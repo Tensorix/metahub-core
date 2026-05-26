@@ -1,11 +1,38 @@
 {
   "name": "metahub",
-  "module": "index.ts",
+  "version": "0.1.0",
+  "description": "Metahub core library and CLI",
   "type": "module",
-  "devDependencies": {
-    "@types/bun": "latest"
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
-  "peerDependencies": {
+  "bin": {
+    "metahub": "./dist/cli.js",
+    "mh": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "bun --hot src/cli/index.ts",
+    "build": "bun run scripts/build.ts",
+    "build:binaries": "bun run scripts/compile-binaries.ts",
+    "prepublishOnly": "bun run build",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "citty": "^0.1.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
     "typescript": "^5"
   }
 }

@@ -1,0 +1,11 @@
+src/
+scripts/
+binaries/
+*.test.ts
+*.test.js
+bun.lock
+.cursor/
+.cache/
+tsconfig.json
+tsconfig.build.json
+CLAUDE.md
