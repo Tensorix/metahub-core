@@ -8,6 +8,8 @@ import doc from "./commands/doc.ts";
 import edit from "./commands/edit.ts";
 import search from "./commands/search.ts";
 import sync from "./commands/sync.ts";
+import snapshot from "./commands/snapshot.ts";
+import restore from "./commands/restore.ts";
 import { startServer } from "../core/sync/server.ts";
 import { print } from "./output.ts";
 
@@ -30,6 +32,8 @@ const main = defineCommand({
     edit,
     search,
     sync,
+    snapshot,
+    restore,
   },
 });
 
