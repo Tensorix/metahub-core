@@ -1,5 +1,5 @@
 {
-  "name": "metahub",
+  "name": "@tensorix/metahub",
   "version": "0.1.0",
   "description": "Metahub core library and CLI",
   "type": "module",
