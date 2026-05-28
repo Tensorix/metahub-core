@@ -6,13 +6,58 @@ import { randomSuffix } from "../core/ids.ts";
 import { getDocument, updateDocument } from "../core/documents.ts";
 import { getRecord, updateRecord } from "../core/records.ts";
 
-/** Open `initial` in $EDITOR, return the saved contents. */
-async function editInEditor(initial: string, ext: string): Promise<string> {
-  const editor = process.env.EDITOR || process.env.VISUAL || "vi";
+/** Known editors mapped to their invocation, including the wait flag GUI
+ * editors need so spawn blocks until the file is closed. */
+const KNOWN_EDITORS: Record<string, string> = {
+  vscode: "code --wait",
+  code: "code --wait",
+  cursor: "cursor --wait",
+  windsurf: "windsurf --wait",
+  zed: "zed --wait",
+  sublime: "subl --wait",
+  subl: "subl --wait",
+  atom: "atom --wait",
+  idea: "idea --wait",
+  webstorm: "webstorm --wait",
+  vim: "vim",
+  nvim: "nvim",
+  neovim: "nvim",
+  vi: "vi",
+  nano: "nano",
+  emacs: "emacs",
+  emacsclient: "emacsclient",
+};
+
+export interface EditOptions {
+  /** --editor: a known editor name or a raw command. */
+  editor?: string;
+  /** --vscode convenience flag. */
+  vscode?: boolean;
+}
+
+/** Resolve the editor command from flags, then env, falling back to vi. */
+export function resolveEditorCommand(
+  opts: EditOptions = {},
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (opts.vscode) return KNOWN_EDITORS.vscode!;
+  if (opts.editor) {
+    const key = opts.editor.trim().toLowerCase();
+    return KNOWN_EDITORS[key] ?? opts.editor;
+  }
+  return env.EDITOR || env.VISUAL || "vi";
+}
+
+/** Open `initial` in `editorCmd`, return the saved contents. */
+async function editInEditor(
+  initial: string,
+  ext: string,
+  editorCmd: string,
+): Promise<string> {
   const file = join(tmpdir(), `metahub-${randomSuffix(8)}.${ext}`);
   await Bun.write(file, initial);
   try {
-    const proc = Bun.spawn([...editor.split(" "), file], {
+    const proc = Bun.spawn([...editorCmd.split(" "), file], {
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
@@ -54,12 +99,17 @@ export interface EditResult {
   changed: boolean;
 }
 
-/** Edit a document (markdown body) or record (field form) in $EDITOR. */
-export async function runEdit(db: Database, id: string): Promise<EditResult> {
+/** Edit a document (markdown body) or record (field form) in the chosen editor. */
+export async function runEdit(
+  db: Database,
+  id: string,
+  opts: EditOptions = {},
+): Promise<EditResult> {
+  const editorCmd = resolveEditorCommand(opts);
   const doc = getDocument(db, id);
   if (doc) {
     const before = doc.body ?? "";
-    const after = await editInEditor(before, "md");
+    const after = await editInEditor(before, "md", editorCmd);
     const changed = after !== before;
     if (changed) updateDocument(db, id, { body: after });
     return { type: "document", id, changed };
@@ -70,7 +120,7 @@ export async function runEdit(db: Database, id: string): Promise<EditResult> {
     const before = Object.entries(rec.values)
       .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
       .join("\n");
-    const after = await editInEditor(`${before}\n`, "txt");
+    const after = await editInEditor(`${before}\n`, "txt", editorCmd);
     const changed = after.trim() !== before.trim();
     if (changed) updateRecord(db, id, parseForm(after));
     return { type: "record", id, changed };
