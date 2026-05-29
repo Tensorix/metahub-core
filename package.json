@@ -29,7 +29,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "citty": "^0.1.6"
+    "citty": "^0.1.6",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "latest",

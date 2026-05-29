@@ -56,8 +56,8 @@ function parsePort(argv: string[]): number {
 const argv = process.argv.slice(2);
 if (argv.includes("--server")) {
   const s = startServer({ port: parsePort(argv) });
-  print({ server: "listening", port: s.port, nodeId: s.node }, () =>
-    `metahub sync server on :${s.port} (node ${s.node})`,
+  print({ server: "listening", port: s.port, nodeId: s.node, docs: `/docs` }, () =>
+    `metahub sync server on :${s.port} (node ${s.node}) — docs at http://localhost:${s.port}/docs`,
   );
 } else {
   runMain(main);
