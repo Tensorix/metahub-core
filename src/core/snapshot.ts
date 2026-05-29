@@ -3,6 +3,7 @@ import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { changesAfterSeq, ingest, type Change } from "./crdt.ts";
 import { ftsAvailable } from "./db.ts";
+import { ensurePropIndex } from "./indexing.ts";
 import { cacheDir, metahubHome } from "./paths.ts";
 import { blobPath } from "./cache.ts";
 
@@ -115,6 +116,29 @@ async function writeBlobs(blobs: Record<string, string>): Promise<number> {
   return n;
 }
 
+/**
+ * Indexes are derived (not in the oplog), so replaying changes doesn't recreate
+ * them. Rebuild the declared ones (relation fields + explicit indexed hint);
+ * auto-indexes from query usage re-derive lazily on next query.
+ */
+function rebuildDeclaredIndexes(db: Database): void {
+  const props = db
+    .query(
+      "SELECT id, database_id, type, config FROM properties WHERE __deleted = 0",
+    )
+    .all() as {
+    id: string;
+    database_id: string | null;
+    type: string;
+    config: string | null;
+  }[];
+  for (const p of props) {
+    if (!p.database_id) continue;
+    const indexed = p.config ? (JSON.parse(p.config) as { indexed?: boolean }).indexed : false;
+    if (p.type === "relation" || indexed) ensurePropIndex(db, p.database_id, p.id);
+  }
+}
+
 export interface RestoreResult {
   mode: "merge" | "reset";
   applied: number;
@@ -137,6 +161,7 @@ export async function restoreSnapshot(
 ): Promise<RestoreResult> {
   if (!opts.reset) {
     const applied = ingest(db, pkg.changes);
+    rebuildDeclaredIndexes(db);
     const blobs = await writeBlobs(pkg.blobs);
     return { mode: "merge", applied, blobs };
   }
@@ -156,7 +181,6 @@ export async function restoreSnapshot(
       "databases",
       "properties",
       "records",
-      "record_values",
       "documents",
       "doc_blocks",
       "peers",
@@ -179,6 +203,7 @@ export async function restoreSnapshot(
       ).run(p.url, p.pull_cursor, p.push_cursor);
   });
   tx();
+  rebuildDeclaredIndexes(db);
 
   const blobs = await writeBlobs(pkg.blobs);
   return { mode: "reset", applied, blobs, safetyPath };

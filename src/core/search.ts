@@ -31,10 +31,9 @@ function ensureIndex(db: Database): boolean {
   }
   for (const r of db
     .query(
-      `SELECT r.id AS id, r.database_id AS database_id, group_concat(rv.value, ' ') AS body
-       FROM records r
-       JOIN record_values rv ON rv.record_id = r.id
-       JOIN properties p ON p.id = rv.property_id AND p.__deleted = 0
+      `SELECT r.id AS id, r.database_id AS database_id, group_concat(je.value, ' ') AS body
+       FROM records r, json_each(r.data) je
+       JOIN properties p ON p.id = je.key AND p.__deleted = 0
        WHERE r.__deleted = 0 AND p.type IN ${TEXT_TYPES}
        GROUP BY r.id`,
     )
@@ -109,10 +108,9 @@ function likeSearch(db: Database, query: string, limit: number): SearchHit[] {
   if (out.length < limit) {
     const recs = db
       .query(
-        `SELECT r.id AS id, r.database_id AS database_id, group_concat(rv.value, ' ') AS body
-         FROM records r
-         JOIN record_values rv ON rv.record_id = r.id
-         JOIN properties p ON p.id = rv.property_id AND p.__deleted = 0
+        `SELECT r.id AS id, r.database_id AS database_id, group_concat(je.value, ' ') AS body
+         FROM records r, json_each(r.data) je
+         JOIN properties p ON p.id = je.key AND p.__deleted = 0
          WHERE r.__deleted = 0 AND p.type IN ${TEXT_TYPES}
          GROUP BY r.id HAVING body LIKE ? ESCAPE '\\' LIMIT ?`,
       )

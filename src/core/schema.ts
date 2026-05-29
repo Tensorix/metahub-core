@@ -43,21 +43,19 @@ CREATE TABLE IF NOT EXISTS properties (
 );
 CREATE INDEX IF NOT EXISTS idx_properties_db ON properties(database_id);
 
+-- One row per record. Field cells live in the data JSON object, keyed by
+-- property id (rename-safe). Each (record,property) is still an independent
+-- CRDT register in the oplog; materialize() folds the winner into data via
+-- json_set/json_remove. Hot fields get expression indexes on data->>'propid'
+-- (see indexing.ts) so filter/sort/limit push down to SQL.
 CREATE TABLE IF NOT EXISTS records (
   id          TEXT PRIMARY KEY,
   database_id TEXT,
   created_hlc TEXT,
+  data        TEXT NOT NULL DEFAULT '{}',
   __deleted   INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_records_db ON records(database_id);
-
--- EAV cells; each (record,property) is an independent CRDT register.
-CREATE TABLE IF NOT EXISTS record_values (
-  record_id   TEXT NOT NULL,
-  property_id TEXT NOT NULL,
-  value       TEXT,
-  PRIMARY KEY (record_id, property_id)
-);
+CREATE INDEX IF NOT EXISTS idx_records_db_hlc ON records(database_id, created_hlc);
 
 CREATE TABLE IF NOT EXISTS documents (
   id          TEXT PRIMARY KEY,

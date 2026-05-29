@@ -11,13 +11,22 @@ function makeNode(id: string): Database {
   return db;
 }
 
+// records.data (JSON) holds the field cells record_values used to. Two
+// converged nodes hold identical values, but json_set inserts keys in apply
+// order, so byte-order can differ — normalize keys before comparing logical state.
+function normalizeRecords(rows: any[]) {
+  return rows.map((r) => ({
+    ...r,
+    data: JSON.stringify(
+      Object.fromEntries(Object.entries(JSON.parse(r.data || "{}")).sort()),
+    ),
+  }));
+}
+
 function snapshot(db: Database) {
   return {
     databases: db.query("SELECT * FROM databases ORDER BY id").all(),
-    records: db.query("SELECT * FROM records ORDER BY id").all(),
-    values: db
-      .query("SELECT * FROM record_values ORDER BY record_id, property_id")
-      .all(),
+    records: normalizeRecords(db.query("SELECT * FROM records ORDER BY id").all()),
     documents: db.query("SELECT * FROM documents ORDER BY id").all(),
   };
 }

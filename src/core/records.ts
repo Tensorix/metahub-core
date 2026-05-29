@@ -3,6 +3,19 @@ import { makeId, slugify } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { listProperties, type PropertyRow } from "./properties.ts";
+import { maybeAutoIndex } from "./indexing.ts";
+
+type SqlValue = string | number | null;
+
+/** Scalars push down to SQL; arrays/objects/null are filtered in JS. */
+function isSqlScalar(v: unknown): v is string | number | boolean {
+  return typeof v === "string" || typeof v === "number" || typeof v === "boolean";
+}
+
+/** Encode a coerced scalar to match what `data ->> '<prop>'` returns. */
+function sqlFilterValue(v: string | number | boolean): SqlValue {
+  return typeof v === "boolean" ? (v ? 1 : 0) : v;
+}
 
 export interface RecordRow {
   id: string;
@@ -70,23 +83,19 @@ function resolveData(
   return out;
 }
 
-function readRecord(
-  db: Database,
-  id: string,
-  databaseId: string,
+/** Build a RecordRow from a materialized row; keys in `data` are property ids. */
+function rowToRecord(
+  row: { id: string; database_id: string; data: string },
   props: PropertyRow[],
 ): RecordRow {
-  const cells = db
-    .query("SELECT property_id, value FROM record_values WHERE record_id = ?")
-    .all(id) as { property_id: string; value: string | null }[];
+  const raw = JSON.parse(row.data || "{}") as Record<string, unknown>;
   const byId = new Map(props.map((p) => [p.id, p]));
   const values: Record<string, unknown> = {};
-  for (const c of cells) {
-    const p = byId.get(c.property_id);
-    if (!p) continue; // cell for a removed property
-    values[p.name] = c.value === null ? null : JSON.parse(c.value);
+  for (const [propId, v] of Object.entries(raw)) {
+    const p = byId.get(propId);
+    if (p) values[p.name] = v; // skip cells for removed properties
   }
-  return { id, database_id: databaseId, values };
+  return { id: row.id, database_id: row.database_id, values };
 }
 
 function deriveTitle(
@@ -119,36 +128,92 @@ export function createRecord(
 }
 
 export function getRecord(db: Database, id: string): RecordRow | null {
-  const rec = db
-    .query("SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0")
-    .get(id) as { id: string; database_id: string } | null;
-  if (!rec) return null;
-  return readRecord(db, rec.id, rec.database_id, listProperties(db, rec.database_id));
+  const row = db
+    .query("SELECT id, database_id, data FROM records WHERE id = ? AND __deleted = 0")
+    .get(id) as { id: string; database_id: string; data: string } | null;
+  if (!row) return null;
+  return rowToRecord(row, listProperties(db, row.database_id));
+}
+
+/** Quote a property id for embedding in a JSON path / index expression. */
+function jsonKeyLit(propId: string): string {
+  return propId.replace(/'/g, "''");
 }
 
 export function listRecords(
   db: Database,
   databaseId: string,
-  opts: { filter?: Record<string, unknown>; limit?: number } = {},
+  opts: { filter?: Record<string, unknown>; sort?: string; limit?: number } = {},
 ): RecordRow[] {
   const props = listProperties(db, databaseId);
-  const recs = db
-    .query(
-      "SELECT id, database_id FROM records WHERE database_id = ? AND __deleted = 0 ORDER BY created_hlc",
-    )
-    .all(databaseId) as { id: string; database_id: string }[];
-  let rows = recs.map((r) => readRecord(db, r.id, r.database_id, props));
 
-  if (opts.filter && Object.keys(opts.filter).length) {
-    const want = resolveData(props, opts.filter).map(({ prop, value }) => ({
-      name: prop.name,
-      value: coerce(prop, value),
-    }));
-    rows = rows.filter((r) =>
-      want.every((w) => JSON.stringify(r.values[w.name] ?? null) === JSON.stringify(w.value)),
-    );
+  // Coerce filters, then split: scalars push down to SQL (and earn an index),
+  // arrays/objects/null are matched in JS afterward.
+  const resolved =
+    opts.filter && Object.keys(opts.filter).length
+      ? resolveData(props, opts.filter).map(({ prop, value }) => ({
+          prop,
+          value: coerce(prop, value),
+        }))
+      : [];
+  const sqlFilters = resolved.filter((f) => isSqlScalar(f.value));
+  const jsFilters = resolved.filter((f) => !isSqlScalar(f.value));
+
+  // Resolve sort: default created_hlc; "-field" = descending.
+  let sortProp: PropertyRow | undefined;
+  let sortDesc = false;
+  if (opts.sort) {
+    let key = opts.sort;
+    if (key.startsWith("-")) {
+      sortDesc = true;
+      key = key.slice(1);
+    }
+    if (key !== "created" && key !== "created_hlc") {
+      const p = props.find(
+        (p) => p.name.toLowerCase() === key.toLowerCase() || p.id === key,
+      );
+      if (!p) throw new Error(`unknown sort field: ${key}`);
+      sortProp = p;
+    }
   }
-  if (opts.limit != null) rows = rows.slice(0, opts.limit);
+
+  // The act of filtering/sorting on a field is the signal to (maybe) index it.
+  for (const f of sqlFilters) maybeAutoIndex(db, databaseId, f.prop);
+  if (sortProp) maybeAutoIndex(db, databaseId, sortProp);
+
+  const where = ["database_id = ?", "__deleted = 0"];
+  const args: SqlValue[] = [databaseId];
+  for (const f of sqlFilters) {
+    where.push(`data ->> '${jsonKeyLit(f.prop.id)}' = ?`);
+    args.push(sqlFilterValue(f.value as string | number | boolean));
+  }
+
+  const orderExpr = sortProp
+    ? `data ->> '${jsonKeyLit(sortProp.id)}'`
+    : "created_hlc";
+  let sql =
+    `SELECT id, database_id, data FROM records WHERE ${where.join(" AND ")} ` +
+    `ORDER BY ${orderExpr} ${sortDesc ? "DESC" : "ASC"}`;
+
+  // LIMIT only pushes down when no JS-side filtering remains.
+  const pushLimit = opts.limit != null && jsFilters.length === 0;
+  if (pushLimit) {
+    sql += " LIMIT ?";
+    args.push(opts.limit!);
+  }
+
+  let rows = (
+    db.query(sql).all(...args) as { id: string; database_id: string; data: string }[]
+  ).map((r) => rowToRecord(r, props));
+
+  if (jsFilters.length) {
+    rows = rows.filter((r) =>
+      jsFilters.every(
+        (f) => JSON.stringify(r.values[f.prop.name] ?? null) === JSON.stringify(f.value),
+      ),
+    );
+    if (opts.limit != null) rows = rows.slice(0, opts.limit);
+  }
   return rows;
 }
 

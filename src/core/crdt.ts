@@ -37,7 +37,7 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
 };
 
 // The `records` dataset is special: these cols hit the `records` table, any
-// other col is a property cell (col == property id) stored in record_values.
+// other col is a property cell (col == property id) folded into records.data JSON.
 const RECORD_META = new Set(["database_id", "created_hlc", "__deleted"]);
 
 type SqlValue = string | number | null;
@@ -91,14 +91,21 @@ function materialize(
         encodeScalar(v),
         rowId,
       );
-    } else if (valueJson === null) {
-      db.query(
-        "DELETE FROM record_values WHERE record_id = ? AND property_id = ?",
-      ).run(rowId, col);
     } else {
-      db.query(
-        "INSERT INTO record_values (record_id, property_id, value) VALUES (?, ?, ?) ON CONFLICT(record_id, property_id) DO UPDATE SET value = excluded.value",
-      ).run(rowId, col, valueJson);
+      // Property cell -> a key in the record's JSON `data`. ensureRow first:
+      // a cell write can arrive before database_id (out-of-order sync).
+      ensureRow(db, "records", rowId);
+      if (valueJson === null) {
+        db.query(
+          `UPDATE records SET data = json_remove(data, '$."' || ? || '"') WHERE id = ?`,
+        ).run(col, rowId);
+      } else {
+        // json(?) embeds the value with its real JSON type (number/array/object),
+        // not as a quoted string.
+        db.query(
+          `UPDATE records SET data = json_set(coalesce(data, '{}'), '$."' || ? || '"', json(?)) WHERE id = ?`,
+        ).run(col, valueJson, rowId);
+      }
     }
     return;
   }

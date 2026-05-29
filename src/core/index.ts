@@ -8,6 +8,7 @@ export * from "./fracdex.ts";
 export * from "./node.ts";
 export * from "./databases.ts";
 export * from "./properties.ts";
+export * from "./indexing.ts";
 export * from "./records.ts";
 export * from "./documents.ts";
 export * from "./search.ts";

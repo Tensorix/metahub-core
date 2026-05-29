@@ -35,12 +35,23 @@ const list = defineCommand({
   args: {
     database: { type: "positional", required: true, description: "Database id" },
     filter: { type: "string", description: "JSON of {column: value} (@file/@- ok)" },
+    sort: { type: "string", description: "Sort field (default created)" },
+    desc: { type: "boolean", description: "Sort descending" },
     limit: { type: "string", description: "Max rows" },
   },
   run: guard(async (args) => {
     const filter = await resolveJson<Record<string, unknown>>(args.filter);
+    // Core takes a single sort string ("-field" = desc); compose from --desc so
+    // the natural `--sort created --desc` works (a bare "-field" value gets
+    // swallowed by arg parsing).
+    const sort = args.sort
+      ? (args.desc ? "-" : "") + args.sort.replace(/^-/, "")
+      : args.desc
+        ? "-created"
+        : undefined;
     const rows = listRecords(openMetahub(), args.database, {
       filter,
+      sort,
       limit: args.limit != null ? Number(args.limit) : undefined,
     });
     print(
