@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { makeId, slugify } from "./ids.ts";
+import { newId, slugify } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { listProperties, type PropertyRow } from "./properties.ts";
@@ -106,7 +106,7 @@ function deriveTitle(
   const text = resolved.find(
     (r) => r.prop.type === "text" && typeof r.value === "string" && r.value,
   );
-  return makeId(text ? String(text.value) : "", fallbackBase);
+  return newId("rec", text ? String(text.value) : "", fallbackBase);
 }
 
 export function createRecord(

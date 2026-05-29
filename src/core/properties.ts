@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { makeId } from "./ids.ts";
+import { newId } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { ensurePropIndex } from "./indexing.ts";
@@ -85,7 +85,7 @@ export function addProperty(
     ? { ...(opts.config ?? {}), indexed: true }
     : (opts.config ?? null);
 
-  const id = makeId(opts.name, "prop");
+  const id = newId("prop", opts.name);
   emit(db, "properties", id, "database_id", databaseId);
   emit(db, "properties", id, "name", opts.name);
   emit(db, "properties", id, "type", opts.type);

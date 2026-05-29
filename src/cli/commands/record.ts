@@ -8,7 +8,9 @@ import {
   deleteRecord,
 } from "../../core/records.ts";
 import { resolveJson } from "../input.ts";
-import { print, fail, table, guard } from "../output.ts";
+import { resolveRef } from "../../core/resolve.ts";
+import { resolveDb } from "../refs.ts";
+import { print, table, guard } from "../output.ts";
 
 function flatten(r: { id: string; values: Record<string, unknown> }) {
   const out: Record<string, unknown> = { id: r.id };
@@ -20,12 +22,13 @@ function flatten(r: { id: string; values: Record<string, unknown> }) {
 const create = defineCommand({
   meta: { name: "create", description: "Create a record (row)" },
   args: {
-    database: { type: "positional", required: true, description: "Database id" },
+    database: { type: "positional", required: false, description: "Database ref (default: current)" },
     data: { type: "string", description: "JSON of {column: value} (@file/@- ok)" },
   },
   run: guard(async (args) => {
+    const db = openMetahub();
     const data = (await resolveJson<Record<string, unknown>>(args.data)) ?? {};
-    const row = createRecord(openMetahub(), args.database, data);
+    const row = createRecord(db, resolveDb(db, args.database), data);
     print(row, () => row.id);
   }),
 });
@@ -33,13 +36,15 @@ const create = defineCommand({
 const list = defineCommand({
   meta: { name: "list", description: "List records in a database" },
   args: {
-    database: { type: "positional", required: true, description: "Database id" },
+    database: { type: "positional", required: false, description: "Database ref (default: current)" },
     filter: { type: "string", description: "JSON of {column: value} (@file/@- ok)" },
     sort: { type: "string", description: "Sort field (default created)" },
     desc: { type: "boolean", description: "Sort descending" },
     limit: { type: "string", description: "Max rows" },
   },
   run: guard(async (args) => {
+    const db = openMetahub();
+    const databaseId = resolveDb(db, args.database);
     const filter = await resolveJson<Record<string, unknown>>(args.filter);
     // Core takes a single sort string ("-field" = desc); compose from --desc so
     // the natural `--sort created --desc` works (a bare "-field" value gets
@@ -49,13 +54,13 @@ const list = defineCommand({
       : args.desc
         ? "-created"
         : undefined;
-    const rows = listRecords(openMetahub(), args.database, {
+    const rows = listRecords(db, databaseId, {
       filter,
       sort,
       limit: args.limit != null ? Number(args.limit) : undefined,
     });
     print(
-      { database: args.database, count: rows.length, records: rows },
+      { database: databaseId, count: rows.length, records: rows },
       () => table(rows.map(flatten)),
     );
   }),
@@ -63,33 +68,35 @@ const list = defineCommand({
 
 const get = defineCommand({
   meta: { name: "get", description: "Show one record" },
-  args: { id: { type: "positional", required: true, description: "Record id" } },
+  args: { id: { type: "positional", required: true, description: "Record ref (id/prefix)" } },
   run: guard((args) => {
-    const row = getRecord(openMetahub(), args.id);
-    if (!row) fail(`no such record: ${args.id}`);
-    print(row);
+    const db = openMetahub();
+    print(getRecord(db, resolveRef(db, args.id, { kind: "rec" })));
   }),
 });
 
 const update = defineCommand({
   meta: { name: "update", description: "Update record cells (partial)" },
   args: {
-    id: { type: "positional", required: true, description: "Record id" },
+    id: { type: "positional", required: true, description: "Record ref (id/prefix)" },
     data: { type: "string", description: "JSON of {column: value} (@file/@- ok)" },
   },
   run: guard(async (args) => {
+    const db = openMetahub();
     const data = (await resolveJson<Record<string, unknown>>(args.data)) ?? {};
-    const row = updateRecord(openMetahub(), args.id, data);
+    const row = updateRecord(db, resolveRef(db, args.id, { kind: "rec" }), data);
     print(row);
   }),
 });
 
 const del = defineCommand({
   meta: { name: "delete", description: "Delete a record" },
-  args: { id: { type: "positional", required: true, description: "Record id" } },
+  args: { id: { type: "positional", required: true, description: "Record ref (id/prefix)" } },
   run: guard((args) => {
-    if (!deleteRecord(openMetahub(), args.id)) fail(`no such record: ${args.id}`);
-    print({ ok: true, deleted: args.id });
+    const db = openMetahub();
+    const id = resolveRef(db, args.id, { kind: "rec" });
+    deleteRecord(db, id);
+    print({ ok: true, deleted: id });
   }),
 });
 

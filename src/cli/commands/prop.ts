@@ -9,7 +9,9 @@ import {
   type PropertyConfig,
 } from "../../core/properties.ts";
 import { resolveJson } from "../input.ts";
-import { print, fail, table, guard } from "../output.ts";
+import { resolveRef } from "../../core/resolve.ts";
+import { resolveDb } from "../refs.ts";
+import { print, table, guard } from "../output.ts";
 
 function buildConfig(args: Record<string, any>, base?: PropertyConfig): PropertyConfig | undefined {
   const config: PropertyConfig = { ...base };
@@ -22,18 +24,21 @@ function buildConfig(args: Record<string, any>, base?: PropertyConfig): Property
 const add = defineCommand({
   meta: { name: "add", description: "Add a property (column) to a database" },
   args: {
-    database: { type: "positional", required: true, description: "Database id" },
     name: { type: "positional", required: true, description: "Property name" },
+    db: { type: "string", description: "Database ref (default: current)" },
     type: { type: "string", required: true, description: "text|number|checkbox|select|multi_select|date|relation|url" },
     options: { type: "string", description: "Comma list for select/multi_select" },
-    target: { type: "string", description: "Target database id for relation" },
+    target: { type: "string", description: "Target database ref for relation" },
     config: { type: "string", description: "Raw config JSON (@file/@- ok)" },
     position: { type: "string", description: "Sort position" },
   },
   run: guard(async (args) => {
+    const db = openMetahub();
+    const databaseId = resolveDb(db, args.db);
     const fromJson = await resolveJson<PropertyConfig>(args.config);
-    const config = buildConfig(args, fromJson);
-    const row = addProperty(openMetahub(), args.database, {
+    const target = args.target != null ? resolveRef(db, args.target, { kind: "db" }) : undefined;
+    const config = buildConfig({ ...args, target }, fromJson);
+    const row = addProperty(db, databaseId, {
       name: args.name,
       type: args.type as PropType,
       config,
@@ -45,9 +50,10 @@ const add = defineCommand({
 
 const list = defineCommand({
   meta: { name: "list", description: "List properties of a database" },
-  args: { database: { type: "positional", required: true, description: "Database id" } },
+  args: { database: { type: "positional", required: false, description: "Database ref (default: current)" } },
   run: guard((args) => {
-    const rows = listProperties(openMetahub(), args.database);
+    const db = openMetahub();
+    const rows = listProperties(db, resolveDb(db, args.database));
     print(rows, () =>
       table(rows.map((r) => ({ id: r.id, name: r.name, type: r.type, position: r.position }))),
     );
@@ -57,17 +63,19 @@ const list = defineCommand({
 const update = defineCommand({
   meta: { name: "update", description: "Update a property" },
   args: {
-    id: { type: "positional", required: true, description: "Property id" },
+    id: { type: "positional", required: true, description: "Property ref (id/prefix/name)" },
     name: { type: "string" },
     options: { type: "string", description: "Comma list for select/multi_select" },
-    target: { type: "string", description: "Target database id for relation" },
+    target: { type: "string", description: "Target database ref for relation" },
     config: { type: "string", description: "Raw config JSON (@file/@- ok)" },
     position: { type: "string" },
   },
   run: guard(async (args) => {
+    const db = openMetahub();
     const fromJson = await resolveJson<PropertyConfig>(args.config);
-    const config = buildConfig(args, fromJson);
-    const row = updateProperty(openMetahub(), args.id, {
+    const target = args.target != null ? resolveRef(db, args.target, { kind: "db" }) : undefined;
+    const config = buildConfig({ ...args, target }, fromJson);
+    const row = updateProperty(db, resolveRef(db, args.id, { kind: "prop" }), {
       name: args.name,
       config,
       position: args.position != null ? Number(args.position) : undefined,
@@ -78,10 +86,12 @@ const update = defineCommand({
 
 const remove = defineCommand({
   meta: { name: "remove", description: "Remove a property" },
-  args: { id: { type: "positional", required: true, description: "Property id" } },
+  args: { id: { type: "positional", required: true, description: "Property ref (id/prefix/name)" } },
   run: guard((args) => {
-    if (!removeProperty(openMetahub(), args.id)) fail(`no such property: ${args.id}`);
-    print({ ok: true, removed: args.id });
+    const db = openMetahub();
+    const id = resolveRef(db, args.id, { kind: "prop" });
+    removeProperty(db, id);
+    print({ ok: true, removed: id });
   }),
 });
 

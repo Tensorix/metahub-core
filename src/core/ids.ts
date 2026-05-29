@@ -25,3 +25,25 @@ export function slugify(name: string, fallback = "item"): string {
 export function makeId(name: string, fallback = "item"): string {
   return `${slugify(name, fallback)}-${randomSuffix()}`;
 }
+
+/** Entity kinds whose ids carry a type prefix. */
+export type Kind = "db" | "prop" | "rec" | "doc" | "blk";
+
+const KINDS: ReadonlySet<string> = new Set<Kind>(["db", "prop", "rec", "doc", "blk"]);
+
+/**
+ * Typed id = "<kind>_<slug>-<rand>". `slugify` emits only [a-z0-9-] and
+ * `randomSuffix` only base36, so the FIRST "_" is unambiguously the type
+ * separator — `idKind` recovers the kind, and legacy ids (no "_") read as null.
+ */
+export function newId(kind: Kind, name: string, fallback: string = kind): string {
+  return `${kind}_${slugify(name, fallback)}-${randomSuffix()}`;
+}
+
+/** The kind encoded in a typed id, or null for legacy (prefix-less) ids. */
+export function idKind(id: string): Kind | null {
+  const i = id.indexOf("_");
+  if (i <= 0) return null;
+  const prefix = id.slice(0, i);
+  return KINDS.has(prefix) ? (prefix as Kind) : null;
+}

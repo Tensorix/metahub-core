@@ -18,31 +18,41 @@
 
 ```bash
 bunx @tensorix/metahub init                      # 创建 ~/.metahub
-mh db create "Tasks"                             # 建一张表 -> 返回 id 如 tasks-k3f9c1
-mh prop add tasks-k3f9c1 Title  --type text
-mh prop add tasks-k3f9c1 Status --type select --options "todo,doing,done"
-mh record create tasks-k3f9c1 --data '{"Title":"写设计稿","Status":"todo"}'
-mh record update <recordId> --data '{"Status":"doing"}'
+mh db create "Tasks"                             # 建一张表 -> 返回 id 如 db_tasks-k3f9c1
+mh use tasks                                     # 设为「当前库」,之后 record/prop 免带库参数
+mh prop add Title  --type text                   # 作用于当前库
+mh prop add Status --type select --options "todo,doing,done"
+mh record create --data '{"Title":"写设计稿","Status":"todo"}'
+mh record update fix-login --data '{"Status":"doing"}'   # 用唯一前缀/名字,不必粘完整 id
 mh doc create --title "架构说明" --body @arch.md  # @file / @- / 直接字符串
 mh search "架构"
-mh edit <id>                                     # 在 $EDITOR 里改文档正文 / 记录字段(给人用)
+mh get tasks                                     # 通用查找:按 id/前缀/名字,自动判类型
+mh edit <ref>                                    # 在 $EDITOR 里改文档正文 / 记录字段(给人用)
 
 # 给 AI 用的非交互增量编辑(对标 Read / Edit / Write):
-mh doc read <id>                                 # 读正文 + version(改前先读)
-mh doc edit <id> --old "旧文本" --new "新文本"   # 锚定查找替换,只传增量
-mh doc append <id> --body "追加段落"             # 也有 prepend
+mh doc read <ref>                                # 读正文 + version(改前先读)
+mh doc edit <ref> --old "旧文本" --new "新文本"  # 锚定查找替换,只传增量
+mh doc append <ref> --body "追加段落"            # 也有 prepend
 ```
 
 输出按受众自动切换：终端（人）显示表格 / markdown，被管道或子进程调用（AI）输出 **JSON**；`--json` / `--pretty` 可强制。
 
-### ID
+### ID 与引用
 
-每个实体 id = `名字slug-随机后缀`（如 `tasks-k3f9c1`），可读且多机离线创建也几乎不撞。
+每个实体 id = `类型_名字slug-随机后缀`（如 `db_tasks-k3f9c1`、`rec_fix-login-bug-7j02an`）。类型前缀让 id 自解释（一眼区分 db/rec/doc/prop），随机后缀保证多机离线创建几乎不撞。
+
+凡接受 id 的地方（`get`/`update`/`delete`/`--db`/`--parent`/`--target` 等）都接受**引用**，按以下顺序解析，省去粘贴完整 id：
+
+- **完整 id**（永远可用，跨库亦可）
+- **唯一前缀**（git 短 SHA 风格，`rec_fix-log` 或裸 slug `fix-log`）
+- **名字/标题**（db 名、doc 标题、prop 名，大小写不敏感）
+
+歧义时报错并列出候选；用 `mh use <db>` 设当前库后，record/prop 的引用与列举自动限定在该库内。Tab 补全见 `mh completion`。
 
 ### 属性类型
 
 `text · number · checkbox · select · multi_select · date · relation · url`
-（select/multi_select 用 `--options a,b,c`；relation 用 `--target <databaseId>`）
+（select/multi_select 用 `--options a,b,c`；relation 用 `--target <db引用>`）
 
 ## 多机同步（CRDT）
 
@@ -80,7 +90,9 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 |------|------|
 | `mh init` | 创建 `~/.metahub` |
 | `mh db create\|list\|get\|delete` | 管理数据库（表） |
-| `mh prop add\|list\|update\|remove` | 管理属性（列） |
+| `mh use [<db>] [--clear]` | 设置/显示「当前库」（record/prop 默认作用于它） |
+| `mh get <ref>` | 通用查找：按 id/前缀/名字解析，自动判别类型 |
+| `mh prop add\|list\|update\|remove` | 管理属性（列）；`add` 用 `--db` 指定库（默认当前库） |
 | `mh record create\|list\|get\|update\|delete` | 管理记录（行） |
 | `mh doc create\|list\|get\|update\|delete` | 管理 markdown 文档 |
 | `mh doc read <id>` | 读正文 + version token（AI 改前先读） |
@@ -88,6 +100,7 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 | `mh doc append\|prepend <id> --body` | 在文档首/尾追加块 |
 | `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
 | `mh search <query>` | 全文检索（文档 + 记录） |
+| `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
 | `mh sync <url>` | 与服务端同步一轮 |
 | `mh --server [--port]` | 启动同步服务端 |
 

@@ -1,12 +1,13 @@
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
+import { resolveRef } from "../../core/resolve.ts";
 import { runEdit } from "../editor.ts";
 import { print, guard } from "../output.ts";
 
 export default defineCommand({
   meta: { name: "edit", description: "Edit a document or record in your editor" },
   args: {
-    id: { type: "positional", required: true, description: "Document or record id" },
+    id: { type: "positional", required: true, description: "Document or record ref (id/prefix/name)" },
     vscode: { type: "boolean", description: "Open in VS Code (code --wait)" },
     editor: {
       type: "string",
@@ -15,7 +16,8 @@ export default defineCommand({
     },
   },
   run: guard(async (args) => {
-    const r = await runEdit(openMetahub(), args.id, {
+    const db = openMetahub();
+    const r = await runEdit(db, resolveRef(db, args.id), {
       editor: args.editor,
       vscode: args.vscode,
     });

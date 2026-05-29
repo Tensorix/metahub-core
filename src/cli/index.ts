@@ -2,11 +2,14 @@ import { defineCommand, runMain } from "citty";
 import pkg from "../../package.json" with { type: "json" };
 import init from "./commands/init.ts";
 import db from "./commands/db.ts";
+import use from "./commands/use.ts";
+import get from "./commands/get.ts";
 import prop from "./commands/prop.ts";
 import record from "./commands/record.ts";
 import doc from "./commands/doc.ts";
 import edit from "./commands/edit.ts";
 import search from "./commands/search.ts";
+import completion, { complete } from "./commands/completion.ts";
 import sync from "./commands/sync.ts";
 import snapshot from "./commands/snapshot.ts";
 import restore from "./commands/restore.ts";
@@ -26,11 +29,15 @@ const main = defineCommand({
   subCommands: {
     init,
     db,
+    use,
+    get,
     prop,
     record,
     doc,
     edit,
     search,
+    completion,
+    __complete: complete,
     sync,
     snapshot,
     restore,

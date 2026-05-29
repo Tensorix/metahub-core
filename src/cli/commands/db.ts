@@ -6,7 +6,8 @@ import {
   getDatabase,
   deleteDatabase,
 } from "../../core/databases.ts";
-import { print, fail, table, guard } from "../output.ts";
+import { resolveRef } from "../../core/resolve.ts";
+import { print, table, guard } from "../output.ts";
 
 const create = defineCommand({
   meta: { name: "create", description: "Create a database" },
@@ -30,20 +31,21 @@ const list = defineCommand({
 
 const get = defineCommand({
   meta: { name: "get", description: "Show one database" },
-  args: { id: { type: "positional", required: true, description: "Database id" } },
+  args: { id: { type: "positional", required: true, description: "Database ref (id/prefix/name)" } },
   run: guard((args) => {
-    const row = getDatabase(openMetahub(), args.id);
-    if (!row) fail(`no such database: ${args.id}`);
-    print(row);
+    const db = openMetahub();
+    print(getDatabase(db, resolveRef(db, args.id, { kind: "db" })));
   }),
 });
 
 const del = defineCommand({
   meta: { name: "delete", description: "Delete a database" },
-  args: { id: { type: "positional", required: true, description: "Database id" } },
+  args: { id: { type: "positional", required: true, description: "Database ref (id/prefix/name)" } },
   run: guard((args) => {
-    if (!deleteDatabase(openMetahub(), args.id)) fail(`no such database: ${args.id}`);
-    print({ ok: true, deleted: args.id });
+    const db = openMetahub();
+    const id = resolveRef(db, args.id, { kind: "db" });
+    deleteDatabase(db, id);
+    print({ ok: true, deleted: id });
   }),
 });
 

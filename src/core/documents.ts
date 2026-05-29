@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { makeId } from "./ids.ts";
+import { newId } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { parseBlocks, serializeBlocks, reconcile } from "./blocks.ts";
 import { keysBetween } from "./fracdex.ts";
@@ -32,7 +32,7 @@ function liveBlocks(db: Database, docId: string): BlockRow[] {
 }
 
 function makeBlockId(text: string): string {
-  return makeId(text.split("\n", 1)[0] ?? "", "blk");
+  return newId("blk", text.split("\n", 1)[0] ?? "");
 }
 
 /** Emit a new block's fields; text last so the final body recompute is complete. */
@@ -114,7 +114,7 @@ export function createDocument(
   db: Database,
   opts: { title: string; body?: string; database_id?: string; parent_id?: string },
 ): DocumentRow {
-  const id = makeId(opts.title, "doc");
+  const id = newId("doc", opts.title);
   const first = emit(db, "documents", id, "title", opts.title);
   emit(db, "documents", id, "created_hlc", first.hlc);
   if (opts.database_id !== undefined) emit(db, "documents", id, "database_id", opts.database_id);
