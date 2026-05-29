@@ -15,6 +15,7 @@ import snapshot from "./commands/snapshot.ts";
 import restore from "./commands/restore.ts";
 import { startServer } from "../core/sync/server.ts";
 import { print } from "./output.ts";
+import { showUsage } from "./help.ts";
 
 const main = defineCommand({
   meta: {
@@ -60,5 +61,5 @@ if (argv.includes("--server")) {
     `metahub sync server on :${s.port} (node ${s.node}) — docs at http://localhost:${s.port}/docs`,
   );
 } else {
-  runMain(main);
+  runMain(main, { showUsage });
 }
