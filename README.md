@@ -72,6 +72,24 @@ mh sync http://a-host:7777
 
 服务端在根路径 `/` 还内置一个**浏览器 WebUI**（Preact）：左侧列出数据库与文档，可浏览/行内编辑数据表、读写 markdown 文档（带预览）、全文搜索；编辑走与 CLI 同一套 core 写入路径，进 CRDT oplog 后随 `mh sync` 复制。同时暴露一组 `/api/*` REST 接口与自动生成的 OpenAPI 文档（`/docs`）。WebUI 资源（含 Preact）单独打包为 `dist/webui.js`，仅在浏览器首次访问 `/` 时懒加载，**不进入 CLI 启动路径，对命令行性能零影响**。设计见 [docs/impl-context/07-webui/design.md](docs/impl-context/07-webui/design.md)。
 
+## Agent 托管静态站点
+
+AI agent 用 CLI 把生成好的 HTML/CSS/JS **发布**成一个命名「站点」，`mh --server` 把它在 `/sites/<name>/` serve 出去；页面同源调用上面的 `/api/*` 即可读取本库的数据表与文档——等于一个本地 mini-Supabase（静态托管 + 数据 API）。
+
+```bash
+# agent 把生成的文件写到一个目录,再整目录发布(站点不存在则自动创建)
+mh site publish blog ./dist
+mh site files blog                 # 查看清单
+mh site put blog index.html --content @-   # 也可单文件上传(--from <file> / --content @file|@-)
+
+# serve 出去
+mh --server --port 7777            # 浏览器打开 http://localhost:7777/sites/blog/
+```
+
+站点与文件**和其它数据一样进 CRDT oplog**，随 `mh sync` 跨机复制：文本与小二进制内联存储；超过阈值的大二进制走内容寻址 blob（`cache/`，其字节暂为本机、不随 oplog 复制，清单照常同步）。
+
+**鉴权**：`--debug` 全开（无鉴权）；否则单 token 守护**每个请求**（`--token` 自定义，否则启动时随机生成并打印，也读 `METAHUB_TOKEN`）。浏览器首次访问会弹**解锁页**输入 token，存入 `localStorage`+cookie 后刷新；之后注入的 fetch 套壳自动给同源 `/api/*` 调用带上 `Authorization: Bearer`，所以 agent 写的页面无需把 token 写进源码。token 可经 `Authorization: Bearer`、Cookie `mh_token` 或 `?token=` 任一方式携带。服务端默认只绑 `127.0.0.1`，`--host 0.0.0.0` 才对外。设计见 [docs/impl-context/08-agent-sites/design.md](docs/impl-context/08-agent-sites/design.md)。
+
 ## 三种用法
 
 ```bash
@@ -104,9 +122,10 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 | `mh doc append\|prepend <id> --body` | 在文档首/尾追加块 |
 | `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
 | `mh search <query>` | 全文检索（文档 + 记录） |
+| `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
 | `mh sync <url>` | 与服务端同步一轮 |
-| `mh --server [--port]` | 启动同步服务端：`/sync` + 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI） |
+| `mh --server [--port] [--host] [--debug] [--token]` | 启动服务端：`/sync` + 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/`；非 `--debug` 时每个请求需带 token |
 
 ## 开发
 
@@ -122,9 +141,10 @@ bun run build:binaries            # 产出 binaries/ 五平台二进制
 
 ```text
 src/
-  core/        # 业务逻辑（库和 CLI 共享）
-    sync/      # CRDT 同步协议 + 服务端 + 客户端 + WebUI/REST 路由（routes/webui-routes/openapi/webui）
-  cli/         # citty 子命令
+  core/        # 业务逻辑（库和 CLI 共享）；含 sites.ts（静态站点模型，进 CRDT）
+    sync/      # CRDT 同步协议 + 服务端 + 客户端 + WebUI/REST 路由 + 静态站点托管与鉴权
+               #   （routes/webui-routes/openapi/webui/sites-routes/sites-serve/auth）
+  cli/         # citty 子命令（含 site）
   webui/       # 浏览器 WebUI（Preact，独立打包为 dist/webui.js）
   index.ts     # 库入口
 scripts/       # 构建脚本（含 webui 打包入口）

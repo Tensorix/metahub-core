@@ -10,6 +10,7 @@ import {
   type SyncRequest,
 } from "./protocol.ts";
 import { webuiRoutes } from "./webui-routes.ts";
+import { sitesRoutes } from "./sites-routes.ts";
 
 /** Injected at server startup; handlers reuse the open DB connection. */
 export interface RouteCtx {
@@ -56,5 +57,6 @@ const syncRoutes: Route[] = [
   },
 ];
 
-// CRDT sync protocol routes + the read/write data API the WebUI consumes.
-export const routes: Route[] = [...syncRoutes, ...webuiRoutes];
+// CRDT sync protocol routes + the read/write data API the WebUI consumes +
+// read-only site endpoints (sites are authored via the `mh site` CLI).
+export const routes: Route[] = [...syncRoutes, ...webuiRoutes, ...sitesRoutes];

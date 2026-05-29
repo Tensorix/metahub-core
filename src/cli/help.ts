@@ -21,6 +21,7 @@ CONCEPTS
   property (prop)  A column with a type (text|number|...). Belongs to a db.
   record (rec)     A row: a { column: value } map inside a db.
   document (doc)   A markdown doc, stored as ordered blocks (block-level CRDT).
+  site (site)      A named bucket of files (HTML/CSS/JS) served at /sites/<name>/.
   Every id is "<kind>_<slug>-<rand>", e.g. db_tasks-k3f9c1, rec_fix-login-7j02an.
   The kind prefix makes ids self-describing; the random suffix is collision-safe.
 
@@ -71,9 +72,19 @@ COMMANDS
     get <ref>                         Resolve any ref, auto-detect its kind
     search <query> [--limit N]        Full-text over documents + records
     edit <ref> [--vscode]             Open in $EDITOR (interactive, for humans)
+  static sites  (host agent-authored HTML/CSS/JS, served by --server at /sites/<name>/)
+    site create <name> [--title]      Create a site (a named bucket of files)
+    site put <site> <path> --from <file> | --content <txt|@file|@->
+    site publish <site> <dir>         Upload a whole directory (creates the site)
+    site list | files <site>
+    site rm <site> <path> | delete <site>
   sync & backup
     sync <url>                        Push/pull one round against a sync server
-    --server [--port N]               Run as a sync server (root flag)
+    --server [--port N] [--host H] [--debug] [--token T]
+                                      Run as a server: /sync + WebUI + /api/* +
+                                      /docs + sites at /sites/<name>/. Outside
+                                      --debug a token guards every request
+                                      (custom via --token, else printed at start).
     snapshot <out.mhpack>             Package all data into a portable file
     restore <pack> [--reset --yes]    Restore (merge by default)
   shell
@@ -132,6 +143,16 @@ const EXAMPLES: Record<string, string[]> = {
   ],
   "doc append": ['mh doc append architecture --body "## New section\\n..."'],
   search: ['mh search "architecture"', 'mh search "spec" --limit 5'],
+  "site create": ['mh site create blog --title "My Blog"'],
+  "site put": [
+    "mh site put blog index.html --from ./index.html",
+    "echo '<h1>hi</h1>' | mh site put blog index.html --content @-",
+  ],
+  "site publish": [
+    "mh site publish blog ./dist        # upload every file in ./dist",
+    "mh site publish blog ./out         # auto-creates the 'blog' site",
+  ],
+  "site files": ["mh site files blog"],
   sync: ["mh sync http://localhost:7777"],
   snapshot: ["mh snapshot backup.mhpack"],
   restore: ["mh restore backup.mhpack", "mh restore backup.mhpack --reset --yes"],

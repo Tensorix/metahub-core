@@ -15,6 +15,7 @@ export * from "./records.ts";
 export * from "./documents.ts";
 export * from "./search.ts";
 export * from "./cache.ts";
+export * from "./sites.ts";
 export * from "./sync/protocol.ts";
 export * from "./sync/client.ts";
 export * from "./sync/server.ts";

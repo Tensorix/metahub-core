@@ -27,9 +27,17 @@ export function makeId(name: string, fallback = "item"): string {
 }
 
 /** Entity kinds whose ids carry a type prefix. */
-export type Kind = "db" | "prop" | "rec" | "doc" | "blk";
+export type Kind = "db" | "prop" | "rec" | "doc" | "blk" | "site" | "sf";
 
-const KINDS: ReadonlySet<string> = new Set<Kind>(["db", "prop", "rec", "doc", "blk"]);
+const KINDS: ReadonlySet<string> = new Set<Kind>([
+  "db",
+  "prop",
+  "rec",
+  "doc",
+  "blk",
+  "site",
+  "sf",
+]);
 
 /**
  * Typed id = "<kind>_<slug>-<rand>". `slugify` emits only [a-z0-9-] and

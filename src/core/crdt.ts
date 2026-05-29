@@ -34,6 +34,22 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
     table: "doc_blocks",
     cols: new Set(["doc_id", "text", "order_key", "__deleted"]),
   },
+  sites: {
+    table: "sites",
+    cols: new Set(["name", "title", "created_hlc", "__deleted"]),
+  },
+  site_files: {
+    table: "site_files",
+    cols: new Set([
+      "site_id",
+      "path",
+      "content_type",
+      "encoding",
+      "content",
+      "created_hlc",
+      "__deleted",
+    ]),
+  },
 };
 
 // The `records` dataset is special: these cols hit the `records` table, any

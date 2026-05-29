@@ -78,6 +78,30 @@ CREATE TABLE IF NOT EXISTS doc_blocks (
   __deleted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_doc_blocks_doc ON doc_blocks(doc_id);
+
+-- A named static site (Supabase-Storage-style bucket). Served at /sites/<name>/.
+CREATE TABLE IF NOT EXISTS sites (
+  id          TEXT PRIMARY KEY,
+  name        TEXT,        -- URL slug; resolved by getSiteByName
+  title       TEXT,
+  created_hlc TEXT,
+  __deleted   INTEGER NOT NULL DEFAULT 0
+);
+
+-- One row per file in a site. content holds inline utf8/base64 text, or a blob
+-- hash (see cache.ts) when encoding = 'blob'. (site_id, path) maps to a stable
+-- id so re-uploads merge as a CRDT register instead of duplicating.
+CREATE TABLE IF NOT EXISTS site_files (
+  id           TEXT PRIMARY KEY,
+  site_id      TEXT,
+  path         TEXT,
+  content_type TEXT,
+  encoding     TEXT,       -- 'utf8' | 'base64' | 'blob'
+  content      TEXT,
+  created_hlc  TEXT,
+  __deleted    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_site_files_site ON site_files(site_id);
 `;
 
 // Best-effort: FTS5 may not be compiled in. Search falls back to LIKE if this fails.

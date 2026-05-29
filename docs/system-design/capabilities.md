@@ -225,6 +225,9 @@ GET    /api/record           PATCH/DELETE /api/record     # ?id=<id>
 GET    /api/documents        POST /api/documents
 GET    /api/document         PATCH/DELETE /api/document    # ?id=<id>
 GET    /api/search           # ?q=<text>&limit=<n>
+
+GET    /api/sites            GET /api/site/files          # 站点 / 文件清单（只读，?site=<id|name>）
+GET    /sites/<name>/<path>  # 托管的静态站点（HTML/CSS/JS，agent 经 mh site 发布）
 ```
 
 当前能力:
@@ -233,10 +236,13 @@ GET    /api/search           # ?q=<text>&limit=<n>
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
 - REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
 - WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。
+- **静态站点托管**:AI agent 用 `mh site create|put|publish|list|files|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联,大二进制走 `cache/` blob、字节暂本机)。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
+- **鉴权**:`--debug` 全开;否则单 token(`--token`/`METAHUB_TOKEN`,否则启动随机生成并打印)守护每个请求,经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带;浏览器走解锁页(存 `localStorage`+cookie)+ 注入 fetch 套壳。默认绑 `127.0.0.1`,`--host` 可改。
 
 当前未实现/限制:
 
-- 无鉴权(同 `/sync`,假定可信局域网/本机)。
+- `/sync`(CRDT 复制端点)本身仍无鉴权;token 门禁覆盖其余请求面。
+- blob 字节不随 oplog 复制(大二进制站点资源跨机需另传)。
 - 表格无分页、无范围/contains 过滤(沿用 `listRecords` 现状)。
 - 快速加属性仅支持 text/number/checkbox/date/url;select/relation 等需带配置的类型仍走 CLI。
 - 无并发编辑冲突的用户可见提示(底层 CRDT 仍按字段 LWW 收敛)。

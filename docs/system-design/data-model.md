@@ -13,6 +13,8 @@ properties
 records
 documents
 doc_blocks
+sites
+site_files
 search_fts
 ```
 
@@ -33,9 +35,10 @@ search_fts
 
 ```text
 db_tasks-a3f9   prop_status-x7p2   rec_fix-login-bug-k2p9   doc_design-9fk3   blk_intro-m4x8
+site_blog-7q2k   sf_index-html-9fk3
 ```
 
-- 前缀↔dataset: `db`/`prop`/`rec`/`doc`/`blk` 对应 `databases`/`properties`/`records`/`documents`/`doc_blocks`。
+- 前缀↔dataset: `db`/`prop`/`rec`/`doc`/`blk`/`site`/`sf` 对应 `databases`/`properties`/`records`/`documents`/`doc_blocks`/`sites`/`site_files`。
 - `slugify` 只产出 `[a-z0-9-]`、`randomSuffix` 只产出 base36——两者都不含 `_`,故 id 中首个 `_` 必是类型分隔符,`idKind` 据此恢复类型;**旧的无前缀 id(无 `_`)读作 null,与新 id 共存**,无需迁移。
 - 前缀只是把类型显式带到人/AI/日志眼前;`crdt_changes.row_id`、`records.data` 的 JSON key、`crdt_changes.col` 对 id 不透明,加前缀对 oplog/sync/快照/搜索零影响。
 
@@ -180,6 +183,29 @@ doc_blocks(id, doc_id, text, order_key, __deleted)
 - `order_key` 使用 fractional index。
 - 展示时按 `ORDER BY order_key, id` 排序。
 - 正文序列化时用空行连接 blocks。
+
+## sites
+
+站点表示一个命名的静态文件桶(由 `mh --server` 在 `/sites/<name>/` serve,见 [08-agent-sites](../impl-context/08-agent-sites/design.md)):
+
+```text
+sites(id, name, title, created_hlc, __deleted)
+```
+
+- `name` 是 URL slug,`getSiteByName` 取最近创建的未删除站点(同名跨节点合并时按 `created_hlc` 取新)。
+- create/list/get/delete(软删),delete 级联软删其下 `site_files`。
+
+## site_files
+
+站点内的单个文件:
+
+```text
+site_files(id, site_id, path, content_type, encoding, content, created_hlc, __deleted)
+```
+
+- `(site_id, path)` 映射到稳定 id:重复上传同一路径复用该 id,「改文件」是同一 CRDT register 合并而非新行。
+- `encoding ∈ {utf8, base64, blob}`:文本(html/css/js/...)存 `utf8`、小二进制存 `base64`(均内联、随 oplog 同步);大于阈值的二进制经 `cache.ts` 的 `putBlob` 内容寻址,`encoding=blob`、`content=<sha256 hash>`。
+- **blob 取舍**:blob 字节存 `cache/`,目前不随 oplog 复制(`site_files` 清单照常同步),故跨机时大二进制需另行传输;主用例为文本时可接受。
 
 ## search_fts
 

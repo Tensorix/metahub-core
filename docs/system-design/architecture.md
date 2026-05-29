@@ -131,11 +131,13 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 
 ## HTTP 路由与 WebUI
 
-`Bun.serve()` 的 fetch handler 用精确路径匹配分发,路由表 `src/core/sync/routes.ts` 是单一来源——`syncRoutes`(`/sync`、`/health`)与 `webuiRoutes`(`/api/*`)合并后,既被 fetch handler 命中,也被 `openapi.ts` 遍历生成 OpenAPI(`/docs`、`/docs.json`),无 codegen。
+`Bun.serve()` 的 fetch handler 用精确路径匹配分发,路由表 `src/core/sync/routes.ts` 是单一来源——`syncRoutes`(`/sync`、`/health`)、`webuiRoutes`(`/api/*`)与 `sitesRoutes`(`/api/sites`、`/api/site/files` 只读)合并后,既被 fetch handler 命中,也被 `openapi.ts` 遍历生成 OpenAPI(`/docs`、`/docs.json`),无 codegen。静态站点用一个 `startsWith("/sites/")` **前缀分支**(精确匹配做不到任意路径)单独处理。
 
 - **REST API**(`src/core/sync/webui-routes.ts`):一组只读 + 轻量写入路由,**复用与 CLI 同一套 core 函数**(`listDatabases`/`listRecords`/`createRecord`/`updateDocument`/`search` 等),因此写操作同样经 `emit()` 进 CRDT oplog、随 sync 复制。id 用 query 参数携带(`?db=`/`?id=`),以保持精确路径匹配与 OpenAPI 生成不变;`Route.method` 扩展出 `PATCH`/`DELETE`。handler 统一包一层 try/catch,异常转 `{error}` 400。
 - **浏览器 WebUI**(`src/webui/app.tsx`,Preact):根路径 `/` 返回内联 HTML 外壳,`/webui.js` 返回应用 bundle。服务模块 `src/core/sync/webui.ts` 经 `server.ts` 的 `await import("./webui.ts")` **懒加载**,优先读打包产物 `dist/webui.js`,开发态(从源码运行、无 dist)即时 `Bun.build` 兜底并缓存。
 - **CLI 性能隔离**:WebUI 与 Preact 单独打包为 `dist/webui.js`,**不进入 `cli.js` 的启动 import 图**;懒加载使其仅在浏览器首次访问 `/` 时载入,普通 `mh <命令>` 启动不受影响。
+- **静态站点托管**(`src/core/sync/sites-serve.ts`,经 `server.ts` 懒加载):`GET /sites/<name>/<path...>` 按名字 resolve 站点、查 `site_files`(默认 `index.html`),返回字节 + MIME;站点经 `mh site` CLI 发布,文件经 `emit()` 进 CRDT(见 [08-agent-sites](../impl-context/08-agent-sites/design.md))。
+- **鉴权**(`src/core/sync/auth.ts`):fetch handler 顶部一处 token 门禁,`--debug` 跳过;`/sync`、`/health` 豁免以保持 peer 复制免 token,其余请求需经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带 token。浏览器导航无 token 返回解锁页(存 `localStorage`+cookie),其后 HTML 响应经 `withShim` 注入 fetch 套壳自动带 `Bearer`。
 
 ## 快照架构
 
