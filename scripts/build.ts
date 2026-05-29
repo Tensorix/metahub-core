@@ -18,6 +18,22 @@ if (!libResult.success) {
   throw new Error("Library build failed");
 }
 
+// Browser WebUI bundle (Preact). Self-hosted so the UI works offline, and kept
+// as its own entrypoint so it never enters the CLI's startup import graph.
+const webuiResult = await Bun.build({
+  entrypoints: ["src/webui/app.tsx"],
+  outdir,
+  target: "browser",
+  format: "esm",
+  minify: true,
+  naming: "webui.js",
+});
+
+if (!webuiResult.success) {
+  console.error(webuiResult.logs);
+  throw new Error("WebUI build failed");
+}
+
 const cliResult = await Bun.build({
   entrypoints: ["src/cli/index.ts"],
   outdir,

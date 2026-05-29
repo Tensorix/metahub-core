@@ -191,3 +191,33 @@ mh sync http://host:7777
 - 命令形态偏工程化。
 - 对普通用户还缺少状态解释、冲突说明和同步历史。
 
+## WebUI 当前流程
+
+### 1. 启动并打开
+
+```bash
+mh --server --port 7777
+# 浏览器打开 http://localhost:7777/
+```
+
+### 2. 浏览与编辑数据表
+
+- 左侧栏点选数据库 → 右侧按属性渲染表格。
+- 点单元格行内编辑(checkbox 即时切换、select 下拉、multi_select/relation 逗号分隔、其余文本框);失焦/回车提交 `PATCH /api/record`。
+- "+ New record" 新增空记录后逐格填写;"+ Add property" 快速加标量属性(text/number/checkbox/date/url)。
+
+### 3. 浏览与编辑文档
+
+- 左侧栏点选文档 → 标题 + 正文 textarea,右侧实时 markdown 预览。
+- 改动后"Save"提交 `PATCH /api/document`;支持新建/删除。
+
+### 4. 搜索
+
+- 顶部搜索框回车 → `GET /api/search`,结果点击跳转到对应文档或记录所在库。
+
+当前体验结论:
+
+- 提供了 CLI 之外的可视化"查看 + 常见编辑"入口,编辑经 CRDT oplog,可随 `mh sync` 复制。
+- 复杂建模(select/relation 配置、批量导入)仍需走 CLI;无鉴权,假定可信网络/本机。
+- WebUI 与 Preact 单独打包(`dist/webui.js`)、懒加载,不影响 CLI 启动性能。
+

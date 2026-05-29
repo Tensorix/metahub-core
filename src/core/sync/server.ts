@@ -41,6 +41,14 @@ export function startServer(opts: { port?: number } = {}): RunningServer {
         });
       }
 
+      // Browser WebUI at `/`. Imported lazily so neither it nor the Preact
+      // bundle ever loads on the CLI startup path — only when a browser asks.
+      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/webui.js")) {
+        const { serveWebui } = await import("./webui.ts");
+        const res = await serveWebui(req);
+        if (res) return res;
+      }
+
       // Registered API routes.
       const route = routes.find((r) => r.method === req.method && r.path === url.pathname);
       if (route) return route.handler(req, ctx);

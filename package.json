@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "citty": "^0.1.6",
+    "preact": "^10.29.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

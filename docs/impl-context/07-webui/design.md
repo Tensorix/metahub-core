@@ -1,0 +1,99 @@
+# 浏览器 WebUI 与 REST API 设计文档
+
+承接 [01-init-basic-func/design.md](../01-init-basic-func/design.md)、[05-json-record-storage/design.md](../05-json-record-storage/design.md)、[06-friendly-ids/design.md](../06-friendly-ids/design.md)。本文记录在已有的 `mh --server`(CRDT 同步服务端 = 一个 metahub 节点)上,于根路径 `/` 内置一个**浏览器 WebUI**,用来浏览并轻量编辑已存储的数据表(databases/records)与文档(documents),并暴露配套的 `/api/*` REST 接口。
+
+**硬约束:不影响 CLI 启动性能。** CLI(`dist/cli.js`)的启动成本 = 其模块 import 图;只要 WebUI 资源不进入该 import 图,前端框架选型对 `mh <命令>` 启动零影响。**底层 core / oplog / sync 协议全部不改**——WebUI 的写入复用与 CLI 完全相同的 core 函数,经 `emit()` 进 CRDT,自然可同步。
+
+## 1. 背景与目标
+
+现状:`mh --server`(`src/core/sync/server.ts`)用极简 `Bun.serve()` 暴露 `/sync`、`/health`,以及自动生成的 OpenAPI(`/docs`、`/docs.json`);根路径 `/` 返回 404。数据全在 `~/.metahub/metahub.db`,只能经 CLI 浏览/编辑,缺一个可视化的查看与编辑入口。
+
+目标:
+
+- 访问 `/` 即看到一个能**浏览 + 编辑**数据表与文档、并能全文搜索的 WebUI。
+- 复用既有 core 读写函数(`listDatabases`/`listRecords`/`createRecord`/`updateDocument`/`search` 等),不新写存储逻辑;写入与 CLI 同路径,经 CRDT oplog,可随 `mh sync` 复制。
+- **对 CLI 启动性能零影响**——这是选型与接线方式的决定性约束。
+
+## 2. 关键评估:框架选型 vs CLI 性能
+
+决定性事实:**影响 CLI 启动的是"代码是否进入 CLI 的模块图",而非框架本身。** 据此:
+
+| 交付方式 | 是否进入 CLI 模块图 | 对 CLI 启动影响 |
+|---|---|---|
+| HTML/JS 字符串内联进 `server.ts`(被 `cli/index.ts` 静态 import) | 是,每次 CLI 都加载 | 小但非零 |
+| WebUI 作为独立 bundle,`server.ts` 经 `await import()` 懒加载服务模块 | 否,仅浏览器访问时载入 | **0** |
+
+体积(浏览器侧 gzip):原生 JS 0KB / **Preact ~5KB** / Vue ~16KB / React ~45KB。由于这是**本地优先(CRDT)工具**、UI 跑在 localhost,若用 CDN 拉框架则断网即挂,故一律**自托管打包**。
+
+**选定 Preact + 自托管打包**:编辑型 UI(行内编辑、表单、保存后 re-render)用声明式框架远比手写 DOM 干净;Preact ~5KB、React 风格 JSX/hooks DX、离线可用;且因独立打包 + 懒加载,对 CLI 启动开销为 0。
+
+## 3. 设计要点
+
+### 3.1 性能隔离(最关键)
+
+1. **WebUI 资源永不进入 CLI import 链**:`server.ts` 的 fetch handler 对 `/`、`/webui.js` 用 `await import("./webui.ts")` 动态加载服务模块。Bun 单文件打包会把该模块**内联**进 `cli.js`(以保持单文件 bin),但其模块体仅在首次 `import()` 被 await 时**执行**——故 HTML 外壳字符串只增加约 5KB 体积,运行时分配与执行延迟到浏览器访问 `/` 时,启动成本 ~0。
+2. **Preact 只打进 `dist/webui.js`**(独立 entrypoint),`webui.ts` 自身不 import preact(只把 `app.tsx` 当字符串路径传给 `Bun.build` 兜底),故 **Preact 运行时不在 `cli.js`**。
+3. 新增 `/api/*` 路由复用的 core 函数本就在 CLI 图中(各 CLI 命令已用),不引入新的启动开销。
+
+### 3.2 REST API:路由表单一来源 + query 携带 id
+
+沿用既有"路由表即 OpenAPI 来源"的模式(`routes.ts` + `openapi.ts`):新增 `src/core/sync/webui-routes.ts` 导出 `webuiRoutes`,在 `routes.ts` 里 `[...syncRoutes, ...webuiRoutes]` 合并。
+
+- 路由器是**精确路径匹配**,故 id 用 **query 参数**携带(`/api/record?id=`、`/api/records?db=`),不改路由器、不破坏 OpenAPI 生成。
+- `Route.method` 联合类型从 `GET|POST` 扩展为加 `PATCH|DELETE`(fetch 的 `r.method===req.method` 与 openapi 的 `method.toLowerCase()` 均已兼容)。
+- handler 统一用 `handle()` 包一层:返回值序列化为 JSON,抛错转 `{error}` 400;找不到的单实体返回 404 `Response`。
+- response/request 用**务实**的 Zod schema(列表 `z.array(...)`,写入对应字段),仅为 `/docs` 提供形状,不追求过度精确。
+
+路由清单:`GET/POST /api/databases`、`GET/POST /api/properties`、`GET/POST /api/records`、`GET/PATCH/DELETE /api/record`、`GET/POST /api/documents`、`GET/PATCH/DELETE /api/document`、`GET /api/search`。
+
+### 3.3 服务模块:懒加载 + 双解析路径
+
+`src/core/sync/webui.ts` 导出 `serveWebui(req): Promise<Response|null>`:
+
+- `GET /` → 返回内联 HTML 外壳(CSS 内联其中,省一个资源路由;支持暗色模式)。
+- `GET /webui.js` → 返回应用 bundle,解析策略(首次后缓存到模块级变量):
+  - **生产**:读取与 `cli.js` 同目录的 `dist/webui.js`(`new URL("./webui.js", import.meta.url)`)。
+  - **开发兜底**(从源码运行、无 dist 时):`Bun.build({ entrypoints: ["…/webui/app.tsx"], target: "browser" })` 即时构建。
+- 其它路径返回 `null`,交回主 handler。
+
+### 3.4 前端(`src/webui/app.tsx`,Preact 单文件)
+
+- 顶部 `/** @jsxImportSource preact */` pragma,JSX 走 preact 自动运行时(不依赖 tsconfig 解析,Bun 逐文件识别)。
+- 左侧栏:databases + documents 列表,各带"+"新建(用 `prompt` 走最简创建流)。
+- 数据表视图:列取自 `/api/properties`,行取自 `/api/records`;`Cell` 组件按属性类型渲染显示/编辑(checkbox 即时切换、select 下拉、multi_select/relation 逗号分隔转数组、其余文本框);提交 `PATCH /api/record?id=`,新增 `POST /api/records?db=`(空记录后再逐格填),删除 `DELETE`。
+- 文档视图:`GET /api/document?id=` → 标题输入 + 正文 textarea + 内置 ~40 行零依赖 markdown 渲染器做实时预览;保存 `PATCH /api/document?id=`,删除 `DELETE`。
+- 顶部全文搜索 → `GET /api/search?q=`,结果点击跳转(文档→文档视图,记录→其所在库)。
+
+### 3.5 构建
+
+`scripts/build.ts` 新增第三个 `Bun.build`:`src/webui/app.tsx` → `dist/webui.js`(`target:"browser"`、minify、Preact 一并打入)。`package.json` 的 `files` 已含 `dist`,发布即带上;`cli.js`/`index.js` 产物不受影响。`tsconfig.build.json` 的 `include` 不含 `src/webui`,且 `webui.ts` 只把 `app.tsx` 当字符串路径引用,故声明构建(tsc)不会因 JSX/preact 报错。
+
+## 4. 取舍
+
+- **Preact 而非原生 JS / React**:编辑型 UI 需要状态管理,原生手写易错;Preact 兼得 React DX 与 ~5KB 体积。React(~45KB)无额外收益时不必要。
+- **自托管打包而非 CDN**:本地优先工具不能因断网而 UI 不可用;Bun 打包成本可忽略。
+- **懒加载 + 单文件内联(`splitting:false`)**:保持 `cli` 为单文件可执行(`build:binaries` 依赖此),同时靠 `import()` 的延迟执行把启动成本压到 0;不开 code splitting 以免破坏单文件 bin。
+- **id 走 query 参数而非路径参数**:避免改动精确路径匹配的路由器与 OpenAPI 生成;代价是 URL 风格不那么 RESTful,但对内部工具可接受。
+- **复用 core 函数、不新写存储**:WebUI 写入与 CLI 完全同路径(经 `emit()`),自动获得 CRDT 收敛与可同步性;无第二套写逻辑。
+- **轻量编辑面**:快速加属性只覆盖无需配置的标量类型,select/relation 等仍走 CLI;创建流用 `prompt` 而非完整表单——优先把"查看 + 常见编辑"做扎实,复杂建模交给 CLI。
+- **无鉴权**:与 `/sync` 一致,假定可信网络/本机;引入鉴权是后续独立议题。
+
+## 5. 涉及文件
+
+- 新增:
+  - `src/webui/app.tsx` — Preact 单页应用(侧栏 / 数据表行内编辑 / 文档编辑 + 预览 / 搜索)。
+  - `src/webui/tsconfig.json` — 为编辑器配置 preact JSX(运行时构建靠 pragma)。
+  - `src/core/sync/webui.ts` — `serveWebui`:`/` 外壳 + `/webui.js`(生产读 dist、开发 `Bun.build` 兜底),经 `server.ts` 懒加载。
+  - `src/core/sync/webui-routes.ts` — `webuiRoutes`:`/api/*` 读写路由 + 务实 Zod schema,复用 core 函数。
+- 修改:
+  - `src/core/sync/routes.ts` — `Route.method` 加 `PATCH|DELETE`;`routes = [...syncRoutes, ...webuiRoutes]`。
+  - `src/core/sync/server.ts` — fetch handler 在 API 路由前加 `/`、`/webui.js` 的懒加载分支。
+  - `scripts/build.ts` — 新增 `dist/webui.js` 打包入口。
+  - `package.json` — 加 `preact` 依赖(仅被 webui bundle 引用)。
+
+## 6. 实现记录（与设计的偏差 / 验证）
+
+- **`.tsx` 里禁用泛型箭头默认值**:`const get = <T = any>(p)=>…` 在 tsx 会被当成 JSX 解析报错;改为非泛型 `req()` 返回 `Promise<any>`,调用点用类型实参标注即可。
+- **CSS 内联在 HTML 外壳**:避免第三个静态资源路由,也让 CSS 不进 JS bundle;单处维护。
+- **性能隔离已验证**:`dist/cli.js` 中无 Preact 运行时符号(`preact/jsx-runtime`/`hooks` 等),仅余 `package.json` 里的版本字符串;普通 CLI 命令冷启动实测 ~30ms,不触碰 server/webui。
+- **端到端已验证**:经 `/api/*` 建库→加属性→建记录→`PATCH` 改字段→建文档→搜索全通;改动确认进 `crdt_changes` oplog,且 `mh record get` 能读到 WebUI 所建记录——证明写入与 CLI 同一可同步路径。`bun test` 59 通过、零回归。

@@ -9,6 +9,7 @@ import {
   HEALTH_PATH,
   type SyncRequest,
 } from "./protocol.ts";
+import { webuiRoutes } from "./webui-routes.ts";
 
 /** Injected at server startup; handlers reuse the open DB connection. */
 export interface RouteCtx {
@@ -22,7 +23,7 @@ export interface RouteCtx {
  * in /docs automatically — no generate step, no separate spec file.
  */
 export interface Route {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   summary: string;
   request?: ZodType;
@@ -30,7 +31,7 @@ export interface Route {
   handler: (req: Request, ctx: RouteCtx) => Promise<Response> | Response;
 }
 
-export const routes: Route[] = [
+const syncRoutes: Route[] = [
   {
     method: "POST",
     path: SYNC_PATH,
@@ -54,3 +55,6 @@ export const routes: Route[] = [
     },
   },
 ];
+
+// CRDT sync protocol routes + the read/write data API the WebUI consumes.
+export const routes: Route[] = [...syncRoutes, ...webuiRoutes];

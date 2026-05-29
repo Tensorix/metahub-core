@@ -70,6 +70,8 @@ mh --server --port 7777
 mh sync http://a-host:7777
 ```
 
+服务端在根路径 `/` 还内置一个**浏览器 WebUI**（Preact）：左侧列出数据库与文档，可浏览/行内编辑数据表、读写 markdown 文档（带预览）、全文搜索；编辑走与 CLI 同一套 core 写入路径，进 CRDT oplog 后随 `mh sync` 复制。同时暴露一组 `/api/*` REST 接口与自动生成的 OpenAPI 文档（`/docs`）。WebUI 资源（含 Preact）单独打包为 `dist/webui.js`，仅在浏览器首次访问 `/` 时懒加载，**不进入 CLI 启动路径，对命令行性能零影响**。设计见 [docs/impl-context/07-webui/design.md](docs/impl-context/07-webui/design.md)。
+
 ## 三种用法
 
 ```bash
@@ -104,7 +106,7 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 | `mh search <query>` | 全文检索（文档 + 记录） |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
 | `mh sync <url>` | 与服务端同步一轮 |
-| `mh --server [--port]` | 启动同步服务端 |
+| `mh --server [--port]` | 启动同步服务端：`/sync` + 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI） |
 
 ## 开发
 
@@ -121,8 +123,9 @@ bun run build:binaries            # 产出 binaries/ 五平台二进制
 ```text
 src/
   core/        # 业务逻辑（库和 CLI 共享）
-    sync/      # CRDT 同步协议 + 服务端 + 客户端
+    sync/      # CRDT 同步协议 + 服务端 + 客户端 + WebUI/REST 路由（routes/webui-routes/openapi/webui）
   cli/         # citty 子命令
+  webui/       # 浏览器 WebUI（Preact，独立打包为 dist/webui.js）
   index.ts     # 库入口
-scripts/       # 构建脚本
+scripts/       # 构建脚本（含 webui 打包入口）
 ```

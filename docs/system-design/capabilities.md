@@ -209,6 +209,38 @@ mh sync http://host:7777
 - 冲突解释或用户可见 diff。
 - blob 按需同步协议。
 
+## WebUI 与 HTTP API
+
+已实现(随 `mh --server` 一起提供):
+
+```text
+GET  /                       # 浏览器 WebUI（Preact 单页应用）
+GET  /webui.js               # WebUI 应用 bundle（懒加载）
+GET  /docs  /docs.json       # OpenAPI 文档（Scalar UI / 规范）
+
+GET    /api/databases        POST /api/databases
+GET    /api/properties       POST /api/properties        # ?db=<id>
+GET    /api/records          POST /api/records           # ?db=<id>
+GET    /api/record           PATCH/DELETE /api/record     # ?id=<id>
+GET    /api/documents        POST /api/documents
+GET    /api/document         PATCH/DELETE /api/document    # ?id=<id>
+GET    /api/search           # ?q=<text>&limit=<n>
+```
+
+当前能力:
+
+- 浏览器打开 `http://localhost:<port>/` 即用:左侧栏列数据库与文档;数据表视图按属性渲染表头、行内编辑单元格(按类型适配 checkbox/select/multi_select/relation/text),可新增/删除记录、快速加属性;文档视图带 markdown 实时预览,可编辑标题/正文、删除;顶部全文搜索。
+- 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
+- REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
+- WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。
+
+当前未实现/限制:
+
+- 无鉴权(同 `/sync`,假定可信局域网/本机)。
+- 表格无分页、无范围/contains 过滤(沿用 `listRecords` 现状)。
+- 快速加属性仅支持 text/number/checkbox/date/url;select/relation 等需带配置的类型仍走 CLI。
+- 无并发编辑冲突的用户可见提示(底层 CRDT 仍按字段 LWW 收敛)。
+
 ## 输出模式
 
 当前输出规则:
