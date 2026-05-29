@@ -68,6 +68,14 @@ mh --server --port 7777
 
 # B 机：与服务端推/拉一轮
 mh sync http://a-host:7777
+
+# 同一条 sync 命令也能在「单个文档/数据表」与「本地文件」间导出/导入，
+# 方向按参数自动判别：哪一侧能解析成库内实体，另一侧就是文件路径。
+# 格式按实体类型固定——文档↔markdown、数据表↔CSV。
+mh sync architecture arch.md   # 导出：文档 → markdown
+mh sync tasks tasks.csv        # 导出：数据表 → CSV（表头=属性名，CSV 含 id 列）
+mh sync arch.md architecture   # 导入：markdown → 文档（更新已存在的文档）
+mh sync tasks.csv tasks        # 导入：CSV → 数据表（有 id 列则按 id upsert）
 ```
 
 服务端在根路径 `/` 还内置一个**浏览器 WebUI**（Preact）：左侧列出数据库与文档，可浏览/行内编辑数据表、读写 markdown 文档（带预览）、全文搜索；编辑走与 CLI 同一套 core 写入路径，进 CRDT oplog 后随 `mh sync` 复制。同时暴露一组 `/api/*` REST 接口与自动生成的 OpenAPI 文档（`/docs`）。WebUI 资源（含 Preact）单独打包为 `dist/webui.js`，仅在浏览器首次访问 `/` 时懒加载，**不进入 CLI 启动路径，对命令行性能零影响**。设计见 [docs/impl-context/07-webui/design.md](docs/impl-context/07-webui/design.md)。
@@ -124,7 +132,8 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 | `mh search <query>` | 全文检索（文档 + 记录） |
 | `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
-| `mh sync <url>` | 与服务端同步一轮 |
+| `mh sync <url>` | 与服务端同步一轮（CRDT 推/拉） |
+| `mh sync <src> <dst>` | 单个文档/数据表与文件互导：文档↔markdown、数据表↔CSV；方向按参数判别（哪侧是库内实体），格式按实体类型固定 |
 | `mh --server [--port] [--host] [--debug] [--token]` | 启动服务端：`/sync` + 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/`；非 `--debug` 时每个请求需带 token |
 
 ## 开发
@@ -141,9 +150,10 @@ bun run build:binaries            # 产出 binaries/ 五平台二进制
 
 ```text
 src/
-  core/        # 业务逻辑（库和 CLI 共享）；含 sites.ts（静态站点模型，进 CRDT）
+  core/        # 业务逻辑（库和 CLI 共享）；含 sites.ts（静态站点模型，进 CRDT）、csv.ts（文件导入导出用）
     sync/      # CRDT 同步协议 + 服务端 + 客户端 + WebUI/REST 路由 + 静态站点托管与鉴权
                #   （routes/webui-routes/openapi/webui/sites-routes/sites-serve/auth）
+               #   files.ts：单文档/数据表与文件互导（markdown/CSV）
   cli/         # citty 子命令（含 site）
   webui/       # 浏览器 WebUI（Preact，独立打包为 dist/webui.js）
   index.ts     # 库入口

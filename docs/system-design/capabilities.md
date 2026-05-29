@@ -209,6 +209,30 @@ mh sync http://host:7777
 - 冲突解释或用户可见 diff。
 - blob 按需同步协议。
 
+### 文件导出/导入
+
+同一条 `sync` 命令在「单个文档/数据表」与「本地文件」间双向搬运(单参数=服务端 URL,走上面的对等同步;双参数=文件导出/导入):
+
+```bash
+mh sync <doc-ref> notes.md     # 导出文档正文 → markdown
+mh sync <db-ref>  rows.csv     # 导出数据表 → CSV（表头=属性名，首列 id）
+mh sync notes.md  <doc-ref>    # 导入 markdown → 更新已存在文档正文
+mh sync rows.csv  <db-ref>     # 导入 CSV → 数据表（有 id 列则按 id upsert，否则新建）
+```
+
+当前能力:
+
+- 方向自动判别:`resolveEntity` 能解析的一侧是实体,另一侧是文件路径;歧义 ref 直接报候选列表(不会被误当文件)。
+- 格式按实体类型固定:文档→markdown(`documents.body`)、数据表→CSV;扩展名只是文件名,不参与选格式。
+- CSV 单元格:数组/对象(multi_select/relation)以 JSON 编码,导入时按 `[`/`{` 还原,故可往返;标量交给 core `coerce` 还原 number/checkbox 等。
+- 复用既有 core 写入(`updateDocument`/`createRecord`/`updateRecord`),所有改动照常进 CRDT oplog,可再随 `mh sync <url>` 复制。
+
+当前未实现:
+
+- 导入新建实体(导入只更新已解析到的现有文档/数据表)。
+- 整库/整目录的批量导出(一次一个实体)。
+- 文档导出携带标题/front-matter(只写正文,保证往返无损)。
+
 ## WebUI 与 HTTP API
 
 已实现(随 `mh --server` 一起提供):

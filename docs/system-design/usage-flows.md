@@ -183,6 +183,11 @@ mh restore backup.mhpack --reset --force
 ```bash
 mh --server --port 7777
 mh sync http://host:7777
+
+# 也可与本地文件互导（同一条命令，双参数即进入导出/导入）
+mh sync architecture arch.md   # 文档 → markdown
+mh sync tasks tasks.csv        # 数据表 → CSV
+mh sync arch.md architecture   # markdown → 文档（反向导入）
 ```
 
 当前体验结论:
@@ -190,6 +195,7 @@ mh sync http://host:7777
 - 可用于备份、迁移和简单多节点同步。
 - 命令形态偏工程化。
 - 对普通用户还缺少状态解释、冲突说明和同步历史。
+- 文件导出/导入便于把单篇文档或单张表交给外部编辑器/表格工具,再导回;但导入只更新已存在实体、一次一个,尚不支持批量入库。
 
 ## WebUI 当前流程
 

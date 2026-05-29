@@ -80,6 +80,7 @@ COMMANDS
     site rm <site> <path> | delete <site>
   sync & backup
     sync <url>                        Push/pull one round against a sync server
+    sync <src> <dst>                  Export/import a doc(→md) or table(→csv) file
     --server [--port N] [--host H] [--debug] [--token T]
                                       Run as a server: /sync + WebUI + /api/* +
                                       /docs + sites at /sites/<name>/. Outside
@@ -153,7 +154,13 @@ const EXAMPLES: Record<string, string[]> = {
     "mh site publish blog ./out         # auto-creates the 'blog' site",
   ],
   "site files": ["mh site files blog"],
-  sync: ["mh sync http://localhost:7777"],
+  sync: [
+    "mh sync http://localhost:7777        # peer push/pull",
+    "mh sync architecture arch.md         # export doc → markdown",
+    "mh sync tasks tasks.csv              # export table → CSV",
+    "mh sync arch.md architecture         # import markdown → doc",
+    "mh sync tasks.csv tasks              # import CSV → table",
+  ],
   snapshot: ["mh snapshot backup.mhpack"],
   restore: ["mh restore backup.mhpack", "mh restore backup.mhpack --reset --yes"],
   completion: ['eval "$(mh completion zsh)"', "mh completion bash >> ~/.bashrc"],
