@@ -25,7 +25,12 @@ mh record create tasks-k3f9c1 --data '{"Title":"写设计稿","Status":"todo"}'
 mh record update <recordId> --data '{"Status":"doing"}'
 mh doc create --title "架构说明" --body @arch.md  # @file / @- / 直接字符串
 mh search "架构"
-mh edit <id>                                     # 在 $EDITOR 里改文档正文 / 记录字段
+mh edit <id>                                     # 在 $EDITOR 里改文档正文 / 记录字段(给人用)
+
+# 给 AI 用的非交互增量编辑(对标 Read / Edit / Write):
+mh doc read <id>                                 # 读正文 + version(改前先读)
+mh doc edit <id> --old "旧文本" --new "新文本"   # 锚定查找替换,只传增量
+mh doc append <id> --body "追加段落"             # 也有 prepend
 ```
 
 输出按受众自动切换：终端（人）显示表格 / markdown，被管道或子进程调用（AI）输出 **JSON**；`--json` / `--pretty` 可强制。
@@ -42,6 +47,8 @@ mh edit <id>                                     # 在 $EDITOR 里改文档正�
 ## 多机同步（CRDT）
 
 每次写入都进 oplog（Hybrid Logical Clock + 按字段 Last-Write-Wins），合并可交换、幂等、最终一致。
+
+文档正文按**块（block）**切分(段落级,fenced code 整块),每块是独立 register、用分数索引(fractional index)排序。所以两台机器改同一篇文档的**不同段落**能干净合并、互不覆盖；`mh doc edit` 的锚定替换通常只改命中那一块。`documents.body` 是由块重算的物化缓存。
 
 ```bash
 # A 机：启动同步服务端（服务端也是一个 metahub 节点）
@@ -76,7 +83,10 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 | `mh prop add\|list\|update\|remove` | 管理属性（列） |
 | `mh record create\|list\|get\|update\|delete` | 管理记录（行） |
 | `mh doc create\|list\|get\|update\|delete` | 管理 markdown 文档 |
-| `mh edit <id>` | 在 `$EDITOR` 中编辑文档/记录 |
+| `mh doc read <id>` | 读正文 + version token（AI 改前先读） |
+| `mh doc edit <id> --old --new` | 锚定查找替换（`--replace-all` / `--if-match`） |
+| `mh doc append\|prepend <id> --body` | 在文档首/尾追加块 |
+| `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
 | `mh search <query>` | 全文检索（文档 + 记录） |
 | `mh sync <url>` | 与服务端同步一轮 |
 | `mh --server [--port]` | 启动同步服务端 |

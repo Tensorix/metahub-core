@@ -62,12 +62,24 @@ CREATE TABLE IF NOT EXISTS record_values (
 CREATE TABLE IF NOT EXISTS documents (
   id          TEXT PRIMARY KEY,
   title       TEXT,
-  body        TEXT,
+  body        TEXT,        -- materialized cache: serialized from doc_blocks
   database_id TEXT,
   parent_id   TEXT,
   created_hlc TEXT,
   __deleted   INTEGER NOT NULL DEFAULT 0
 );
+
+-- Document body as an ordered list of blocks; each (block,field) is an
+-- independent CRDT register so concurrent edits to different blocks merge.
+-- order_key is a fractional index (ties broken by id) giving display order.
+CREATE TABLE IF NOT EXISTS doc_blocks (
+  id        TEXT PRIMARY KEY,
+  doc_id    TEXT,
+  text      TEXT,
+  order_key TEXT,
+  __deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_doc_blocks_doc ON doc_blocks(doc_id);
 `;
 
 // Best-effort: FTS5 may not be compiled in. Search falls back to LIKE if this fails.

@@ -3,6 +3,8 @@ export * from "./db.ts";
 export * from "./ids.ts";
 export * from "./hlc.ts";
 export * from "./crdt.ts";
+export * from "./blocks.ts";
+export * from "./fracdex.ts";
 export * from "./node.ts";
 export * from "./databases.ts";
 export * from "./properties.ts";

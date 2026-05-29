@@ -158,6 +158,7 @@ export async function restoreSnapshot(
       "records",
       "record_values",
       "documents",
+      "doc_blocks",
       "peers",
     ])
       db.query(`DELETE FROM ${t}`).run();

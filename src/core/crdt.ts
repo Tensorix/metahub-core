@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { getNodeId } from "./node.ts";
 import { nextHlc, observeHlc } from "./hlc.ts";
+import { serializeBlocks } from "./blocks.ts";
 
 // A single field assignment — the unit of replication. `value` is JSON-encoded
 // (or null). `dataset`/`row_id`/`col` identify the CRDT register.
@@ -29,6 +30,10 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
     table: "documents",
     cols: new Set(["title", "body", "database_id", "parent_id", "created_hlc", "__deleted"]),
   },
+  doc_blocks: {
+    table: "doc_blocks",
+    cols: new Set(["doc_id", "text", "order_key", "__deleted"]),
+  },
 };
 
 // The `records` dataset is special: these cols hit the `records` table, any
@@ -47,6 +52,28 @@ function encodeScalar(val: unknown): SqlValue {
 
 function ensureRow(db: Database, table: string, id: string): void {
   db.query(`INSERT OR IGNORE INTO ${table} (id) VALUES (?)`).run(id);
+}
+
+/** A doc is "block-managed" once it has any block row; blocks then own its body. */
+function isBlockManaged(db: Database, docId: string): boolean {
+  return (
+    db.query("SELECT 1 AS x FROM doc_blocks WHERE doc_id = ? LIMIT 1").get(docId) !=
+    null
+  );
+}
+
+/** Rebuild a document's materialized body from its live blocks (ordered). */
+function recomputeDocBody(db: Database, docId: string): void {
+  const rows = db
+    .query(
+      "SELECT text FROM doc_blocks WHERE doc_id = ? AND __deleted = 0 ORDER BY order_key, id",
+    )
+    .all(docId) as { text: string | null }[];
+  ensureRow(db, "documents", docId);
+  db.query("UPDATE documents SET body = ? WHERE id = ?").run(
+    serializeBlocks(rows.map((r) => r.text)),
+    docId,
+  );
 }
 
 function materialize(
@@ -78,12 +105,26 @@ function materialize(
 
   const d = DOMAIN[dataset];
   if (!d || !d.cols.has(col)) return; // unknown dataset/column -> ignore (forward-compat)
+
+  // Legacy documents.body register is ignored once the doc is block-managed:
+  // blocks are authoritative and recompute the body cache themselves.
+  if (dataset === "documents" && col === "body" && isBlockManaged(db, rowId)) return;
+
   ensureRow(db, d.table, rowId);
   const v = valueJson === null ? null : JSON.parse(valueJson);
   db.query(`UPDATE ${d.table} SET "${col}" = ? WHERE id = ?`).run(
     encodeScalar(v),
     rowId,
   );
+
+  // A block change re-derives its document's body cache. doc_id may not have
+  // materialized yet (out-of-order sync) — the later doc_id write recomputes.
+  if (dataset === "doc_blocks") {
+    const blk = db
+      .query("SELECT doc_id FROM doc_blocks WHERE id = ?")
+      .get(rowId) as { doc_id: string | null } | null;
+    if (blk?.doc_id) recomputeDocBody(db, blk.doc_id);
+  }
 }
 
 /**
