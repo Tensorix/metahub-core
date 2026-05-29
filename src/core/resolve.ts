@@ -37,6 +37,16 @@ type SqlValue = string;
 // prefix p under BINARY collation — a primary-key range scan, no LIKE wildcards.
 const HI = "{";
 
+/** The first text property's id for a database — a record's de-facto title. */
+function titlePropId(db: Database, databaseId: string): string | null {
+  const row = db
+    .query(
+      "SELECT id FROM properties WHERE database_id = ? AND type = 'text' AND __deleted = 0 ORDER BY position LIMIT 1",
+    )
+    .get(databaseId) as { id: string } | null;
+  return row?.id ?? null;
+}
+
 /** All live rows of one kind matching `ref` by id-prefix or name. */
 function queryKind(
   db: Database,
@@ -45,7 +55,14 @@ function queryKind(
   databaseId?: string,
 ): Candidate[] {
   const spec = SPECS[kind];
-  const labelExpr = spec.nameCol ?? "''"; // kinds without a name show id only
+  // Records have no name column; when scoped to a database, match/show the
+  // first text property's value (its title) so "Alice Chen" resolves.
+  let nameCol = spec.nameCol;
+  if (kind === "rec" && databaseId) {
+    const tp = titlePropId(db, databaseId);
+    if (tp) nameCol = `data ->> '${tp.replace(/'/g, "''")}'`;
+  }
+  const labelExpr = nameCol ?? "''"; // kinds without a name show id only
   const conds: string[] = [];
   const args: SqlValue[] = [];
 
@@ -57,8 +74,8 @@ function queryKind(
   conds.push("(id >= ? AND id < ?)");
   args.push(typed, typed + HI);
   // Name/title equality (case-insensitive), where the kind has a name.
-  if (spec.nameCol) {
-    conds.push(`lower(${spec.nameCol}) = lower(?)`);
+  if (nameCol) {
+    conds.push(`lower(${nameCol}) = lower(?)`);
     args.push(ref);
   }
 

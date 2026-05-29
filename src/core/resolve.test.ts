@@ -95,6 +95,50 @@ test("blk is excluded from public resolution", () => {
   expect(resolveCandidates(db, blk.id)).toHaveLength(0);
 });
 
+test("relation values resolve by name / prefix in the target database", () => {
+  const db = newDb();
+  const people = createDatabase(db, { name: "People" });
+  addProperty(db, people.id, { name: "name", type: "text" });
+  const alice = createRecord(db, people.id, { name: "Alice Chen" });
+
+  const tasks = createDatabase(db, { name: "Tasks" });
+  addProperty(db, tasks.id, { name: "title", type: "text" });
+  addProperty(db, tasks.id, {
+    name: "assignee",
+    type: "relation",
+    config: { database: people.id },
+  });
+
+  // by name
+  const t1 = createRecord(db, tasks.id, { title: "Fix bug", assignee: "Alice Chen" });
+  expect(t1.values.assignee).toEqual([alice.id]);
+  // by prefix
+  const t2 = createRecord(db, tasks.id, { title: "Other", assignee: "alice" });
+  expect(t2.values.assignee).toEqual([alice.id]);
+});
+
+test("relation: full id passes through (forward ref); bad name throws", () => {
+  const db = newDb();
+  const people = createDatabase(db, { name: "People" });
+  addProperty(db, people.id, { name: "name", type: "text" });
+  const tasks = createDatabase(db, { name: "Tasks" });
+  addProperty(db, tasks.id, { name: "title", type: "text" });
+  addProperty(db, tasks.id, {
+    name: "assignee",
+    type: "relation",
+    config: { database: people.id },
+  });
+
+  // a well-formed record id for a not-yet-existing record is allowed through
+  const fwd = "rec_nobody-zzzzzz";
+  const t = createRecord(db, tasks.id, { title: "X", assignee: fwd });
+  expect(t.values.assignee).toEqual([fwd]);
+  // a name that matches nothing throws
+  expect(() => createRecord(db, tasks.id, { title: "Y", assignee: "ghost" })).toThrow(
+    /no such record/,
+  );
+});
+
 test("legacy prefix-less ids still resolve by exact match", () => {
   const db = newDb();
   // simulate a pre-prefix database row written straight to the oplog

@@ -15,6 +15,22 @@ mh init
 - 创建 cache 目录。
 - 初始化或读取 node id。
 
+## 引用与当前库
+
+已实现:
+
+```bash
+mh use [<db-ref>] [--clear]     # 设置/显示「当前库」;record/prop 默认作用于它
+mh get <ref>                     # 通用查找:按 id/前缀/名字解析,自动判别类型
+```
+
+当前体验:
+
+- 凡接受 id 的参数(`get`/`update`/`delete`/`--db`/`--parent`/`--target` 及 relation 值)都接受**引用**:完整 id、唯一前缀、名字/标题。
+- `mh use <db>` 后,`record`/`prop` 命令免带库参数,引用与列举自动限定在该库内。
+- 引用歧义时报错并列出候选(git 短 SHA 风格),不会静默误选。
+- 详见 [data-model.md](./data-model.md) 的「ID 与引用」。
+
 ## 数据库和属性
 
 已实现:
@@ -22,31 +38,32 @@ mh init
 ```bash
 mh db create <name> [--icon]
 mh db list
-mh db get <id>
-mh db delete <id>
+mh db get <ref>
+mh db delete <ref>
 
-mh prop add <db> <name> --type <type> [--options a,b] [--target <db>] [--config JSON] [--position N]
-mh prop list <db>
-mh prop update <id> [--name] [--options] [--target] [--config] [--position]
-mh prop remove <id>
+mh prop add <name> --type <type> [--db <db>] [--options a,b] [--target <db>] [--config JSON] [--position N]
+mh prop list [<db>]
+mh prop update <ref> [--name] [--options] [--target] [--config] [--position]
+mh prop remove <ref>
 ```
 
 当前体验:
 
 - 可以手动创建 Notion-like 表结构。
 - 属性支持类型和基本配置校验。
-- 属性名当前没有唯一性约束,同名属性会造成 CLI 输入歧义。
+- `prop add` 的库用 `--db` 指定(默认当前库);`prop list` 的库可省略(默认当前库)。
+- 属性名当前没有唯一性约束,同名属性会造成引用歧义,但解析时会报错列候选而非静默误选。
 
 ## 记录
 
 已实现:
 
 ```bash
-mh record create <db> --data '{"field":"value"}'
-mh record list <db> [--filter '{"field":"value"}'] [--sort field] [--desc] [--limit N]
-mh record get <recordId>
-mh record update <recordId> --data '{"field":"value"}'
-mh record delete <recordId>
+mh record create [<db>] --data '{"field":"value"}'      # db 省略时用当前库
+mh record list [<db>] [--filter '{"field":"value"}'] [--sort field] [--desc] [--limit N]
+mh record get <ref>
+mh record update <ref> --data '{"field":"value"}'
+mh record delete <ref>
 ```
 
 当前查询能力:
@@ -56,6 +73,8 @@ mh record delete <recordId>
 - 支持 limit。
 - 支持属性名或属性 id 作为 data key。
 - 支持 select/multi_select 的 options 校验。
+- record 的 `<ref>` 支持完整 id 或唯一前缀(跨库;不按当前库 scope,以保证完整 id 始终可用)。
+- relation 字段的值接受引用(在目标库内按 id/前缀/名字解析,数组逐个;完整 `rec_` id 直通)。
 
 当前未实现:
 
@@ -72,21 +91,23 @@ mh record delete <recordId>
 已实现:
 
 ```bash
-mh doc create --title <title> [--body @file]
-mh doc list [--db <db>]
-mh doc get <docId>
-mh doc update <docId> [--title] [--body]
-mh doc delete <docId>
+mh doc create --title <title> [--body @file] [--db <db-ref>] [--parent <doc-ref>]
+mh doc list [--db <db-ref>]
+mh doc get <doc-ref>
+mh doc update <doc-ref> [--title] [--body]
+mh doc delete <doc-ref>
 ```
 
 AI 增量编辑:
 
 ```bash
-mh doc read <docId>
-mh doc edit <docId> --old "old text" --new "new text" [--replace-all] [--if-match <version>]
-mh doc append <docId> --body "markdown"
-mh doc prepend <docId> --body "markdown"
+mh doc read <doc-ref>
+mh doc edit <doc-ref> --old "old text" --new "new text" [--replace-all] [--if-match <version>]
+mh doc append <doc-ref> --body "markdown"
+mh doc prepend <doc-ref> --body "markdown"
 ```
+
+文档引用 `<doc-ref>` 支持完整 id、唯一前缀或标题。`--db`/`--parent` 同样接受引用;文档可独立存在(`--db` 不默认当前库)。
 
 当前体验:
 
@@ -99,10 +120,9 @@ mh doc prepend <docId> --body "markdown"
 已实现:
 
 ```bash
-mh edit <docId>
-mh edit <recordId>
-mh edit <id> --vscode
-mh edit <id> --editor zed
+mh edit <ref>                 # 文档或记录引用(id/前缀/名字)
+mh edit <ref> --vscode
+mh edit <ref> --editor zed
 ```
 
 当前体验:
@@ -137,6 +157,20 @@ mh search <query> [--limit N]
 - 返回 record 命中字段。
 - IM 消息 around context。
 - 语义检索。
+
+## Shell 补全
+
+已实现:
+
+```bash
+mh completion <bash|zsh|fish>     # 打印补全脚本: eval "$(mh completion zsh)"
+mh __complete <kind|any> <prefix> # (内部)补全脚本回调,逐行返回候选 id
+```
+
+当前能力:
+
+- 补全脚本按子命令推断要补的类型(db/rec/doc/prop),回调 `__complete` 实时查库。
+- rec/prop 候选按当前库 scope;doc 列全部(可独立/跨库)。
 
 ## 快照和恢复
 

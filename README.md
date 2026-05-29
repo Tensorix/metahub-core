@@ -54,6 +54,8 @@ mh doc append <ref> --body "追加段落"            # 也有 prepend
 `text · number · checkbox · select · multi_select · date · relation · url`
 （select/multi_select 用 `--options a,b,c`；relation 用 `--target <db引用>`）
 
+relation 字段的**值**也接受引用：`--data '{"assignee":"Alice Chen"}'` 会在目标库里按名字/前缀解析成记录 id（数组逐个解析）；歧义或找不到会报错，完整 `rec_…` id 始终直通。
+
 ## 多机同步（CRDT）
 
 每次写入都进 oplog（Hybrid Logical Clock + 按字段 Last-Write-Wins），合并可交换、幂等、最终一致。

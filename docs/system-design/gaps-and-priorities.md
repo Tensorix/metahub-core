@@ -11,16 +11,26 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 - AI 可以稳定读 schema、写数据、查数据、修正文档。
 - 人类可以用直观命令和编辑器完成相同数据的查看和修正。
 
+## 已改善: ID 引用体验
+
+原硬伤「每次都要粘贴完整 id、id 不带类型(`test-abc` 分不清 db/rec/doc)、record 操作重复带库 id」已通过友好 ID 特性解决(见 [data-model.md](./data-model.md) 的「ID 与引用」、`docs/impl-context/06-friendly-ids/design.md`):
+
+- 类型前缀 id(`<kind>_…`)使 id 自解释。
+- 引用解析层支持完整 id / 唯一前缀 / 名字。
+- `mh use <db>` 提供当前库上下文;relation 值也按引用解析。
+- 歧义报错列候选(git 风格),不静默误选。
+- `mh completion` 提供 Tab 补全。
+
 ## P0: 当前体验硬伤
 
-### 属性名唯一性和歧义处理
+### 属性名唯一性
 
-当前同一 database 下可以创建重复属性名。CLI data/filter 用属性名解析时会产生歧义。
+当前同一 database 下可以创建重复属性名。引用解析遇到重名时已会**报错列候选**(不再静默误选),但仍缺少硬约束。
 
 建议:
 
 - 默认禁止同库重复属性名。
-- 或者在解析属性名时遇到重复直接报错,要求使用 property id。
+- 或者继续依赖解析层的歧义报错 + 要求使用 property id / 更长前缀。
 
 ### 友好参数错误
 

@@ -11,17 +11,18 @@
 ```bash
 mh init
 mh db create "Transactions"
-mh prop add <dbId> date --type date
-mh prop add <dbId> amount --type number
-mh prop add <dbId> category --type select --options food,transport,shopping,other
-mh prop add <dbId> account --type text
-mh prop add <dbId> note --type text
+mh use transactions            # 设为当前库,后续 prop/record 免带库参数
+mh prop add date --type date
+mh prop add amount --type number
+mh prop add category --type select --options food,transport,shopping,other
+mh prop add account --type text
+mh prop add note --type text
 ```
 
 ### 2. 写入一笔流水
 
 ```bash
-mh record create <dbId> --data '{
+mh record create --data '{
   "date": "2026-05-29",
   "amount": -38.5,
   "category": "food",
@@ -35,9 +36,9 @@ mh record create <dbId> --data '{
 当前可做:
 
 ```bash
-mh record list <dbId> --filter '{"category":"food"}' --sort date --desc --limit 20
-mh record get <recordId>
-mh record update <recordId> --data '{"category":"transport"}'
+mh record list --filter '{"category":"food"}' --sort date --desc --limit 20
+mh record get <ref>            # 完整 id 或唯一前缀
+mh record update <ref> --data '{"category":"transport"}'
 mh search "coffee"
 ```
 
@@ -70,18 +71,19 @@ mh search "coffee"
 
 ```bash
 mh db create "Messages"
-mh prop add <dbId> conversation --type text
-mh prop add <dbId> sender --type text
-mh prop add <dbId> sent_at --type date
-mh prop add <dbId> text --type text
-mh prop add <dbId> source --type text
-mh prop add <dbId> message_id --type text
+mh use messages
+mh prop add conversation --type text
+mh prop add sender --type text
+mh prop add sent_at --type date
+mh prop add text --type text
+mh prop add source --type text
+mh prop add message_id --type text
 ```
 
 ### 2. 写入消息
 
 ```bash
-mh record create <dbId> --data '{
+mh record create --data '{
   "conversation": "alice",
   "sender": "Alice",
   "sent_at": "2026-05-29T10:00:00Z",
@@ -96,7 +98,7 @@ mh record create <dbId> --data '{
 当前可做:
 
 ```bash
-mh record list <dbId> --filter '{"conversation":"alice"}' --sort sent_at --desc --limit 50
+mh record list --filter '{"conversation":"alice"}' --sort sent_at --desc --limit 50
 mh search "发票"
 ```
 
@@ -130,23 +132,23 @@ mh search "发票"
 ```bash
 mh doc create --title "架构说明" --body @arch.md
 mh doc list
-mh doc get <docId>
+mh doc get 架构说明              # 标题/前缀/完整 id 均可
 mh search "架构"
 ```
 
 ### 2. AI 增量编辑
 
 ```bash
-mh doc read <docId>
-mh doc edit <docId> --old "旧文本" --new "新文本"
-mh doc append <docId> --body "追加段落"
+mh doc read <doc-ref>
+mh doc edit <doc-ref> --old "旧文本" --new "新文本"
+mh doc append <doc-ref> --body "追加段落"
 ```
 
 ### 3. 人类编辑
 
 ```bash
-mh edit <docId>
-mh edit <docId> --vscode
+mh edit <doc-ref>
+mh edit <doc-ref> --vscode
 ```
 
 ### 当前体验结论

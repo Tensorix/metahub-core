@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { newId, slugify } from "./ids.ts";
+import { newId, slugify, idKind } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { listProperties, type PropertyRow } from "./properties.ts";
 import { maybeAutoIndex } from "./indexing.ts";
+import { resolveCandidates } from "./resolve.ts";
 
 type SqlValue = string | number | null;
 
@@ -23,8 +24,28 @@ export interface RecordRow {
   values: Record<string, unknown>;
 }
 
+/**
+ * Resolve one relation value to a concrete record id in the target database.
+ * Accepts a full id / unique prefix / name. A well-formed record id that does
+ * not (yet) exist passes through unchanged — a forward reference / explicit id
+ * escape valve. Names/prefixes that match nothing, or match many, throw.
+ */
+function resolveRelation(db: Database, prop: PropertyRow, value: string): string {
+  const target = prop.config?.database;
+  if (!target) return value; // misconfigured relation — leave the value as-is
+  const cands = resolveCandidates(db, value, { kind: "rec", databaseId: target });
+  const exact = cands.find((c) => c.id === value);
+  if (exact) return exact.id;
+  if (cands.length === 1) return cands[0]!.id;
+  if (cands.length === 0) {
+    if (idKind(value) === "rec") return value; // forward reference to a full id
+    throw new Error(`${prop.name}: no such record in target database: ${value}`);
+  }
+  throw new Error(`${prop.name}: ambiguous relation "${value}" (${cands.length} matches); use a full id`);
+}
+
 /** Validate + normalize a value for a property's type. Throws on mismatch. */
-function coerce(prop: PropertyRow, value: unknown): unknown {
+function coerce(db: Database, prop: PropertyRow, value: unknown): unknown {
   switch (prop.type) {
     case "text":
     case "url":
@@ -62,7 +83,7 @@ function coerce(prop: PropertyRow, value: unknown): unknown {
     }
     case "relation": {
       const arr = value === null ? [] : Array.isArray(value) ? value : [value];
-      return arr.map(String);
+      return arr.map((v) => resolveRelation(db, prop, String(v)));
     }
   }
 }
@@ -123,7 +144,7 @@ export function createRecord(
   const first = emit(db, "records", id, "database_id", databaseId);
   emit(db, "records", id, "created_hlc", first.hlc);
   for (const { prop, value } of resolved)
-    emit(db, "records", id, prop.id, coerce(prop, value));
+    emit(db, "records", id, prop.id, coerce(db, prop, value));
   return getRecord(db, id)!;
 }
 
@@ -153,7 +174,7 @@ export function listRecords(
     opts.filter && Object.keys(opts.filter).length
       ? resolveData(props, opts.filter).map(({ prop, value }) => ({
           prop,
-          value: coerce(prop, value),
+          value: coerce(db, prop, value),
         }))
       : [];
   const sqlFilters = resolved.filter((f) => isSqlScalar(f.value));
@@ -228,7 +249,7 @@ export function updateRecord(
   if (!rec) throw new Error(`no such record: ${id}`);
   const resolved = resolveData(listProperties(db, rec.database_id), data);
   for (const { prop, value } of resolved)
-    emit(db, "records", id, prop.id, coerce(prop, value));
+    emit(db, "records", id, prop.id, coerce(db, prop, value));
   return getRecord(db, id)!;
 }
 

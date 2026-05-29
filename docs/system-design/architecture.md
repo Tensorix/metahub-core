@@ -15,6 +15,7 @@ CLI (src/cli)
 Core API (src/core)
   - databases / properties / records
   - documents / blocks
+  - resolve (引用解析) / context (当前库)
   - search
   - snapshot / restore
   - sync client/server
@@ -59,6 +60,19 @@ SQLite + cache
 5. 如果胜出,物化到领域表。
 
 当前 register 由 `(dataset, row_id, col)` 定义。记录单元格也是 register,其中 `col` 是 property id。
+
+新建实体的 `row_id` 带类型前缀(`<kind>_<slug>-<rand>`,见 `src/core/ids.ts`),对 oplog/物化/同步完全不透明;旧的无前缀 id 与之共存。
+
+## 引用解析路径
+
+CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成确切 id:
+
+1. CLI 命令拿到 id 参数(可能是完整 id、唯一前缀、名字/标题)。
+2. 调 `resolveRef`(`src/core/resolve.ts`,纯只读)在指定 kind/库范围内解析,歧义或找不到则抛错(经 `guard` 转成 `{error}` 输出)。
+3. 用解析出的精确 id 调 core 的 `getX`/`updateX`/`deleteX`——**core API 仍只接受精确 id**,解析便利只在 CLI 边界。
+4. `database` 参数缺省时回退到 `meta.current_db`(`src/core/context.ts`,本机上下文);relation 值在写入(`coerce`)时于目标库内解析。
+
+这样保持了 core API 的精确可预测,同时把「不必粘贴完整 id」的体验集中在解析层。
 
 ## 读取路径
 

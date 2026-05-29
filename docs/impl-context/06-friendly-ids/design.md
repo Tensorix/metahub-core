@@ -114,7 +114,7 @@ record id 现派生自整段正文(`records.ts:109`)，即便有名字解析仍�
 - **名字解析仅 db/doc/prop，record 靠 id 前缀**：record 无稳定唯一名字(可重名、可无标题)，标题已 slug 进 id，前缀匹配已够；避免给 record 强加「名字」语义。
 - **解析放 core 但 `get*` 仍精确**：保持核心 API 精确可预测，便利层只在 CLI 边界；core 仅多出一个只读 `resolve.ts` 供复用与单测。
 - **当前库存本地 `meta` 而非同步**：上下文是「这台机器此刻在看哪个库」，本就不该随 sync 跑到别的节点。
-- **relation/parent 值的解析范围**：`--db`/`--parent`/`--target` 这类**显式单实体引用**走 `resolveRef`；而 `--data` JSON 里的 relation 值(可为数组、可混入任意键)本期仍要求完整 id，避免在自由 JSON 里做有歧义的猜测，后续按需再加。
+- **relation/parent 值的解析范围**：`--db`/`--parent`/`--target` 这类**显式单实体引用**走 `resolveRef`；`--data` JSON 里的 relation 值**也已解析**(Phase 7)——`coerce` 对 relation 值在**目标库范围内**调 `resolveCandidates`，按 id/前缀/名字解析、数组逐个处理；歧义或匹配不到则报错(非自由 JSON 盲猜)，但**完整 record id 直通**(即便目标记录尚不存在，作前向引用逃生阀)。
 - **补全用外部脚本回调**：citty 无原生补全，回调式是业界标准(gh/kubectl)，且能反映当前库上下文与实时数据；代价是每种 shell 一份脚本。
 
 ## 4. 涉及文件
@@ -140,3 +140,5 @@ record id 现派生自整段正文(`records.ts:109`)，即便有名字解析仍�
 - **`prop add` 的库参数改为 `--db` 标志**（非位置参数）：因其后跟必填位置参数 `name`，可选前导位置参数会被 citty 错位；与 `doc create --db` 一致，并支持当前库回退。
 - **`doc create --db` 不默认当前库**：文档可独立存在；补全里 doc 也不按当前库过滤（仅 rec/prop 过滤）。
 - **前缀匹配上界哨兵**用 `'{'`(0x7B，紧邻 'z' 之后)，配合主键 BINARY 序做范围扫描。
+- **record 名字匹配已实现(原列为可选)**：解析**限定到某库**(`databaseId` 给定，即 relation 与补全)时，按该库**首个 text 属性的值**(de-facto 标题)做大小写不敏感匹配，候选也显示该标题。未 scope 的 record 解析(如 `record get` 跨库)仍只按 id/slug 前缀——因不同库标题属性不同，无库范围无从匹配。
+- **Phase 7 已随本期实现**：relation 值解析见上条取舍；逃生阀 = 完整 `rec_` id 直通。

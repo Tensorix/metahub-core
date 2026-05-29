@@ -25,6 +25,26 @@ search_fts
 - `node_id`: 当前节点稳定 id。
 - `hlc`: 当前节点最后一次 Hybrid Logical Clock。
 - `search_hlc`: FTS 已索引到的 oplog 水位。
+- `current_db`: 「当前数据库」指针(本机 UI 上下文,不进 oplog、不随 sync)。读取时惰性校验所指库是否仍存在,失效则自动清除(见 `src/core/context.ts`)。
+
+## ID 与引用
+
+新建实体的 id 带**类型前缀**: `<kind>_<slug>-<rand>`(`src/core/ids.ts` 的 `newId`/`idKind`):
+
+```text
+db_tasks-a3f9   prop_status-x7p2   rec_fix-login-bug-k2p9   doc_design-9fk3   blk_intro-m4x8
+```
+
+- 前缀↔dataset: `db`/`prop`/`rec`/`doc`/`blk` 对应 `databases`/`properties`/`records`/`documents`/`doc_blocks`。
+- `slugify` 只产出 `[a-z0-9-]`、`randomSuffix` 只产出 base36——两者都不含 `_`,故 id 中首个 `_` 必是类型分隔符,`idKind` 据此恢复类型;**旧的无前缀 id(无 `_`)读作 null,与新 id 共存**,无需迁移。
+- 前缀只是把类型显式带到人/AI/日志眼前;`crdt_changes.row_id`、`records.data` 的 JSON key、`crdt_changes.col` 对 id 不透明,加前缀对 oplog/sync/快照/搜索零影响。
+
+引用解析层(`src/core/resolve.ts`,纯只读)把存储 id 与用户输入的「引用」分离。`resolveRef` / `resolveEntity` / `resolveCandidates` 按以下规则解析:
+
+- **kind 范围**: 命令显式 `kind` 优先;否则按 ref 的类型前缀分派;否则跨 `db/prop/rec/doc`(blk 不参与公共解析)。
+- **匹配**: 精确 id(永远可用,跨库亦可) → id 前缀(对 `ref` 原样及 `<kind>_<ref>`,主键范围扫描 `id >= p AND id < p||'{'`,不用 LIKE 以避开 `_` 通配符) → 名字/标题(db.name / doc.title / prop.name 大小写不敏感)。
+- **record 名字**: record 无名字列;当解析**限定到某库**(`databaseId` 给定,即 relation 与补全)时,按该库**首个 text 属性的值**(de-facto 标题)匹配。未 scope 的 record 解析仍只按 id/slug 前缀。
+- **歧义**: 命中多个则报错并列出候选(git 短 SHA 风格);0 个报 `no such <kind>`。
 
 ## crdt_changes
 
@@ -84,7 +104,7 @@ properties(id, database_id, name, type, config, position, __deleted)
 - `relation` 要求 `config.database`。
 - `date` 当前按 string 校验,没有统一规范化。
 - `url` 当前按 string 校验,没有 URL 格式校验。
-- `relation` 当前存目标 record id 数组,没有反向链接和完整性校验。
+- `relation` 当前存目标 record id 数组,没有反向链接和完整性校验。写入时,relation 值会在**目标库范围内**经引用解析(id/前缀/名字),数组逐个解析;歧义或匹配不到则报错,完整 `rec_` id 直通(前向引用逃生阀)。
 
 ## records
 
