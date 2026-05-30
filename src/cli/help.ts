@@ -64,7 +64,10 @@ COMMANDS
     record get <ref> | update <ref> --data <json> | delete <ref>
   documents
     doc create --title <t> [--body <md>] [--db <ref>] [--parent <ref>]
-    doc list [--db <ref>] | get <ref> | update <ref> | delete <ref>
+    doc list [--db <ref>]               Indented parent/child tree
+    doc get <ref> | delete <ref>
+    doc update <ref> [--title <t>] [--body <md>] [--parent <ref>]
+                                      --parent "" moves the doc to top level
     doc read <ref>                    Body + version token (read before edit)
     doc edit <ref> --old <txt> --new <txt> [--replace-all] [--if-match <ver>]
     doc append <ref> --body <md>      Add block(s) at end (also: prepend)
@@ -136,6 +139,10 @@ const EXAMPLES: Record<string, string[]> = {
   "doc create": [
     'mh doc create --title "Architecture" --body @arch.md',
     'mh doc create --title "Sub page" --parent architecture',
+  ],
+  "doc update": [
+    'mh doc update sub-page --parent architecture   # nest under another doc',
+    'mh doc update sub-page --parent ""             # move back to top level',
   ],
   "doc read": ["mh doc read architecture    # returns body + version token"],
   "doc edit": [

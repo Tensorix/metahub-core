@@ -154,12 +154,22 @@ export function listDocuments(
 export function updateDocument(
   db: Database,
   id: string,
-  fields: { title?: string; body?: string; database_id?: string; parent_id?: string },
+  fields: { title?: string; body?: string; database_id?: string; parent_id?: string | null },
 ): DocumentRow {
   if (!getDocument(db, id)) throw new Error(`no such document: ${id}`);
   if (fields.title !== undefined) emit(db, "documents", id, "title", fields.title);
   if (fields.database_id !== undefined) emit(db, "documents", id, "database_id", fields.database_id);
-  if (fields.parent_id !== undefined) emit(db, "documents", id, "parent_id", fields.parent_id);
+  if (fields.parent_id !== undefined) {
+    // Walk the prospective ancestor chain; reaching `id` (including self) would
+    // form a cycle and make the document tree unrenderable. Guard in core so
+    // every caller (CLI, WebUI, sync) is protected, not just the WebUI.
+    let cur: string | null | undefined = fields.parent_id;
+    while (cur) {
+      if (cur === id) throw new Error(`cannot set parent_id: would create a cycle (${id})`);
+      cur = getDocument(db, cur)?.parent_id ?? null;
+    }
+    emit(db, "documents", id, "parent_id", fields.parent_id);
+  }
   if (fields.body !== undefined) {
     ensureBlocks(db, id);
     reconcileBody(db, id, fields.body);

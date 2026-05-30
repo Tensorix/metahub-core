@@ -114,6 +114,31 @@ test("update --body reconciles, keeping unchanged block identity", () => {
   expect(after[2]).toBe(ids[2]!); // keep2 identity preserved
 });
 
+test("update reparents a document and --top clears the parent", () => {
+  const db = makeNode("aaaa");
+  const parent = createDocument(db, { title: "Parent" });
+  const child = createDocument(db, { title: "Child" });
+
+  updateDocument(db, child.id, { parent_id: parent.id });
+  expect(getDocument(db, child.id)!.parent_id).toBe(parent.id);
+
+  updateDocument(db, child.id, { parent_id: null });
+  expect(getDocument(db, child.id)!.parent_id).toBeNull();
+});
+
+test("update rejects parent cycles (self and descendant)", () => {
+  const db = makeNode("aaaa");
+  const a = createDocument(db, { title: "A" });
+  const b = createDocument(db, { title: "B" });
+  updateDocument(db, b.id, { parent_id: a.id }); // B under A
+
+  // A cannot become its own parent, nor a child of its descendant B.
+  expect(() => updateDocument(db, a.id, { parent_id: a.id })).toThrow(/cycle/);
+  expect(() => updateDocument(db, a.id, { parent_id: b.id })).toThrow(/cycle/);
+  // Unaffected edge stays intact.
+  expect(getDocument(db, b.id)!.parent_id).toBe(a.id);
+});
+
 test("PAYOFF: concurrent edits to different blocks of one doc both survive", () => {
   const a = makeNode("aaaa");
   const doc = createDocument(a, { title: "Spec", body: "para one\n\npara two\n\npara three" });

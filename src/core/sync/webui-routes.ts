@@ -94,6 +94,7 @@ const CreateDocumentReq = z.object({
 const UpdateDocumentReq = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
+  parent_id: z.string().nullable().optional(),
 });
 
 // --- helpers ----------------------------------------------------------------
@@ -295,11 +296,11 @@ export const webuiRoutes: Route[] = [
   {
     method: "PATCH",
     path: "/api/document",
-    summary: "Update a document's title/body. Query: ?id=<id>",
+    summary: "Update a document's title/body/parent_id (null = top level). Query: ?id=<id>",
     request: UpdateDocumentReq,
     response: DocumentSchema,
     handler: handle(async (req, { db }) => {
-      const body = (await req.json()) as { title?: string; body?: string };
+      const body = (await req.json()) as { title?: string; body?: string; parent_id?: string | null };
       return updateDocument(db, need(req, "id"), body);
     }),
   },

@@ -92,11 +92,13 @@ mh record delete <ref>
 
 ```bash
 mh doc create --title <title> [--body @file] [--db <db-ref>] [--parent <doc-ref>]
-mh doc list [--db <db-ref>]
+mh doc list [--db <db-ref>]                 # 按 parent_id 缩进成树
 mh doc get <doc-ref>
-mh doc update <doc-ref> [--title] [--body]
+mh doc update <doc-ref> [--title] [--body] [--parent <doc-ref>]
 mh doc delete <doc-ref>
 ```
+
+文档层级:`--parent <doc-ref>` 把文档挂到某个父文档下,`--parent ""`(空值)移回顶层(清空 parent_id)。core 在改 parent 时做防环校验(不能挂到自身或后代下)。CLI 与 WebUI 拖拽改嵌套共用同一 `updateDocument(parent_id)` 路径。
 
 AI 增量编辑:
 
