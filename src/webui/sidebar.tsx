@@ -20,6 +20,7 @@ interface SidebarProps {
   activeKind: string;
   activeId?: string;
   width: number;
+  collapsed: boolean;
   onResize: (w: number) => void;
   onOpenDb: (id: string) => void;
   onOpenDoc: (id: string) => void;
@@ -211,7 +212,10 @@ export function Sidebar(props: SidebarProps) {
   };
 
   return (
-    <div class="sidebar" style={{ width: props.width }}>
+    <div
+      class={"sidebar" + (props.collapsed ? " collapsed" : "")}
+      style={{ width: props.width, marginLeft: props.collapsed ? -props.width : undefined }}
+    >
       <div class="sb-head">
         <div class="brand">
           <span class="mark"><Icon name="cube" /></span>Metahub

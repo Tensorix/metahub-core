@@ -33,7 +33,7 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 | `sidebar.tsx` | 文档树（折叠/拖拽改嵌套/宽度可拖拽）、条目菜单、新建数据库 Modal（模板）、删库/删文档 |
 | `table.tsx` | `DatabaseView`：视图 tab、工具栏、网格、各类型单元格编辑、列头菜单、加列、行菜单、多选删除条、记录 peek 侧栏 |
 | `editor.tsx` | `DocView`：块渲染、`/` 斜杠菜单、块菜单、拖拽重排、选中浮动格式条、防抖保存 |
-| `app.tsx` | 壳：顶栏/面包屑、视图路由（doc/db/search/empty）、nav 数据与 `reloadNav`、移动抽屉、错误条、`<UiHost/>` |
+| `app.tsx` | 壳：顶栏/面包屑、视图路由（doc/db/search/empty）、nav 数据与 `reloadNav`、侧栏折叠/移动抽屉、错误条、`<UiHost/>` |
 
 设计系统 CSS 内联在 `src/core/sync/webui.ts` 的 HTML 外壳（tokens + 深色模式 + 组件样式 + ≤768px 移动断点；引 Google Fonts: Hanken Grotesk / JetBrains Mono，系统字体兜底）。
 
@@ -64,6 +64,8 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 ### 4.5 侧边栏（`sidebar.tsx`）
 
 文档树按 `parent_id` 递归渲染、可折叠；HTML5 拖拽：drop-into 设 `parent_id=目标`，drop-before/after 设为目标的同级（均经 `updateDocument` 持久化；防环检测）。宽度拖拽（210–460px，临时态）。条目菜单：新建子页、重命名、移到顶层、删除（递归删子树）。新建数据库 Modal 含名称/图标/模板（空白/任务/联系人），模板按序 `createProperty`。
+
+**整栏折叠**：折叠状态 `sbCollapsed` 提升到 `app.tsx`，经 `collapsed` prop 下传；折叠时给 `.sidebar` 加 `collapsed` class 并设 `marginLeft:-width`（复用既有 `transition:margin-left` 平滑滑出）。头部收起按钮 `onCollapse` 置位，顶栏 `panelLeft` 按钮在折叠时显示（`.hamburger.show-collapsed`）以重新展开——它与移动抽屉复用同一按钮：桌面折叠态点击展开侧栏，否则打开移动抽屉。（修复：旧 `onCollapse` 误接移动抽屉的 `setDrawerOpen(false)`，桌面端 drawer 本就关闭，故按钮无效。）
 
 ## 5. v1 范围外（未改 schema，明确标注）
 

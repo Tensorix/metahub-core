@@ -31,6 +31,7 @@ function App() {
   const [view, setView] = useState<View>({ kind: "empty" });
   const [error, setError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sbCollapsed, setSbCollapsed] = useState(false);
   const [sbWidth, setSbWidth] = useState(268);
 
   const onError = useCallback((m: string) => setError(m), []);
@@ -97,11 +98,12 @@ function App() {
         activeKind={view.kind}
         activeId={"id" in view ? view.id : undefined}
         width={sbWidth}
+        collapsed={sbCollapsed}
         onResize={setSbWidth}
         onOpenDb={(id) => navigate({ kind: "db", id })}
         onOpenDoc={(id) => navigate({ kind: "doc", id })}
         onSearch={(q) => navigate({ kind: "search", q })}
-        onCollapse={() => setDrawerOpen(false)}
+        onCollapse={() => setSbCollapsed(true)}
         reloadNav={reloadNav}
         onError={onError}
         afterDelete={(_, id) => { if ("id" in view && view.id === id) setView({ kind: "empty" }); }}
@@ -111,7 +113,13 @@ function App() {
 
       <div class="main">
         <div class="topbar">
-          <button class="iconbtn hamburger" onClick={() => setDrawerOpen(true)}><Icon name="panelLeft" /></button>
+          <button
+            class={"iconbtn hamburger" + (sbCollapsed ? " show-collapsed" : "")}
+            title={sbCollapsed ? "展开侧栏" : "菜单"}
+            onClick={() => (sbCollapsed ? setSbCollapsed(false) : setDrawerOpen(true))}
+          >
+            <Icon name="panelLeft" />
+          </button>
           <div class="crumb">
             {view.kind === "doc" && <><span class="emoji"><Icon name="file" cls="ico sm" /></span><span>{activeDoc?.title || "无标题"}</span></>}
             {view.kind === "db" && <><span class="emoji">{activeDb?.icon || "🗂️"}</span><span>{activeDb?.name}</span></>}

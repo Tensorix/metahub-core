@@ -261,7 +261,7 @@ GET    /sites/<name>/<path>  # 托管的静态站点（HTML/CSS/JS，agent 经 m
 当前能力:
 
 - 浏览器打开 `http://localhost:<port>/` 即用，**Notion-like 模块化 Preact 应用**（v2，见 [07-webui/implementation.md](../impl-context/07-webui/implementation.md)）：
-  - **侧栏**：文档树（折叠/拖拽改嵌套）、宽度可拖拽、移动端抽屉；条目菜单（重命名/复制/删除/新建子页）、新建数据库 Modal（模板）。
+  - **侧栏**：文档树（折叠/拖拽改嵌套）、宽度可拖拽、整栏可收起/展开、移动端抽屉；条目菜单（重命名/复制/删除/新建子页）、新建数据库 Modal（模板）。
   - **表格**：按类型行内编辑（checkbox/select/multi_select/relation/text/number/date/url）、列头菜单（改名/**改类型**/选项增删/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。
   - **文档**：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、选中浮动格式条、待办/列表/引用/代码/分隔线）；防抖保存复用 `PATCH /api/document` 的按块 reconcile。
   - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题、移动端适配。

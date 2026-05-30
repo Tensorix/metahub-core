@@ -100,6 +100,9 @@ const HTML = `<!doctype html>
   .main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
   .topbar { display:flex; align-items:center; gap:6px; padding:10px 18px; border-bottom:1px solid var(--line); min-height:49px; }
   .topbar .hamburger { display:none; }
+  .topbar .hamburger.show-collapsed { display:grid; }
+  .sidebar.collapsed { overflow:hidden; }
+  .sidebar.collapsed .sb-resizer { pointer-events:none; }
   .crumb { display:flex; align-items:center; gap:7px; flex:1; min-width:0; font-size:13.5px; color:var(--fg); font-weight:500; }
   .crumb .emoji { font-size:15px; } .crumb .sub { color:var(--muted); font-weight:400; }
   .iconbtn { width:30px; height:30px; display:grid; place-items:center; border-radius:var(--radius-sm); color:var(--fg-soft); transition:background .12s; }
