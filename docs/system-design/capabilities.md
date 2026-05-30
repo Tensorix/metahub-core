@@ -243,11 +243,13 @@ GET  /webui.js               # WebUI 应用 bundle（懒加载）
 GET  /docs  /docs.json       # OpenAPI 文档（Scalar UI / 规范）
 
 GET    /api/databases        POST /api/databases
-GET    /api/properties       POST /api/properties        # ?db=<id>
-GET    /api/records          POST /api/records           # ?db=<id>
-GET    /api/record           PATCH/DELETE /api/record     # ?id=<id>
+                             PATCH/DELETE /api/database    # ?id=<id>（重命名/图标、删除）
+GET    /api/properties       POST /api/properties          # ?db=<id>
+                             PATCH/DELETE /api/property     # ?id=<id>（改名/类型/选项/排序、删除）
+GET    /api/records          POST /api/records             # ?db=<id>
+GET    /api/record           PATCH/DELETE /api/record       # ?id=<id>
 GET    /api/documents        POST /api/documents
-GET    /api/document         PATCH/DELETE /api/document    # ?id=<id>
+GET    /api/document         PATCH/DELETE /api/document      # ?id=<id>
 GET    /api/search           # ?q=<text>&limit=<n>
 
 GET    /api/sites            GET /api/site/files          # 站点 / 文件清单（只读，?site=<id|name>）
@@ -256,10 +258,15 @@ GET    /sites/<name>/<path>  # 托管的静态站点（HTML/CSS/JS，agent 经 m
 
 当前能力:
 
-- 浏览器打开 `http://localhost:<port>/` 即用:左侧栏列数据库与文档;数据表视图按属性渲染表头、行内编辑单元格(按类型适配 checkbox/select/multi_select/relation/text),可新增/删除记录、快速加属性;文档视图带 markdown 实时预览,可编辑标题/正文、删除;顶部全文搜索。
+- 浏览器打开 `http://localhost:<port>/` 即用，**Notion-like 模块化 Preact 应用**（v2，见 [07-webui/implementation.md](../impl-context/07-webui/implementation.md)）：
+  - **侧栏**：文档树（折叠/拖拽改嵌套）、宽度可拖拽、移动端抽屉；条目菜单（重命名/复制/删除/新建子页）、新建数据库 Modal（模板）。
+  - **表格**：按类型行内编辑（checkbox/select/multi_select/relation/text/number/date/url）、列头菜单（改名/**改类型**/选项增删/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。
+  - **文档**：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、选中浮动格式条、待办/列表/引用/代码/分隔线）；防抖保存复用 `PATCH /api/document` 的按块 reconcile。
+  - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题、移动端适配。
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
 - REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
 - WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。
+- **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化。
 - **静态站点托管**:AI agent 用 `mh site create|put|publish|list|files|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联,大二进制走 `cache/` blob、字节暂本机)。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
 - **鉴权**:`--debug` 全开;否则单 token(`--token`/`METAHUB_TOKEN`,否则启动随机生成并打印)守护每个请求,经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带;浏览器走解锁页(存 `localStorage`+cookie)+ 注入 fetch 套壳。默认绑 `127.0.0.1`,`--host` 可改。
 

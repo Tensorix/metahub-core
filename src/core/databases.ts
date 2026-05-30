@@ -20,6 +20,17 @@ export function createDatabase(
   return getDatabase(db, id)!;
 }
 
+export function updateDatabase(
+  db: Database,
+  id: string,
+  fields: { name?: string; icon?: string | null },
+): DatabaseRow {
+  if (!getDatabase(db, id)) throw new Error(`no such database: ${id}`);
+  if (fields.name !== undefined) emit(db, "databases", id, "name", fields.name);
+  if (fields.icon !== undefined) emit(db, "databases", id, "icon", fields.icon);
+  return getDatabase(db, id)!;
+}
+
 export function getDatabase(db: Database, id: string): DatabaseRow | null {
   return db
     .query(

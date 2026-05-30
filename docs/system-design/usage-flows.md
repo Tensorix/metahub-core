@@ -206,24 +206,31 @@ mh --server --port 7777
 # 浏览器打开 http://localhost:7777/
 ```
 
-### 2. 浏览与编辑数据表
+> v2 改版为 Notion-like 模块化 Preact 应用，下述流程为现状（见 [07-webui/implementation.md](../impl-context/07-webui/implementation.md)）。
 
-- 左侧栏点选数据库 → 右侧按属性渲染表格。
-- 点单元格行内编辑(checkbox 即时切换、select 下拉、multi_select/relation 逗号分隔、其余文本框);失焦/回车提交 `PATCH /api/record`。
-- "+ New record" 新增空记录后逐格填写;"+ Add property" 快速加标量属性(text/number/checkbox/date/url)。
+### 2. 侧栏：导航与组织
 
-### 3. 浏览与编辑文档
+- 左侧栏分「数据库」「文档」两组；文档为**树**，可折叠、拖拽改嵌套（drop-into 设父、before/after 设同级，经 `PATCH /api/document` 的 `parent_id` 持久化）。
+- 悬停条目出现「+ 子页」与 ⋯ 菜单（重命名/复制/删除/移到顶层）。「数据库」组的「+」弹**新建数据库 Modal**（名称 + 图标 + 模板：空白/任务/联系人）。侧栏宽度可拖拽；窄屏（≤768px）变抽屉。
 
-- 左侧栏点选文档 → 标题 + 正文 textarea,右侧实时 markdown 预览。
-- 改动后"Save"提交 `PATCH /api/document`;支持新建/删除。
+### 3. 表格（Notion-like）
 
-### 4. 搜索
+- 点选数据库 → 按属性渲染网格。单元格按类型行内编辑：checkbox 即时切、select/multi_select 弹彩色 chip 菜单、relation 逗号分隔、其余文本/数字/日期框；提交 `PATCH /api/record`。
+- **列头菜单**：改名、**改类型**（`PATCH /api/property`，改类型会清空该列单元格）、select 选项增删、排序、在右侧插入列、删除列。末列「+」按类型新建属性。
+- 行 ⋯ 菜单（打开/复制/删除）、勾选多行后底部操作条（复制/删除）、首列「打开」进**记录侧栏 peek**（属性逐项编辑）。
 
-- 顶部搜索框回车 → `GET /api/search`,结果点击跳转到对应文档或记录所在库。
+### 4. 文档（块级所见即所得）
+
+- 点选文档 → 标题 + 块编辑器。悬停块左侧出现「+」与拖拽手柄；输入 `/` 唤出**块类型菜单**（文本/标题/列表/待办/引用/代码/分隔线），选中文字弹**行内格式条**（粗/斜/下划线/删除线/代码/链接）。
+- 编辑防抖保存：所有块序列化为 markdown body → `PATCH /api/document`，服务端 `reconcileBody` 按块保留 CRDT 身份。
+
+### 5. 搜索
+
+- 侧栏搜索框回车 → `GET /api/search`,结果点击跳转到对应文档或记录所在库。
 
 当前体验结论:
 
-- 提供了 CLI 之外的可视化"查看 + 常见编辑"入口,编辑经 CRDT oplog,可随 `mh sync` 复制。
-- 复杂建模(select/relation 配置、批量导入)仍需走 CLI;无鉴权,假定可信网络/本机。
+- 提供了 CLI 之外的 Notion-like 可视化编辑入口（全面 CRUD、真实弹窗/菜单、明暗主题、移动端适配），编辑经 CRDT oplog,可随 `mh sync` 复制。
+- 暂未做：数据库描述/文档独立图标、保存视图与持久化筛选排序（当前排序为客户端临时态）、同级/行手动顺序持久化；关系列暂以文本解析。无鉴权外的复杂权限,假定可信网络/本机。
 - WebUI 与 Preact 单独打包(`dist/webui.js`)、懒加载,不影响 CLI 启动性能。
 

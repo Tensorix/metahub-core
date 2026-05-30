@@ -123,14 +123,36 @@ export function listProperties(db: Database, databaseId: string): PropertyRow[] 
 export function updateProperty(
   db: Database,
   id: string,
-  fields: { name?: string; config?: PropertyConfig; position?: number },
+  fields: { name?: string; type?: PropType; config?: PropertyConfig; position?: number },
 ): PropertyRow {
   const cur = getProperty(db, id);
   if (!cur) throw new Error(`no such property: ${id}`);
-  if (fields.config !== undefined) validateConfig(cur.type, fields.config);
+
+  const typeChanged = fields.type !== undefined && fields.type !== cur.type;
+  if (fields.type !== undefined && !PROP_TYPES.has(fields.type))
+    throw new Error(`unknown property type: ${fields.type}`);
+
+  // Validate config against whichever type will be in effect.
+  const effectiveType = fields.type ?? cur.type;
+  if (fields.config !== undefined) validateConfig(effectiveType, fields.config);
+  else if (typeChanged) validateConfig(fields.type!, undefined);
+
   if (fields.name !== undefined) emit(db, "properties", id, "name", fields.name);
+  if (fields.type !== undefined) emit(db, "properties", id, "type", fields.type);
   if (fields.config !== undefined) emit(db, "properties", id, "config", fields.config);
   if (fields.position !== undefined) emit(db, "properties", id, "position", fields.position);
+
+  // A type change invalidates existing cell values (a number may not be a valid
+  // select option, etc.), so clear the cells that currently hold a value for
+  // this property. The field is keyed by property id in the records data JSON.
+  if (typeChanged) {
+    const rows = db
+      .query(
+        "SELECT id FROM records WHERE database_id = ? AND __deleted = 0 AND data ->> ? IS NOT NULL",
+      )
+      .all(cur.database_id, id) as { id: string }[];
+    for (const r of rows) emit(db, "records", r.id, id, null);
+  }
   return getProperty(db, id)!;
 }
 

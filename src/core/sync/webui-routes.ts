@@ -1,7 +1,14 @@
 import { z } from "zod";
 import type { Route, RouteCtx } from "./routes.ts";
-import { listDatabases, createDatabase } from "../databases.ts";
-import { listProperties, addProperty, type PropType, type PropertyConfig } from "../properties.ts";
+import { listDatabases, createDatabase, updateDatabase, deleteDatabase } from "../databases.ts";
+import {
+  listProperties,
+  addProperty,
+  updateProperty,
+  removeProperty,
+  type PropType,
+  type PropertyConfig,
+} from "../properties.ts";
 import {
   listRecords,
   getRecord,
@@ -62,11 +69,21 @@ const SearchHitSchema = z.object({
 const OkSchema = z.object({ ok: z.boolean() });
 
 const CreateDatabaseReq = z.object({ name: z.string(), icon: z.string().optional() });
+const UpdateDatabaseReq = z.object({
+  name: z.string().optional(),
+  icon: z.string().nullable().optional(),
+});
 const CreatePropertyReq = z.object({
   db: z.string(),
   name: z.string(),
   type: z.string(),
   config: z.any().optional(),
+});
+const UpdatePropertyReq = z.object({
+  name: z.string().optional(),
+  type: z.string().optional(),
+  config: z.any().optional(),
+  position: z.number().optional(),
 });
 const RecordValuesReq = z.record(z.string(), z.any());
 const CreateDocumentReq = z.object({
@@ -128,6 +145,24 @@ export const webuiRoutes: Route[] = [
     }),
   },
   {
+    method: "PATCH",
+    path: "/api/database",
+    summary: "Rename a database or change its icon. Query: ?id=<id>",
+    request: UpdateDatabaseReq,
+    response: DatabaseSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { name?: string; icon?: string | null };
+      return updateDatabase(db, need(req, "id"), body);
+    }),
+  },
+  {
+    method: "DELETE",
+    path: "/api/database",
+    summary: "Delete a database (and stop it being the current one). Query: ?id=<id>",
+    response: OkSchema,
+    handler: handle((req, { db }) => ({ ok: deleteDatabase(db, need(req, "id")) })),
+  },
+  {
     method: "GET",
     path: "/api/properties",
     summary: "List a database's properties (columns). Query: ?db=<id>",
@@ -149,6 +184,29 @@ export const webuiRoutes: Route[] = [
       };
       return addProperty(db, body.db, { name: body.name, type: body.type, config: body.config });
     }),
+  },
+  {
+    method: "PATCH",
+    path: "/api/property",
+    summary: "Update a property: rename, change type, edit config/options, reorder. Query: ?id=<id>",
+    request: UpdatePropertyReq,
+    response: PropertySchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as {
+        name?: string;
+        type?: PropType;
+        config?: PropertyConfig;
+        position?: number;
+      };
+      return updateProperty(db, need(req, "id"), body);
+    }),
+  },
+  {
+    method: "DELETE",
+    path: "/api/property",
+    summary: "Delete a property (column) and its cells. Query: ?id=<id>",
+    response: OkSchema,
+    handler: handle((req, { db }) => ({ ok: removeProperty(db, need(req, "id")) })),
   },
   {
     method: "GET",

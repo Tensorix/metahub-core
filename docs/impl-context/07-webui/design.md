@@ -97,3 +97,29 @@
 - **CSS 内联在 HTML 外壳**:避免第三个静态资源路由,也让 CSS 不进 JS bundle;单处维护。
 - **性能隔离已验证**:`dist/cli.js` 中无 Preact 运行时符号(`preact/jsx-runtime`/`hooks` 等),仅余 `package.json` 里的版本字符串;普通 CLI 命令冷启动实测 ~30ms,不触碰 server/webui。
 - **端到端已验证**:经 `/api/*` 建库→加属性→建记录→`PATCH` 改字段→建文档→搜索全通;改动确认进 `crdt_changes` oplog,且 `mh record get` 能读到 WebUI 所建记录——证明写入与 CLI 同一可同步路径。`bun test` 59 通过、零回归。
+
+## 7. v2 改版（Notion-like 重写）
+
+v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：文档非所见即所得、表格不能改/删/排序列、侧栏无树/拖拽、无移动端、用 `alert/prompt/confirm`。v2 在**不动 core/oplog/sync、不破坏性能隔离**的前提下，把前端重写为 Notion-like 体验。代码级实现见 [implementation.md](./implementation.md)。
+
+### 7.1 范围与目标
+- 文档：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、行内格式条、待办/列表/引用/代码/分隔线）。
+- 表格：Notion-like——按类型行内编辑、列头菜单（改名/**改类型**/选项增删/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。
+- 侧栏：文档**树**（折叠/拖拽改嵌套）、宽度可拖拽、移动端抽屉；条目菜单与新建数据库 Modal（模板）。
+- 全面 CRUD + 真实弹窗/菜单/SVG 图标，移动端适配，明暗主题。
+
+### 7.2 关键设计决策
+1. **编辑器自研、不引重依赖**：contenteditable 块编辑器（保持依赖仅 citty/preact/zod）。**每个编辑器块 = 一个 core block**；保存时把所有块序列化为 markdown body，复用 `PATCH /api/document` + `reconcileBody`，**无需新增 block 级 API**，CRDT 按块合并语义不变。多行紧凑列表在前端拆为逐项块（一行一块），序列化为以空行分隔的列表项。
+2. **后端缺口极小**：core 已有 `updateProperty`/`removeProperty`/`deleteDatabase`/`listRecords(filter/sort)`，仅新增 `updateDatabase` 与 `updateProperty` 的 `type` 支持，并暴露 `PATCH/DELETE /api/database`、`PATCH/DELETE /api/property`（沿用 query 携带 id）。
+3. **属性类型变更**：扩展 `updateProperty` 接受 `type`；变更时清空该列所有单元格（旧值在新类型下可能非法）——有意的有界取舍。
+4. **前端模块化**：`app.tsx` 仍是唯一构建入口，拆为 `api/icons/ui/blocks/markdown/sidebar/table/editor`；Bun 跟随 import 自动打包，**性能隔离不变**（不进 `cli.js` 启动图）。命令式 `ui.tsx`（Modal/Menu/Toast）替换原生 `alert/prompt/confirm`。
+
+### 7.3 v1 范围外（避免改 schema，明确标注）
+- 数据库描述字段、文档独立 emoji 图标（需加列）。
+- 保存视图 / 持久化筛选排序（v2 排序为客户端临时态；看板/日历占位）。
+- 文档同级顺序、表格行手动拖拽顺序的**持久化**（跨层级移动 `parent_id` 已持久化）。
+
+### 7.4 涉及文件（增量）
+- 后端：改 `src/core/databases.ts`、`src/core/properties.ts`、`src/core/sync/webui-routes.ts`；新增 `src/core/{databases,properties}.test.ts`。
+- 前端：重写 `src/webui/app.tsx`、`src/core/sync/webui.ts`(CSS)；新增 `src/webui/{api.ts,icons.tsx,ui.tsx,blocks.ts,blocks.test.ts,markdown.tsx,markdown.test.ts,sidebar.tsx,table.tsx,editor.tsx}`。
+- 静态原型（评审规范）：`prototype/webui.html`。
