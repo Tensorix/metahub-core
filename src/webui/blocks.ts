@@ -21,6 +21,7 @@ export interface Block {
   content: string; // inner text, without the markdown prefix/fence
   checked?: boolean; // todo only
   lang?: string; // code only
+  start?: number; // numbered only: explicit start number of a run (first item)
   children?: Block[]; // list items only
 }
 
@@ -38,7 +39,7 @@ const RE = {
   h: /^(#{1,3})\s+(.*)$/,
   todo: /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/,
   bullet: /^\s*[-*+]\s+(.*)$/,
-  numbered: /^\s*\d+[.)]\s+(.*)$/,
+  numbered: /^\s*(\d+)[.)]\s+(.*)$/,
   quote: /^>\s?(.*)$/,
   divider: /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/,
 };
@@ -48,6 +49,7 @@ interface ListLine {
   type: "bullet" | "numbered" | "todo";
   checked?: boolean;
   content: string;
+  num?: number; // numbered only: the literal number the user wrote
 }
 
 interface Parsed {
@@ -60,6 +62,7 @@ interface Shortcut {
   content: string;
   checked?: boolean;
   lang?: string;
+  start?: number;
 }
 
 export function isListType(type: BlockType): boolean {
@@ -85,7 +88,7 @@ export function textToBlock(text: string): BlockDraft {
   }
   if ((m = firstLine.match(RE.todo)))
     return { type: "todo", content: m[2]!, checked: m[1]!.toLowerCase() === "x" };
-  if ((m = firstLine.match(RE.numbered))) return { type: "numbered", content: m[1]! };
+  if ((m = firstLine.match(RE.numbered))) return { type: "numbered", content: m[2]!, start: parseInt(m[1]!, 10) };
   if ((m = firstLine.match(RE.bullet))) return { type: "bullet", content: m[1]! };
   if (RE.quote.test(firstLine)) {
     const content = text
@@ -106,7 +109,50 @@ export function blockToText(b: Block): string {
 export function blocksFromBody(body: string | null | undefined): Block[] {
   const normalized = (body ?? "").replace(/\r\n?/g, "\n");
   const lines = normalized ? normalized.split("\n") : [];
-  return parseContainer(lines, 0, 0).blocks;
+  const blocks = parseContainer(lines, 0, 0).blocks;
+  normalizeNumbering(blocks);
+  return blocks;
+}
+
+/**
+ * Display numbers for a sibling list. A contiguous run of numbered items starts
+ * at the first item's `start` (default 1) and increments; any non-numbered
+ * sibling breaks the run. This is the single source of truth for both on-screen
+ * markers and Markdown serialization, so numbers always re-sequence on
+ * insert/delete/reorder ("sequence rebuild").
+ */
+export function computeListNumbers(siblings: readonly Block[]): Map<string, number> {
+  const out = new Map<string, number>();
+  let counter: number | null = null;
+  for (const b of siblings) {
+    if (b.type === "numbered") {
+      counter = counter === null ? Math.max(1, b.start ?? 1) : counter + 1;
+      out.set(b.id, counter);
+    } else {
+      counter = null;
+    }
+  }
+  return out;
+}
+
+/** Keep an explicit `start` only on the first item of each numbered run (and
+ *  drop it when it's the default 1); a run's later items always auto-increment,
+ *  so their parsed numbers are intentionally discarded (CommonMark behaviour). */
+function normalizeNumbering(blocks: Block[]): void {
+  let runStart = true;
+  for (const b of blocks) {
+    if (b.type === "numbered") {
+      if (runStart) {
+        if ((b.start ?? 1) <= 1) delete b.start;
+        runStart = false;
+      } else {
+        delete b.start;
+      }
+    } else {
+      runStart = true;
+    }
+    if (b.children) normalizeNumbering(b.children);
+  }
 }
 
 /** Editor block tree -> body Markdown. Empty paragraphs are dropped. */
@@ -121,7 +167,8 @@ export function shortcutFromInput(text: string, key: " " | "Enter"): Shortcut | 
     if (text === "### ") return { type: "h3", content: "" };
     if (text === "> ") return { type: "quote", content: "" };
     if (/^[-*+] $/.test(text)) return { type: "bullet", content: "" };
-    if (/^\d+[.)] $/.test(text)) return { type: "numbered", content: "" };
+    const numbered = text.match(/^(\d+)[.)] $/);
+    if (numbered) return { type: "numbered", content: "", start: parseInt(numbered[1]!, 10) };
 
     const todo = text.match(/^[-*+]\s+\[([ xX])\]\s$/);
     if (todo) return { type: "todo", content: "", checked: todo[1]!.toLowerCase() === "x" };
@@ -167,6 +214,7 @@ function parseListItem(lines: string[], start: number, minIndent: number): Parse
     content: info.content,
   };
   if (info.type === "todo") block.checked = !!info.checked;
+  if (info.type === "numbered" && info.num != null) block.start = info.num;
 
   const child = parseContainer(lines, start + 1, info.indent + 2);
   if (child.blocks.length) block.children = child.blocks;
@@ -268,8 +316,8 @@ function matchListLine(line: string, minIndent: number): ListLine | null {
     };
   }
 
-  m = text.match(/^\d+[.)]\s+(.*)$/);
-  if (m) return { indent, type: "numbered", content: m[1]! };
+  m = text.match(/^(\d+)[.)]\s+(.*)$/);
+  if (m) return { indent, type: "numbered", content: m[2]!, num: parseInt(m[1]!, 10) };
 
   m = text.match(/^[-*+]\s+(.*)$/);
   if (m) return { indent, type: "bullet", content: m[1]! };
@@ -280,14 +328,12 @@ function matchListLine(line: string, minIndent: number): ListLine | null {
 function renderContainer(blocks: readonly Block[] | undefined, indent: number): string[] {
   const out: string[] = [];
   let prev: Block | null = null;
-  let number = 1;
+  const persisted = (blocks ?? []).filter(shouldPersist);
+  const numbers = computeListNumbers(persisted);
 
-  for (const block of blocks ?? []) {
-    if (!shouldPersist(block)) continue;
+  for (const block of persisted) {
     if (out.length && shouldSeparate(prev, block)) out.push("");
-
-    out.push(...renderBlock(block, indent, block.type === "numbered" ? number : 1));
-    if (block.type === "numbered") number++;
+    out.push(...renderBlock(block, indent, numbers.get(block.id) ?? 1));
     prev = block;
   }
 

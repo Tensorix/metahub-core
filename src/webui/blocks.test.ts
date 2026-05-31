@@ -81,8 +81,8 @@ test("nested ordered lists keep child paragraphs, quotes, and fenced code", () =
   ]);
 
   expect(bodyFromBlocks(blocks)).toBe([
-    "1. Parent",
-    "  1. Child",
+    "4. Parent",
+    "  9. Child",
     "",
     "    Child paragraph",
     "",
@@ -91,13 +91,38 @@ test("nested ordered lists keep child paragraphs, quotes, and fenced code", () =
     "    ```python",
     "    print('hi')",
     "    ```",
-    "2. Sibling",
+    "5. Sibling",
   ].join("\n"));
 });
 
-test("ordered numbering is recalculated per sibling level", () => {
+test("ordered runs start at the first item's number, then auto-increment", () => {
+  // The first item's number is honoured; later items re-sequence from it.
   const blocks = blocksFromBody("3. top\n  9. nested\n  3. nested again\n8. next");
-  expect(bodyFromBlocks(blocks)).toBe("1. top\n  1. nested\n  2. nested again\n2. next");
+  expect(bodyFromBlocks(blocks)).toBe("3. top\n  9. nested\n  10. nested again\n4. next");
+});
+
+test("ordered start is preserved across a Markdown round-trip", () => {
+  const body = "5. a\n6. b\n7. c";
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
+});
+
+test("repeated '1.' input re-sequences to 1, 2, 3", () => {
+  const blocks = blocksFromBody("1. a\n1. b\n1. c");
+  expect(bodyFromBlocks(blocks)).toBe("1. a\n2. b\n3. c");
+  // start defaults away when it is 1
+  expect(blocks[0]!.start).toBeUndefined();
+});
+
+test("only the first item of a run keeps an explicit start", () => {
+  const blocks = blocksFromBody("5. a\n6. b");
+  expect(blocks[0]!.start).toBe(5);
+  expect(blocks[1]!.start).toBeUndefined();
+});
+
+test("deleting the first item re-sequences the run from the new head", () => {
+  const blocks = blocksFromBody("5. a\n6. b\n7. c");
+  blocks.shift(); // remove "5. a"
+  expect(bodyFromBlocks(blocks)).toBe("1. b\n2. c");
 });
 
 test("nested list serialization reflects indent and outdent moves", () => {
@@ -129,7 +154,8 @@ test("list items can own fenced code children", () => {
 });
 
 test("typing shortcuts recognise markdown prefixes", () => {
-  expect(shortcutFromInput("1. ", " ")).toMatchObject({ type: "numbered", content: "" });
+  expect(shortcutFromInput("1. ", " ")).toMatchObject({ type: "numbered", content: "", start: 1 });
+  expect(shortcutFromInput("5. ", " ")).toMatchObject({ type: "numbered", content: "", start: 5 });
   expect(shortcutFromInput("> ", " ")).toMatchObject({ type: "quote", content: "" });
   expect(shortcutFromInput("- [ ] ", " ")).toMatchObject({ type: "todo", checked: false });
   expect(shortcutFromInput("- [x] ", " ")).toMatchObject({ type: "todo", checked: true });

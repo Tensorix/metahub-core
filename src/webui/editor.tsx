@@ -14,6 +14,7 @@ import {
   blockToText,
   blocksFromBody,
   bodyFromBlocks,
+  computeListNumbers,
   genId,
   isListType,
   shortcutFromInput,
@@ -76,11 +77,78 @@ export function DocView({
   const [sel, setSel] = useState<{ anchorId: string; focusId: string } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  const bump = () => setVersion((v) => v + 1);
+  // ---- undo/redo history ----
+  // Structural block ops mutate blocksRef directly and aren't on the browser's
+  // native undo stack, so we keep our own snapshot history and take over Ctrl+Z.
+  // `present` is the snapshot as of the last recordHistory() call; a mutation
+  // pushes it to `past`. Rapid same-block edits (typing) coalesce into one step.
+  const history = useRef<{
+    past: Snap[];
+    future: Snap[];
+    present: Snap | null;
+    lastKey: string | null;
+    lastTime: number;
+  }>({ past: [], future: [], present: null, lastKey: null, lastTime: 0 });
+
+  const snapshot = (): Snap => ({
+    blocks: structuredClone(blocksRef.current),
+    title: titleRef.current,
+    focusId: focusedBlockId(),
+  });
+
+  const recordHistory = (coalesceKey: string | null) => {
+    const h = history.current;
+    if (!h.present) { h.present = snapshot(); h.lastKey = coalesceKey; h.lastTime = Date.now(); return; }
+    const now = Date.now();
+    if (coalesceKey && coalesceKey === h.lastKey && now - h.lastTime < 600) {
+      h.present = snapshot(); // advance present to the latest state, no new step
+      h.lastTime = now;
+      return;
+    }
+    h.past.push(h.present);
+    if (h.past.length > 200) h.past.shift();
+    h.present = snapshot();
+    h.future = [];
+    h.lastKey = coalesceKey;
+    h.lastTime = now;
+  };
+
+  const restoreSnap = (snap: Snap) => {
+    blocksRef.current = structuredClone(snap.blocks);
+    titleRef.current = snap.title;
+    setSel(null);
+    setVersion((v) => v + 1); // re-render without recording (bypasses bump)
+    scheduleSave();
+    if (snap.focusId) requestAnimationFrame(() => focusBlock(snap.focusId!, true));
+  };
+
+  const undo = () => {
+    const h = history.current;
+    if (!h.past.length) return;
+    if (h.present) h.future.push(h.present);
+    const prev = h.past.pop()!;
+    h.present = prev;
+    h.lastKey = null;
+    restoreSnap(prev);
+  };
+
+  const redo = () => {
+    const h = history.current;
+    if (!h.future.length) return;
+    if (h.present) h.past.push(h.present);
+    const next = h.future.pop()!;
+    h.present = next;
+    h.lastKey = null;
+    restoreSnap(next);
+  };
+
+  // Every structural mutation funnels through bump(); record a history step here.
+  const bump = () => { recordHistory(null); setVersion((v) => v + 1); };
 
   useEffect(() => {
     setLoading(true);
     setSlash(null);
+    history.current = { past: [], future: [], present: null, lastKey: null, lastTime: 0 };
     api
       .getDocument(docId)
       .then((d) => {
@@ -132,6 +200,8 @@ export function DocView({
     else delete b.checked;
     if (type === "code") b.lang = draft.lang ?? "";
     else delete b.lang;
+    if (type === "numbered" && draft.start != null && draft.start > 1) b.start = draft.start;
+    else delete b.start;
     if (children?.length) b.children = children;
     else delete b.children;
     bump();
@@ -147,6 +217,7 @@ export function DocView({
 
   const onContentInput = (b: Block, el: HTMLElement) => {
     b.content = blockEditorText(b, el);
+    recordHistory("text:" + b.id);
     // slash trigger / filter
     const text = el.textContent ?? "";
     if (text.startsWith("/")) {
@@ -247,10 +318,15 @@ export function DocView({
   // editable is blurred while a block selection is up, so keydowns would
   // otherwise never reach the .doc element. No-ops when there is no selection.
   const onBlockKeyDown = (e: KeyboardEvent) => {
+    const mod = e.metaKey || e.ctrlKey;
+    // Undo/redo: take over Ctrl/Cmd+Z so structural block ops are reversible
+    // (the browser's native undo only covers intra-block text typing).
+    if (mod && (e.key === "z" || e.key === "Z")) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if (mod && e.key === "y") { e.preventDefault(); redo(); return; }
+
     if (!sel) return;
     const ids = selectedIds;
     if (!ids.length) return;
-    const mod = e.metaKey || e.ctrlKey;
 
     if (e.key === "Escape") { e.preventDefault(); const a = sel.anchorId; clearSel(); focusBlock(a, true); return; }
     if (e.key === "Tab") { e.preventDefault(); indentSelectedBlocks(ids, e.shiftKey ? "outdent" : "indent"); return; }
@@ -487,19 +563,20 @@ export function DocView({
   if (loading) return <div class="empty">加载中…</div>;
 
   const selectedSet = new Set(selectedIds);
-  const renderBlocks = (items: Block[], depth = 0): ComponentChildren =>
-    items.map((b, i) => (
+  const renderBlocks = (items: Block[], depth = 0): ComponentChildren => {
+    const numbers = computeListNumbers(items);
+    return items.map((b) => (
       <BlockRow
         key={b.id}
         renderKey={version}
         block={b}
         depth={depth}
         selected={selectedSet.has(b.id)}
-        number={b.type === "numbered" ? items.slice(0, i + 1).filter((x) => x.type === "numbered").length : 0}
+        number={b.type === "numbered" ? (numbers.get(b.id) ?? 1) : 0}
         onInput={(el) => onContentInput(b, el)}
         onLangInput={(lang) => { b.lang = lang; bump(); scheduleSave(); }}
         onKeyDown={(e, el) => onKeyDown(e, b, el)}
-        onCodeInput={(value) => { b.content = value; scheduleSave(); }}
+        onCodeInput={(value) => { b.content = value; recordHistory("text:" + b.id); scheduleSave(); }}
         onCodeKeyDown={(e, ta) => onCodeKeyDown(e, b, ta)}
         onAdd={() => insertAfter(b.id)}
         onMenu={(e) => blockMenu(e, b)}
@@ -519,6 +596,7 @@ export function DocView({
         {b.children?.length ? renderBlocks(b.children, depth + 1) : null}
       </BlockRow>
     ));
+  };
 
   return (
     <div
@@ -530,7 +608,7 @@ export function DocView({
       <div
         class="doc-title"
         contentEditable
-        onInput={(e) => { titleRef.current = (e.target as HTMLElement).textContent ?? ""; scheduleSave(); }}
+        onInput={(e) => { titleRef.current = (e.target as HTMLElement).textContent ?? ""; recordHistory("title"); scheduleSave(); }}
         onBlur={() => { onTitleChange(); }}
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (!blocks.length) insertAfter(null); else focusBlock(blocks[0]!.id); } }}
         dangerouslySetInnerHTML={{ __html: titleRef.current }}
@@ -814,6 +892,19 @@ function closestBlockElement(node: Node): HTMLElement | null {
   return (el?.closest(".block[data-bid]") as HTMLElement | null) ?? null;
 }
 
+// A document snapshot for the undo/redo history.
+interface Snap {
+  blocks: Block[];
+  title: string;
+  focusId: string | null;
+}
+
+function focusedBlockId(): string | null {
+  const el = document.activeElement as HTMLElement | null;
+  const block = el?.closest?.(".doc .block[data-bid]") as HTMLElement | null;
+  return block?.getAttribute("data-bid") ?? null;
+}
+
 // Toggle native text selectability off during a block-selection drag so the
 // browser doesn't paint a stray character highlight underneath the block tint.
 function setSelectingClass(on: boolean) {
@@ -851,6 +942,7 @@ function makeBlock(type: BlockType, draft: Partial<BlockDraft> = {}): Block {
   const block: Block = { id: genId(), type, content: draft.content ?? "" };
   if (type === "todo") block.checked = draft.checked ?? false;
   if (type === "code") block.lang = draft.lang ?? "";
+  if (type === "numbered" && draft.start != null && draft.start > 1) block.start = draft.start;
   if (isListType(type) && draft.children?.length) block.children = draft.children;
   return block;
 }
