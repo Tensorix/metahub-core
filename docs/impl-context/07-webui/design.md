@@ -158,6 +158,7 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 - **高亮引擎**：`highlight.js/lib/common`（~30 常用语言，指定语言用 `hljs.highlight`，否则 `highlightAuto`）。token 配色自写一套用 CSS 变量（`--hl-*`），浅色 + `prefers-color-scheme:dark` 双套内联，不引第三方主题 CSS，保持与系统调性一致。新增运行时依赖 `highlight.js`——仅进 lazy 加载的 webui bundle，不入 CLI 启动 import 图。
 - **代码块输入架构**：放弃 contentEditable，改 **transparent `<textarea>` + 下层 `<pre><code>` 高亮镜像**（经典 code-editor 方案）。原生光标 / 多行 / 方向键；逐键命令式刷新高亮与行号。`wrap="off"` 让 textarea 不软换行以对齐高亮层；`rows="1"` 修正 textarea `scrollHeight` 以 `rows`（默认 2）为下限导致短代码块底部多一行空白的问题。
 - **退出代码块（消除「卡住」）**：末行为空行按 Enter，或光标在末行按 ↓，退出并在下方建块；首行按 ↑ 回上一块。此前全局 `onKeyDown` 用 `type!=="code"` 跳过代码块，Enter/↓ 都无法离开。
+- **删除空代码块**：顶层空代码块 Backspace 转回普通段落；列表项内嵌空代码块 Backspace 只移除代码块子节点并聚焦回父列表项，保留列表编号/marker，避免留下额外空子段落。
 - **代码块 UI**：语言下拉 + 复制按钮收进**右下角 hover 浮层**（默认隐藏，`:hover` / `:focus-within` 显示）；左侧行号栏；整体紧凑度量。
 - **引用块**：收敛为中性左边条 + 斜体柔色（去掉早期带色底纹——它是文档里唯一的色块，与中性调性冲突）。
 - **嵌套子块**：缩进为主；仅对**真正的子列表**（`:has(> .b-bullet/.b-numbered/.b-todo)`）显示细引导线，代码等其它嵌套内容不画线，避免多层堆叠成「乱线」。列表项内嵌代码块时隐藏冗余的子块 gutter，由列表项 host gutter 统一掌管（否则与列表序号重叠）。

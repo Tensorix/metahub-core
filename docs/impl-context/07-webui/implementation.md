@@ -170,7 +170,7 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 - `Enter`：当前行为空且为最后一行 → 去尾空行后 `insertAfter(b.id,"p")` 退出；否则放行原生换行。
 - `ArrowDown`：光标在最后一行 → `nextBlock()` 聚焦下块，无下块则建段落。
 - `ArrowUp`：光标在第一行 → `previousBlock()` 聚焦上块末尾。
-- `Backspace`：空内容 → `convert(b.id,"p")`。
+- `Backspace`：顶层空代码块 → `convert(b.id,"p")`；列表项内的空子代码块 → 移除该子块并聚焦回空列表项，保留编号/marker。
 - 配套：新增 `nextBlock`/`flatten`；`focusBlock` 选择器扩展 `.code-input`，textarea 用 `setSelectionRange` 定位（atEnd → `value.length`）。
 
 ### 10.4 关键修复：短代码块底部空白
@@ -193,3 +193,16 @@ textarea 的 `scrollHeight` 以 `rows` 属性为下限，`rows` 默认 **2**，�
 ### 10.7 涉及文件
 
 - `package.json`、`src/webui/blocks.ts`、`src/webui/editor.tsx`、`src/core/sync/webui.ts`。
+
+### 10.8 v2.2.1 列表内空代码块删除修正（2026-06-01）
+
+问题：列表第一行或任意列表项内用 code fence 创建嵌套代码块后，清空代码块并按 Backspace，旧逻辑会把子 `code` 转成空 `p`，导致 UI 显示「空列表项 + 空段落子块」两行 placeholder。
+
+修正：`onCodeKeyDown` 在空内容 Backspace 时先检查当前代码块是否位于空列表项下；若是，只从父列表项 `children` 中移除该代码块，必要时清掉 `parent.children`，然后聚焦回父列表项。顶层空代码块仍按原行为转成普通段落。
+
+验证：
+
+- `bun test src/webui/blocks.test.ts src/webui/markdown.test.ts`：14 通过。
+- `bun test`：111 通过。
+- `bun build src/webui/app.tsx --outdir /private/tmp/metahub-webui-check`：通过。
+- `bun run tsc --noEmit`：仍有既存无关类型错误，位置为 `src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`src/webui/table.tsx`；本次改动文件未新增类型错误。
