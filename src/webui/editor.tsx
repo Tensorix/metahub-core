@@ -11,12 +11,27 @@ import {
   type BlockType,
   BLOCK_MENU,
   COMMON_LANGS,
+  blockToText,
   blocksFromBody,
   bodyFromBlocks,
   genId,
   isListType,
   shortcutFromInput,
 } from "./blocks.ts";
+import {
+  cloneBlock,
+  countBlocks,
+  findBlock,
+  flattenBlocks,
+  indentBlock,
+  indentBlocks,
+  moveBlock,
+  nextBlock,
+  outdentBlock,
+  outdentBlocks,
+  previousBlock,
+  removeBlockById,
+} from "./editor-ops.ts";
 import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
 
 /** Highlight code to HTML for the overlay layer. Falls back to escaped text. */
@@ -114,9 +129,7 @@ export function DocView({
   };
 
   const remove = (id: string) => {
-    const found = findBlock(blocks, id);
-    if (!found) return;
-    found.parent.splice(found.index, 1);
+    if (!removeBlockById(blocks, id)) return;
     bump();
     scheduleSave();
   };
@@ -161,29 +174,90 @@ export function DocView({
   };
 
   const indent = (id: string) => {
-    const found = findBlock(blocks, id);
-    if (!found || found.index === 0) return;
-    const previous = found.parent[found.index - 1]!;
-    if (!isListType(previous.type)) return;
-    const moved = found.parent.splice(found.index, 1)[0]!;
-    previous.children ??= [];
-    previous.children.push(moved);
+    syncRenderedBlocks(blocks);
+    if (!indentBlock(blocks, id)) return;
     bump();
     requestAnimationFrame(() => focusBlock(id));
     scheduleSave();
   };
 
   const outdent = (id: string) => {
-    const found = findBlock(blocks, id);
-    if (!found?.parentBlock) return;
-    const parentFound = findBlock(blocks, found.parentBlock.id);
-    if (!parentFound) return;
-    const moved = found.parent.splice(found.index, 1)[0]!;
-    if (found.parent.length === 0) delete found.parentBlock.children;
-    parentFound.parent.splice(parentFound.index + 1, 0, moved);
+    syncRenderedBlocks(blocks);
+    if (!outdentBlock(blocks, id)) return;
     bump();
     requestAnimationFrame(() => focusBlock(id));
     scheduleSave();
+  };
+
+  const applySelectionIndent = (ids: string[], dir: "indent" | "outdent") => {
+    syncRenderedBlocks(blocks);
+    const changed = dir === "indent" ? indentBlocks(blocks, ids) : outdentBlocks(blocks, ids);
+    if (!changed.length) return false;
+    bump();
+    requestAnimationFrame(() => focusBlock(changed[0]!));
+    scheduleSave();
+    setBar(null);
+    return true;
+  };
+
+  const deleteSelection = (selection: BlockSelection) => {
+    syncRenderedBlocks(blocks);
+    const focusId = deleteBlockSelection(blocks, selection);
+    if (!focusId) return false;
+    bump();
+    requestAnimationFrame(() => focusBlock(focusId, true));
+    scheduleSave();
+    setBar(null);
+    return true;
+  };
+
+  const onDocKeyDownCapture = (e: KeyboardEvent) => {
+    if (e.key !== "Tab" && e.key !== "Backspace" && e.key !== "Delete") return;
+    const selection = getBlockSelection(blocks);
+    if (!selection || selection.ids.length <= 1) return;
+    e.preventDefault();
+    if (e.key === "Tab") applySelectionIndent(selection.ids, e.shiftKey ? "outdent" : "indent");
+    else deleteSelection(selection);
+  };
+
+  const applyFormatCommand = (cmd: string) => {
+    const selection = getBlockSelection(blocks);
+    const link = cmd === "createLink" ? prompt("链接地址") : null;
+    if (cmd === "createLink" && !link) return;
+
+    if (selection && selection.ids.length > 1) {
+      const changed = applyFormatToBlockSelection(selection, cmd, link ?? undefined);
+      if (!changed.length) return;
+      syncRenderedBlocks(blocks);
+      scheduleSave();
+      updateBar(setBar);
+      return;
+    }
+
+    if (cmd === "code") wrapInlineCode();
+    else document.execCommand(cmd, false, link ?? undefined);
+    syncFocusedBlock(blocks);
+    scheduleSave();
+    updateBar(setBar);
+  };
+
+  const onDocCopy = (e: ClipboardEvent) => {
+    const selection = getBlockSelection(blocks);
+    if (!selection || selection.ids.length <= 1) return;
+    const text = serializeBlockSelection(blocks, selection);
+    if (!text) return;
+    e.preventDefault();
+    e.clipboardData?.setData("text/plain", text);
+  };
+
+  const onDocCut = (e: ClipboardEvent) => {
+    const selection = getBlockSelection(blocks);
+    if (!selection || selection.ids.length <= 1) return;
+    const text = serializeBlockSelection(blocks, selection);
+    if (!text) return;
+    e.preventDefault();
+    e.clipboardData?.setData("text/plain", text);
+    deleteSelection(selection);
   };
 
   const onKeyDown = (e: KeyboardEvent, b: Block, el: HTMLElement) => {
@@ -193,10 +267,9 @@ export function DocView({
       if (e.key === "Enter") { e.preventDefault(); const m = slashMatches[slash.idx]; if (m) applySlash(m); return; }
       if (e.key === "Escape") { setSlash(null); return; }
     }
-    if (e.key === "Tab" && (b.type === "code" || isListType(b.type))) {
+    if (e.key === "Tab") {
       e.preventDefault();
-      if (b.type === "code") document.execCommand("insertText", false, "  ");
-      else (e.shiftKey ? outdent : indent)(b.id);
+      (e.shiftKey ? outdent : indent)(b.id);
       return;
     }
     if (e.key === " " && b.type === "p" && !hasExpandedSelection()) {
@@ -239,6 +312,15 @@ export function DocView({
     const { value, selectionStart: start, selectionEnd: end } = ta;
     if (e.key === "Tab") {
       e.preventDefault();
+      if (e.shiftKey) {
+        syncRenderedBlocks(blocks);
+        if (outdentBlock(blocks, b.id)) {
+          bump();
+          requestAnimationFrame(() => focusBlock(b.id));
+          scheduleSave();
+        }
+        return;
+      }
       document.execCommand("insertText", false, "  "); // keeps native undo + fires input
       return;
     }
@@ -334,6 +416,9 @@ export function DocView({
   return (
     <div
       class="doc"
+      onKeyDownCapture={(e) => onDocKeyDownCapture(e as KeyboardEvent)}
+      onCopy={(e) => onDocCopy(e as ClipboardEvent)}
+      onCut={(e) => onDocCut(e as ClipboardEvent)}
       onMouseUp={() => updateBar(setBar)}
       onKeyUp={(e) => { if (e.shiftKey || e.key.startsWith("Arrow")) updateBar(setBar); }}
     >
@@ -370,7 +455,7 @@ export function DocView({
         </div>
       )}
 
-      {bar && <FormatBar x={bar.x} y={bar.y} onDone={() => syncFocusedBlock(blocksRef.current)} />}
+      {bar && <FormatBar x={bar.x} y={bar.y} onCommand={applyFormatCommand} />}
     </div>
   );
 }
@@ -578,13 +663,10 @@ function CodeBlock({
 }
 
 // ---- inline formatting toolbar ----
-function FormatBar({ x, y, onDone }: { x: number; y: number; onDone: () => void }) {
+function FormatBar({ x, y, onCommand }: { x: number; y: number; onCommand: (cmd: string) => void }) {
   const run = (cmd: string) => (e: MouseEvent) => {
     e.preventDefault();
-    if (cmd === "code") wrapInlineCode();
-    else if (cmd === "createLink") { const u = prompt("链接地址"); if (u) document.execCommand("createLink", false, u); }
-    else document.execCommand(cmd, false);
-    onDone();
+    onCommand(cmd);
   };
   return (
     <div class="pop" style={{ left: Math.max(8, Math.min(x, innerWidth - 220)), top: y - 46, minWidth: 0, padding: 3, display: "flex", gap: 1 }}>
@@ -604,14 +686,196 @@ function wrapInlineCode() {
   const text = sel.toString();
   document.execCommand("insertHTML", false, `<code>${text.replace(/</g, "&lt;")}</code>`);
 }
+
+interface BlockSelection {
+  ids: string[];
+  startId: string;
+  endId: string;
+  range: Range;
+}
+
+function getBlockSelection(blocks: Block[]): BlockSelection | null {
+  const sel = getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  const startBlock = closestBlockElement(range.startContainer);
+  const endBlock = closestBlockElement(range.endContainer);
+  const startId = startBlock?.getAttribute("data-bid");
+  const endId = endBlock?.getAttribute("data-bid");
+  if (!startId || !endId) return null;
+
+  const flat = flattenBlocks(blocks);
+  const startIndex = flat.findIndex((b) => b.id === startId);
+  const endIndex = flat.findIndex((b) => b.id === endId);
+  if (startIndex < 0 || endIndex < 0) return null;
+
+  const from = Math.min(startIndex, endIndex);
+  const to = Math.max(startIndex, endIndex);
+  return {
+    ids: flat.slice(from, to + 1).map((b) => b.id),
+    startId: flat[from]!.id,
+    endId: flat[to]!.id,
+    range: range.cloneRange(),
+  };
+}
+
+function applyFormatToBlockSelection(selection: BlockSelection, cmd: string, link?: string): string[] {
+  const segments = selection.ids
+    .map((id) => {
+      const el = editableForBlock(id);
+      const range = el ? rangeForEditableSegment(selection, id, el) : null;
+      return el && range ? { id, range } : null;
+    })
+    .filter((x): x is { id: string; range: Range } => !!x);
+  const changed: string[] = [];
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const segment = segments[i]!;
+    if (wrapRangeWithInlineCommand(segment.range, cmd, link)) changed.push(segment.id);
+  }
+  return changed;
+}
+
+function deleteBlockSelection(blocks: Block[], selection: BlockSelection): string | null {
+  const first = selection.ids[0];
+  const last = selection.ids[selection.ids.length - 1];
+  if (!first || !last || first === last) return null;
+
+  const fallback = previousBlock(blocks, first)?.id ?? nextBlock(blocks, last)?.id ?? null;
+  const remove = new Set(selection.ids.slice(1, -1));
+  let focusId: string | null = first;
+
+  const firstEl = editableForBlock(first);
+  if (firstEl && elementContainsNode(firstEl, selection.range.startContainer)) {
+    const tail = document.createRange();
+    tail.selectNodeContents(firstEl);
+    tail.setStart(selection.range.startContainer, selection.range.startOffset);
+    tail.deleteContents();
+    syncBlockElement(blocks, firstEl);
+  } else {
+    remove.add(first);
+    focusId = last;
+  }
+
+  const lastEl = editableForBlock(last);
+  if (lastEl && elementContainsNode(lastEl, selection.range.endContainer)) {
+    const head = document.createRange();
+    head.selectNodeContents(lastEl);
+    head.setEnd(selection.range.endContainer, selection.range.endOffset);
+    head.deleteContents();
+    syncBlockElement(blocks, lastEl);
+  } else {
+    remove.add(last);
+  }
+
+  const flat = flattenBlocks(blocks).map((b) => b.id);
+  for (let i = flat.length - 1; i >= 0; i--) {
+    const id = flat[i]!;
+    if (remove.has(id)) removeBlockById(blocks, id);
+  }
+
+  if (!focusId || !findBlock(blocks, focusId)) {
+    focusId = fallback ?? flattenBlocks(blocks)[0]?.id ?? null;
+  }
+  return focusId;
+}
+
+function serializeBlockSelection(blocks: Block[], selection: BlockSelection): string {
+  const parts: string[] = [];
+  for (const id of selection.ids) {
+    const found = findBlock(blocks, id);
+    if (!found) continue;
+    const el = editableForBlock(id);
+    const range = el ? rangeForEditableSegment(selection, id, el) : null;
+    if (range && (id === selection.startId || id === selection.endId)) {
+      const text = range.toString();
+      if (text) parts.push(text);
+      continue;
+    }
+    parts.push(blockToText({ ...found.block, children: undefined }));
+  }
+  return parts.filter(Boolean).join("\n");
+}
+
+function rangeForEditableSegment(selection: BlockSelection, id: string, el: HTMLElement): Range | null {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  if (id === selection.startId) {
+    if (!elementContainsNode(el, selection.range.startContainer)) return null;
+    range.setStart(selection.range.startContainer, selection.range.startOffset);
+  }
+  if (id === selection.endId) {
+    if (!elementContainsNode(el, selection.range.endContainer)) return null;
+    range.setEnd(selection.range.endContainer, selection.range.endOffset);
+  }
+  return range;
+}
+
+function wrapRangeWithInlineCommand(range: Range, cmd: string, link?: string): boolean {
+  if (range.collapsed || !range.toString()) return false;
+  const tag =
+    cmd === "bold"
+      ? "strong"
+      : cmd === "italic"
+        ? "em"
+        : cmd === "underline"
+          ? "u"
+          : cmd === "strikeThrough"
+            ? "s"
+            : cmd === "code"
+              ? "code"
+              : cmd === "createLink"
+                ? "a"
+                : null;
+  if (!tag) return false;
+  const wrapper = document.createElement(tag);
+  if (tag === "a" && link) {
+    wrapper.setAttribute("href", link);
+    wrapper.setAttribute("target", "_blank");
+    wrapper.setAttribute("rel", "noreferrer");
+  }
+  wrapper.append(range.extractContents());
+  range.insertNode(wrapper);
+  return true;
+}
+
+function syncRenderedBlocks(blocks: Block[]) {
+  document.querySelectorAll(".doc .block[data-bid]").forEach((el) => syncBlockElement(blocks, el as HTMLElement));
+}
+
+function syncBlockElement(blocks: Block[], el: HTMLElement) {
+  const blockEl = el.matches(".block[data-bid]") ? el : (el.closest(".block[data-bid]") as HTMLElement | null);
+  const id = blockEl?.getAttribute("data-bid");
+  const block = id ? findBlock(blocks, id)?.block : null;
+  if (!block || !blockEl) return;
+  const editable = blockEl.querySelector(".editable") as HTMLElement | null;
+  const code = blockEl.querySelector(".code-input") as HTMLTextAreaElement | null;
+  if (editable) block.content = blockEditorText(block, editable);
+  else if (code) block.content = code.value;
+}
+
+function editableForBlock(id: string): HTMLElement | null {
+  return document.querySelector(`.block[data-bid="${id}"] .editable`) as HTMLElement | null;
+}
+
+function closestBlockElement(node: Node): HTMLElement | null {
+  const el = node instanceof HTMLElement ? node : node.parentElement;
+  return (el?.closest(".block[data-bid]") as HTMLElement | null) ?? null;
+}
+
+function elementContainsNode(el: HTMLElement, node: Node): boolean {
+  return node === el || el.contains(node);
+}
+
 function updateBar(setBar: (b: { x: number; y: number } | null) => void) {
   const sel = getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount) return setBar(null);
   const node = sel.anchorNode;
   if (!(node?.parentElement?.closest?.(".editable"))) return setBar(null);
-  const r = sel.getRangeAt(0).getBoundingClientRect();
-  if (!r.width) return setBar(null);
-  setBar({ x: r.left, y: r.top });
+  const range = sel.getRangeAt(0);
+  const r = range.getBoundingClientRect();
+  const firstRect = r.width || r.height ? r : range.getClientRects()[0];
+  if (!firstRect) return setBar(null);
+  setBar({ x: firstRect.left, y: firstRect.top });
 }
 function syncFocusedBlock(blocks: Block[]) {
   const el = getSelection()?.anchorNode?.parentElement?.closest?.(".editable") as HTMLElement | null;
@@ -627,92 +891,6 @@ function makeBlock(type: BlockType, draft: Partial<BlockDraft> = {}): Block {
   if (type === "code") block.lang = draft.lang ?? "";
   if (isListType(type) && draft.children?.length) block.children = draft.children;
   return block;
-}
-
-interface FoundBlock {
-  block: Block;
-  parent: Block[];
-  index: number;
-  parentBlock: Block | null;
-}
-
-function findBlock(blocks: Block[], id: string, parentBlock: Block | null = null): FoundBlock | null {
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i]!;
-    if (block.id === id) return { block, parent: blocks, index: i, parentBlock };
-    const found = block.children ? findBlock(block.children, id, block) : null;
-    if (found) return found;
-  }
-  return null;
-}
-
-function countBlocks(blocks: readonly Block[]): number {
-  let count = 0;
-  for (const block of blocks) count += 1 + countBlocks(block.children ?? []);
-  return count;
-}
-
-function cloneBlock(block: Block): Block {
-  return {
-    ...block,
-    id: genId(),
-    children: block.children?.map(cloneBlock),
-  };
-}
-
-function containsBlock(blocks: readonly Block[] | undefined, id: string): boolean {
-  for (const block of blocks ?? []) {
-    if (block.id === id || containsBlock(block.children, id)) return true;
-  }
-  return false;
-}
-
-function moveBlock(blocks: Block[], srcId: string, targetId: string, where: "before" | "after"): boolean {
-  if (srcId === targetId) return false;
-  const source = findBlock(blocks, srcId);
-  const target = findBlock(blocks, targetId);
-  if (!source || !target || containsBlock(source.block.children, targetId)) return false;
-
-  const moved = source.parent.splice(source.index, 1)[0]!;
-  const freshTarget = findBlock(blocks, targetId);
-  if (!freshTarget) {
-    source.parent.splice(source.index, 0, moved);
-    return false;
-  }
-  freshTarget.parent.splice(freshTarget.index + (where === "after" ? 1 : 0), 0, moved);
-  return true;
-}
-
-function previousBlock(blocks: readonly Block[], id: string): Block | null {
-  let previous: Block | null = null;
-  let found: Block | null = null;
-  const visit = (items: readonly Block[]) => {
-    for (const block of items) {
-      if (block.id === id) {
-        found = previous;
-        return;
-      }
-      previous = block;
-      if (block.children) visit(block.children);
-      if (found) return;
-    }
-  };
-  visit(blocks);
-  return found;
-}
-
-function flatten(blocks: readonly Block[], out: Block[] = []): Block[] {
-  for (const block of blocks) {
-    out.push(block);
-    if (block.children) flatten(block.children, out);
-  }
-  return out;
-}
-
-function nextBlock(blocks: readonly Block[], id: string): Block | null {
-  const flat = flatten(blocks);
-  const i = flat.findIndex((b) => b.id === id);
-  return i >= 0 && i + 1 < flat.length ? flat[i + 1]! : null;
 }
 
 function blockEditorText(_block: Block, el: HTMLElement): string {
