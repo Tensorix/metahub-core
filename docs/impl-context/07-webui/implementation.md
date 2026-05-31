@@ -128,3 +128,22 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 - `bunx tsc --noEmit`：仍有既存无关类型错误（`src/cli/index.ts` 的 citty 泛型、`src/core/sync/sites-serve.ts` 的 `Uint8Array` BodyInit、`src/webui/table.tsx` 的 nullable `dataTransfer`）；本次 editor 相关类型问题已修正。
 - 服务烟测：用临时 `METAHUB_HOME` 启动 `bun src/cli/index.ts --server --debug --port 7781`，验证 `/`、`/webui.js`、`/api/documents` 可访问，并通过 API 创建含嵌套列表 + fenced code 的文档成功。
 - 当前会话的 in-app browser 后端不可用，未做视觉点击手验。
+
+## 9. v2.1.1 列表项代码 Fence 归属修正（2026-05-31）
+
+本节记录 v2.1 嵌套 Markdown 实现后的行为修正，便于回溯。问题：在列表项内输入 ```` ``` ```` 或 ```` ```python ```` 后按 Enter，初版会把当前列表块整体转换成代码块；Typora 预期是保留列表项，并把代码块作为该列表项的子块。
+
+### 9.1 改动
+
+- `src/webui/editor.tsx`：Enter 的代码 fence 快捷转换增加列表项分支。当前块为列表项且快捷目标为 `code` 时，清空当前列表项文本，创建子代码块并聚焦；普通段落里的代码 fence 仍转换当前块。
+- `src/webui/editor.tsx` / `src/core/sync/webui.ts`：空列表项承载子代码块时收起父列表项的空 editable，只保留列表 marker，让代码块直接显示在列表项第一行。
+- `src/webui/blocks.ts`：空列表项只有非列表子块时，序列化不再额外插入空行，保存为缩进在列表项下的 fenced code。
+- `src/webui/blocks.test.ts`：新增 “list items can own fenced code children” round-trip 测试，覆盖列表子代码块的保存与读取。
+
+### 9.2 验证
+
+- `bun test src/webui/blocks.test.ts`：10 通过。
+- `bun test`：111 通过。
+- `bun run build`：通过。
+- `git diff --check`：通过。
+- `bunx tsc --noEmit`：仍有既存无关类型错误，位置同 v2.1 记录：`src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`src/webui/table.tsx`。

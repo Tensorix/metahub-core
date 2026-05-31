@@ -134,6 +134,9 @@ const HTML = `<!doctype html>
     border-radius:2px; pointer-events:none; box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 18%,transparent); }
   .block.drop-before::before { top:-1px; }
   .block.drop-after::after { bottom:-1px; }
+  .block.list-code-host { height:0; min-height:0; padding:0; overflow:visible; }
+  .block-wrap:hover > .block.list-code-host .gutter { opacity:1; }
+  .block.list-code-host .marker { position:absolute; left:0; top:0; padding-top:4px; z-index:1; }
   .editable { outline:none; flex:1; min-width:0; padding:3px 2px; line-height:1.6; }
   .editable:empty::before { content:attr(data-ph); color:var(--muted); pointer-events:none; }
   .b-h1 .editable { font-size:28px; font-weight:700; letter-spacing:-.02em; padding-top:12px; }

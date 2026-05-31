@@ -332,7 +332,7 @@ function renderListBlock(block: Block, indent: number, number: number): string[]
   const lines = [`${pad}${marker}${block.content}`];
   const children = (block.children ?? []).filter(shouldPersist);
   if (children.length) {
-    if (!isListType(children[0]!.type)) lines.push("");
+    if (!isListType(children[0]!.type) && block.content.trim() !== "") lines.push("");
     lines.push(...renderContainer(children, indent + 2));
   }
   return lines;

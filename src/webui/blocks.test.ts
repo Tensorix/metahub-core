@@ -111,6 +111,23 @@ test("nested list serialization reflects indent and outdent moves", () => {
   expect(bodyFromBlocks(blocks)).toBe("- one\n- child\n- two");
 });
 
+test("list items can own fenced code children", () => {
+  const body = bodyFromBlocks([
+    {
+      id: "1",
+      type: "bullet",
+      content: "",
+      children: [{ id: "2", type: "code", content: "print(1)", lang: "python" }],
+    },
+  ]);
+
+  expect(body).toBe("- \n  ```python\n  print(1)\n  ```");
+
+  const parsed = blocksFromBody(body);
+  expect(parsed[0]).toMatchObject({ type: "bullet", content: "" });
+  expect(parsed[0]!.children?.[0]).toMatchObject({ type: "code", content: "print(1)", lang: "python" });
+});
+
 test("typing shortcuts recognise markdown prefixes", () => {
   expect(shortcutFromInput("1. ", " ")).toMatchObject({ type: "numbered", content: "" });
   expect(shortcutFromInput("> ", " ")).toMatchObject({ type: "quote", content: "" });

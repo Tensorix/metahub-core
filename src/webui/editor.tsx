@@ -132,6 +132,17 @@ export function DocView({
     setSlash(null);
   };
 
+  const insertListChildFromShortcut = (b: Block, draft: BlockDraft) => {
+    b.content = "";
+    b.children ??= [];
+    const child = makeBlock(draft.type, draft);
+    b.children.unshift(child);
+    setSlash(null);
+    bump();
+    requestAnimationFrame(() => focusBlock(child.id));
+    scheduleSave();
+  };
+
   const indent = (id: string) => {
     const found = findBlock(blocks, id);
     if (!found || found.index === 0) return;
@@ -183,6 +194,10 @@ export function DocView({
       const shortcut = shortcutFromInput((el.textContent ?? "").trim(), "Enter");
       if (shortcut) {
         e.preventDefault();
+        if (isListType(b.type) && shortcut.type === "code") {
+          insertListChildFromShortcut(b, shortcut);
+          return;
+        }
         applyShortcut(b, shortcut);
         return;
       }
@@ -314,7 +329,13 @@ function BlockRow({
   useEffect(() => {
     if (edRef.current) edRef.current.innerHTML = block.type === "code" ? escapeHtml(block.content) : inlineToHtml(block.content);
   }, [renderKey, block.type]);
-  const cls = "block b-" + block.type + (block.type === "todo" && block.checked ? " b-done" : "");
+  const compactCodeHost =
+    isListType(block.type) && block.content.trim() === "" && block.children?.[0]?.type === "code";
+  const cls =
+    "block b-" +
+    block.type +
+    (block.type === "todo" && block.checked ? " b-done" : "") +
+    (compactCodeHost ? " list-code-host" : "");
   return (
     <div class="block-wrap" style={depth ? { marginLeft: 28 } : undefined}>
       <div
@@ -365,7 +386,7 @@ function BlockRow({
             {block.type === "todo" && (
               <div class="marker"><input type="checkbox" checked={!!block.checked} onChange={onToggle} /></div>
             )}
-            {block.type === "code" ? (
+            {compactCodeHost ? null : block.type === "code" ? (
               <div class="codebox">
                 <input
                   class="code-lang"
