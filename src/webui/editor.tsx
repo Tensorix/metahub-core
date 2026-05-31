@@ -247,7 +247,13 @@ function BlockRow({
     <div
       class={cls}
       data-bid={block.id}
-      onDragOver={(e) => { if (dragRef.current && dragRef.current !== block.id) { e.preventDefault(); markBlockDrop(e.currentTarget as HTMLElement, e); } }}
+      onDragOver={(e) => {
+        if (dragRef.current && dragRef.current !== block.id) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          markBlockDrop(e.currentTarget as HTMLElement, e);
+        }
+      }}
       onDrop={(e) => {
         if (!dragRef.current) return;
         e.preventDefault();
@@ -263,7 +269,12 @@ function BlockRow({
           title="拖拽移动 · 点击菜单"
           draggable
           onClick={onMenu}
-          onDragStart={(e) => { dragRef.current = block.id; (e.currentTarget!.closest(".block") as HTMLElement).classList.add("dragging"); }}
+          onDragStart={(e) => {
+            dragRef.current = block.id;
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", block.id);
+            (e.currentTarget!.closest(".block") as HTMLElement).classList.add("dragging");
+          }}
           onDragEnd={(e) => { (e.currentTarget!.closest(".block") as HTMLElement).classList.remove("dragging"); clearBlockDrop(); }}
         >
           <Icon name="grip" cls="ico sm" />
@@ -362,7 +373,7 @@ function focusBlock(id: string, atEnd = false) {
   }
 }
 function clearBlockDrop() {
-  document.querySelectorAll(".drop-before,.drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after"));
+  document.querySelectorAll(".block.drop-before,.block.drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after"));
 }
 function markBlockDrop(el: HTMLElement, e: DragEvent) {
   clearBlockDrop();
