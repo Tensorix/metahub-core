@@ -111,7 +111,7 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 - 不新增 block 级 HTTP API；仍通过 `PATCH /api/document` 保存完整 Markdown body。
 - 前端逻辑块树不是存储模型。`children/lang` 只存在于 `src/webui/blocks.ts` 的编辑模型里；服务端仍按 core `parseBlocks` 的段落/fenced code 规则 reconcile `doc_blocks`。
 - 保存后的 Markdown 以稳定、规范为优先，可能 canonicalize 非规范源码排版。
-- 本次不实现表格、数学、脚注、callout、TOC、代码高亮。
+- 本次不实现表格、数学、脚注、callout、TOC、代码高亮（代码高亮已在 §10 / v2.2 补齐）。
 
 ### 8.3 涉及文件
 
@@ -147,3 +147,49 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 - `bun run build`：通过。
 - `git diff --check`：通过。
 - `bunx tsc --noEmit`：仍有既存无关类型错误，位置同 v2.1 记录：`src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`src/webui/table.tsx`。
+
+## 10. v2.2 代码块语法高亮与块样式打磨（2026-06-01）
+
+本节记录在 v2.1 / v2.1.1 之上的增量，配套设计见 [design.md §9](./design.md)。补齐代码块语法高亮，重写代码块 / 引用块 / 嵌套子块的视觉与交互。后端 API、schema、core CRDT、sync 协议不变；数据模型（`Block`/`BlockType`）与 Markdown parse/serialize 不变，纯表现层 + 交互层改动。
+
+### 10.1 依赖与块模型
+
+- `package.json`：新增运行时依赖 `highlight.js`（Bun 打包进 lazy 的 webui bundle，零 CLI 启动开销）。
+- `src/webui/blocks.ts`：导出 `COMMON_LANGS`（highlight.js 合法语言 id + 中文标签）供下拉；解析/序列化与 `cleanLang` 不变，语言名往返保真（旧文档遗留的未知语言保留为下拉额外选项）。
+
+### 10.2 代码块组件（`editor.tsx` `CodeBlock`）
+
+- 结构：`.codeblock` > `.code-body`（`.code-gutter` 行号 + `.code-scroll` 内 `.code-hl` 高亮镜像 `<pre><code>` + `.code-input` textarea）+ 右下角 hover `.code-tools`（语言 `<select>` + 复制按钮）。
+- 高亮：模块级 `highlightCode(code, lang)` —— `lang && hljs.getLanguage(lang)` 用 `hljs.highlight({ignoreIllegals})`，否则 `highlightAuto`，异常回退 `escapeHtml`；内容以 `\n` 结尾时补一空行使高亮层高度跟齐 textarea。
+- 非受控：仅 `renderKey`/`block.lang` 变化时用 ref 写 `textarea.value`；输入时命令式 `paint(value)` 刷新高亮 innerHTML + 行号 + auto-grow（`height="auto"` → `height=scrollHeight`）；`onScroll` 同步 `.code-hl` 横向滚动。`wrap="off"` 防软换行对齐；`rows={1}` 见 §10.4。
+- 复制：`navigator.clipboard.writeText`，1.4s 内切 `check` 图标 + 「已复制」反馈。
+
+### 10.3 代码块键盘（`onCodeKeyDown`，独立于全局 `onKeyDown`）
+
+- `Tab`：`document.execCommand("insertText","  ")`（保留原生 undo + 触发 input 重绘）。
+- `Enter`：当前行为空且为最后一行 → 去尾空行后 `insertAfter(b.id,"p")` 退出；否则放行原生换行。
+- `ArrowDown`：光标在最后一行 → `nextBlock()` 聚焦下块，无下块则建段落。
+- `ArrowUp`：光标在第一行 → `previousBlock()` 聚焦上块末尾。
+- `Backspace`：空内容 → `convert(b.id,"p")`。
+- 配套：新增 `nextBlock`/`flatten`；`focusBlock` 选择器扩展 `.code-input`，textarea 用 `setSelectionRange` 定位（atEnd → `value.length`）。
+
+### 10.4 关键修复：短代码块底部空白
+
+textarea 的 `scrollHeight` 以 `rows` 属性为下限，`rows` 默认 **2**，故即使先 `height="auto"` 再取 `scrollHeight`，单行/空代码块也永远 ≥2 行高 → 底部多一行空白。修复：`rows={1}`。用隔离复现页 + 浏览器实测确认（1 行块 55px→35px，空块同；2/3 行块不受影响）。
+
+### 10.5 CSS（`src/core/sync/webui.ts` 内联）
+
+- 新增 `.codeblock`（圆角卡片、紧凑度量变量 `--code-fs:12.5px / --code-lh:1.55 / --code-pad:8px`）、`.code-body/.code-gutter/.code-scroll/.code-hl/.code-input`、右下角 hover `.code-tools`（半透明 `backdrop-filter` chip，`opacity:0` → `:hover`/`:focus-within` 显示），及自写 hljs token 主题（明/暗双套，`--hl-*`、`--code-bg` 变量）。
+- 引用块 `.b-quote`：中性左边条（`--line-strong`）+ 斜体柔色，无底纹。
+- 嵌套：`.block-wrap.nested` 缩进 24px；`:has(> .b-bullet/.b-numbered/.b-todo)::before` 仅给子列表画细引导线；`.list-code-host + .block-wrap.nested .gutter { display:none }` 消除列表内嵌代码块与序号重叠的冗余 gutter。
+
+### 10.6 验证
+
+- `bunx tsc --noEmit`：本次相关文件零错误；既存无关错误位置同前（`src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`src/webui/table.tsx`）。
+- `bun test`：111 通过（数据模型未变，`blocks.test.ts` 往返测试全绿）。
+- `bun build src/webui/app.tsx`：通过（~237KB min，highlight.js 已打入 lazy bundle）。
+- 视觉点验（隔离复现 + 用户实机刷新）：高亮 / 行号 / 语言下拉 / 复制反馈、代码块键盘退出各场景、引用与嵌套新样式、明暗主题、短代码块无底部空白。
+
+### 10.7 涉及文件
+
+- `package.json`、`src/webui/blocks.ts`、`src/webui/editor.tsx`、`src/core/sync/webui.ts`。

@@ -265,12 +265,12 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
 - 浏览器打开 `http://localhost:<port>/` 即用，**Notion-like 模块化 Preact 应用**（v2，见 [07-webui/implementation.md](../impl-context/07-webui/implementation.md)）：
   - **侧栏**：文档树（折叠/拖拽改嵌套）、宽度可拖拽、整栏可收起/展开、移动端抽屉；条目菜单（重命名/复制/删除/新建子页）、新建数据库 Modal（模板）。
   - **表格**：按类型行内编辑（checkbox/select/multi_select/relation/text/number/date/url）、列头菜单（改名/**改类型**/选项增删/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。
-  - **文档**：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、选中浮动格式条、待办/列表/引用/代码/分隔线）；支持 Typora 风格核心快捷输入（标题、列表、待办、引用、代码 fence）、列表 Tab/Shift+Tab 嵌套、列表内段落/引用/代码块/子列表、代码语言名。防抖保存复用 `PATCH /api/document` 的按块 reconcile,保存 Markdown 会规范化缩进与同级有序列表编号。
+  - **文档**：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、选中浮动格式条、待办/列表/引用/代码/分隔线）；支持 Typora 风格核心快捷输入（标题、列表、待办、引用、代码 fence）、列表 Tab/Shift+Tab 嵌套、列表内段落/引用/代码块/子列表、代码语言名。代码块为 textarea + highlight.js 高亮镜像，含**语法高亮**、行号、语言下拉、复制（右下角 hover）与键盘退出（末行空行 Enter / 末行 ↓）。防抖保存复用 `PATCH /api/document` 的按块 reconcile,保存 Markdown 会规范化缩进与同级有序列表编号。
   - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题、移动端适配。
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
 - REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
 - WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。
-- **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化；文档表格、数学、脚注、callout、TOC、代码高亮。
+- **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化；文档表格、数学、脚注、callout、TOC。
 - **静态站点托管**:AI agent 用 `mh site create|put|publish|list|files|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联,大二进制走 `cache/` blob、字节暂本机)。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
 - **鉴权**:`--debug` 全开;否则单 token 守护每个请求,经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带;浏览器走解锁页(存 `localStorage`+cookie)+ 注入 fetch 套壳。**token 默认持久化在 `~/.metahub`**(重启复用),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token [show|refresh]` 的 refresh 时轮换;轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 无感换新(解锁页静默续期 + 套壳 401 自动重试)。`--token`/`METAHUB_TOKEN` 则为固定、不持久化、不过期的静态覆盖。默认绑 `127.0.0.1`,`--host` 可改。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)。
 
