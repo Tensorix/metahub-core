@@ -104,6 +104,7 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 - Markdown 按段落切块,fenced code block 保持为一个块。
 - `doc edit --old --new` 优先在单块内做锚定替换。
 - 跨块或引入块分隔时走整篇 reconcile。
+- WebUI 文档编辑器有自己的前端逻辑块树（支持嵌套列表与代码语言名）,但保存仍只是完整 Markdown body；服务端不认识前端 `children/lang` 结构,仍按上述 core block 规则 reconcile。
 
 这让不同段落的并发编辑可以合并,比整篇 LWW 更适合 AI 增量编辑。
 
@@ -134,7 +135,7 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 `Bun.serve()` 的 fetch handler 用精确路径匹配分发,路由表 `src/core/sync/routes.ts` 是单一来源——`syncRoutes`(`/sync`、`/health`)、`webuiRoutes`(`/api/*`)与 `sitesRoutes`(`/api/sites`、`/api/site/files` 只读)合并后,既被 fetch handler 命中,也被 `openapi.ts` 遍历生成 OpenAPI(`/docs`、`/docs.json`),无 codegen。静态站点用一个 `startsWith("/sites/")` **前缀分支**(精确匹配做不到任意路径)单独处理。
 
 - **REST API**(`src/core/sync/webui-routes.ts`):一组只读 + 写入路由,**复用与 CLI 同一套 core 函数**(`listDatabases`/`updateDatabase`/`listRecords`/`createRecord`/`updateProperty`/`updateDocument`/`search` 等),因此写操作同样经 `emit()` 进 CRDT oplog、随 sync 复制。id 用 query 参数携带(`?db=`/`?id=`),以保持精确路径匹配与 OpenAPI 生成不变;`Route.method` 扩展出 `PATCH`/`DELETE`(含 `PATCH/DELETE /api/database`、`PATCH/DELETE /api/property`)。handler 统一包一层 try/catch,异常转 `{error}` 400。
-- **浏览器 WebUI**(`src/webui/`,Preact):根路径 `/` 返回内联 HTML 外壳,`/webui.js` 返回应用 bundle。服务模块 `src/core/sync/webui.ts` 经 `server.ts` 的 `await import("./webui.ts")` **懒加载**,优先读打包产物 `dist/webui.js`,开发态(从源码运行、无 dist)即时 `Bun.build` 兜底并缓存。v2 为 Notion-like 模块化应用(`app.tsx` 为唯一构建入口,拆 `api/icons/ui/blocks/markdown/sidebar/table/editor`):块级所见即所得文档编辑(每个编辑块=一个 core block,序列化为 body 走 `reconcileBody` 保留 CRDT 身份,无需 block 级 API)、Notion-like 表格、文档树侧栏(拖拽改嵌套)、移动端适配。见 [07-webui](../impl-context/07-webui/implementation.md)。
+- **浏览器 WebUI**(`src/webui/`,Preact):根路径 `/` 返回内联 HTML 外壳,`/webui.js` 返回应用 bundle。服务模块 `src/core/sync/webui.ts` 经 `server.ts` 的 `await import("./webui.ts")` **懒加载**,优先读打包产物 `dist/webui.js`,开发态(从源码运行、无 dist)即时 `Bun.build` 兜底并缓存。v2 为 Notion-like 模块化应用(`app.tsx` 为唯一构建入口,拆 `api/icons/ui/blocks/markdown/sidebar/table/editor`):块级所见即所得文档编辑(前端逻辑块树支持嵌套列表、列表内段落/引用/代码块、代码语言名与 Markdown 快捷转换；保存为 body 走 `reconcileBody`,无需 block 级 API)、Notion-like 表格、文档树侧栏(拖拽改嵌套)、移动端适配。见 [07-webui](../impl-context/07-webui/implementation.md)。
 - **CLI 性能隔离**:WebUI 与 Preact 单独打包为 `dist/webui.js`,**不进入 `cli.js` 的启动 import 图**;懒加载使其仅在浏览器首次访问 `/` 时载入,普通 `mh <命令>` 启动不受影响。
 - **静态站点托管**(`src/core/sync/sites-serve.ts`,经 `server.ts` 懒加载):`GET /sites/<name>/<path...>` 按名字 resolve 站点、查 `site_files`(默认 `index.html`),返回字节 + MIME;站点经 `mh site` CLI 发布,文件经 `emit()` 进 CRDT(见 [08-agent-sites](../impl-context/08-agent-sites/design.md))。
 - **鉴权**(`src/core/sync/auth.ts`、`src/core/sync/token.ts`):fetch handler 顶部一处 token 门禁,`--debug` 跳过;`/sync`、`/health`、`/auth/token` 豁免(前两者保持 peer 复制免 token,后者让持过期 token 者仍能换新),其余请求需经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带 token。**token 默认持久化在 `~/.metahub` 的 `meta` 表**(非 `--token`/`METAHUB_TOKEN` 静态覆盖时),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token refresh` 时**惰性轮换**(以 DB 为单一来源、每请求读,故另一进程刷新立即生效);轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 换到新 token,实现浏览器**无感续期**。浏览器导航无 token 返回解锁页(存 `localStorage`+cookie,并先尝试 `/auth/token` 静默续期),其后 HTML 响应经 `withShim` 注入 fetch 套壳自动带 `Bearer`、并在 401 时自动换取并重试一次。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)。
@@ -159,4 +160,3 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 
 - 同进程或多进程并发写入的 SQLite lock 体验。
 - 同步服务和快照导入的安全边界。
-

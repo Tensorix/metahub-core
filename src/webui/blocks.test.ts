@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { blocksFromBody, bodyFromBlocks, textToBlock, blockToText } from "./blocks.ts";
+import { blocksFromBody, bodyFromBlocks, textToBlock, blockToText, shortcutFromInput } from "./blocks.ts";
 
 test("textToBlock recognises each block type", () => {
   expect(textToBlock("# Title").type).toBe("h1");
@@ -15,10 +15,11 @@ test("textToBlock recognises each block type", () => {
 });
 
 test("code blocks keep their inner text whole", () => {
-  const b = textToBlock("```\nconst x = 1\n\nconst y = 2\n```");
+  const b = textToBlock("```ts\nconst x = 1\n\nconst y = 2\n```");
   expect(b.type).toBe("code");
+  expect(b.lang).toBe("ts");
   expect(b.content).toBe("const x = 1\n\nconst y = 2");
-  expect(blockToText({ id: "1", ...b })).toBe("```\nconst x = 1\n\nconst y = 2\n```");
+  expect(blockToText({ id: "1", ...b })).toBe("```ts\nconst x = 1\n\nconst y = 2\n```");
 });
 
 test("blocksFromBody splits a tight list into one block per item", () => {
@@ -52,4 +53,69 @@ test("empty paragraphs are dropped on serialize", () => {
     { id: "3", type: "divider" as const, content: "" },
   ];
   expect(bodyFromBlocks(blocks)).toBe("keep\n\n---");
+});
+
+test("nested ordered lists keep child paragraphs, quotes, and fenced code", () => {
+  const body = [
+    "4. Parent",
+    "  9. Child",
+    "",
+    "    Child paragraph",
+    "",
+    "    > child quote",
+    "",
+    "    ```python",
+    "    print('hi')",
+    "    ```",
+    "2. Sibling",
+  ].join("\n");
+
+  const blocks = blocksFromBody(body);
+  expect(blocks).toHaveLength(2);
+  expect(blocks[0]).toMatchObject({ type: "numbered", content: "Parent" });
+  expect(blocks[0]!.children?.[0]).toMatchObject({ type: "numbered", content: "Child" });
+  expect(blocks[0]!.children?.[0]?.children?.map((b) => [b.type, b.content, b.lang ?? ""])).toEqual([
+    ["p", "Child paragraph", ""],
+    ["quote", "child quote", ""],
+    ["code", "print('hi')", "python"],
+  ]);
+
+  expect(bodyFromBlocks(blocks)).toBe([
+    "1. Parent",
+    "  1. Child",
+    "",
+    "    Child paragraph",
+    "",
+    "    > child quote",
+    "",
+    "    ```python",
+    "    print('hi')",
+    "    ```",
+    "2. Sibling",
+  ].join("\n"));
+});
+
+test("ordered numbering is recalculated per sibling level", () => {
+  const blocks = blocksFromBody("3. top\n  9. nested\n  3. nested again\n8. next");
+  expect(bodyFromBlocks(blocks)).toBe("1. top\n  1. nested\n  2. nested again\n2. next");
+});
+
+test("nested list serialization reflects indent and outdent moves", () => {
+  const blocks = blocksFromBody("- one\n- child\n- two");
+  const child = blocks.splice(1, 1)[0]!;
+  blocks[0]!.children = [child];
+  expect(bodyFromBlocks(blocks)).toBe("- one\n  - child\n- two");
+
+  blocks.splice(1, 0, blocks[0]!.children!.shift()!);
+  delete blocks[0]!.children;
+  expect(bodyFromBlocks(blocks)).toBe("- one\n- child\n- two");
+});
+
+test("typing shortcuts recognise markdown prefixes", () => {
+  expect(shortcutFromInput("1. ", " ")).toMatchObject({ type: "numbered", content: "" });
+  expect(shortcutFromInput("> ", " ")).toMatchObject({ type: "quote", content: "" });
+  expect(shortcutFromInput("- [ ] ", " ")).toMatchObject({ type: "todo", checked: false });
+  expect(shortcutFromInput("- [x] ", " ")).toMatchObject({ type: "todo", checked: true });
+  expect(shortcutFromInput("## ", " ")).toMatchObject({ type: "h2", content: "" });
+  expect(shortcutFromInput("```python", "Enter")).toMatchObject({ type: "code", lang: "python" });
 });

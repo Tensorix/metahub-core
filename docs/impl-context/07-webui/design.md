@@ -123,3 +123,28 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 - 后端：改 `src/core/databases.ts`、`src/core/properties.ts`、`src/core/sync/webui-routes.ts`；新增 `src/core/{databases,properties}.test.ts`。
 - 前端：重写 `src/webui/app.tsx`、`src/core/sync/webui.ts`(CSS)；新增 `src/webui/{api.ts,icons.tsx,ui.tsx,blocks.ts,blocks.test.ts,markdown.tsx,markdown.test.ts,sidebar.tsx,table.tsx,editor.tsx}`。
 - 静态原型（评审规范）：`prototype/webui.html`。
+
+## 8. v2.1 文档编辑器嵌套 Markdown（2026-05-31）
+
+本节记录 v2 之后的增量设计。历史上 §7 描述的是 Notion-like v2 重写；本节只描述 2026-05-31 对文档编辑器的嵌套 Markdown 扩展。
+
+### 8.1 范围与目标
+
+- 目标：核心子集 + 前端兼容层 + Typora 近似体验。
+- 不改后端 API、schema、core CRDT、sync 协议；`PATCH /api/document` 仍保存完整 Markdown body。
+- 扩展 webui block 模型：列表块支持 `children`，代码块支持 `lang`，用于表达列表项内嵌段落、引用、代码块、子列表。
+- `blocksFromBody` 读取现有 Markdown 时重建嵌套列表结构；`bodyFromBlocks` 保存为 GFM 兼容缩进 Markdown。
+- 保留现有 slash menu、块拖拽、格式工具条；新增逻辑只作用于文档编辑器。
+
+### 8.2 UX
+
+- 空格触发：`1. ` 有序列表，`- ` / `* ` / `+ ` 无序列表，`- [ ] ` / `- [x] ` 待办，`> ` 引用，`# ` / `## ` / `### ` 标题。
+- Enter 行为：列表项 Enter 创建同级下一项；空列表项 Enter 退出列表；普通块 Enter 创建下一段。
+- Tab / Shift+Tab：列表项缩进/反缩进，形成嵌套列表；代码块内 Tab 插入空格。
+- 代码块：输入 ```` ``` ```` 或 ```` ```python ```` 后 Enter 转为代码块，隐藏 fence，保留语言名；不做语法高亮，先提供轻量语言标签/输入。
+- 列表项内可以继续创建段落、引用、代码块；保存为规范缩进 Markdown，不强求保留原始源码排版。
+
+### 8.3 暂不实现
+
+- 表格、数学、脚注、callout、TOC、代码高亮。
+- CLI 和 core markdown 切块规则不变；嵌套能力先服务 WebUI 文档编辑器。

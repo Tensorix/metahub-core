@@ -78,7 +78,7 @@ mh sync arch.md architecture   # 导入：markdown → 文档（更新已存在�
 mh sync tasks.csv tasks        # 导入：CSV → 数据表（有 id 列则按 id upsert）
 ```
 
-服务端在根路径 `/` 还内置一个**浏览器 WebUI**（Preact）：左侧列出数据库与文档，可浏览/行内编辑数据表、读写 markdown 文档（带预览）、全文搜索；编辑走与 CLI 同一套 core 写入路径，进 CRDT oplog 后随 `mh sync` 复制。同时暴露一组 `/api/*` REST 接口与自动生成的 OpenAPI 文档（`/docs`）。WebUI 资源（含 Preact）单独打包为 `dist/webui.js`，仅在浏览器首次访问 `/` 时懒加载，**不进入 CLI 启动路径，对命令行性能零影响**。设计见 [docs/impl-context/07-webui/design.md](docs/impl-context/07-webui/design.md)。
+服务端在根路径 `/` 还内置一个**浏览器 WebUI**（Preact）：左侧列出数据库与文档，可浏览/行内编辑数据表、用块级所见即所得编辑 markdown 文档（含嵌套列表、代码语言名与常用 Markdown 快捷输入）、全文搜索；编辑走与 CLI 同一套 core 写入路径，进 CRDT oplog 后随 `mh sync` 复制。同时暴露一组 `/api/*` REST 接口与自动生成的 OpenAPI 文档（`/docs`）。WebUI 资源（含 Preact）单独打包为 `dist/webui.js`，仅在浏览器首次访问 `/` 时懒加载，**不进入 CLI 启动路径，对命令行性能零影响**。设计见 [docs/impl-context/07-webui/design.md](docs/impl-context/07-webui/design.md)。
 
 ## Agent 托管静态站点
 

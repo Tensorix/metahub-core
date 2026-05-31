@@ -1,19 +1,21 @@
 /** @jsxImportSource preact */
+import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "./ui.tsx";
 import {
   type Block,
+  type BlockDraft,
   type BlockType,
   BLOCK_MENU,
   blocksFromBody,
   bodyFromBlocks,
   genId,
+  isListType,
+  shortcutFromInput,
 } from "./blocks.ts";
-import { inlineToHtml, htmlToInline } from "./markdown.tsx";
-
-const LIST_TYPES: BlockType[] = ["bullet", "numbered", "todo"];
+import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
 
 export function DocView({
   docId,
@@ -60,39 +62,50 @@ export function DocView({
       .catch((e) => onError(String(e.message)));
 
   const blocks = blocksRef.current;
-  const idx = (id: string) => blocks.findIndex((b) => b.id === id);
 
-  const insertAfter = (afterId: string | null, type: BlockType = "p"): Block => {
-    const b: Block = { id: genId(), type, content: "" };
-    const i = afterId ? idx(afterId) : -1;
-    blocks.splice(i + 1, 0, b);
+  const insertAfter = (afterId: string | null, type: BlockType = "p", draft: Partial<BlockDraft> = {}): Block => {
+    const b = makeBlock(type, draft);
+    if (!afterId) {
+      blocks.push(b);
+    } else {
+      const found = findBlock(blocks, afterId);
+      if (found) found.parent.splice(found.index + 1, 0, b);
+      else blocks.push(b);
+    }
     bump();
     requestAnimationFrame(() => focusBlock(b.id));
     scheduleSave();
     return b;
   };
 
-  const convert = (id: string, type: BlockType) => {
-    const b = blocks[idx(id)];
+  const convert = (id: string, type: BlockType, draft: Partial<BlockDraft> = {}) => {
+    const found = findBlock(blocks, id);
+    const b = found?.block;
     if (!b) return;
+    const children = isListType(type) ? b.children : undefined;
     b.type = type;
-    b.content = "";
-    if (type !== "todo") delete b.checked;
+    b.content = draft.content ?? "";
+    if (type === "todo") b.checked = draft.checked ?? false;
+    else delete b.checked;
+    if (type === "code") b.lang = draft.lang ?? "";
+    else delete b.lang;
+    if (children?.length) b.children = children;
+    else delete b.children;
     bump();
     if (type !== "divider") requestAnimationFrame(() => focusBlock(id));
     scheduleSave();
   };
 
   const remove = (id: string) => {
-    const i = idx(id);
-    if (i < 0) return;
-    blocks.splice(i, 1);
+    const found = findBlock(blocks, id);
+    if (!found) return;
+    found.parent.splice(found.index, 1);
     bump();
     scheduleSave();
   };
 
   const onContentInput = (b: Block, el: HTMLElement) => {
-    b.content = htmlToInline(el.innerHTML);
+    b.content = blockEditorText(b, el);
     // slash trigger / filter
     const text = el.textContent ?? "";
     if (text.startsWith("/")) {
@@ -114,6 +127,37 @@ export function DocView({
     setSlash(null);
   };
 
+  const applyShortcut = (b: Block, draft: BlockDraft) => {
+    convert(b.id, draft.type, draft);
+    setSlash(null);
+  };
+
+  const indent = (id: string) => {
+    const found = findBlock(blocks, id);
+    if (!found || found.index === 0) return;
+    const previous = found.parent[found.index - 1]!;
+    if (!isListType(previous.type)) return;
+    const moved = found.parent.splice(found.index, 1)[0]!;
+    previous.children ??= [];
+    previous.children.push(moved);
+    bump();
+    requestAnimationFrame(() => focusBlock(id));
+    scheduleSave();
+  };
+
+  const outdent = (id: string) => {
+    const found = findBlock(blocks, id);
+    if (!found?.parentBlock) return;
+    const parentFound = findBlock(blocks, found.parentBlock.id);
+    if (!parentFound) return;
+    const moved = found.parent.splice(found.index, 1)[0]!;
+    if (found.parent.length === 0) delete found.parentBlock.children;
+    parentFound.parent.splice(parentFound.index + 1, 0, moved);
+    bump();
+    requestAnimationFrame(() => focusBlock(id));
+    scheduleSave();
+  };
+
   const onKeyDown = (e: KeyboardEvent, b: Block, el: HTMLElement) => {
     if (slash && slash.blockId === b.id) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSlash({ ...slash, idx: Math.min(slash.idx + 1, slashMatches.length - 1) }); return; }
@@ -121,16 +165,38 @@ export function DocView({
       if (e.key === "Enter") { e.preventDefault(); const m = slashMatches[slash.idx]; if (m) applySlash(m); return; }
       if (e.key === "Escape") { setSlash(null); return; }
     }
+    if (e.key === "Tab" && (b.type === "code" || isListType(b.type))) {
+      e.preventDefault();
+      if (b.type === "code") document.execCommand("insertText", false, "  ");
+      else (e.shiftKey ? outdent : indent)(b.id);
+      return;
+    }
+    if (e.key === " " && b.type === "p" && !hasExpandedSelection()) {
+      const shortcut = shortcutFromInput((el.textContent ?? "") + " ", " ");
+      if (shortcut) {
+        e.preventDefault();
+        applyShortcut(b, shortcut);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey && b.type !== "code") {
+      const shortcut = shortcutFromInput((el.textContent ?? "").trim(), "Enter");
+      if (shortcut) {
+        e.preventDefault();
+        applyShortcut(b, shortcut);
+        return;
+      }
       e.preventDefault();
       const empty = (el.textContent ?? "").trim() === "";
-      if (LIST_TYPES.includes(b.type) && empty) { convert(b.id, "p"); return; }
-      insertAfter(b.id, LIST_TYPES.includes(b.type) ? b.type : "p");
+      if (isListType(b.type) && empty && !(b.children ?? []).length) { convert(b.id, "p"); return; }
+      insertAfter(b.id, isListType(b.type) ? b.type : "p");
     } else if (e.key === "Backspace" && (el.textContent ?? "") === "") {
       e.preventDefault();
-      const i = idx(b.id);
       if (b.type !== "p") convert(b.id, "p");
-      else if (i > 0) { const prev = blocks[i - 1]!; remove(b.id); requestAnimationFrame(() => focusBlock(prev.id, true)); }
+      else {
+        const prev = previousBlock(blocks, b.id);
+        if (prev) { remove(b.id); requestAnimationFrame(() => focusBlock(prev.id, true)); }
+      }
     }
   };
 
@@ -143,7 +209,7 @@ export function DocView({
           <MenuItem key={m.type} icon={m.ic} label={m.t} checked={b.type === m.type} onClick={() => { convert(b.id, m.type); close(); }} />
         ))}
         <MenuSep />
-        <MenuItem icon="copy" label="复制块" onClick={() => { const i = idx(b.id); blocks.splice(i + 1, 0, { ...b, id: genId() }); bump(); scheduleSave(); close(); }} />
+        <MenuItem icon="copy" label="复制块" onClick={() => { const found = findBlock(blocks, b.id); if (found) found.parent.splice(found.index + 1, 0, cloneBlock(b)); bump(); scheduleSave(); close(); }} />
         <MenuItem icon="trash" label="删除块" danger onClick={() => { remove(b.id); close(); }} />
       </>
     ));
@@ -153,6 +219,32 @@ export function DocView({
   const dragRef = useRef<string | null>(null);
 
   if (loading) return <div class="empty">加载中…</div>;
+
+  const renderBlocks = (items: Block[], depth = 0): ComponentChildren =>
+    items.map((b, i) => (
+      <BlockRow
+        key={b.id}
+        renderKey={version}
+        block={b}
+        depth={depth}
+        number={b.type === "numbered" ? items.slice(0, i + 1).filter((x) => x.type === "numbered").length : 0}
+        onInput={(el) => onContentInput(b, el)}
+        onLangInput={(lang) => { b.lang = lang; bump(); scheduleSave(); }}
+        onKeyDown={(e, el) => onKeyDown(e, b, el)}
+        onAdd={() => insertAfter(b.id)}
+        onMenu={(e) => blockMenu(e, b)}
+        onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
+        dragRef={dragRef}
+        onReorder={(srcId, where) => {
+          if (moveBlock(blocks, srcId, b.id, where)) {
+            bump();
+            scheduleSave();
+          }
+        }}
+      >
+        {b.children?.length ? renderBlocks(b.children, depth + 1) : null}
+      </BlockRow>
+    ));
 
   return (
     <div
@@ -169,34 +261,11 @@ export function DocView({
         dangerouslySetInnerHTML={{ __html: titleRef.current }}
       />
       <div class="doc-meta">
-        <span><Icon name="file" cls="ico sm" />{blocks.length} 个块</span>
+        <span><Icon name="file" cls="ico sm" />{countBlocks(blocks)} 个块</span>
         <span>实时同步</span>
       </div>
 
-      {blocks.map((b) => (
-        <BlockRow
-          key={b.id}
-          renderKey={version}
-          block={b}
-          number={b.type === "numbered" ? blocks.filter((x) => x.type === "numbered" && idx(x.id) <= idx(b.id)).length : 0}
-          onInput={(el) => onContentInput(b, el)}
-          onKeyDown={(e, el) => onKeyDown(e, b, el)}
-          onAdd={() => insertAfter(b.id)}
-          onMenu={(e) => blockMenu(e, b)}
-          onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
-          dragRef={dragRef}
-          onReorder={(srcId, where) => {
-            const from = idx(srcId);
-            if (from < 0 || srcId === b.id) return;
-            const moved = blocks.splice(from, 1)[0]!;
-            let to = idx(b.id);
-            if (where === "after") to += 1;
-            blocks.splice(to, 0, moved);
-            bump();
-            scheduleSave();
-          }}
-        />
-      ))}
+      {renderBlocks(blocks)}
 
       {blocks.length === 0 && (
         <div class="editable" style={{ color: "var(--muted)", cursor: "text" }} onClick={() => insertAfter(null)}>
@@ -222,84 +291,113 @@ export function DocView({
 }
 
 function BlockRow({
-  block, number, renderKey, onInput, onKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder,
+  block, number, depth, renderKey, onInput, onLangInput, onKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
+  depth: number;
   renderKey: number;
   onInput: (el: HTMLElement) => void;
+  onLangInput: (lang: string) => void;
   onKeyDown: (e: KeyboardEvent, el: HTMLElement) => void;
   onAdd: () => void;
   onMenu: (e: MouseEvent) => void;
   onToggle: () => void;
   dragRef: { current: string | null };
   onReorder: (srcId: string, where: "before" | "after") => void;
+  children?: ComponentChildren;
 }) {
   const edRef = useRef<HTMLDivElement>(null);
   // Uncontrolled: set innerHTML only on structural changes (renderKey/type), not
   // on every re-render, so typing — including a `/` query that re-renders the
   // doc to show the slash menu — never resets the caret.
   useEffect(() => {
-    if (edRef.current) edRef.current.innerHTML = inlineToHtml(block.content);
+    if (edRef.current) edRef.current.innerHTML = block.type === "code" ? escapeHtml(block.content) : inlineToHtml(block.content);
   }, [renderKey, block.type]);
   const cls = "block b-" + block.type + (block.type === "todo" && block.checked ? " b-done" : "");
   return (
-    <div
-      class={cls}
-      data-bid={block.id}
-      onDragOver={(e) => {
-        if (dragRef.current && dragRef.current !== block.id) {
+    <div class="block-wrap" style={depth ? { marginLeft: 28 } : undefined}>
+      <div
+        class={cls}
+        data-bid={block.id}
+        onDragOver={(e) => {
+          if (dragRef.current && dragRef.current !== block.id) {
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+            markBlockDrop(e.currentTarget as HTMLElement, e);
+          }
+        }}
+        onDrop={(e) => {
+          if (!dragRef.current) return;
           e.preventDefault();
-          e.dataTransfer.dropEffect = "move";
-          markBlockDrop(e.currentTarget as HTMLElement, e);
-        }
-      }}
-      onDrop={(e) => {
-        if (!dragRef.current) return;
-        e.preventDefault();
-        const where = (e.currentTarget as HTMLElement).classList.contains("drop-after") ? "after" : "before";
-        const src = dragRef.current; dragRef.current = null; clearBlockDrop();
-        onReorder(src, where);
-      }}
-    >
-      <div class="gutter">
-        <button title="在下方插入" onClick={onAdd}><Icon name="plus" cls="ico sm" /></button>
-        <button
-          class="grip"
-          title="拖拽移动 · 点击菜单"
-          draggable
-          onClick={onMenu}
-          onDragStart={(e) => {
-            dragRef.current = block.id;
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData("text/plain", block.id);
-            (e.currentTarget!.closest(".block") as HTMLElement).classList.add("dragging");
-          }}
-          onDragEnd={(e) => { (e.currentTarget!.closest(".block") as HTMLElement).classList.remove("dragging"); clearBlockDrop(); }}
-        >
-          <Icon name="grip" cls="ico sm" />
-        </button>
-      </div>
+          const where = (e.currentTarget as HTMLElement).classList.contains("drop-after") ? "after" : "before";
+          const src = dragRef.current; dragRef.current = null; clearBlockDrop();
+          onReorder(src, where);
+        }}
+      >
+        <div class="gutter">
+          <button title="在下方插入" onClick={onAdd}><Icon name="plus" cls="ico sm" /></button>
+          <button
+            class="grip"
+            title="拖拽移动 · 点击菜单"
+            draggable
+            onClick={onMenu}
+            onDragStart={(e) => {
+              dragRef.current = block.id;
+              if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", block.id);
+              }
+              (e.currentTarget!.closest(".block") as HTMLElement).classList.add("dragging");
+            }}
+            onDragEnd={(e) => { (e.currentTarget!.closest(".block") as HTMLElement).classList.remove("dragging"); clearBlockDrop(); }}
+          >
+            <Icon name="grip" cls="ico sm" />
+          </button>
+        </div>
 
-      {block.type === "divider" ? (
-        <hr />
-      ) : (
-        <>
-          {block.type === "bullet" && <div class="marker">•</div>}
-          {block.type === "numbered" && <div class="marker">{number}.</div>}
-          {block.type === "todo" && (
-            <div class="marker"><input type="checkbox" checked={!!block.checked} onChange={onToggle} /></div>
-          )}
-          <div
-            ref={edRef}
-            class="editable"
-            contentEditable
-            data-ph={placeholder(block.type)}
-            onInput={(e) => onInput(e.currentTarget as HTMLElement)}
-            onKeyDown={(e) => onKeyDown(e, e.currentTarget as HTMLElement)}
-          />
-        </>
-      )}
+        {block.type === "divider" ? (
+          <hr />
+        ) : (
+          <>
+            {block.type === "bullet" && <div class="marker">•</div>}
+            {block.type === "numbered" && <div class="marker">{number}.</div>}
+            {block.type === "todo" && (
+              <div class="marker"><input type="checkbox" checked={!!block.checked} onChange={onToggle} /></div>
+            )}
+            {block.type === "code" ? (
+              <div class="codebox">
+                <input
+                  class="code-lang"
+                  value={block.lang ?? ""}
+                  placeholder="语言"
+                  spellcheck={false}
+                  onInput={(e) => onLangInput((e.currentTarget as HTMLInputElement).value)}
+                />
+                <div
+                  ref={edRef}
+                  class="editable"
+                  contentEditable
+                  spellcheck={false}
+                  data-ph={placeholder(block.type)}
+                  onInput={(e) => onInput(e.currentTarget as HTMLElement)}
+                  onKeyDown={(e) => onKeyDown(e, e.currentTarget as HTMLElement)}
+                />
+              </div>
+            ) : (
+              <div
+                ref={edRef}
+                class="editable"
+                contentEditable
+                data-ph={placeholder(block.type)}
+                onInput={(e) => onInput(e.currentTarget as HTMLElement)}
+                onKeyDown={(e) => onKeyDown(e, e.currentTarget as HTMLElement)}
+              />
+            )}
+          </>
+        )}
+      </div>
+      {children}
     </div>
   );
 }
@@ -348,8 +446,97 @@ function syncFocusedBlock(blocks: Block[]) {
   const el = getSelection()?.anchorNode?.parentElement?.closest?.(".editable") as HTMLElement | null;
   const wrap = el?.closest(".block") as HTMLElement | null;
   const id = wrap?.getAttribute("data-bid");
-  const b = blocks.find((x) => x.id === id);
-  if (b && el) b.content = htmlToInline(el.innerHTML);
+  const b = id ? findBlock(blocks, id)?.block : null;
+  if (b && el) b.content = blockEditorText(b, el);
+}
+
+function makeBlock(type: BlockType, draft: Partial<BlockDraft> = {}): Block {
+  const block: Block = { id: genId(), type, content: draft.content ?? "" };
+  if (type === "todo") block.checked = draft.checked ?? false;
+  if (type === "code") block.lang = draft.lang ?? "";
+  if (isListType(type) && draft.children?.length) block.children = draft.children;
+  return block;
+}
+
+interface FoundBlock {
+  block: Block;
+  parent: Block[];
+  index: number;
+  parentBlock: Block | null;
+}
+
+function findBlock(blocks: Block[], id: string, parentBlock: Block | null = null): FoundBlock | null {
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]!;
+    if (block.id === id) return { block, parent: blocks, index: i, parentBlock };
+    const found = block.children ? findBlock(block.children, id, block) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
+function countBlocks(blocks: readonly Block[]): number {
+  let count = 0;
+  for (const block of blocks) count += 1 + countBlocks(block.children ?? []);
+  return count;
+}
+
+function cloneBlock(block: Block): Block {
+  return {
+    ...block,
+    id: genId(),
+    children: block.children?.map(cloneBlock),
+  };
+}
+
+function containsBlock(blocks: readonly Block[] | undefined, id: string): boolean {
+  for (const block of blocks ?? []) {
+    if (block.id === id || containsBlock(block.children, id)) return true;
+  }
+  return false;
+}
+
+function moveBlock(blocks: Block[], srcId: string, targetId: string, where: "before" | "after"): boolean {
+  if (srcId === targetId) return false;
+  const source = findBlock(blocks, srcId);
+  const target = findBlock(blocks, targetId);
+  if (!source || !target || containsBlock(source.block.children, targetId)) return false;
+
+  const moved = source.parent.splice(source.index, 1)[0]!;
+  const freshTarget = findBlock(blocks, targetId);
+  if (!freshTarget) {
+    source.parent.splice(source.index, 0, moved);
+    return false;
+  }
+  freshTarget.parent.splice(freshTarget.index + (where === "after" ? 1 : 0), 0, moved);
+  return true;
+}
+
+function previousBlock(blocks: readonly Block[], id: string): Block | null {
+  let previous: Block | null = null;
+  let found: Block | null = null;
+  const visit = (items: readonly Block[]) => {
+    for (const block of items) {
+      if (block.id === id) {
+        found = previous;
+        return;
+      }
+      previous = block;
+      if (block.children) visit(block.children);
+      if (found) return;
+    }
+  };
+  visit(blocks);
+  return found;
+}
+
+function blockEditorText(block: Block, el: HTMLElement): string {
+  return block.type === "code" ? htmlToInline(el.innerHTML).replace(/\u00a0/g, " ") : htmlToInline(el.innerHTML);
+}
+
+function hasExpandedSelection(): boolean {
+  const sel = getSelection();
+  return !!sel && !sel.isCollapsed;
 }
 
 // ---- caret + drag helpers ----

@@ -86,3 +86,45 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 - 后端改：`src/core/databases.ts`、`src/core/properties.ts`、`src/core/sync/webui-routes.ts`；新增 `src/core/{databases,properties}.test.ts`。
 - 前端：重写 `src/webui/app.tsx`、`src/core/sync/webui.ts`(CSS)；新增 `src/webui/{api.ts,icons.tsx,ui.tsx,blocks.ts,blocks.test.ts,markdown.tsx,markdown.test.ts,sidebar.tsx,table.tsx,editor.tsx}`。
 - 视觉规范留档：`prototype/webui.html`（评审用静态原型）。
+
+## 8. v2.1 文档编辑器嵌套 Markdown（2026-05-31）
+
+本节记录 2026-05-31 在 v2 WebUI 之上的增量改动。目标是让文档编辑器更接近 Typora Live Preview 的核心 Markdown 体验，同时保持后端 API、schema、core CRDT 与 sync 协议不变。
+
+### 8.1 范围
+
+- 列表块增加前端 `children`，代码块增加前端 `lang`。
+- `blocksFromBody()` 改为解析 Markdown 行序列，重建嵌套列表结构，并支持列表项内段落、引用、代码块和子列表。
+- `bodyFromBlocks()` 保存为规范 GFM 缩进 Markdown；同级有序列表编号会重新计算。
+- Markdown 快捷转换：
+  - 空格触发：`# ` / `## ` / `### `、`- ` / `* ` / `+ `、`1. `、`- [ ] ` / `- [x] `、`> `。
+  - Enter 触发：```` ``` ```` 或 ```` ```python ```` 转代码块，隐藏 fence，保留语言名。
+- 键盘行为：
+  - 列表项 Enter 创建同级下一项。
+  - 空列表项 Enter 退出列表。
+  - Tab/Shift+Tab 在列表项中缩进/反缩进。
+  - 代码块内 Tab 插入两个空格。
+- 代码块新增轻量语言输入框；不做语法高亮。
+
+### 8.2 设计边界
+
+- 不新增 block 级 HTTP API；仍通过 `PATCH /api/document` 保存完整 Markdown body。
+- 前端逻辑块树不是存储模型。`children/lang` 只存在于 `src/webui/blocks.ts` 的编辑模型里；服务端仍按 core `parseBlocks` 的段落/fenced code 规则 reconcile `doc_blocks`。
+- 保存后的 Markdown 以稳定、规范为优先，可能 canonicalize 非规范源码排版。
+- 本次不实现表格、数学、脚注、callout、TOC、代码高亮。
+
+### 8.3 涉及文件
+
+- `src/webui/blocks.ts`：块类型扩展、嵌套 Markdown parse/serialize、快捷转换纯函数。
+- `src/webui/editor.tsx`：树形块查找/插入/删除/拖拽、Tab/outdent、代码语言输入、代码块纯文本编辑。
+- `src/webui/blocks.test.ts`：新增嵌套列表、代码语言名、同级编号重算、缩进/反缩进序列化、快捷转换测试。
+- `src/core/sync/webui.ts`：嵌套 wrapper 与代码语言输入框 CSS。
+
+### 8.4 验证
+
+- `bun test`：110 通过。
+- `bun run build`：通过。
+- `git diff --check`：通过。
+- `bunx tsc --noEmit`：仍有既存无关类型错误（`src/cli/index.ts` 的 citty 泛型、`src/core/sync/sites-serve.ts` 的 `Uint8Array` BodyInit、`src/webui/table.tsx` 的 nullable `dataTransfer`）；本次 editor 相关类型问题已修正。
+- 服务烟测：用临时 `METAHUB_HOME` 启动 `bun src/cli/index.ts --server --debug --port 7781`，验证 `/`、`/webui.js`、`/api/documents` 可访问，并通过 API 创建含嵌套列表 + fenced code 的文档成功。
+- 当前会话的 in-app browser 后端不可用，未做视觉点击手验。

@@ -184,6 +184,7 @@ doc_blocks(id, doc_id, text, order_key, __deleted)
 - `order_key` 使用 fractional index。
 - 展示时按 `ORDER BY order_key, id` 排序。
 - 正文序列化时用空行连接 blocks。
+- WebUI 的文档编辑器会在前端把 Markdown 解析成更丰富的逻辑块树（例如列表项 `children`、代码块 `lang`）,但这些字段不入库。保存仍写完整 Markdown body,再由 core 按段落/fenced code 重建或 reconcile `doc_blocks`。
 
 ## sites
 
@@ -222,4 +223,3 @@ search_fts(kind, id, database_id, title, body)
 - record: 文本类属性值 group concat 后作为 body。
 
 当前索引重建策略是全量重建,不是增量更新。
-

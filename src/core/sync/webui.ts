@@ -122,6 +122,7 @@ const HTML = `<!doctype html>
   .doc-title:empty::before { content:"无标题"; color:var(--muted); }
   .doc-meta { display:flex; gap:14px; color:var(--muted); font-size:12.5px; margin-bottom:22px; }
   .doc-meta span { display:inline-flex; align-items:center; gap:5px; }
+  .block-wrap { position:relative; }
   .block { position:relative; display:flex; align-items:flex-start; padding:1px 0; border-radius:4px; }
   .block .gutter { position:absolute; left:-52px; top:2px; display:flex; gap:1px; opacity:0; transition:opacity .12s; }
   .block:hover .gutter, .block.drop-before .gutter, .block.drop-after .gutter, .block.dragging .gutter { opacity:1; }
@@ -140,8 +141,11 @@ const HTML = `<!doctype html>
   .b-h3 .editable { font-size:18px; font-weight:600; padding-top:4px; }
   .b-h1 .gutter { top:22px; } .b-h2 .gutter { top:14px; } .b-h3 .gutter { top:7px; }
   .b-quote .editable { border-left:3px solid var(--accent); padding-left:14px; color:var(--fg-soft); font-style:italic; }
-  .b-code .editable { font-family:var(--mono); background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius);
-    padding:14px 16px; font-size:13px; white-space:pre-wrap; line-height:1.6; }
+  .codebox { flex:1; min-width:0; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+  .code-lang { width:100%; border:0; border-bottom:1px solid var(--line); outline:none; background:color-mix(in srgb,var(--surface-2) 84%,var(--bg));
+    color:var(--muted); font-family:var(--mono); font-size:11px; padding:6px 10px; }
+  .code-lang:focus { color:var(--fg-soft); }
+  .b-code .editable { font-family:var(--mono); padding:10px 14px 14px; font-size:13px; white-space:pre-wrap; line-height:1.6; }
   .marker { width:24px; flex:none; text-align:center; color:var(--fg-soft); user-select:none; padding-top:4px; }
   .b-todo .marker { padding-top:5px; }
   .b-todo .marker input { width:15px; height:15px; accent-color:var(--accent); cursor:pointer; }
