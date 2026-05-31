@@ -160,6 +160,10 @@
     border-radius: 2px; pointer-events: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
   .block.drop-before::before { top: -1px; }
   .block.drop-after::after { bottom: -1px; }
+  /* multi-block selection: whole-block highlight, suppress text reflow during drag */
+  .block.selected { background: var(--accent-soft); }
+  .block.selected .editable::selection, .block.selected .editable *::selection { background: transparent; }
+  .doc.selecting, .doc.selecting * { user-select: none; -webkit-user-select: none; cursor: default; }
   .editable { outline: none; flex: 1; min-width: 0; padding: 3px 2px; line-height: 1.6; }
   .editable:empty::before { content: attr(data-ph); color: var(--muted); pointer-events: none; }
   .b-h1 .editable { font-size: 28px; font-weight: 700; letter-spacing: -.02em; padding-top: 12px; }

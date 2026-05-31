@@ -145,6 +145,10 @@ const HTML = `<!doctype html>
     border-radius:2px; pointer-events:none; box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 18%,transparent); }
   .block.drop-before::before { top:-1px; }
   .block.drop-after::after { bottom:-1px; }
+  /* multi-block selection: whole-block tint + suppress stray native text highlight while dragging */
+  .block.selected { background:var(--accent-soft); }
+  .block.selected .editable::selection, .block.selected .editable *::selection { background:transparent; }
+  .doc.selecting, .doc.selecting * { user-select:none; -webkit-user-select:none; cursor:default; }
   .block.list-code-host { height:0; min-height:0; padding:0; overflow:visible; }
   .block-wrap:hover > .block.list-code-host .gutter { opacity:1; }
   .block.list-code-host .marker { position:absolute; left:0; top:0; padding-top:4px; z-index:1; }

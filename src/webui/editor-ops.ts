@@ -1,4 +1,4 @@
-import { type Block, genId, isListType } from "./blocks.ts";
+import { type Block, blockToText, genId, isListType } from "./blocks.ts";
 
 export interface FoundBlock {
   block: Block;
@@ -149,6 +149,91 @@ export function topmostBlockIds(blocks: readonly Block[], ids: readonly string[]
   };
   visit(blocks, false);
   return out;
+}
+
+/** Flatten-ordered ids spanning anchor..focus inclusive (continuous range). */
+export function blockRangeIds(blocks: readonly Block[], anchorId: string, focusId: string): string[] {
+  const flat = flattenBlocks(blocks);
+  const a = flat.findIndex((b) => b.id === anchorId);
+  const b = flat.findIndex((b) => b.id === focusId);
+  if (a < 0 || b < 0) return [];
+  const [from, to] = a <= b ? [a, b] : [b, a];
+  return flat.slice(from, to + 1).map((blk) => blk.id);
+}
+
+/**
+ * Remove every selected block (children come along with a selected parent) and
+ * return the id of the block to focus afterwards — the nearest surviving block
+ * before the selection, else after it, else the first remaining block.
+ */
+export function deleteBlocks(blocks: Block[], ids: readonly string[]): string | null {
+  if (!ids.length) return null;
+  const idSet = new Set(ids);
+  const flat = flattenBlocks(blocks);
+  const firstSel = flat.findIndex((b) => idSet.has(b.id));
+  if (firstSel < 0) return null;
+
+  let focusId: string | null = null;
+  for (let i = firstSel - 1; i >= 0; i--) if (!idSet.has(flat[i]!.id)) { focusId = flat[i]!.id; break; }
+  if (!focusId) for (let i = firstSel + 1; i < flat.length; i++) if (!idSet.has(flat[i]!.id)) { focusId = flat[i]!.id; break; }
+
+  for (const id of topmostBlockIds(blocks, ids)) removeBlockById(blocks, id);
+  if (focusId && !findBlock(blocks, focusId)) focusId = null;
+  return focusId ?? flattenBlocks(blocks)[0]?.id ?? null;
+}
+
+/** Duplicate the topmost selected blocks, inserting the copies as a group right
+ *  after the last selected block. Returns the ids of the new clones. */
+export function duplicateBlocks(blocks: Block[], ids: readonly string[]): string[] {
+  const tops = topmostBlockIds(blocks, ids);
+  if (!tops.length) return [];
+  const clones: Block[] = [];
+  for (const id of tops) {
+    const found = findBlock(blocks, id);
+    if (found) clones.push(cloneBlock(found.block));
+  }
+  const last = findBlock(blocks, tops[tops.length - 1]!);
+  if (!last || !clones.length) return [];
+  last.parent.splice(last.index + 1, 0, ...clones);
+  return clones.map((b) => b.id);
+}
+
+/** Move the topmost selected blocks as a group before/after the target block. */
+export function moveBlocks(
+  blocks: Block[],
+  ids: readonly string[],
+  targetId: string,
+  where: "before" | "after",
+): boolean {
+  const tops = topmostBlockIds(blocks, ids);
+  if (!tops.length || tops.includes(targetId)) return false;
+  for (const id of tops) {
+    const found = findBlock(blocks, id);
+    if (found && containsBlock(found.block.children, targetId)) return false;
+  }
+  const moved: Block[] = [];
+  for (const id of tops) {
+    const removed = removeBlockById(blocks, id);
+    if (removed) moved.push(removed);
+  }
+  const target = findBlock(blocks, targetId);
+  if (!target) {
+    blocks.push(...moved); // target vanished (shouldn't happen) — keep blocks alive
+    return false;
+  }
+  target.parent.splice(target.index + (where === "after" ? 1 : 0), 0, ...moved);
+  return true;
+}
+
+/** Serialize the topmost selected blocks (with children) to Markdown. */
+export function serializeBlocks(blocks: Block[], ids: readonly string[]): string {
+  return topmostBlockIds(blocks, ids)
+    .map((id) => {
+      const found = findBlock(blocks, id);
+      return found ? blockToText(found.block) : "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function indentBlocks(blocks: Block[], ids: readonly string[]): string[] {

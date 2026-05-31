@@ -19,18 +19,23 @@ import {
   shortcutFromInput,
 } from "./blocks.ts";
 import {
+  blockRangeIds,
   cloneBlock,
   countBlocks,
+  deleteBlocks,
+  duplicateBlocks,
   findBlock,
   flattenBlocks,
   indentBlock,
   indentBlocks,
   moveBlock,
+  moveBlocks,
   nextBlock,
   outdentBlock,
   outdentBlocks,
   previousBlock,
   removeBlockById,
+  serializeBlocks,
 } from "./editor-ops.ts";
 import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
 
@@ -64,6 +69,11 @@ export function DocView({
   const [loading, setLoading] = useState(true);
   const [slash, setSlash] = useState<{ blockId: string; x: number; y: number; query: string; idx: number } | null>(null);
   const [bar, setBar] = useState<{ x: number; y: number } | null>(null);
+  // Block-level (multi-block) selection: a continuous anchor..focus range.
+  // Independent from native text selection, because each block is its own
+  // contentEditable host and the browser can't span a native selection across
+  // them. null = no block selection (normal single-block editing).
+  const [sel, setSel] = useState<{ anchorId: string; focusId: string } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const bump = () => setVersion((v) => v + 1);
@@ -94,6 +104,7 @@ export function DocView({
       .catch((e) => onError(String(e.message)));
 
   const blocks = blocksRef.current;
+  const selectedIds = sel ? blockRangeIds(blocks, sel.anchorId, sel.focusId) : [];
 
   const insertAfter = (afterId: string | null, type: BlockType = "p", draft: Partial<BlockDraft> = {}): Block => {
     const b = makeBlock(type, draft);
@@ -189,51 +200,9 @@ export function DocView({
     scheduleSave();
   };
 
-  const applySelectionIndent = (ids: string[], dir: "indent" | "outdent") => {
-    syncRenderedBlocks(blocks);
-    const changed = dir === "indent" ? indentBlocks(blocks, ids) : outdentBlocks(blocks, ids);
-    if (!changed.length) return false;
-    bump();
-    requestAnimationFrame(() => focusBlock(changed[0]!));
-    scheduleSave();
-    setBar(null);
-    return true;
-  };
-
-  const deleteSelection = (selection: BlockSelection) => {
-    syncRenderedBlocks(blocks);
-    const focusId = deleteBlockSelection(blocks, selection);
-    if (!focusId) return false;
-    bump();
-    requestAnimationFrame(() => focusBlock(focusId, true));
-    scheduleSave();
-    setBar(null);
-    return true;
-  };
-
-  const onDocKeyDownCapture = (e: KeyboardEvent) => {
-    if (e.key !== "Tab" && e.key !== "Backspace" && e.key !== "Delete") return;
-    const selection = getBlockSelection(blocks);
-    if (!selection || selection.ids.length <= 1) return;
-    e.preventDefault();
-    if (e.key === "Tab") applySelectionIndent(selection.ids, e.shiftKey ? "outdent" : "indent");
-    else deleteSelection(selection);
-  };
-
   const applyFormatCommand = (cmd: string) => {
-    const selection = getBlockSelection(blocks);
     const link = cmd === "createLink" ? prompt("链接地址") : null;
     if (cmd === "createLink" && !link) return;
-
-    if (selection && selection.ids.length > 1) {
-      const changed = applyFormatToBlockSelection(selection, cmd, link ?? undefined);
-      if (!changed.length) return;
-      syncRenderedBlocks(blocks);
-      scheduleSave();
-      updateBar(setBar);
-      return;
-    }
-
     if (cmd === "code") wrapInlineCode();
     else document.execCommand(cmd, false, link ?? undefined);
     syncFocusedBlock(blocks);
@@ -241,24 +210,156 @@ export function DocView({
     updateBar(setBar);
   };
 
-  const onDocCopy = (e: ClipboardEvent) => {
-    const selection = getBlockSelection(blocks);
-    if (!selection || selection.ids.length <= 1) return;
-    const text = serializeBlockSelection(blocks, selection);
-    if (!text) return;
-    e.preventDefault();
-    e.clipboardData?.setData("text/plain", text);
+  // ---- block-selection batch operations ----
+  const clearSel = () => setSel(null);
+
+  const deleteSelectedBlocks = (ids: string[]) => {
+    syncRenderedBlocks(blocks);
+    const focusId = deleteBlocks(blocks, ids);
+    clearSel();
+    bump();
+    if (focusId) requestAnimationFrame(() => focusBlock(focusId, true));
+    scheduleSave();
   };
 
-  const onDocCut = (e: ClipboardEvent) => {
-    const selection = getBlockSelection(blocks);
-    if (!selection || selection.ids.length <= 1) return;
-    const text = serializeBlockSelection(blocks, selection);
-    if (!text) return;
-    e.preventDefault();
-    e.clipboardData?.setData("text/plain", text);
-    deleteSelection(selection);
+  const indentSelectedBlocks = (ids: string[], dir: "indent" | "outdent") => {
+    syncRenderedBlocks(blocks);
+    const changed = dir === "indent" ? indentBlocks(blocks, ids) : outdentBlocks(blocks, ids);
+    if (!changed.length) return;
+    bump(); // keep the block selection; ids are unchanged by indent/outdent
+    scheduleSave();
   };
+
+  const duplicateSelectedBlocks = (ids: string[]) => {
+    syncRenderedBlocks(blocks);
+    const newIds = duplicateBlocks(blocks, ids);
+    if (newIds.length) setSel({ anchorId: newIds[0]!, focusId: newIds[newIds.length - 1]! });
+    bump();
+    scheduleSave();
+  };
+
+  const copySelectedBlocks = (ids: string[]) => {
+    const text = serializeBlocks(blocks, ids);
+    if (text) navigator.clipboard?.writeText(text).catch(() => {});
+  };
+
+  // Block-mode keyboard: routed at the document level because the active
+  // editable is blurred while a block selection is up, so keydowns would
+  // otherwise never reach the .doc element. No-ops when there is no selection.
+  const onBlockKeyDown = (e: KeyboardEvent) => {
+    if (!sel) return;
+    const ids = selectedIds;
+    if (!ids.length) return;
+    const mod = e.metaKey || e.ctrlKey;
+
+    if (e.key === "Escape") { e.preventDefault(); const a = sel.anchorId; clearSel(); focusBlock(a, true); return; }
+    if (e.key === "Tab") { e.preventDefault(); indentSelectedBlocks(ids, e.shiftKey ? "outdent" : "indent"); return; }
+    if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); deleteSelectedBlocks(ids); return; }
+    if (mod && e.key === "d") { e.preventDefault(); duplicateSelectedBlocks(ids); return; }
+    if (mod && (e.key === "c" || e.key === "x")) {
+      e.preventDefault();
+      copySelectedBlocks(ids);
+      if (e.key === "x") deleteSelectedBlocks(ids);
+      return;
+    }
+    if (mod && e.key === "a") {
+      e.preventDefault();
+      const flat = flattenBlocks(blocks);
+      if (flat.length) setSel({ anchorId: flat[0]!.id, focusId: flat[flat.length - 1]!.id });
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const flat = flattenBlocks(blocks);
+      const fi = flat.findIndex((b) => b.id === sel.focusId);
+      if (fi < 0) return;
+      if (e.shiftKey) {
+        const ni = e.key === "ArrowDown" ? Math.min(fi + 1, flat.length - 1) : Math.max(fi - 1, 0);
+        setSel({ anchorId: sel.anchorId, focusId: flat[ni]!.id });
+      } else {
+        const edge = e.key === "ArrowDown" ? ids[ids.length - 1]! : ids[0]!;
+        clearSel();
+        focusBlock(edge, e.key === "ArrowDown");
+      }
+      return;
+    }
+    if (e.key.length === 1 && !mod) {
+      // any other printable key drops back into editing the last selected block
+      const last = ids[ids.length - 1]!;
+      clearSel();
+      focusBlock(last, true);
+    }
+  };
+
+  // ---- pointer-driven block selection (drag across blocks / gutter drag) ----
+  const dragSel = useRef<
+    { anchorId: string; started: boolean; sx: number; sy: number; mode: "text" | "block" } | null
+  >(null);
+
+  const onDocMouseDown = (e: MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // let interactive affordances (gutter buttons, popovers, form controls) work
+    if (target.closest(".gutter") || target.closest(".pop") || target.closest("input, button, select, a")) return;
+
+    const blockEl = closestBlockElement(e.target as Node);
+    const id = blockEl?.getAttribute("data-bid") ?? null;
+    if (!id) { clearSel(); return; }
+
+    if (e.shiftKey && sel) { // shift-click extends the current block selection
+      e.preventDefault();
+      enterBlockSelecting();
+      setSel({ anchorId: sel.anchorId, focusId: id });
+      return;
+    }
+
+    const inEditable = !!target.closest(".editable, .code-input");
+    if (inEditable) {
+      // start as text; promote to block mode only once the drag crosses a block
+      dragSel.current = { anchorId: id, started: false, sx: e.clientX, sy: e.clientY, mode: "text" };
+      if (sel) clearSel();
+    } else {
+      // pressed in the left margin / marker area → select the whole block now
+      e.preventDefault();
+      enterBlockSelecting();
+      setSel({ anchorId: id, focusId: id });
+      dragSel.current = { anchorId: id, started: true, sx: e.clientX, sy: e.clientY, mode: "block" };
+    }
+  };
+
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const d = dragSel.current;
+      if (!d) return;
+      const overEl = document.elementFromPoint(e.clientX, e.clientY);
+      const overId = (overEl?.closest(".block[data-bid]") as HTMLElement | null)?.getAttribute("data-bid") ?? null;
+      if (d.mode === "text") {
+        if (overId && overId !== d.anchorId) {
+          d.mode = "block";
+          enterBlockSelecting();
+          setSel({ anchorId: d.anchorId, focusId: overId });
+        }
+        return;
+      }
+      if (!d.started && Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) < 4) return;
+      d.started = true;
+      setSelectingClass(true);
+      if (overId) setSel({ anchorId: d.anchorId, focusId: overId });
+    };
+    const up = () => { dragSel.current = null; setSelectingClass(false); };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+  }, []);
+
+  // Route block-mode keystrokes from the document (latest closure via ref).
+  const blockKeyRef = useRef(onBlockKeyDown);
+  blockKeyRef.current = onBlockKeyDown;
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => blockKeyRef.current(e);
+    document.addEventListener("keydown", h, true);
+    return () => document.removeEventListener("keydown", h, true);
+  }, []);
 
   const onKeyDown = (e: KeyboardEvent, b: Block, el: HTMLElement) => {
     if (slash && slash.blockId === b.id) {
@@ -385,6 +486,7 @@ export function DocView({
 
   if (loading) return <div class="empty">加载中…</div>;
 
+  const selectedSet = new Set(selectedIds);
   const renderBlocks = (items: Block[], depth = 0): ComponentChildren =>
     items.map((b, i) => (
       <BlockRow
@@ -392,6 +494,7 @@ export function DocView({
         renderKey={version}
         block={b}
         depth={depth}
+        selected={selectedSet.has(b.id)}
         number={b.type === "numbered" ? items.slice(0, i + 1).filter((x) => x.type === "numbered").length : 0}
         onInput={(el) => onContentInput(b, el)}
         onLangInput={(lang) => { b.lang = lang; bump(); scheduleSave(); }}
@@ -403,7 +506,11 @@ export function DocView({
         onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
         dragRef={dragRef}
         onReorder={(srcId, where) => {
-          if (moveBlock(blocks, srcId, b.id, where)) {
+          const ids = selectedIds;
+          const moved = ids.length > 1 && ids.includes(srcId)
+            ? moveBlocks(blocks, ids, b.id, where)
+            : moveBlock(blocks, srcId, b.id, where);
+          if (moved) {
             bump();
             scheduleSave();
           }
@@ -416,9 +523,7 @@ export function DocView({
   return (
     <div
       class="doc"
-      onKeyDownCapture={(e) => onDocKeyDownCapture(e as KeyboardEvent)}
-      onCopy={(e) => onDocCopy(e as ClipboardEvent)}
-      onCut={(e) => onDocCut(e as ClipboardEvent)}
+      onMouseDown={(e) => onDocMouseDown(e as MouseEvent)}
       onMouseUp={() => updateBar(setBar)}
       onKeyUp={(e) => { if (e.shiftKey || e.key.startsWith("Arrow")) updateBar(setBar); }}
     >
@@ -455,18 +560,19 @@ export function DocView({
         </div>
       )}
 
-      {bar && <FormatBar x={bar.x} y={bar.y} onCommand={applyFormatCommand} />}
+      {bar && !sel && <FormatBar x={bar.x} y={bar.y} onCommand={applyFormatCommand} />}
     </div>
   );
 }
 
 function BlockRow({
-  block, number, depth, renderKey, onInput, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder, children,
+  block, number, depth, renderKey, selected, onInput, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
   depth: number;
   renderKey: number;
+  selected: boolean;
   onInput: (el: HTMLElement) => void;
   onLangInput: (lang: string) => void;
   onKeyDown: (e: KeyboardEvent, el: HTMLElement) => void;
@@ -493,7 +599,8 @@ function BlockRow({
     "block b-" +
     block.type +
     (block.type === "todo" && block.checked ? " b-done" : "") +
-    (compactCodeHost ? " list-code-host" : "");
+    (compactCodeHost ? " list-code-host" : "") +
+    (selected ? " selected" : "");
   return (
     <div class={"block-wrap" + (depth ? " nested" : "")}>
       <div
@@ -687,157 +794,6 @@ function wrapInlineCode() {
   document.execCommand("insertHTML", false, `<code>${text.replace(/</g, "&lt;")}</code>`);
 }
 
-interface BlockSelection {
-  ids: string[];
-  startId: string;
-  endId: string;
-  range: Range;
-}
-
-function getBlockSelection(blocks: Block[]): BlockSelection | null {
-  const sel = getSelection();
-  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
-  const range = sel.getRangeAt(0);
-  const startBlock = closestBlockElement(range.startContainer);
-  const endBlock = closestBlockElement(range.endContainer);
-  const startId = startBlock?.getAttribute("data-bid");
-  const endId = endBlock?.getAttribute("data-bid");
-  if (!startId || !endId) return null;
-
-  const flat = flattenBlocks(blocks);
-  const startIndex = flat.findIndex((b) => b.id === startId);
-  const endIndex = flat.findIndex((b) => b.id === endId);
-  if (startIndex < 0 || endIndex < 0) return null;
-
-  const from = Math.min(startIndex, endIndex);
-  const to = Math.max(startIndex, endIndex);
-  return {
-    ids: flat.slice(from, to + 1).map((b) => b.id),
-    startId: flat[from]!.id,
-    endId: flat[to]!.id,
-    range: range.cloneRange(),
-  };
-}
-
-function applyFormatToBlockSelection(selection: BlockSelection, cmd: string, link?: string): string[] {
-  const segments = selection.ids
-    .map((id) => {
-      const el = editableForBlock(id);
-      const range = el ? rangeForEditableSegment(selection, id, el) : null;
-      return el && range ? { id, range } : null;
-    })
-    .filter((x): x is { id: string; range: Range } => !!x);
-  const changed: string[] = [];
-  for (let i = segments.length - 1; i >= 0; i--) {
-    const segment = segments[i]!;
-    if (wrapRangeWithInlineCommand(segment.range, cmd, link)) changed.push(segment.id);
-  }
-  return changed;
-}
-
-function deleteBlockSelection(blocks: Block[], selection: BlockSelection): string | null {
-  const first = selection.ids[0];
-  const last = selection.ids[selection.ids.length - 1];
-  if (!first || !last || first === last) return null;
-
-  const fallback = previousBlock(blocks, first)?.id ?? nextBlock(blocks, last)?.id ?? null;
-  const remove = new Set(selection.ids.slice(1, -1));
-  let focusId: string | null = first;
-
-  const firstEl = editableForBlock(first);
-  if (firstEl && elementContainsNode(firstEl, selection.range.startContainer)) {
-    const tail = document.createRange();
-    tail.selectNodeContents(firstEl);
-    tail.setStart(selection.range.startContainer, selection.range.startOffset);
-    tail.deleteContents();
-    syncBlockElement(blocks, firstEl);
-  } else {
-    remove.add(first);
-    focusId = last;
-  }
-
-  const lastEl = editableForBlock(last);
-  if (lastEl && elementContainsNode(lastEl, selection.range.endContainer)) {
-    const head = document.createRange();
-    head.selectNodeContents(lastEl);
-    head.setEnd(selection.range.endContainer, selection.range.endOffset);
-    head.deleteContents();
-    syncBlockElement(blocks, lastEl);
-  } else {
-    remove.add(last);
-  }
-
-  const flat = flattenBlocks(blocks).map((b) => b.id);
-  for (let i = flat.length - 1; i >= 0; i--) {
-    const id = flat[i]!;
-    if (remove.has(id)) removeBlockById(blocks, id);
-  }
-
-  if (!focusId || !findBlock(blocks, focusId)) {
-    focusId = fallback ?? flattenBlocks(blocks)[0]?.id ?? null;
-  }
-  return focusId;
-}
-
-function serializeBlockSelection(blocks: Block[], selection: BlockSelection): string {
-  const parts: string[] = [];
-  for (const id of selection.ids) {
-    const found = findBlock(blocks, id);
-    if (!found) continue;
-    const el = editableForBlock(id);
-    const range = el ? rangeForEditableSegment(selection, id, el) : null;
-    if (range && (id === selection.startId || id === selection.endId)) {
-      const text = range.toString();
-      if (text) parts.push(text);
-      continue;
-    }
-    parts.push(blockToText({ ...found.block, children: undefined }));
-  }
-  return parts.filter(Boolean).join("\n");
-}
-
-function rangeForEditableSegment(selection: BlockSelection, id: string, el: HTMLElement): Range | null {
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  if (id === selection.startId) {
-    if (!elementContainsNode(el, selection.range.startContainer)) return null;
-    range.setStart(selection.range.startContainer, selection.range.startOffset);
-  }
-  if (id === selection.endId) {
-    if (!elementContainsNode(el, selection.range.endContainer)) return null;
-    range.setEnd(selection.range.endContainer, selection.range.endOffset);
-  }
-  return range;
-}
-
-function wrapRangeWithInlineCommand(range: Range, cmd: string, link?: string): boolean {
-  if (range.collapsed || !range.toString()) return false;
-  const tag =
-    cmd === "bold"
-      ? "strong"
-      : cmd === "italic"
-        ? "em"
-        : cmd === "underline"
-          ? "u"
-          : cmd === "strikeThrough"
-            ? "s"
-            : cmd === "code"
-              ? "code"
-              : cmd === "createLink"
-                ? "a"
-                : null;
-  if (!tag) return false;
-  const wrapper = document.createElement(tag);
-  if (tag === "a" && link) {
-    wrapper.setAttribute("href", link);
-    wrapper.setAttribute("target", "_blank");
-    wrapper.setAttribute("rel", "noreferrer");
-  }
-  wrapper.append(range.extractContents());
-  range.insertNode(wrapper);
-  return true;
-}
-
 function syncRenderedBlocks(blocks: Block[]) {
   document.querySelectorAll(".doc .block[data-bid]").forEach((el) => syncBlockElement(blocks, el as HTMLElement));
 }
@@ -853,17 +809,23 @@ function syncBlockElement(blocks: Block[], el: HTMLElement) {
   else if (code) block.content = code.value;
 }
 
-function editableForBlock(id: string): HTMLElement | null {
-  return document.querySelector(`.block[data-bid="${id}"] .editable`) as HTMLElement | null;
-}
-
 function closestBlockElement(node: Node): HTMLElement | null {
   const el = node instanceof HTMLElement ? node : node.parentElement;
   return (el?.closest(".block[data-bid]") as HTMLElement | null) ?? null;
 }
 
-function elementContainsNode(el: HTMLElement, node: Node): boolean {
-  return node === el || el.contains(node);
+// Toggle native text selectability off during a block-selection drag so the
+// browser doesn't paint a stray character highlight underneath the block tint.
+function setSelectingClass(on: boolean) {
+  document.querySelector(".doc")?.classList.toggle("selecting", on);
+}
+
+// Enter block-selection mode: drop any native caret/selection and blur the
+// active editable so keystrokes route to the document-level handler.
+function enterBlockSelecting() {
+  getSelection()?.removeAllRanges();
+  (document.activeElement as HTMLElement | null)?.blur?.();
+  setSelectingClass(true);
 }
 
 function updateBar(setBar: (b: { x: number; y: number } | null) => void) {
