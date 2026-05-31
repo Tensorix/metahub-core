@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "./ui.tsx";
+import hljs from "highlight.js/lib/common";
 import {
   type Block,
   type BlockDraft,
   type BlockType,
   BLOCK_MENU,
+  COMMON_LANGS,
   blocksFromBody,
   bodyFromBlocks,
   genId,
@@ -16,6 +18,21 @@ import {
   shortcutFromInput,
 } from "./blocks.ts";
 import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
+
+/** Highlight code to HTML for the overlay layer. Falls back to escaped text. */
+function highlightCode(code: string, lang?: string): string {
+  let html: string;
+  try {
+    html = lang && hljs.getLanguage(lang)
+      ? hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
+      : hljs.highlightAuto(code).value;
+  } catch {
+    html = escapeHtml(code);
+  }
+  // Trailing newline collapses in the highlight <pre>; pad so its height keeps
+  // pace with the textarea's caret line.
+  return code.endsWith("\n") ? html + "\n" : html;
+}
 
 export function DocView({
   docId,
@@ -215,6 +232,47 @@ export function DocView({
     }
   };
 
+  // Code blocks use a real <textarea>, so they get their own key handler instead
+  // of the contentEditable one. This is also where "escape the code block"
+  // lives: Enter on a trailing blank line, or ↓ on the last line, exits below.
+  const onCodeKeyDown = (e: KeyboardEvent, b: Block, ta: HTMLTextAreaElement) => {
+    const { value, selectionStart: start, selectionEnd: end } = ta;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      document.execCommand("insertText", false, "  "); // keeps native undo + fires input
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey && start === end) {
+      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+      const nlAfter = value.indexOf("\n", start);
+      const lastLine = nlAfter === -1;
+      const lineEmpty = value.slice(lineStart, lastLine ? undefined : nlAfter).trim() === "";
+      if (lastLine && lineEmpty) {
+        e.preventDefault();
+        b.content = value.replace(/\n[ \t]*$/, "");
+        insertAfter(b.id, "p");
+      }
+      return;
+    }
+    if (e.key === "ArrowDown" && start === end && value.indexOf("\n", start) === -1) {
+      e.preventDefault();
+      const next = nextBlock(blocks, b.id);
+      if (next) focusBlock(next.id);
+      else insertAfter(b.id, "p");
+      return;
+    }
+    if (e.key === "ArrowUp" && start === end && value.lastIndexOf("\n", start - 1) === -1) {
+      e.preventDefault();
+      const prev = previousBlock(blocks, b.id);
+      if (prev) focusBlock(prev.id, true);
+      return;
+    }
+    if (e.key === "Backspace" && value === "") {
+      e.preventDefault();
+      convert(b.id, "p");
+    }
+  };
+
   const blockMenu = (e: MouseEvent, b: Block) => {
     e.stopPropagation();
     openMenu(e, (close) => (
@@ -246,6 +304,8 @@ export function DocView({
         onInput={(el) => onContentInput(b, el)}
         onLangInput={(lang) => { b.lang = lang; bump(); scheduleSave(); }}
         onKeyDown={(e, el) => onKeyDown(e, b, el)}
+        onCodeInput={(value) => { b.content = value; scheduleSave(); }}
+        onCodeKeyDown={(e, ta) => onCodeKeyDown(e, b, ta)}
         onAdd={() => insertAfter(b.id)}
         onMenu={(e) => blockMenu(e, b)}
         onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
@@ -306,7 +366,7 @@ export function DocView({
 }
 
 function BlockRow({
-  block, number, depth, renderKey, onInput, onLangInput, onKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder, children,
+  block, number, depth, renderKey, onInput, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
@@ -315,6 +375,8 @@ function BlockRow({
   onInput: (el: HTMLElement) => void;
   onLangInput: (lang: string) => void;
   onKeyDown: (e: KeyboardEvent, el: HTMLElement) => void;
+  onCodeInput: (value: string) => void;
+  onCodeKeyDown: (e: KeyboardEvent, ta: HTMLTextAreaElement) => void;
   onAdd: () => void;
   onMenu: (e: MouseEvent) => void;
   onToggle: () => void;
@@ -325,9 +387,10 @@ function BlockRow({
   const edRef = useRef<HTMLDivElement>(null);
   // Uncontrolled: set innerHTML only on structural changes (renderKey/type), not
   // on every re-render, so typing — including a `/` query that re-renders the
-  // doc to show the slash menu — never resets the caret.
+  // doc to show the slash menu — never resets the caret. Code blocks render via
+  // <CodeBlock> (textarea), so they don't use edRef.
   useEffect(() => {
-    if (edRef.current) edRef.current.innerHTML = block.type === "code" ? escapeHtml(block.content) : inlineToHtml(block.content);
+    if (edRef.current && block.type !== "code") edRef.current.innerHTML = inlineToHtml(block.content);
   }, [renderKey, block.type]);
   const compactCodeHost =
     isListType(block.type) && block.content.trim() === "" && block.children?.[0]?.type === "code";
@@ -337,7 +400,7 @@ function BlockRow({
     (block.type === "todo" && block.checked ? " b-done" : "") +
     (compactCodeHost ? " list-code-host" : "");
   return (
-    <div class="block-wrap" style={depth ? { marginLeft: 28 } : undefined}>
+    <div class={"block-wrap" + (depth ? " nested" : "")}>
       <div
         class={cls}
         data-bid={block.id}
@@ -387,24 +450,13 @@ function BlockRow({
               <div class="marker"><input type="checkbox" checked={!!block.checked} onChange={onToggle} /></div>
             )}
             {compactCodeHost ? null : block.type === "code" ? (
-              <div class="codebox">
-                <input
-                  class="code-lang"
-                  value={block.lang ?? ""}
-                  placeholder="语言"
-                  spellcheck={false}
-                  onInput={(e) => onLangInput((e.currentTarget as HTMLInputElement).value)}
-                />
-                <div
-                  ref={edRef}
-                  class="editable"
-                  contentEditable
-                  spellcheck={false}
-                  data-ph={placeholder(block.type)}
-                  onInput={(e) => onInput(e.currentTarget as HTMLElement)}
-                  onKeyDown={(e) => onKeyDown(e, e.currentTarget as HTMLElement)}
-                />
-              </div>
+              <CodeBlock
+                block={block}
+                renderKey={renderKey}
+                onInput={onCodeInput}
+                onLangChange={onLangInput}
+                onKeyDown={onCodeKeyDown}
+              />
             ) : (
               <div
                 ref={edRef}
@@ -425,6 +477,94 @@ function BlockRow({
 
 function placeholder(t: BlockType): string {
   return ({ h1: "标题 1", h2: "标题 2", h3: "标题 3", code: "输入代码…", quote: "引用" } as Record<string, string>)[t] ?? "输入文本，“/” 唤出命令";
+}
+
+// ---- code block: transparent textarea over a highlight.js mirror ----
+function CodeBlock({
+  block, renderKey, onInput, onLangChange, onKeyDown,
+}: {
+  block: Block;
+  renderKey: number;
+  onInput: (value: string) => void;
+  onLangChange: (lang: string) => void;
+  onKeyDown: (e: KeyboardEvent, ta: HTMLTextAreaElement) => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const hlRef = useRef<HTMLElement>(null);
+  const gutRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Repaint the highlight mirror + line-number gutter, and grow the textarea to
+  // fit its content (so the block has no inner vertical scroll).
+  const paint = (value: string) => {
+    if (hlRef.current) hlRef.current.innerHTML = highlightCode(value, block.lang);
+    if (gutRef.current) {
+      const lines = value.split("\n").length;
+      let s = "1";
+      for (let i = 2; i <= lines; i++) s += "\n" + i;
+      gutRef.current.textContent = s;
+    }
+    const ta = taRef.current;
+    if (ta) { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; }
+  };
+
+  // Uncontrolled, like the contentEditable blocks: only push value on structural
+  // change or language switch, never on every keystroke (would reset the caret).
+  useEffect(() => {
+    const ta = taRef.current;
+    if (ta && ta.value !== block.content) ta.value = block.content;
+    paint(block.content);
+  }, [renderKey, block.lang]);
+
+  const lang = block.lang ?? "";
+  const langKnown = COMMON_LANGS.some((l) => l.id === lang);
+
+  return (
+    <div class="codeblock">
+      <div class="code-body">
+        <div ref={gutRef} class="code-gutter" aria-hidden="true">1</div>
+        <div class="code-scroll">
+          <pre class="code-hl" aria-hidden="true"><code ref={hlRef} class="hljs" /></pre>
+          <textarea
+            ref={taRef}
+            class="code-input"
+            rows={1}
+            spellcheck={false}
+            wrap="off"
+            placeholder="输入代码…"
+            onInput={(e) => { const ta = e.currentTarget as HTMLTextAreaElement; onInput(ta.value); paint(ta.value); }}
+            onKeyDown={(e) => onKeyDown(e, e.currentTarget as HTMLTextAreaElement)}
+            onScroll={(e) => {
+              const pre = hlRef.current?.parentElement as HTMLElement | null;
+              if (pre) pre.scrollLeft = (e.currentTarget as HTMLTextAreaElement).scrollLeft;
+            }}
+          />
+        </div>
+      </div>
+      <div class="code-tools">
+        <span class="code-lang">
+          <select value={lang} onChange={(e) => onLangChange((e.currentTarget as HTMLSelectElement).value)}>
+            {!langKnown && <option value={lang}>{lang || "纯文本"}</option>}
+            {COMMON_LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+          </select>
+          <Icon name="chevronDown" cls="ico sm" />
+        </span>
+        <button
+          class={"code-copy" + (copied ? " ok" : "")}
+          title="复制代码"
+          onClick={() => {
+            const text = taRef.current?.value ?? block.content;
+            navigator.clipboard?.writeText(text)
+              .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1400); })
+              .catch(() => {});
+          }}
+        >
+          <Icon name={copied ? "check" : "copy"} cls="ico sm" />
+          {copied ? "已复制" : "复制"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ---- inline formatting toolbar ----
@@ -551,8 +691,22 @@ function previousBlock(blocks: readonly Block[], id: string): Block | null {
   return found;
 }
 
-function blockEditorText(block: Block, el: HTMLElement): string {
-  return block.type === "code" ? htmlToInline(el.innerHTML).replace(/\u00a0/g, " ") : htmlToInline(el.innerHTML);
+function flatten(blocks: readonly Block[], out: Block[] = []): Block[] {
+  for (const block of blocks) {
+    out.push(block);
+    if (block.children) flatten(block.children, out);
+  }
+  return out;
+}
+
+function nextBlock(blocks: readonly Block[], id: string): Block | null {
+  const flat = flatten(blocks);
+  const i = flat.findIndex((b) => b.id === id);
+  return i >= 0 && i + 1 < flat.length ? flat[i + 1]! : null;
+}
+
+function blockEditorText(_block: Block, el: HTMLElement): string {
+  return htmlToInline(el.innerHTML);
 }
 
 function hasExpandedSelection(): boolean {
@@ -568,9 +722,15 @@ function caretRect(): { x: number; y: number } {
   return { x: r.left || 80, y: r.top || 120 };
 }
 function focusBlock(id: string, atEnd = false) {
-  const el = document.querySelector(`.block[data-bid="${id}"] .editable`) as HTMLElement | null;
+  const sel = `.block[data-bid="${id}"] .editable, .block[data-bid="${id}"] .code-input`;
+  const el = document.querySelector(sel) as HTMLElement | null;
   if (!el) return;
   el.focus();
+  if (el instanceof HTMLTextAreaElement) {
+    const pos = atEnd ? el.value.length : 0;
+    el.setSelectionRange(pos, pos);
+    return;
+  }
   if (atEnd) {
     const r = document.createRange();
     r.selectNodeContents(el);

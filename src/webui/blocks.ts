@@ -387,6 +387,40 @@ function cleanLang(lang: string): string {
   return lang.trim().replace(/[^A-Za-z0-9_+.#-]/g, "");
 }
 
+/** Languages offered in the code block's language dropdown. Values are
+ *  highlight.js language ids (also accepted by cleanLang for round-trip). */
+export const COMMON_LANGS: { id: string; label: string }[] = [
+  { id: "", label: "纯文本" },
+  { id: "bash", label: "Bash" },
+  { id: "shell", label: "Shell" },
+  { id: "javascript", label: "JavaScript" },
+  { id: "typescript", label: "TypeScript" },
+  { id: "json", label: "JSON" },
+  { id: "python", label: "Python" },
+  { id: "go", label: "Go" },
+  { id: "rust", label: "Rust" },
+  { id: "java", label: "Java" },
+  { id: "c", label: "C" },
+  { id: "cpp", label: "C++" },
+  { id: "csharp", label: "C#" },
+  { id: "sql", label: "SQL" },
+  { id: "yaml", label: "YAML" },
+  { id: "xml", label: "HTML / XML" },
+  { id: "css", label: "CSS" },
+  { id: "scss", label: "SCSS" },
+  { id: "markdown", label: "Markdown" },
+  { id: "php", label: "PHP" },
+  { id: "ruby", label: "Ruby" },
+  { id: "swift", label: "Swift" },
+  { id: "kotlin", label: "Kotlin" },
+  { id: "objectivec", label: "Objective-C" },
+  { id: "perl", label: "Perl" },
+  { id: "lua", label: "Lua" },
+  { id: "makefile", label: "Makefile" },
+  { id: "ini", label: "INI / TOML" },
+  { id: "diff", label: "Diff" },
+];
+
 export const BLOCK_MENU: { type: BlockType; ic: string; t: string; d: string }[] = [
   { type: "p", ic: "text", t: "文本", d: "普通段落" },
   { type: "h1", ic: "heading", t: "标题 1", d: "大号标题" },
