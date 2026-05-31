@@ -49,6 +49,7 @@ export function DatabaseView({
   const [editing, setEditing] = useState<{ rec: string; prop: string } | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>({});
+  const dragRef = useRef<string | null>(null);
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => onError(String(e.message)));
 
@@ -93,6 +94,21 @@ export function DatabaseView({
         return [...rs.slice(0, i + 1), copy, ...rs.slice(i + 1)];
       });
     });
+
+  const moveRecord = (srcId: string, targetId: string, where: "before" | "after") => {
+    if (srcId === targetId || sort) return;
+    setRecords((rs) => {
+      const next = [...rs];
+      const from = next.findIndex((r) => r.id === srcId);
+      if (from < 0) return rs;
+      const moved = next.splice(from, 1)[0]!;
+      let to = next.findIndex((r) => r.id === targetId);
+      if (to < 0) return rs;
+      if (where === "after") to += 1;
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
 
   const sorted = sort
     ? [...records].sort((a, b) => {
@@ -158,6 +174,7 @@ export function DatabaseView({
                       }
                     />
                   </th>
+                  <th class="gripcol" />
                   {props.map((p) => (
                     <th key={p.id} style={{ minWidth: widths[p.id] ?? 180 }}>
                       <div class="colhead" onClick={(e) => openColMenu(e, p, db.id, reload, props)}>
@@ -176,7 +193,24 @@ export function DatabaseView({
               </thead>
               <tbody>
                 {sorted.map((rec) => (
-                  <tr key={rec.id} class={sel.has(rec.id) ? "sel" : ""}>
+                  <tr
+                    key={rec.id}
+                    class={sel.has(rec.id) ? "sel" : ""}
+                    onDragOver={(e) => {
+                      if (sort || !dragRef.current || dragRef.current === rec.id) return;
+                      e.preventDefault();
+                      markRowDrop(e.currentTarget as HTMLElement, e as unknown as DragEvent);
+                    }}
+                    onDrop={(e) => {
+                      if (sort || !dragRef.current) return;
+                      e.preventDefault();
+                      const where = (e.currentTarget as HTMLElement).classList.contains("drop-after") ? "after" : "before";
+                      const src = dragRef.current;
+                      dragRef.current = null;
+                      clearRowDrop();
+                      moveRecord(src, rec.id, where);
+                    }}
+                  >
                     <td class="selcell">
                       <input
                         type="checkbox"
@@ -185,6 +219,28 @@ export function DatabaseView({
                           setSel((s) => { const n = new Set(s); n.has(rec.id) ? n.delete(rec.id) : n.add(rec.id); return n; })
                         }
                       />
+                    </td>
+                    <td
+                      class="rowgrip"
+                      title={sort ? "清除排序后可拖拽移动" : "拖拽移动"}
+                      draggable={!sort}
+                      onDragStart={(e) => {
+                        if (sort) {
+                          e.preventDefault();
+                          return;
+                        }
+                        dragRef.current = rec.id;
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", rec.id);
+                        (e.currentTarget.closest("tr") as HTMLElement | null)?.classList.add("dragging");
+                      }}
+                      onDragEnd={(e) => {
+                        dragRef.current = null;
+                        (e.currentTarget.closest("tr") as HTMLElement | null)?.classList.remove("dragging");
+                        clearRowDrop();
+                      }}
+                    >
+                      <Icon name="grip" cls="ico sm" />
                     </td>
                     {props.map((p, ci) => (
                       <td key={p.id} class="cell-td">
@@ -326,6 +382,17 @@ function CellDisplay({ prop, val }: { prop: Prop; val: unknown }) {
 function coerceInput(type: PropType, raw: string): unknown {
   if (type === "relation") return raw.split(",").map((s) => s.trim()).filter(Boolean);
   return raw;
+}
+
+function clearRowDrop() {
+  document.querySelectorAll("table.grid tr.drop-before,table.grid tr.drop-after")
+    .forEach((n) => n.classList.remove("drop-before", "drop-after"));
+}
+
+function markRowDrop(el: HTMLElement, e: DragEvent) {
+  clearRowDrop();
+  const r = el.getBoundingClientRect();
+  el.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
 }
 
 // ---- column resizer ----

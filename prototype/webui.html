@@ -211,7 +211,8 @@
   .col-resizer { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 2; }
   .col-resizer:hover { background: var(--accent); opacity: .35; }
   .addcol { width: 46px; } .addcol .colhead { justify-content: center; color: var(--muted); }
-  .selcol { width: 38px; } .gripcol { width: 26px; }
+  table.grid .selcell { width: 38px; min-width: 38px; max-width: 38px; text-align: center; }
+  table.grid .gripcol, table.grid .rowgrip { width: 26px; min-width: 26px; max-width: 26px; text-align: center; }
   td.cell-td { vertical-align: top; }
   .cell { padding: 8px 11px; min-height: 37px; cursor: text; word-break: break-word; transition: background .1s; display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
   .cell:hover { background: var(--hover); }
@@ -219,9 +220,12 @@
   tbody tr { transition: background .08s; }
   tbody tr:hover { background: var(--hover); }
   tbody tr.sel { background: var(--accent-soft); }
-  .rowgrip { text-align: center; color: transparent; cursor: grab; vertical-align: middle; }
+  table.grid tr.drop-before td { box-shadow: inset 0 2px 0 0 var(--accent); }
+  table.grid tr.drop-after td { box-shadow: inset 0 -2px 0 0 var(--accent); }
+  .rowgrip { color: transparent; cursor: grab; vertical-align: middle; }
+  .rowgrip[draggable="false"] { cursor: not-allowed; }
   tbody tr:hover .rowgrip { color: var(--muted); }
-  .selcell { text-align: center; vertical-align: middle; }
+  .selcell { vertical-align: middle; }
   .selcell input, thead .selcell input { width: 15px; height: 15px; accent-color: var(--accent); opacity: 0; cursor: pointer; vertical-align: middle; }
   tbody tr:hover .selcell input, tbody tr.sel .selcell input, thead .selcell input:checked, .selcell input:checked { opacity: 1; }
   .firstcell { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
