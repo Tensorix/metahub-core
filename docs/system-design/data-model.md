@@ -184,7 +184,7 @@ doc_blocks(id, doc_id, text, order_key, __deleted)
 - `order_key` 使用 fractional index。
 - 展示时按 `ORDER BY order_key, id` 排序。
 - 正文序列化时用空行连接 blocks。
-- WebUI 的文档编辑器会在前端把 Markdown 解析成更丰富的逻辑块树（例如列表项 `children`、代码块 `lang`）,但这些字段不入库。保存仍写完整 Markdown body,再由 core 按段落/fenced code 重建或 reconcile `doc_blocks`。
+- WebUI 的文档编辑器会在前端把 Markdown 解析成更丰富的逻辑块树（例如列表项 `children`、代码块 `lang`、有序列表 `start` 起始号）,但这些字段不入库。保存仍写完整 Markdown body,再由 core 按段落/fenced code 重建或 reconcile `doc_blocks`；有序列表起始号通过 Markdown 序号本身往返。
 
 ## sites
 

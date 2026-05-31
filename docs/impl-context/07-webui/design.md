@@ -166,3 +166,54 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 ### 9.2 暂不实现
 
 - 高亮主题切换、复制以外的代码块操作（折叠/换行开关）、语言自动探测的可视化提示。
+
+## 10. v2.3 多块选中、撤销/重做与有序列表起始号（2026-06-01）
+
+本节记录在 v2.2 之上文档编辑器的三项增量：多块（整块）选中、自建撤销/重做（Ctrl+Z）、有序列表按用户输入的起始号。仍不改后端 API、schema、core CRDT、sync 协议；数据模型仅有序列表块新增可选 `start`。代码级实现见 [implementation.md §11](./implementation.md)。
+
+### 10.1 多块选中
+
+**背景**：每个块正文是**独立的 contentEditable 宿主**，浏览器原生 `Selection` 不能跨宿主——从 A 块拖到 B 块时选区被钳在起始块内。早先写过一套读原生选区映射块的 `getBlockSelection`/跨块删除/缩进/复制/行内格式，但因此从未触发；代码块是 `<textarea>` 更无法参与原生跨块选区。
+
+**决策**：放弃依赖原生选区，引入**独立的块选择状态**（`anchor..focus` 连续区间），用指针事件自行框选：
+
+- 触发：① 在块文本中拖拽、一旦越过另一个块即自动从文字选择切换为整块选择；② 在块左侧 gutter/marker 空白处按下即整块选择；③ Shift+点击扩展区间。仅连续区间，不做 Cmd+点击离散加选。
+- 视觉：选中块加 `.selected` 底色（`--accent-soft`）；拖拽期间 `.doc.selecting` 关闭原生文字反白。**无浮动工具栏**（按用户要求，仅底色）。
+- 批量操作（纯键盘）：Backspace/Delete 删除、Tab/Shift+Tab 缩进/反缩进（复用既有批量 `indentBlocks`/`outdentBlocks`）、Cmd/Ctrl+C·X 复制/剪切为 Markdown、Cmd/Ctrl+D 复制、Cmd/Ctrl+A 全选、Shift+↑/↓ 扩展、Esc/方向键/打字退出；选中多块整组拖拽移动。
+- 取舍：多块=整块模式；单块内仍用原生文字选择驱动行内格式条。废弃失效的跨块行内格式路径。
+
+### 10.2 撤销/重做（Ctrl+Z）
+
+**背景**：结构性块操作直接改 `blocksRef` 再 `bump()` 重渲染，不进浏览器原生撤销栈，故 Ctrl+Z 对插入/删除/移动/缩进/转换/多块批量等**全部无效**（原生撤销只覆盖单块内文字输入）。
+
+**决策**：自建快照式历史并接管 Ctrl+Z：
+
+- 快照 = 深拷贝块树 + 标题 + 当前聚焦块 id；`present` 为最近一次记录，发生变更时把它压入 `past`（上限 200 步），清空 `future`。
+- 记录时机：所有结构性操作经 `bump()` 各记一步；文字/代码/标题输入按块 id 在 600ms 窗口内合并为一步，避免逐字符撤销。
+- 快捷键（document 捕获层，编辑文字时也生效，`preventDefault` 屏蔽原生）：Cmd/Ctrl+Z 撤销、Cmd/Ctrl+Shift+Z 或 Ctrl+Y 重做。
+- 恢复：替换块树/标题、清空多块选择、重渲染并恢复光标；切换文档重置历史。
+
+### 10.3 有序列表起始号
+
+**背景**：序号原为实时重排计数（同级 numbered 计数），完全忽略用户输入的数字，永远显示 1、2、3…
+
+**决策**：采用 CommonMark 语义——一个连续有序 run 由**首项**的数字定起点、后续自动递增（首项数字尊重用户输入，后续数字按规范忽略）：
+
+- 模型：`Block` 增可选 `start`（仅 numbered，且只在 run 首项有意义）。
+- 单一数字来源 `computeListNumbers(siblings)`（导出）：显示与序列化共用，故插入/删除/重排后序号自动「序列重建」。
+- 输入入口：打字 `5. ` 快捷键、粘贴/加载 Markdown 解析首项数字。`normalizeNumbering` 只在每个 run 首项保留 `start`（为 1 则省略），其余项的数字丢弃。
+- 行为：`5.` 起从 5 递增；`1. 1. 1.` 重排为 1,2,3；删除首项后余项重建。
+
+### 10.4 暂不实现
+
+- 离散（Cmd+点击）多块选中、块选浮动工具栏、多块批量类型转换 UI。
+- 编辑已有有序列表起始号的 UI（仅创建/粘贴时按用户输入）。
+- 撤销栈对大文档「每键全树深拷贝」的优化（当前文档规模无感）。
+
+### 10.5 涉及文件
+
+- `src/webui/editor-ops.ts`：新增 `blockRangeIds`/`deleteBlocks`/`duplicateBlocks`/`moveBlocks`/`serializeBlocks`（复用既有 `flattenBlocks`/`indentBlocks`/`outdentBlocks`/`topmostBlockIds` 等）。
+- `src/webui/blocks.ts`：`Block.start`、导出 `computeListNumbers`、`normalizeNumbering`、解析/快捷转换捕获数字、`renderContainer` 改用统一编号。
+- `src/webui/editor.tsx`：块选择状态与指针框选、document 键盘路由（撤销/重做 + 块批量）、快照历史、显示编号/创建/转换接入 `start`。
+- `src/core/sync/webui.ts`：`.block.selected` / `.doc.selecting` CSS（注意 webui 真实 CSS 内联于此，非 `prototype/webui.html`）。
+- 测试：`src/webui/editor-ops.test.ts`、`src/webui/blocks.test.ts`。

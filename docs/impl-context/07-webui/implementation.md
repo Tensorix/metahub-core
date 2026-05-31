@@ -206,3 +206,40 @@ textarea 的 `scrollHeight` 以 `rows` 属性为下限，`rows` 默认 **2**，�
 - `bun test`：111 通过。
 - `bun build src/webui/app.tsx --outdir /private/tmp/metahub-webui-check`：通过。
 - `bun run tsc --noEmit`：仍有既存无关类型错误，位置为 `src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`src/webui/table.tsx`；本次改动文件未新增类型错误。
+
+## 11. v2.3 多块选中、撤销/重做、有序列表起始号（2026-06-01）
+
+配套设计见 [design.md §10](./design.md)。在 v2.2 之上为文档编辑器三项增量；后端/CRDT/sync 不变。分两批落地：多块选中（提交 `e73d818`）+ 撤销/重做与有序列表（本次）。
+
+### 11.1 多块选中（`editor.tsx` + `editor-ops.ts`）
+
+- **根因清理**：每块正文是独立 contentEditable 宿主，原生 `Selection` 不能跨宿主 → 旧 `getBlockSelection` 恒返回单块、批量分支（`selection.ids.length <= 1` 守卫）永不触发。删除整套失效代码（`getBlockSelection`/`deleteBlockSelection`/`serializeBlockSelection`/`applyFormatToBlockSelection`/`rangeForEditableSegment`/`wrapRangeWithInlineCommand`/`editableForBlock`/`elementContainsNode`），并简化 `applyFormatCommand` 只保留单块行内格式。
+- **状态**：`sel:{anchorId,focusId}|null`；派生 `selectedIds = blockRangeIds(blocks, anchor, focus)`（flatten 连续区间）。
+- **指针框选**：`.doc` 的 `onMouseDown` + window 级 `mousemove`/`mouseup`（`useEffect` 注册）。文本区按下记 anchor 与 `mode:"text"`，拖动越过另一块 → 转 `"block"`（`getSelection().removeAllRanges()` + blur + `.doc.selecting`）；gutter/marker 空白按下直接整块；Shift+点击扩展。`document.elementFromPoint(x,y).closest('.block[data-bid]')` 求落点块。表单控件（`input/button/select/a`）/`.gutter`/`.pop` 上的按下直接放行。
+- **批量纯函数**（`editor-ops.ts`，配单测）：`deleteBlocks`（删 topmost、回退聚焦前/后邻块）、`duplicateBlocks`（topmost 成组复制到选区后）、`moveBlocks`（成组移动，拒入自身子树）、`serializeBlocks`（topmost→`blockToText`）；缩进复用 `indentBlocks`/`outdentBlocks`。
+- **键盘**（document 捕获 `onBlockKeyDown`，经 `blockKeyRef` 取最新闭包）：Backspace/Delete、Tab/Shift+Tab、Cmd/Ctrl+C·X（块模式无原生 copy 事件，故走快捷键 + `navigator.clipboard.writeText`）、Cmd/Ctrl+D、Cmd/Ctrl+A、Shift+↑/↓ 扩展、其余打字/方向键退出。多块拖拽：`renderBlocks` 的 `onReorder` 内若 `srcId ∈ selectedIds` 走 `moveBlocks`，否则原 `moveBlock`。
+- **CSS**（`webui.ts` 内联）：`.block.selected{background:var(--accent-soft)}`、`.doc.selecting *{user-select:none}`。按用户要求**无浮动工具栏**，仅底色 + 键盘。
+
+### 11.2 撤销/重做（`editor.tsx`）
+
+- `history` ref `{past,future,present,lastKey,lastTime}`；`snapshot()=structuredClone(blocksRef)+title+focusedBlockId()`。
+- `recordHistory(key)`：`present` 为空则初始化；`key` 与 `lastKey` 相同且间隔 <600ms → 仅刷新 `present`（合并打字）；否则把 `present` 压 `past`（上限 200）、清 `future`。
+- 接线：`bump()` 改为 `recordHistory(null) + setVersion`（每个结构 op 记一步，因几乎所有结构变更都经 bump）；`onContentInput`、代码 `onCodeInput`、标题 `onInput` 分别调 `recordHistory("text:"+id)` / `"title"`。
+- `restoreSnap` 用 `setVersion` 直接重渲染（绕过 bump，不记录）+ 清 `sel` + rAF 恢复聚焦；`undo`/`redo` 在 `onBlockKeyDown` 顶部拦 Cmd/Ctrl+Z、Shift+Z / Ctrl+Y 并 `preventDefault` 屏蔽原生撤销；docId 切换时重置 history。
+
+### 11.3 有序列表起始号（`blocks.ts` + `editor.tsx`）
+
+- `Block.start?:number`；导出 `computeListNumbers(siblings)`（run 首项 `start??1` 起算、逐项 +1、遇非 numbered 兄弟断开）→ `renderBlocks`（显示）与 `renderContainer`（序列化）共用，保证「序列重建」单一来源。
+- 解析：`matchListLine` 与 `RE.numbered`、`textToBlock` 捕获实际数字；`blocksFromBody` 末尾 `normalizeNumbering`（每个 run 只首项留 `start`，为 1 则删，其余丢弃 → CommonMark）。
+- 创建：`shortcutFromInput` 的 `N. ` 解析出 `start`；`makeBlock`/`convert` 落 `start`（仅 numbered 且 >1，否则删）。
+
+### 11.4 验证
+
+- `bun test src/webui/`：32 通过（`blocks`/`markdown`/`editor-ops`）；新增块批量 op 与有序列表起始/往返/重建用例，更新旧的「从 1 重排」断言为「按首项起始」。
+- `bunx tsc --noEmit -p src/webui/tsconfig.json`：本次文件零错误（既存无关：`src/webui/table.tsx` nullable `dataTransfer`）。
+- 视觉手验（用户实机刷新）：跨块/边栏拖拽框选 + 底色、键盘批量删/缩进/复制/移动；Ctrl+Z 撤销结构 op 与整段打字、Shift+Z 重做、切档历史不串；`5.` 起始、`1.1.1.→1,2,3`、删首项重排。
+
+### 11.5 涉及文件
+
+- 前端：`src/webui/editor.tsx`、`src/webui/editor-ops.ts`、`src/webui/blocks.ts`；CSS `src/core/sync/webui.ts`。
+- 测试：`src/webui/editor-ops.test.ts`、`src/webui/blocks.test.ts`。
