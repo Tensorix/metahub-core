@@ -269,6 +269,16 @@ export function DocView({
     }
     if (e.key === "Backspace" && value === "") {
       e.preventDefault();
+      const found = findBlock(blocks, b.id);
+      const parent = found?.parentBlock;
+      if (found && parent && isListType(parent.type) && parent.content.trim() === "") {
+        found.parent.splice(found.index, 1);
+        if (found.parent.length === 0) delete parent.children;
+        bump();
+        requestAnimationFrame(() => focusBlock(parent.id));
+        scheduleSave();
+        return;
+      }
       convert(b.id, "p");
     }
   };
