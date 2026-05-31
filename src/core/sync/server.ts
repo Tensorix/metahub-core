@@ -1,13 +1,15 @@
 import { openMetahub } from "../db.ts";
 import { getNodeId } from "../node.ts";
-import { randomSuffix } from "../ids.ts";
 import pkg from "../../../package.json" with { type: "json" };
 import { routes, type RouteCtx } from "./routes.ts";
-import { SYNC_PATH, HEALTH_PATH } from "./protocol.ts";
+import { SYNC_PATH, HEALTH_PATH, RENEW_PATH } from "./protocol.ts";
+import { DEFAULT_TTL_MS, DEFAULT_GRACE_MS } from "./token.ts";
 import { buildOpenApi } from "./openapi.ts";
 import {
   type AuthConfig,
+  activeToken,
   hasValidToken,
+  renewToken,
   wantsHtml,
   unlockPage,
   withShim,
@@ -21,6 +23,8 @@ export interface RunningServer {
   port: number;
   /** The active token, or null in --debug mode (auth disabled). */
   token: string | null;
+  /** Token expiry (epoch ms); Infinity for a static --token, null when auth is off. */
+  exp: number | null;
 }
 
 export interface ServerOptions {
@@ -49,10 +53,19 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   const node = getNodeId(db);
   const ctx: RouteCtx = { db, node };
 
-  const auth: AuthConfig = {
-    debug: opts.debug ?? false,
-    token: opts.debug ? null : (opts.token ?? randomSuffix(24)),
-  };
+  // Three modes: --debug disables auth; an explicit --token/env is a fixed,
+  // non-persisted token; otherwise a persistent, rotating token from ~/.metahub.
+  const auth: AuthConfig = opts.debug
+    ? { debug: true, staticToken: null, db: null, ttlMs: 0, graceMs: 0 }
+    : opts.token
+      ? { debug: false, staticToken: opts.token, db: null, ttlMs: 0, graceMs: 0 }
+      : {
+          debug: false,
+          staticToken: null,
+          db,
+          ttlMs: DEFAULT_TTL_MS,
+          graceMs: DEFAULT_GRACE_MS,
+        };
 
   const server = Bun.serve({
     port: opts.port ?? 7777,
@@ -62,8 +75,13 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
 
       // CRDT replication keeps its prior trusted-peer model: /sync and /health
       // are exempt from the token gate so `mh sync` works without distributing
-      // the token to peers. Everything else (WebUI, /api/*, /docs, /sites) is gated.
-      const exempt = url.pathname === SYNC_PATH || url.pathname === HEALTH_PATH;
+      // the token to peers. /auth/token must be reachable with an expired token
+      // (it's how a browser swaps an old token for the current one). Everything
+      // else (WebUI, /api/*, /docs, /sites) is gated.
+      const exempt =
+        url.pathname === SYNC_PATH ||
+        url.pathname === HEALTH_PATH ||
+        url.pathname === RENEW_PATH;
 
       // Token gate (no-op in --debug). A browser without a token gets the unlock
       // page; everything else gets 401. Once the unlock page sets the cookie the
@@ -72,6 +90,13 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
         return wantsHtml(req)
           ? new Response(unlockPage(), { headers: HTML_HEADERS })
           : unauthorized();
+      }
+
+      // Seamless renewal: swap the current (or in-grace previous) token for the
+      // current token + expiry. 401 if the presented token isn't recognized.
+      if (url.pathname === RENEW_PATH) {
+        const r = renewToken(req, url, auth);
+        return r ? Response.json(r) : unauthorized();
       }
 
       // Auto-generated API docs.
@@ -105,5 +130,12 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       return new Response("not found", { status: 404 });
     },
   });
-  return { server, node, port: server.port ?? opts.port ?? 7777, token: auth.token };
+  const active = activeToken(auth);
+  return {
+    server,
+    node,
+    port: server.port ?? opts.port ?? 7777,
+    token: active?.token ?? null,
+    exp: active?.exp ?? null,
+  };
 }

@@ -96,7 +96,7 @@ mh --server --port 7777            # 浏览器打开 http://localhost:7777/sites
 
 站点与文件**和其它数据一样进 CRDT oplog**，随 `mh sync` 跨机复制：文本与小二进制内联存储；超过阈值的大二进制走内容寻址 blob（`cache/`，其字节暂为本机、不随 oplog 复制，清单照常同步）。
 
-**鉴权**：`--debug` 全开（无鉴权）；否则单 token 守护**每个请求**（`--token` 自定义，否则启动时随机生成并打印，也读 `METAHUB_TOKEN`）。浏览器首次访问会弹**解锁页**输入 token，存入 `localStorage`+cookie 后刷新；之后注入的 fetch 套壳自动给同源 `/api/*` 调用带上 `Authorization: Bearer`，所以 agent 写的页面无需把 token 写进源码。token 可经 `Authorization: Bearer`、Cookie `mh_token` 或 `?token=` 任一方式携带。服务端默认只绑 `127.0.0.1`，`--host 0.0.0.0` 才对外。设计见 [docs/impl-context/08-agent-sites/design.md](docs/impl-context/08-agent-sites/design.md)。
+**鉴权**：`--debug` 全开（无鉴权）；否则单 token 守护**每个请求**。token **默认持久化在 `~/.metahub`**（重启复用，`mh token` 查看），带有效期（默认 30 天），**到期或 `mh token refresh` 时才轮换**；轮换后旧 token 在宽限期内（默认 7 天）仍可换到新 token，浏览器**无感续期**。`--token` / `METAHUB_TOKEN` 则固定一个不持久化、不过期的 token（脚本/CI 用）。浏览器首次访问会弹**解锁页**输入 token，存入 `localStorage`+cookie 后刷新；之后注入的 fetch 套壳自动给同源 `/api/*` 调用带上 `Authorization: Bearer`，并在轮换后透明地用 `GET /auth/token` 换新 token 重试，所以 agent 写的页面无需把 token 写进源码。token 可经 `Authorization: Bearer`、Cookie `mh_token` 或 `?token=` 任一方式携带；有效期/宽限期可经 `METAHUB_TOKEN_TTL` / `METAHUB_TOKEN_GRACE` 调整。服务端默认只绑 `127.0.0.1`，`--host 0.0.0.0` 才对外。设计见 [docs/impl-context/08-agent-sites/design.md](docs/impl-context/08-agent-sites/design.md)、[docs/impl-context/10-persistent-token/design.md](docs/impl-context/10-persistent-token/design.md)。
 
 ## 三种用法
 
@@ -131,10 +131,11 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 | `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
 | `mh search <query>` | 全文检索（文档 + 记录） |
 | `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
+| `mh token [show\|refresh]` | 查看 / 轮换持久化的服务器鉴权 token（存于 `~/.metahub`，默认 30 天到期轮换） |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
 | `mh sync <url>` | 与服务端同步一轮（CRDT 推/拉） |
 | `mh sync <src> <dst>` | 单个文档/数据表与文件互导：文档↔markdown、数据表↔CSV；方向按参数判别（哪侧是库内实体），格式按实体类型固定 |
-| `mh --server [--port] [--host] [--debug] [--token]` | 启动服务端：`/sync` + 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/`；非 `--debug` 时每个请求需带 token |
+| `mh --server [--port] [--host] [--debug] [--token]` | 启动服务端：`/sync` + 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/` + token 交换 `/auth/token`；非 `--debug` 时每个请求需带 token |
 
 ## 开发
 

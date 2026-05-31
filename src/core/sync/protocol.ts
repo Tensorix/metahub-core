@@ -39,3 +39,6 @@ export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
 export const SYNC_PATH = "/sync";
 export const HEALTH_PATH = "/health";
+// Token exchange: a holder of the current (or an in-grace previous) token swaps
+// it for the current token. Exempt from the gate so an expired token can reach it.
+export const RENEW_PATH = "/auth/token";

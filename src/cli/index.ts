@@ -10,6 +10,7 @@ import doc from "./commands/doc.ts";
 import edit from "./commands/edit.ts";
 import search from "./commands/search.ts";
 import site from "./commands/site.ts";
+import token from "./commands/token.ts";
 import completion, { complete } from "./commands/completion.ts";
 import sync from "./commands/sync.ts";
 import snapshot from "./commands/snapshot.ts";
@@ -42,6 +43,7 @@ const main = defineCommand({
     edit,
     search,
     site,
+    token,
     completion,
     __complete: complete,
     sync,
@@ -71,11 +73,22 @@ if (argv.includes("--server")) {
     debug: argv.includes("--debug"),
     token: flagValue(argv, "token") ?? process.env.METAHUB_TOKEN,
   });
+  const expNote =
+    s.token && s.exp != null && Number.isFinite(s.exp)
+      ? ` (expires ${new Date(s.exp).toISOString()})`
+      : "";
   print(
-    { server: "listening", port: s.port, nodeId: s.node, docs: `/docs`, token: s.token },
+    {
+      server: "listening",
+      port: s.port,
+      nodeId: s.node,
+      docs: `/docs`,
+      token: s.token,
+      exp: s.exp != null && Number.isFinite(s.exp) ? s.exp : null,
+    },
     () =>
       `metahub sync server on :${s.port} (node ${s.node}) — docs at http://localhost:${s.port}/docs\n` +
-      (s.token ? `auth token: ${s.token}` : `auth: disabled (--debug)`),
+      (s.token ? `auth token: ${s.token}${expNote}` : `auth: disabled (--debug)`),
   );
 } else {
   runMain(main, { showUsage });

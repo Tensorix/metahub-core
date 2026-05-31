@@ -8,9 +8,20 @@
 // localStorage + a cookie and reloads; served HTML then gets a fetch shim that
 // re-attaches the token as a Bearer header on same-origin API calls.
 
+import type { Database } from "bun:sqlite";
+import { loadOrRotate } from "./token.ts";
+import { RENEW_PATH } from "./protocol.ts";
+
+// Three modes:
+//   debug        — auth off entirely.
+//   staticToken  — fixed token from --token/env; not persisted, never expires.
+//   db (managed) — persistent, rotating token in ~/.metahub (see ./token.ts).
 export interface AuthConfig {
   debug: boolean;
-  token: string | null;
+  staticToken: string | null;
+  db: Database | null;
+  ttlMs: number;
+  graceMs: number;
 }
 
 const COOKIE = "mh_token";
@@ -31,9 +42,46 @@ export function extractToken(req: Request, url: URL): string | null {
   return cookieToken(req) ?? url.searchParams.get("token");
 }
 
+/** Whether auth is on at all (so the gate runs and the fetch shim is injected). */
+export function authActive(cfg: AuthConfig): boolean {
+  return !cfg.debug && (cfg.staticToken != null || cfg.db != null);
+}
+
+/** The currently-valid token and its expiry, or null when auth is off. */
+export function activeToken(cfg: AuthConfig): { token: string; exp: number } | null {
+  if (cfg.debug) return null;
+  if (cfg.staticToken != null) return { token: cfg.staticToken, exp: Infinity };
+  if (cfg.db) {
+    const s = loadOrRotate(cfg.db, cfg.ttlMs, cfg.graceMs);
+    return { token: s.token, exp: s.exp };
+  }
+  return null;
+}
+
 export function hasValidToken(req: Request, url: URL, cfg: AuthConfig): boolean {
-  if (cfg.debug || !cfg.token) return true;
-  return extractToken(req, url) === cfg.token;
+  const cur = activeToken(cfg);
+  if (!cur) return true;
+  return extractToken(req, url) === cur.token;
+}
+
+/**
+ * Token exchange: a holder of the current token (or the in-grace previous token)
+ * gets the current token back. Managed mode only — returns null otherwise.
+ */
+export function renewToken(
+  req: Request,
+  url: URL,
+  cfg: AuthConfig,
+): { token: string; exp: number } | null {
+  if (cfg.debug || cfg.staticToken != null || !cfg.db) return null;
+  const s = loadOrRotate(cfg.db, cfg.ttlMs, cfg.graceMs);
+  const presented = extractToken(req, url);
+  if (!presented) return null;
+  if (presented === s.token) return { token: s.token, exp: s.exp };
+  if (s.prev && presented === s.prev && Date.now() < s.prevExp) {
+    return { token: s.token, exp: s.exp };
+  }
+  return null;
 }
 
 /** A browser navigation (so we can answer with an unlock page instead of a 401). */
@@ -59,41 +107,83 @@ export function unlockPage(): string {
   button{width:100%;padding:8px;border:0;border-radius:6px;background:#238636;color:#fff;cursor:pointer}
   .err{color:#f85149;margin:0 0 12px;font-size:13px}
 </style></head><body>
-<form id="f">
+<form id="f" style="display:none">
   <h1>🔒 This server requires a token</h1>
   <p class="err" id="e" style="display:none">Token rejected — try again.</p>
-  <input id="t" type="password" placeholder="Token" autofocus autocomplete="current-password">
+  <input id="t" type="password" placeholder="Token" autocomplete="current-password">
   <button type="submit">Unlock</button>
 </form>
 <script>
-  // A leftover token means the previous attempt failed the gate.
-  if (localStorage.getItem("mh_token")) document.getElementById("e").style.display = "block";
+  var KEY = "mh_token";
+  function save(t) {
+    localStorage.setItem(KEY, t);
+    document.cookie = "${COOKIE}=" + encodeURIComponent(t) + "; path=/; SameSite=Strict; Max-Age=31536000";
+  }
+  function showForm() {
+    document.getElementById("f").style.display = "block";
+    // A leftover token means an attempt (or silent renewal) failed the gate.
+    if (localStorage.getItem(KEY)) document.getElementById("e").style.display = "block";
+    document.getElementById("t").focus();
+  }
   document.getElementById("f").addEventListener("submit", function (ev) {
     ev.preventDefault();
-    var t = document.getElementById("t").value;
-    localStorage.setItem("mh_token", t);
-    document.cookie = "${COOKIE}=" + encodeURIComponent(t) + "; path=/; SameSite=Strict; Max-Age=31536000";
+    save(document.getElementById("t").value);
     location.reload();
   });
+  // Seamless renewal for top-level navigation: if we hold a token, try swapping
+  // it for the current one before prompting. Covers the case where the token
+  // rotated while this browser held the (in-grace) previous one.
+  var stored = localStorage.getItem(KEY);
+  if (stored) {
+    fetch("${RENEW_PATH}", { headers: { authorization: "Bearer " + stored } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.token) { save(d.token); location.reload(); } else { showForm(); } })
+      .catch(showForm);
+  } else {
+    showForm();
+  }
 </script>
 </body></html>`;
 }
 
-/** Wrap window.fetch so same-origin requests carry the stored token as a Bearer header. */
+/**
+ * Wrap window.fetch so same-origin requests carry the stored token as a Bearer
+ * header, and so a 401 transparently swaps an old token for the current one
+ * (via ${RENEW_PATH}) and retries once — seamless renewal after a rotation.
+ */
 const SHIM = `<script>(function(){
-  var t = localStorage.getItem("mh_token");
-  if (!t) return;
+  var KEY = "mh_token";
+  function save(t){
+    try { localStorage.setItem(KEY, t); } catch (e) {}
+    document.cookie = KEY + "=" + encodeURIComponent(t) + "; path=/; SameSite=Strict; Max-Age=31536000";
+  }
   var orig = window.fetch.bind(window);
   window.fetch = function(input, init){
     init = init || {};
+    var t = null; try { t = localStorage.getItem(KEY); } catch (e) {}
     var url;
     try { url = new URL((typeof input === "string" ? input : input.url), location.href); } catch (e) { url = null; }
-    if (url && url.origin === location.origin) {
+    var same = url && url.origin === location.origin;
+    if (same && t) {
       var h = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
       if (!h.has("authorization")) h.set("authorization", "Bearer " + t);
       init.headers = h;
     }
-    return orig(input, init);
+    return orig(input, init).then(function(res){
+      if (res.status !== 401 || !same || !t || init.__mhRetried) return res;
+      return orig("${RENEW_PATH}", { headers: { authorization: "Bearer " + t } }).then(function(r){
+        if (!r.ok) return res;
+        return r.json().then(function(d){
+          if (!d || !d.token) return res;
+          save(d.token);
+          var h2 = new Headers(init.headers || {});
+          h2.set("authorization", "Bearer " + d.token);
+          init.headers = h2;
+          init.__mhRetried = true;
+          return orig(input, init);
+        });
+      }).catch(function(){ return res; });
+    });
   };
 })();</script>`;
 
@@ -104,9 +194,9 @@ export function injectShim(html: string): string {
   return SHIM + html;
 }
 
-/** For HTML responses in non-debug mode, inject the shim; otherwise pass through. */
+/** For HTML responses when auth is active, inject the shim; otherwise pass through. */
 export async function withShim(res: Response, cfg: AuthConfig): Promise<Response> {
-  if (cfg.debug || !cfg.token) return res;
+  if (!authActive(cfg)) return res;
   const ct = res.headers.get("content-type") ?? "";
   if (!ct.includes("text/html")) return res;
   const html = injectShim(await res.text());

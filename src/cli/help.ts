@@ -81,14 +81,21 @@ COMMANDS
     site publish <site> <dir>         Upload a whole directory (creates the site)
     site list | files <site>
     site rm <site> <path> | delete <site>
+  server auth  (token persisted in ~/.metahub; rotates on expiry or 'token refresh')
+    token show                        Print the current server token + expiry
+    token refresh                     Rotate now (old token swappable during grace)
   sync & backup
     sync <url>                        Push/pull one round against a sync server
     sync <src> <dst>                  Export/import a doc(→md) or table(→csv) file
     --server [--port N] [--host H] [--debug] [--token T]
                                       Run as a server: /sync + WebUI + /api/* +
                                       /docs + sites at /sites/<name>/. Outside
-                                      --debug a token guards every request
-                                      (custom via --token, else printed at start).
+                                      --debug a token guards every request. The
+                                      token persists in ~/.metahub (30d TTL,
+                                      rotates on expiry; old token swappable for
+                                      7d via /auth/token). --token / METAHUB_TOKEN
+                                      pins a fixed token instead. Both windows are
+                                      env-tunable (METAHUB_TOKEN_TTL / _GRACE).
     snapshot <out.mhpack>             Package all data into a portable file
     restore <pack> [--reset --yes]    Restore (merge by default)
   shell
@@ -161,6 +168,7 @@ const EXAMPLES: Record<string, string[]> = {
     "mh site publish blog ./out         # auto-creates the 'blog' site",
   ],
   "site files": ["mh site files blog"],
+  token: ["mh token            # show current token", "mh token show", "mh token refresh"],
   sync: [
     "mh sync http://localhost:7777        # peer push/pull",
     "mh sync architecture arch.md         # export doc → markdown",
