@@ -77,7 +77,8 @@ export function DatabaseView({
   const [sort, setSort] = useState<{ name: string; desc: boolean } | null>(null);
   const [editing, setEditing] = useState<{ rec: string; prop: string } | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
-  const [widths, setWidths] = useState<Record<string, number>>({});
+  // Column width lives in prop.config.width (persisted + replicated); 180 is the default.
+  const colWidth = (p: Prop) => p.config?.width ?? 180;
   const rowDragRef = useRef<RowDragState | null>(null);
   const colDragRef = useRef<ColDragState | null>(null);
   const suppressColClick = useRef(false);
@@ -324,7 +325,7 @@ export function DatabaseView({
                 <col style={{ width: 38 }} />
                 <col style={{ width: 26 }} />
                 {props.map((p) => (
-                  <col key={p.id} data-col-id={p.id} style={{ width: widths[p.id] ?? 180 }} />
+                  <col key={p.id} data-col-id={p.id} style={{ width: colWidth(p) }} />
                 ))}
                 <col />
               </colgroup>
@@ -358,7 +359,14 @@ export function DatabaseView({
                         <span class="ti"><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /></span>
                         <span class="nm">{p.name}</span>
                       </div>
-                      <ColResizer colId={p.id} startWidth={widths[p.id] ?? 180} onCommit={(w) => setWidths((m) => ({ ...m, [p.id]: w }))} />
+                      <ColResizer
+                        colId={p.id}
+                        startWidth={colWidth(p)}
+                        onCommit={(w) => {
+                          setProps((ps) => ps.map((x) => (x.id === p.id ? { ...x, config: { ...(x.config ?? {}), width: w } } : x)));
+                          api.setColumnWidth(p.id, w).catch((e) => { onError(String(e.message)); reload().catch(() => {}); });
+                        }}
+                      />
                     </th>
                   ))}
                   <th class="addcol">

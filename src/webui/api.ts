@@ -17,6 +17,7 @@ export interface PropConfig {
   options?: string[];
   database?: string;
   indexed?: boolean;
+  width?: number; // table column width in px
 }
 
 export interface Db {
@@ -85,6 +86,8 @@ export const api = {
     id: string,
     b: { name?: string; type?: PropType; config?: PropConfig; position?: number },
   ) => req<Prop>("PATCH", `/api/property?id=${q(id)}`, b),
+  setColumnWidth: (id: string, width: number) =>
+    req<Prop>("PATCH", `/api/property/width?id=${q(id)}`, { width }),
   deleteProperty: (id: string) => req<{ ok: boolean }>("DELETE", `/api/property?id=${q(id)}`),
 
   // records

@@ -5,6 +5,7 @@ import {
   listProperties,
   addProperty,
   updateProperty,
+  setPropertyWidth,
   removeProperty,
   type PropType,
   type PropertyConfig,
@@ -90,6 +91,7 @@ const UpdatePropertyReq = z.object({
   config: z.any().optional(),
   position: z.number().optional(),
 });
+const SetWidthReq = z.object({ width: z.number() });
 const RecordValuesReq = z.record(z.string(), z.any());
 const CreateDocumentReq = z.object({
   title: z.string(),
@@ -205,6 +207,17 @@ export const webuiRoutes: Route[] = [
         position?: number;
       };
       return updateProperty(db, need(req, "id"), body);
+    }),
+  },
+  {
+    method: "PATCH",
+    path: "/api/property/width",
+    summary: "Set a property's table column width (px). Query: ?id=<id>",
+    request: SetWidthReq,
+    response: PropertySchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { width: number };
+      return setPropertyWidth(db, need(req, "id"), body.width);
     }),
   },
   {

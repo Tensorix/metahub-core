@@ -7,6 +7,7 @@ import {
   getProperty,
   listProperties,
   updateProperty,
+  setPropertyWidth,
   removeProperty,
 } from "./properties.ts";
 import { createRecord, getRecord } from "./records.ts";
@@ -56,6 +57,24 @@ test("changing to select without options is rejected", () => {
   const d = createDatabase(db, { name: "Tasks" });
   const p = addProperty(db, d.id, { name: "Count", type: "number" });
   expect(() => updateProperty(db, p.id, { type: "select" })).toThrow(/options/);
+});
+
+test("setPropertyWidth persists, clamps, and preserves sibling config", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const p = addProperty(db, d.id, { name: "Status", type: "select", config: { options: ["todo", "done"] } });
+
+  const sized = setPropertyWidth(db, p.id, 240);
+  expect(sized.config?.width).toBe(240);
+  // merge must not strip the select's options
+  expect(sized.config?.width !== undefined && getProperty(db, p.id)!.config?.options).toEqual(["todo", "done"]);
+
+  // below the floor is clamped to 80, above the ceiling to 2000
+  expect(setPropertyWidth(db, p.id, 10).config?.width).toBe(80);
+  expect(setPropertyWidth(db, p.id, 9999).config?.width).toBe(2000);
+
+  // non-finite is rejected
+  expect(() => setPropertyWidth(db, p.id, NaN)).toThrow();
 });
 
 test("removeProperty drops the column from listings", () => {

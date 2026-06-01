@@ -29,6 +29,7 @@ export interface PropertyConfig {
   options?: string[]; // select / multi_select
   database?: string; // relation target database id
   indexed?: boolean; // hot query key — materialize an index for this field
+  width?: number; // table column width in px (UI metadata, replicated via config)
 }
 
 export interface PropertyRow {
@@ -154,6 +155,17 @@ export function updateProperty(
     for (const r of rows) emit(db, "records", r.id, id, null);
   }
   return getProperty(db, id)!;
+}
+
+// Persist a column's display width. Merges into the existing config server-side
+// so concurrent callers can't strip sibling fields (e.g. a select's `options`),
+// and clamps to a sane range. The width replicates with `config` via the oplog.
+export function setPropertyWidth(db: Database, id: string, width: number): PropertyRow {
+  const cur = getProperty(db, id);
+  if (!cur) throw new Error(`no such property: ${id}`);
+  if (!Number.isFinite(width)) throw new Error("width must be a finite number");
+  const w = Math.max(80, Math.min(2000, Math.round(width)));
+  return updateProperty(db, id, { config: { ...(cur.config ?? {}), width: w } });
 }
 
 export function removeProperty(db: Database, id: string): boolean {
