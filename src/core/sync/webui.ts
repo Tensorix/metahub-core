@@ -324,13 +324,16 @@ const HTML = `<!doctype html>
   tbody tr:hover .selcell input, tbody tr.sel .selcell input, .selcell input:checked, thead .selcell input { opacity:1; }
   .firstcell { position:relative; width:100%; min-width:0; }
   /* row actions float over the cell on hover, never reserving column width */
-  .rowactions { position:absolute; top:0; bottom:0; right:0; display:flex; align-items:center; gap:4px;
-    padding-left:28px; opacity:0; pointer-events:none;
-    background:linear-gradient(to right, transparent, var(--hover) 28px); }
+  /* right:-5px pulls the button out over the cell's 11px right padding so it
+     sits ~6px from the column border instead of ~15px inside it */
+  .rowactions { position:absolute; top:0; bottom:0; right:-5px; display:flex; align-items:flex-start;
+    padding:1px 0 0; opacity:0; pointer-events:none; }
   tbody tr:hover .rowactions { opacity:1; pointer-events:auto; }
-  tbody tr.sel .rowactions { background:linear-gradient(to right, transparent, var(--accent-soft) 28px); }
-  .rowopen { display:inline-flex; align-items:center; gap:4px; color:var(--muted); border-radius:5px; padding:3px 6px; font-size:11.5px; font-weight:500; flex:none; white-space:nowrap; }
-  .rowopen:hover { background:var(--hover-2); color:var(--fg); }
+  /* square icon button — "open as page" (Notion-style) */
+  .rowopen { width:23px; height:23px; flex:none; display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg-soft); box-shadow:var(--shadow-sm); }
+  .rowopen:hover { background:var(--surface-2); color:var(--fg); border-color:var(--line-strong); }
+  .rowopen svg { width:14px; height:14px; }
   .chip { display:inline-flex; align-items:center; gap:4px; border-radius:5px; padding:2px 8px; font-size:12.5px; font-weight:500;
     background:color-mix(in srgb,var(--c) 15%,transparent); color:var(--c); }
   @media (prefers-color-scheme: dark) { .chip { background:color-mix(in srgb,var(--c) 22%,transparent); color:color-mix(in srgb,var(--c) 75%,#fff); } }

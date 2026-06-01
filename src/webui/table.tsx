@@ -510,15 +510,12 @@ function CellView({
   const body = <CellDisplay prop={prop} val={val} />;
   if (first) {
     return (
-      <div class="cell" onClick={onClick}>
+      <div class="cell" onClick={onClick} onContextMenu={(e) => { e.preventDefault(); onRowMenu(e); }}>
         <div class="firstcell">
           {body}
           <div class="rowactions">
-            <button class="rowopen" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
-              <Icon name="cornerUpRight" cls="ico sm" />打开
-            </button>
-            <button class="rowopen" title="更多" onClick={(e) => { e.stopPropagation(); onRowMenu(e); }}>
-              <Icon name="dots" cls="ico sm" />
+            <button class="rowopen" title="打开" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+              <Icon name="openPeek" cls="ico sm" />
             </button>
           </div>
         </div>
