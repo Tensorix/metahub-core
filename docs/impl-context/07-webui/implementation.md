@@ -291,3 +291,32 @@ textarea 的 `scrollHeight` 以 `rows` 属性为下限，`rows` 默认 **2**，�
 - 前端：`src/webui/editor.tsx`——`onContentPaste`、`onKeyDown` 的 ↑↓ 与 Ctrl+A 分支、`selectAllBlocks`，helpers `caretLineEdge`/`splitEditableAtCaret`/`inlineTextLength`/`focusBlockAtOffset`/`blockTextFullySelected`，`BlockRow` 的 `onPaste` 接线与 `innerHTML` 守卫。
 - 复用：`blocksFromBody`/`htmlToInline`/`inlineToHtml`（`blocks.ts`/`markdown.tsx`）、`flattenBlocks`/`findBlock`/`previousBlock`/`nextBlock`（`editor-ops.ts`）。
 - 构建：`dist/webui.js`（经 `scripts/build.ts` 由 `app.tsx` 打包；改前端须重建）。
+
+## 13. 表格单元格底色打磨（2026-06-02）
+
+### 13.1 单选 popup 选项竖排（逐字换行）
+
+单选/多选编辑 popup 里每个选项被包进 `<span class="lico plain">`，而 `.lico.plain` 是 **22×22px 的图标盒**（本为小图标/色块设计）。把整段文字 `<Chip>` 塞进去后,中文只有 ~22px 宽 → 逐字竖排,且 22px 高度还裁切。修复:`SelectMenu`（`table.tsx`）里直接渲染 `<Chip text={o} />`,去掉 `.lico.plain` 包裹（`.item` 本是 flex、`.chk` 带 `margin-left:auto`,布局天然正确）;并给 `.chip` 加 `white-space:nowrap` 作防御,保证 pill 在 popup/单元格/peek 任何位置都不逐字换行。
+
+### 13.2 关键修复：同行有更高 cell 时,hover/选中底色缺一块
+
+**现象**：某行里一个 cell 文字换成多行把 `<td>` 撑高后,相邻 cell 的 hover/选中灰底**只覆盖上半截,底部留一条未着色空白**（叠在 `tr:hover` 整行浅色上,缺口处只剩整行浅色,故看起来"缺一块"）。
+
+**根因**：底色画在内层 `.cell` 上,而 `.cell` 只有内容高度（`min-height:37px`）+ `td.cell-td{vertical-align:top}` 顶部对齐;同行更高的兄弟 cell 把 `<td>` 撑高时 `.cell` 不跟着长 → 底部空出。
+
+**失败尝试（均用隔离复现页 + Playwright 实测排除）**：
+- `.cell{height:100%}`+`td{height:100%}`：**无效**。表格 `table.grid` 无确定高度,`tr`/`td` 高度 auto,百分比高度解析为 auto。实测 `.cell` 仍 53px、`td` 106.5px。
+- 经典 `td{height:1px}` hack + `.cell{height:100%}`：在本表 `table-layout:fixed`+`border-collapse:collapse` 下**溢出**到 122px,不可靠。
+
+**正解**：把 hover/active 底色从内层 `.cell` 移到外层 `td.cell-td`。`<td>` 由表格布局保证天然等于整行高度,无需任何百分比高度技巧。实测 `td` = 106.5px = 整行高度,填满。`.cell-td:hover` 只命中数据列（复选框列 `.selcell`、拖拽列 `.rowgrip` 是独立 td,范围与原 `.cell:hover` 一致）。
+
+**通用经验**：
+1. **表格里要让某区域等高整行,把样式/底色画在 `<td>` 上,不要画在 td 内层 div 上**。表格布局只保证 `<td>` 等高,内层元素默认只有内容高度。
+2. **表格内的 `height:100%` 百分比高度极不可靠**：祖先无确定高度时解析为 auto;`td{height:1px}` hack 在 `fixed`/`collapse` 下行为还会因浏览器而异。能靠 `<td>` 天生等高解决就别用百分比技巧。
+3. **CSS 布局疑难先建隔离复现页 + Playwright 量 `getBoundingClientRect()` 实测各方案,再改源码**,避免盲改反复 miss（本次三方案一次性量清）。
+
+### 13.3 涉及文件 / 验证
+
+- `src/webui/table.tsx`——`SelectMenu` 选项渲染（去 `.lico.plain` 包裹）。
+- `src/core/sync/webui.ts`（内联 CSS）——`.chip` 加 `white-space:nowrap`；底色规则 `.cell:hover` → `td.cell-td:hover`（`transition` 同移到 td）。
+- 验证：`bun run build` + 重启服务 + 硬刷新;把某 cell 撑成多行,hover/选中相邻 cell,确认底色铺满整行高度、底部无缺口;单选/多选 popup 选项为横向 pill、单行。
