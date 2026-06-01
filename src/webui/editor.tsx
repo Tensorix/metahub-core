@@ -229,6 +229,50 @@ export function DocView({
     scheduleSave();
   };
 
+  // Paste: parse the clipboard's plain text as Markdown so it renders as real
+  // inline formatting and block structure, instead of dropping in literal "**…**"
+  // or collapsing everything into one flat paragraph. Non-text payloads (images,
+  // files) fall through to the browser default.
+  const onContentPaste = (e: ClipboardEvent, b: Block, el: HTMLElement) => {
+    const text = (e.clipboardData?.getData("text/plain") ?? "").replace(/\r\n?/g, "\n");
+    if (!text) return;
+    e.preventDefault();
+    const parsed = blocksFromBody(text);
+    if (!parsed.length) return;
+    const found = findBlock(blocks, b.id);
+    if (!found) return;
+    const { before, after } = splitEditableAtCaret(el);
+
+    // A lone paragraph dropped into a line stays inline, so pasting a phrase like
+    // "see **docs**" formats in place without splitting the block apart.
+    if (parsed.length === 1 && parsed[0]!.type === "p" && (before.trim() !== "" || after.trim() !== "")) {
+      b.content = before + parsed[0]!.content + after;
+      const offset = inlineTextLength(before + parsed[0]!.content);
+      bump();
+      scheduleSave();
+      requestAnimationFrame(() => focusBlockAtOffset(b.id, offset));
+      return;
+    }
+
+    // Otherwise the line is split around the caret and the parsed blocks are
+    // dropped in between: `before` stays in the current block (keeping its type),
+    // `after` trails as a new paragraph after the pasted content.
+    const insert: Block[] = [...parsed];
+    const afterBlock = after.trim() !== "" ? makeBlock("p", { content: after }) : null;
+    if (afterBlock) insert.push(afterBlock);
+
+    if (before.trim() === "" && !found.block.children?.length) {
+      found.parent.splice(found.index, 1, ...insert); // empty line: replace it
+    } else {
+      b.content = before;
+      found.parent.splice(found.index + 1, 0, ...insert);
+    }
+    bump();
+    scheduleSave();
+    const caret = afterBlock ?? insert[insert.length - 1]!;
+    requestAnimationFrame(() => focusBlock(caret.id, !afterBlock));
+  };
+
   const slashMatches = slash
     ? BLOCK_MENU.filter((m) => (m.t + m.type + m.d).toLowerCase().includes(slash.query.toLowerCase()))
     : [];
@@ -587,6 +631,7 @@ export function DocView({
         selected={selectedSet.has(b.id)}
         number={b.type === "numbered" ? (numbers.get(b.id) ?? 1) : 0}
         onInput={(el) => onContentInput(b, el)}
+        onPaste={(e, el) => onContentPaste(e, b, el)}
         onLangInput={(lang) => { b.lang = lang; bump(); scheduleSave(); }}
         onKeyDown={(e, el) => onKeyDown(e, b, el)}
         onCodeInput={(value) => { b.content = value; recordHistory("text:" + b.id); scheduleSave(); }}
@@ -657,7 +702,7 @@ export function DocView({
 }
 
 function BlockRow({
-  block, number, depth, renderKey, selected, onInput, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder, children,
+  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
@@ -665,6 +710,7 @@ function BlockRow({
   renderKey: number;
   selected: boolean;
   onInput: (el: HTMLElement) => void;
+  onPaste: (e: ClipboardEvent, el: HTMLElement) => void;
   onLangInput: (lang: string) => void;
   onKeyDown: (e: KeyboardEvent, el: HTMLElement) => void;
   onCodeInput: (value: string) => void;
@@ -764,6 +810,7 @@ function BlockRow({
                 contentEditable
                 data-ph={placeholder(block.type)}
                 onInput={(e) => onInput(e.currentTarget as HTMLElement)}
+                onPaste={(e) => onPaste(e as ClipboardEvent, e.currentTarget as HTMLElement)}
                 onKeyDown={(e) => onKeyDown(e, e.currentTarget as HTMLElement)}
               />
             )}
@@ -994,6 +1041,55 @@ function caretLineEdge(el: HTMLElement): { first: boolean; last: boolean } {
   if (!cr.height && !cr.top) return { first: true, last: true };
   const lh = parseFloat(getComputedStyle(el).lineHeight) || cr.height || 20;
   return { first: cr.top - er.top < lh * 0.5, last: er.bottom - cr.bottom < lh * 0.5 };
+}
+// Split an editable's contents at the caret (or around its selection) into
+// inline-Markdown strings, so a paste can rejoin the text on either side.
+function splitEditableAtCaret(el: HTMLElement): { before: string; after: string } {
+  const sel = getSelection();
+  if (!sel || !sel.rangeCount || !el.contains(sel.getRangeAt(0).startContainer)) {
+    return { before: htmlToInline(el.innerHTML), after: "" };
+  }
+  const range = sel.getRangeAt(0);
+  const toInline = (set: (r: Range) => void) => {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    set(r);
+    const div = document.createElement("div");
+    div.appendChild(r.cloneContents());
+    return htmlToInline(div.innerHTML);
+  };
+  return {
+    before: toInline((r) => r.setEnd(range.startContainer, range.startOffset)),
+    after: toInline((r) => r.setStart(range.endContainer, range.endOffset)),
+  };
+}
+// Rendered (visible) text length of an inline-Markdown string — used to land the
+// caret right after freshly pasted inline content.
+function inlineTextLength(src: string): number {
+  const div = document.createElement("div");
+  div.innerHTML = inlineToHtml(src);
+  return (div.textContent ?? "").length;
+}
+// Place the caret at a visible-text offset inside a block's editable.
+function focusBlockAtOffset(id: string, offset: number) {
+  const el = document.querySelector(`.block[data-bid="${id}"] .editable`) as HTMLElement | null;
+  if (!el) return;
+  el.focus();
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let remaining = offset;
+  let target: Text | null = null;
+  for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+    target = node;
+    if (remaining <= node.data.length) break;
+    remaining -= node.data.length;
+  }
+  const range = document.createRange();
+  if (target) range.setStart(target, Math.min(remaining, target.data.length));
+  else { range.selectNodeContents(el); }
+  range.collapse(true);
+  const s = getSelection();
+  s?.removeAllRanges();
+  s?.addRange(range);
 }
 function focusBlock(id: string, atEnd = false) {
   const sel = `.block[data-bid="${id}"] .editable, .block[data-bid="${id}"] .code-input`;
