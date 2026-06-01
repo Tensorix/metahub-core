@@ -303,8 +303,12 @@ const HTML = `<!doctype html>
   table.grid .selcell { width:38px; min-width:38px; max-width:38px; text-align:center; }
   table.grid .gripcol, table.grid .rowgrip { width:26px; min-width:26px; max-width:26px; text-align:center; }
   td.cell-td { vertical-align:top; }
-  .cell { padding:8px 11px; min-height:37px; cursor:text; word-break:break-word; transition:background .1s; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
-  .cell:hover { background:var(--hover); } .cell.center { justify-content:center; }
+  .cell { padding:8px 11px; min-height:37px; cursor:text; word-break:break-word; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
+  /* hover/active tint goes on the <td> (always full row height) not the inner
+     .cell (only as tall as its content), so a taller sibling row never leaves a
+     gap of un-tinted space at the bottom of the hovered cell. */
+  td.cell-td { transition:background .1s; }
+  td.cell-td:hover { background:var(--hover); } .cell.center { justify-content:center; }
   tbody tr { transition:background .08s; }
   tbody tr:hover { background:var(--hover); }
   tbody tr.sel { background:var(--accent-soft); }
@@ -338,7 +342,7 @@ const HTML = `<!doctype html>
     border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg-soft); box-shadow:var(--shadow-sm); }
   .rowopen:hover { background:var(--surface-2); color:var(--fg); border-color:var(--line-strong); }
   .rowopen svg { width:14px; height:14px; }
-  .chip { display:inline-flex; align-items:center; gap:4px; border-radius:5px; padding:2px 8px; font-size:12.5px; font-weight:500;
+  .chip { display:inline-flex; align-items:center; gap:4px; border-radius:5px; padding:2px 8px; font-size:12.5px; font-weight:500; white-space:nowrap;
     background:color-mix(in srgb,var(--c) 15%,transparent); color:var(--c); }
   @media (prefers-color-scheme: dark) { .chip { background:color-mix(in srgb,var(--c) 22%,transparent); color:color-mix(in srgb,var(--c) 75%,#fff); } }
   .addrow { display:flex; align-items:center; gap:7px; padding:9px 12px; color:var(--muted); font-size:13px; cursor:pointer; border-top:1px solid var(--line); }

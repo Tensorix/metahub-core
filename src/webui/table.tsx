@@ -707,7 +707,7 @@ function SelectMenu({ multi, options, value, onPick }: { multi: boolean; options
       <MenuLabel>{multi ? "多选 — 点选切换" : "单选"}</MenuLabel>
       {options.map((o) => (
         <button key={o} class="item" onClick={() => pick(o)}>
-          <span class="lico plain"><Chip text={o} /></span>
+          <Chip text={o} />
           {isOn(o) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
         </button>
       ))}
