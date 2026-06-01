@@ -33,6 +33,21 @@ function Chip({ text }: { text: string }) {
 const VIEW_TABS: [string, string][] = [["表格", "list"], ["看板", "group"], ["日历", "calendar"]];
 type DropWhere = "before" | "after";
 
+// ---- cell range selection ----
+type CellPos = { r: number; c: number }; // r = row index in sorted, c = column index in props
+type CellSel = { a: CellPos; b: CellPos }; // a = anchor, b = focus
+function normRect(s: CellSel) {
+  return {
+    r0: Math.min(s.a.r, s.b.r), r1: Math.max(s.a.r, s.b.r),
+    c0: Math.min(s.a.c, s.b.c), c1: Math.max(s.a.c, s.b.c),
+  };
+}
+function cellText(_prop: Prop, val: unknown): string {
+  if (val == null) return "";
+  if (Array.isArray(val)) return val.join(", ");
+  return String(val);
+}
+
 interface RowDragState {
   id: string;
   pointerId: number;
@@ -77,9 +92,11 @@ export function DatabaseView({
   const [sort, setSort] = useState<{ name: string; desc: boolean } | null>(null);
   const [editing, setEditing] = useState<{ rec: string; prop: string } | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
+  const [cellSel, setCellSel] = useState<CellSel | null>(null);
   // Column width lives in prop.config.width (persisted + replicated); 180 is the default.
   const colWidth = (p: Prop) => p.config?.width ?? 180;
   const rowDragRef = useRef<RowDragState | null>(null);
+  const cellDragRef = useRef<{ pointerId: number; startX: number; startY: number; active: boolean } | null>(null);
   const colDragRef = useRef<ColDragState | null>(null);
   const suppressColClick = useRef(false);
 
@@ -94,6 +111,7 @@ export function DatabaseView({
     setSel(new Set());
     setPeek(null);
     setTab(0);
+    setCellSel(null);
     reload().catch((e) => onError(String(e.message)));
   }, [db.id]);
 
@@ -268,6 +286,67 @@ export function DatabaseView({
     addEventListener("pointercancel", up);
   };
 
+  const startCellSelect = (e: any, ri: number, ci: number) => {
+    if (e.button !== 0) return;
+    // Let inputs / buttons / links handle their own clicks (checkbox, row-open, edit input, url).
+    if ((e.target as HTMLElement).closest("input,button,a")) return;
+    const anchor = e.shiftKey && cellSel ? cellSel.a : { r: ri, c: ci };
+    setCellSel({ a: anchor, b: { r: ri, c: ci } });
+    cellDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, active: false };
+
+    const move = (ev: PointerEvent) => {
+      const d = cellDragRef.current;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      if (!d.active) {
+        if (Math.hypot(ev.clientX - d.startX, ev.clientY - d.startY) < 4) return;
+        d.active = true;
+        document.body.classList.add("cell-selecting");
+      }
+      ev.preventDefault();
+      const td = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.("td.cell-td") as HTMLElement | null;
+      if (!td || td.dataset.r == null) return;
+      setCellSel({ a: anchor, b: { r: Number(td.dataset.r), c: Number(td.dataset.c) } });
+    };
+    const up = (ev: PointerEvent) => {
+      const d = cellDragRef.current;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      document.body.classList.remove("cell-selecting");
+      cellDragRef.current = null;
+    };
+    addEventListener("pointermove", move, { passive: false });
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+  };
+
+  // Apply a value to every cell in the current selection, batching all changed
+  // columns per record into a single updateRecord call.
+  const applyToSelection = (valueFor: (p: Prop) => unknown) =>
+    guard(async () => {
+      if (!cellSel) return;
+      const { r0, r1, c0, c1 } = normRect(cellSel);
+      const cols = props.slice(c0, c1 + 1);
+      const rows = sorted.slice(r0, r1 + 1);
+      const updates = await Promise.all(rows.map((rec) => {
+        const patch: Record<string, unknown> = {};
+        for (const p of cols) patch[p.name] = valueFor(p);
+        return api.updateRecord(rec.id, patch);
+      }));
+      setRecords((rs) => rs.map((r) => updates.find((u) => u.id === r.id) ?? r));
+    });
+
+  const copySelection = async () => {
+    if (!cellSel) return;
+    const { r0, r1, c0, c1 } = normRect(cellSel);
+    const cols = props.slice(c0, c1 + 1);
+    const tsv = sorted.slice(r0, r1 + 1)
+      .map((rec) => cols.map((p) => cellText(p, rec.values[p.name])).join("\t"))
+      .join("\n");
+    try { await navigator.clipboard.writeText(tsv); } catch { /* clipboard blocked */ }
+  };
+
   const sorted = sort
     ? [...records].sort((a, b) => {
         const av = String(a.values[sort.name] ?? "");
@@ -277,9 +356,33 @@ export function DatabaseView({
     : records;
 
   const peekRec = records.find((r) => r.id === peek) ?? null;
+  const cr = cellSel ? normRect(cellSel) : null;
+
+  // Keyboard: copy (Cmd/Ctrl+C), clear (Delete/Backspace), dismiss (Escape) on the cell selection.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!cellSel || editing) return;
+      const ae = document.activeElement as HTMLElement | null;
+      const tag = (ae?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || ae?.isContentEditable) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copySelection(); }
+      else if (e.key === "Escape") { setCellSel(null); }
+      else if ((e.key === "Delete" || e.key === "Backspace")) {
+        const r = normRect(cellSel);
+        if (r.r0 !== r.r1 || r.c0 !== r.c1) { e.preventDefault(); applyToSelection(() => null); }
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [cellSel, editing, records, props, sort]);
 
   return (
-    <div class="db">
+    <div
+      class="db"
+      onPointerDown={(e) => {
+        if (!(e.target as HTMLElement).closest("td.cell-td, .cellselbar")) setCellSel(null);
+      }}
+    >
       <div class="db-head">
         <div class="db-icon">{db.icon || "🗂️"}</div>
         <div>
@@ -377,7 +480,7 @@ export function DatabaseView({
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((rec) => (
+                {sorted.map((rec, ri) => (
                   <tr
                     key={rec.id}
                     data-row-id={rec.id}
@@ -400,21 +503,40 @@ export function DatabaseView({
                     >
                       <Icon name="grip" cls="ico sm" />
                     </td>
-                    {props.map((p, ci) => (
-                      <td key={p.id} class="cell-td">
-                        <CellView
-                          rec={rec}
-                          prop={p}
-                          first={ci === 0}
-                          editing={editing?.rec === rec.id && editing?.prop === p.id}
-                          onEdit={() => setEditing({ rec: rec.id, prop: p.id })}
-                          onCancel={() => setEditing(null)}
-                          onCommit={(v) => commit(rec, p, v)}
-                          onOpen={() => setPeek(rec.id)}
-                          onRowMenu={(e) => openRowMenu(e, rec, () => setPeek(rec.id), () => duplicateRecord(rec), () => deleteRecords([rec.id]))}
-                        />
-                      </td>
-                    ))}
+                    {props.map((p, ci) => {
+                      const inSel = cr != null && ri >= cr.r0 && ri <= cr.r1 && ci >= cr.c0 && ci <= cr.c1;
+                      let boxShadow: string | undefined;
+                      if (inSel && cr) {
+                        const parts: string[] = [];
+                        if (ri === cr.r0) parts.push("inset 0 2px 0 0 var(--accent)");
+                        if (ri === cr.r1) parts.push("inset 0 -2px 0 0 var(--accent)");
+                        if (ci === cr.c0) parts.push("inset 2px 0 0 0 var(--accent)");
+                        if (ci === cr.c1) parts.push("inset -2px 0 0 0 var(--accent)");
+                        boxShadow = parts.join(",") || undefined;
+                      }
+                      return (
+                        <td
+                          key={p.id}
+                          class={"cell-td" + (inSel ? " cellsel" : "")}
+                          data-r={ri}
+                          data-c={ci}
+                          style={boxShadow ? { boxShadow } : undefined}
+                          onPointerDown={(e) => startCellSelect(e, ri, ci)}
+                        >
+                          <CellView
+                            rec={rec}
+                            prop={p}
+                            first={ci === 0}
+                            editing={editing?.rec === rec.id && editing?.prop === p.id}
+                            onEdit={() => setEditing({ rec: rec.id, prop: p.id })}
+                            onCancel={() => setEditing(null)}
+                            onCommit={(v) => commit(rec, p, v)}
+                            onOpen={() => setPeek(rec.id)}
+                            onRowMenu={(e) => openRowMenu(e, rec, () => setPeek(rec.id), () => duplicateRecord(rec), () => deleteRecords([rec.id]))}
+                          />
+                        </td>
+                      );
+                    })}
                     <td class="filler" />
                   </tr>
                 ))}
@@ -443,6 +565,20 @@ export function DatabaseView({
             <Icon name="trash" cls="ico sm" />删除
           </button>
           <button onClick={() => setSel(new Set())}><Icon name="x" cls="ico sm" /></button>
+        </div>
+      )}
+
+      {cr && (cr.r0 !== cr.r1 || cr.c0 !== cr.c1) && (
+        <div class="selbar cellselbar">
+          <span class="cnt">{(cr.r1 - cr.r0 + 1) * (cr.c1 - cr.c0 + 1)} 个单元格</span>
+          <button onClick={copySelection}><Icon name="copy" cls="ico sm" />复制</button>
+          <button onClick={() => applyToSelection((p) => sorted[cr.r0]!.values[p.name] ?? null)}>
+            <Icon name="copy" cls="ico sm" />填充
+          </button>
+          <button class="del" onClick={() => applyToSelection(() => null)}>
+            <Icon name="trash" cls="ico sm" />清空
+          </button>
+          <button onClick={() => setCellSel(null)}><Icon name="x" cls="ico sm" /></button>
         </div>
       )}
 
@@ -502,7 +638,8 @@ function CellView({
     );
   }
 
-  const onClick = (e: MouseEvent) => {
+  // Single click selects the cell (handled by the <td> pointer handler); double click edits.
+  const onActivate = (e: MouseEvent) => {
     if (prop.type === "select" || prop.type === "multi_select") openSelectMenu(e, prop, val, onCommit);
     else onEdit();
   };
@@ -510,7 +647,7 @@ function CellView({
   const body = <CellDisplay prop={prop} val={val} />;
   if (first) {
     return (
-      <div class="cell" onClick={onClick} onContextMenu={(e) => { e.preventDefault(); onRowMenu(e); }}>
+      <div class="cell" onDblClick={onActivate} onContextMenu={(e) => { e.preventDefault(); onRowMenu(e); }}>
         <div class="firstcell">
           {body}
           <div class="rowactions">
@@ -522,7 +659,7 @@ function CellView({
       </div>
     );
   }
-  return <div class="cell" onClick={onClick}>{body}</div>;
+  return <div class="cell" onDblClick={onActivate}>{body}</div>;
 }
 
 function CellDisplay({ prop, val }: { prop: Prop; val: unknown }) {

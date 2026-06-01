@@ -312,6 +312,10 @@ const HTML = `<!doctype html>
   tbody tr { transition:background .08s; }
   tbody tr:hover { background:var(--hover); }
   tbody tr.sel { background:var(--accent-soft); }
+  /* cell range selection: per-cell fill; the accent rectangle outline is drawn via inline box-shadow on edge cells. Placed after :hover so it wins on equal specificity. */
+  td.cell-td.cellsel, td.cell-td.cellsel:hover { background:var(--accent-soft); }
+  body.cell-selecting { user-select:none; cursor:cell; }
+  body.cell-selecting .cell { cursor:cell; }
   table.grid tr.drop-before td { box-shadow:inset 0 2px 0 0 var(--accent); }
   table.grid tr.drop-after td { box-shadow:inset 0 -2px 0 0 var(--accent); }
   table.grid th.drop-before { box-shadow:inset 2px 0 0 0 var(--accent); }
