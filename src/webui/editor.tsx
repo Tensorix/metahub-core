@@ -449,6 +449,19 @@ export function DocView({
       (e.shiftKey ? outdent : indent)(b.id);
       return;
     }
+    // ↑/↓ cross block boundaries: only when the caret sits on the block's first
+    // (↑) or last (↓) visual line, so multi-line wrapped text still moves between
+    // its own lines natively. Skip while extending a selection (Shift).
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !hasExpandedSelection()) {
+      const edge = caretLineEdge(el);
+      if (e.key === "ArrowUp" && edge.first) {
+        const prev = previousBlock(blocks, b.id);
+        if (prev) { e.preventDefault(); focusBlock(prev.id, true); return; }
+      } else if (e.key === "ArrowDown" && edge.last) {
+        const next = nextBlock(blocks, b.id);
+        if (next) { e.preventDefault(); focusBlock(next.id); return; }
+      }
+    }
     if (e.key === " " && b.type === "p" && !hasExpandedSelection()) {
       const shortcut = shortcutFromInput((el.textContent ?? "") + " ", " ");
       if (shortcut) {
@@ -668,8 +681,15 @@ function BlockRow({
   // on every re-render, so typing — including a `/` query that re-renders the
   // doc to show the slash menu — never resets the caret. Code blocks render via
   // <CodeBlock> (textarea), so they don't use edRef.
+  // renderKey is a global version counter, so every structural mutation re-runs
+  // this for *all* blocks. Only rewrite when the HTML actually differs, otherwise
+  // an unrelated edit (e.g. deleting another block) would clobber a caret we just
+  // placed here — landing it at the block's start instead of where it was set.
   useEffect(() => {
-    if (edRef.current && block.type !== "code") edRef.current.innerHTML = inlineToHtml(block.content);
+    if (edRef.current && block.type !== "code") {
+      const html = inlineToHtml(block.content);
+      if (edRef.current.innerHTML !== html) edRef.current.innerHTML = html;
+    }
   }, [renderKey, block.type]);
   const compactCodeHost =
     isListType(block.type) && block.content.trim() === "" && block.children?.[0]?.type === "code";
@@ -962,6 +982,18 @@ function caretRect(): { x: number; y: number } {
   if (!sel || !sel.rangeCount) return { x: 80, y: 120 };
   const r = sel.getRangeAt(0).getBoundingClientRect();
   return { x: r.left || 80, y: r.top || 120 };
+}
+// Is the collapsed caret on the first / last visual line of `el`? Compares the
+// caret's rect against the element's box within half a line-height of tolerance.
+// An empty element (no caret rect) counts as both first and last.
+function caretLineEdge(el: HTMLElement): { first: boolean; last: boolean } {
+  const sel = getSelection();
+  if (!sel || !sel.rangeCount) return { first: true, last: true };
+  const cr = sel.getRangeAt(0).getBoundingClientRect();
+  const er = el.getBoundingClientRect();
+  if (!cr.height && !cr.top) return { first: true, last: true };
+  const lh = parseFloat(getComputedStyle(el).lineHeight) || cr.height || 20;
+  return { first: cr.top - er.top < lh * 0.5, last: er.bottom - cr.bottom < lh * 0.5 };
 }
 function focusBlock(id: string, atEnd = false) {
   const sel = `.block[data-bid="${id}"] .editable, .block[data-bid="${id}"] .code-input`;
