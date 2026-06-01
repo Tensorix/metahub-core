@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS records (
   id          TEXT PRIMARY KEY,
   database_id TEXT,
   created_hlc TEXT,
+  order_key   TEXT,
   data        TEXT NOT NULL DEFAULT '{}',
   __deleted   INTEGER NOT NULL DEFAULT 0
 );

@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dbPath, cacheDir, metahubHome } from "./paths.ts";
 import { CORE_SCHEMA, FTS_SCHEMA } from "./schema.ts";
+import { backfillRecordOrderKeys } from "./records.ts";
 
 export function ensureDirs(): void {
   mkdirSync(metahubHome(), { recursive: true });
@@ -45,6 +46,8 @@ function tableExists(db: Database, table: string): boolean {
 export function migrateRecords(db: Database): void {
   if (!hasColumn(db, "records", "data"))
     db.exec("ALTER TABLE records ADD COLUMN data TEXT NOT NULL DEFAULT '{}'");
+  if (!hasColumn(db, "records", "order_key"))
+    db.exec("ALTER TABLE records ADD COLUMN order_key TEXT");
 
   if (!tableExists(db, "record_values")) return;
 
@@ -58,8 +61,11 @@ export function migrateRecords(db: Database): void {
       WHERE id IN (SELECT DISTINCT record_id FROM record_values);
     `);
     db.exec("DROP TABLE record_values");
+    backfillRecordOrderKeys(db);
   });
   tx();
+
+  backfillRecordOrderKeys(db);
 }
 
 /** Open (and migrate) the on-disk metahub database for the resolved home. */

@@ -257,9 +257,19 @@ const HTML = `<!doctype html>
   tbody tr.sel { background:var(--accent-soft); }
   table.grid tr.drop-before td { box-shadow:inset 0 2px 0 0 var(--accent); }
   table.grid tr.drop-after td { box-shadow:inset 0 -2px 0 0 var(--accent); }
-  .rowgrip { color:transparent; cursor:grab; vertical-align:middle; }
-  .rowgrip[draggable="false"] { cursor:not-allowed; }
+  table.grid th.drop-before { box-shadow:inset 2px 0 0 0 var(--accent); }
+  table.grid th.drop-after { box-shadow:inset -2px 0 0 0 var(--accent); }
+  .rowgrip { color:transparent; cursor:grab; vertical-align:middle; touch-action:none; }
+  .rowgrip[aria-disabled="true"] { cursor:not-allowed; }
   tbody tr:hover .rowgrip { color:var(--muted); }
+  .colhead { touch-action:none; }
+  .drag-source { opacity:.35; }
+  body.table-dragging { user-select:none; cursor:grabbing; }
+  .drag-ghost { position:fixed; left:0; top:0; z-index:120; pointer-events:none; display:flex; align-items:center;
+    padding:7px 11px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border:1px solid var(--line-strong);
+    border-radius:7px; background:var(--bg); color:var(--fg); box-shadow:var(--shadow-lg); opacity:.94; font-size:13px; }
+  .row-ghost { min-height:34px; }
+  .col-ghost { justify-content:center; font-weight:600; color:var(--fg-soft); background:var(--surface); }
   .selcell { vertical-align:middle; }
   .selcell input { width:15px; height:15px; accent-color:var(--accent); opacity:0; cursor:pointer; vertical-align:middle; }
   tbody tr:hover .selcell input, tbody tr.sel .selcell input, .selcell input:checked, thead .selcell input { opacity:1; }

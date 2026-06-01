@@ -7,6 +7,7 @@ import {
   createRecord,
   getRecord,
   listRecords,
+  moveRecord,
   updateRecord,
   deleteRecord,
 } from "./records.ts";
@@ -90,6 +91,58 @@ test("filter / sort / limit push down to SQL correctly", () => {
   expect(aDesc.map((r) => r.values.n)).toEqual([4, 2, 0]);
 });
 
+test("records default to persistent manual order", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  addProperty(db, d.id, { name: "title", type: "text" });
+  addProperty(db, d.id, { name: "n", type: "number" });
+
+  const a = createRecord(db, d.id, { title: "a", n: 1 });
+  const b = createRecord(db, d.id, { title: "b", n: 2 });
+  const c = createRecord(db, d.id, { title: "c", n: 3 });
+  expect(listRecords(db, d.id).map((r) => r.id)).toEqual([a.id, b.id, c.id]);
+
+  moveRecord(db, c.id, a.id, "before");
+  expect(listRecords(db, d.id).map((r) => r.id)).toEqual([c.id, a.id, b.id]);
+
+  moveRecord(db, a.id, b.id, "after");
+  expect(listRecords(db, d.id).map((r) => r.id)).toEqual([c.id, b.id, a.id]);
+  expect(listRecords(db, d.id, { sort: "n" }).map((r) => r.id)).toEqual([a.id, b.id, c.id]);
+});
+
+test("record moves are scoped to one database and sync via CRDT", () => {
+  const a = newDb("aaaa");
+  const b = newDb("bbbb");
+  const d = createDatabase(a, { name: "Tasks" });
+  addProperty(a, d.id, { name: "title", type: "text" });
+  const one = createRecord(a, d.id, { title: "one" });
+  const two = createRecord(a, d.id, { title: "two" });
+  const other = createDatabase(a, { name: "Other" });
+  const otherRec = createRecord(a, other.id, {});
+
+  expect(() => moveRecord(a, one.id, otherRec.id, "after")).toThrow(/across databases/);
+
+  ingest(b, changesSince(a, ""));
+  moveRecord(a, two.id, one.id, "before");
+  ingest(b, changesSince(a, ""));
+  expect(listRecords(b, d.id).map((r) => r.id)).toEqual([two.id, one.id]);
+});
+
+test("record move rebalances duplicate adjacent order keys", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  addProperty(db, d.id, { name: "title", type: "text" });
+  const a = createRecord(db, d.id, { title: "a" });
+  const b = createRecord(db, d.id, { title: "b" });
+  const c = createRecord(db, d.id, { title: "c" });
+
+  emit(db, "records", a.id, "order_key", "U");
+  emit(db, "records", b.id, "order_key", "U");
+
+  expect(() => moveRecord(db, c.id, b.id, "before")).not.toThrow();
+  expect(listRecords(db, d.id).map((r) => r.id)).toEqual([a.id, c.id, b.id]);
+});
+
 test("concurrent edits to different fields of one record both survive", () => {
   const a = newDb("aaaa");
   const b = newDb("bbbb");
@@ -165,6 +218,11 @@ test("migrates legacy record_values into data JSON", () => {
   expect(JSON.parse((db.query("SELECT data FROM records WHERE id='r2'").get() as any).data)).toEqual(
     { "p-title": "world" },
   );
+  const order = db
+    .query("SELECT id, order_key FROM records ORDER BY order_key, id")
+    .all() as { id: string; order_key: string | null }[];
+  expect(order.map((r) => r.id)).toEqual(["r1", "r2"]);
+  expect(order.every((r) => typeof r.order_key === "string")).toBe(true);
 
   // idempotent: running again is a no-op
   migrateRecords(db);

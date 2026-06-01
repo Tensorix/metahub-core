@@ -99,6 +99,8 @@ export const api = {
   getRecord: (id: string) => req<Rec>("GET", `/api/record?id=${q(id)}`),
   updateRecord: (id: string, values: Record<string, unknown>) =>
     req<Rec>("PATCH", `/api/record?id=${q(id)}`, values),
+  moveRecord: (id: string, target: string, where: "before" | "after") =>
+    req<Rec>("PATCH", `/api/record/order?id=${q(id)}`, { target, where }),
   deleteRecord: (id: string) => req<{ ok: boolean }>("DELETE", `/api/record?id=${q(id)}`),
 
   // documents

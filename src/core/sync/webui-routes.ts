@@ -14,6 +14,7 @@ import {
   getRecord,
   createRecord,
   updateRecord,
+  moveRecord,
   deleteRecord,
 } from "../records.ts";
 import {
@@ -50,6 +51,10 @@ const RecordSchema = z.object({
   id: z.string(),
   database_id: z.string(),
   values: z.record(z.string(), z.any()),
+});
+const MoveRecordReq = z.object({
+  target: z.string(),
+  where: z.enum(["before", "after"]),
 });
 const DocumentSummarySchema = z.object({
   id: z.string(),
@@ -252,6 +257,17 @@ export const webuiRoutes: Route[] = [
     handler: handle(async (req, { db }) => {
       const values = (await req.json()) as Record<string, unknown>;
       return updateRecord(db, need(req, "id"), values);
+    }),
+  },
+  {
+    method: "PATCH",
+    path: "/api/record/order",
+    summary: "Move a record before or after another record. Query: ?id=<id>",
+    request: MoveRecordReq,
+    response: RecordSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { target: string; where: "before" | "after" };
+      return moveRecord(db, need(req, "id"), body.target, body.where);
     }),
   },
   {

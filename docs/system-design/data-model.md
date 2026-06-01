@@ -115,7 +115,7 @@ properties(id, database_id, name, type, config, position, __deleted)
 记录表示表的一行:
 
 ```text
-records(id, database_id, created_hlc, data, __deleted)
+records(id, database_id, created_hlc, order_key, data, __deleted)
 ```
 
 当前记录字段存储在 `data` JSON 中:

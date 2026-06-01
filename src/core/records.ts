@@ -5,6 +5,7 @@ import { getDatabase } from "./databases.ts";
 import { listProperties, type PropertyRow } from "./properties.ts";
 import { maybeAutoIndex } from "./indexing.ts";
 import { resolveCandidates } from "./resolve.ts";
+import { keyBetween, keysBetween } from "./fracdex.ts";
 
 type SqlValue = string | number | null;
 
@@ -22,6 +23,13 @@ export interface RecordRow {
   id: string;
   database_id: string;
   values: Record<string, unknown>;
+}
+
+interface OrderedRecordRow {
+  id: string;
+  database_id: string;
+  created_hlc: string | null;
+  order_key: string | null;
 }
 
 /**
@@ -130,6 +138,79 @@ function deriveTitle(
   return newId("rec", text ? String(text.value) : "", fallbackBase);
 }
 
+function tableExists(db: Database, table: string): boolean {
+  return (
+    db
+      .query("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table) != null
+  );
+}
+
+function canEmitOrderKeys(db: Database): boolean {
+  return tableExists(db, "meta") && tableExists(db, "crdt_changes");
+}
+
+function writeRecordOrderKey(db: Database, recordId: string, orderKey: string, emitChange: boolean): void {
+  if (emitChange) emit(db, "records", recordId, "order_key", orderKey);
+  else db.query("UPDATE records SET order_key = ? WHERE id = ?").run(orderKey, recordId);
+}
+
+function lastRecordOrderKey(db: Database, databaseId: string): string | null {
+  const row = db
+    .query(
+      `SELECT order_key FROM records
+       WHERE database_id = ? AND __deleted = 0 AND order_key IS NOT NULL
+       ORDER BY order_key DESC, id DESC LIMIT 1`,
+    )
+    .get(databaseId) as { order_key: string | null } | null;
+  return row?.order_key ?? null;
+}
+
+function orderedRecordRows(db: Database, databaseId: string): OrderedRecordRow[] {
+  return db
+    .query(
+      `SELECT id, database_id, created_hlc, order_key FROM records
+       WHERE database_id = ? AND __deleted = 0
+       ORDER BY order_key IS NULL, order_key, created_hlc, id`,
+    )
+    .all(databaseId) as OrderedRecordRow[];
+}
+
+function rebalanceRecordOrderKeys(db: Database, databaseId: string): void {
+  const rows = orderedRecordRows(db, databaseId);
+  const keys = keysBetween(null, null, rows.length);
+  rows.forEach((row, i) => {
+    if (row.order_key !== keys[i]) emit(db, "records", row.id, "order_key", keys[i]!);
+  });
+}
+
+export function backfillRecordOrderKeys(db: Database, databaseId?: string): void {
+  const emitChange = canEmitOrderKeys(db);
+  const dbRows = databaseId
+    ? [{ database_id: databaseId }]
+    : (db
+        .query(
+          `SELECT DISTINCT database_id FROM records
+           WHERE database_id IS NOT NULL AND __deleted = 0 AND order_key IS NULL`,
+        )
+        .all() as { database_id: string }[]);
+
+  for (const d of dbRows) {
+    const missing = db
+      .query(
+        `SELECT id FROM records
+         WHERE database_id = ? AND __deleted = 0 AND order_key IS NULL
+         ORDER BY created_hlc, id`,
+      )
+      .all(d.database_id) as { id: string }[];
+    if (!missing.length) continue;
+
+    const start = lastRecordOrderKey(db, d.database_id);
+    const keys = keysBetween(start, null, missing.length);
+    missing.forEach((row, i) => writeRecordOrderKey(db, row.id, keys[i]!, emitChange));
+  }
+}
+
 export function createRecord(
   db: Database,
   databaseId: string,
@@ -140,9 +221,11 @@ export function createRecord(
   const props = listProperties(db, databaseId);
   const resolved = resolveData(props, data);
   const id = deriveTitle(props, resolved, slugify(dbRow.name, "rec"));
+  const orderKey = keyBetween(lastRecordOrderKey(db, databaseId), null);
 
   const first = emit(db, "records", id, "database_id", databaseId);
   emit(db, "records", id, "created_hlc", first.hlc);
+  emit(db, "records", id, "order_key", orderKey);
   for (const { prop, value } of resolved)
     emit(db, "records", id, prop.id, coerce(db, prop, value));
   return getRecord(db, id)!;
@@ -209,12 +292,15 @@ export function listRecords(
     args.push(sqlFilterValue(f.value as string | number | boolean));
   }
 
+  const manualOrder = opts.sort == null;
   const orderExpr = sortProp
     ? `data ->> '${jsonKeyLit(sortProp.id)}'`
     : "created_hlc";
   let sql =
     `SELECT id, database_id, data FROM records WHERE ${where.join(" AND ")} ` +
-    `ORDER BY ${orderExpr} ${sortDesc ? "DESC" : "ASC"}`;
+    (manualOrder
+      ? "ORDER BY order_key IS NULL, order_key, id"
+      : `ORDER BY ${orderExpr} ${sortDesc ? "DESC" : "ASC"}, id`);
 
   // LIMIT only pushes down when no JS-side filtering remains.
   const pushLimit = opts.limit != null && jsFilters.length === 0;
@@ -236,6 +322,50 @@ export function listRecords(
     if (opts.limit != null) rows = rows.slice(0, opts.limit);
   }
   return rows;
+}
+
+export function moveRecord(
+  db: Database,
+  id: string,
+  targetId: string,
+  where: "before" | "after",
+): RecordRow {
+  if (where !== "before" && where !== "after")
+    throw new Error(`unknown move position: ${where}`);
+
+  const src = db
+    .query(
+      "SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0",
+    )
+    .get(id) as { id: string; database_id: string } | null;
+  if (!src) throw new Error(`no such record: ${id}`);
+  const target = db
+    .query(
+      "SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0",
+    )
+    .get(targetId) as { id: string; database_id: string } | null;
+  if (!target) throw new Error(`no such record: ${targetId}`);
+  if (src.database_id !== target.database_id)
+    throw new Error("cannot move a record across databases");
+  if (id === targetId) return getRecord(db, id)!;
+
+  backfillRecordOrderKeys(db, src.database_id);
+
+  let rows = orderedRecordRows(db, src.database_id).filter((r) => r.id !== id);
+  let to = rows.findIndex((r) => r.id === targetId);
+  if (to < 0) throw new Error(`no such target record: ${targetId}`);
+
+  let left = where === "before" ? (rows[to - 1]?.order_key ?? null) : rows[to]!.order_key;
+  let right = where === "before" ? rows[to]!.order_key : (rows[to + 1]?.order_key ?? null);
+  if (left !== null && right !== null && left >= right) {
+    rebalanceRecordOrderKeys(db, src.database_id);
+    rows = orderedRecordRows(db, src.database_id).filter((r) => r.id !== id);
+    to = rows.findIndex((r) => r.id === targetId);
+    left = where === "before" ? (rows[to - 1]?.order_key ?? null) : rows[to]!.order_key;
+    right = where === "before" ? rows[to]!.order_key : (rows[to + 1]?.order_key ?? null);
+  }
+  emit(db, "records", id, "order_key", keyBetween(left, right));
+  return getRecord(db, id)!;
 }
 
 export function updateRecord(

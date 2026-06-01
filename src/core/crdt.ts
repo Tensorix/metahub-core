@@ -54,7 +54,7 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
 
 // The `records` dataset is special: these cols hit the `records` table, any
 // other col is a property cell (col == property id) folded into records.data JSON.
-const RECORD_META = new Set(["database_id", "created_hlc", "__deleted"]);
+const RECORD_META = new Set(["database_id", "created_hlc", "order_key", "__deleted"]);
 
 type SqlValue = string | number | null;
 

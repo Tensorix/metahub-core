@@ -31,6 +31,35 @@ function Chip({ text }: { text: string }) {
 }
 
 const VIEW_TABS: [string, string][] = [["表格", "list"], ["看板", "group"], ["日历", "calendar"]];
+type DropWhere = "before" | "after";
+
+interface RowDragState {
+  id: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offsetX: number;
+  offsetY: number;
+  active: boolean;
+  source: HTMLElement;
+  ghost: HTMLElement | null;
+  targetId: string | null;
+  where: DropWhere;
+}
+
+interface ColDragState {
+  id: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offsetX: number;
+  offsetY: number;
+  active: boolean;
+  source: HTMLElement;
+  ghost: HTMLElement | null;
+  targetId: string | null;
+  where: DropWhere;
+}
 
 export function DatabaseView({
   db,
@@ -49,7 +78,9 @@ export function DatabaseView({
   const [editing, setEditing] = useState<{ rec: string; prop: string } | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>({});
-  const dragRef = useRef<string | null>(null);
+  const rowDragRef = useRef<RowDragState | null>(null);
+  const colDragRef = useRef<ColDragState | null>(null);
+  const suppressColClick = useRef(false);
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => onError(String(e.message)));
 
@@ -95,19 +126,145 @@ export function DatabaseView({
       });
     });
 
-  const moveRecord = (srcId: string, targetId: string, where: "before" | "after") => {
+  const moveRecordLocal = (srcId: string, targetId: string, where: DropWhere) => {
     if (srcId === targetId || sort) return;
-    setRecords((rs) => {
-      const next = [...rs];
-      const from = next.findIndex((r) => r.id === srcId);
-      if (from < 0) return rs;
-      const moved = next.splice(from, 1)[0]!;
-      let to = next.findIndex((r) => r.id === targetId);
-      if (to < 0) return rs;
-      if (where === "after") to += 1;
-      next.splice(to, 0, moved);
-      return next;
+    setRecords((rs) => reorderById(rs, srcId, targetId, where));
+  };
+
+  const persistRecordMove = (srcId: string, targetId: string, where: DropWhere) => {
+    if (srcId === targetId || sort) return;
+    moveRecordLocal(srcId, targetId, where);
+    api.moveRecord(srcId, targetId, where).catch((e) => {
+      onError(String(e.message));
+      reload().catch((err) => onError(String(err.message)));
     });
+  };
+
+  const persistColumnMove = (srcId: string, targetId: string, where: DropWhere) => {
+    if (srcId === targetId) return;
+    setProps((cur) => {
+      const ordered = reorderById(cur, srcId, targetId, where).map((p, i) => ({ ...p, position: i + 1 }));
+      const prev = new Map(cur.map((p) => [p.id, p.position]));
+      const changed = ordered.filter((p) => prev.get(p.id) !== p.position);
+      if (changed.length) {
+        Promise.all(changed.map((p) => api.updateProperty(p.id, { position: p.position }))).catch((e) => {
+          onError(String(e.message));
+          reload().catch((err) => onError(String(err.message)));
+        });
+      }
+      return ordered;
+    });
+  };
+
+  const startRowDrag = (e: any, rec: Rec) => {
+    if (sort || e.button !== 0) return;
+    const source = (e.currentTarget as HTMLElement).closest("tr") as HTMLElement | null;
+    if (!source) return;
+    e.preventDefault();
+    const rect = source.getBoundingClientRect();
+    const state: RowDragState = {
+      id: rec.id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      active: false,
+      source,
+      ghost: null,
+      targetId: null,
+      where: "before",
+    };
+    rowDragRef.current = state;
+
+    const move = (ev: PointerEvent) => {
+      const d = rowDragRef.current;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      if (!d.active) {
+        const dx = ev.clientX - d.startX;
+        const dy = ev.clientY - d.startY;
+        if (Math.hypot(dx, dy) < 4) return;
+        d.active = true;
+        d.ghost = createRowGhost(d.source);
+        d.source.classList.add("drag-source");
+        document.body.classList.add("table-dragging");
+      }
+      ev.preventDefault();
+      positionGhost(d.ghost, ev.clientX - d.offsetX, ev.clientY - d.offsetY);
+      updateRowDrop(d, ev.clientX, ev.clientY);
+    };
+    const up = (ev: PointerEvent) => {
+      const d = rowDragRef.current;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      d.ghost?.remove();
+      d.source.classList.remove("drag-source");
+      document.body.classList.remove("table-dragging");
+      clearRowDrop();
+      rowDragRef.current = null;
+      if (d.active && d.targetId) persistRecordMove(d.id, d.targetId, d.where);
+    };
+    addEventListener("pointermove", move, { passive: false });
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+  };
+
+  const startColDrag = (e: any, prop: Prop) => {
+    if (e.button !== 0) return;
+    const source = (e.currentTarget as HTMLElement).closest("th") as HTMLElement | null;
+    if (!source) return;
+    const rect = source.getBoundingClientRect();
+    const state: ColDragState = {
+      id: prop.id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      active: false,
+      source,
+      ghost: null,
+      targetId: null,
+      where: "before",
+    };
+    colDragRef.current = state;
+
+    const move = (ev: PointerEvent) => {
+      const d = colDragRef.current;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      if (!d.active) {
+        const dx = ev.clientX - d.startX;
+        const dy = ev.clientY - d.startY;
+        if (Math.hypot(dx, dy) < 4) return;
+        d.active = true;
+        suppressColClick.current = true;
+        d.ghost = createColGhost(d.source);
+        d.source.classList.add("drag-source");
+        document.body.classList.add("table-dragging");
+      }
+      ev.preventDefault();
+      positionGhost(d.ghost, ev.clientX - d.offsetX, ev.clientY - d.offsetY);
+      updateColDrop(d, ev.clientX, ev.clientY);
+    };
+    const up = (ev: PointerEvent) => {
+      const d = colDragRef.current;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      d.ghost?.remove();
+      d.source.classList.remove("drag-source");
+      document.body.classList.remove("table-dragging");
+      clearColDrop();
+      colDragRef.current = null;
+      if (d.active) setTimeout(() => { suppressColClick.current = false; }, 0);
+      if (d.active && d.targetId) persistColumnMove(d.id, d.targetId, d.where);
+    };
+    addEventListener("pointermove", move, { passive: false });
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
   };
 
   const sorted = sort
@@ -176,8 +333,20 @@ export function DatabaseView({
                   </th>
                   <th class="gripcol" />
                   {props.map((p) => (
-                    <th key={p.id} style={{ minWidth: widths[p.id] ?? 180 }}>
-                      <div class="colhead" onClick={(e) => openColMenu(e, p, db.id, reload, props)}>
+                    <th key={p.id} data-col-id={p.id} style={{ minWidth: widths[p.id] ?? 180 }}>
+                      <div
+                        class="colhead"
+                        onPointerDown={(e) => startColDrag(e, p)}
+                        onClick={(e) => {
+                          if (suppressColClick.current) {
+                            suppressColClick.current = false;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            return;
+                          }
+                          openColMenu(e, p, db.id, reload, props);
+                        }}
+                      >
                         <span class="ti"><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /></span>
                         <span class="nm">{p.name}</span>
                       </div>
@@ -195,21 +364,8 @@ export function DatabaseView({
                 {sorted.map((rec) => (
                   <tr
                     key={rec.id}
+                    data-row-id={rec.id}
                     class={sel.has(rec.id) ? "sel" : ""}
-                    onDragOver={(e) => {
-                      if (sort || !dragRef.current || dragRef.current === rec.id) return;
-                      e.preventDefault();
-                      markRowDrop(e.currentTarget as HTMLElement, e as unknown as DragEvent);
-                    }}
-                    onDrop={(e) => {
-                      if (sort || !dragRef.current) return;
-                      e.preventDefault();
-                      const where = (e.currentTarget as HTMLElement).classList.contains("drop-after") ? "after" : "before";
-                      const src = dragRef.current;
-                      dragRef.current = null;
-                      clearRowDrop();
-                      moveRecord(src, rec.id, where);
-                    }}
                   >
                     <td class="selcell">
                       <input
@@ -223,22 +379,8 @@ export function DatabaseView({
                     <td
                       class="rowgrip"
                       title={sort ? "清除排序后可拖拽移动" : "拖拽移动"}
-                      draggable={!sort}
-                      onDragStart={(e) => {
-                        if (sort) {
-                          e.preventDefault();
-                          return;
-                        }
-                        dragRef.current = rec.id;
-                        e.dataTransfer.effectAllowed = "move";
-                        e.dataTransfer.setData("text/plain", rec.id);
-                        (e.currentTarget.closest("tr") as HTMLElement | null)?.classList.add("dragging");
-                      }}
-                      onDragEnd={(e) => {
-                        dragRef.current = null;
-                        (e.currentTarget.closest("tr") as HTMLElement | null)?.classList.remove("dragging");
-                        clearRowDrop();
-                      }}
+                      aria-disabled={sort ? "true" : undefined}
+                      onPointerDown={(e) => startRowDrag(e, rec)}
                     >
                       <Icon name="grip" cls="ico sm" />
                     </td>
@@ -384,29 +526,110 @@ function coerceInput(type: PropType, raw: string): unknown {
   return raw;
 }
 
+function reorderById<T extends { id: string }>(items: T[], srcId: string, targetId: string, where: DropWhere): T[] {
+  const next = [...items];
+  const from = next.findIndex((r) => r.id === srcId);
+  if (from < 0) return items;
+  const moved = next.splice(from, 1)[0]!;
+  let to = next.findIndex((r) => r.id === targetId);
+  if (to < 0) return items;
+  if (where === "after") to += 1;
+  next.splice(to, 0, moved);
+  return next;
+}
+
 function clearRowDrop() {
   document.querySelectorAll("table.grid tr.drop-before,table.grid tr.drop-after")
     .forEach((n) => n.classList.remove("drop-before", "drop-after"));
 }
 
-function markRowDrop(el: HTMLElement, e: DragEvent) {
+function markRowDrop(el: HTMLElement, clientY: number): DropWhere {
   clearRowDrop();
   const r = el.getBoundingClientRect();
-  el.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+  const where = clientY < r.top + r.height / 2 ? "before" : "after";
+  el.classList.add(where === "before" ? "drop-before" : "drop-after");
+  return where;
+}
+
+function clearColDrop() {
+  document.querySelectorAll("table.grid th.drop-before,table.grid th.drop-after")
+    .forEach((n) => n.classList.remove("drop-before", "drop-after"));
+}
+
+function markColDrop(el: HTMLElement, clientX: number): DropWhere {
+  clearColDrop();
+  const r = el.getBoundingClientRect();
+  const where = clientX < r.left + r.width / 2 ? "before" : "after";
+  el.classList.add(where === "before" ? "drop-before" : "drop-after");
+  return where;
+}
+
+function updateRowDrop(d: RowDragState, clientX: number, clientY: number) {
+  const el = document.elementFromPoint(clientX, clientY)?.closest?.("tr[data-row-id]") as HTMLElement | null;
+  if (!el || el.dataset.rowId === d.id) {
+    clearRowDrop();
+    d.targetId = null;
+    return;
+  }
+  d.targetId = el.dataset.rowId ?? null;
+  d.where = markRowDrop(el, clientY);
+}
+
+function updateColDrop(d: ColDragState, clientX: number, clientY: number) {
+  const el = document.elementFromPoint(clientX, clientY)?.closest?.("th[data-col-id]") as HTMLElement | null;
+  if (!el || el.dataset.colId === d.id) {
+    clearColDrop();
+    d.targetId = null;
+    return;
+  }
+  d.targetId = el.dataset.colId ?? null;
+  d.where = markColDrop(el, clientX);
+}
+
+function positionGhost(el: HTMLElement | null, left: number, top: number) {
+  if (!el) return;
+  el.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
+}
+
+function createRowGhost(row: HTMLElement): HTMLElement {
+  const rect = row.getBoundingClientRect();
+  const ghost = document.createElement("div");
+  ghost.className = "drag-ghost row-ghost";
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  const text = Array.from(row.querySelectorAll("td"))
+    .map((td) => (td.textContent ?? "").trim())
+    .filter(Boolean)
+    .join("    ");
+  ghost.textContent = text || "移动记录";
+  document.body.appendChild(ghost);
+  return ghost;
+}
+
+function createColGhost(th: HTMLElement): HTMLElement {
+  const rect = th.getBoundingClientRect();
+  const ghost = document.createElement("div");
+  ghost.className = "drag-ghost col-ghost";
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  ghost.textContent = th.textContent?.trim() || "移动属性";
+  document.body.appendChild(ghost);
+  return ghost;
 }
 
 // ---- column resizer ----
 function ColResizer({ onResize, startWidth }: { onResize: (w: number) => void; startWidth: number }) {
-  const start = (e: MouseEvent) => {
+  const start = (e: any) => {
     e.preventDefault();
     e.stopPropagation();
     const x0 = e.clientX;
-    const move = (ev: MouseEvent) => onResize(Math.max(80, startWidth + ev.clientX - x0));
-    const up = () => { removeEventListener("mousemove", move); removeEventListener("mouseup", up); };
-    addEventListener("mousemove", move);
-    addEventListener("mouseup", up);
+    const move = (ev: PointerEvent) => onResize(Math.max(80, startWidth + ev.clientX - x0));
+    const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", up); };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
   };
-  return <div class="col-resizer" onMouseDown={start} />;
+  return <div class="col-resizer" onPointerDown={start} />;
 }
 
 // ---- select / multi-select editor menu ----
