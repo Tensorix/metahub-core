@@ -243,3 +243,51 @@ textarea 的 `scrollHeight` 以 `rows` 属性为下限，`rows` 默认 **2**，�
 
 - 前端：`src/webui/editor.tsx`、`src/webui/editor-ops.ts`、`src/webui/blocks.ts`；CSS `src/core/sync/webui.ts`。
 - 测试：`src/webui/editor-ops.test.ts`、`src/webui/blocks.test.ts`。
+
+## 12. v2.4 跨块光标导航、Markdown 粘贴、双击全选（2026-06-01）
+
+配套设计见 [design.md §11](./design.md)。在 v2.3 之上为文档编辑器补四项交互；后端/CRDT/sync 不变。分批落地：↑/↓ 跨块 + 删块光标修正（提交 `7796db8`）、富文本 Markdown 粘贴（提交 `a990214`）、双击 Ctrl+A 渐进全选（本次）。
+
+### 12.1 ↑/↓ 跨块导航（`editor.tsx` `onKeyDown`）
+
+- 现象：每块是独立 contentEditable，原生 ↑/↓ 只在本宿主内移动，到块首/块尾无法跨块（此前仅代码块 textarea 有跨块逻辑）。
+- 实现：contentEditable 的 `onKeyDown` 增 ↑/↓ 分支，仅当光标位于块的**首个/末个可视行**才跨块（↑→上一块末尾 `focusBlock(prev,true)`、↓→下一块开头 `focusBlock(next)`），否则放行原生逐行移动；按住 Shift（扩选）或已有非空选区时不接管。
+- 行边界判定 `caretLineEdge(el)`：取折叠光标 `getRangeAt(0).getBoundingClientRect()` 与 `el` 盒比较，容差半个 `line-height`（`first: cr.top-er.top < lh*0.5`、`last: er.bottom-cr.bottom < lh*0.5`）；空块（无 caret rect）视为既首行也末行 → 直接跨块。
+
+### 12.2 删块后光标落到上一块**末尾**（坑点：全局 renderKey 重置 innerHTML）
+
+- 现象：空块 Backspace 删除后，`focusBlock(prev.id, true)` 已请求落到块尾，但光标却跳到上一块**开头**。
+- 根因：`renderKey` 取自全局 `version` 计数，任一结构 op `bump()` 都会让**所有**块 re-render；`BlockRow` 的 `useEffect([renderKey, type])` 因此对每个块（含目标上一块）重写 `innerHTML`，把刚用 rAF 设好的光标 range 冲掉，浏览器回退到位置 0。（代码块 ↑ 跨块无此问题，因纯导航不触发 bump/重渲染。）
+- 修复：`useEffect` 仅在 `innerHTML` **确有变化**时才重写（`if (el.innerHTML !== html)`）。删别的块时目标块 HTML 未变 → 跳过重写 → 光标保留；顺带省掉每次结构变更对全部块的无谓 DOM 重写。
+
+### 12.3 富文本 Markdown 粘贴（`editor.tsx` `onContentPaste`）
+
+- 现象：原本无 `onPaste`，走浏览器默认，`**粗**` 粘进来是字面文本、多行 Markdown 塌成单块。
+- 实现：拦 `paste` 取 `clipboardData.getData("text/plain")`（非文本/图片放行默认），经 `blocksFromBody()` 解析为块树，再围绕光标拼接：
+  - `splitEditableAtCaret(el)`：用 Range 克隆光标（或选区）两侧内容 → `htmlToInline()` 得前后两段**行内 Markdown**（兼容「替换选中再粘贴」）。
+  - **纯行内**（解析结果为单段落且落在非空行）：`content = before + 段落 + after` 留在原块，`focusBlockAtOffset()` 按可视文本偏移落光标到粘贴内容之后（`inlineTextLength()` = `inlineToHtml` 后的 `textContent.length`，绕开 Markdown 源串长 ≠ 渲染文本长）。
+  - **块级**（多块 / 单个非段落）：`before` 留原块（保留原类型），解析块整组 splice 到其后，`after` 作为新段落收尾；空行则整块替换（带子块的列表项不替换以免丢子树）。光标落 `after` 块开头或末块末尾。
+- `blocksFromBody` 产出的块已带 `genId()` 与子块，可直接 splice。代码块 textarea 不接管，保持字面粘贴（代码应原样插入）。
+
+### 12.4 双击 Ctrl/Cmd+A 渐进全选（`editor.tsx`）
+
+- 语义：编辑态首次 Ctrl+A 走原生选中本块文字；本块文字**已全选**时再按 → 升级为选中所有块（复用块选模式）。采用「读当前选区是否已全选」的**无状态**判定，而非「计按键次数 + 超时窗口」——与 Notion 式逐级扩选语义一致，且不会与点击/移动光标后的真实选区脱节（计数方案需在 click/keydown/blur/selectionchange 上逐一失效，易漏）。
+- 接线：contentEditable `onKeyDown` 顶部加 Ctrl/Cmd+A 分支，`blockTextFullySelected(el)` 为真才 `preventDefault + selectAllBlocks()`，否则放行原生；`selectAllBlocks()` = `enterBlockSelecting()` + `setSel(首块..末块)`，并重构 `onBlockKeyDown` 块模式 Ctrl+A 共用之。
+- **坑点：尾部隐形 `<br>`**。最初用 `selectNodeContents(el)` + `compareBoundaryPoints(END_TO_END)` 判全选，被浏览器在 contentEditable 末尾自动插入的隐形 `<br>`（bogus br）坑了——`selectNodeContents` 结束点落在 `<br>` 之后，而原生 Ctrl+A 只选到文字，比较恒判「未全选」，第二次永不升级。改用**选中文本长度**判定：`sel.toString().length >= el.textContent.length`（`<br>` 不计入 `textContent`），空块直接视为已全选。
+
+### 12.5 坑点：改前端不生效（stale bundle）
+
+- 浏览器加载的 `/webui.js` 经 `src/core/sync/webui.ts` 的 `getJs()` 提供，两层缓存会挡住源码改动：① 跑编译产物时**优先读预构建 `dist/webui.js`**（早于改动即是旧码）；② 进程内 `cachedJs` 整个进程生命周期只构建一次，且 `editor.tsx` **不在 `--hot` 的 import 图内**（刻意隔离出 CLI 启动图），改它不触发热重载。
+- 结论：改完前端需 `bun run build` 重建 `dist/webui.js` + **重启服务进程** + 浏览器硬刷新（`/webui.js` 未设 cache 头）。debug「为何没生效」时先排除此项——本次 ↑↓/粘贴生效而 Ctrl+A 不生效，恰好反证 bundle 已新、Ctrl+A 是真 bug。
+
+### 12.6 验证
+
+- `bun test src/webui/`：32 通过（无回归；本批为交互逻辑，未加单测）。
+- `bunx tsc --noEmit -p src/webui/tsconfig.json`：本次文件零错误（既存无关：`table.tsx` nullable `dataTransfer`）。
+- 视觉手验（实机重建 + 重启 + 硬刷新）：段落内 ↑/↓ 逐行、块首/尾跨块；空块 Backspace 落到上一块末尾；粘贴行内 `**粗**`/链接即时渲染、粘贴多块 Markdown 拆成对应块；同块两次 Ctrl+A（先选文字、后全选块）。
+
+### 12.7 涉及文件
+
+- 前端：`src/webui/editor.tsx`——`onContentPaste`、`onKeyDown` 的 ↑↓ 与 Ctrl+A 分支、`selectAllBlocks`，helpers `caretLineEdge`/`splitEditableAtCaret`/`inlineTextLength`/`focusBlockAtOffset`/`blockTextFullySelected`，`BlockRow` 的 `onPaste` 接线与 `innerHTML` 守卫。
+- 复用：`blocksFromBody`/`htmlToInline`/`inlineToHtml`（`blocks.ts`/`markdown.tsx`）、`flattenBlocks`/`findBlock`/`previousBlock`/`nextBlock`（`editor-ops.ts`）。
+- 构建：`dist/webui.js`（经 `scripts/build.ts` 由 `app.tsx` 打包；改前端须重建）。

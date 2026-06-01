@@ -217,3 +217,24 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 - `src/webui/editor.tsx`：块选择状态与指针框选、document 键盘路由（撤销/重做 + 块批量）、快照历史、显示编号/创建/转换接入 `start`。
 - `src/core/sync/webui.ts`：`.block.selected` / `.doc.selecting` CSS（注意 webui 真实 CSS 内联于此，非 `prototype/webui.html`）。
 - 测试：`src/webui/editor-ops.test.ts`、`src/webui/blocks.test.ts`。
+
+## 11. v2.4 跨块光标导航、Markdown 粘贴、双击全选（2026-06-01）
+
+文档编辑器交互增量，对齐 Notion 手感；不改 schema/CRDT。实现见 [implementation.md §12](./implementation.md)。
+
+### 11.1 关键设计决策
+
+- **↑/↓ 跨块**：块是独立 contentEditable，原生方向键不跨宿主。仅当光标在块**首/末可视行**才跨块（↑→上块末尾、↓→下块开头），其余放行逐行移动；行边界用光标矩形 vs 块盒比较（半行容差），空块视为首尾皆是。
+- **Markdown 粘贴**：粘贴的 `text/plain` 经块解析器渲染为行内格式 + 块结构（而非字面 `**` 或单块）。单段落就地行内插入；多块/非段落则在光标处拆行、整组插入、尾段收尾。代码块保持字面粘贴。
+- **双击 Ctrl+A**：渐进扩选——首次选本块文字，已全选再按则全选所有块。判定读「当前选区是否已全选」的**无状态**信号，不计按键次数 + 超时窗口；用选中文本**长度比较**规避 contentEditable 尾部隐形 `<br>` 把边界点判定带偏。
+
+### 11.2 暂不实现
+
+- 跨块**文本级**选区（仍是块级整选）。
+- 粘贴 **HTML 富文本**来源（仅取 `text/plain` 的 Markdown）。
+- 粘贴时的光标精确还原在含 Markdown 标记的混排场景下为近似（落到末块边界）。
+
+### 11.3 工程坑点（供后续 debug 参考）
+
+- **改前端不生效**：`/webui.js` 经 `getJs()` 提供，优先读预构建 `dist/webui.js` + 进程内 `cachedJs` 仅构建一次，且 `editor.tsx` 不在 `--hot` import 图内。改完须 `bun run build` + 重启进程 + 浏览器硬刷新。
+- **全局 `renderKey` 重置光标**：结构 op 经 `bump()` 让全部块重渲染、重写 `innerHTML` 冲掉光标 → `useEffect` 改为「HTML 有变才写」。
