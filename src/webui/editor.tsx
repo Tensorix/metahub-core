@@ -780,17 +780,31 @@ export function DocView({
         </div>
       )}
 
-      {slash && slashMatches.length > 0 && (
-        <div class="pop" style={{ left: Math.min(slash.x, innerWidth - 270), top: Math.min(slash.y + 22, innerHeight - 320), minWidth: 260 }}>
-          <MenuLabel>基础块</MenuLabel>
-          {slashMatches.map((m, i) => (
-            <button key={m.type} class={"item" + (i === slash.idx ? " sel" : "")} onMouseDown={(e) => { e.preventDefault(); applySlash(m); }}>
-              <span class="lico"><Icon name={m.ic} cls="ico sm" /></span>
-              <span class="meta"><span class="t">{m.t}</span><span class="d">{m.d}</span></span>
-            </button>
-          ))}
-        </div>
-      )}
+      {slash && slashMatches.length > 0 && (() => {
+        // Place below the caret by default; flip above when there isn't enough room,
+        // and cap max-height to the available space so the menu scrolls (overflow:auto)
+        // instead of overflowing the viewport and clipping its bottom.
+        const GAP = 22, M = 8;
+        const spaceBelow = innerHeight - (slash.y + GAP) - M;
+        const spaceAbove = slash.y - M;
+        const below = spaceBelow >= 240 || spaceBelow >= spaceAbove;
+        const left = Math.min(slash.x, innerWidth - 270);
+        const maxHeight = Math.min(below ? spaceBelow : spaceAbove, Math.round(innerHeight * 0.7));
+        const style = below
+          ? { left, top: slash.y + GAP, maxHeight, minWidth: 260 }
+          : { left, bottom: innerHeight - slash.y + 6, maxHeight, minWidth: 260 };
+        return (
+          <div class="pop" style={style}>
+            <MenuLabel>基础块</MenuLabel>
+            {slashMatches.map((m, i) => (
+              <button key={m.type} class={"item" + (i === slash.idx ? " sel" : "")} onMouseDown={(e) => { e.preventDefault(); applySlash(m); }}>
+                <span class="lico"><Icon name={m.ic} cls="ico sm" /></span>
+                <span class="meta"><span class="t">{m.t}</span><span class="d">{m.d}</span></span>
+              </button>
+            ))}
+          </div>
+        );
+      })()}
 
       {bar && !sel && <FormatBar x={bar.x} y={bar.y} onCommand={applyFormatCommand} />}
     </div>
