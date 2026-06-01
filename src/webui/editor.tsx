@@ -328,6 +328,13 @@ export function DocView({
   // ---- block-selection batch operations ----
   const clearSel = () => setSel(null);
 
+  const selectAllBlocks = () => {
+    const flat = flattenBlocks(blocks);
+    if (!flat.length) return;
+    enterBlockSelecting();
+    setSel({ anchorId: flat[0]!.id, focusId: flat[flat.length - 1]!.id });
+  };
+
   const deleteSelectedBlocks = (ids: string[]) => {
     syncRenderedBlocks(blocks);
     const focusId = deleteBlocks(blocks, ids);
@@ -384,8 +391,7 @@ export function DocView({
     }
     if (mod && e.key === "a") {
       e.preventDefault();
-      const flat = flattenBlocks(blocks);
-      if (flat.length) setSel({ anchorId: flat[0]!.id, focusId: flat[flat.length - 1]!.id });
+      selectAllBlocks();
       return;
     }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -487,6 +493,12 @@ export function DocView({
       if (e.key === "ArrowUp") { e.preventDefault(); setSlash({ ...slash, idx: Math.max(slash.idx - 1, 0) }); return; }
       if (e.key === "Enter") { e.preventDefault(); const m = slashMatches[slash.idx]; if (m) applySlash(m); return; }
       if (e.key === "Escape") { setSlash(null); return; }
+    }
+    // Ctrl/Cmd+A: first press selects this block's text (native); a second press
+    // while it's already fully selected escalates to selecting every block.
+    if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
+      if (blockTextFullySelected(el)) { e.preventDefault(); selectAllBlocks(); }
+      return;
     }
     if (e.key === "Tab") {
       e.preventDefault();
@@ -1041,6 +1053,19 @@ function caretLineEdge(el: HTMLElement): { first: boolean; last: boolean } {
   if (!cr.height && !cr.top) return { first: true, last: true };
   const lh = parseFloat(getComputedStyle(el).lineHeight) || cr.height || 20;
   return { first: cr.top - er.top < lh * 0.5, last: er.bottom - cr.bottom < lh * 0.5 };
+}
+// Does the current selection cover all of the editable's text? Compares selected
+// text length against the block's text rather than range boundary points, so the
+// browser's trailing bogus <br> (which selectNodeContents would include but Ctrl+A
+// won't) can't throw the comparison off. An empty block counts as fully selected,
+// so Ctrl+A escalates straight to all-block selection.
+function blockTextFullySelected(el: HTMLElement): boolean {
+  const text = el.textContent ?? "";
+  if (text.trim() === "") return true;
+  const sel = getSelection();
+  if (!sel || !sel.rangeCount || sel.isCollapsed) return false;
+  if (!el.contains(sel.anchorNode) || !el.contains(sel.focusNode)) return false;
+  return sel.toString().length >= text.length;
 }
 // Split an editable's contents at the caret (or around its selection) into
 // inline-Markdown strings, so a paste can rejoin the text on either side.
