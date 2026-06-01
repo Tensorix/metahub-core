@@ -16,6 +16,7 @@ const HTML = `<!doctype html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('mh-theme')||'system'}catch(e){}</script>
 <style>
   :root {
     --bg:#ffffff; --surface:#fbfbfa; --surface-2:#f1f1ef; --sidebar:#f7f7f5;
@@ -32,8 +33,21 @@ const HTML = `<!doctype html>
     --hl-cmt:#9a9aa2; --hl-key:#a626a4; --hl-str:#28823f; --hl-num:#b76a00;
     --hl-fn:#3f51d6; --hl-type:#0a7ea4; --hl-var:#c2410c;
   }
+  /* Dark palette. Applied (a) when explicitly chosen via [data-theme="dark"],
+   * or (b) when following the system and the OS reports dark. Light is the
+   * default :root above, so [data-theme="light"] needs no extra rule. */
+  :root[data-theme="dark"] {
+    --bg:#1a1a1c; --surface:#202022; --surface-2:#2a2a2d; --sidebar:#171719;
+    --fg:#e6e6e9; --fg-soft:#b4b4bb; --muted:#7d7d86; --line:#2c2c30; --line-strong:#3a3a40;
+    --accent:#7b86ff; --accent-fg:#14141a; --accent-soft:#23243a; --danger:#f87168; --danger-soft:#341e1c;
+    --hover:rgba(255,255,255,.05); --hover-2:rgba(255,255,255,.09);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 14px rgba(0,0,0,.45); --shadow-lg:0 20px 56px rgba(0,0,0,.6);
+    --code-bg:#1d1d20;
+    --hl-cmt:#7d7d86; --hl-key:#d291e4; --hl-str:#7ed492; --hl-num:#e0a566;
+    --hl-fn:#86a8ff; --hl-type:#5fc6e0; --hl-var:#f0936b;
+  }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root[data-theme="system"], :root:not([data-theme]) {
       --bg:#1a1a1c; --surface:#202022; --surface-2:#2a2a2d; --sidebar:#171719;
       --fg:#e6e6e9; --fg-soft:#b4b4bb; --muted:#7d7d86; --line:#2c2c30; --line-strong:#3a3a40;
       --accent:#7b86ff; --accent-fg:#14141a; --accent-soft:#23243a; --danger:#f87168; --danger-soft:#341e1c;
@@ -101,6 +115,34 @@ const HTML = `<!doctype html>
   .navitem.drop-before { box-shadow:inset 0 2px 0 0 var(--accent); }
   .navitem.drop-after { box-shadow:inset 0 -2px 0 0 var(--accent); }
   .dragging { opacity:.35; }
+  .sb-footer { flex:none; padding:6px 8px; border-top:1px solid var(--line); }
+  .sb-footer .navitem { font-size:13.5px; }
+
+  /* settings page */
+  .set-page { max-width:680px; margin:0 auto; padding:40px 28px 64px; }
+  .set-title { font-size:26px; font-weight:700; letter-spacing:-.02em; color:var(--fg); }
+  .set-sub { color:var(--muted); margin-top:4px; }
+  .set-section { margin-top:34px; }
+  .set-section-head { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px; }
+  .set-section-desc { color:var(--fg-soft); margin-bottom:16px; }
+  .theme-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .theme-card { position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:10px;
+    text-align:left; padding:16px; border:1px solid var(--line-strong); border-radius:var(--radius);
+    background:var(--surface); color:var(--fg-soft); box-shadow:var(--shadow-sm);
+    transition:border-color .14s, background .14s, transform .14s, box-shadow .14s; }
+  .theme-card:hover { border-color:var(--muted); transform:translateY(-1px); }
+  .theme-card .tc-ico { width:34px; height:34px; display:grid; place-items:center; border-radius:9px;
+    background:var(--surface-2); color:var(--fg); }
+  .theme-card .tc-ico svg { width:18px; height:18px; }
+  .theme-card .tc-name { font-weight:600; font-size:14px; color:var(--fg); }
+  .theme-card .tc-desc { font-size:12px; color:var(--muted); line-height:1.45; }
+  .theme-card .tc-check { position:absolute; top:10px; right:10px; width:18px; height:18px; border-radius:50%;
+    background:var(--accent); color:var(--accent-fg); display:grid; place-items:center; opacity:0; transform:scale(.6); transition:opacity .14s, transform .14s; }
+  .theme-card .tc-check svg { width:12px; height:12px; stroke-width:2.6; }
+  .theme-card.sel { border-color:var(--accent); background:var(--accent-soft); box-shadow:0 0 0 1px var(--accent) inset, var(--shadow-sm); }
+  .theme-card.sel .tc-ico { background:var(--accent); color:var(--accent-fg); }
+  .theme-card.sel .tc-check { opacity:1; transform:scale(1); }
+  @media (max-width:560px) { .theme-grid { grid-template-columns:1fr; } }
 
   /* main */
   .main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }

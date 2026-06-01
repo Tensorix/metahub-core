@@ -26,6 +26,8 @@ interface SidebarProps {
   onOpenDoc: (id: string) => void;
   onSearch: (q: string) => void;
   onCollapse: () => void;
+  onOpenSettings: () => void;
+  settingsActive: boolean;
   reloadNav: () => Promise<void>;
   onError: (msg: string) => void;
   afterDelete: (kind: "db" | "doc", id: string) => void;
@@ -271,6 +273,16 @@ export function Sidebar(props: SidebarProps) {
           {renderTree(null)}
           {props.docs.length === 0 && <div class="navitem muted">暂无</div>}
         </div>
+      </div>
+
+      <div class="sb-footer">
+        <button
+          class={"navitem" + (props.settingsActive ? " active" : "")}
+          onClick={props.onOpenSettings}
+        >
+          <span class="emoji"><Icon name="settings" cls="ico sm" /></span>
+          <span class="label">设置</span>
+        </button>
       </div>
 
       <div class="sb-resizer" onMouseDown={startResize} />

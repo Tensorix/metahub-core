@@ -6,6 +6,7 @@ import { Icon } from "./icons.tsx";
 import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
 import { DocView } from "./editor.tsx";
+import { SettingsView } from "./settings.tsx";
 import {
   UiHost,
   openMenu,
@@ -23,7 +24,8 @@ type View =
   | { kind: "empty" }
   | { kind: "db"; id: string }
   | { kind: "doc"; id: string }
-  | { kind: "search"; q: string };
+  | { kind: "search"; q: string }
+  | { kind: "settings" };
 
 function App() {
   const [databases, setDatabases] = useState<Db[]>([]);
@@ -104,6 +106,8 @@ function App() {
         onOpenDoc={(id) => navigate({ kind: "doc", id })}
         onSearch={(q) => navigate({ kind: "search", q })}
         onCollapse={() => setSbCollapsed(true)}
+        onOpenSettings={() => navigate({ kind: "settings" })}
+        settingsActive={view.kind === "settings"}
         reloadNav={reloadNav}
         onError={onError}
         afterDelete={(_, id) => { if ("id" in view && view.id === id) setView({ kind: "empty" }); }}
@@ -124,6 +128,7 @@ function App() {
             {view.kind === "doc" && <><span class="emoji"><Icon name="file" cls="ico sm" /></span><span>{activeDoc?.title || "无标题"}</span></>}
             {view.kind === "db" && <><span class="emoji">{activeDb?.icon || "🗂️"}</span><span>{activeDb?.name}</span></>}
             {view.kind === "search" && <span>搜索：“{view.q}”</span>}
+            {view.kind === "settings" && <><span class="emoji"><Icon name="settings" cls="ico sm" /></span><span>设置</span></>}
             {view.kind === "empty" && <span class="sub">未选择任何内容</span>}
           </div>
           {(view.kind === "doc" || view.kind === "db") && (
@@ -154,6 +159,7 @@ function App() {
           {view.kind === "search" && (
             <SearchView q={view.q} onOpenDoc={(id) => navigate({ kind: "doc", id })} onOpenDb={(id) => navigate({ kind: "db", id })} />
           )}
+          {view.kind === "settings" && <SettingsView />}
         </div>
       </div>
 
