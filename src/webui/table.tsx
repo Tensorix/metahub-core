@@ -320,6 +320,14 @@ export function DatabaseView({
         <div class="tablewrap">
           <div class="tablescroll">
             <table class="grid">
+              <colgroup>
+                <col style={{ width: 38 }} />
+                <col style={{ width: 26 }} />
+                {props.map((p) => (
+                  <col key={p.id} data-col-id={p.id} style={{ width: widths[p.id] ?? 180 }} />
+                ))}
+                <col />
+              </colgroup>
               <thead>
                 <tr>
                   <th class="selcell">
@@ -333,7 +341,7 @@ export function DatabaseView({
                   </th>
                   <th class="gripcol" />
                   {props.map((p) => (
-                    <th key={p.id} data-col-id={p.id} style={{ minWidth: widths[p.id] ?? 180 }}>
+                    <th key={p.id} data-col-id={p.id}>
                       <div
                         class="colhead"
                         onPointerDown={(e) => startColDrag(e, p)}
@@ -350,7 +358,7 @@ export function DatabaseView({
                         <span class="ti"><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /></span>
                         <span class="nm">{p.name}</span>
                       </div>
-                      <ColResizer onResize={(w) => setWidths((m) => ({ ...m, [p.id]: w }))} startWidth={widths[p.id] ?? 180} />
+                      <ColResizer colId={p.id} startWidth={widths[p.id] ?? 180} onCommit={(w) => setWidths((m) => ({ ...m, [p.id]: w }))} />
                     </th>
                   ))}
                   <th class="addcol">
@@ -399,7 +407,7 @@ export function DatabaseView({
                         />
                       </td>
                     ))}
-                    <td />
+                    <td class="filler" />
                   </tr>
                 ))}
               </tbody>
@@ -496,13 +504,15 @@ function CellView({
     return (
       <div class="cell" onClick={onClick}>
         <div class="firstcell">
-          <span style={{ flex: 1 }}>{body}</span>
-          <button class="rowopen" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
-            <Icon name="cornerUpRight" cls="ico sm" />打开
-          </button>
-          <button class="rowopen" title="更多" onClick={(e) => { e.stopPropagation(); onRowMenu(e); }}>
-            <Icon name="dots" cls="ico sm" />
-          </button>
+          {body}
+          <div class="rowactions">
+            <button class="rowopen" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+              <Icon name="cornerUpRight" cls="ico sm" />打开
+            </button>
+            <button class="rowopen" title="更多" onClick={(e) => { e.stopPropagation(); onRowMenu(e); }}>
+              <Icon name="dots" cls="ico sm" />
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -618,14 +628,40 @@ function createColGhost(th: HTMLElement): HTMLElement {
 }
 
 // ---- column resizer ----
-function ColResizer({ onResize, startWidth }: { onResize: (w: number) => void; startWidth: number }) {
+// During drag we mutate the matching <col> element's width directly (table-layout
+// is fixed, so this reflows 1:1 with the cursor) and only commit to React state on
+// pointerup — avoids re-rendering the whole table on every pointermove.
+function ColResizer({ colId, startWidth, onCommit }: { colId: string; startWidth: number; onCommit: (w: number) => void }) {
   const start = (e: any) => {
     e.preventDefault();
     e.stopPropagation();
+    const handle = e.currentTarget as HTMLElement;
+    const col = document.querySelector<HTMLElement>(`col[data-col-id="${CSS.escape(colId)}"]`);
     const x0 = e.clientX;
-    const move = (ev: PointerEvent) => onResize(Math.max(80, startWidth + ev.clientX - x0));
-    const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", up); };
-    addEventListener("pointermove", move);
+    let last = startWidth;
+    let raf = 0;
+    handle.classList.add("dragging");
+    document.body.classList.add("col-resizing");
+
+    const apply = () => {
+      raf = 0;
+      if (col) col.style.width = last + "px";
+    };
+    const move = (ev: PointerEvent) => {
+      last = Math.max(80, startWidth + ev.clientX - x0);
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    const up = () => {
+      if (raf) cancelAnimationFrame(raf);
+      if (col) col.style.width = last + "px";
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("col-resizing");
+      onCommit(last);
+    };
+    addEventListener("pointermove", move, { passive: false });
     addEventListener("pointerup", up);
     addEventListener("pointercancel", up);
   };

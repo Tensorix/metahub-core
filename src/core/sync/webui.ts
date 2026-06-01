@@ -277,7 +277,11 @@ const HTML = `<!doctype html>
   .tbtn.on { color:var(--accent); }
   .tablewrap { border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow-sm); }
   .tablescroll { overflow-x:auto; }
-  table.grid { border-collapse:collapse; width:100%; }
+  /* fixed layout + max-content: each <col> width is authoritative, so the table
+     is exactly the sum of its columns and resizing one column never redistributes
+     width to its neighbours. min-width:100% fills the container when columns are
+     narrow, with the slack absorbed only by the trailing auto (filler) column. */
+  table.grid { border-collapse:collapse; table-layout:fixed; width:max-content; min-width:100%; }
   table.grid th, table.grid td { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:0; text-align:left; }
   table.grid th:last-child, table.grid td:last-child { border-right:0; }
   table.grid tbody tr:last-child td { border-bottom:0; }
@@ -286,9 +290,12 @@ const HTML = `<!doctype html>
   .colhead:hover { background:var(--hover); }
   .colhead .ti { color:var(--muted); } .colhead .ti svg { width:14px; height:14px; }
   .colhead .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .col-resizer { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:2; }
-  .col-resizer:hover { background:var(--accent); opacity:.35; }
-  .addcol { width:46px; } .addcol .colhead { justify-content:center; color:var(--muted); }
+  .col-resizer { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:2; touch-action:none; }
+  .col-resizer:hover, .col-resizer.dragging { background:var(--accent); opacity:.35; }
+  .addcol { min-width:46px; } .addcol .colhead { justify-content:flex-start; color:var(--muted); }
+  /* trailing filler column: empty canvas to the right of the data, not a real cell */
+  table.grid td.filler { border-right:0; border-bottom:0; background:transparent; }
+  body.col-resizing { user-select:none; cursor:col-resize; }
   table.grid .selcell { width:38px; min-width:38px; max-width:38px; text-align:center; }
   table.grid .gripcol, table.grid .rowgrip { width:26px; min-width:26px; max-width:26px; text-align:center; }
   td.cell-td { vertical-align:top; }
@@ -315,9 +322,14 @@ const HTML = `<!doctype html>
   .selcell { vertical-align:middle; }
   .selcell input { width:15px; height:15px; accent-color:var(--accent); opacity:0; cursor:pointer; vertical-align:middle; }
   tbody tr:hover .selcell input, tbody tr.sel .selcell input, .selcell input:checked, thead .selcell input { opacity:1; }
-  .firstcell { display:flex; align-items:center; justify-content:space-between; gap:6px; width:100%; }
-  .rowopen { display:inline-flex; align-items:center; gap:4px; opacity:0; color:var(--muted); border-radius:5px; padding:3px 6px; font-size:11.5px; font-weight:500; flex:none; }
-  tbody tr:hover .rowopen { opacity:1; }
+  .firstcell { position:relative; width:100%; min-width:0; }
+  /* row actions float over the cell on hover, never reserving column width */
+  .rowactions { position:absolute; top:0; bottom:0; right:0; display:flex; align-items:center; gap:4px;
+    padding-left:28px; opacity:0; pointer-events:none;
+    background:linear-gradient(to right, transparent, var(--hover) 28px); }
+  tbody tr:hover .rowactions { opacity:1; pointer-events:auto; }
+  tbody tr.sel .rowactions { background:linear-gradient(to right, transparent, var(--accent-soft) 28px); }
+  .rowopen { display:inline-flex; align-items:center; gap:4px; color:var(--muted); border-radius:5px; padding:3px 6px; font-size:11.5px; font-weight:500; flex:none; white-space:nowrap; }
   .rowopen:hover { background:var(--hover-2); color:var(--fg); }
   .chip { display:inline-flex; align-items:center; gap:4px; border-radius:5px; padding:2px 8px; font-size:12.5px; font-weight:500;
     background:color-mix(in srgb,var(--c) 15%,transparent); color:var(--c); }
