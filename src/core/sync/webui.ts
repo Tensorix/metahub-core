@@ -170,6 +170,10 @@ const HTML = `<!doctype html>
   .doc-title:empty::before { content:"无标题"; color:var(--muted); }
   .doc-meta { display:flex; gap:14px; color:var(--muted); font-size:12.5px; margin-bottom:22px; }
   .doc-meta span { display:inline-flex; align-items:center; gap:5px; }
+  .doc.source-mode { min-height:100%; }
+  .doc-source { display:block; width:100%; min-height:calc(100vh - 210px); resize:none; border:0;
+    background:transparent; color:var(--fg); outline:none; overflow:hidden; padding:3px 2px 36vh;
+    font-family:var(--ui); font-size:15px; line-height:1.7; tab-size:2; }
   .block-wrap { position:relative; }
   .block-wrap.nested { padding-left:24px; }
   /* Subtle indent guide only for true sub-lists; suppressed for code/other

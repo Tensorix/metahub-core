@@ -40,6 +40,15 @@ import {
 } from "./editor-ops.ts";
 import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
 
+export type DocMode = "blocks" | "source";
+
+export interface DocViewHandle {
+  getMode: () => DocMode;
+  setMode: (mode: DocMode) => void;
+  snapshotMarkdown: () => string;
+  flushSave: () => Promise<void>;
+}
+
 /** Highlight code to HTML for the overlay layer. Falls back to escaped text. */
 function highlightCode(code: string, lang?: string): string {
   let html: string;
@@ -59,13 +68,20 @@ export function DocView({
   docId,
   onTitleChange,
   onError,
+  onModeChange,
+  onHandle,
 }: {
   docId: string;
   onTitleChange: () => void;
   onError: (m: string) => void;
+  onModeChange?: (mode: DocMode) => void;
+  onHandle?: (handle: DocViewHandle | null) => void;
 }) {
   const blocksRef = useRef<Block[]>([]);
+  const sourceRef = useRef("");
+  const sourceTaRef = useRef<HTMLTextAreaElement>(null);
   const titleRef = useRef("");
+  const [mode, setModeState] = useState<DocMode>("blocks");
   const [version, setVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [slash, setSlash] = useState<{ blockId: string; x: number; y: number; query: string; idx: number } | null>(null);
@@ -153,6 +169,7 @@ export function DocView({
       .getDocument(docId)
       .then((d) => {
         titleRef.current = d.title ?? "";
+        sourceRef.current = d.body ?? "";
         blocksRef.current = blocksFromBody(d.body);
         setLoading(false);
         bump();
@@ -165,11 +182,63 @@ export function DocView({
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(save, 700);
   };
+  const snapshotMarkdown = () => {
+    if (mode === "source") {
+      sourceRef.current = sourceTaRef.current?.value ?? sourceRef.current;
+      return sourceRef.current;
+    }
+    syncRenderedBlocks(blocksRef.current);
+    return bodyFromBlocks(blocksRef.current);
+  };
   const save = () =>
     api
-      .updateDocument(docId, { title: titleRef.current, body: bodyFromBlocks(blocksRef.current) })
+      .updateDocument(docId, { title: titleRef.current, body: snapshotMarkdown() })
       .then(() => onTitleChange())
       .catch((e) => onError(String(e.message)));
+  const flushSave = async () => {
+    clearTimeout(saveTimer.current);
+    await save();
+  };
+
+  const setDisplayMode = (next: DocMode) => {
+    if (next === mode) return;
+    if (next === "source") {
+      sourceRef.current = snapshotMarkdown();
+      setSlash(null);
+      setBar(null);
+      setSel(null);
+      setModeState("source");
+      onModeChange?.("source");
+      requestAnimationFrame(() => {
+        if (sourceTaRef.current) {
+          sourceTaRef.current.value = sourceRef.current;
+          resizeSourceEditor(sourceTaRef.current);
+          sourceTaRef.current.focus();
+        }
+      });
+      return;
+    }
+
+    sourceRef.current = sourceTaRef.current?.value ?? sourceRef.current;
+    blocksRef.current = blocksFromBody(sourceRef.current);
+    setModeState("blocks");
+    onModeChange?.("blocks");
+    setVersion((v) => v + 1);
+    requestAnimationFrame(() => {
+      const first = flattenBlocks(blocksRef.current)[0];
+      if (first) focusBlock(first.id);
+    });
+  };
+
+  useEffect(() => {
+    onHandle?.({
+      getMode: () => mode,
+      setMode: setDisplayMode,
+      snapshotMarkdown,
+      flushSave,
+    });
+    return () => onHandle?.(null);
+  }, [onHandle, mode]);
 
   const blocks = blocksRef.current;
   const selectedIds = sel ? blockRangeIds(blocks, sel.anchorId, sel.focusId) : [];
@@ -369,6 +438,8 @@ export function DocView({
   // editable is blurred while a block selection is up, so keydowns would
   // otherwise never reach the .doc element. No-ops when there is no selection.
   const onBlockKeyDown = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.(".doc-source")) return;
     const mod = e.metaKey || e.ctrlKey;
     // Undo/redo: take over Ctrl/Cmd+Z so structural block ops are reversible
     // (the browser's native undo only covers intra-block text typing).
@@ -670,7 +741,7 @@ export function DocView({
 
   return (
     <div
-      class="doc"
+      class={"doc" + (mode === "source" ? " source-mode" : "")}
       onMouseDown={(e) => onDocMouseDown(e as MouseEvent)}
       onMouseUp={() => updateBar(setBar)}
       onKeyUp={(e) => { if (e.shiftKey || e.key.startsWith("Arrow")) updateBar(setBar); }}
@@ -688,9 +759,22 @@ export function DocView({
         <span>实时同步</span>
       </div>
 
-      {renderBlocks(blocks)}
+      {mode === "source" ? (
+        <textarea
+          ref={sourceTaRef}
+          class="doc-source"
+          spellcheck={false}
+          defaultValue={sourceRef.current}
+          onInput={(e) => {
+            const ta = e.currentTarget as HTMLTextAreaElement;
+            sourceRef.current = ta.value;
+            resizeSourceEditor(ta);
+            scheduleSave();
+          }}
+        />
+      ) : renderBlocks(blocks)}
 
-      {blocks.length === 0 && (
+      {mode === "blocks" && blocks.length === 0 && (
         <div class="editable" style={{ color: "var(--muted)", cursor: "text" }} onClick={() => insertAfter(null)}>
           点此书写，或输入 “/” 选择块类型…
         </div>
@@ -1134,6 +1218,10 @@ function focusBlock(id: string, atEnd = false) {
     s?.removeAllRanges();
     s?.addRange(r);
   }
+}
+function resizeSourceEditor(ta: HTMLTextAreaElement) {
+  ta.style.height = "auto";
+  ta.style.height = ta.scrollHeight + "px";
 }
 function clearBlockDrop() {
   document.querySelectorAll(".block.drop-before,.block.drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after"));

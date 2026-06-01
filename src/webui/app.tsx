@@ -1,12 +1,13 @@
 /** @jsxImportSource preact */
 import { render } from "preact";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type Hit } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
-import { DocView } from "./editor.tsx";
+import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
+import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
   UiHost,
   openMenu,
@@ -35,8 +36,13 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sbCollapsed, setSbCollapsed] = useState(false);
   const [sbWidth, setSbWidth] = useState(268);
+  const [docMode, setDocMode] = useState<DocMode>("blocks");
+  const docHandleRef = useRef<DocViewHandle | null>(null);
 
   const onError = useCallback((m: string) => setError(m), []);
+  const registerDocHandle = useCallback((handle: DocViewHandle | null) => {
+    docHandleRef.current = handle;
+  }, []);
 
   const reloadNav = useCallback(async () => {
     const [d, o] = await Promise.all([api.listDatabases(), api.listDocuments()]);
@@ -55,11 +61,30 @@ function App() {
 
   const activeDb = view.kind === "db" ? databases.find((d) => d.id === view.id) : undefined;
   const activeDoc = view.kind === "doc" ? docs.find((d) => d.id === view.id) : undefined;
+  const activeDocId = view.kind === "doc" ? view.id : null;
+
+  useEffect(() => {
+    setDocMode("blocks");
+  }, [activeDocId]);
 
   const moreMenu = (e: MouseEvent) => {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
         <>
+          <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} checked={docMode === "source"} onClick={() => {
+            close();
+            docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
+          }} />
+          <MenuItem icon="download" label="导出 Markdown" onClick={() => {
+            close();
+            const body = docHandleRef.current?.snapshotMarkdown();
+            docHandleRef.current?.flushSave();
+            const fallback = body == null ? api.getDocument(activeDoc.id).then((d) => d.body ?? "") : Promise.resolve(body);
+            fallback
+              .then((text) => downloadText(safeFilename(activeDoc.title || activeDoc.id, ".md"), text, "text/markdown;charset=utf-8"))
+              .catch((err) => onError(String(err.message)));
+          }} />
+          <MenuSep />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
             const title = await promptDialog({ title: "重命名文档", value: activeDoc.title });
@@ -76,6 +101,15 @@ function App() {
     } else if (view.kind === "db" && activeDb) {
       openMenu(e, (close) => (
         <>
+          <MenuItem icon="download" label="导出 CSV" onClick={() => {
+            close();
+            Promise.all([api.listProperties(activeDb.id), api.listRecords(activeDb.id)])
+              .then(([props, records]) =>
+                downloadText(safeFilename(activeDb.name || activeDb.id, ".csv"), databaseToCsv(props, records), "text/csv;charset=utf-8"),
+              )
+              .catch((err) => onError(String(err.message)));
+          }} />
+          <MenuSep />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
             const name = await promptDialog({ title: "重命名数据库", value: activeDb.name });
@@ -154,7 +188,14 @@ function App() {
             <DatabaseView key={activeDb.id} db={activeDb} reloadNav={reloadNav} onError={onError} />
           )}
           {view.kind === "doc" && (
-            <DocView key={view.id} docId={view.id} onTitleChange={reloadNav} onError={onError} />
+            <DocView
+              key={view.id}
+              docId={view.id}
+              onTitleChange={reloadNav}
+              onError={onError}
+              onModeChange={setDocMode}
+              onHandle={registerDocHandle}
+            />
           )}
           {view.kind === "search" && (
             <SearchView q={view.q} onOpenDoc={(id) => navigate({ kind: "doc", id })} onOpenDb={(id) => navigate({ kind: "db", id })} />
