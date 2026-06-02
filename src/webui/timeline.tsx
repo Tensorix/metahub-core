@@ -34,6 +34,7 @@ export function TimelineView({
   const endProp =
     endId === "none" ? null : (props.find((p) => p.id === endId) ?? dateProps.find((p) => p !== startProp) ?? null);
   const dragRef = useRef<{ pointerId: number; startX: number } | null>(null);
+  const guideRef = useRef<HTMLDivElement>(null);
 
   if (!startProp) {
     return <div class="view-placeholder">时间轴视图需要一个「日期」属性作为开始日期。请在表格视图中添加一个日期列后再切换到时间轴。</div>;
@@ -89,6 +90,18 @@ export function TimelineView({
     }
   };
 
+  const showGuide = (x: number, label: string) => {
+    const g = guideRef.current;
+    if (!g) return;
+    g.style.left = x + "px";
+    g.style.display = "block";
+    const lbl = g.firstElementChild as HTMLElement | null;
+    if (lbl) lbl.textContent = label;
+  };
+  const hideGuide = () => {
+    if (guideRef.current) guideRef.current.style.display = "none";
+  };
+
   const startDrag = (ev: any, rec: Rec, s: Date | null, e: Date | null, mode: "move" | "l" | "r", el: HTMLElement) => {
     if (ev.button !== 0 || !s) return;
     ev.preventDefault();
@@ -102,13 +115,23 @@ export function TimelineView({
       if (!d || d.pointerId !== e2.pointerId) return;
       const dxDays = Math.round((e2.clientX - d.startX) / DAY_PX);
       if (Math.abs(e2.clientX - d.startX) > 3) moved = true;
-      if (mode === "move") el.style.left = baseLeft + dxDays * DAY_PX + "px";
-      else if (mode === "l") {
-        el.style.left = baseLeft + dxDays * DAY_PX + "px";
+      let edgeX: number; // canvas-x of the edge being aligned, and its date
+      let edgeDate: Date;
+      if (mode === "move") {
+        const left = baseLeft + dxDays * DAY_PX;
+        el.style.left = left + "px";
+        edgeX = left; edgeDate = addDays(s, dxDays);
+      } else if (mode === "l") {
+        const left = baseLeft + dxDays * DAY_PX;
+        el.style.left = left + "px";
         el.style.width = Math.max(DAY_PX, baseWidth - dxDays * DAY_PX) + "px";
+        edgeX = left; edgeDate = addDays(s, dxDays);
       } else {
-        el.style.width = Math.max(DAY_PX, baseWidth + dxDays * DAY_PX) + "px";
+        const w = Math.max(DAY_PX, baseWidth + dxDays * DAY_PX);
+        el.style.width = w + "px";
+        edgeX = baseLeft + w; edgeDate = addDays(s, Math.round(w / DAY_PX) - 1);
       }
+      showGuide(edgeX, toISO(edgeDate));
     };
     const up = (e2: PointerEvent) => {
       const d = dragRef.current;
@@ -117,6 +140,7 @@ export function TimelineView({
       removeEventListener("pointerup", up);
       removeEventListener("pointercancel", up);
       dragRef.current = null;
+      hideGuide();
       const dxDays = Math.round((e2.clientX - d.startX) / DAY_PX);
       if (!moved) { onOpenRecord(rec.id); return; }
       commitDelta(rec, s, e, mode, dxDays);
@@ -222,6 +246,10 @@ export function TimelineView({
           {todayOffset >= 0 && todayOffset < totalDays && (
             <div class="tl-today" style={{ left: xForOffset(todayOffset) + DAY_PX / 2, height: HEAD + rows.length * ROW }} />
           )}
+          {/* drag alignment guide (shown imperatively during bar drag) */}
+          <div class="tl-guide" ref={guideRef} style={{ display: "none", height: HEAD + rows.length * ROW }}>
+            <span class="tl-guide-label" />
+          </div>
         </div>
       </div>
     </div>

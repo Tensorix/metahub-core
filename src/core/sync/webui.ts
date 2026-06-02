@@ -562,6 +562,9 @@ const HTML = `<!doctype html>
     color:var(--muted); border:1px dashed var(--line-strong); background:var(--bg); white-space:nowrap; }
   .tl-schedule:hover { color:var(--accent); border-color:var(--accent); }
   .tl-today { position:absolute; top:0; width:2px; background:var(--accent); opacity:.55; z-index:2; pointer-events:none; }
+  .tl-guide { position:absolute; top:0; width:0; border-left:1px dashed var(--accent); z-index:6; pointer-events:none; }
+  .tl-guide-label { position:absolute; top:2px; left:4px; font-size:11px; font-weight:600; color:var(--accent-fg); background:var(--accent);
+    padding:1px 6px; border-radius:5px; white-space:nowrap; box-shadow:var(--shadow-sm); }
 
   /* mobile */
   .backdrop { display:none; }
