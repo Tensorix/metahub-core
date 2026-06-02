@@ -27,6 +27,7 @@ const PATHS: Record<string, string> = {
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
   link: '<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>',
   calendar: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+  timeline: '<rect x="3" y="5" width="9" height="3" rx="1.5"/><rect x="8" y="10.5" width="11" height="3" rx="1.5"/><rect x="5" y="16" width="7" height="3" rx="1.5"/>',
   hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
   text: '<path d="M4 6h16M4 6v-.5M8 6v13M4 19h8"/><path d="M14 11h6M17 11v8M14 19h6"/>',
   list: '<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',

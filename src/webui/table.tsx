@@ -18,19 +18,17 @@ import {
   MenuSep,
   confirmDialog,
 } from "./ui.tsx";
+import { Chip, CellDisplay, coerceInput, cellText } from "./cells.tsx";
+import { BoardView } from "./board.tsx";
+import { CalendarView } from "./calendar.tsx";
+import { TimelineView } from "./timeline.tsx";
 
-// ---- option colors (stable per string) ----
-const HUES = [4, 28, 45, 130, 165, 200, 220, 255, 290, 330];
-function optColor(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return `hsl(${HUES[h % HUES.length]} 65% 45%)`;
-}
-function Chip({ text }: { text: string }) {
-  return <span class="chip" style={{ ["--c" as any]: optColor(text) }}>{text}</span>;
-}
-
-const VIEW_TABS: [string, string][] = [["表格", "list"], ["看板", "group"], ["日历", "calendar"]];
+const VIEW_TABS: [string, string][] = [
+  ["表格", "list"],
+  ["看板", "group"],
+  ["日历", "calendar"],
+  ["时间轴", "timeline"],
+];
 type DropWhere = "before" | "after";
 
 // ---- cell range selection ----
@@ -41,11 +39,6 @@ function normRect(s: CellSel) {
     r0: Math.min(s.a.r, s.b.r), r1: Math.max(s.a.r, s.b.r),
     c0: Math.min(s.a.c, s.b.c), c1: Math.max(s.a.c, s.b.c),
   };
-}
-function cellText(_prop: Prop, val: unknown): string {
-  if (val == null) return "";
-  if (Array.isArray(val)) return val.join(", ");
-  return String(val);
 }
 
 interface RowDragState {
@@ -122,11 +115,12 @@ export function DatabaseView({
       setEditing(null);
     });
 
-  const newRecord = () =>
+  const createRecordWith = (values: Record<string, unknown>) =>
     guard(async () => {
-      const rec = await api.createRecord(db.id, {});
+      const rec = await api.createRecord(db.id, values);
       setRecords((rs) => [...rs, rec]);
     });
+  const newRecord = () => createRecordWith({});
 
   const deleteRecords = (ids: string[]) =>
     guard(async () => {
@@ -418,8 +412,31 @@ export function DatabaseView({
         <button class="btn btn-primary" onClick={newRecord}><Icon name="plus" cls="ico sm" />新建</button>
       </div>
 
-      {tab !== 0 ? (
-        <div class="view-placeholder">「{VIEW_TABS[tab]![0]}」视图为后续迭代（同一数据的另一种呈现）。</div>
+      {tab === 1 ? (
+        <BoardView
+          props={props}
+          records={records}
+          onCommitValue={commit}
+          onCreate={createRecordWith}
+          onOpenRecord={setPeek}
+          onMove={persistRecordMove}
+        />
+      ) : tab === 2 ? (
+        <CalendarView
+          props={props}
+          records={records}
+          onCommitValue={commit}
+          onCreate={createRecordWith}
+          onOpenRecord={setPeek}
+        />
+      ) : tab === 3 ? (
+        <TimelineView
+          props={props}
+          records={records}
+          onCommitValue={commit}
+          onCreate={createRecordWith}
+          onOpenRecord={setPeek}
+        />
       ) : (
         <div class="tablewrap">
           <div class="tablescroll">
@@ -660,22 +677,6 @@ function CellView({
     );
   }
   return <div class="cell" onDblClick={onActivate}>{body}</div>;
-}
-
-function CellDisplay({ prop, val }: { prop: Prop; val: unknown }) {
-  if (val == null || val === "" || (Array.isArray(val) && val.length === 0))
-    return <span class="muted">&nbsp;</span>;
-  if (prop.type === "select") return <Chip text={String(val)} />;
-  if (prop.type === "multi_select" || prop.type === "relation")
-    return <>{(val as unknown[]).map((x) => <Chip key={String(x)} text={String(x)} />)}</>;
-  if (prop.type === "url")
-    return <a href={String(val)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{String(val)}</a>;
-  return <span>{String(val)}</span>;
-}
-
-function coerceInput(type: PropType, raw: string): unknown {
-  if (type === "relation") return raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return raw;
 }
 
 function reorderById<T extends { id: string }>(items: T[], srcId: string, targetId: string, where: DropWhere): T[] {
