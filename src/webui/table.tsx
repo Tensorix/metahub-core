@@ -401,20 +401,18 @@ export function DatabaseView({
           </div>
         ))}
         <div class="view-tab" title="新建视图"><Icon name="plus" cls="ico sm" /></div>
-      </div>
-
-      <div class="toolbar">
-        {tab === 0 && (
-          <>
-            <button class="tbtn" onClick={(e) => openSortMenu(e, props, sort, setSort)}>
-              <Icon name="sort" cls="ico sm" />排序
-            </button>
-            <button class="tbtn"><Icon name="filter" cls="ico sm" />筛选</button>
-          </>
-        )}
-        <div class="spacer" />
+        <div class="spacer" style={{ flex: 1 }} />
         <button class="btn btn-primary" onClick={newRecord}><Icon name="plus" cls="ico sm" />新建</button>
       </div>
+
+      {tab === 0 && (
+        <div class="toolbar">
+          <button class="tbtn" onClick={(e) => openSortMenu(e, props, sort, setSort)}>
+            <Icon name="sort" cls="ico sm" />排序
+          </button>
+          <button class="tbtn"><Icon name="filter" cls="ico sm" />筛选</button>
+        </div>
+      )}
 
       {tab === 1 ? (
         <BoardView
