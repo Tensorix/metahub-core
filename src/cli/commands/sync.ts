@@ -1,8 +1,45 @@
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
-import { syncWithPeer } from "../../core/sync/client.ts";
+import { syncWithPeer, type SyncResult } from "../../core/sync/client.ts";
+import { addPeer } from "../../core/sync/peers.ts";
 import { syncFiles } from "../../core/sync/files.ts";
 import { print, guard } from "../output.ts";
+
+function isAuthError(e: unknown): boolean {
+  return e instanceof Error && /\b401\b|unauthorized/i.test(e.message);
+}
+
+const isTTY = () => Boolean(process.stdout.isTTY && process.stdin.isTTY);
+
+/**
+ * Peer sync with a graceful token flow: an already-paired peer (or --token)
+ * syncs straight through; otherwise a token-gated server returns 401 and we
+ * prompt for the token (on a TTY), retry, and remember it so the next sync is
+ * direct. Non-interactive callers get a clear error telling them to pass --token.
+ */
+async function peerSync(
+  db: ReturnType<typeof openMetahub>,
+  url: string,
+  token: string | undefined,
+): Promise<SyncResult> {
+  try {
+    const result = await syncWithPeer(db, url, token);
+    if (token) addPeer(db, { url, token }); // remember an explicitly-passed token
+    return result;
+  } catch (e) {
+    if (token || !isAuthError(e)) throw e;
+    if (!isTTY()) {
+      throw new Error(
+        `${(e as Error).message}\nthis server requires a token — pass --token <token> or run in an interactive terminal`,
+      );
+    }
+    const entered = (globalThis.prompt("该服务器需要令牌，请输入 token:") ?? "").trim();
+    if (!entered) throw new Error("no token provided");
+    const result = await syncWithPeer(db, url, entered);
+    addPeer(db, { url, token: entered }); // save so future syncs are direct
+    return result;
+  }
+}
 
 export default defineCommand({
   meta: {
@@ -21,11 +58,15 @@ export default defineCommand({
       required: false,
       description: "File path or entity ref; when given, export/import instead of peer sync",
     },
+    token: {
+      type: "string",
+      description: "Auth token for a protected sync server (saved for next time)",
+    },
   },
   run: guard(async (args) => {
     const db = openMetahub();
     if (args.dst == null) {
-      const result = await syncWithPeer(db, args.src);
+      const result = await peerSync(db, args.src, args.token);
       return print(result, () => `pushed ${result.pushed}, pulled ${result.pulled}`);
     }
     const r = await syncFiles(db, args.src, args.dst);

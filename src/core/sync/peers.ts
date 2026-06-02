@@ -55,8 +55,19 @@ export function addPeer(db: Database, input: AddPeerInput): void {
   ).run(input.url, input.token ?? null, input.label ?? null, input.node_id ?? null);
 }
 
+/**
+ * Remove a peer AND revoke the credential we issued to it during pairing, so
+ * disconnecting is mutual: we stop syncing out to it (peers row) and it can no
+ * longer sync in to us (peer_grants row, keyed by peer_url). Grants minted for a
+ * peer that never sent a self_url have a null peer_url and can't be revoked here.
+ */
 export function removePeer(db: Database, url: string): boolean {
-  return db.query("DELETE FROM peers WHERE url = ?").run(url).changes > 0;
+  const tx = db.transaction(() => {
+    const changed = db.query("DELETE FROM peers WHERE url = ?").run(url).changes > 0;
+    db.query("DELETE FROM peer_grants WHERE peer_url = ?").run(url);
+    return changed;
+  });
+  return tx();
 }
 
 export function setPeerEnabled(db: Database, url: string, enabled: boolean): boolean {

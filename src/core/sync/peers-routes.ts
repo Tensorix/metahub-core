@@ -6,7 +6,13 @@ import {
   PAIR_PATH,
   type PairRequest,
 } from "./protocol.ts";
-import { generatePairingCode, handlePairRequest, performPairing } from "./pairing.ts";
+import {
+  generatePairingCode,
+  handlePairRequest,
+  performPairing,
+  listGrants,
+  revokeGrant,
+} from "./pairing.ts";
 import {
   listPeers,
   removePeer,
@@ -53,6 +59,13 @@ const PeerSyncRes = z.object({
   pulled: z.number().optional(),
   error: z.string().optional(),
 });
+const GrantSchema = z.object({
+  token: z.string(),
+  peer_url: z.string().nullable(),
+  node_id: z.string().nullable(),
+  created_at: z.number().nullable(),
+});
+const RevokeRes = z.object({ revoked: z.number() });
 const OkSchema = z.object({ ok: z.boolean() });
 
 // --- helpers ----------------------------------------------------------------
@@ -143,5 +156,19 @@ export const peersRoutes: Route[] = [
     summary: "Manually sync once with a peer. Query: ?url=<url>",
     response: PeerSyncRes,
     handler: handle((req, { db }) => syncPeer(db, need(req, "url"))),
+  },
+  {
+    method: "GET",
+    path: "/api/grants",
+    summary: "List credentials this server issued and accepts on /sync (inbound)",
+    response: z.array(GrantSchema),
+    handler: handle((_req, { db }) => listGrants(db)),
+  },
+  {
+    method: "DELETE",
+    path: "/api/grant",
+    summary: "Revoke an issued credential by token or prefix. Query: ?token=<token>",
+    response: RevokeRes,
+    handler: handle((req, { db }) => ({ revoked: revokeGrant(db, need(req, "token")) })),
   },
 ];

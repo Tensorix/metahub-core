@@ -80,6 +80,25 @@ mh sync tasks.csv tasks        # 导入：CSV → 数据表（有 id 列则按 i
 
 服务端在根路径 `/` 还内置一个**浏览器 WebUI**（Preact）：左侧列出数据库与文档，可浏览/行内编辑数据表、用块级所见即所得编辑 markdown 文档（含嵌套列表、代码语言名与常用 Markdown 快捷输入）、全文搜索；编辑走与 CLI 同一套 core 写入路径，进 CRDT oplog 后随 `mh sync` 复制。同时暴露一组 `/api/*` REST 接口与自动生成的 OpenAPI 文档（`/docs`）。WebUI 资源（含 Preact）单独打包为 `dist/webui.js`，仅在浏览器首次访问 `/` 时懒加载，**不进入 CLI 启动路径，对命令行性能零影响**。设计见 [docs/impl-context/07-webui/design.md](docs/impl-context/07-webui/design.md)。
 
+## 多设备配对与自动同步
+
+不必每次手敲 `mh sync`：两台设备**配对**一次后,server 内置定时器就会**周期性双向同步**(默认 30s)。配对用**一次性配对码**引导,认证通过后两端**互相签发长期凭据**(主 token 不外泄,配对码用完即废),之后 `/sync` 用该凭据鉴权。
+
+```bash
+# A 机：生成一次性配对码(随机 12 位、默认 10 分钟、单次)
+mh config peer code
+
+# B 机：填入 A 的地址 + 配对码完成配对(--self-url 让 A 也登记 B → 真正互配)
+mh config peer add --url http://a-host:7777 --code <code> --self-url http://b-host:7777
+
+# 此后两端后台自动双向同步。查看 / 管理：
+mh config show                 # 当前配置 + peer 状态
+mh config peer list|sync|enable|disable|rm --url <url>
+mh config grant list|revoke --token <token或前缀>   # 列出/吊销本机签发的入站凭据
+```
+
+`mh config` 无参数进**交互式向导**,带 `--flag` 则直配(服务器 host/port/同步间隔/开关、配对、撤销);WebUI 设置页是其 GUI 镜像(「同步设备」+「已授权设备」)。配对后 `/sync` **强制鉴权**:此后无凭据的 `mh sync <url>` 在交互终端会提示输入 token(可用对端主 token)、走完并记住,下次直连。删 peer 会连带吊销签发给对方的凭据;单向配对(没传 `--self-url`)产生的无主凭据用 `grant revoke` 兜底。设计见 [docs/impl-context/11-device-pairing-sync/design.md](docs/impl-context/11-device-pairing-sync/design.md)。
+
 ## Agent 托管静态站点
 
 AI agent 用 CLI 把生成好的 HTML/CSS/JS **发布**成一个命名「站点」，`mh --server` 把它在 `/sites/<name>/` serve 出去；页面同源调用上面的 `/api/*` 即可读取本库的数据表与文档——等于一个本地 mini-Supabase（静态托管 + 数据 API）。
@@ -96,7 +115,9 @@ mh --server --port 7777            # 浏览器打开 http://localhost:7777/sites
 
 站点与文件**和其它数据一样进 CRDT oplog**，随 `mh sync` 跨机复制：文本与小二进制内联存储；超过阈值的大二进制走内容寻址 blob（`cache/`，其字节暂为本机、不随 oplog 复制，清单照常同步）。
 
-**鉴权**：`--debug` 全开（无鉴权）；否则单 token 守护**每个请求**。token **默认持久化在 `~/.metahub`**（重启复用，`mh token` 查看），带有效期（默认 30 天），**到期或 `mh token refresh` 时才轮换**；轮换后旧 token 在宽限期内（默认 7 天）仍可换到新 token，浏览器**无感续期**。`--token` / `METAHUB_TOKEN` 则固定一个不持久化、不过期的 token（脚本/CI 用）。浏览器首次访问会弹**解锁页**输入 token，存入 `localStorage`+cookie 后刷新；之后注入的 fetch 套壳自动给同源 `/api/*` 调用带上 `Authorization: Bearer`，并在轮换后透明地用 `GET /auth/token` 换新 token 重试，所以 agent 写的页面无需把 token 写进源码。token 可经 `Authorization: Bearer`、Cookie `mh_token` 或 `?token=` 任一方式携带；有效期/宽限期可经 `METAHUB_TOKEN_TTL` / `METAHUB_TOKEN_GRACE` 调整。服务端默认只绑 `127.0.0.1`，`--host 0.0.0.0` 才对外。设计见 [docs/impl-context/08-agent-sites/design.md](docs/impl-context/08-agent-sites/design.md)、[docs/impl-context/10-persistent-token/design.md](docs/impl-context/10-persistent-token/design.md)。
+**鉴权**：`--debug` 全开（无鉴权）；否则单 token 守护**每个请求**。token **默认持久化在 `~/.metahub`**（重启复用，`mh token` 查看），带有效期（默认 30 天），**到期或 `mh token refresh` 时才轮换**；轮换后旧 token 在宽限期内（默认 7 天）仍可换到新 token，浏览器**无感续期**。`--token` / `METAHUB_TOKEN` 则固定一个不持久化、不过期的 token（脚本/CI 用）。浏览器首次访问会弹**解锁页**输入 token，存入 `localStorage`+cookie 后刷新；之后注入的 fetch 套壳自动给同源 `/api/*` 调用带上 `Authorization: Bearer`，并在轮换后透明地用 `GET /auth/token` 换新 token 重试，所以 agent 写的页面无需把 token 写进源码。token 可经 `Authorization: Bearer`、Cookie `mh_token` 或 `?token=` 任一方式携带；有效期/宽限期可经 `METAHUB_TOKEN_TTL` / `METAHUB_TOKEN_GRACE` 调整。服务端默认只绑 `127.0.0.1`，`--host 0.0.0.0` 才对外。
+
+`/sync` 不再豁免鉴权（信任对等模型已移除）：非 `--debug` 下它接受**主 token 或任一配对凭据**（见上「多设备配对」）。配对凭据是服务器签发、托管在本地 DB 的长期 bearer 凭据,**目前无过期**,靠 `peer rm` / `grant revoke` 撤销。注意凭据/token 以**明文 Bearer**传输且默认无 TLS:对外暴露（`--host 0.0.0.0`）请置于可信网络或前置 TLS/反代。设计见 [docs/impl-context/08-agent-sites/design.md](docs/impl-context/08-agent-sites/design.md)、[docs/impl-context/10-persistent-token/design.md](docs/impl-context/10-persistent-token/design.md)、[docs/impl-context/11-device-pairing-sync/design.md](docs/impl-context/11-device-pairing-sync/design.md)。
 
 ## 三种用法
 
@@ -133,9 +154,12 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 | `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
 | `mh token [show\|refresh]` | 查看 / 轮换持久化的服务器鉴权 token（存于 `~/.metahub`，默认 30 天到期轮换） |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
-| `mh sync <url>` | 与服务端同步一轮（CRDT 推/拉） |
+| `mh sync <url>` | 与服务端同步一轮（CRDT 推/拉）；`/sync` 受保护时按已存凭据直连，否则在交互终端提示输入 token 并记住（`--token` 非交互） |
 | `mh sync <src> <dst>` | 单个文档/数据表与文件互导：文档↔markdown、数据表↔CSV；方向按参数判别（哪侧是库内实体），格式按实体类型固定 |
-| `mh --server [--port] [--host] [--debug] [--token]` | 启动服务端：`/sync` + 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/` + token 交换 `/auth/token`；非 `--debug` 时每个请求需带 token |
+| `mh config` | 配置服务器与同步设备：无参进交互向导，`--flag` 直配（`--host/--port/--sync-interval/--auto-sync`） |
+| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | 多设备配对与管理：生成一次性配对码 / 配对 / 列出 / 立即同步 / 启停 / 移除（连带吊销签发给对方的凭据） |
+| `mh config grant list\|revoke` | 列出 / 吊销本机签发的入站同步凭据（`revoke --token` 支持精确或前缀） |
+| `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync]` | 启动服务端：`/sync`（接受主 token 或配对凭据）+ 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/` + token 交换 `/auth/token` + 配对 `/api/pair`；内置定时器自动同步已配对 peer |
 
 ## 开发
 
@@ -151,11 +175,12 @@ bun run build:binaries            # 产出 binaries/ 五平台二进制
 
 ```text
 src/
-  core/        # 业务逻辑（库和 CLI 共享）；含 sites.ts（静态站点模型，进 CRDT）、csv.ts（文件导入导出用）
+  core/        # 业务逻辑（库和 CLI 共享）；含 sites.ts（静态站点模型，进 CRDT）、csv.ts（文件导入导出用）、config.ts（服务器级设置，存 meta）
     sync/      # CRDT 同步协议 + 服务端 + 客户端 + WebUI/REST 路由 + 静态站点托管与鉴权
                #   （routes/webui-routes/openapi/webui/sites-routes/sites-serve/auth）
                #   files.ts：单文档/数据表与文件互导（markdown/CSV）
-  cli/         # citty 子命令（含 site）
+               #   pairing.ts/peers.ts/peers-routes.ts：多设备配对、peer 管理与自动同步
+  cli/         # citty 子命令（含 site、config）
   webui/       # 浏览器 WebUI（Preact，独立打包为 dist/webui.js）
   index.ts     # 库入口
 scripts/       # 构建脚本（含 webui 打包入口）

@@ -3,7 +3,12 @@ import { openMetahub } from "../../core/db.ts";
 import { getNodeId } from "../../core/node.ts";
 import { getServerConfig, setServerConfig, type ServerConfig } from "../../core/config.ts";
 import { parseDuration } from "../../core/sync/token.ts";
-import { generatePairingCode, performPairing } from "../../core/sync/pairing.ts";
+import {
+  generatePairingCode,
+  performPairing,
+  listGrants,
+  revokeGrant,
+} from "../../core/sync/pairing.ts";
 import {
   listPeers,
   removePeer,
@@ -143,6 +148,39 @@ function syncLine(o: { url: string; ok: boolean; pushed?: number; pulled?: numbe
   return o.ok ? `${o.url}: pushed ${o.pushed}, pulled ${o.pulled}` : `${o.url}: error — ${o.error}`;
 }
 
+const maskToken = (t: string) => (t.length > 10 ? `${t.slice(0, 8)}…` : t);
+
+function grantView(g: { token: string; peer_url: string | null; node_id: string | null; created_at: number | null }) {
+  return {
+    token: maskToken(g.token),
+    peer_url: g.peer_url ?? "(unknown)",
+    node_id: g.node_id ?? "",
+    issued: iso(g.created_at),
+  };
+}
+
+function grantDispatch(
+  db: ReturnType<typeof openMetahub>,
+  action: string,
+  args: Record<string, any>,
+): void {
+  switch (action) {
+    case "list": {
+      const rows = listGrants(db).map(grantView);
+      print(rows, () => (rows.length ? table(rows) : "(no issued credentials)"));
+      return;
+    }
+    case "revoke": {
+      const token = flagOrAsk(args.token, "token");
+      const n = revokeGrant(db, token);
+      print({ revoked: n }, () => (n > 0 ? `revoked ${n} credential(s)` : "no matching credential"));
+      return;
+    }
+    default:
+      throw new Error(`unknown grant action '${action}' (list|revoke)`);
+  }
+}
+
 // --- interactive wizard -----------------------------------------------------
 
 function serverWizard(db: ReturnType<typeof openMetahub>): void {
@@ -165,9 +203,10 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
     console.log("  4) 移除设备");
     console.log("  5) 启用/禁用设备");
     console.log("  6) 立即同步全部");
-    console.log("  7) 返回");
-    const c = ask("选择 (1-7)");
-    if (c === "" || c === "7") return;
+    console.log("  7) 已签发凭据 (列出/吊销)");
+    console.log("  8) 返回");
+    const c = ask("选择 (1-8)");
+    if (c === "" || c === "8") return;
     try {
       if (c === "1") {
         const url = ask("对方服务器地址 (如 http://192.168.1.10:7777)");
@@ -199,6 +238,13 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
       } else if (c === "6") {
         const r = await syncAllPeers(db);
         console.log(r.length ? r.map(syncLine).join("\n") : "(无启用的设备)");
+      } else if (c === "7") {
+        const rows = listGrants(db);
+        console.log(rows.length ? table(rows.map(grantView)) : "(无已签发凭据)");
+        if (rows.length) {
+          const t = ask("输入要吊销的 token (或前缀, 留空跳过)");
+          if (t) console.log(`✓ 已吊销 ${revokeGrant(db, t)} 条`);
+        }
       }
     } catch (e) {
       console.log(`✗ ${(e as Error).message}`);
@@ -226,8 +272,8 @@ export default defineCommand({
       "Configure server + sync devices. Run with no args for an interactive wizard, or use flags directly (e.g. `config --port 7777`, `config peer add --url <url> --code <code>`).",
   },
   args: {
-    section: { type: "positional", required: false, description: "show | set | peer (omit for wizard)" },
-    action: { type: "positional", required: false, description: "peer action: add|code|list|rm|enable|disable|sync" },
+    section: { type: "positional", required: false, description: "show | set | peer | grant (omit for wizard)" },
+    action: { type: "positional", required: false, description: "peer: add|code|list|rm|enable|disable|sync · grant: list|revoke" },
     host: { type: "string", description: "Bind address" },
     port: { type: "string", description: "Server port" },
     "sync-interval": { type: "string", description: "Auto-sync interval (e.g. 30s, 5m)" },
@@ -235,6 +281,7 @@ export default defineCommand({
     url: { type: "string", description: "Peer URL (peer add/rm/enable/disable/sync)" },
     code: { type: "string", description: "One-time pairing code (peer add)" },
     "self-url": { type: "string", description: "This device's reachable URL (peer add, optional)" },
+    token: { type: "string", description: "Issued credential token or prefix (grant revoke)" },
   },
   run: guard(async (args) => {
     const db = openMetahub();
@@ -253,6 +300,7 @@ export default defineCommand({
     if (section === "show") return showConfig(db);
     if (section === "set") return applySet(db, args);
     if (section === "peer") return peerDispatch(db, (args.action as string) ?? "list", args);
-    throw new Error(`unknown config section '${section}' (show | set | peer)`);
+    if (section === "grant") return grantDispatch(db, (args.action as string) ?? "list", args);
+    throw new Error(`unknown config section '${section}' (show | set | peer | grant)`);
   }),
 });

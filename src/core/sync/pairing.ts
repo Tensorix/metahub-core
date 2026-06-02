@@ -26,22 +26,28 @@ export interface PairingCode {
 
 /** Mint a one-time pairing code, stored until redeemed or expired. */
 export function generatePairingCode(db: Database, ttlMs: number = DEFAULT_PAIR_TTL_MS): PairingCode {
-  const code = randomSuffix(8);
-  const exp = Date.now() + ttlMs;
+  const now = Date.now();
+  // Opportunistic housekeeping: drop spent/expired codes so the table can't grow.
+  db.query("DELETE FROM pairing_codes WHERE used = 1 OR exp < ?").run(now);
+  const code = randomSuffix(12); // ~62 bits; brute-forcing within the TTL is infeasible
+  const exp = now + ttlMs;
   db.query(
     "INSERT INTO pairing_codes (code, exp, used, created_at) VALUES (?, ?, 0, ?)",
-  ).run(code, exp, Date.now());
+  ).run(code, exp, now);
   return { code, exp };
 }
 
-/** Validate and consume a pairing code. Returns false if unknown/used/expired. */
+/**
+ * Validate and consume a pairing code. The check-and-consume is a single atomic
+ * UPDATE (guarded on used=0 AND not-expired) so two concurrent redemptions of
+ * the same code can't both succeed. Returns false if unknown/used/expired.
+ */
 export function redeemPairingCode(db: Database, code: string): boolean {
-  const row = db
-    .query("SELECT exp, used FROM pairing_codes WHERE code = ?")
-    .get(code) as { exp: number; used: number } | null;
-  if (!row || row.used === 1 || Date.now() > row.exp) return false;
-  db.query("UPDATE pairing_codes SET used = 1 WHERE code = ?").run(code);
-  return true;
+  return (
+    db
+      .query("UPDATE pairing_codes SET used = 1 WHERE code = ? AND used = 0 AND exp >= ?")
+      .run(code, Date.now()).changes > 0
+  );
 }
 
 /** Mint a durable credential we issue to a peer and will accept on /sync. */
@@ -56,6 +62,31 @@ export function mintGrant(db: Database, peerUrl: string | null, nodeId: string |
 /** Whether a presented token matches a credential we issued during pairing. */
 export function isAcceptedGrant(db: Database, token: string): boolean {
   return db.query("SELECT 1 FROM peer_grants WHERE token = ?").get(token) != null;
+}
+
+export interface GrantRow {
+  token: string;
+  peer_url: string | null;
+  node_id: string | null;
+  created_at: number | null;
+}
+
+/** All credentials we have issued and still accept on /sync (inbound access). */
+export function listGrants(db: Database): GrantRow[] {
+  return db
+    .query("SELECT token, peer_url, node_id, created_at FROM peer_grants ORDER BY created_at DESC")
+    .all() as GrantRow[];
+}
+
+/**
+ * Revoke issued credentials by exact token or a unique prefix (handy for the
+ * grants minted by one-directional pairing, which removePeer can't reach since
+ * they have a null peer_url). Returns the number of grants revoked.
+ */
+export function revokeGrant(db: Database, tokenOrPrefix: string): number {
+  return db
+    .query("DELETE FROM peer_grants WHERE token = ? OR token LIKE ? || '%'")
+    .run(tokenOrPrefix, tokenOrPrefix).changes;
 }
 
 /**

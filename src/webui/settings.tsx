@@ -2,7 +2,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
-import { api, type Peer } from "./api.ts";
+import { api, type Peer, type Grant } from "./api.ts";
 import {
   Modal,
   openModal,
@@ -54,6 +54,7 @@ export function SettingsView() {
       </div>
 
       <SyncDevices />
+      <IssuedGrants />
     </div>
   );
 }
@@ -172,6 +173,63 @@ function SyncDevices() {
               </div>
               <button class="btn btn-ghost peer-menu" onClick={(e) => menu(e as unknown as MouseEvent, p)}>
                 <Icon name="dots" cls="ico sm" />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IssuedGrants() {
+  const [grants, setGrants] = useState<Grant[] | null>(null);
+
+  const reload = () =>
+    api
+      .listGrants()
+      .then(setGrants)
+      .catch((e) => toast(`加载失败：${e.message}`));
+
+  useEffect(() => {
+    reload();
+  }, []);
+
+  const revoke = async (g: Grant) => {
+    const ok = await confirmDialog({
+      title: "吊销凭据",
+      message: `吊销后，持有此凭据的设备${g.peer_url ? `（${g.peer_url}）` : ""}将无法再同步进本机。`,
+      confirmLabel: "吊销",
+      danger: true,
+    });
+    if (!ok) return;
+    await api.revokeGrant(g.token).catch((e) => toast(e.message));
+    reload();
+  };
+
+  return (
+    <div class="set-section">
+      <div class="set-section-head">已授权设备</div>
+      <div class="set-section-desc">
+        本机签发、允许其他设备同步进来的凭据。吊销即断开对方的入站访问。
+      </div>
+      <div class="peer-list">
+        {grants == null ? (
+          <div class="muted">加载中…</div>
+        ) : grants.length === 0 ? (
+          <div class="muted">还没有签发任何凭据。</div>
+        ) : (
+          grants.map((g) => (
+            <div key={g.token} class="peer-row">
+              <span class="peer-dot on" />
+              <div class="peer-main">
+                <div class="peer-url">{g.peer_url || "(未知地址)"}</div>
+                <div class="peer-sub">
+                  {g.token.slice(0, 8)}… · 签发于 {fmtTime(g.created_at)}
+                </div>
+              </div>
+              <button class="btn btn-ghost peer-menu" title="吊销" onClick={() => revoke(g)}>
+                <Icon name="trash" cls="ico sm" />
               </button>
             </div>
           ))

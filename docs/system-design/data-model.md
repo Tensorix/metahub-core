@@ -8,6 +8,8 @@
 meta
 crdt_changes
 peers
+peer_grants
+pairing_codes
 databases
 properties
 records
@@ -29,6 +31,7 @@ search_fts
 - `search_hlc`: FTS 已索引到的 oplog 水位。
 - `current_db`: 「当前数据库」指针(本机 UI 上下文,不进 oplog、不随 sync)。读取时惰性校验所指库是否仍存在,失效则自动清除(见 `src/core/context.ts`)。
 - `auth_token` / `auth_token_exp` / `auth_token_prev` / `auth_token_prev_exp`: 持久化的服务器鉴权 token、其过期时刻(epoch ms)、上一代 token 及其可被交换的截止时刻(本机服务器密钥,不进 oplog、不随 sync;见 `src/core/sync/token.ts`、[10-persistent-token](../impl-context/10-persistent-token/design.md))。
+- `cfg_host` / `cfg_port` / `cfg_sync_interval` / `cfg_auto_sync`: `mh config` 持久化的服务器级设置(绑定地址、端口、自动同步间隔 ms、自动同步开关),`--server` 启动时作默认值(CLI flag 覆盖);本机配置,不进 oplog、不随 sync(见 `src/core/config.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。
 
 ## ID 与引用
 
@@ -185,6 +188,20 @@ doc_blocks(id, doc_id, text, order_key, __deleted)
 - 展示时按 `ORDER BY order_key, id` 排序。
 - 正文序列化时用空行连接 blocks。
 - WebUI 的文档编辑器会在前端把 Markdown 解析成更丰富的逻辑块树（例如列表项 `children`、代码块 `lang`、有序列表 `start` 起始号）,但这些字段不入库。保存仍写完整 Markdown body,再由 core 按段落/fenced code 重建或 reconcile `doc_blocks`；有序列表起始号通过 Markdown 序号本身往返。
+
+## peers / peer_grants / pairing_codes
+
+多设备同步的本机表(都不进 oplog、不随 sync;见 [11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md)):
+
+```text
+peers(url PK, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_status, last_error)
+peer_grants(token PK, peer_url, node_id, created_at)
+pairing_codes(code PK, exp, used, created_at)
+```
+
+- `peers`(出站):我会同步去的对端。`pull_cursor`/`push_cursor` 是基于 rowid 的复制游标;`token` 是对端配对时签发给我、我出站 `/sync` 时出示的凭据;`enabled` 决定是否进自动同步定时器;`last_*` 为状态。老库经 `migratePeers` 幂等补列。
+- `peer_grants`(入站):我签发、并在 `/sync` 上接受的长期 bearer 凭据(`acceptsSyncToken` = 主 token 或命中此表)。`peer_url` 记签发对象,`removePeer` 据此连带吊销;单向配对产生的 `peer_url` 为 null,需 `grant revoke`。**目前无过期**。
+- `pairing_codes`:一次性配对码(随机 12 位 base36,默认 10min)。兑换是单条原子 `UPDATE ... WHERE used=0 AND 未过期`(防 TOCTOU 双兑换);生成时清理过期/已用码。
 
 ## sites
 

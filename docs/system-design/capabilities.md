@@ -201,15 +201,23 @@ mh sync http://host:7777
 
 当前能力:
 
-- 一轮 push/pull。
+- 一轮 push/pull(单次轮回即双向:同时推本地、拉远端)。
 - 基于 rowid cursor 防止 HLC 漂移漏同步。
 - 通过 CRDT oplog 最终一致。
+- **多设备配对 + 自动同步**:一次性配对码引导、交换长期 per-peer 凭据,server 内置定时器周期性双向同步已配对 peer(默认 30s);`/sync` 鉴权(主 token 或配对凭据)。统一入口 `mh config`(交互向导 + `--flag`)/ WebUI 设置页。撤销:`peer rm`(连带吊销)/ `grant revoke`。见 [11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md)。
+
+```bash
+mh config peer code                                          # 生成一次性配对码
+mh config peer add --url http://host:7777 --code <code> --self-url <self>
+mh config peer list|sync|enable|disable|rm   |   mh config grant list|revoke
+```
 
 当前未实现:
 
 - 大批量分页同步。
 - 冲突解释或用户可见 diff。
 - blob 按需同步协议。
+- 配对凭据过期(目前靠撤销管理)、`/api/pair` 限频、传输层 TLS(明文 Bearer,需可信网络/前置反代)。
 
 ### 文件导出/导入
 

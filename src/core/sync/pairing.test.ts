@@ -8,8 +8,10 @@ import {
   mintGrant,
   isAcceptedGrant,
   handlePairRequest,
+  listGrants,
+  revokeGrant,
 } from "./pairing.ts";
-import { getPeer, addPeer } from "./peers.ts";
+import { getPeer, addPeer, removePeer } from "./peers.ts";
 import { type AuthConfig, acceptsSyncToken } from "./auth.ts";
 import { loadOrRotate } from "./token.ts";
 
@@ -71,6 +73,22 @@ test("mintGrant is accepted; random tokens are not", () => {
   expect(isAcceptedGrant(db, "garbage")).toBe(false);
 });
 
+test("listGrants and revokeGrant (exact and prefix, incl. null peer_url)", () => {
+  const db = makeDb();
+  const g1 = mintGrant(db, "http://b", "nodeB");
+  const g2 = mintGrant(db, null, "nodeC"); // one-directional pairing: no peer_url
+  expect(listGrants(db).map((g) => g.token).sort()).toEqual([g1, g2].sort());
+
+  // exact revoke
+  expect(revokeGrant(db, g1)).toBe(1);
+  expect(isAcceptedGrant(db, g1)).toBe(false);
+
+  // prefix revoke reaches the null-peer_url grant (removePeer cannot)
+  expect(revokeGrant(db, g2.slice(0, 6))).toBe(1);
+  expect(isAcceptedGrant(db, g2)).toBe(false);
+  expect(listGrants(db)).toHaveLength(0);
+});
+
 // --- sync gate --------------------------------------------------------------
 
 test("acceptsSyncToken: master token, any grant, reject unknown", () => {
@@ -123,4 +141,10 @@ test("handshake: both sides accept each other's sync tokens and register peers",
 
   // The code is now spent.
   expect(redeemPairingCode(dbA, code)).toBe(false);
+
+  // Removing the peer on A revokes the grant A issued (inbound /sync access)
+  // and drops A's outbound peer row — a full mutual disconnect.
+  removePeer(dbA, urlB);
+  expect(getPeer(dbA, urlB)).toBeNull();
+  expect(acceptsSyncToken(...post("http://a/sync", resp.grant), managed(dbA), dbA)).toBe(false);
 });

@@ -77,6 +77,12 @@ export interface PeerSyncOutcome {
   pulled?: number;
   error?: string;
 }
+export interface Grant {
+  token: string;
+  peer_url: string | null;
+  node_id: string | null;
+  created_at: number | null;
+}
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -155,6 +161,8 @@ export const api = {
     req<{ ok: boolean }>("PATCH", `/api/peer?url=${q(url)}`, b),
   removePeer: (url: string) => req<{ ok: boolean }>("DELETE", `/api/peer?url=${q(url)}`),
   syncPeer: (url: string) => req<PeerSyncOutcome>("POST", `/api/peer/sync?url=${q(url)}`),
+  listGrants: () => req<Grant[]>("GET", "/api/grants"),
+  revokeGrant: (token: string) => req<{ revoked: number }>("DELETE", `/api/grant?token=${q(token)}`),
 };
 
 export const TYPE_META: Record<PropType, { ic: string; t: string }> = {
