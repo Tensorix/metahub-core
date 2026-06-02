@@ -97,7 +97,7 @@ mh config peer list|sync|enable|disable|rm --url <url>
 mh config grant list|revoke --token <token或前缀>   # 列出/吊销本机签发的入站凭据
 ```
 
-`mh config` 无参数进**交互式向导**,带 `--flag` 则直配(服务器 host/port/同步间隔/开关、配对、撤销);WebUI 设置页是其 GUI 镜像(「同步设备」+「已授权设备」)。配对后 `/sync` **强制鉴权**:此后无凭据的 `mh sync <url>` 在交互终端会提示输入 token(可用对端主 token)、走完并记住,下次直连。删 peer 会连带吊销签发给对方的凭据;单向配对(没传 `--self-url`)产生的无主凭据用 `grant revoke` 兜底。设计见 [docs/impl-context/11-device-pairing-sync/design.md](docs/impl-context/11-device-pairing-sync/design.md)。
+`mh config` 无参数进**方向键交互式向导**(`@clack/prompts`:↑↓ 移动 / Enter 选择 / Esc 取消,移除·启停 peer 与吊销凭据都从列表里选,不必手敲 URL/token),带 `--flag` 则直配(服务器 host/port/同步间隔/开关、配对、撤销);WebUI 设置页是其 GUI 镜像(「同步设备」+「已授权设备」)。配对后 `/sync` **强制鉴权**:此后无凭据的 `mh sync <url>` 在交互终端会提示输入 token(可用对端主 token)、走完并记住,下次直连。删 peer 会连带吊销签发给对方的凭据;单向配对(没传 `--self-url`)产生的无主凭据用 `grant revoke` 兜底。设计见 [docs/impl-context/11-device-pairing-sync/design.md](docs/impl-context/11-device-pairing-sync/design.md)。
 
 ## Agent 托管静态站点
 

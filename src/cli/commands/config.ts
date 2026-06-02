@@ -8,6 +8,7 @@ import {
   performPairing,
   listGrants,
   revokeGrant,
+  type GrantRow,
 } from "../../core/sync/pairing.ts";
 import {
   listPeers,
@@ -18,6 +19,7 @@ import {
   type PeerRow,
 } from "../../core/sync/peers.ts";
 import { print, table, guard } from "../output.ts";
+import * as p from "@clack/prompts";
 
 // Single command, positional dispatch (no citty subCommands — a parent `run`
 // would double-execute alongside a matched subcommand; see token.ts). Supports
@@ -181,87 +183,204 @@ function grantDispatch(
   }
 }
 
-// --- interactive wizard -----------------------------------------------------
+// --- interactive wizard (@clack/prompts) ------------------------------------
+// Arrow-key driven: ↑↓ to move, Enter to pick, Esc/Ctrl-C to cancel. Only the
+// no-arg TTY path reaches here (see run()); flag-driven dispatch is untouched.
 
-function serverWizard(db: ReturnType<typeof openMetahub>): void {
-  const cur = getServerConfig(db);
-  const host = ask("Host", cur.host);
-  const port = Number(ask("Port", String(cur.port)));
-  const interval = parseDuration(ask("Sync interval", `${Math.round(cur.syncIntervalMs / 1000)}s`), cur.syncIntervalMs);
-  const autoSync = parseBool(ask("Auto-sync (true/false)", String(cur.autoSync)));
-  setServerConfig(db, { host, port, syncIntervalMs: interval, autoSync });
-  console.log("✓ saved (restart --server to apply host/port/interval)");
+const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
+
+/** True (and prints a cancel notice) when the user aborted a clack prompt. */
+function cancelled(v: unknown): v is symbol {
+  if (p.isCancel(v)) {
+    p.cancel("已取消");
+    return true;
+  }
+  return false;
+}
+
+/** clack `select` options for the current peers (value = url). */
+export function peerChoices(peers: PeerRow[]): { value: string; label: string; hint: string }[] {
+  return peers.map((pr) => ({
+    value: pr.url,
+    label: pr.label ? `${pr.label} (${pr.url})` : pr.url,
+    hint: pr.enabled ? "enabled" : "disabled",
+  }));
+}
+
+/** clack `select` options for issued credentials (value = full token). */
+export function grantChoices(grants: GrantRow[]): { value: string; label: string; hint: string }[] {
+  return grants.map((g) => ({
+    value: g.token,
+    label: maskToken(g.token),
+    hint: g.peer_url ?? "(unknown)",
+  }));
+}
+
+/** Validate a port string: an integer in 1–65535. Returns an error message or undefined. */
+export function validatePort(s: string | undefined): string | undefined {
+  const n = Number(s);
+  if (!Number.isInteger(n) || n <= 0 || n > 65535) return "端口必须是 1-65535 的整数";
+  return undefined;
+}
+
+/** Validate a duration string parses to a positive interval (e.g. 30s, 5m). */
+export function validateInterval(s: string | undefined): string | undefined {
+  return parseDuration(s, -1) > 0 ? undefined : "请输入有效的时长 (如 30s, 5m)";
+}
+
+const required = (v: string | undefined) => (v && v.trim() ? undefined : "必填");
+
+async function serverWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
+  const working = { ...getServerConfig(db) };
+  for (;;) {
+    const field = await p.select({
+      message: "服务器设置",
+      options: [
+        { value: "host", label: "Host", hint: working.host },
+        { value: "port", label: "Port", hint: String(working.port) },
+        { value: "interval", label: "同步间隔", hint: secs(working.syncIntervalMs) },
+        { value: "auto", label: "Auto-sync", hint: working.autoSync ? "on" : "off" },
+        { value: "save", label: "保存并返回" },
+        { value: "back", label: "返回 (放弃修改)" },
+      ],
+    });
+    if (cancelled(field) || field === "back") return;
+    if (field === "save") {
+      setServerConfig(db, working);
+      p.note("restart --server to apply host/port/interval changes", "✓ 已保存");
+      return;
+    }
+    if (field === "host") {
+      const v = await p.text({ message: "Host", initialValue: working.host });
+      if (cancelled(v)) return;
+      working.host = v;
+    } else if (field === "port") {
+      const v = await p.text({ message: "Port", initialValue: String(working.port), validate: validatePort });
+      if (cancelled(v)) return;
+      working.port = Number(v);
+    } else if (field === "interval") {
+      const v = await p.text({ message: "同步间隔 (如 30s, 5m)", initialValue: secs(working.syncIntervalMs), validate: validateInterval });
+      if (cancelled(v)) return;
+      working.syncIntervalMs = parseDuration(v, working.syncIntervalMs);
+    } else if (field === "auto") {
+      const v = await p.confirm({ message: "启用 auto-sync?", initialValue: working.autoSync });
+      if (cancelled(v)) return;
+      working.autoSync = v;
+    }
+  }
 }
 
 async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
   const node = getNodeId(db);
   for (;;) {
-    console.log("\n同步设备:");
-    console.log("  1) 添加设备 (输入对方地址 + 配对码)");
-    console.log("  2) 生成本机配对码");
-    console.log("  3) 列出设备");
-    console.log("  4) 移除设备");
-    console.log("  5) 启用/禁用设备");
-    console.log("  6) 立即同步全部");
-    console.log("  7) 已签发凭据 (列出/吊销)");
-    console.log("  8) 返回");
-    const c = ask("选择 (1-8)");
-    if (c === "" || c === "8") return;
+    const action = await p.select({
+      message: "同步设备",
+      options: [
+        { value: "add", label: "添加设备", hint: "对方地址 + 配对码" },
+        { value: "code", label: "生成本机配对码" },
+        { value: "list", label: "列出设备" },
+        { value: "rm", label: "移除设备" },
+        { value: "toggle", label: "启用 / 禁用设备" },
+        { value: "sync", label: "立即同步全部" },
+        { value: "back", label: "返回" },
+      ],
+    });
+    if (cancelled(action) || action === "back") return;
     try {
-      if (c === "1") {
-        const url = ask("对方服务器地址 (如 http://192.168.1.10:7777)");
-        const code = ask("配对码");
-        const selfUrl = ask("本机可达地址 (可选, 留空则单向)");
-        if (!url || !code) {
-          console.log("地址与配对码必填");
+      if (action === "add") {
+        const url = await p.text({ message: "对方服务器地址", placeholder: "http://192.168.1.10:7777", validate: required });
+        if (cancelled(url)) continue;
+        const code = await p.text({ message: "配对码", validate: required });
+        if (cancelled(code)) continue;
+        const selfUrl = await p.text({ message: "本机可达地址 (可选, 留空则单向)" });
+        if (cancelled(selfUrl)) continue;
+        const s = p.spinner();
+        s.start("配对中…");
+        try {
+          const r = await performPairing(db, node, url, code, selfUrl || undefined);
+          const sync = await syncPeer(db, r.url);
+          s.stop(`✓ 已配对 ${r.url} (node ${r.node_id})`);
+          p.note(syncLine(sync), "同步结果");
+        } catch (e) {
+          s.stop(`✗ ${(e as Error).message}`);
+        }
+      } else if (action === "code") {
+        const code = generatePairingCode(db);
+        p.note(`配对码: ${code.code}\n有效至: ${iso(code.exp)}`, "本机配对码");
+      } else if (action === "list") {
+        const rows = listPeers(db).map(peerView);
+        p.note(rows.length ? table(rows) : "(无设备)", "设备列表");
+      } else if (action === "rm") {
+        const peers = listPeers(db);
+        if (!peers.length) {
+          p.note("(无设备)");
           continue;
         }
-        const r = await performPairing(db, node, url, code, selfUrl || undefined);
-        const sync = await syncPeer(db, url);
-        console.log(`✓ 已配对 ${r.url} (node ${r.node_id}); ${syncLine(sync)}`);
-      } else if (c === "2") {
-        const code = generatePairingCode(db);
-        console.log(`配对码: ${code.code}  (有效至 ${iso(code.exp)})`);
-      } else if (c === "3") {
-        const rows = listPeers(db).map(peerView);
-        console.log(rows.length ? table(rows) : "(无设备)");
-      } else if (c === "4") {
-        const url = ask("要移除的地址");
-        if (url) console.log(removePeer(db, url) ? `✓ 已移除 ${url}` : "未找到该设备");
-      } else if (c === "5") {
-        const url = ask("地址");
-        const en = parseBool(ask("启用? (true/false)", "true"));
-        if (url) {
-          setPeerEnabled(db, url, en);
-          console.log(`✓ ${en ? "已启用" : "已禁用"} ${url}`);
+        const url = await p.select({ message: "选择要移除的设备", options: peerChoices(peers) });
+        if (cancelled(url)) continue;
+        p.note(removePeer(db, url) ? `✓ 已移除 ${url}` : "未找到该设备");
+      } else if (action === "toggle") {
+        const peers = listPeers(db);
+        if (!peers.length) {
+          p.note("(无设备)");
+          continue;
         }
-      } else if (c === "6") {
+        const url = await p.select({ message: "选择设备", options: peerChoices(peers) });
+        if (cancelled(url)) continue;
+        const cur = peers.find((x) => x.url === url);
+        const en = await p.confirm({ message: "启用该设备?", initialValue: cur ? !!cur.enabled : true });
+        if (cancelled(en)) continue;
+        setPeerEnabled(db, url, en);
+        p.note(`✓ ${en ? "已启用" : "已禁用"} ${url}`);
+      } else if (action === "sync") {
+        const s = p.spinner();
+        s.start("同步中…");
         const r = await syncAllPeers(db);
-        console.log(r.length ? r.map(syncLine).join("\n") : "(无启用的设备)");
-      } else if (c === "7") {
-        const rows = listGrants(db);
-        console.log(rows.length ? table(rows.map(grantView)) : "(无已签发凭据)");
-        if (rows.length) {
-          const t = ask("输入要吊销的 token (或前缀, 留空跳过)");
-          if (t) console.log(`✓ 已吊销 ${revokeGrant(db, t)} 条`);
-        }
+        s.stop("同步完成");
+        p.note(r.length ? r.map(syncLine).join("\n") : "(无启用的设备)", "同步结果");
       }
     } catch (e) {
-      console.log(`✗ ${(e as Error).message}`);
+      p.note(`✗ ${(e as Error).message}`, "错误");
     }
   }
 }
 
-async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
+async function grantWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
   for (;;) {
-    console.log("\nMetahub 配置:");
-    console.log("  1) 服务器设置");
-    console.log("  2) 同步设备");
-    console.log("  3) 退出");
-    const c = ask("选择 (1-3)");
-    if (c === "" || c === "3") return;
-    if (c === "1") serverWizard(db);
-    else if (c === "2") await peerWizard(db);
+    const grants = listGrants(db);
+    p.note(grants.length ? table(grants.map(grantView)) : "(无已签发凭据)", "已签发凭据");
+    if (!grants.length) return;
+    const token = await p.select({
+      message: "选择要吊销的凭据",
+      options: [...grantChoices(grants), { value: "__back__", label: "返回" }],
+    });
+    if (cancelled(token) || token === "__back__") return;
+    const ok = await p.confirm({ message: `确认吊销 ${maskToken(token)}?`, initialValue: false });
+    if (cancelled(ok) || !ok) continue;
+    const n = revokeGrant(db, token);
+    p.note(n > 0 ? `✓ 已吊销 ${n} 条` : "无匹配凭据");
+  }
+}
+
+async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
+  p.intro("Metahub 配置");
+  for (;;) {
+    const choice = await p.select({
+      message: "选择操作",
+      options: [
+        { value: "server", label: "服务器设置", hint: "host / port / 同步间隔 / auto-sync" },
+        { value: "peers", label: "同步设备", hint: "配对 / 列出 / 移除 / 同步" },
+        { value: "grants", label: "已签发凭据", hint: "列出 / 吊销" },
+        { value: "exit", label: "退出" },
+      ],
+    });
+    if (cancelled(choice) || choice === "exit") {
+      p.outro("再见");
+      return;
+    }
+    if (choice === "server") await serverWizard(db);
+    else if (choice === "peers") await peerWizard(db);
+    else if (choice === "grants") await grantWizard(db);
   }
 }
 

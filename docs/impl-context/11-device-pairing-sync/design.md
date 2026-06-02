@@ -16,7 +16,7 @@
 - **一次性配对码引导 + 交换证书**:A 生成短期单次配对码 → B 填码 → 双方**互相签发长期 per-peer 凭据**,主 token 不外泄。
 - **自动同步**:server 内置定时器,周期性对每个启用的 peer 跑一轮推/拉。
 - **双向**:配对自动在两端互相登记,任一方都能发起。
-- **统一配置入口 `mh config`**:同一命令既能交互式向导(Bun 全局 `prompt()`),也能 `--flag` 直配;WebUi 设置页是其 GUI 镜像。
+- **统一配置入口 `mh config`**:同一命令既能交互式向导(`@clack/prompts` 方向键 TUI),也能 `--flag` 直配;WebUi 设置页是其 GUI 镜像。
 - **可撤销**:删 peer 连带吊销签发出去的凭据;另有列出/吊销凭据的命令兜底单向配对产生的无主凭据。
 
 ## 2. 配对与鉴权流程
@@ -71,10 +71,12 @@ pairing_codes: code PK, exp, used, created_at            -- 一次性配对码
 
 ## 6. 配置入口 `mh config`(`src/cli/commands/config.ts`)
 
-单命令、positional 分发(不用 citty subCommands,避父子 `run` 双执行,见 `token.ts` 注释)。无参数 + TTY → 交互向导(Bun `prompt()`);有 flag → 直配;非 TTY 无参 → 打印当前配置。
+单命令、positional 分发(不用 citty subCommands,避父子 `run` 双执行,见 `token.ts` 注释)。无参数 + TTY → 交互向导(`@clack/prompts` 方向键 TUI);有 flag → 直配;非 TTY 无参 → 打印当前配置。
+
+**交互向导**(`@clack/prompts`,↑↓ 移动 / Enter 选择 / Esc·Ctrl-C 取消):`intro` + 主菜单 `select`(服务器设置 / 同步设备 / 已签发凭据 / 退出)。服务器设置是字段列表 `select`(当前值在 `hint`),逐项用 `text`(port/间隔带 `validate`)与 `confirm`(auto-sync 开关)改工作副本,「保存并返回」时才 `setServerConfig`。**移除 / 启停 peer、吊销凭据** 用从 `listPeers`/`listGrants` 生成的 `select` 选择(`peerChoices`/`grantChoices`),不再手敲 URL/token;配对与同步包在 `spinner` 里。选 `@clack/prompts` 而非 ink:纯 JS、无 React/yoga-wasm,可过 `bun build --compile` 跨平台二进制编译。仅交互层重写,核心逻辑调用与 `--flag` 直配路径(含 `flagOrAsk` 兜底)、非 TTY `showConfig` 均不动。
 
 ```
-mh config                                   # 交互向导(服务器设置 / 同步设备)
+mh config                                   # 交互向导(服务器设置 / 同步设备 / 已签发凭据)
 mh config --host --port --sync-interval --auto-sync   # 直接写入持久化 config
 mh config show [--json]                      # 当前配置 + peer 状态
 mh config peer add --url <url> --code <code> [--self-url <url>]
@@ -114,5 +116,6 @@ WebUI(`src/webui/settings.tsx`)是镜像:「同步设备」(生成配对码带�
 
 ## 9. 涉及文件
 
-- 新增:`core/config.ts`、`core/sync/pairing.ts`、`core/sync/peers.ts`、`core/sync/peers-routes.ts`、`cli/commands/config.ts`、`core/sync/pairing.test.ts`
+- 新增:`core/config.ts`、`core/sync/pairing.ts`、`core/sync/peers.ts`、`core/sync/peers-routes.ts`、`cli/commands/config.ts`、`cli/commands/config.test.ts`、`core/sync/pairing.test.ts`
+- 依赖:`@clack/prompts`(交互向导,纯 JS 方向键 TUI;唯一为 CLI 加的运行时依赖)
 - 改动:`core/schema.ts` + `core/db.ts`(迁移)、`core/sync/client.ts`、`core/sync/auth.ts`、`core/sync/server.ts`、`core/sync/protocol.ts`、`core/sync/routes.ts`、`cli/index.ts`、`cli/commands/sync.ts`、`webui/settings.tsx` + `webui/api.ts` + `core/sync/webui.ts`(CSS)
