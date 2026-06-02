@@ -126,6 +126,22 @@ export function TimelineView({
     addEventListener("pointercancel", up);
   };
 
+  // Give an unscheduled record a start date (and matching end, if an end field
+  // is selected, for a 1-day bar) so it appears on the axis and can be dragged.
+  const scheduleStart = (rec: Rec, day: Date) => {
+    onCommitValue(rec, startProp, toISO(day));
+    if (endProp) onCommitValue(rec, endProp, toISO(day));
+  };
+  // Click on an empty row track → place the record's start at the clicked day.
+  const placeAt = (ev: MouseEvent, rec: Rec) => {
+    const row = (ev.currentTarget as HTMLElement).closest(".tl-row") as HTMLElement | null;
+    if (!row) return;
+    const x = ev.clientX - row.getBoundingClientRect().left;
+    if (x < SIDE) return;
+    const i = Math.max(0, Math.min(totalDays - 1, Math.round((x - SIDE) / DAY_PX)));
+    scheduleStart(rec, addDays(rangeStart, i));
+  };
+
   const pickField = (e: MouseEvent) =>
     openMenu(e, (close) => (
       <>
@@ -176,7 +192,11 @@ export function TimelineView({
               <div class="tl-row" key={rec.id} style={{ top: HEAD + ri * ROW, height: ROW }}>
                 <div class="tl-rowlabel" style={{ width: SIDE }}>{titleText(rec, titleProp) || <span class="muted">无标题</span>}</div>
                 {!s ? (
-                  <div class="tl-unscheduled" style={{ left: SIDE + 8 }}>未排期</div>
+                  <div class="tl-track-empty" style={{ left: SIDE }} onClick={(ev) => placeAt(ev, rec)} title="点击空白处排期">
+                    <button class="tl-schedule" style={{ left: SIDE + 8 }} onClick={(ev) => { ev.stopPropagation(); scheduleStart(rec, now); }}>
+                      未排期 · 排到今天
+                    </button>
+                  </div>
                 ) : e ? (
                   <div
                     class="tl-item"

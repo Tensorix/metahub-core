@@ -127,10 +127,19 @@ export function CalendarView({
               const evs = eventsOn(day);
               const iso = toISO(day);
               return (
-                <div class={"cal-day" + (dim ? " dim" : "") + (isToday ? " today" : "")} data-iso={iso} key={iso}>
+                <div
+                  class={"cal-day" + (dim ? " dim" : "") + (isToday ? " today" : "")}
+                  data-iso={iso}
+                  key={iso}
+                  onClick={(e) => {
+                    // Click empty space in the day to add a record dated to it.
+                    if ((e.target as HTMLElement).closest(".cal-ev,.cal-add,.cal-more")) return;
+                    onCreate({ [dateProp.name]: iso });
+                  }}
+                >
                   <div class="cal-daynum">
                     <span>{day.getDate()}</span>
-                    <button class="cal-add" title="新建记录" onClick={() => onCreate({ [dateProp.name]: iso })}>
+                    <button class="cal-add" title="新建记录" onClick={(e) => { e.stopPropagation(); onCreate({ [dateProp.name]: iso }); }}>
                       <Icon name="plus" cls="ico sm" />
                     </button>
                   </div>
@@ -145,7 +154,28 @@ export function CalendarView({
                         {titleText(rec, titleProp) || "无标题"}
                       </div>
                     ))}
-                    {evs.length > MAX_PER_DAY && <div class="cal-more">+{evs.length - MAX_PER_DAY} 更多</div>}
+                    {evs.length > MAX_PER_DAY && (
+                      <button
+                        class="cal-more"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openMenu(e, (close) => (
+                            <>
+                              <MenuLabel>{iso} · {evs.length} 条记录</MenuLabel>
+                              {evs.map(({ rec }) => (
+                                <MenuItem
+                                  key={rec.id}
+                                  label={titleText(rec, titleProp) || "无标题"}
+                                  onClick={() => { close(); onOpenRecord(rec.id); }}
+                                />
+                              ))}
+                            </>
+                          ));
+                        }}
+                      >
+                        +{evs.length - MAX_PER_DAY} 更多
+                      </button>
+                    )}
                   </div>
                 </div>
               );

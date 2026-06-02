@@ -404,10 +404,14 @@ export function DatabaseView({
       </div>
 
       <div class="toolbar">
-        <button class="tbtn" onClick={(e) => openSortMenu(e, props, sort, setSort)}>
-          <Icon name="sort" cls="ico sm" />排序
-        </button>
-        <button class="tbtn"><Icon name="filter" cls="ico sm" />筛选</button>
+        {tab === 0 && (
+          <>
+            <button class="tbtn" onClick={(e) => openSortMenu(e, props, sort, setSort)}>
+              <Icon name="sort" cls="ico sm" />排序
+            </button>
+            <button class="tbtn"><Icon name="filter" cls="ico sm" />筛选</button>
+          </>
+        )}
         <div class="spacer" />
         <button class="btn btn-primary" onClick={newRecord}><Icon name="plus" cls="ico sm" />新建</button>
       </div>
