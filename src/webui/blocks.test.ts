@@ -153,6 +153,44 @@ test("list items can own fenced code children", () => {
   expect(parsed[0]!.children?.[0]).toMatchObject({ type: "code", content: "print(1)", lang: "python" });
 });
 
+test("GFM table parses into header + body rows with alignment", () => {
+  const body = ["| Name | Age |", "| :--- | ---: |", "| Ann | 30 |", "| Bob | 7 |"].join("\n");
+  const blocks = blocksFromBody(body);
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]).toMatchObject({
+    type: "table",
+    rows: [["Name", "Age"], ["Ann", "30"], ["Bob", "7"]],
+    align: ["left", "right"],
+  });
+});
+
+test("table round-trips through Markdown and stays stable", () => {
+  const body = ["| A | B | C |", "| :--- | :---: | ---: |", "| 1 | 2 | 3 |"].join("\n");
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
+});
+
+test("table cells escape pipes and pad short rows", () => {
+  const blocks = blocksFromBody(["| a | b |", "| --- | --- |", "| x |"].join("\n"));
+  // short body row is padded to the header column count
+  expect(blocks[0]!.rows).toEqual([["a", "b"], ["x", ""]]);
+
+  const out = bodyFromBlocks([
+    { id: "1", type: "table", content: "", rows: [["a|b", "c"], ["d", "e"]], align: [null, null] },
+  ]);
+  expect(out).toBe(["| a\\|b | c |", "| --- | --- |", "| d | e |"].join("\n"));
+  // escaped pipe survives the round-trip back into a single cell
+  expect(blocksFromBody(out)[0]!.rows).toEqual([["a|b", "c"], ["d", "e"]]);
+});
+
+test("an empty table is dropped on serialize", () => {
+  expect(bodyFromBlocks([{ id: "1", type: "table", content: "", rows: [["", ""], ["", ""]], align: [null, null] }])).toBe("");
+});
+
+test("a paragraph before a table is not merged into it", () => {
+  const blocks = blocksFromBody(["intro", "| a | b |", "| --- | --- |", "| 1 | 2 |"].join("\n"));
+  expect(blocks.map((b) => b.type)).toEqual(["p", "table"]);
+});
+
 test("typing shortcuts recognise markdown prefixes", () => {
   expect(shortcutFromInput("1. ", " ")).toMatchObject({ type: "numbered", content: "", start: 1 });
   expect(shortcutFromInput("5. ", " ")).toMatchObject({ type: "numbered", content: "", start: 5 });

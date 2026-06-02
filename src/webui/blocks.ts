@@ -13,7 +13,10 @@ export type BlockType =
   | "todo"
   | "quote"
   | "code"
+  | "table"
   | "divider";
+
+export type ColAlign = "left" | "center" | "right" | null;
 
 export interface Block {
   id: string;
@@ -23,6 +26,8 @@ export interface Block {
   lang?: string; // code only
   start?: number; // numbered only: explicit start number of a run (first item)
   children?: Block[]; // list items only
+  rows?: string[][]; // table only: rows[0] is the header; each cell is inline markdown
+  align?: ColAlign[]; // table only: per-column text alignment
 }
 
 export type BlockDraft = Omit<Block, "id">;
@@ -196,7 +201,10 @@ function parseContainer(
     }
     if (leadingIndent(line) < minIndent) break;
 
-    const parsed = parseListItem(lines, i, minIndent) ?? parseLeafBlock(lines, i, minIndent);
+    const parsed =
+      parseListItem(lines, i, minIndent) ??
+      parseTableBlock(lines, i, minIndent) ??
+      parseLeafBlock(lines, i, minIndent);
     blocks.push(parsed.block);
     i = parsed.next;
   }
@@ -283,13 +291,115 @@ function parseQuoteBlock(lines: string[], start: number, minIndent: number): Par
   return { block: { id: genId(), type: "quote", content: content.join("\n") }, next: i };
 }
 
+// ---- GFM pipe tables ----
+const RE_DELIM_CELL = /^\s*:?-+:?\s*$/;
+
+/** True if a GFM table begins at line `i`: a pipe row immediately followed by a
+ *  delimiter row (e.g. `| :--- | ---: |`). */
+function looksLikeTableAt(lines: string[], i: number, minIndent: number): boolean {
+  const head = lines[i];
+  const delim = lines[i + 1];
+  if (head == null || delim == null) return false;
+  if (leadingIndent(head) < minIndent || leadingIndent(delim) < minIndent) return false;
+  const headText = stripIndent(head, minIndent);
+  const delimText = stripIndent(delim, minIndent);
+  if (!headText.includes("|") || !delimText.includes("|")) return false;
+  const cells = splitTableRow(delimText);
+  return cells.length > 0 && cells.every((c) => RE_DELIM_CELL.test(c));
+}
+
+/** Split a table row into trimmed cells, honoring `\|` escapes and dropping the
+ *  empty cells produced by the outer (leading/trailing) pipes. */
+function splitTableRow(line: string): string[] {
+  const cells: string[] = [];
+  let cur = "";
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (ch === "\\" && line[i + 1] === "|") {
+      cur += "|";
+      i++;
+      continue;
+    }
+    if (ch === "|") {
+      cells.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  cells.push(cur);
+  if (cells.length && cells[0]!.trim() === "") cells.shift();
+  if (cells.length && cells[cells.length - 1]!.trim() === "") cells.pop();
+  return cells.map((c) => c.trim());
+}
+
+function alignFromDelim(cell: string): ColAlign {
+  const trimmed = cell.trim();
+  const left = trimmed.startsWith(":");
+  const right = trimmed.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  if (left) return "left";
+  return null;
+}
+
+function padRow(cells: string[], cols: number): string[] {
+  const out = cells.slice(0, cols);
+  while (out.length < cols) out.push("");
+  return out;
+}
+
+function parseTableBlock(lines: string[], start: number, minIndent: number): Parsed | null {
+  if (!looksLikeTableAt(lines, start, minIndent)) return null;
+  const header = splitTableRow(stripIndent(lines[start]!, minIndent));
+  const cols = Math.max(1, header.length);
+  const align = splitTableRow(stripIndent(lines[start + 1]!, minIndent)).map(alignFromDelim);
+  const rows: string[][] = [padRow(header, cols)];
+  let i = start + 2;
+  for (; i < lines.length; i++) {
+    const raw = lines[i]!;
+    if (raw.trim() === "" || leadingIndent(raw) < minIndent) break;
+    const text = stripIndent(raw, minIndent);
+    if (!text.includes("|")) break;
+    rows.push(padRow(splitTableRow(text), cols));
+  }
+  while (align.length < cols) align.push(null);
+  align.length = cols;
+  return { block: { id: genId(), type: "table", content: "", rows, align }, next: i };
+}
+
+function delimCell(a: ColAlign): string {
+  switch (a) {
+    case "left":
+      return ":---";
+    case "center":
+      return ":---:";
+    case "right":
+      return "---:";
+    default:
+      return "---";
+  }
+}
+
+function renderTable(block: Block, indent: number): string[] {
+  const pad = " ".repeat(indent);
+  const rows = block.rows ?? [];
+  const cols = Math.max(1, ...rows.map((r) => r.length));
+  const align = block.align ?? [];
+  const esc = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  const renderRow = (cells: string[]) => `${pad}| ${padRow(cells, cols).map(esc).join(" | ")} |`;
+  const delim = `${pad}| ${Array.from({ length: cols }, (_, c) => delimCell(align[c] ?? null)).join(" | ")} |`;
+  const header = rows[0] ?? Array.from({ length: cols }, () => "");
+  return [renderRow(header), delim, ...rows.slice(1).map(renderRow)];
+}
+
 function parseParagraph(lines: string[], start: number, minIndent: number): Parsed {
   const content: string[] = [];
   let i = start;
   for (; i < lines.length; i++) {
     const raw = lines[i]!;
     if (raw.trim() === "" || leadingIndent(raw) < minIndent) break;
-    if (content.length && startsLeafBlock(raw, minIndent)) break;
+    if (content.length && (startsLeafBlock(raw, minIndent) || looksLikeTableAt(lines, i, minIndent))) break;
     content.push(stripIndent(raw, minIndent));
   }
   return { block: { id: genId(), type: "p", content: content.join("\n") }, next: i };
@@ -360,6 +470,8 @@ function renderBlock(block: Block, indent: number, number: number): string[] {
       const body = block.content.split("\n").map((line) => `${pad}${line}`);
       return [first, ...body, `${pad}\`\`\``];
     }
+    case "table":
+      return renderTable(block, indent);
     case "divider":
       return [`${pad}---`];
     default:
@@ -395,6 +507,7 @@ function shouldPersist(block: Block): boolean {
     return block.content.trim() !== "" || (block.children ?? []).some(shouldPersist);
   }
   if (block.type === "code") return block.content.trim() !== "" || !!block.lang?.trim();
+  if (block.type === "table") return (block.rows ?? []).some((r) => r.some((c) => c.trim() !== ""));
   return block.content.trim() !== "";
 }
 
@@ -477,5 +590,6 @@ export const BLOCK_MENU: { type: BlockType; ic: string; t: string; d: string }[]
   { type: "todo", ic: "checkbox", t: "待办清单", d: "复选项" },
   { type: "quote", ic: "quote", t: "引用", d: "引用块" },
   { type: "code", ic: "code", t: "代码", d: "代码块" },
+  { type: "table", ic: "table", t: "表格", d: "插入表格" },
   { type: "divider", ic: "minus", t: "分隔线", d: "水平分隔" },
 ];

@@ -9,6 +9,7 @@ import {
   type Block,
   type BlockDraft,
   type BlockType,
+  type ColAlign,
   BLOCK_MENU,
   COMMON_LANGS,
   blockToText,
@@ -271,10 +272,17 @@ export function DocView({
     else delete b.lang;
     if (type === "numbered" && draft.start != null && draft.start > 1) b.start = draft.start;
     else delete b.start;
+    if (type === "table") {
+      b.rows = draft.rows ? draft.rows.map((r) => [...r]) : starterTableRows();
+      b.align = draft.align ? [...draft.align] : new Array(b.rows[0]!.length).fill(null);
+    } else {
+      delete b.rows;
+      delete b.align;
+    }
     if (children?.length) b.children = children;
     else delete b.children;
     bump();
-    if (type !== "divider") requestAnimationFrame(() => focusBlock(id));
+    if (type !== "divider" && type !== "table") requestAnimationFrame(() => focusBlock(id));
     scheduleSave();
   };
 
@@ -496,8 +504,9 @@ export function DocView({
   const onDocMouseDown = (e: MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    // let interactive affordances (gutter buttons, popovers, form controls) work
-    if (target.closest(".gutter") || target.closest(".pop") || target.closest("input, button, select, a")) return;
+    // let interactive affordances (gutter buttons, popovers, form controls, the
+    // table column resizer) work
+    if (target.closest(".gutter") || target.closest(".pop") || target.closest(".doc-col-resizer") || target.closest("input, button, select, a")) return;
 
     const blockEl = closestBlockElement(e.target as Node);
     const id = blockEl?.getAttribute("data-bid") ?? null;
@@ -510,7 +519,7 @@ export function DocView({
       return;
     }
 
-    const inEditable = !!target.closest(".editable, .code-input");
+    const inEditable = !!target.closest(".editable, .code-input, .doc-td");
     if (inEditable) {
       // start as text; promote to block mode only once the drag crosses a block
       dragSel.current = { anchorId: id, started: false, sx: e.clientX, sy: e.clientY, mode: "text" };
@@ -719,6 +728,13 @@ export function DocView({
         onKeyDown={(e, el) => onKeyDown(e, b, el)}
         onCodeInput={(value) => { b.content = value; recordHistory("text:" + b.id); scheduleSave(); }}
         onCodeKeyDown={(e, ta) => onCodeKeyDown(e, b, ta)}
+        onCellInput={(r, c, value) => {
+          if (!b.rows?.[r]) return;
+          b.rows[r]![c] = value;
+          recordHistory("table:" + b.id + ":" + r + ":" + c);
+          scheduleSave();
+        }}
+        onTableChange={() => { bump(); scheduleSave(); }}
         onAdd={() => insertAfter(b.id)}
         onMenu={(e) => blockMenu(e, b)}
         onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
@@ -812,7 +828,7 @@ export function DocView({
 }
 
 function BlockRow({
-  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onAdd, onMenu, onToggle, dragRef, onReorder, children,
+  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, onAdd, onMenu, onToggle, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
@@ -825,6 +841,8 @@ function BlockRow({
   onKeyDown: (e: KeyboardEvent, el: HTMLElement) => void;
   onCodeInput: (value: string) => void;
   onCodeKeyDown: (e: KeyboardEvent, ta: HTMLTextAreaElement) => void;
+  onCellInput: (r: number, c: number, value: string) => void;
+  onTableChange: () => void;
   onAdd: () => void;
   onMenu: (e: MouseEvent) => void;
   onToggle: () => void;
@@ -898,6 +916,8 @@ function BlockRow({
 
         {block.type === "divider" ? (
           <hr />
+        ) : block.type === "table" ? (
+          <TableBlock block={block} renderKey={renderKey} onCellInput={onCellInput} onTableChange={onTableChange} />
         ) : (
           <>
             {block.type === "bullet" && <div class="marker">•</div>}
@@ -1024,6 +1044,237 @@ function CodeBlock({
   );
 }
 
+// ---- table block ----
+// A GFM pipe table rendered as a real <table> of contentEditable cells. Cell
+// edits are uncontrolled (innerHTML rewritten only on a structural re-render, via
+// renderKey) so typing never resets the caret — same pattern as the .editable /
+// CodeBlock hosts. Structural ops (add/del row & col, alignment) go through
+// onTableChange → bump(). Column widths are session-only: kept in a ref and
+// written straight onto the <col> elements, never serialized to Markdown.
+function TableBlock({
+  block, renderKey, onCellInput, onTableChange,
+}: {
+  block: Block;
+  renderKey: number;
+  onCellInput: (r: number, c: number, value: string) => void;
+  onTableChange: () => void;
+}) {
+  const rows = block.rows ?? [];
+  const cols = rows[0]?.length ?? 0;
+  const align = block.align ?? [];
+  const tableRef = useRef<HTMLTableElement>(null);
+  const widths = useRef<number[]>([]);
+  // Keep the session-only width array sized to the column count; new columns
+  // inherit the default, existing widths are preserved across re-renders.
+  if (widths.current.length !== cols) {
+    widths.current = Array.from({ length: cols }, (_, c) => widths.current[c] ?? 160);
+  }
+
+  const addRow = () => { block.rows = [...rows, new Array(cols).fill("")]; onTableChange(); };
+  const addCol = () => {
+    block.rows = rows.map((r) => [...r, ""]);
+    block.align = [...align, null];
+    onTableChange();
+  };
+  const insertCol = (at: number) => {
+    block.rows = rows.map((r) => { const n = [...r]; n.splice(at, 0, ""); return n; });
+    const a = [...align]; a.splice(at, 0, null); block.align = a;
+    onTableChange();
+  };
+  const deleteCol = (c: number) => {
+    if (cols <= 1) return;
+    block.rows = rows.map((r) => r.filter((_, i) => i !== c));
+    block.align = align.filter((_, i) => i !== c);
+    onTableChange();
+  };
+  const deleteRow = (r: number) => {
+    if (r === 0 || rows.length <= 2) return; // keep the header + at least one body row
+    block.rows = rows.filter((_, i) => i !== r);
+    onTableChange();
+  };
+  const setAlign = (c: number, a: ColAlign) => {
+    const next = Array.from({ length: cols }, (_, i) => align[i] ?? null);
+    next[c] = a;
+    block.align = next;
+    onTableChange();
+  };
+
+  // Move focus by (dr, dc) within this table; returns false if out of bounds.
+  const focusCell = (r: number, c: number): boolean => {
+    const el = tableRef.current?.querySelector<HTMLElement>(`.doc-td[data-r="${r}"][data-c="${c}"]`);
+    if (!el) return false;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const s = getSelection();
+    s?.removeAllRanges();
+    s?.addRange(range);
+    return true;
+  };
+
+  const onCellKeyDown = (e: KeyboardEvent, r: number, c: number) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (c > 0) focusCell(r, c - 1);
+        else if (r > 0) focusCell(r - 1, cols - 1);
+      } else {
+        if (c < cols - 1) focusCell(r, c + 1);
+        else if (r < rows.length - 1) focusCell(r + 1, 0);
+        else { addRow(); requestAnimationFrame(() => focusCell(rows.length, 0)); }
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      // Cells are single-line; Enter steps to the row below instead of inserting a <br>.
+      e.preventDefault();
+      if (r < rows.length - 1) focusCell(r + 1, c);
+      else { addRow(); requestAnimationFrame(() => focusCell(rows.length, c)); }
+      return;
+    }
+  };
+
+  const startResize = (e: PointerEvent, c: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const handle = e.currentTarget as HTMLElement;
+    const col = tableRef.current?.querySelector<HTMLElement>(`col[data-tcol="${c}"]`);
+    const x0 = e.clientX;
+    const startW = widths.current[c] ?? 160;
+    let last = startW;
+    let raf = 0;
+    handle.classList.add("dragging");
+    document.body.classList.add("col-resizing");
+    const apply = () => { raf = 0; if (col) col.style.width = last + "px"; };
+    const move = (ev: PointerEvent) => {
+      last = Math.max(60, startW + ev.clientX - x0);
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    const up = () => {
+      if (raf) cancelAnimationFrame(raf);
+      if (col) col.style.width = last + "px";
+      widths.current[c] = last;
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("col-resizing");
+    };
+    addEventListener("pointermove", move, { passive: false });
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+  };
+
+  const colMenu = (e: MouseEvent, c: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openMenu(e, (close) => (
+      <>
+        <MenuLabel>对齐方式</MenuLabel>
+        <MenuItem icon="alignLeft" label="左对齐" checked={(align[c] ?? null) === null || align[c] === "left"} onClick={() => { setAlign(c, "left"); close(); }} />
+        <MenuItem icon="alignCenter" label="居中" checked={align[c] === "center"} onClick={() => { setAlign(c, "center"); close(); }} />
+        <MenuItem icon="alignRight" label="右对齐" checked={align[c] === "right"} onClick={() => { setAlign(c, "right"); close(); }} />
+        <MenuSep />
+        <MenuItem icon="plus" label="在左侧插入列" onClick={() => { insertCol(c); close(); }} />
+        <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => { insertCol(c + 1); close(); }} />
+        <MenuItem icon="trash" label="删除列" danger onClick={() => { deleteCol(c); close(); }} />
+      </>
+    ));
+  };
+
+  return (
+    <div class="doc-table-wrap">
+      <div class="doc-table-scroll">
+        <div class="doc-table-inner">
+          <div class="doc-table-row">
+            <table ref={tableRef} class="doc-table">
+              <colgroup>
+                {Array.from({ length: cols }, (_, c) => (
+                  <col key={c} data-tcol={c} style={{ width: widths.current[c] }} />
+                ))}
+              </colgroup>
+              <tbody>
+                {rows.map((row, r) => (
+                  <tr key={r}>
+                    {row.map((cell, c) => (
+                      <td key={c} class={r === 0 ? "doc-th" : undefined}>
+                        <TableCell
+                          value={cell}
+                          renderKey={renderKey}
+                          r={r}
+                          c={c}
+                          align={align[c] ?? null}
+                          onInput={(v) => onCellInput(r, c, v)}
+                          onKeyDown={(e) => onCellKeyDown(e, r, c)}
+                        />
+                        {r === 0 && (
+                          <>
+                            <button class="doc-col-menu" title="列选项" onMouseDown={(e) => colMenu(e as MouseEvent, c)}>
+                              <Icon name="chevronDown" cls="ico sm" />
+                            </button>
+                            <div class="doc-col-resizer" onPointerDown={(e) => startResize(e as PointerEvent, c)} />
+                          </>
+                        )}
+                        {c === 0 && r > 0 && rows.length > 2 && (
+                          <button class="doc-row-del" title="删除行" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); deleteRow(r); }}>
+                            <Icon name="trash" cls="ico sm" />
+                          </button>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button class="doc-table-addcol" title="新增列" onMouseDown={(e) => { e.preventDefault(); addCol(); }}>
+              <Icon name="plus" cls="ico sm" />
+            </button>
+          </div>
+          <button class="doc-table-addrow" title="新增行" onMouseDown={(e) => { e.preventDefault(); addRow(); }}>
+            <Icon name="plus" cls="ico sm" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TableCell({
+  value, renderKey, r, c, align, onInput, onKeyDown,
+}: {
+  value: string;
+  renderKey: number;
+  r: number;
+  c: number;
+  align: ColAlign;
+  onInput: (value: string) => void;
+  onKeyDown: (e: KeyboardEvent) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Uncontrolled: rewrite innerHTML only on a structural re-render (renderKey),
+  // never on every keystroke — mirrors the .editable host so the caret survives.
+  useEffect(() => {
+    if (ref.current) {
+      const html = inlineToHtml(value);
+      if (ref.current.innerHTML !== html) ref.current.innerHTML = html;
+    }
+  }, [renderKey]);
+  return (
+    <div
+      ref={ref}
+      class="doc-td"
+      data-r={r}
+      data-c={c}
+      contentEditable
+      data-ph={r === 0 ? "表头" : ""}
+      style={align ? { textAlign: align } : undefined}
+      onInput={(e) => onInput(htmlToInline((e.currentTarget as HTMLElement).innerHTML))}
+      onKeyDown={(e) => onKeyDown(e as KeyboardEvent)}
+    />
+  );
+}
+
 // ---- inline formatting toolbar ----
 function FormatBar({ x, y, onCommand }: { x: number; y: number; onCommand: (cmd: string) => void }) {
   const run = (cmd: string) => (e: MouseEvent) => {
@@ -1121,7 +1372,20 @@ function makeBlock(type: BlockType, draft: Partial<BlockDraft> = {}): Block {
   if (type === "code") block.lang = draft.lang ?? "";
   if (type === "numbered" && draft.start != null && draft.start > 1) block.start = draft.start;
   if (isListType(type) && draft.children?.length) block.children = draft.children;
+  if (type === "table") {
+    block.rows = draft.rows ? draft.rows.map((r) => [...r]) : starterTableRows();
+    block.align = draft.align ? [...draft.align] : new Array(block.rows[0]!.length).fill(null);
+  }
   return block;
+}
+
+// Starter table for slash-insert / block conversion: header row + 1 body row,
+// two empty columns.
+function starterTableRows(): string[][] {
+  return [
+    ["", ""],
+    ["", ""],
+  ];
 }
 
 function blockEditorText(_block: Block, el: HTMLElement): string {

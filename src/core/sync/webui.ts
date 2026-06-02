@@ -263,6 +263,44 @@ const HTML = `<!doctype html>
   .editable code { font-family:var(--mono); background:var(--surface-2); padding:1px 5px; border-radius:4px; font-size:.9em; }
   .editable a { color:var(--accent); }
 
+  /* document table (GFM pipe table block) */
+  .b-table .doc-table-wrap { flex:1; min-width:0; margin:4px 0; }
+  .doc-table-scroll { overflow-x:auto; padding:2px 0; }
+  .doc-table-inner { width:max-content; }
+  .doc-table-row { display:flex; align-items:stretch; }
+  table.doc-table { border-collapse:separate; border-spacing:0; table-layout:fixed; width:max-content;
+    border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; box-shadow:var(--shadow-sm); }
+  table.doc-table td { position:relative; vertical-align:top; padding:0;
+    border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
+  table.doc-table tr td:last-child { border-right:0; }
+  table.doc-table tr:last-child td { border-bottom:0; }
+  table.doc-table .doc-th { background:var(--surface); }
+  .doc-td { outline:none; padding:7px 22px 7px 10px; min-height:20px; line-height:1.55; word-break:break-word; white-space:pre-wrap; }
+  .doc-th .doc-td { font-weight:650; color:var(--fg); }
+  .doc-td:empty::before { content:attr(data-ph); color:var(--muted); pointer-events:none; }
+  .doc-td b, .doc-td strong { font-weight:700; }
+  .doc-td code { font-family:var(--mono); background:var(--surface-2); padding:1px 5px; border-radius:4px; font-size:.9em; }
+  .doc-td a { color:var(--accent); }
+  /* header cell: column menu + resize handle */
+  .doc-col-menu { position:absolute; top:4px; right:4px; width:18px; height:18px; display:grid; place-items:center;
+    color:var(--muted); border-radius:4px; opacity:0; transition:opacity .12s,background .12s; }
+  .doc-th:hover .doc-col-menu { opacity:1; }
+  .doc-col-menu:hover { background:var(--hover-2); color:var(--fg); }
+  .doc-col-resizer { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:3; touch-action:none; }
+  .doc-col-resizer:hover, .doc-col-resizer.dragging { background:var(--accent); opacity:.35; }
+  /* per-row delete: small handle floating at the first cell on row hover */
+  .doc-row-del { position:absolute; top:3px; left:2px; width:18px; height:18px; display:grid; place-items:center;
+    color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:5px; box-shadow:var(--shadow-sm);
+    opacity:0; transition:opacity .12s; }
+  table.doc-table tr:hover .doc-row-del { opacity:1; }
+  .doc-row-del:hover { background:var(--danger-soft); color:var(--danger); border-color:var(--danger-soft); }
+  /* add-column (right edge) and add-row (bottom edge) buttons */
+  .doc-table-addcol { width:22px; margin-left:4px; flex:none; display:grid; place-items:center; color:var(--muted);
+    border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s; }
+  .doc-table-addrow { width:100%; height:22px; margin-top:4px; display:grid; place-items:center; color:var(--muted);
+    border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s; }
+  .doc-table-addcol:hover, .doc-table-addrow:hover { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+
   /* database / table */
   .db { padding:22px 36px 90px; min-width:0; }
   .db-head { display:flex; align-items:center; gap:12px; }
