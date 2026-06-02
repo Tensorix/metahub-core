@@ -1,0 +1,15 @@
+{
+  "name": "@tensorix/metahub-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Metahub desktop app (Electron shell over the core sync server)",
+  "main": "dist/main.js",
+  "scripts": {
+    "build:main": "bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist",
+    "dev": "bun run build:main && electron .",
+    "start": "bun run dev"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
