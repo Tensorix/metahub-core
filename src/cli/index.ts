@@ -15,6 +15,8 @@ import completion, { complete } from "./commands/completion.ts";
 import sync from "./commands/sync.ts";
 import snapshot from "./commands/snapshot.ts";
 import restore from "./commands/restore.ts";
+import config from "./commands/config.ts";
+import { parseDuration } from "../core/sync/token.ts";
 import { startServer } from "../core/sync/server.ts";
 import { print } from "./output.ts";
 import { showUsage } from "./help.ts";
@@ -31,6 +33,8 @@ const main = defineCommand({
     host: { type: "string", description: "Bind address (with --server)", default: "127.0.0.1" },
     debug: { type: "boolean", description: "Disable auth on the server (with --server)" },
     token: { type: "string", description: "Server auth token; generated if omitted (with --server)" },
+    "sync-interval": { type: "string", description: "Auto-sync interval, e.g. 30s/5m (with --server)" },
+    "no-auto-sync": { type: "boolean", description: "Disable the auto-sync timer (with --server)" },
   },
   subCommands: {
     init,
@@ -49,6 +53,7 @@ const main = defineCommand({
     sync,
     snapshot,
     restore,
+    config,
   },
 });
 
@@ -61,17 +66,19 @@ function flagValue(argv: string[], name: string): string | undefined {
   return a.includes("=") ? a.slice(a.indexOf("=") + 1) : argv[i + 1];
 }
 
-function parsePort(argv: string[]): number {
-  return Number(flagValue(argv, "port")) || 7777;
-}
-
 const argv = process.argv.slice(2);
 if (argv.includes("--server")) {
+  // Pass a flag only when present; startServer falls back to persisted config
+  // (mh config) then built-in defaults, so explicit flags keep top priority.
+  const portFlag = flagValue(argv, "port");
+  const intervalFlag = flagValue(argv, "sync-interval");
   const s = startServer({
-    port: parsePort(argv),
+    port: portFlag != null ? Number(portFlag) : undefined,
     host: flagValue(argv, "host"),
     debug: argv.includes("--debug"),
     token: flagValue(argv, "token") ?? process.env.METAHUB_TOKEN,
+    syncIntervalMs: intervalFlag != null ? parseDuration(intervalFlag, 30_000) : undefined,
+    autoSync: argv.includes("--no-auto-sync") ? false : undefined,
   });
   const expNote =
     s.token && s.exp != null && Number.isFinite(s.exp)

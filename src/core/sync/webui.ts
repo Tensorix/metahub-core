@@ -144,6 +144,21 @@ const HTML = `<!doctype html>
   .theme-card.sel .tc-check { opacity:1; transform:scale(1); }
   @media (max-width:560px) { .theme-grid { grid-template-columns:1fr; } }
 
+  /* sync devices */
+  .peer-actions { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+  .peer-actions .btn { display:inline-flex; align-items:center; gap:6px; }
+  .peer-list { display:flex; flex-direction:column; gap:8px; }
+  .peer-row { display:flex; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--line);
+    border-radius:10px; background:var(--surface); }
+  .peer-dot { width:9px; height:9px; border-radius:50%; flex:none; background:var(--muted); }
+  .peer-dot.on { background:#3fb950; } .peer-dot.err { background:#f85149; } .peer-dot.off { background:var(--muted); }
+  .peer-main { flex:1; min-width:0; }
+  .peer-url { font-weight:600; font-size:14px; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .peer-sub { font-size:12px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .peer-menu { flex:none; padding:6px; }
+  .pair-code { font-family:var(--mono); font-size:26px; font-weight:700; letter-spacing:.12em;
+    text-align:center; padding:16px; border:1px dashed var(--line); border-radius:10px; background:var(--surface); color:var(--fg); }
+
   /* main */
   .main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
   .topbar { display:flex; align-items:center; gap:6px; padding:10px 18px; border-bottom:1px solid var(--line); min-height:49px; }

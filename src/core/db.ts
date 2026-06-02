@@ -68,6 +68,26 @@ export function migrateRecords(db: Database): void {
   backfillRecordOrderKeys(db);
 }
 
+/**
+ * Add the peer-pairing columns to a legacy `peers` table (token/label/node_id/
+ * enabled/last_sync_at/last_status/last_error). Idempotent — guarded per column,
+ * never drops the table so existing replication cursors survive.
+ */
+export function migratePeers(db: Database): void {
+  const add: [string, string][] = [
+    ["token", "TEXT"],
+    ["label", "TEXT"],
+    ["node_id", "TEXT"],
+    ["enabled", "INTEGER NOT NULL DEFAULT 1"],
+    ["last_sync_at", "INTEGER"],
+    ["last_status", "TEXT"],
+    ["last_error", "TEXT"],
+  ];
+  for (const [col, decl] of add) {
+    if (!hasColumn(db, "peers", col)) db.exec(`ALTER TABLE peers ADD COLUMN ${col} ${decl}`);
+  }
+}
+
 /** Open (and migrate) the on-disk metahub database for the resolved home. */
 export function openMetahub(): Database {
   ensureDirs();
@@ -75,5 +95,6 @@ export function openMetahub(): Database {
   db.exec("PRAGMA journal_mode = WAL;");
   runSchema(db);
   migrateRecords(db);
+  migratePeers(db);
   return db;
 }

@@ -10,6 +10,7 @@
 
 import type { Database } from "bun:sqlite";
 import { loadOrRotate } from "./token.ts";
+import { isAcceptedGrant } from "./pairing.ts";
 import { RENEW_PATH } from "./protocol.ts";
 
 // Three modes:
@@ -62,6 +63,20 @@ export function hasValidToken(req: Request, url: URL, cfg: AuthConfig): boolean 
   const cur = activeToken(cfg);
   if (!cur) return true;
   return extractToken(req, url) === cur.token;
+}
+
+/**
+ * Gate for /sync: accept the master token OR any durable per-peer grant issued
+ * during pairing (see ./pairing.ts). Returns true when auth is off (--debug).
+ * `db` is needed to look up grants even in staticToken mode where cfg.db is null.
+ */
+export function acceptsSyncToken(req: Request, url: URL, cfg: AuthConfig, db: Database): boolean {
+  if (!authActive(cfg)) return true;
+  const presented = extractToken(req, url);
+  if (!presented) return false;
+  const cur = activeToken(cfg);
+  if (cur && presented === cur.token) return true;
+  return isAcceptedGrant(db, presented);
 }
 
 /**

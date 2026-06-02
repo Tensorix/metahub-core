@@ -6,16 +6,17 @@ import { type SyncResponse, SYNC_PATH } from "./protocol.ts";
 interface PeerCursors {
   pull_cursor: number;
   push_cursor: number;
+  token: string | null;
 }
 
 function getPeer(db: Database, url: string): PeerCursors {
   const row = db
-    .query("SELECT pull_cursor, push_cursor FROM peers WHERE url = ?")
+    .query("SELECT pull_cursor, push_cursor, token FROM peers WHERE url = ?")
     .get(url) as PeerCursors | null;
-  return row ?? { pull_cursor: 0, push_cursor: 0 };
+  return row ?? { pull_cursor: 0, push_cursor: 0, token: null };
 }
 
-function setPeer(db: Database, url: string, c: PeerCursors): void {
+function setPeer(db: Database, url: string, c: { pull_cursor: number; push_cursor: number }): void {
   db.query(
     "INSERT INTO peers (url, pull_cursor, push_cursor) VALUES (?, ?, ?) ON CONFLICT(url) DO UPDATE SET pull_cursor = excluded.pull_cursor, push_cursor = excluded.push_cursor",
   ).run(url, c.pull_cursor, c.push_cursor);
@@ -26,15 +27,27 @@ export interface SyncResult {
   pulled: number;
 }
 
-/** Run one push/pull round against a peer server. */
-export async function syncWithPeer(db: Database, url: string): Promise<SyncResult> {
+/**
+ * Run one push/pull round against a peer server. A single round is bidirectional
+ * (pushes local changes, pulls remote ones). `token` defaults to the credential
+ * stored for this peer (set during pairing) and is sent as a Bearer header so a
+ * token-gated /sync accepts the request.
+ */
+export async function syncWithPeer(
+  db: Database,
+  url: string,
+  token?: string,
+): Promise<SyncResult> {
   const node = getNodeId(db);
   const peer = getPeer(db, url);
+  const bearer = token ?? peer.token ?? undefined;
   const toPush = changesAfterSeq(db, peer.push_cursor);
 
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (bearer) headers.authorization = `Bearer ${bearer}`;
   const res = await fetch(new URL(SYNC_PATH, url), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({ node_id: node, since: peer.pull_cursor, changes: toPush.changes }),
   });
   if (!res.ok) throw new Error(`sync failed: ${res.status} ${await res.text()}`);

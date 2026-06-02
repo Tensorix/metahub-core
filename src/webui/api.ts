@@ -54,6 +54,29 @@ export interface Hit {
   title?: string;
   snippet: string;
 }
+export interface Peer {
+  url: string;
+  pull_cursor: number;
+  push_cursor: number;
+  token: string | null;
+  label: string | null;
+  node_id: string | null;
+  enabled: number;
+  last_sync_at: number | null;
+  last_status: string | null;
+  last_error: string | null;
+}
+export interface PairingCode {
+  code: string;
+  exp: number;
+}
+export interface PeerSyncOutcome {
+  url: string;
+  ok: boolean;
+  pushed?: number;
+  pulled?: number;
+  error?: string;
+}
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -122,6 +145,16 @@ export const api = {
     if (limit != null) p.set("limit", String(limit));
     return req<Hit[]>("GET", `/api/search?${p}`);
   },
+
+  // sync peers / pairing
+  listPeers: () => req<Peer[]>("GET", "/api/peers"),
+  newPairingCode: () => req<PairingCode>("POST", "/api/pair/new"),
+  addPeerByPairing: (b: { url: string; code: string; self_url?: string }) =>
+    req<{ node_id: string; url: string }>("POST", "/api/peers/pair", b),
+  updatePeer: (url: string, b: { enabled?: boolean; label?: string }) =>
+    req<{ ok: boolean }>("PATCH", `/api/peer?url=${q(url)}`, b),
+  removePeer: (url: string) => req<{ ok: boolean }>("DELETE", `/api/peer?url=${q(url)}`),
+  syncPeer: (url: string) => req<PeerSyncOutcome>("POST", `/api/peer/sync?url=${q(url)}`),
 };
 
 export const TYPE_META: Record<PropType, { ic: string; t: string }> = {

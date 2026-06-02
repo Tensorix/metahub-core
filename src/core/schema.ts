@@ -17,11 +17,41 @@ CREATE TABLE IF NOT EXISTS crdt_changes (
 CREATE INDEX IF NOT EXISTS idx_changes_hlc ON crdt_changes(hlc);
 
 -- Per-peer replication cursors (SQLite rowids: monotonic in insertion order,
--- so no change is ever skipped regardless of HLC/clock skew).
+-- so no change is ever skipped regardless of HLC/clock skew). Outbound side of
+-- a pairing: "token" is the credential the *remote* issued to us (sent as a
+-- Bearer header when we sync to them). See migratePeers in db.ts for the columns
+-- added to legacy databases.
 CREATE TABLE IF NOT EXISTS peers (
-  url         TEXT PRIMARY KEY,
-  pull_cursor INTEGER NOT NULL DEFAULT 0,
-  push_cursor INTEGER NOT NULL DEFAULT 0
+  url          TEXT PRIMARY KEY,
+  pull_cursor  INTEGER NOT NULL DEFAULT 0,
+  push_cursor  INTEGER NOT NULL DEFAULT 0,
+  token        TEXT,
+  label        TEXT,
+  node_id      TEXT,
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  last_sync_at INTEGER,
+  last_status  TEXT,
+  last_error   TEXT
+);
+
+-- Inbound side of a pairing: credentials *we* issued to remote devices. A peer
+-- presents one of these on /sync; acceptsSyncToken() checks it alongside the
+-- managed master token. Revoke by deleting the row.
+CREATE TABLE IF NOT EXISTS peer_grants (
+  token      TEXT PRIMARY KEY,
+  peer_url   TEXT,
+  node_id    TEXT,
+  created_at INTEGER
+);
+
+-- One-time pairing codes minted by "mh config peer code" / POST /api/pair/new.
+-- Short-lived and single-use: redeemed during the pairing handshake, then the
+-- two devices exchange durable peer_grants. used/exp gate redemption.
+CREATE TABLE IF NOT EXISTS pairing_codes (
+  code       TEXT PRIMARY KEY,
+  exp        INTEGER NOT NULL,
+  used       INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS databases (

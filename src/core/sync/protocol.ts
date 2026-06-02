@@ -31,6 +31,24 @@ export const HealthResponseSchema = z.object({
   node: z.string().describe("Server's node id"),
 });
 
+// Pairing handshake (see ./pairing.ts). The caller (device B) presents a
+// one-time code, its node id, the durable credential it issues to us, and
+// optionally its own reachable URL so we can register it back as a peer.
+export const PairRequestSchema = z.object({
+  code: z.string().describe("One-time pairing code minted by this server"),
+  node_id: z.string().describe("Calling device's node id"),
+  grant: z.string().describe("Durable credential the caller issues to us"),
+  self_url: z.string().optional().describe("Caller's reachable server URL (for mutual sync)"),
+});
+
+export const PairResponseSchema = z.object({
+  node_id: z.string().describe("This server's node id"),
+  grant: z.string().describe("Durable credential we issue to the caller"),
+});
+
+export type PairRequest = z.infer<typeof PairRequestSchema>;
+export type PairResponse = z.infer<typeof PairResponseSchema>;
+
 // `Change` stays sourced from crdt.ts to avoid a second source of truth; the
 // schema above is structurally compatible and used only for validation/docs.
 export type SyncRequest = z.infer<typeof SyncRequestSchema> & { changes: CrdtChange[] };
@@ -42,3 +60,6 @@ export const HEALTH_PATH = "/health";
 // Token exchange: a holder of the current (or an in-grace previous) token swaps
 // it for the current token. Exempt from the gate so an expired token can reach it.
 export const RENEW_PATH = "/auth/token";
+// Pairing handshake. Exempt from the master-token gate because the caller only
+// holds a one-time code (validated inside the handler), not the server token.
+export const PAIR_PATH = "/api/pair";
