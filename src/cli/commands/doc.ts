@@ -22,12 +22,17 @@ function docId(db: Database, ref: string): string {
   return resolveRef(db, ref, { kind: "doc" });
 }
 
-/** Render documents as an indented `id<TAB>  title` tree by `parent_id`.
+/** Render documents as an `id  tree` forest by `parent_id`, using box-drawing
+ *  connectors (├──/└──/│) so parent/child and sibling boundaries read at a
+ *  glance. The id sits in a space-padded fixed-width left column (ids vary a
+ *  lot in length) so the tree always starts at the same column and stays
+ *  aligned — a TAB here lands on uneven tab stops and skews the glyphs.
  *  Rows whose parent is absent from the set (e.g. filtered out by --db) are
  *  treated as roots so nothing is silently hidden. */
 function docTree(rows: DocumentSummary[]): string {
   if (rows.length === 0) return "(empty)";
   const ids = new Set(rows.map((r) => r.id));
+  const idWidth = Math.max(...rows.map((r) => r.id.length));
   const children = new Map<string, DocumentSummary[]>();
   const roots: DocumentSummary[] = [];
   for (const r of rows) {
@@ -36,11 +41,17 @@ function docTree(rows: DocumentSummary[]): string {
     else (children.get(key) ?? children.set(key, []).get(key)!).push(r);
   }
   const lines: string[] = [];
-  const walk = (node: DocumentSummary, depth: number) => {
-    lines.push(`${node.id}\t${"  ".repeat(depth)}${node.title || "(untitled)"}`);
-    for (const child of children.get(node.id) ?? []) walk(child, depth + 1);
+  // `prefix` is the ancestor guide drawn before a node's own connector; roots
+  // sit flush at the tree's column 0 (no connector), their subtrees draw glyphs.
+  const walk = (node: DocumentSummary, prefix: string, isRoot: boolean, isLast: boolean) => {
+    const branch = isRoot ? "" : isLast ? "└── " : "├── ";
+    const title = node.title || "(untitled)";
+    lines.push(`${node.id.padEnd(idWidth)}  ${prefix}${branch}${title}`);
+    const kids = children.get(node.id) ?? [];
+    const childPrefix = isRoot ? "" : prefix + (isLast ? "    " : "│   ");
+    kids.forEach((child, i) => walk(child, childPrefix, false, i === kids.length - 1));
   };
-  for (const root of roots) walk(root, 0);
+  roots.forEach((root) => walk(root, "", true, true));
   return lines.join("\n");
 }
 
