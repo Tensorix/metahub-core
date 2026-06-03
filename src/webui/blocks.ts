@@ -116,6 +116,12 @@ export function blocksFromBody(body: string | null | undefined): Block[] {
   const lines = normalized ? normalized.split("\n") : [];
   const blocks = parseContainer(lines, 0, 0).blocks;
   normalizeNumbering(blocks);
+  // Blank lines the user left at the very end (for spacing) become empty
+  // paragraphs so the gap survives a save/reload. One trailing newline is the
+  // conventional file terminator and is ignored; every newline beyond it is a
+  // real blank line.
+  const trailingNewlines = normalized.length - normalized.replace(/\n+$/, "").length;
+  for (let i = 1; i < trailingNewlines; i++) blocks.push({ id: genId(), type: "p", content: "" });
   return blocks;
 }
 
@@ -160,9 +166,24 @@ function normalizeNumbering(blocks: Block[]): void {
   }
 }
 
-/** Editor block tree -> body Markdown. Empty paragraphs are dropped. */
+/** Editor block tree -> body Markdown. Empty paragraphs are dropped, except a
+ *  run at the very end: those trailing blank lines are kept so a gap the user
+ *  left at the bottom of the document survives the round-trip. */
 export function bodyFromBlocks(blocks: Block[]): string {
-  return renderContainer(blocks, 0).join("\n").replace(/\n+$/, "");
+  const core = renderContainer(blocks, 0).join("\n").replace(/\n+$/, "");
+  const trailing = trailingEmptyParagraphs(blocks);
+  return trailing > 0 ? `${core}${"\n".repeat(trailing + 1)}` : core;
+}
+
+/** Count the run of empty top-level paragraphs at the end of the document. */
+function trailingEmptyParagraphs(blocks: readonly Block[]): number {
+  let n = 0;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i]!;
+    if (b.type === "p" && b.content.trim() === "" && !b.children?.length) n++;
+    else break;
+  }
+  return n;
 }
 
 export function shortcutFromInput(text: string, key: " " | "Enter"): Shortcut | null {

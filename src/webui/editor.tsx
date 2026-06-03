@@ -599,10 +599,15 @@ export function DocView({
       }
     }
     if (e.key === " " && b.type === "p" && !hasExpandedSelection()) {
-      const shortcut = shortcutFromInput((el.textContent ?? "") + " ", " ");
+      // Match the marker against the text *before* the caret, not the whole line,
+      // so a prefix typed at the start of a paragraph that already has content
+      // ("1. " before "hello") still promotes the block — keeping the trailing
+      // text as the new content.
+      const { before, after } = splitEditableAtCaret(el);
+      const shortcut = shortcutFromInput(before + " ", " ");
       if (shortcut) {
         e.preventDefault();
-        applyShortcut(b, shortcut);
+        applyShortcut(b, { ...shortcut, content: after });
         return;
       }
     }
@@ -621,12 +626,19 @@ export function DocView({
       const empty = (el.textContent ?? "").trim() === "";
       if (isListType(b.type) && empty && !(b.children ?? []).length) { convert(b.id, "p"); return; }
       insertAfter(b.id, isListType(b.type) ? b.type : "p");
-    } else if (e.key === "Backspace" && (el.textContent ?? "") === "") {
-      e.preventDefault();
-      if (b.type !== "p") convert(b.id, "p");
-      else {
-        const prev = previousBlock(blocks, b.id);
-        if (prev) { remove(b.id); requestAnimationFrame(() => focusBlock(prev.id, true)); }
+    } else if (e.key === "Backspace") {
+      if ((el.textContent ?? "") === "") {
+        e.preventDefault();
+        if (b.type !== "p") convert(b.id, "p");
+        else {
+          const prev = previousBlock(blocks, b.id);
+          if (prev) { remove(b.id); requestAnimationFrame(() => focusBlock(prev.id, true)); }
+        }
+      } else if (isListType(b.type) && !hasExpandedSelection() && caretAtBlockStart(el)) {
+        // Backspace at the very start of a non-empty list item strips the list
+        // marker, turning it into a plain paragraph while keeping its text.
+        e.preventDefault();
+        convert(b.id, "p", { content: blockEditorText(b, el) });
       }
     }
   };
@@ -1395,6 +1407,17 @@ function blockEditorText(_block: Block, el: HTMLElement): string {
 function hasExpandedSelection(): boolean {
   const sel = getSelection();
   return !!sel && !sel.isCollapsed;
+}
+// Is the collapsed caret at the very start of `el` (nothing rendered before it)?
+function caretAtBlockStart(el: HTMLElement): boolean {
+  const sel = getSelection();
+  if (!sel || !sel.rangeCount || !sel.isCollapsed) return false;
+  const range = sel.getRangeAt(0);
+  if (!el.contains(range.startContainer)) return false;
+  const pre = document.createRange();
+  pre.selectNodeContents(el);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length === 0;
 }
 
 // ---- caret + drag helpers ----
