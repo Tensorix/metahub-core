@@ -606,17 +606,29 @@ const HTML = `<!doctype html>
   body.quicknote #app { display:block; width:100vw; height:100vh; }
   .qn { display:flex; flex-direction:column; width:100%; height:100vh; overflow:hidden;
     background:color-mix(in srgb, var(--bg) 20%, transparent); }
-  .qn-bar { display:flex; align-items:center; gap:8px; padding:8px 10px 8px 78px;
-    border-bottom:1px solid var(--line); user-select:none; -webkit-app-region:drag;
+  .qn-bar { display:flex; align-items:center; gap:6px; padding:4px 10px 4px 76px;
+    user-select:none; -webkit-app-region:drag;
     background:color-mix(in srgb, var(--surface) 30%, transparent); }
-  .qn-brand { flex:1; min-width:0; font-size:13px; font-weight:600; color:var(--fg-soft);
+  .qn-brand { flex:1; min-width:0; font-size:12px; font-weight:600; color:var(--fg-soft);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .qn-actions { display:flex; gap:2px; -webkit-app-region:no-drag; }
+  .qn-actions .iconbtn { width:26px; height:26px; }
   .qn-actions .iconbtn.active { color:var(--accent); background:var(--hover-2); }
   .qn-body { flex:1; overflow:auto; -webkit-app-region:no-drag; }
   .qn-body .doc { max-width:none; margin:0; padding:14px 22px 30vh; }
   .qn-body .doc-title { font-size:24px; margin-bottom:2px; }
   .qn-body .doc-meta { display:none; }
+  /* Compact menus inside the quick-note window only (dropdown + slash command
+     share .pop/.item/.lico with the main app; scope under body.quicknote so the
+     main app keeps its roomier density). */
+  body.quicknote .pop { padding:5px; border-radius:9px; }
+  body.quicknote .pop .lbl { padding:4px 8px 2px; font-size:10px; }
+  body.quicknote .pop .item { padding:5px 9px; gap:8px; font-size:12.5px; }
+  body.quicknote .pop .item .t { font-size:12.5px; }
+  body.quicknote .pop .item .d { font-size:10.5px; }
+  body.quicknote .pop .item .lico { width:22px; height:22px; }
+  body.quicknote .pop .item .lico.plain { width:20px; height:20px; }
+  body.quicknote .pop .sep { margin:4px 4px; }
 
   /* Quick Notes settings rows (desktop only). */
   .qn-set-row { display:flex; align-items:center; gap:14px; padding:12px 0; border-top:1px solid var(--line); }
