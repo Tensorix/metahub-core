@@ -39,7 +39,7 @@ SQLite + cache
 - 构建脚本输出库入口 `dist/index.js` 和 CLI `dist/cli.js`。
 - `package.json` 暴露 `metahub` 和 `mh` 两个 bin。
 - 支持通过 `bun build --compile` 生成独立二进制。
-- 桌面端 `apps/desktop`(Electron + Bun 边车):外壳是 Electron(自带 Node 运行时),core/server 跑在 spawn 出的 Bun 边车里(因 core 依赖 `bun:sqlite` 等 Bun 专有 API,无法在 Electron 主进程直接运行),窗口加载边车在回环临时端口提供的内嵌 WebUI。详见 [impl-context/12-desktop-app](../impl-context/12-desktop-app/design.md)。
+- 桌面端 `apps/desktop`(Electron + Bun 边车):外壳是 Electron(自带 Node 运行时),core/server 跑在 spawn 出的 Bun 边车里(因 core 依赖 `bun:sqlite` 等 Bun 专有 API,无法在 Electron 主进程直接运行),窗口加载边车在回环临时端口提供的内嵌 WebUI。还含「快速笔记」小窗(全局快捷键/托盘唤起、mac 半透明、可置顶):复用同一份 WebUI 的 `#quick` 路由 + 块编辑器,笔记是挂在通用 `parent_id` 下的普通文档,**core 不含 quicknote 概念**。详见 [impl-context/12-desktop-app](../impl-context/12-desktop-app/design.md)。
 
 ## 本地目录
 
