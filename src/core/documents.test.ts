@@ -10,6 +10,7 @@ import {
   appendDocument,
   prependDocument,
   documentVersion,
+  listDocuments,
 } from "./documents.ts";
 
 function makeNode(id: string): Database {
@@ -41,6 +42,18 @@ test("create with no body leaves body null and no blocks", () => {
   const doc = createDocument(db, { title: "Empty" });
   expect(getDocument(db, doc.id)!.body).toBeNull();
   expect(blockIds(db, doc.id).length).toBe(0);
+});
+
+test("listDocuments filters by parent_id", () => {
+  const db = makeNode("aaaa");
+  const parent = createDocument(db, { title: "Quick Notes" });
+  const a = createDocument(db, { title: "Note A", parent_id: parent.id });
+  const b = createDocument(db, { title: "Note B", parent_id: parent.id });
+  createDocument(db, { title: "Unrelated" }); // top-level, excluded
+
+  const kids = listDocuments(db, { parent_id: parent.id });
+  expect(kids.map((d) => d.id).sort()).toEqual([a.id, b.id].sort());
+  expect(kids.every((d) => d.parent_id === parent.id)).toBe(true);
 });
 
 test("single-block edit preserves block identity", () => {

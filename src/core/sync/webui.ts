@@ -595,6 +595,37 @@ const HTML = `<!doctype html>
     .db { padding:16px 14px 90px; }
     .peek { width:100%; }
   }
+
+  /* Quick Notes window (desktop, loaded at #quick). A transparent body lets the
+     macOS vibrancy blur show through; a translucent panel keeps text readable.
+     The top bar is the window drag region; its buttons opt back out. */
+  body.quicknote { background:transparent; }
+  /* The main app lays #app out as a flex row (sidebar + main); the quick-note
+     route has a single child, so override to a full-bleed block or the panel
+     shrinks to its content width and the window's vibrancy shows through. */
+  body.quicknote #app { display:block; width:100vw; height:100vh; }
+  .qn { display:flex; flex-direction:column; width:100%; height:100vh; overflow:hidden;
+    background:color-mix(in srgb, var(--bg) 20%, transparent); }
+  .qn-bar { display:flex; align-items:center; gap:8px; padding:8px 10px 8px 78px;
+    border-bottom:1px solid var(--line); user-select:none; -webkit-app-region:drag;
+    background:color-mix(in srgb, var(--surface) 30%, transparent); }
+  .qn-brand { flex:1; min-width:0; font-size:13px; font-weight:600; color:var(--fg-soft);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .qn-actions { display:flex; gap:2px; -webkit-app-region:no-drag; }
+  .qn-actions .iconbtn.active { color:var(--accent); background:var(--hover-2); }
+  .qn-body { flex:1; overflow:auto; -webkit-app-region:no-drag; }
+  .qn-body .doc { max-width:none; margin:0; padding:14px 22px 30vh; }
+  .qn-body .doc-title { font-size:24px; margin-bottom:2px; }
+  .qn-body .doc-meta { display:none; }
+
+  /* Quick Notes settings rows (desktop only). */
+  .qn-set-row { display:flex; align-items:center; gap:14px; padding:12px 0; border-top:1px solid var(--line); }
+  .qn-set-row:first-of-type { border-top:0; }
+  .qn-set-main { flex:1; min-width:0; }
+  .qn-set-name { font-weight:600; }
+  .qn-set-desc { color:var(--muted); font-size:13px; margin-top:2px; }
+  .qn-shortcut { min-width:140px; justify-content:center; font-family:var(--mono); }
+  .qn-shortcut.capturing { outline:2px solid var(--accent); color:var(--accent); }
 </style>
 </head>
 <body>

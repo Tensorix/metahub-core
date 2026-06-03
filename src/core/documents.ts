@@ -136,19 +136,19 @@ export function getDocument(db: Database, id: string): DocumentRow | null {
 
 export function listDocuments(
   db: Database,
-  opts: { database_id?: string } = {},
+  opts: { database_id?: string; parent_id?: string } = {},
 ): DocumentSummary[] {
+  const cols =
+    "SELECT id, title, database_id, parent_id, created_hlc FROM documents WHERE __deleted = 0";
+  if (opts.parent_id !== undefined)
+    return db
+      .query(`${cols} AND parent_id = ? ORDER BY created_hlc`)
+      .all(opts.parent_id) as DocumentSummary[];
   if (opts.database_id)
     return db
-      .query(
-        "SELECT id, title, database_id, parent_id, created_hlc FROM documents WHERE database_id = ? AND __deleted = 0 ORDER BY created_hlc",
-      )
+      .query(`${cols} AND database_id = ? ORDER BY created_hlc`)
       .all(opts.database_id) as DocumentSummary[];
-  return db
-    .query(
-      "SELECT id, title, database_id, parent_id, created_hlc FROM documents WHERE __deleted = 0 ORDER BY created_hlc",
-    )
-    .all() as DocumentSummary[];
+  return db.query(`${cols} ORDER BY created_hlc`).all() as DocumentSummary[];
 }
 
 export function updateDocument(

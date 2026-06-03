@@ -7,6 +7,7 @@ import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
 import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
+import { QuickNote } from "./quicknote/quicknote.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
   UiHost,
@@ -245,4 +246,12 @@ function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: str
   );
 }
 
-render(<App />, document.getElementById("app")!);
+// The desktop Quick Notes window loads this same bundle at `…/#quick`. Mount the
+// compact note view there — but only inside the desktop shell (guarded on the
+// preload bridge), so a browser hitting `/#quick` just gets the full app.
+if (location.hash === "#quick" && typeof window !== "undefined" && window.metahubDesktop) {
+  document.body.classList.add("quicknote");
+  render(<QuickNote />, document.getElementById("app")!);
+} else {
+  render(<App />, document.getElementById("app")!);
+}

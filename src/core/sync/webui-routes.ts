@@ -97,6 +97,7 @@ const CreateDocumentReq = z.object({
   title: z.string(),
   body: z.string().optional(),
   database_id: z.string().optional(),
+  parent_id: z.string().optional(),
 });
 const UpdateDocumentReq = z.object({
   title: z.string().optional(),
@@ -293,9 +294,11 @@ export const webuiRoutes: Route[] = [
   {
     method: "GET",
     path: "/api/documents",
-    summary: "List documents. Optional query: ?db=<id>",
+    summary: "List documents. Optional query: ?db=<id> or ?parent=<id>",
     response: z.array(DocumentSummarySchema),
-    handler: handle((req, { db }) => listDocuments(db, { database_id: opt(req, "db") })),
+    handler: handle((req, { db }) =>
+      listDocuments(db, { database_id: opt(req, "db"), parent_id: opt(req, "parent") }),
+    ),
   },
   {
     method: "POST",
@@ -308,6 +311,7 @@ export const webuiRoutes: Route[] = [
         title: string;
         body?: string;
         database_id?: string;
+        parent_id?: string;
       };
       return createDocument(db, body);
     }),

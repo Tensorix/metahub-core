@@ -1,8 +1,10 @@
 /**
- * Preload script. The WebUI talks to the sidecar over HTTP, so it needs no IPC.
- * We expose only a tiny, read-only surface for environment awareness.
+ * Preload script. The WebUI talks to the sidecar over HTTP, so it needs almost
+ * no IPC. We expose a tiny, read-only environment surface plus the `quicknote`
+ * bridge the Quick Notes window and the settings page use to drive the native
+ * global shortcut / always-on-top behaviour (see src/webui/desktop.d.ts).
  */
-import { contextBridge } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("metahubDesktop", {
   platform: process.platform,
@@ -10,5 +12,12 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     electron: process.versions.electron,
     chrome: process.versions.chrome,
     node: process.versions.node,
+  },
+  quicknote: {
+    getSettings: () => ipcRenderer.invoke("qn:get-settings"),
+    setShortcut: (accelerator: string) => ipcRenderer.invoke("qn:set-shortcut", accelerator),
+    getAlwaysOnTop: () => ipcRenderer.invoke("qn:get-always-on-top"),
+    setAlwaysOnTop: (on: boolean) => ipcRenderer.invoke("qn:set-always-on-top", on),
+    hide: () => ipcRenderer.invoke("qn:hide"),
   },
 });

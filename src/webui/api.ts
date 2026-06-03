@@ -138,6 +138,8 @@ export const api = {
   // documents
   listDocuments: (dbId?: string) =>
     req<DocSummary[]>("GET", dbId ? `/api/documents?db=${q(dbId)}` : "/api/documents"),
+  listDocumentsByParent: (parentId: string) =>
+    req<DocSummary[]>("GET", `/api/documents?parent=${q(parentId)}`),
   createDocument: (b: { title: string; body?: string; database_id?: string; parent_id?: string }) =>
     req<Doc>("POST", "/api/documents", b),
   getDocument: (id: string) => req<Doc>("GET", `/api/document?id=${q(id)}`),

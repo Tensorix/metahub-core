@@ -53,8 +53,132 @@ export function SettingsView() {
         </div>
       </div>
 
+      {typeof window !== "undefined" && window.metahubDesktop?.quicknote && <QuickNotesSettings />}
       <SyncDevices />
       <IssuedGrants />
+    </div>
+  );
+}
+
+// ---- quick notes (desktop only) -------------------------------------------
+
+const DEFAULT_SHORTCUT = "CommandOrControl+Shift+Space";
+
+/** Build an Electron accelerator from a keydown, or null for an invalid combo. */
+function toAccelerator(e: KeyboardEvent): string | null {
+  if (["Control", "Meta", "Alt", "Shift"].includes(e.key)) return null; // modifier alone
+  const parts: string[] = [];
+  if (e.metaKey || e.ctrlKey) parts.push("CommandOrControl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  let key = e.key;
+  if (key === " ") key = "Space";
+  else if (key.startsWith("Arrow")) key = key.slice(5);
+  else if (key.length === 1) key = key.toUpperCase();
+  if (parts.length === 0) return null; // require at least one modifier
+  parts.push(key);
+  return parts.join("+");
+}
+
+/** Show an accelerator the way users read it, per platform. */
+function prettyShortcut(accel: string): string {
+  const mac = typeof window !== "undefined" && window.metahubDesktop?.platform === "darwin";
+  return accel
+    .replace("CommandOrControl", mac ? "⌘" : "Ctrl")
+    .replace("Alt", mac ? "⌥" : "Alt")
+    .replace("Shift", mac ? "⇧" : "Shift")
+    .split("+")
+    .join(mac ? " " : "+");
+}
+
+function QuickNotesSettings() {
+  const qn = window.metahubDesktop!.quicknote!;
+  const [shortcut, setShortcut] = useState<string>(DEFAULT_SHORTCUT);
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+
+  useEffect(() => {
+    qn.getSettings()
+      .then((s) => {
+        setShortcut(s.shortcut);
+        setAlwaysOnTop(s.alwaysOnTop);
+      })
+      .catch((e) => toast(`加载失败：${(e as Error).message}`));
+  }, []);
+
+  const applyShortcut = async (accel: string) => {
+    try {
+      const s = await qn.setShortcut(accel);
+      setShortcut(s.shortcut);
+      toast(`快捷键已设为 ${prettyShortcut(s.shortcut)}`);
+    } catch (e) {
+      toast(`设置失败：${(e as Error).message}`);
+    }
+  };
+
+  const onCaptureKey = (e: KeyboardEvent) => {
+    e.preventDefault();
+    if (e.key === "Escape") {
+      setCapturing(false);
+      return;
+    }
+    const accel = toAccelerator(e);
+    if (!accel) return; // wait for a full modifier+key combo
+    setCapturing(false);
+    void applyShortcut(accel);
+  };
+
+  const toggleTop = async () => {
+    const next = !alwaysOnTop;
+    setAlwaysOnTop(next);
+    try {
+      setAlwaysOnTop(await qn.setAlwaysOnTop(next));
+    } catch (e) {
+      setAlwaysOnTop(!next);
+      toast(`设置失败：${(e as Error).message}`);
+    }
+  };
+
+  return (
+    <div class="set-section">
+      <div class="set-section-head">快速笔记</div>
+      <div class="set-section-desc">
+        用全局快捷键随时唤起小窗记录想法。小窗也可从菜单栏图标打开。
+      </div>
+
+      <div class="qn-set-row">
+        <div class="qn-set-main">
+          <div class="qn-set-name">唤起快捷键</div>
+          <div class="qn-set-desc">点击下方按钮，然后按下你想用的组合键。</div>
+        </div>
+        <button
+          class={"btn btn-secondary qn-shortcut" + (capturing ? " capturing" : "")}
+          onClick={() => setCapturing(true)}
+          onBlur={() => setCapturing(false)}
+          onKeyDown={capturing ? onCaptureKey : undefined}
+        >
+          {capturing ? "按下组合键…" : prettyShortcut(shortcut)}
+        </button>
+        {shortcut !== DEFAULT_SHORTCUT && (
+          <button class="btn btn-ghost" title="重置默认" onClick={() => void applyShortcut(DEFAULT_SHORTCUT)}>
+            重置
+          </button>
+        )}
+      </div>
+
+      <div class="qn-set-row">
+        <div class="qn-set-main">
+          <div class="qn-set-name">默认始终置顶</div>
+          <div class="qn-set-desc">小窗浮在其他窗口之上；也可在小窗内用 📌 按钮切换。</div>
+        </div>
+        <button
+          class={"btn " + (alwaysOnTop ? "btn-primary" : "btn-secondary")}
+          aria-pressed={alwaysOnTop}
+          onClick={() => void toggleTop()}
+        >
+          {alwaysOnTop ? "已开启" : "已关闭"}
+        </button>
+      </div>
     </div>
   );
 }
