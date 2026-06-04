@@ -1,0 +1,5 @@
+# build output
+dist/
+resources/
+release/
+build/icon.png

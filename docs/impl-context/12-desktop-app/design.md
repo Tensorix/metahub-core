@@ -32,19 +32,31 @@ Electron 主进程 (Node)                    Bun 边车子进程
 
 ```text
 apps/desktop/
-  package.json          # electron 依赖 + bun 脚本
+  package.json          # electron + electron-builder 依赖 + bun 脚本
+  electron-builder.yml  # 打包配置(四平台 / extraResources / ad-hoc 不签名)
   tsconfig.json         # 继承根 tsconfig,加 bun+node types / DOM lib
   src/
-    server-entry.ts     # Bun 入口:调 core 的 startServer,打印端口
+    sidecar.ts          # 共享边车启动逻辑(runSidecar:调 startServer,打印端口)
+    server-entry.ts     # 开发态 Bun 入口(bun run,WebUI 源码懒构建)
+    server-bundle.ts    # 生产态编译入口(内嵌 dist/webui.js,供 --compile)
     main.ts             # Electron 主进程:spawn 边车 / 建窗 / 生命周期
     preload.ts          # 最小 contextBridge(平台/版本信息)
+  scripts/
+    build-sidecars.ts   # bun build --compile 交叉编译四平台边车二进制
+    gen-icon.ts         # 纯 TS PNG 编码器生成 1024² 占位图标
+  assets/trayTemplate.png  # 托盘图标
+  build/icon.png        # 应用图标源图(electron-builder 自动派生 icns/ico/png)
+  resources/            # 构建产物:各平台边车二进制(metahub-sidecar-*)
   dist/                 # 构建产物(main.js / preload.js)
+  release/              # 打包产物(.dmg / .zip / .exe / .AppImage / .deb)
 ```
 
 ## 4. 各文件职责
 
-- **`src/server-entry.ts`**(由 bun 运行,保持 `.ts` 不编译):`import { startServer } from "../../../src/core/sync/server.ts"`;`startServer({ debug:true, host:"127.0.0.1", port:0 })`;按约定打印 `METAHUB_PORT=<port>`;`SIGTERM`/`SIGINT` → `s.stop()` 优雅退出。
-- **`src/main.ts`**(Electron 主进程):`resolveBun()` 定位 bun(`BUN_PATH` > `/opt/homebrew/bin/bun`、`/usr/local/bin/bun` > PATH 上的 `bun`);`spawn` 边车并从 stdout 正则提取端口;`waitForHealth()` 轮询 `/health`(常量镜像 `src/core/sync/protocol.ts` 的 `HEALTH_PATH`,带超时/重试);`createWindow()` 建窗加载;`window-all-closed`(macOS 保留 dock)/`before-quit`/`will-quit`/`process exit` 统一 `killSidecar()`;启动失败 `dialog.showErrorBox` 兜底。
+- **`src/sidecar.ts`**(共享启动逻辑):导出 `runSidecar()`——`import { startServer } from "../../../src/core/sync/server.ts"`;`startServer({ debug:true, host:"127.0.0.1", port:0 })`;按约定打印 `METAHUB_PORT=<port>`;`SIGTERM`/`SIGINT` → `s.stop()` 优雅退出。开发态与生产态两个入口都调它,避免重复。
+- **`src/server-entry.ts`**(开发态入口,由 bun 运行、不编译):仅 `import { runSidecar } from "./sidecar.ts"; runSidecar()`。WebUI 由 `getJs()` 从源码懒构建,故**不**内嵌 bundle。
+- **`src/server-bundle.ts`**(生产态入口,被 `bun build --compile` 编成独立二进制):`import webuiBundle from "../../../dist/webui.js" with { type: "text" }` 把预构建 bundle 作为**内嵌文本**带进二进制,`setWebuiBundle(webuiBundle)` 注入 core 后再 `runSidecar()`。编译二进制无源码、无 sibling `dist/webui.js`,靠这条把 WebUI 嵌进去(详见 §8.1)。
+- **`src/main.ts`**(Electron 主进程):`resolveSidecarCommand()` 按 `app.isPackaged` 分流——**打包态**用 `process.resourcesPath` 下的编译二进制(`metahub-sidecar`/`.exe`,免装 Bun、免源码);**开发态**走 `resolveBun()` + `bun run src/server-entry.ts`(`BUN_PATH` > `/opt/homebrew/bin/bun`、`/usr/local/bin/bun` > PATH)。`spawn` 边车并从 stdout 正则提取端口;`waitForHealth()` 轮询 `/health`(常量镜像 `src/core/sync/protocol.ts` 的 `HEALTH_PATH`,带超时/重试);`createWindow()` 建窗加载;`window-all-closed`(macOS 保留 dock)/`before-quit`/`will-quit`/`process exit` 统一 `killSidecar()`;启动失败 `dialog.showErrorBox` 兜底。
 - **`src/preload.ts`**:`contextBridge.exposeInMainWorld("metahubDesktop", { platform, versions, quicknote })`。WebUI 的数据读写通过 HTTP 直连边车、不依赖 IPC,故 preload 仍很轻;`quicknote` 子对象(`qn:*` IPC)是唯一例外,为快速笔记的原生能力(全局快捷键/置顶)服务,详见 §7。
 
 ## 5. 构建与运行
@@ -53,15 +65,21 @@ apps/desktop/
 
 - `main.ts`/`preload.ts` 用 `bun build --target=node --format=cjs --external electron` 编译到 `dist/`(`--format=cjs` 让 `require("electron")` 正常工作;**`--external electron` 必须有**,否则 bun 会把 `electron` npm 包的「可执行文件路径字符串」打进 bundle,运行时 `app` 为 `undefined`)。
   - **坑**:`bun build` 会在编译期把 `__dirname` 内联成**源文件**目录(`apps/desktop/src`),不是产物目录 `dist/`。所以主进程**不能用 `__dirname` 拼路径**,否则会指向不存在的文件(详见 §7.4)。一律改用运行时的 `app.getAppPath()`。
-- `server-entry.ts` 由边车的 bun 运行,**不编译**。
+- `server-entry.ts` 由边车的 bun 运行,**不编译**;`server-bundle.ts` 则用 `bun build --compile` 编成独立二进制(§8)。
 
 ```jsonc
 // package.json scripts
-"build:main": "bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist",
-"dev": "bun run build:main && electron ."
+"build:main":     "bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist",
+"build:icon":     "bun run scripts/gen-icon.ts",          // → build/icon.png
+"build:sidecars": "bun run scripts/build-sidecars.ts",    // → resources/metahub-sidecar-*
+"build":          "bun run build:main && bun run build:icon && bun run build:sidecars",
+"dev":            "bun run build:main && electron .",
+"dist":           "bun run build && electron-builder --publish never",       // 当前平台
+"dist:mac":       "bun run build && electron-builder --mac --publish never",  // 另有 dist:win / dist:linux
 ```
 
-运行:`cd apps/desktop && bun install && bun run dev`。
+- **开发运行**:`cd apps/desktop && bun install && bun run dev`(从含 bun 的终端启动,边车跑源码)。
+- **打可分发包**:`bun run dist:mac`(产物在 `release/`)。详见 §8。
 
 ## 6. 复用清单(不重复实现)
 
@@ -129,14 +147,67 @@ function appFile(...p: string[]) { return join(app.getAppPath(), ...p); }
 - **前端(快速笔记视图)**:新增 `src/webui/quicknote/quicknote.tsx`;`src/webui/app.tsx`(分流+守卫)、`src/webui/settings.tsx`(设置区块)、`src/webui/icons.tsx`(`pin` 图标)、`src/webui/desktop.d.ts`(桥类型声明)、`src/core/sync/webui.ts`(内联 CSS)。
 - **桌面**:`apps/desktop/src/main.ts`(第二窗口 / 快捷键 / 托盘 / IPC / `app.getAppPath()` 路径修复)、`apps/desktop/src/preload.ts`(`quicknote` 桥)、新增 `apps/desktop/assets/trayTemplate.png`。
 
-## 8. 生产打包 —— 暂未实现(仅记录方向)
+## 8. 生产打包
 
-当前交付范围:本地 `bun run dev` 可运行(从终端启动时 PATH 含 bun)。
+**目标**:产出免装 Bun、免源码、双击即用的可分发安装包,覆盖 macOS(arm64+x64)、Windows(x64)、Linux(x64)。开发态 `bun run dev` 行为不变。
 
-后续要做免装 Bun 的可分发安装包:用 `bun build --compile`(参考 `scripts/compile-binaries.ts`)把 `server-entry.ts` 产出独立二进制,放进 `process.resourcesPath`;再用 `electron-builder` 打 `.dmg`/`.exe`,把边车二进制放进 `extraResources`。GUI 双击启动时 PATH 精简,届时主进程改为优先用打包的二进制(或用户设 `BUN_PATH`)。
+**根因**:原 `main.ts` 运行时 `bun run src/server-entry.ts` 依赖两个前提——①用户机器装有 Bun;②磁盘存在整个 monorepo 源码(边车会再 `import ".../core/sync/server.ts"`)。打成 `.app`/`.exe`/AppImage 后两者皆不成立。
+
+**方案**:把边车用 `bun build --compile` 编成**自包含二进制**(内嵌 Bun 运行时、`bun:sqlite`、core 服务端、WebUI bundle),由 `electron-builder` 作为 `extraResources` 打进安装包;`main.ts` 按 `app.isPackaged` 分流(§4)。数据目录仍用 `~/.metahub`(与 CLI 共享),不改。
+
+### 8.1 关键缝隙:编译二进制如何服务 WebUI
+
+`getJs()`(`src/core/sync/webui.ts`)原逻辑:优先读 sibling `dist/webui.js`,否则从源码 `Bun.build`。**在编译二进制里两条都失效**——`import.meta.url` 指向虚拟 `/$bunfs/...`(找不到 sibling 文件),且无源码可构建。这是连带发现的潜在缺陷(现有 `compile-binaries.ts` 产出的 CLI 二进制同样无法服务 WebUI)。
+
+修复:在 `webui.ts` 加一个**领域中立**的注入缝隙:
+
+```ts
+export function setWebuiBundle(js: string): void { cachedJs = js; }
+```
+
+`server-bundle.ts` 在编译期 `import webuiBundle from "../../../dist/webui.js" with { type: "text" }`(Bun 的 import attribute,`--compile` 会把文本嵌进二进制),启动前 `setWebuiBundle(webuiBundle)`,首个 `/webui.js` 请求即命中缓存。开发态走 `server-entry.ts`(不 import bundle),仍是源码懒构建,因此开发**不需要**先 build。
+
+### 8.2 边车交叉编译(`scripts/build-sidecars.ts`)
+
+从仓库根 `bun build --compile` 四个 target(单机即可全产出),输出名对齐 electron-builder 的 `${arch}` 宏:
+
+| bun target | 输出文件名 |
+|---|---|
+| `bun-darwin-arm64` | `metahub-sidecar-mac-arm64` |
+| `bun-darwin-x64`   | `metahub-sidecar-mac-x64` |
+| `bun-windows-x64`  | `metahub-sidecar-win-x64.exe` |
+| `bun-linux-x64`    | `metahub-sidecar-linux-x64` |
+
+入口为 `apps/desktop/src/server-bundle.ts`,故需先有 `dist/webui.js`(脚本检测缺失则先跑根 `bun run build`)。复用既有 `bun build --compile` 模式(`scripts/compile-binaries.ts`)。
+
+### 8.3 打包配置(`electron-builder.yml`)
+
+- `files: dist/** + assets/** + package.json`,`asar: true`——只把 Electron 外壳进 asar;WebUI 在边车二进制里、经 loopback HTTP 服务,**不**进 app 包。
+- 各平台 `extraResources` 用 `${arch}` 选匹配的边车,`to` 统一成 `metahub-sidecar`(.exe),落在 `Contents/Resources/`(= `process.resourcesPath`),与 `main.ts` 查找一致。mac 两个架构各自打进对应二进制。
+- `mac.identity: null`——ad-hoc 不签名/不公证(留好缝隙,后续接入只改 yml + 证书,无需改代码)。
+- bun 编译出的二进制自带可执行位,electron-builder 在 mac/linux 保留。
+
+### 8.4 应用图标(`scripts/gen-icon.ts`)
+
+纯 TS + `node:zlib` 手写 PNG 编码器,2×2 超采样画一个圆角紫渐变方块 + 白「M」,输出单张 `build/icon.png`(1024²)。electron-builder 从这一张**自动派生** `.icns`/`.ico`/`.png`,无需 iconutil/ImageMagick。换真 logo 只需替换该文件(≥512²);托盘图标仍是 `assets/trayTemplate.png`。
+
+### 8.5 跨平台构建注意
+
+边车二进制可单机全交叉编译;**安装包**受工具链限制:macOS dmg/zip(含 x64)可在 Mac 直接产出;**Windows NSIS 从 macOS 需 wine**;**Linux deb 从 macOS 可能需 dpkg/fakeroot**(AppImage 通常可直接出)。不稳定时在对应 OS 或 CI 跑 `dist:win`/`dist:linux`——属工具链限制,非代码问题。
+
+### 8.6 验证结论
+
+- 独立边车二进制:打印 `METAHUB_PORT`、`/health` 返回 `{ok:true}`、`/webui.js` 返回与 `dist/webui.js` **逐字节一致**(内嵌 WebUI 生效)。
+- 四平台边车全部交叉编译成功;`bun run dist:mac` 产出 arm64/x64 的 dmg+zip,各 `.app` 内 `metahub-sidecar` 架构正确(`${arch}` 路由)、`icon.icns` 已派生、asar + extraResource 落点正确。
+
+### 8.7 暂不在范围
+
+代码签名/公证、自动更新(electron-updater)、发布 CI(`.github/workflows` 当前不存在)。顺带可复用 `setWebuiBundle` 缝隙修 CLI 编译二进制的 WebUI(后续项)。
 
 ## 9. 涉及文件
 
-- 新增:`apps/desktop/{package.json,tsconfig.json}`、`apps/desktop/src/{server-entry,main,preload}.ts`
-- 依赖:`electron`(仅 `apps/desktop` 的 devDependency;不进 core/CLI 依赖图)
-- 改动:**外壳本身 core 零改动**(纯复用);快速笔记(§7)另在接口侧加了**领域中立**的文档树能力(`parent_id` 透传 + `?parent=` 过滤),core 仍不含任何 quicknote 概念。
+- 外壳(§1–6)新增:`apps/desktop/{package.json,tsconfig.json}`、`apps/desktop/src/{server-entry,main,preload}.ts`
+- 快速笔记(§7)见 §7.5。
+- 生产打包(§8)新增:`apps/desktop/src/{sidecar,server-bundle}.ts`、`apps/desktop/scripts/{build-sidecars,gen-icon}.ts`、`apps/desktop/electron-builder.yml`、`apps/desktop/{README.md,.gitignore}`;改 `apps/desktop/src/{server-entry,main}.ts`、`apps/desktop/package.json`(scripts + `electron-builder` devDep);**core 仅加领域中立缝隙** `setWebuiBundle()`(`src/core/sync/webui.ts`)。
+- 依赖:`electron`、`electron-builder`(仅 `apps/desktop` 的 devDependency;不进 core/CLI 依赖图)。
+- 改动总结:**外壳本身 core 零业务改动**(纯复用 + 一个通用注入缝隙);快速笔记(§7)在接口侧加了**领域中立**的文档树能力(`parent_id` 透传 + `?parent=` 过滤),core 仍不含任何 quicknote 概念。

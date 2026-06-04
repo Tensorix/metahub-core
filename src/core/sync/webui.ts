@@ -648,6 +648,14 @@ const HTML = `<!doctype html>
 
 let cachedJs: string | null = null;
 
+/** Inject a prebuilt WebUI bundle. Used by `bun build --compile` binaries
+ *  (e.g. the desktop sidecar), where neither a sibling dist/webui.js nor the
+ *  source tree exists at runtime — the bundle is embedded at build time and
+ *  handed in here so getJs() can serve it without touching the filesystem. */
+export function setWebuiBundle(js: string): void {
+  cachedJs = js;
+}
+
 /** Resolve the app bundle: prefer a prebuilt dist/webui.js next to the running
  *  file; in dev (running from source) build it on first request and cache. */
 async function getJs(): Promise<string> {

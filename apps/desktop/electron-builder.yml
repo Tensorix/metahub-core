@@ -1,0 +1,48 @@
+appId: org.tensorix.metahub
+productName: Metahub
+copyright: Copyright © Tensorix
+
+directories:
+  output: release
+  buildResources: build # build/icon.png → auto-derived icns/ico/png
+
+# Only the Electron shell goes inside the app bundle. The sidecar is a separate
+# self-contained binary shipped via extraResources (see below). The WebUI is
+# embedded in the sidecar binary, served over loopback HTTP — not bundled here.
+files:
+  - dist/**/*
+  - assets/**/*
+  - package.json
+asar: true
+
+mac:
+  category: public.app-category.productivity
+  identity: null # ad-hoc: unsigned / not notarized for now
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  extraResources:
+    - from: resources/metahub-sidecar-mac-${arch}
+      to: metahub-sidecar
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  extraResources:
+    - from: resources/metahub-sidecar-win-x64.exe
+      to: metahub-sidecar.exe
+
+linux:
+  category: Utility
+  maintainer: Tensorix <noahc1510@gmail.com>
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  extraResources:
+    - from: resources/metahub-sidecar-linux-x64
+      to: metahub-sidecar

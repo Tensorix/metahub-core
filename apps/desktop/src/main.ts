@@ -92,14 +92,30 @@ function resolveBun(): string {
   return "bun"; // rely on PATH (dev is launched from a shell that has bun)
 }
 
+/** The compiled sidecar binary name shipped as an extraResource. */
+function sidecarBinaryName(): string {
+  return process.platform === "win32" ? "metahub-sidecar.exe" : "metahub-sidecar";
+}
+
+/**
+ * Resolve how to launch the sidecar.
+ *  - packaged: run the self-contained compiled binary from Resources/ (no Bun
+ *    on PATH, no source tree needed).
+ *  - dev: `bun run src/server-entry.ts` from source (WebUI builds lazily).
+ */
+function resolveSidecarCommand(): { cmd: string; args: string[] } {
+  if (app.isPackaged) {
+    return { cmd: join(process.resourcesPath, sidecarBinaryName()), args: [] };
+  }
+  return { cmd: resolveBun(), args: ["run", appFile("src", "server-entry.ts")] };
+}
+
 /** Spawn the Bun sidecar and resolve with the port it prints on stdout. */
 function startSidecar(): Promise<number> {
-  // dist/main.js → ../src/server-entry.ts (server-entry stays uncompiled .ts)
-  const entry = appFile("src", "server-entry.ts");
-  const bun = resolveBun();
+  const { cmd, args } = resolveSidecarCommand();
 
   return new Promise<number>((resolve, reject) => {
-    const child = spawn(bun, ["run", entry], {
+    const child = spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
@@ -124,7 +140,7 @@ function startSidecar(): Promise<number> {
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => process.stderr.write(`[sidecar] ${chunk}`));
 
-    child.on("error", (err) => fail(new Error(`failed to launch Bun (${bun}): ${err.message}`)));
+    child.on("error", (err) => fail(new Error(`failed to launch sidecar (${cmd}): ${err.message}`)));
     child.on("exit", (code) => fail(new Error(`sidecar exited early (code ${code})`)));
   });
 }
