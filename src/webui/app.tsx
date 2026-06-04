@@ -60,6 +60,11 @@ function App() {
     setDrawerOpen(false);
   };
 
+  const newEmptyDoc = () =>
+    api.createDocument({ title: "" })
+      .then((d) => { reloadNav(); navigate({ kind: "doc", id: d.id }); })
+      .catch((e) => onError(String(e.message)));
+
   const activeDb = view.kind === "db" ? databases.find((d) => d.id === view.id) : undefined;
   const activeDoc = view.kind === "doc" ? docs.find((d) => d.id === view.id) : undefined;
   const activeDocId = view.kind === "doc" ? view.id : null;
@@ -151,7 +156,7 @@ function App() {
       <DrawerClass open={drawerOpen} />
 
       <div class="main">
-        <div class="topbar">
+        <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
           <button
             class={"iconbtn hamburger" + (sbCollapsed ? " show-collapsed" : "")}
             title={sbCollapsed ? "展开侧栏" : "菜单"}
@@ -164,7 +169,6 @@ function App() {
             {view.kind === "db" && <><span class="emoji">{activeDb?.icon || "🗂️"}</span><span>{activeDb?.name}</span></>}
             {view.kind === "search" && <span>搜索：“{view.q}”</span>}
             {view.kind === "settings" && <><span class="emoji"><Icon name="settings" cls="ico sm" /></span><span>设置</span></>}
-            {view.kind === "empty" && <span class="sub">未选择任何内容</span>}
           </div>
           {(view.kind === "doc" || view.kind === "db") && (
             <>
@@ -177,14 +181,7 @@ function App() {
         {error && <div class="error-bar" onClick={() => setError("")}>⚠ {error}（点击关闭）</div>}
 
         <div class="content">
-          {view.kind === "empty" && (
-            <div class="empty">
-              <div>
-                <p>从左侧选择一个数据库或文档，</p>
-                <p>或新建一个开始。</p>
-              </div>
-            </div>
-          )}
+          {view.kind === "empty" && <EmptyState onNewDoc={newEmptyDoc} />}
           {view.kind === "db" && activeDb && (
             <DatabaseView key={activeDb.id} db={activeDb} reloadNav={reloadNav} onError={onError} />
           )}
@@ -208,6 +205,41 @@ function App() {
       <div class={"backdrop" + (drawerOpen ? " show" : "")} onClick={() => setDrawerOpen(false)} />
       <UiHost />
     </>
+  );
+}
+
+/** Right-pane placeholder shown when nothing is selected: a "knowledge growth"
+ *  illustration (a sprout growing from a document card) that animates in, then
+ *  gently sways. Pure CSS/SVG — styles live inline in src/core/sync/webui.ts. */
+function EmptyState({ onNewDoc }: { onNewDoc: () => void }) {
+  return (
+    <div class="empty">
+      <svg class="estate-art" viewBox="0 0 220 190" fill="none" aria-hidden="true">
+        <ellipse class="kg-ground ground" cx="110" cy="176" rx="62" ry="8" />
+        <circle class="kg-glow fill-soft" cx="116" cy="88" r="42" />
+        <g class="kg-plant">
+          <path class="kg-stem stroke-a draw" pathLength="100" d="M110 134 C110 117 108 106 113 92 C116 83 122 77 128 72" />
+          <g class="kg-leaf l1"><g class="kg-grow"><path class="fill-a" d="M108 108 C90 100 86 88 88 80 C102 80 111 90 108 108 Z" /></g></g>
+          <g class="kg-leaf l2"><g class="kg-grow"><path class="fill-a" d="M118 90 C133 83 144 86 150 94 C139 105 125 104 118 90 Z" /></g></g>
+          <g class="kg-leaf l3"><g class="kg-grow"><path class="fill-a" d="M128 72 C128 57 136 48 146 45 C150 58 144 69 128 72 Z" /></g></g>
+        </g>
+        <rect class="kg-cardB fill-soft" x="76" y="124" width="68" height="44" rx="8" transform="rotate(7 110 146)" />
+        <g class="kg-cardA">
+          <rect class="fill-surface stroke" x="66" y="128" width="76" height="46" rx="9" transform="rotate(-5 104 151)" />
+          <rect class="fill-a" x="74" y="136" width="18" height="18" rx="5" transform="rotate(-5 104 151)" />
+          <rect class="fill-soft" x="98" y="139" width="34" height="6" rx="3" transform="rotate(-5 104 151)" />
+          <rect class="fill-soft" x="98" y="150" width="24" height="6" rx="3" transform="rotate(-5 104 151)" />
+        </g>
+        <circle class="kg-particle p1 fill-a" cx="44" cy="62" r="2.6" />
+        <circle class="kg-particle p2 fill-soft" cx="178" cy="74" r="3" />
+        <circle class="kg-particle p3 fill-a" cx="40" cy="120" r="2" />
+        <circle class="kg-particle p4 fill-soft" cx="182" cy="126" r="2.4" />
+        <circle class="kg-particle p5 fill-a" cx="150" cy="44" r="2.2" />
+      </svg>
+      <p class="estate-title">空空如也</p>
+      <p class="estate-hint">从左侧选择一个数据库或文档，或新建一个开始。</p>
+      <button class="estate-link" onClick={onNewDoc}>＋ 新建文档</button>
+    </div>
   );
 }
 

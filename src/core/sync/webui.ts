@@ -162,6 +162,7 @@ const HTML = `<!doctype html>
   /* main */
   .main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
   .topbar { display:flex; align-items:center; gap:6px; padding:10px 18px; border-bottom:1px solid var(--line); min-height:49px; }
+  .topbar.bare { border-bottom:0; }
   .topbar .hamburger { display:none; }
   .topbar .hamburger.show-collapsed { display:grid; }
   .sidebar.collapsed { overflow:hidden; }
@@ -486,7 +487,71 @@ const HTML = `<!doctype html>
   @keyframes slidein { from { opacity:0; transform:translateX(-12px); } }
 
   /* misc */
-  .empty { display:grid; place-items:center; height:100%; color:var(--muted); text-align:center; padding:40px; }
+  .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%;
+    color:var(--muted); text-align:center; padding:40px; }
+
+  /* ---- empty state: 知识生长插画 ---- */
+  .estate-art { width:240px; height:208px; overflow:visible; animation:idleFloat 5s ease-in-out 1.6s infinite; }
+  .estate-art .stroke-a { fill:none; stroke:var(--accent); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
+  .estate-art .stroke   { fill:none; stroke:var(--line-strong); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
+  .estate-art .fill-a       { fill:var(--accent); }
+  .estate-art .fill-soft    { fill:var(--accent-soft); }
+  .estate-art .fill-surface { fill:var(--bg); }
+  .estate-art .ground       { fill:var(--accent); }
+  .estate-title { margin:28px 0 0; font-size:18px; font-weight:600; letter-spacing:.2px; color:var(--fg);
+    opacity:0; animation:fadeUp .5s ease forwards 1.0s; }
+  .estate-hint { margin:9px 0 0; font-size:13.5px; line-height:1.6; color:var(--muted); max-width:300px;
+    opacity:0; animation:fadeUp .5s ease forwards 1.15s; }
+  .estate-link { margin:18px 0 0; font-size:14px; font-weight:600; color:var(--accent);
+    display:inline-flex; align-items:center; gap:6px; padding:9px 8px; border-radius:var(--radius-sm);
+    opacity:0; animation:fadeUp .5s ease forwards 1.3s; transition:opacity .15s; }
+  .estate-link:hover { opacity:.7; }
+  /* intro */
+  .draw { stroke-dasharray:100; stroke-dashoffset:100; }
+  @keyframes draw     { to { stroke-dashoffset:0; } }
+  @keyframes leafGrow { from { opacity:0; transform:scale(.2) rotate(-10deg); } to { opacity:1; transform:scale(1) rotate(0); } }
+  @keyframes cardUp   { from { opacity:0; transform:translateY(16px) scale(.96); } to { opacity:1; transform:translateY(0) scale(1); } }
+  @keyframes groundIn { to { opacity:.1; } }
+  @keyframes glowIn   { to { opacity:.6; } }
+  @keyframes fadeUp   { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+  /* idle loops — each 0% equals the settled rest state to avoid a jump */
+  @keyframes idleFloat     { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-5px); } }
+  @keyframes plantSway     { 0%,100% { transform:rotate(0deg); } 25% { transform:rotate(-1.3deg); } 75% { transform:rotate(1.3deg); } }
+  @keyframes leafSwayA     { 0%,100% { transform:rotate(0deg); } 25% { transform:rotate(-2.6deg); } 75% { transform:rotate(2.6deg); } }
+  @keyframes leafSwayB     { 0%,100% { transform:rotate(0deg); } 25% { transform:rotate(2.6deg); } 75% { transform:rotate(-2.6deg); } }
+  @keyframes groundBreathe { 0%,100% { transform:scale(1); opacity:.10; } 50% { transform:scale(1.07); opacity:.15; } }
+  @keyframes glowPulse     { 0%,100% { transform:scale(1); opacity:.6; } 50% { transform:scale(1.1); opacity:.85; } }
+  @keyframes particle      { 0% { opacity:0; transform:translate(0,0) scale(.4); } 35% { opacity:.85; transform:translate(2px,-4px) scale(1); } 70% { opacity:0; transform:translate(4px,-9px) scale(.5); } 100% { opacity:0; transform:translate(0,0) scale(.4); } }
+  /* wiring */
+  .kg-ground { transform-box:fill-box; transform-origin:center; opacity:0;
+    animation:groundIn .5s ease forwards .1s, groundBreathe 6s ease-in-out 1.6s infinite; }
+  .kg-glow { filter:blur(9px); transform-box:fill-box; transform-origin:center; opacity:0;
+    animation:glowIn .6s ease forwards .1s, glowPulse 4.6s ease-in-out 1.6s infinite; }
+  .kg-cardB { transform-box:fill-box; transform-origin:center; opacity:0; animation:cardUp .55s cubic-bezier(.2,.8,.2,1) forwards .2s; }
+  .kg-cardA { transform-box:fill-box; transform-origin:center; opacity:0; animation:cardUp .55s cubic-bezier(.2,.8,.2,1) forwards .32s; }
+  .kg-plant { transform-box:fill-box; transform-origin:50% 100%; animation:plantSway 6s ease-in-out 1.7s infinite; }
+  .kg-stem  { animation:draw .9s ease-out forwards .4s; }
+  .kg-leaf  { transform-box:fill-box; }
+  .kg-grow  { transform-box:fill-box; opacity:0; }
+  .kg-leaf.l1 { transform-origin:90% 100%; animation:leafSwayA 4.6s ease-in-out 1.7s infinite; }
+  .kg-leaf.l2 { transform-origin:0% 80%;   animation:leafSwayB 5.2s ease-in-out 1.8s infinite; }
+  .kg-leaf.l3 { transform-origin:0% 100%;  animation:leafSwayA 5.0s ease-in-out 1.9s infinite; }
+  .kg-leaf.l1 .kg-grow { transform-origin:90% 100%; animation:leafGrow .52s cubic-bezier(.18,.9,.24,1.22) forwards .85s; }
+  .kg-leaf.l2 .kg-grow { transform-origin:0% 80%;   animation:leafGrow .52s cubic-bezier(.18,.9,.24,1.22) forwards 1.0s; }
+  .kg-leaf.l3 .kg-grow { transform-origin:0% 100%;  animation:leafGrow .52s cubic-bezier(.18,.9,.24,1.22) forwards 1.15s; }
+  .kg-particle { transform-box:fill-box; transform-origin:center; opacity:0; }
+  .kg-particle.p1 { animation:particle 4.5s ease-in-out 1.6s infinite; }
+  .kg-particle.p2 { animation:particle 5.2s ease-in-out 2.0s infinite; }
+  .kg-particle.p3 { animation:particle 4.8s ease-in-out 2.6s infinite; }
+  .kg-particle.p4 { animation:particle 5.6s ease-in-out 3.1s infinite; }
+  .kg-particle.p5 { animation:particle 4.2s ease-in-out 2.3s infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .estate-art, .estate-art *, .estate-title, .estate-hint, .estate-link { animation:none !important; opacity:1 !important; transform:none !important; }
+    .draw { stroke-dashoffset:0 !important; }
+    .kg-ground { opacity:.1 !important; }
+    .kg-glow { opacity:.6 !important; }
+    .kg-particle { opacity:0 !important; }
+  }
   .error-bar { margin:12px 24px; padding:10px 14px; background:var(--danger-soft); color:var(--danger); border-radius:var(--radius-sm); font-size:13px; cursor:pointer; }
   .view-placeholder { padding:40px; text-align:center; border:1px dashed var(--line-strong); border-radius:var(--radius); color:var(--muted); margin-top:8px; }
   .ico.flip { transform:scaleX(-1); }
