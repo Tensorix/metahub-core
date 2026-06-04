@@ -51,6 +51,7 @@ interface QuickNoteSettings {
 
 let sidecar: ChildProcess | null = null;
 let serverPort = 0;
+let mainWin: BrowserWindow | null = null;
 let quickWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let currentShortcut: string | null = null;
@@ -180,7 +181,27 @@ function createWindow(port: number): void {
       nodeIntegration: false,
     },
   });
+  mainWin = win;
+  win.on("closed", () => {
+    if (mainWin === win) mainWin = null;
+  });
   void win.loadURL(`http://127.0.0.1:${port}/`);
+}
+
+/**
+ * Bring the main window to the front, creating it if it was closed.
+ * Used by the macOS dock-icon `activate` handler. Note: a hidden Quick Note
+ * window keeps `getAllWindows()` non-empty, so we track the main window
+ * explicitly rather than counting windows.
+ */
+function showMainWindow(): void {
+  if (!mainWin || mainWin.isDestroyed()) {
+    createWindow(serverPort);
+    return;
+  }
+  if (mainWin.isMinimized()) mainWin.restore();
+  mainWin.show();
+  mainWin.focus();
 }
 
 /** Default bottom-right placement on the primary display's work area. */
@@ -374,10 +395,8 @@ app.whenReady().then(async () => {
       saveSettings();
     }
 
-    // macOS: re-open the main window when the dock icon is clicked.
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow(serverPort);
-    });
+    // macOS: re-open / focus the main window when the dock icon is clicked.
+    app.on("activate", () => showMainWindow());
   } catch (err) {
     killSidecar();
     dialog.showErrorBox("Metahub failed to start", (err as Error).message);
