@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { changesAfterSeq, ingest, type Change } from "./crdt.ts";
 import { ftsAvailable } from "./db.ts";
 import { ensurePropIndex } from "./indexing.ts";
+import { repairHub } from "./integrity.ts";
 import { cacheDir, metahubHome } from "./paths.ts";
 import { blobPath } from "./cache.ts";
 
@@ -143,6 +144,8 @@ export interface RestoreResult {
   mode: "merge" | "reset";
   applied: number;
   blobs: number;
+  /** Repair changes emitted to fix invariants broken by the merged/restored data. */
+  repaired: number;
   safetyPath?: string;
 }
 
@@ -162,8 +165,11 @@ export async function restoreSnapshot(
   if (!opts.reset) {
     const applied = ingest(db, pkg.changes);
     rebuildDeclaredIndexes(db);
+    // Merging a peer's oplog can break invariants (e.g. a record created here
+    // into a database deleted there). Deterministic repair reconciles them.
+    const repaired = repairHub(db).applied;
     const blobs = await writeBlobs(pkg.blobs);
-    return { mode: "merge", applied, blobs };
+    return { mode: "merge", applied, blobs, repaired };
   }
 
   if (!opts.force)
@@ -204,7 +210,8 @@ export async function restoreSnapshot(
   });
   tx();
   rebuildDeclaredIndexes(db);
+  const repaired = repairHub(db).applied;
 
   const blobs = await writeBlobs(pkg.blobs);
-  return { mode: "reset", applied, blobs, safetyPath };
+  return { mode: "reset", applied, blobs, repaired, safetyPath };
 }

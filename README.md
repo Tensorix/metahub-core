@@ -151,6 +151,8 @@ chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
 | `mh doc append\|prepend <id> --body` | 在文档首/尾追加块 |
 | `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
 | `mh search <query>` | 全文检索（文档 + 记录） |
+| `mh doctor` | 只读体检：列出逻辑完整性问题（孤儿引用/单元格、重复路径、文档环、重名等） |
+| `mh repair [--dry-run]` | 确定性、幂等修复可自动修的问题（改动随 oplog 复制）；`--dry-run` 仅预览（等价 doctor） |
 | `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
 | `mh token [show\|refresh]` | 查看 / 轮换持久化的服务器鉴权 token（存于 `~/.metahub`，默认 30 天到期轮换） |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |

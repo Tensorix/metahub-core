@@ -33,8 +33,8 @@ export default defineCommand({
     });
     print(result, () =>
       result.mode === "reset"
-        ? `Restored (reset) from ${args.file}: ${result.applied} changes, ${result.blobs} blobs. Safety snapshot: ${result.safetyPath}`
-        : `Merged ${args.file}: ${result.applied} new changes, ${result.blobs} blobs`,
+        ? `Restored (reset) from ${args.file}: ${result.applied} changes, ${result.blobs} blobs, ${result.repaired} repairs. Safety snapshot: ${result.safetyPath}`
+        : `Merged ${args.file}: ${result.applied} new changes, ${result.blobs} blobs, ${result.repaired} repairs`,
     );
   }),
 });

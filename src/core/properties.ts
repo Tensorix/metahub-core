@@ -169,7 +169,17 @@ export function setPropertyWidth(db: Database, id: string, width: number): Prope
 }
 
 export function removeProperty(db: Database, id: string): boolean {
-  if (!getProperty(db, id)) return false;
+  const prop = getProperty(db, id);
+  if (!prop) return false;
   emit(db, "properties", id, "__deleted", 1);
+  // Clear this property's now-orphaned cells (keyed by property id in the records
+  // data JSON) so no dead cell data lingers — same cleanup repairHub would do off
+  // the property tombstone. emit(undefined) materializes to json_remove.
+  const rows = db
+    .query(
+      "SELECT id FROM records WHERE database_id = ? AND __deleted = 0 AND data ->> ? IS NOT NULL",
+    )
+    .all(prop.database_id, id) as { id: string }[];
+  for (const r of rows) emit(db, "records", r.id, id, undefined);
   return true;
 }

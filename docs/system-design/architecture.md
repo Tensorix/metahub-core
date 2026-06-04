@@ -17,6 +17,7 @@ Core API (src/core)
   - databases / properties / records
   - documents / blocks
   - resolve (引用解析) / context (当前库)
+  - integrity (完整性校验/修复 validateHub/repairHub)
   - search
   - snapshot / restore
   - sync client/server
@@ -155,6 +156,17 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 
 - merge: 将包内 oplog ingest 到当前库。
 - reset: 先保存安全快照,再清空领域表和 oplog,重放包内 changes。
+
+两种模式在重建索引后都会跑一次 `repairHub`,把合入数据可能破坏的不变量确定性修好(见下「完整性架构」)。
+
+## 完整性架构
+
+schema 刻意只有主键、无 FK/UNIQUE(per-field LWW oplog 需要前向引用、并发同名存活、幂等回放),完整性改在 core 层做最终一致约束(`src/core/integrity.ts`,见 [13-data-integrity](../impl-context/13-data-integrity/design.md)):
+
+- `validateHub(db)` 只读体检,`repairHub(db)` 确定性、幂等修复(循环到不动点,改动经 `emit()` 进 oplog 随 sync 复制)。
+- **两条铁律**:① 修复只针对 tombstone(`__deleted=1`),容忍 absence(可能是尚未到达的前向引用);② 修复是收敛态的纯函数,winner 用全序 `(created_hlc, id)`,故各节点独立修复后既收敛又有效。
+- **两层协作**:删除操作(`deleteDatabase`/`removeProperty`/`deleteDocument`)内置写时级联,删除节点一次性 emit,是主路径;`repairHub` 作为事后兜底,处理 sync 引入的坏数据(典型竞态:A 删库时 B 并发往该库建记录)。
+- **触发时机**:`restoreSnapshot`(merge+reset)后自动跑;`mh doctor`/`mh repair` 手动触发;**不**在每次 `/sync` 后自动跑(避免重扫描与修复 op 抖动)。
 
 ## 当前暂缓边界
 

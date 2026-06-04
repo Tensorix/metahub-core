@@ -258,7 +258,22 @@ export function prependDocument(db: Database, id: string, body: string): EditDoc
 export function deleteDocument(db: Database, id: string): boolean {
   if (!getDocument(db, id)) return false;
   emit(db, "documents", id, "__deleted", 1);
+  // Cascade off the tombstone, mirroring repairHub: the doc's blocks are derived
+  // content -> tombstone them; live child documents survive as roots -> unparent.
+  for (const b of liveChildIds(db, "doc_blocks", "doc_id", id))
+    emit(db, "doc_blocks", b, "__deleted", 1);
+  for (const c of liveChildIds(db, "documents", "parent_id", id))
+    emit(db, "documents", c, "parent_id", null);
   return true;
+}
+
+/** Ids of live rows in `table` whose `col` references `parentId`. */
+function liveChildIds(db: Database, table: string, col: string, parentId: string): string[] {
+  return (
+    db
+      .query(`SELECT id FROM ${table} WHERE ${col} = ? AND __deleted = 0`)
+      .all(parentId) as { id: string }[]
+  ).map((r) => r.id);
 }
 
 function countOccurrences(haystack: string, needle: string): number {

@@ -21,16 +21,27 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 - 歧义报错列候选(git 风格),不静默误选。
 - `mh completion` 提供 Tab 补全。
 
+## 已改善: 数据完整性
+
+原硬伤「schema 只保主键,关联字段全是弱引用,API/CLI/sync/restore 都可能写出孤儿/重复/断链,且在 CRDT 下被同步放大」已通过 core 层最终一致约束解决(见 [data-model.md](./data-model.md) 的「完整性约束」、`docs/impl-context/13-data-integrity/design.md`):
+
+- `validateHub`/`repairHub`(`src/core/integrity.ts`):只读体检 + 确定性、幂等修复。
+- 两条铁律:修复只针对 tombstone(容忍尚未到达的前向引用)、修复是收敛态纯函数(winner 取 `(created_hlc,id)` 全序,循环到不动点),故各节点独立修复后既收敛又有效。
+- 删除 database/property/document 内置写时级联(主路径);`repairHub` 兜底 sync 引入的坏数据,并在 `restore` 后自动跑。
+- `mh doctor` / `mh repair [--dry-run]` 暴露给用户;**绝不 hard-delete 用户内容**(重名只报告)。
+
+仍未做:把弱引用唯一性升级为写时强校验(当前重名只报告)、`/sync` 后增量校验、WebUI 暴露体检入口。
+
 ## P0: 当前体验硬伤
 
 ### 属性名唯一性
 
-当前同一 database 下可以创建重复属性名。引用解析遇到重名时已会**报错列候选**(不再静默误选),但仍缺少硬约束。
+当前同一 database 下可以创建重复属性名。引用解析遇到重名时已会**报错列候选**(不再静默误选),`mh doctor` 也会把重名列为 `dup_name`,但仍缺少**写时硬约束**(repair 只报告、不自动改名/删,以免破坏用户内容)。
 
 建议:
 
-- 默认禁止同库重复属性名。
-- 或者继续依赖解析层的歧义报错 + 要求使用 property id / 更长前缀。
+- 默认禁止同库重复属性名(写时强校验)。
+- 或者继续依赖解析层的歧义报错 + `doctor` 报告 + 要求使用 property id / 更长前缀。
 
 ### 友好参数错误
 

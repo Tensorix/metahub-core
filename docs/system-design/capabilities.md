@@ -52,7 +52,7 @@ mh prop remove <ref>
 - 可以手动创建 Notion-like 表结构。
 - 属性支持类型和基本配置校验。
 - `prop add` 的库用 `--db` 指定(默认当前库);`prop list` 的库可省略(默认当前库)。
-- 属性名当前没有唯一性约束,同名属性会造成引用歧义,但解析时会报错列候选而非静默误选。
+- 属性名当前没有唯一性约束,同名属性会造成引用歧义,但解析时会报错列候选而非静默误选;`mh doctor` 也会把同库重名列为 `dup_name`(仅报告,不自动改)。
 
 ## 记录
 
@@ -189,6 +189,24 @@ mh restore <file.mhpack> --reset --force
 - 快照包含 oplog、meta、peers 和 cache blobs。
 - 默认 restore 是 merge。
 - reset 前会保存安全快照。
+- restore(merge / reset)完成后自动跑一次 `repairHub`,修复合入数据可能破坏的不变量(见下「数据完整性」)。
+
+## 数据完整性
+
+已实现(见 [data-model.md](./data-model.md) 的「完整性约束」、[13-data-integrity](../impl-context/13-data-integrity/design.md)):
+
+```bash
+mh doctor                 # 只读体检,列出逻辑完整性问题
+mh repair                 # 确定性修复可自动修的问题(幂等,改动随 oplog 复制)
+mh repair --dry-run       # 仅报告将要修复什么,不改动(等价 doctor)
+```
+
+当前能力:
+
+- schema 保持弱约束(只主键,无 FK/UNIQUE,契合 CRDT 前向引用/并发同名/幂等回放),完整性在 core 层做最终一致约束。
+- `doctor` 归类:`broken_ref`(引用指向已删目标)、`orphan_cell`(已删属性残留单元格)、`dup_path`(同 site 同 path 冗余文件)、`parent_cycle`(文档父子环)为可自动修;`dup_name`(同库重名 database/property)、`bad_config`(非法 type/relation/select 配置)为仅报告。
+- `repair` 确定性、幂等(循环到不动点),winner 用 `(created_hlc, id)` 全序;只对 tombstone 动手(容忍尚未到达的前向引用),**绝不 hard-delete 用户内容**(重名只报告)。
+- 删除 database/property/document 时已内置写时级联(主路径);`repair` 兜底 sync 引入的坏数据(如 A 删库时 B 并发建记录)。
 
 ## 同步
 

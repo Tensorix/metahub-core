@@ -84,7 +84,7 @@ interface Change {
 databases(id, name, icon, created_hlc, __deleted)
 ```
 
-当前支持 create/list/get/delete。删除是软删除,写入 `__deleted = 1`。
+当前支持 create/list/get/delete。删除是软删除,写入 `__deleted = 1`。**删除会级联**(删除节点在删除时一次性 emit):其下 properties / records 跟随软删,documents 改为 detach(置空 `database_id`,内容作为独立文档保留)。见下文「完整性约束」。
 
 ## properties
 
@@ -138,7 +138,7 @@ records(id, database_id, created_hlc, order_key, data, __deleted)
 当前行为:
 
 - 读记录时把 property id 映射回 property name。
-- 删除属性后,旧记录 JSON 中对应 key 会被读取层跳过。
+- 删除属性时会**清理孤儿单元格**:`removeProperty` 软删属性的同时,把各记录 JSON 中该属性 key 删掉(`emit(undefined)` 物化为 `json_remove`);若属性 tombstone 经 sync 单独到达,`repairHub` 也会兜底清理(见「完整性约束」)。
 - `null` 是合法单元格值。
 - CLI 目前没有单独的 unset 命令来删除 JSON key。
 
@@ -172,6 +172,8 @@ documents(id, title, body, database_id, parent_id, created_hlc, __deleted)
 ```
 
 当前 `body` 是缓存列,不是文档正文的权威来源。对于 block-managed 文档,正文由 `doc_blocks` 重算。
+
+删除文档会**级联**:`deleteDocument` 软删自身后,软删其 `doc_blocks`(派生正文)、并把直接子文档 unparent(置空 `parent_id`,作为顶层文档保留)。改 `parent_id` 时 core 做防环校验;sync 仍可能合出环,由 `repairHub` 兜底打断(见「完整性约束」)。
 
 ## doc_blocks
 
@@ -225,6 +227,24 @@ site_files(id, site_id, path, content_type, encoding, content, created_hlc, __de
 - `(site_id, path)` 映射到稳定 id:重复上传同一路径复用该 id,「改文件」是同一 CRDT register 合并而非新行。
 - `encoding ∈ {utf8, base64, blob}`:文本(html/css/js/...)存 `utf8`、小二进制存 `base64`(均内联、随 oplog 同步);大于阈值的二进制经 `cache.ts` 的 `putBlob` 内容寻址,`encoding=blob`、`content=<sha256 hash>`。
 - **blob 取舍**:blob 字节存 `cache/`,目前不随 oplog 复制(`site_files` 清单照常同步),故跨机时大二进制需另行传输;主用例为文本时可接受。
+
+## 完整性约束(invariant)
+
+schema **刻意只保留主键,不加 FK / UNIQUE**:per-field LWW oplog 需要前向引用(单元格写入可先于父行到达)、并发同名创建都要存活才能收敛、回放必须幂等——这些都会被 SQL 硬约束破坏。因此跨实体引用(`database_id` / `parent_id` / `site_id` / `doc_id`、记录 JSON 的 property key)都是**弱引用**,完整性改在 core 层做**最终一致**的逻辑约束(`src/core/integrity.ts`,见 [13-data-integrity](../impl-context/13-data-integrity/design.md))。
+
+两条贯穿设计的硬性原则:
+
+1. **修复只针对 tombstone,容忍 absence。** 引用目标「查不到」在乱序 sync 下既可能是已删(`__deleted=1`),也可能是尚未到达的前向引用;只有目标存在且 `__deleted=1` 才判定断裂并修复,单纯缺失一律不动(读路径的 `__deleted=0` 过滤已优雅隐藏)。
+2. **修复是收敛态的确定性、幂等函数。** winner 用全序 `(created_hlc, id)`;`repairHub` 循环到不动点;所有修复经 `emit()` 复制,故各节点独立修复后既收敛又有效。
+
+两个入口:
+
+- `validateHub(db)`:只读体检,归类问题(`broken_ref` / `orphan_cell` / `dup_path` / `parent_cycle` 可自动修;`dup_name` / `bad_config` 仅报告)。
+- `repairHub(db)`:确定性修复可自动修的类别;**绝不 hard-delete 用户内容**——重复 database/property 名只报告,只删派生行(孤儿 cell/block)和路由冗余(同 site 同 path 文件,winner 取 `created_hlc` 最早者,与 `getFileForServe`/`fileIdFor` 读取一致)。
+
+两层协作:删除操作内置**写时级联**(databases/properties/documents,删除节点一次性 emit,是主路径);`repairHub` 是**事后兜底**,处理 sync 引入的坏数据(典型竞态:A 删库时 B 并发往该库建记录)。`repairHub` 在 `restoreSnapshot`(merge + reset)后自动跑一次,并由 `mh doctor` / `mh repair` 手动触发;**不**在每次 sync 后自动跑(避免重扫描与抖动)。
+
+`emit` 置空语义(关键):`emit(...,null)` → JSON `"null"`(把列/单元格置为 null 值);`emit(...,undefined)` → SQL NULL → 物化为 `json_remove`(真正删 key)。孤儿单元格清理必须用 `undefined`,否则 key 残留破坏不动点。
 
 ## search_fts
 
