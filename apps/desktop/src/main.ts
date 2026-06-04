@@ -24,8 +24,9 @@ import {
   Tray,
 } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { cachedBinaryPath, maybeUpdateCore } from "./core-updater";
 
 const HEALTH_PATH = "/health"; // mirrors src/core/sync/protocol.ts
 const HEALTH_TIMEOUT_MS = 15_000;
@@ -103,14 +104,33 @@ function sidecarBinaryName(): string {
 }
 
 /**
+ * Pick the packaged sidecar binary: prefer the auto-updated copy in the
+ * user-data cache (written by core-updater on a prior launch), falling back to
+ * the one bundled in Resources/. This is what gives us "core updates without
+ * repackaging the app" — see core-updater.ts.
+ */
+function packagedSidecarPath(): string {
+  const cached = cachedBinaryPath();
+  if (existsSync(cached)) {
+    try {
+      accessSync(cached, constants.X_OK);
+      return cached;
+    } catch {
+      /* not executable — fall back to the bundled copy */
+    }
+  }
+  return join(process.resourcesPath, sidecarBinaryName());
+}
+
+/**
  * Resolve how to launch the sidecar.
- *  - packaged: run the self-contained compiled binary from Resources/ (no Bun
- *    on PATH, no source tree needed).
+ *  - packaged: run the self-contained compiled binary (cached update, else the
+ *    one bundled in Resources/). No Bun on PATH, no source tree needed.
  *  - dev: `bun run src/server-entry.ts` from source (WebUI builds lazily).
  */
 function resolveSidecarCommand(): { cmd: string; args: string[] } {
   if (app.isPackaged) {
-    return { cmd: join(process.resourcesPath, sidecarBinaryName()), args: [] };
+    return { cmd: packagedSidecarPath(), args: [] };
   }
   return { cmd: resolveBun(), args: ["run", appFile("src", "server-entry.ts")] };
 }
@@ -232,6 +252,10 @@ function createWindow(port: number): void {
     // so its first open is instant. Deferred so it never competes with the
     // main window's first frame.
     setTimeout(prewarmQuickNote, 0);
+    // Check for a newer core sidecar in the background; if found it's cached and
+    // used on the NEXT launch (never hot-swapping the running one). Errors are
+    // swallowed inside maybeUpdateCore — this must never disrupt the app.
+    if (app.isPackaged) setTimeout(() => void maybeUpdateCore(), 3_000);
   });
   void win.loadURL(`http://127.0.0.1:${port}/`);
 }
@@ -408,6 +432,8 @@ function createTray(): void {
 // ---- IPC (preload bridge) --------------------------------------------------
 
 function registerIpc(): void {
+  ipcMain.handle("app:get-version", () => app.getVersion());
+
   ipcMain.handle("qn:get-settings", () => ({
     shortcut: settings.shortcut,
     alwaysOnTop: settings.alwaysOnTop,

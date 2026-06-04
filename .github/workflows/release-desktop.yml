@@ -1,0 +1,113 @@
+name: Release Desktop
+
+# 推送形如 desktop-v1.2.3 的 tag 时打包并发布桌面 App。
+# 用法：cd apps/desktop && bun run release（读 apps/desktop/package.json 版本打 desktop-v<ver> 并推送）
+#
+# electron-builder 无法跨 OS，故每个平台各打各的。打包出的 app 内嵌「该 tag 提交时的
+# core」作为离线 fallback；之后 core 更新由 app 运行时从 core Release 自动下载（见 core-updater.ts）。
+on:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── 1. 校验 tag 并创建 draft Release ──────────────────────────────────────
+  create:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag is on main
+        run: |
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main; refusing to release."
+            exit 1
+          fi
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; reusing it."
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --draft
+          fi
+
+  # ── 2. 三 OS 各自打包（dmg/zip、nsis、AppImage/deb）────────────────────────
+  desktop:
+    name: Desktop (${{ matrix.platform }})
+    needs: create
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            script: dist:mac
+          - os: windows-latest
+            platform: win
+            script: dist:win
+          - os: ubuntu-latest
+            platform: linux
+            script: dist:linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash # 让 glob 在 Windows runner 上也走 bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # 根依赖（核心库 + WebUI + sidecar 构建），以及 desktop 依赖（electron / electron-builder）
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          bun install --frozen-lockfile --cwd apps/desktop
+
+      - name: Package desktop app
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }} # electron-builder 期望存在；--publish never 不会真的发
+        run: bun run ${{ matrix.script }}
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(apps/desktop/release/*.dmg apps/desktop/release/*.zip \
+                 apps/desktop/release/*.exe \
+                 apps/desktop/release/*.AppImage apps/desktop/release/*.deb)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No desktop artifacts found for ${{ matrix.platform }}"
+            exit 1
+          fi
+          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
+
+  # ── 3. 全部上传成功后，把 draft 转正式发布 ──────────────────────────────
+  publish:
+    name: Publish release
+    needs: desktop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark release as published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false

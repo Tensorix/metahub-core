@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     chrome: process.versions.chrome,
     node: process.versions.node,
   },
+  appVersion: () => ipcRenderer.invoke("app:get-version"),
   quicknote: {
     getSettings: () => ipcRenderer.invoke("qn:get-settings"),
     setShortcut: (accelerator: string) => ipcRenderer.invoke("qn:set-shortcut", accelerator),

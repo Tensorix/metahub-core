@@ -26,6 +26,7 @@ import {
   deleteDocument,
 } from "../documents.ts";
 import { search } from "../search.ts";
+import pkg from "../../../package.json" with { type: "json" };
 
 // Read-only viewer + light editing for the browser UI. These routes wrap the
 // same core functions the CLI uses, so every write goes through `emit()` and
@@ -134,7 +135,16 @@ function handle(
 
 // --- routes -----------------------------------------------------------------
 
+const VersionSchema = z.object({ version: z.string() });
+
 export const webuiRoutes: Route[] = [
+  {
+    method: "GET",
+    path: "/api/version",
+    summary: "Version of the running core (sidecar). Used by the desktop app's settings footer.",
+    response: VersionSchema,
+    handler: () => Response.json({ version: pkg.version }),
+  },
   {
     method: "GET",
     path: "/api/databases",

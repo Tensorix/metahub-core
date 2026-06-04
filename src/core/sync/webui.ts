@@ -131,6 +131,9 @@ const HTML = `<!doctype html>
   .set-section { margin-top:34px; }
   .set-section-head { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px; }
   .set-section-desc { color:var(--fg-soft); margin-bottom:16px; }
+  .set-footer { margin-top:40px; padding-top:20px; border-top:1px solid var(--line); display:flex;
+    justify-content:center; gap:8px; color:var(--muted); font-size:12px; }
+  .set-footer-sep { opacity:.5; }
   .theme-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
   .theme-card { position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:10px;
     text-align:left; padding:16px; border:1px solid var(--line-strong); border-radius:var(--radius);

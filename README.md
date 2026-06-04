@@ -173,6 +173,24 @@ bun run build                     # 产出 dist/（库 + CLI + 类型声明）
 bun run build:binaries            # 产出 binaries/ 五平台二进制
 ```
 
+## 发布
+
+core 与 desktop **独立版本、独立发布**（推 tag 触发 GitHub Actions）：
+
+```sh
+# core（CLI 二进制 + sidecar 二进制 + 校验和 → .github/workflows/release.yml）
+#   先改根 package.json 版本并在 main 上提交，然后：
+bun run release                     # 打 v<version> 并推送
+
+# desktop 桌面 App（三平台安装包 → release-desktop.yml）
+#   先改 apps/desktop/package.json 版本并提交，然后：
+cd apps/desktop && bun run release  # 打 desktop-v<version> 并推送
+```
+
+core Release 里的 sidecar 二进制同时是**桌面端运行时自动更新 core 的下载源**：桌面 App 每次启动
+后台检查 core 最新版、下载校验后缓存，下次启动生效——故 core 高频发版无需重打包桌面 App。详见
+`apps/desktop/README.md`。
+
 ## 目录结构
 
 ```text

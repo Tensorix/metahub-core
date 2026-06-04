@@ -11,6 +11,8 @@ export interface QuickNoteSettings {
 export interface MetahubDesktop {
   platform: NodeJS.Platform;
   versions: { electron: string; chrome: string; node: string };
+  /** Electron shell (desktop app) version, from the main process. */
+  appVersion?: () => Promise<string>;
   quicknote?: {
     getSettings: () => Promise<QuickNoteSettings>;
     setShortcut: (accelerator: string) => Promise<QuickNoteSettings>;

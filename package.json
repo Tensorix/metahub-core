@@ -1,6 +1,6 @@
 {
   "name": "@tensorix/metahub",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Metahub core library and CLI",
   "type": "module",
   "main": "./dist/index.js",
@@ -26,7 +26,8 @@
     "build": "bun run scripts/build.ts",
     "build:binaries": "bun run scripts/compile-binaries.ts",
     "prepublishOnly": "bun run build",
-    "test": "bun test"
+    "test": "bun test",
+    "release": "bun run scripts/tag-release.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.5.0",

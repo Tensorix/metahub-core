@@ -165,6 +165,9 @@ export const api = {
   syncPeer: (url: string) => req<PeerSyncOutcome>("POST", `/api/peer/sync?url=${q(url)}`),
   listGrants: () => req<Grant[]>("GET", "/api/grants"),
   revokeGrant: (token: string) => req<{ revoked: number }>("DELETE", `/api/grant?token=${q(token)}`),
+
+  // version of the running core (sidecar)
+  version: () => req<{ version: string }>("GET", "/api/version"),
 };
 
 export const TYPE_META: Record<PropType, { ic: string; t: string }> = {

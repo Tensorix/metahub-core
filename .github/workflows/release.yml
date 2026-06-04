@@ -1,0 +1,119 @@
+name: Release Core
+
+# 推送形如 v1.2.3 的 core tag 时自动构建并发布 Release。
+# 用法：bun run release（在仓库根，自动读 package.json 版本打 v<ver> 并推送）
+#
+# 产物（同一个 Release 内）：
+#   - CLI 跨平台二进制 + SHA256SUMS.txt（单机交叉编译，ubuntu）
+#   - core sidecar 二进制 + SHA256SUMS-sidecars.txt（桌面端自动更新的数据源）
+#
+# 桌面 App 安装包是独立的 desktop-v* tag → 见 release-desktop.yml。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # 创建 Release / 上传产物需要写权限
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── 1. 校验 tag 并创建 draft Release（后续 job 往里上传产物）──────────────
+  create:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要历史来判断 tag 是否在 main 上
+
+      # tag 必须指向 main 分支上的提交，否则中止（“main 分支推了 tag”）
+      - name: Ensure tag is on main
+        run: |
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main; refusing to release."
+            exit 1
+          fi
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; reusing it."
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --draft
+          fi
+
+  # ── 2. CLI 跨平台二进制（单台 ubuntu 交叉编译全部目标）────────────────────
+  cli:
+    name: CLI binaries
+    needs: create
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - name: Build cross-platform binaries
+        run: bun run build:binaries
+
+      - name: Checksums
+        working-directory: binaries
+        run: sha256sum metahub-* > SHA256SUMS.txt
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" binaries/metahub-* binaries/SHA256SUMS.txt --clobber
+
+  # ── 3. core sidecar 二进制（桌面端运行时自动更新的下载源，纯 Bun 单机交叉编译）──
+  sidecars:
+    name: Core sidecars
+    needs: create
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      # 纯 Bun，不需要 electron；缺 dist/webui.js 时脚本会自动跑根 build。
+      - name: Build sidecar binaries
+        run: bun run apps/desktop/scripts/build-sidecars.ts
+
+      - name: Checksums
+        working-directory: apps/desktop/resources
+        run: sha256sum metahub-sidecar-* > SHA256SUMS-sidecars.txt
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            apps/desktop/resources/metahub-sidecar-* \
+            apps/desktop/resources/SHA256SUMS-sidecars.txt --clobber
+
+  # ── 4. 全部上传成功后，把 draft 转正式发布 ──────────────────────────────
+  publish:
+    name: Publish release
+    needs: [cli, sidecars]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mark release as published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false

@@ -6,7 +6,7 @@
   "author": "Tensorix <noahc1510@gmail.com>",
   "main": "dist/main.js",
   "scripts": {
-    "build:main": "bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist",
+    "build:main": "bun run scripts/gen-core-version.ts && bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist",
     "build:icon": "bun run scripts/gen-icon.ts",
     "build:sidecars": "bun run scripts/build-sidecars.ts",
     "build": "bun run build:main && bun run build:icon && bun run build:sidecars",
@@ -15,7 +15,8 @@
     "dist": "bun run build && electron-builder --publish never",
     "dist:mac": "bun run build && electron-builder --mac --publish never",
     "dist:win": "bun run build && electron-builder --win --publish never",
-    "dist:linux": "bun run build && electron-builder --linux --publish never"
+    "dist:linux": "bun run build && electron-builder --linux --publish never",
+    "release": "bun run scripts/tag-release.ts"
   },
   "devDependencies": {
     "electron": "^33.0.0",

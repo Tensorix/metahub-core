@@ -49,5 +49,34 @@ Installer creation is more constrained:
 - **Linux** `.deb` from macOS may need `dpkg`/`fakeroot` (AppImage usually
   builds fine). If unreliable, run `dist:linux` on Linux or in CI.
 
-Out of scope for now: code signing/notarization, auto-update (electron-updater),
-release CI.
+## Core auto-update
+
+The app ships **independently** from `core` (CLI + sync server). The packaged
+app embeds one sidecar as an offline fallback, but on every launch it checks the
+core GitHub Releases for a newer sidecar and downloads it into
+`<userData>/core/` — applied on the **next** launch (never hot-swapping the
+running one). See `src/core-updater.ts`. This lets core release frequently
+without repackaging the (slow, 3-OS) Electron app.
+
+- Channel: GitHub Releases (`v*` tags), verified against `SHA256SUMS-sidecars.txt`.
+- Unsigned-safe: a binary fetched programmatically isn't macOS-quarantined; we
+  strip the attribute defensively anyway.
+- `resolveSidecarCommand()` prefers the cached binary over the bundled one. The
+  Settings footer shows the **App** (shell) and **Core** (running sidecar, via
+  `/api/version`) versions.
+
+## Releasing
+
+Versions are independent. Bump the version, commit on `main`, then push the tag:
+
+```sh
+# desktop shell (3-OS installers → release-desktop.yml)
+#   bump apps/desktop/package.json, commit, then:
+cd apps/desktop && bun run release      # tags desktop-v<version>
+
+# core (CLI + sidecar binaries → release.yml; also the auto-update source)
+#   bump root package.json, commit, then:
+bun run release                          # tags v<version>
+```
+
+Out of scope for now: code signing/notarization (unsigned/ad-hoc by design).

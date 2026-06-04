@@ -56,6 +56,33 @@ export function SettingsView() {
       {typeof window !== "undefined" && window.metahubDesktop?.quicknote && <QuickNotesSettings />}
       <SyncDevices />
       <IssuedGrants />
+      <VersionFooter />
+    </div>
+  );
+}
+
+// ---- version footer --------------------------------------------------------
+
+/**
+ * Shows the running core version (from the sidecar's /api/version) and, in the
+ * desktop app, the Electron shell's app version. In the plain browser (CLI
+ * server) there is no `metahubDesktop` bridge, so only the core line is shown.
+ */
+function VersionFooter() {
+  const [core, setCore] = useState<string | null>(null);
+  const [appVer, setAppVer] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.version().then((v) => setCore(v.version)).catch(() => setCore(null));
+    const d = typeof window !== "undefined" ? window.metahubDesktop : undefined;
+    d?.appVersion?.().then(setAppVer).catch(() => setAppVer(null));
+  }, []);
+
+  return (
+    <div class="set-footer">
+      {appVer && <span>App {appVer}</span>}
+      {appVer && core && <span class="set-footer-sep">·</span>}
+      {core && <span>Core {core}</span>}
     </div>
   );
 }
