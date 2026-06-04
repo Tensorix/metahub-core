@@ -1,6 +1,6 @@
 {
   "name": "@tensorix/metahub",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Metahub core library and CLI",
   "type": "module",
   "main": "./dist/index.js",
