@@ -32,6 +32,20 @@ export interface RunningServer {
   stop: () => void;
 }
 
+/** Thrown when the requested port is already taken, so callers can react. */
+export class PortInUseError extends Error {
+  constructor(
+    readonly port: number,
+    readonly host: string,
+  ) {
+    super(
+      `port ${port} is already in use — another mh server may be running. ` +
+        `Stop it, or start on a free port with --port <n>.`,
+    );
+    this.name = "PortInUseError";
+  }
+}
+
 export interface ServerOptions {
   port?: number;
   /** Bind address. Defaults to 127.0.0.1; pass "0.0.0.0" to expose. */
@@ -83,7 +97,9 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
           graceMs: DEFAULT_GRACE_MS,
         };
 
-  const server = Bun.serve({
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    server = Bun.serve({
     port,
     hostname: host,
     async fetch(req) {
@@ -149,7 +165,22 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
 
       return new Response("not found", { status: 404 });
     },
-  });
+    });
+  } catch (e) {
+    // Bun.serve throws synchronously on a bind failure. Turn the raw EADDRINUSE
+    // (and the related EACCES) into an actionable message instead of a stack
+    // trace pointing into the framework.
+    const code = (e as { code?: string } | null)?.code;
+    if (code === "EADDRINUSE") {
+      throw new PortInUseError(port, host);
+    }
+    if (code === "EACCES") {
+      throw new Error(
+        `permission denied binding ${host}:${port} — ports below 1024 need elevated privileges; pick a higher port with --port`,
+      );
+    }
+    throw e;
+  }
   // Auto-sync timer: each tick runs one push/pull round against every enabled
   // peer. The DB is the source of truth, so peers added by `mh config` (a
   // separate process) are picked up on the next tick without a restart.

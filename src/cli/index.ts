@@ -19,8 +19,8 @@ import doctor from "./commands/doctor.ts";
 import repair from "./commands/repair.ts";
 import config from "./commands/config.ts";
 import { parseDuration } from "../core/sync/token.ts";
-import { startServer } from "../core/sync/server.ts";
-import { print } from "./output.ts";
+import { startServer, PortInUseError } from "../core/sync/server.ts";
+import { print, fail } from "./output.ts";
 import { showUsage } from "./help.ts";
 
 const main = defineCommand({
@@ -76,14 +76,20 @@ if (argv.includes("--server")) {
   // (mh config) then built-in defaults, so explicit flags keep top priority.
   const portFlag = flagValue(argv, "port");
   const intervalFlag = flagValue(argv, "sync-interval");
-  const s = startServer({
-    port: portFlag != null ? Number(portFlag) : undefined,
-    host: flagValue(argv, "host"),
-    debug: argv.includes("--debug"),
-    token: flagValue(argv, "token") ?? process.env.METAHUB_TOKEN,
-    syncIntervalMs: intervalFlag != null ? parseDuration(intervalFlag, 30_000) : undefined,
-    autoSync: argv.includes("--no-auto-sync") ? false : undefined,
-  });
+  let s: ReturnType<typeof startServer>;
+  try {
+    s = startServer({
+      port: portFlag != null ? Number(portFlag) : undefined,
+      host: flagValue(argv, "host"),
+      debug: argv.includes("--debug"),
+      token: flagValue(argv, "token") ?? process.env.METAHUB_TOKEN,
+      syncIntervalMs: intervalFlag != null ? parseDuration(intervalFlag, 30_000) : undefined,
+      autoSync: argv.includes("--no-auto-sync") ? false : undefined,
+    });
+  } catch (e) {
+    // A clean one-line message + exit 1 instead of Bun's bind stack trace.
+    fail(e instanceof Error ? e.message : String(e), e instanceof PortInUseError ? 98 : 1);
+  }
   const expNote =
     s.token && s.exp != null && Number.isFinite(s.exp)
       ? ` (expires ${new Date(s.exp).toISOString()})`
