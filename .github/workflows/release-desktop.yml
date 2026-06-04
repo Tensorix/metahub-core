@@ -110,4 +110,5 @@ jobs:
       - name: Mark release as published
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }} # no checkout here; tell gh which repo
         run: gh release edit "${GITHUB_REF_NAME}" --draft=false
