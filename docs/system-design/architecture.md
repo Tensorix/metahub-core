@@ -116,8 +116,8 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 搜索模块当前实现:
 
 - 优先使用 SQLite FTS5。
-- 使用 `meta.search_hlc` 记录已索引水位。
-- 只要 oplog 最大 HLC 变化,会清空并重建 `search_fts`。
+- 用 `meta.search_seq`(`crdt_changes.rowid` 游标)+ `meta.search_index_version` 记录索引进度与版本。
+- 搜索前**增量**维护:只读取游标之后的 oplog 变更,归并受影响对象,重写其 `search_fts` 行;首次建索引 / 版本升级 / 快照 reset / 手动修复时才全量重建。整个增量更新与游标推进在同一事务内,保证不漏索引。
 - FTS 无命中或不可用时使用 LIKE 子串搜索。
 
 当前搜索是全文搜索 MVP,不是面向 IM 上下文检索的完整体验。

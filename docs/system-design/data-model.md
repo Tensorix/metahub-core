@@ -28,7 +28,7 @@ search_fts
 
 - `node_id`: 当前节点稳定 id。
 - `hlc`: 当前节点最后一次 Hybrid Logical Clock。
-- `search_hlc`: FTS 已索引到的 oplog 水位。
+- `search_seq`: 搜索索引(`search_fts`)已处理到的 `crdt_changes.rowid` 增量游标;`search_index_version`: 索引逻辑版本号(规则变更时 bump → 触发全量重建)。两者取代旧的 `search_hlc`(见 [14-incremental-search-index](../impl-context/14-incremental-search-index/design.md))。
 - `current_db`: 「当前数据库」指针(本机 UI 上下文,不进 oplog、不随 sync)。读取时惰性校验所指库是否仍存在,失效则自动清除(见 `src/core/context.ts`)。
 - `auth_token` / `auth_token_exp` / `auth_token_prev` / `auth_token_prev_exp`: 持久化的服务器鉴权 token、其过期时刻(epoch ms)、上一代 token 及其可被交换的截止时刻(本机服务器密钥,不进 oplog、不随 sync;见 `src/core/sync/token.ts`、[10-persistent-token](../impl-context/10-persistent-token/design.md))。
 - `cfg_host` / `cfg_port` / `cfg_sync_interval` / `cfg_auto_sync`: `mh config` 持久化的服务器级设置(绑定地址、端口、自动同步间隔 ms、自动同步开关),`--server` 启动时作默认值(CLI flag 覆盖);本机配置,不进 oplog、不随 sync(见 `src/core/config.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。
@@ -259,4 +259,4 @@ search_fts(kind, id, database_id, title, body)
 - document: title + body。
 - record: 文本类属性值 group concat 后作为 body。
 
-当前索引重建策略是全量重建,不是增量更新。
+索引维护为**增量**:搜索前按 `meta.search_seq`(`crdt_changes.rowid` 游标)读取游标之后的新变更,归并出受影响的文档/记录,只删除并重写这些对象的 FTS 行。全量重建仅作兜底:首次建索引、`search_index_version` 升级、快照 reset、或手动修复(`rebuildSearchIndex`)。删库/删属性经级联产生的 `__deleted` 变更也会经增量路由自动从索引移除。详见 [14-incremental-search-index](../impl-context/14-incremental-search-index/design.md)。

@@ -192,7 +192,7 @@ export async function restoreSnapshot(
       "peers",
     ])
       db.query(`DELETE FROM ${t}`).run();
-    db.query("DELETE FROM meta WHERE key = 'search_hlc'").run();
+    db.query("DELETE FROM meta WHERE key IN ('search_seq', 'search_index_version')").run();
     if (ftsAvailable(db)) db.query("DELETE FROM search_fts").run();
 
     const setMeta = db.query(
