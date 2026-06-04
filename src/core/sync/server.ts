@@ -24,10 +24,18 @@ export interface RunningServer {
   server: ReturnType<typeof Bun.serve>;
   node: string;
   port: number;
+  /** Resolved bind address (loopback unless explicitly exposed). */
+  host: string;
   /** The active token, or null in --debug mode (auth disabled). */
   token: string | null;
   /** Token expiry (epoch ms); Infinity for a static --token, null when auth is off. */
   exp: number | null;
+  /** How the token was sourced: rotating (managed), fixed (static), or off (disabled). */
+  authMode: "managed" | "static" | "disabled";
+  /** Whether the auto-sync timer is running. */
+  autoSync: boolean;
+  /** Auto-sync poll interval in ms (meaningful only when autoSync). */
+  syncIntervalMs: number;
   /** Stop the server and the auto-sync timer. */
   stop: () => void;
 }
@@ -193,12 +201,21 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   }
 
   const active = activeToken(auth);
+  const authMode: RunningServer["authMode"] = opts.debug
+    ? "disabled"
+    : opts.token
+      ? "static"
+      : "managed";
   return {
     server,
     node,
     port: server.port ?? port,
+    host,
     token: active?.token ?? null,
     exp: active?.exp ?? null,
+    authMode,
+    autoSync: Boolean(autoSync && syncIntervalMs > 0),
+    syncIntervalMs,
     stop() {
       if (timer) clearInterval(timer);
       server.stop();

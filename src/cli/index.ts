@@ -21,6 +21,7 @@ import config from "./commands/config.ts";
 import { parseDuration } from "../core/sync/token.ts";
 import { startServer, PortInUseError } from "../core/sync/server.ts";
 import { print, fail } from "./output.ts";
+import { renderStartupBanner } from "./banner.ts";
 import { showUsage } from "./help.ts";
 
 const main = defineCommand({
@@ -90,22 +91,36 @@ if (argv.includes("--server")) {
     // A clean one-line message + exit 1 instead of Bun's bind stack trace.
     fail(e instanceof Error ? e.message : String(e), e instanceof PortInUseError ? 98 : 1);
   }
-  const expNote =
-    s.token && s.exp != null && Number.isFinite(s.exp)
-      ? ` (expires ${new Date(s.exp).toISOString()})`
-      : "";
+  const webui = `http://localhost:${s.port}`;
+  const docs = `${webui}/docs`;
   print(
     {
       server: "listening",
       port: s.port,
+      host: s.host,
       nodeId: s.node,
       docs: `/docs`,
+      webui,
+      authMode: s.authMode,
       token: s.token,
       exp: s.exp != null && Number.isFinite(s.exp) ? s.exp : null,
+      autoSync: s.autoSync,
+      syncIntervalMs: s.syncIntervalMs,
     },
     () =>
-      `metahub sync server on :${s.port} (node ${s.node}) — docs at http://localhost:${s.port}/docs\n` +
-      (s.token ? `auth token: ${s.token}${expNote}` : `auth: disabled (--debug)`),
+      renderStartupBanner({
+        version: pkg.version,
+        host: s.host,
+        port: s.port,
+        webuiUrl: webui,
+        docsUrl: docs,
+        authMode: s.authMode,
+        token: s.token,
+        exp: s.exp,
+        node: s.node,
+        autoSync: s.autoSync,
+        syncIntervalMs: s.syncIntervalMs,
+      }),
   );
 } else {
   runMain(main, { showUsage });
