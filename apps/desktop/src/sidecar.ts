@@ -23,6 +23,13 @@ export function runSidecar(): void {
   // Contract with main.ts: this exact prefix is matched to extract the port.
   console.log(`METAHUB_PORT=${s.port}`);
 
+  // Pre-build the WebUI bundle in the background so the window's first
+  // `/webui.js` request doesn't pay for a cold `Bun.build` (dev only; the
+  // packaged bundle is embedded). Fire-and-forget — must not delay the port
+  // line above, and webui.ts stays out of the CLI's startup import graph since
+  // only this sidecar entry pulls it in.
+  void import("../../../src/core/sync/webui.ts").then((m) => m.warmWebui()).catch(() => {});
+
   const shutdown = (): void => {
     try {
       s.stop();

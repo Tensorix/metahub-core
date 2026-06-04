@@ -15,7 +15,13 @@ const HTML = `<!doctype html>
 <title>Metahub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Load web fonts without blocking first paint: media="print" keeps the
+     stylesheet non-render-blocking, then onload flips it to "all". The page
+     paints instantly with the system-font fallbacks baked into --ui/--mono and
+     swaps to the web fonts when they arrive (or stays on system fonts offline).
+     This is what kept the desktop cold-start white for seconds on slow networks. -->
+<link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('mh-theme')||'system'}catch(e){}</script>
 <style>
   :root {
@@ -737,6 +743,19 @@ async function getJs(): Promise<string> {
   if (!res.success) throw new AggregateError(res.logs, "webui build failed");
   cachedJs = await res.outputs[0]!.text();
   return cachedJs;
+}
+
+/** Pre-build & cache the JS bundle ahead of the first request. In dev the first
+ *  `/webui.js` hit otherwise pays for a `Bun.build` (1–3s) that blocks the
+ *  WebUI's first paint; warming it right after the server starts listening
+ *  moves that cost off the cold-start critical path. In packaged builds the
+ *  bundle is already embedded via setWebuiBundle(), so this is a no-op. */
+export async function warmWebui(): Promise<void> {
+  try {
+    await getJs();
+  } catch {
+    // best-effort: a failed warm just falls back to building on first request
+  }
 }
 
 /** Handle WebUI asset requests. Returns null for anything else so the caller

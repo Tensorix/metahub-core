@@ -19,6 +19,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  nativeTheme,
   screen,
   Tray,
 } from "electron";
@@ -52,7 +53,10 @@ interface QuickNoteSettings {
 let sidecar: ChildProcess | null = null;
 let serverPort = 0;
 let mainWin: BrowserWindow | null = null;
+let splashWin: BrowserWindow | null = null;
 let quickWin: BrowserWindow | null = null;
+let quickReady = false; // has the quick-note window painted at least once?
+let quickPendingShow = false; // reveal the quick-note window as soon as it paints
 let tray: Tray | null = null;
 let currentShortcut: string | null = null;
 let quitting = false;
@@ -167,6 +171,38 @@ async function waitForHealth(port: number): Promise<void> {
 
 // ---- windows ---------------------------------------------------------------
 
+/**
+ * Show a tiny branded splash immediately at startup. It covers the whole cold
+ * start — sidecar spawn, /health poll, and the WebUI's first paint — so the
+ * user never stares at a blank/white window. It is self-contained (no sidecar,
+ * no CDN) so it paints instantly; see apps/desktop/assets/splash.html.
+ */
+function createSplash(): void {
+  const win = new BrowserWindow({
+    width: 360,
+    height: 240,
+    frame: false,
+    resizable: false,
+    movable: true,
+    center: true,
+    show: false,
+    skipTaskbar: true,
+    title: "Metahub",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff",
+  });
+  splashWin = win;
+  win.on("closed", () => {
+    if (splashWin === win) splashWin = null;
+  });
+  win.once("ready-to-show", () => win.show());
+  void win.loadFile(appFile("assets", "splash.html"));
+}
+
+function closeSplash(): void {
+  if (splashWin && !splashWin.isDestroyed()) splashWin.close();
+  splashWin = null;
+}
+
 function createWindow(port: number): void {
   const win = new BrowserWindow({
     width: 1280,
@@ -174,7 +210,10 @@ function createWindow(port: number): void {
     minWidth: 720,
     minHeight: 480,
     title: "Metahub",
-    backgroundColor: "#ffffff",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff",
+    // Stay hidden until the renderer has painted its first frame, then reveal
+    // and hand off from the splash — no white flash, no blank window.
+    show: false,
     webPreferences: {
       preload: appFile("dist", "preload.js"),
       contextIsolation: true,
@@ -184,6 +223,15 @@ function createWindow(port: number): void {
   mainWin = win;
   win.on("closed", () => {
     if (mainWin === win) mainWin = null;
+  });
+  win.once("ready-to-show", () => {
+    win.show();
+    win.focus();
+    closeSplash();
+    // Main window is up; quietly warm the quick-note window in the background
+    // so its first open is instant. Deferred so it never competes with the
+    // main window's first frame.
+    setTimeout(prewarmQuickNote, 0);
   });
   void win.loadURL(`http://127.0.0.1:${port}/`);
 }
@@ -249,8 +297,15 @@ function createQuickNoteWindow(): BrowserWindow {
     },
   });
 
+  quickReady = false;
   void win.loadURL(`http://127.0.0.1:${serverPort}/#quick`);
-  win.once("ready-to-show", () => win.show());
+  // Decouple create from show: ready-to-show only reveals the window if a show
+  // was actually requested. This lets us pre-warm it hidden at startup (render
+  // in the background) without it popping up — the first real open is instant.
+  win.once("ready-to-show", () => {
+    quickReady = true;
+    if (quickPendingShow && !win.isDestroyed()) revealQuickNote(win);
+  });
 
   const persistBounds = debounce(() => {
     if (!win.isDestroyed()) {
@@ -266,24 +321,47 @@ function createQuickNoteWindow(): BrowserWindow {
   win.on("close", (e) => {
     if (!quitting) {
       e.preventDefault();
+      quickPendingShow = false;
       win.hide();
     }
   });
   win.on("closed", () => {
-    if (quickWin === win) quickWin = null;
+    if (quickWin === win) {
+      quickWin = null;
+      quickReady = false;
+    }
   });
 
   return win;
 }
 
+/** Reveal the (already-rendered) quick-note window. */
+function revealQuickNote(win: BrowserWindow): void {
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+/**
+ * Create the quick-note window hidden and let it render in the background, so
+ * the first shortcut/tray open reveals an already-painted window with no white
+ * flash. Called once the main window is up; a cheap no-op if already warm.
+ */
+function prewarmQuickNote(): void {
+  if (!quickWin || quickWin.isDestroyed()) quickWin = createQuickNoteWindow();
+}
+
 function showQuickNote(): void {
   if (!quickWin || quickWin.isDestroyed()) quickWin = createQuickNoteWindow();
-  quickWin.show();
-  quickWin.focus();
+  quickPendingShow = true;
+  // Pre-warmed at startup → already painted → reveal instantly. If the user is
+  // fast enough to beat first paint, the ready-to-show handler reveals it then.
+  if (quickReady) revealQuickNote(quickWin);
 }
 
 function toggleQuickNote(): void {
   if (quickWin && !quickWin.isDestroyed() && quickWin.isVisible() && quickWin.isFocused()) {
+    quickPendingShow = false;
     quickWin.hide();
   } else {
     showQuickNote();
@@ -381,6 +459,8 @@ function killSidecar(): void {
 
 app.whenReady().then(async () => {
   loadSettings();
+  // Branded feedback up front, before any slow startup work begins.
+  createSplash();
   try {
     serverPort = await startSidecar();
     await waitForHealth(serverPort);
@@ -398,6 +478,7 @@ app.whenReady().then(async () => {
     // macOS: re-open / focus the main window when the dock icon is clicked.
     app.on("activate", () => showMainWindow());
   } catch (err) {
+    closeSplash();
     killSidecar();
     dialog.showErrorBox("Metahub failed to start", (err as Error).message);
     app.quit();
