@@ -4,6 +4,11 @@
   "private": true,
   "description": "Metahub desktop app (Electron shell over the core sync server)",
   "author": "Tensorix <noahc1510@gmail.com>",
+  "homepage": "https://github.com/Tensorix/metahub-core",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Tensorix/metahub-core.git"
+  },
   "main": "dist/main.js",
   "scripts": {
     "build:main": "bun run scripts/gen-core-version.ts && bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist",

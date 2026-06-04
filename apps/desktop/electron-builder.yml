@@ -2,6 +2,16 @@ appId: org.tensorix.metahub
 productName: Metahub
 copyright: Copyright © Tensorix
 
+# We never use electron-updater (the shell is updated manually; core updates via
+# core-updater.ts). But electron-builder still needs a publish provider to
+# compute update-channel metadata during packaging — without it, zip/deb targets
+# crash in computeChannelNames. The actual upload is done by `gh` in CI, so the
+# scripts pass `--publish never` and this is never used to upload.
+publish:
+  provider: github
+  owner: Tensorix
+  repo: metahub-core
+
 directories:
   output: release
   buildResources: build # build/icon.png → auto-derived icns/ico/png
@@ -38,6 +48,9 @@ win:
 linux:
   category: Utility
   maintainer: Tensorix <noahc1510@gmail.com>
+  # Without this the deb uses the scoped npm name (@tensorix/metahub-desktop),
+  # producing a path with a slash. Keep artifact names flat and clean.
+  artifactName: ${productName}-${version}-${arch}.${ext}
   target:
     - target: AppImage
       arch: [x64]
