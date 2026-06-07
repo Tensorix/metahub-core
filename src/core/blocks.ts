@@ -88,16 +88,6 @@ export function serializeDocBlocks(
   return out.join("\n");
 }
 
-/** Split markdown into block texts (no leading/trailing blank lines, no empties). */
-export function parseBlocks(md: string): string[] {
-  return parseDocBlocks(md).map((b) => b.text);
-}
-
-/** Join block texts back into a markdown body (canonical single-blank separators). */
-export function serializeBlocks(texts: readonly (string | null)[]): string {
-  return texts.filter((t): t is string => !!t && t.length > 0).join("\n\n");
-}
-
 export type ReconcileItem = { keep: number } | { insert: string };
 export interface ReconcilePlan {
   /** The new block sequence, each item either reusing an old block or inserting text. */

@@ -1,69 +1,25 @@
 import { test, expect } from "bun:test";
 import {
-  parseBlocks,
-  serializeBlocks,
   parseDocBlocks,
   serializeDocBlocks,
   reconcile,
 } from "./blocks.ts";
 
-test("splits paragraphs on blank lines", () => {
-  expect(parseBlocks("a\n\nb\n\nc")).toEqual(["a", "b", "c"]);
-});
-
-test("collapses blank runs and trims edges", () => {
-  expect(parseBlocks("\n\n# Title\n\n\n\npara one\n\n")).toEqual([
-    "# Title",
-    "para one",
-  ]);
-});
-
-test("multi-line paragraph stays one block", () => {
-  expect(parseBlocks("line one\nline two\n\nnext")).toEqual([
+test("parseDocBlocks block splitting: multi-line paragraphs, ~~~/``` fences, empty input", () => {
+  // a multi-line paragraph stays one block
+  expect(parseDocBlocks("line one\nline two\n\nnext").map((b) => b.text)).toEqual([
     "line one\nline two",
     "next",
   ]);
-});
-
-test("fenced code block keeps internal blank lines as one block", () => {
-  const md = "intro\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\noutro";
-  expect(parseBlocks(md)).toEqual([
-    "intro",
-    "```ts\nconst a = 1;\n\nconst b = 2;\n```",
-    "outro",
+  // tilde and backtick fences each stay whole; internal blank lines don't split
+  expect(parseDocBlocks("~~~\na\n\nb\n~~~\n\n```\nc\n```").map((b) => b.text)).toEqual([
+    "~~~\na\n\nb\n~~~",
+    "```\nc\n```",
   ]);
-});
-
-test("tilde fences and adjacent fences", () => {
-  const md = "~~~\na\n\nb\n~~~\n\n```\nc\n```";
-  expect(parseBlocks(md)).toEqual(["~~~\na\n\nb\n~~~", "```\nc\n```"]);
-});
-
-test("empty input yields no blocks", () => {
-  expect(parseBlocks("")).toEqual([]);
-  expect(parseBlocks("\n\n  \n")).toEqual([]);
-});
-
-test("serialize joins with a blank line and drops empties", () => {
-  expect(serializeBlocks(["a", "b", "c"])).toBe("a\n\nb\n\nc");
-  expect(serializeBlocks(["a", "", null, "b"])).toBe("a\n\nb");
-});
-
-test("parse/serialize round-trips for varied content", () => {
-  for (const md of [
-    "a\n\nb\n\nc",
-    "# H\n\npara\n\n```\ncode\n\nmore\n```\n\nend",
-    "single",
-    "line one\nline two\n\n- item\n- item",
-  ]) {
-    const blocks = parseBlocks(md);
-    // serialize -> parse is the identity on the parsed block list
-    expect(parseBlocks(serializeBlocks(blocks))).toEqual(blocks);
-    // serialize is idempotent through a second parse
-    expect(serializeBlocks(parseBlocks(serializeBlocks(blocks)))).toBe(
-      serializeBlocks(blocks),
-    );
-  }
+  // leading blanks trimmed; empty / whitespace-only input yields no blocks
+  expect(parseDocBlocks("\n\n# Title\n\npara").map((b) => b.text)).toEqual(["# Title", "para"]);
+  expect(parseDocBlocks("")).toEqual([]);
+  expect(parseDocBlocks("\n\n  \n")).toEqual([]);
 });
 
 test("parseDocBlocks records extra blank lines beyond the separator", () => {
@@ -84,9 +40,9 @@ test("parseDocBlocks records extra blank lines beyond the separator", () => {
 test("serializeDocBlocks re-emits kept blank-line runs", () => {
   expect(serializeDocBlocks([{ text: "a", blankAfter: 0 }, { text: "b", blankAfter: 0 }])).toBe("a\n\nb");
   expect(serializeDocBlocks([{ text: "a", blankAfter: 1 }, { text: "b", blankAfter: 2 }])).toBe("a\n\n\nb\n\n");
-  // gap-free serialization matches the canonical join
+  // gap-free serialization is the canonical single-blank join
   expect(serializeDocBlocks([{ text: "a", blankAfter: 0 }, { text: "b", blankAfter: 0 }, { text: "c", blankAfter: 0 }]))
-    .toBe(serializeBlocks(["a", "b", "c"]));
+    .toBe("a\n\nb\n\nc");
 });
 
 test("doc-block blank runs round-trip and stay idempotent", () => {
