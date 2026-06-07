@@ -114,15 +114,20 @@ export function blockToText(b: Block): string {
 export function blocksFromBody(body: string | null | undefined): Block[] {
   const normalized = (body ?? "").replace(/\r\n?/g, "\n");
   const lines = normalized ? normalized.split("\n") : [];
-  const blocks = parseContainer(lines, 0, 0).blocks;
+  const blocks = parseContainer(lines, 0, 0, true).blocks;
   normalizeNumbering(blocks);
   // Blank lines the user left at the very end (for spacing) become empty
   // paragraphs so the gap survives a save/reload. One trailing newline is the
   // conventional file terminator and is ignored; every newline beyond it is a
-  // real blank line.
+  // real blank line. (Interior blank runs are handled inside parseContainer.)
   const trailingNewlines = normalized.length - normalized.replace(/\n+$/, "").length;
   for (let i = 1; i < trailingNewlines; i++) blocks.push({ id: genId(), type: "p", content: "" });
   return blocks;
+}
+
+/** An empty top-level paragraph — vertical spacing the user inserted. */
+function isBlankParagraph(b: Block): boolean {
+  return b.type === "p" && b.content.trim() === "" && !b.children?.length;
 }
 
 /**
@@ -166,24 +171,32 @@ function normalizeNumbering(blocks: Block[]): void {
   }
 }
 
-/** Editor block tree -> body Markdown. Empty paragraphs are dropped, except a
- *  run at the very end: those trailing blank lines are kept so a gap the user
- *  left at the bottom of the document survives the round-trip. */
+/** Editor block tree -> body Markdown. Empty top-level paragraphs are the user's
+ *  vertical spacing: each one becomes an extra blank line (beyond the standard
+ *  single-blank separator), so interior and trailing gaps survive the round-trip.
+ *  Other empty blocks (list items, tables, code) are still dropped. */
 export function bodyFromBlocks(blocks: Block[]): string {
-  const core = renderContainer(blocks, 0).join("\n").replace(/\n+$/, "");
-  const trailing = trailingEmptyParagraphs(blocks);
-  return trailing > 0 ? `${core}${"\n".repeat(trailing + 1)}` : core;
-}
-
-/** Count the run of empty top-level paragraphs at the end of the document. */
-function trailingEmptyParagraphs(blocks: readonly Block[]): number {
-  let n = 0;
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const b = blocks[i]!;
-    if (b.type === "p" && b.content.trim() === "" && !b.children?.length) n++;
-    else break;
+  const numbers = computeListNumbers(blocks);
+  const out: string[] = [];
+  let prev: Block | null = null;
+  let extraBlanks = 0; // empty paragraphs seen since the last rendered block
+  for (const b of blocks) {
+    if (isBlankParagraph(b)) {
+      if (out.length) extraBlanks++; // leading empties are dropped
+      continue;
+    }
+    if (!shouldPersist(b)) continue;
+    if (out.length) {
+      const sep = shouldSeparate(prev, b) ? 1 : 0;
+      for (let k = 0; k < sep + extraBlanks; k++) out.push("");
+    }
+    out.push(...renderBlock(b, 0, numbers.get(b.id) ?? 1));
+    prev = b;
+    extraBlanks = 0;
   }
-  return n;
+  // Trailing empty paragraphs: their blank lines plus the conventional terminator.
+  if (out.length && extraBlanks > 0) for (let k = 0; k <= extraBlanks; k++) out.push("");
+  return out.join("\n");
 }
 
 export function shortcutFromInput(text: string, key: " " | "Enter"): Shortcut | null {
@@ -210,17 +223,27 @@ function parseContainer(
   lines: string[],
   start: number,
   minIndent: number,
+  top = false,
 ): { blocks: Block[]; next: number } {
   const blocks: Block[] = [];
   let i = start;
+  let blankRun = 0;
 
   while (i < lines.length) {
     const line = lines[i]!;
     if (line.trim() === "") {
+      blankRun++;
       i++;
       continue;
     }
     if (leadingIndent(line) < minIndent) break;
+
+    // Top-level only: blank lines between blocks beyond the single separator are
+    // spacing the user inserted — materialize the extras as empty paragraphs so
+    // they survive the round-trip. Trailing blanks are left for blocksFromBody.
+    if (top && blocks.length && blankRun > 1)
+      for (let k = 1; k < blankRun; k++) blocks.push({ id: genId(), type: "p", content: "" });
+    blankRun = 0;
 
     const parsed =
       parseListItem(lines, i, minIndent) ??

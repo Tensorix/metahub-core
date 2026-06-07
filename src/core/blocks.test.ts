@@ -1,5 +1,11 @@
 import { test, expect } from "bun:test";
-import { parseBlocks, serializeBlocks, reconcile } from "./blocks.ts";
+import {
+  parseBlocks,
+  serializeBlocks,
+  parseDocBlocks,
+  serializeDocBlocks,
+  reconcile,
+} from "./blocks.ts";
 
 test("splits paragraphs on blank lines", () => {
   expect(parseBlocks("a\n\nb\n\nc")).toEqual(["a", "b", "c"]);
@@ -57,6 +63,42 @@ test("parse/serialize round-trips for varied content", () => {
     expect(serializeBlocks(parseBlocks(serializeBlocks(blocks)))).toBe(
       serializeBlocks(blocks),
     );
+  }
+});
+
+test("parseDocBlocks records extra blank lines beyond the separator", () => {
+  // one blank line = standard separator (blankAfter 0)
+  expect(parseDocBlocks("a\n\nb")).toEqual([
+    { text: "a", blankAfter: 0 },
+    { text: "b", blankAfter: 0 },
+  ]);
+  // two blank lines between = 1 extra; trailing run counts in full on the last block
+  expect(parseDocBlocks("a\n\n\nb\n\n")).toEqual([
+    { text: "a", blankAfter: 1 },
+    { text: "b", blankAfter: 2 },
+  ]);
+  // leading blank lines are dropped
+  expect(parseDocBlocks("\n\na")).toEqual([{ text: "a", blankAfter: 0 }]);
+});
+
+test("serializeDocBlocks re-emits kept blank-line runs", () => {
+  expect(serializeDocBlocks([{ text: "a", blankAfter: 0 }, { text: "b", blankAfter: 0 }])).toBe("a\n\nb");
+  expect(serializeDocBlocks([{ text: "a", blankAfter: 1 }, { text: "b", blankAfter: 2 }])).toBe("a\n\n\nb\n\n");
+  // gap-free serialization matches the canonical join
+  expect(serializeDocBlocks([{ text: "a", blankAfter: 0 }, { text: "b", blankAfter: 0 }, { text: "c", blankAfter: 0 }]))
+    .toBe(serializeBlocks(["a", "b", "c"]));
+});
+
+test("doc-block blank runs round-trip and stay idempotent", () => {
+  for (const md of [
+    "a\n\n\nb",            // interior extra blank line
+    "keep\n\n",            // trailing blank line
+    "x\n\n\n\ny\n\n\n",    // multiple interior + trailing
+    "intro\n\n```ts\nq\n\nw\n```\n\n\nend", // fence with extra blank after
+  ]) {
+    const blocks = parseDocBlocks(md);
+    expect(serializeDocBlocks(blocks)).toBe(md);
+    expect(parseDocBlocks(serializeDocBlocks(blocks))).toEqual(blocks);
   }
 });
 

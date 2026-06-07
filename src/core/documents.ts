@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
 import { emit } from "./crdt.ts";
-import { parseBlocks, serializeBlocks, reconcile } from "./blocks.ts";
+import { parseDocBlocks, serializeDocBlocks, reconcile, type DocBlock } from "./blocks.ts";
 import { keysBetween } from "./fracdex.ts";
 
 export interface DocumentRow {
@@ -19,6 +19,7 @@ interface BlockRow {
   id: string;
   text: string;
   order_key: string;
+  blank_after: number;
 }
 
 // ---- block helpers ---------------------------------------------------------
@@ -26,7 +27,7 @@ interface BlockRow {
 function liveBlocks(db: Database, docId: string): BlockRow[] {
   return db
     .query(
-      "SELECT id, text, order_key FROM doc_blocks WHERE doc_id = ? AND __deleted = 0 ORDER BY order_key, id",
+      "SELECT id, text, order_key, blank_after FROM doc_blocks WHERE doc_id = ? AND __deleted = 0 ORDER BY order_key, id",
     )
     .all(docId) as BlockRow[];
 }
@@ -35,27 +36,31 @@ function makeBlockId(text: string): string {
   return newId("blk", text.split("\n", 1)[0] ?? "");
 }
 
-/** Emit a new block's fields; text last so the final body recompute is complete. */
+/** Emit a new block's fields; text last so the final body recompute is complete.
+ *  blank_after is only emitted when non-zero (0 is the column default). */
 function emitBlock(
   db: Database,
   docId: string,
-  fields: { text: string; order_key: string },
+  fields: { text: string; order_key: string; blankAfter: number },
 ): void {
   const id = makeBlockId(fields.text);
   emit(db, "doc_blocks", id, "doc_id", docId);
   emit(db, "doc_blocks", id, "order_key", fields.order_key);
+  if (fields.blankAfter) emit(db, "doc_blocks", id, "blank_after", fields.blankAfter);
   emit(db, "doc_blocks", id, "text", fields.text);
 }
 
 function insertBlocks(
   db: Database,
   docId: string,
-  texts: string[],
+  blocks: readonly DocBlock[],
   after: string | null,
   before: string | null,
 ): void {
-  const keys = keysBetween(after, before, texts.length);
-  texts.forEach((text, i) => emitBlock(db, docId, { text, order_key: keys[i]! }));
+  const keys = keysBetween(after, before, blocks.length);
+  blocks.forEach((b, i) =>
+    emitBlock(db, docId, { text: b.text, order_key: keys[i]!, blankAfter: b.blankAfter }),
+  );
 }
 
 /** Lazily migrate a legacy body-only document into blocks (idempotent). */
@@ -65,16 +70,17 @@ function ensureBlocks(db: Database, docId: string): void {
   const row = db.query("SELECT body FROM documents WHERE id = ?").get(docId) as
     | { body: string | null }
     | null;
-  const texts = parseBlocks(row?.body ?? "");
-  if (texts.length) insertBlocks(db, docId, texts, null, null);
+  const blocks = parseDocBlocks(row?.body ?? "");
+  if (blocks.length) insertBlocks(db, docId, blocks, null, null);
 }
 
 /** Diff a full new body against current blocks; keep unchanged, delete/insert the rest. */
 function reconcileBody(db: Database, docId: string, body: string): void {
   const old = liveBlocks(db, docId);
+  const next = parseDocBlocks(body);
   const plan = reconcile(
     old.map((b) => b.text),
-    parseBlocks(body),
+    next.map((b) => b.text),
   );
 
   for (const oi of plan.deleted) emit(db, "doc_blocks", old[oi]!.id, "__deleted", 1);
@@ -82,7 +88,12 @@ function reconcileBody(db: Database, docId: string, body: string): void {
   const { items } = plan;
   let i = 0;
   while (i < items.length) {
-    if ("keep" in items[i]!) {
+    const it = items[i]!;
+    if ("keep" in it) {
+      // Text unchanged: only the surrounding blank-line count may have shifted.
+      const oldB = old[it.keep]!;
+      const want = next[i]!.blankAfter;
+      if ((oldB.blank_after ?? 0) !== want) emit(db, "doc_blocks", oldB.id, "blank_after", want);
       i++;
       continue;
     }
@@ -90,8 +101,7 @@ function reconcileBody(db: Database, docId: string, body: string): void {
     while (j < items.length && "insert" in items[j]!) j++;
     const left = i > 0 ? old[(items[i - 1] as { keep: number }).keep]!.order_key : null;
     const right = j < items.length ? old[(items[j] as { keep: number }).keep]!.order_key : null;
-    const texts = items.slice(i, j).map((it) => (it as { insert: string }).insert);
-    insertBlocks(db, docId, texts, left, right);
+    insertBlocks(db, docId, next.slice(i, j), left, right);
     i = j;
   }
 }
@@ -120,8 +130,8 @@ export function createDocument(
   if (opts.database_id !== undefined) emit(db, "documents", id, "database_id", opts.database_id);
   if (opts.parent_id !== undefined) emit(db, "documents", id, "parent_id", opts.parent_id);
   if (opts.body !== undefined) {
-    const texts = parseBlocks(opts.body);
-    if (texts.length) insertBlocks(db, id, texts, null, null);
+    const blocks = parseDocBlocks(opts.body);
+    if (blocks.length) insertBlocks(db, id, blocks, null, null);
   }
   return getDocument(db, id)!;
 }
@@ -202,7 +212,7 @@ export function editDocument(
 
   ensureBlocks(db, id);
   const blocks = liveBlocks(db, id);
-  const body = serializeBlocks(blocks.map((b) => b.text));
+  const body = serializeDocBlocks(blocks.map((b) => ({ text: b.text, blankAfter: b.blank_after })));
   const count = countOccurrences(body, opts.old);
   if (count === 0) throw new Error(`anchor not found: no match for --old`);
   if (count > 1 && !opts.replaceAll)
@@ -234,25 +244,25 @@ export function editDocument(
 export function appendDocument(db: Database, id: string, body: string): EditDocResult {
   if (!getDocument(db, id)) throw new Error(`no such document: ${id}`);
   ensureBlocks(db, id);
-  const texts = parseBlocks(body);
-  if (texts.length) {
+  const next = parseDocBlocks(body);
+  if (next.length) {
     const blocks = liveBlocks(db, id);
     const last = blocks.length ? blocks[blocks.length - 1]!.order_key : null;
-    insertBlocks(db, id, texts, last, null);
+    insertBlocks(db, id, next, last, null);
   }
-  return { id, changed: texts.length > 0, replaced: texts.length, version: documentVersion(db, id) };
+  return { id, changed: next.length > 0, replaced: next.length, version: documentVersion(db, id) };
 }
 
 export function prependDocument(db: Database, id: string, body: string): EditDocResult {
   if (!getDocument(db, id)) throw new Error(`no such document: ${id}`);
   ensureBlocks(db, id);
-  const texts = parseBlocks(body);
-  if (texts.length) {
+  const next = parseDocBlocks(body);
+  if (next.length) {
     const blocks = liveBlocks(db, id);
     const first = blocks.length ? blocks[0]!.order_key : null;
-    insertBlocks(db, id, texts, null, first);
+    insertBlocks(db, id, next, null, first);
   }
-  return { id, changed: texts.length > 0, replaced: texts.length, version: documentVersion(db, id) };
+  return { id, changed: next.length > 0, replaced: next.length, version: documentVersion(db, id) };
 }
 
 export function deleteDocument(db: Database, id: string): boolean {

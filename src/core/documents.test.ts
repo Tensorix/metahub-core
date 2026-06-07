@@ -127,6 +127,31 @@ test("update --body reconciles, keeping unchanged block identity", () => {
   expect(after[2]).toBe(ids[2]!); // keep2 identity preserved
 });
 
+test("interior and trailing blank lines persist through create and reload", () => {
+  const db = makeNode("aaaa");
+  const body = "alpha\n\n\nbeta\n\n"; // extra blank line between, blank line at end
+  const doc = createDocument(db, { title: "T", body });
+  expect(getDocument(db, doc.id)!.body).toBe(body);
+  // the spacing rides on the blocks, not zero-content rows
+  expect(blockIds(db, doc.id).length).toBe(2);
+});
+
+test("changing only blank spacing keeps block identity (no churn)", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "a\n\nb" });
+  const ids = blockIds(db, doc.id);
+
+  // add two blank lines after "a" — text is unchanged, so identities must hold
+  updateDocument(db, doc.id, { body: "a\n\n\n\nb" });
+  expect(getDocument(db, doc.id)!.body).toBe("a\n\n\n\nb");
+  expect(blockIds(db, doc.id)).toEqual(ids);
+
+  // removing the spacing again round-trips back to canonical
+  updateDocument(db, doc.id, { body: "a\n\nb" });
+  expect(getDocument(db, doc.id)!.body).toBe("a\n\nb");
+  expect(blockIds(db, doc.id)).toEqual(ids);
+});
+
 test("update reparents a document and --top clears the parent", () => {
   const db = makeNode("aaaa");
   const parent = createDocument(db, { title: "Parent" });

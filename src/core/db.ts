@@ -88,6 +88,16 @@ export function migratePeers(db: Database): void {
   }
 }
 
+/**
+ * Add the `blank_after` column to a legacy `doc_blocks` table. Idempotent —
+ * guarded by hasColumn; existing blocks default to 0 (canonical single-blank-line
+ * separators), so the migration never changes an existing document's body.
+ */
+export function migrateDocBlocks(db: Database): void {
+  if (!hasColumn(db, "doc_blocks", "blank_after"))
+    db.exec("ALTER TABLE doc_blocks ADD COLUMN blank_after INTEGER NOT NULL DEFAULT 0");
+}
+
 /** Open (and migrate) the on-disk metahub database for the resolved home. */
 export function openMetahub(): Database {
   ensureDirs();
@@ -96,5 +106,6 @@ export function openMetahub(): Database {
   runSchema(db);
   migrateRecords(db);
   migratePeers(db);
+  migrateDocBlocks(db);
   return db;
 }

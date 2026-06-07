@@ -2,20 +2,43 @@
 // of blocks separated by blank lines; fenced code blocks (``` / ~~~) are kept
 // whole so their internal blank lines don't split them. No DB dependency.
 
-/** Split markdown into block texts (no leading/trailing blank lines, no empties). */
-export function parseBlocks(md: string): string[] {
+/**
+ * A document block plus the blank lines the user left after it. `blankAfter` is
+ * the count *beyond* the standard single-blank-line separator (so a normal
+ * paragraph break is 0); for the last block it's the trailing blank-line run.
+ * This is what lets deliberate vertical spacing survive a save/reload without
+ * representing blank lines as zero-content blocks (which would churn the
+ * text-keyed reconcile). See [[blocks]] doc-block model.
+ */
+export interface DocBlock {
+  text: string;
+  blankAfter: number;
+}
+
+/**
+ * Split markdown into doc blocks, preserving blank-line runs as `blankAfter`.
+ * Leading blank lines (before the first block) are dropped; one blank line
+ * between two blocks is the standard separator, every extra blank line is kept.
+ */
+export function parseDocBlocks(md: string): DocBlock[] {
   if (!md) return [];
   const lines = md.replace(/\r\n?/g, "\n").split("\n");
-  const blocks: string[] = [];
+  const blocks: DocBlock[] = [];
   let cur: string[] = [];
   let fenceChar: "`" | "~" | null = null;
   let fenceLen = 0;
 
-  const flushPara = () => {
-    while (cur.length && cur[cur.length - 1]!.trim() === "") cur.pop();
-    while (cur.length && cur[0]!.trim() === "") cur.shift();
-    if (cur.length) blocks.push(cur.join("\n"));
-    cur = [];
+  const closeBlock = () => {
+    if (cur.length) {
+      blocks.push({ text: cur.join("\n"), blankAfter: 0 });
+      cur = [];
+    }
+  };
+  const onBlank = () => {
+    closeBlock();
+    // Count toward the preceding block; a blank line before any block (leading
+    // whitespace) has nowhere to attach and is dropped.
+    if (blocks.length) blocks[blocks.length - 1]!.blankAfter++;
   };
 
   for (const raw of lines) {
@@ -23,8 +46,7 @@ export function parseBlocks(md: string): string[] {
       cur.push(raw);
       const m = raw.match(/^\s*(`{3,}|~{3,})\s*$/);
       if (m && m[1]![0] === fenceChar && m[1]!.length >= fenceLen) {
-        blocks.push(cur.join("\n"));
-        cur = [];
+        closeBlock();
         fenceChar = null;
         fenceLen = 0;
       }
@@ -32,26 +54,46 @@ export function parseBlocks(md: string): string[] {
     }
     const open = raw.match(/^\s*(`{3,}|~{3,})/);
     if (open) {
-      flushPara();
+      closeBlock();
       fenceChar = open[1]![0] as "`" | "~";
       fenceLen = open[1]!.length;
       cur.push(raw);
     } else if (raw.trim() === "") {
-      flushPara();
+      onBlank();
     } else {
       cur.push(raw);
     }
   }
-  // EOF: close out a trailing paragraph or an unterminated fence.
-  if (fenceChar) {
-    if (cur.length) blocks.push(cur.join("\n"));
-  } else {
-    flushPara();
-  }
+  closeBlock(); // trailing paragraph or unterminated fence
+
+  // Convert raw blank-line counts to "extra beyond the standard separator". The
+  // last block keeps its raw count (trailing blanks have no following separator).
+  for (let i = 0; i < blocks.length - 1; i++)
+    blocks[i]!.blankAfter = Math.max(0, blocks[i]!.blankAfter - 1);
   return blocks;
 }
 
-/** Join block texts back into a markdown body. */
+/** Serialize doc blocks back to a body, re-emitting kept blank-line runs. */
+export function serializeDocBlocks(
+  blocks: readonly { text: string | null; blankAfter?: number }[],
+): string {
+  const live = blocks.filter((b): b is { text: string; blankAfter?: number } => !!b.text && b.text.length > 0);
+  const out: string[] = [];
+  live.forEach((b, i) => {
+    out.push(...b.text.split("\n"));
+    const extra = Math.max(0, b.blankAfter ?? 0);
+    if (i < live.length - 1) out.push(""); // standard single-blank-line separator
+    for (let k = 0; k < extra; k++) out.push("");
+  });
+  return out.join("\n");
+}
+
+/** Split markdown into block texts (no leading/trailing blank lines, no empties). */
+export function parseBlocks(md: string): string[] {
+  return parseDocBlocks(md).map((b) => b.text);
+}
+
+/** Join block texts back into a markdown body (canonical single-blank separators). */
 export function serializeBlocks(texts: readonly (string | null)[]): string {
   return texts.filter((t): t is string => !!t && t.length > 0).join("\n\n");
 }

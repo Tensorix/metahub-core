@@ -46,13 +46,13 @@ test("body round-trips through blocks and stays stable on re-parse", () => {
   );
 });
 
-test("empty paragraphs are dropped on serialize", () => {
+test("interior empty paragraphs persist as blank lines on serialize", () => {
   const blocks = [
     { id: "1", type: "p" as const, content: "keep" },
-    { id: "2", type: "p" as const, content: "   " },
+    { id: "2", type: "p" as const, content: "   " }, // user spacing -> extra blank line
     { id: "3", type: "divider" as const, content: "" },
   ];
-  expect(bodyFromBlocks(blocks)).toBe("keep\n\n---");
+  expect(bodyFromBlocks(blocks)).toBe("keep\n\n\n---");
 });
 
 test("trailing blank lines round-trip as empty paragraphs", () => {
@@ -72,14 +72,25 @@ test("a single trailing newline is not a blank line", () => {
   expect(bodyFromBlocks(blocks)).toBe("keep");
 });
 
-test("interior empty paragraphs are still dropped, trailing ones kept", () => {
+test("interior and trailing empty paragraphs both survive serialize", () => {
   const blocks = [
     { id: "1", type: "p" as const, content: "keep" },
     { id: "2", type: "p" as const, content: "   " },
     { id: "3", type: "p" as const, content: "tail" },
     { id: "4", type: "p" as const, content: "" },
   ];
-  expect(bodyFromBlocks(blocks)).toBe("keep\n\ntail\n\n");
+  expect(bodyFromBlocks(blocks)).toBe("keep\n\n\ntail\n\n");
+});
+
+test("interior blank runs round-trip as empty paragraphs", () => {
+  // one extra blank line between two paragraphs -> one interior empty paragraph
+  const blocks = blocksFromBody("a\n\n\nb");
+  expect(blocks.map((b) => [b.type, b.content])).toEqual([["p", "a"], ["p", ""], ["p", "b"]]);
+  expect(bodyFromBlocks(blocks)).toBe("a\n\n\nb");
+
+  // interior + trailing together stay stable
+  const body = "a\n\n\nb\n\n";
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
 });
 
 test("nested ordered lists keep child paragraphs, quotes, and fenced code", () => {

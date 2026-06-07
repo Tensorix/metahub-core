@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { getNodeId } from "./node.ts";
 import { nextHlc, observeHlc } from "./hlc.ts";
-import { serializeBlocks } from "./blocks.ts";
+import { serializeDocBlocks } from "./blocks.ts";
 
 // A single field assignment — the unit of replication. `value` is JSON-encoded
 // (or null). `dataset`/`row_id`/`col` identify the CRDT register.
@@ -32,7 +32,7 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
   },
   doc_blocks: {
     table: "doc_blocks",
-    cols: new Set(["doc_id", "text", "order_key", "__deleted"]),
+    cols: new Set(["doc_id", "text", "order_key", "blank_after", "__deleted"]),
   },
   sites: {
     table: "sites",
@@ -82,12 +82,12 @@ function isBlockManaged(db: Database, docId: string): boolean {
 function recomputeDocBody(db: Database, docId: string): void {
   const rows = db
     .query(
-      "SELECT text FROM doc_blocks WHERE doc_id = ? AND __deleted = 0 ORDER BY order_key, id",
+      "SELECT text, blank_after FROM doc_blocks WHERE doc_id = ? AND __deleted = 0 ORDER BY order_key, id",
     )
-    .all(docId) as { text: string | null }[];
+    .all(docId) as { text: string | null; blank_after: number | null }[];
   ensureRow(db, "documents", docId);
   db.query("UPDATE documents SET body = ? WHERE id = ?").run(
-    serializeBlocks(rows.map((r) => r.text)),
+    serializeDocBlocks(rows.map((r) => ({ text: r.text, blankAfter: r.blank_after ?? 0 }))),
     docId,
   );
 }

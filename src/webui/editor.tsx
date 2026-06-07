@@ -625,7 +625,12 @@ export function DocView({
       e.preventDefault();
       const empty = (el.textContent ?? "").trim() === "";
       if (isListType(b.type) && empty && !(b.children ?? []).length) { convert(b.id, "p"); return; }
-      insertAfter(b.id, isListType(b.type) ? b.type : "p");
+      // Split at the caret: text before it stays in this block, text after it
+      // moves into the new block (caret lands at its start). Empty `after`
+      // degrades to the plain "new empty line below" behaviour.
+      const { before, after } = splitEditableAtCaret(el);
+      b.content = before;
+      insertAfter(b.id, isListType(b.type) ? b.type : "p", { content: after });
     } else if (e.key === "Backspace") {
       if ((el.textContent ?? "") === "") {
         e.preventDefault();
@@ -965,7 +970,10 @@ function BlockRow({
 }
 
 function placeholder(t: BlockType): string {
-  return ({ h1: "标题 1", h2: "标题 2", h3: "标题 3", code: "输入代码…", quote: "引用" } as Record<string, string>)[t] ?? "输入文本，“/” 唤出命令";
+  // Typed blocks hint their kind; a plain empty paragraph stays blank (no "/"
+  // prompt) so blank lines read as real empty space. The whole-document entry
+  // hint is handled separately when there are no blocks at all.
+  return ({ h1: "标题 1", h2: "标题 2", h3: "标题 3", code: "输入代码…", quote: "引用" } as Record<string, string>)[t] ?? "";
 }
 
 // ---- code block: transparent textarea over a highlight.js mirror ----
@@ -1511,14 +1519,15 @@ function focusBlock(id: string, atEnd = false) {
     el.setSelectionRange(pos, pos);
     return;
   }
-  if (atEnd) {
-    const r = document.createRange();
-    r.selectNodeContents(el);
-    r.collapse(false);
-    const s = getSelection();
-    s?.removeAllRanges();
-    s?.addRange(r);
-  }
+  // Always set the caret explicitly (start or end), never rely on the browser's
+  // post-focus default: after a structural re-render rewrites this block's
+  // innerHTML, an unset caret lands at position 0 and races the rewrite.
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.collapse(!atEnd); // !atEnd -> start, atEnd -> end
+  const s = getSelection();
+  s?.removeAllRanges();
+  s?.addRange(r);
 }
 function resizeSourceEditor(ta: HTMLTextAreaElement) {
   ta.style.height = "auto";

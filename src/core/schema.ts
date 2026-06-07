@@ -102,11 +102,12 @@ CREATE TABLE IF NOT EXISTS documents (
 -- independent CRDT register so concurrent edits to different blocks merge.
 -- order_key is a fractional index (ties broken by id) giving display order.
 CREATE TABLE IF NOT EXISTS doc_blocks (
-  id        TEXT PRIMARY KEY,
-  doc_id    TEXT,
-  text      TEXT,
-  order_key TEXT,
-  __deleted INTEGER NOT NULL DEFAULT 0
+  id          TEXT PRIMARY KEY,
+  doc_id      TEXT,
+  text        TEXT,
+  order_key   TEXT,
+  blank_after INTEGER NOT NULL DEFAULT 0,  -- extra blank lines kept after this block (user spacing)
+  __deleted   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_doc_blocks_doc ON doc_blocks(doc_id);
 
