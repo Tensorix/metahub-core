@@ -481,14 +481,14 @@ const HTML = `<!doctype html>
   .optrow .x:hover { background:var(--hover-2); color:var(--danger); }
 
   /* modal */
-  .modal-scrim { position:fixed; inset:0; background:rgba(15,15,25,.4); z-index:100; display:grid; place-items:center;
+  .modal-scrim { position:fixed; inset:0; background:rgba(15,15,25,.4); z-index:100; display:flex; align-items:center; justify-content:center;
     opacity:0; pointer-events:none; transition:opacity .15s; padding:20px; }
   .modal-scrim.open { opacity:1; pointer-events:auto; }
-  .modal { background:var(--bg); border-radius:16px; box-shadow:var(--shadow-lg); width:440px; max-width:100%; overflow:hidden; }
+  .modal { background:var(--bg); border-radius:16px; box-shadow:var(--shadow-lg); width:440px; max-width:100%; max-height:100%; display:flex; flex-direction:column; overflow:hidden; }
   .modal-head { padding:20px 22px 0; }
   .modal-head h3 { margin:0; font-size:18px; font-weight:700; letter-spacing:-.01em; }
   .modal-head p { margin:6px 0 0; color:var(--muted); font-size:13.5px; }
-  .modal-body { padding:18px 22px; }
+  .modal-body { padding:18px 22px; overflow-y:auto; }
   .modal-foot { display:flex; justify-content:flex-end; gap:8px; padding:14px 22px; background:var(--surface); border-top:1px solid var(--line); }
   .field-label { font-size:12px; font-weight:600; color:var(--fg-soft); margin:12px 0 5px; }
   .field-label:first-child { margin-top:0; }
