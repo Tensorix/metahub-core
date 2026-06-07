@@ -1000,6 +1000,7 @@ function BlockRow({
                 class="editable"
                 contentEditable
                 data-ph={placeholder(block.type)}
+                data-ph-hint={isSlashHint(block.type) ? "slash" : "kind"}
                 onInput={(e) => onInput(e.currentTarget as HTMLElement)}
                 onPaste={(e) => onPaste(e as ClipboardEvent, e.currentTarget as HTMLElement)}
                 onKeyDown={(e) => onKeyDown(e, e.currentTarget as HTMLElement)}
@@ -1013,12 +1014,22 @@ function BlockRow({
   );
 }
 
+const KIND_HINTS: Record<string, string> = { h1: "标题 1", h2: "标题 2", h3: "标题 3", code: "输入代码…", quote: "引用" };
+
 function placeholder(t: BlockType): string {
-  // The paragraph hint shows only while the block is focused (see the
-  // `.b-p .editable:empty:not(:focus)` CSS rule), so idle blank lines read as
-  // real empty space but the line with the caret still prompts "/". Typed blocks
-  // keep their kind hint always.
-  return ({ h1: "标题 1", h2: "标题 2", h3: "标题 3", code: "输入代码…", quote: "引用" } as Record<string, string>)[t] ?? "输入文本，“/” 唤出命令";
+  // Kind-hint blocks (headings/quote/code) always show their hint; everything
+  // else falls through to the generic "/" prompt.
+  return KIND_HINTS[t] ?? "输入文本，“/” 唤出命令";
+}
+
+// True when the block carries the generic "/" prompt rather than a kind hint.
+// The "/" prompt shows only while the line is focused (see the
+// `.editable[data-ph-hint="slash"]:empty:not(:focus)` CSS rule), so idle blank
+// lines — paragraphs and list items alike, at any nesting depth — read as real
+// empty space, while the line with the caret still prompts "/". Keying on the
+// hint kind (not the block type) keeps paragraphs and lists consistent.
+function isSlashHint(t: BlockType): boolean {
+  return !(t in KIND_HINTS);
 }
 
 // ---- code block: transparent textarea over a highlight.js mirror ----
