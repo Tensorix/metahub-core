@@ -396,3 +396,15 @@ Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace
 - core:`src/core/schema.ts`、`src/core/db.ts`、`src/core/blocks.ts`、`src/core/documents.ts`、`src/core/crdt.ts`;测试 `src/core/blocks.test.ts`、`src/core/documents.test.ts`。
 - 前端:`src/webui/editor.tsx`(Enter 拆分、`focusBlock`、`placeholder`)、`src/webui/blocks.ts`(`bodyFromBlocks`、`parseContainer` top、`isBlankParagraph`);测试 `src/webui/blocks.test.ts`。
 - 构建:`dist/webui.js`(改前端须重建)。
+
+## 15. v2.7 点击文末空白处建/聚焦尾随空行（`editor.tsx` `onDocMouseDown`，2026-06-08）
+
+`.doc` 的 36vh 底部内边距是一大片可点空白,旧 `onDocMouseDown` 在未命中块(`!id`)时只 `clearSel()`。设计见 [design.md §14](./design.md)。改动仅在 `if (!id)` 分支:
+
+1. 仅当 `target.classList.contains("doc")`(点在容器自身内边距,而非标题/meta/占位符/块)且 `mode === "blocks"`。
+2. 算内容底缘:取 `doc.querySelectorAll(".block")` 最后一个的 `getBoundingClientRect().bottom`(无块时回退 `.doc-meta`);仅 `e.clientY > contentBottom` 才触发,避开标题上方的顶部内边距。
+3. `const last = blocks[blocks.length-1]`:`last && isBlankSpacer(last)` → `focusBlock(last.id, true)`(光标进既有空行);否则 `insertAfter(null)`(追加空 `p`,内部 rAF 自动聚焦、`bump()` 记历史、`scheduleSave()`)。其余情形落回原 `clearSel()`。
+
+验证:`bun run build` 成功;手验(重建+重启+硬刷新):末行有字 → 点下方空白建新空行并落光标;末行已空 → 光标进该行且 `.doc-meta` 块计数不增;点标题附近不建行;空文档占位符照旧。
+
+涉及文件:`src/webui/editor.tsx`(`onDocMouseDown`);构建 `dist/webui.js`(改前端须重建)。

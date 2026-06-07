@@ -511,7 +511,25 @@ export function DocView({
 
     const blockEl = closestBlockElement(e.target as Node);
     const id = blockEl?.getAttribute("data-bid") ?? null;
-    if (!id) { clearSel(); return; }
+    if (!id) {
+      // Click landed outside any block. If it's in the doc's trailing blank area
+      // (the big bottom padding), create or focus a trailing empty line.
+      const doc = target.classList.contains("doc") ? target : null;
+      if (mode === "blocks" && doc) {
+        const blockEls = doc.querySelectorAll(".block");
+        const ref = blockEls.length ? blockEls[blockEls.length - 1]! : doc.querySelector(".doc-meta");
+        const contentBottom = ref ? ref.getBoundingClientRect().bottom : 0;
+        if (e.clientY > contentBottom) {
+          e.preventDefault();
+          const last = blocks[blocks.length - 1];
+          if (last && isBlankSpacer(last)) focusBlock(last.id, true);
+          else insertAfter(null);
+          return;
+        }
+      }
+      clearSel();
+      return;
+    }
 
     if (e.shiftKey && sel) { // shift-click extends the current block selection
       e.preventDefault();
