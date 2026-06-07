@@ -202,12 +202,49 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 
 ### 8.7 暂不在范围
 
-代码签名/公证、自动更新(electron-updater)、发布 CI(`.github/workflows` 当前不存在)。顺带可复用 `setWebuiBundle` 缝隙修 CLI 编译二进制的 WebUI(后续项)。
+代码签名/公证、**外壳整体**自动更新(electron-updater 级别)。core 边车的更新已另行实现——启动静默暂存 + 设置页手动检查,详见 §9。顺带可复用 `setWebuiBundle` 缝隙修 CLI 编译二进制的 WebUI(后续项)。
 
-## 9. 涉及文件
+## 9. 核心更新(自动暂存 + 手动检查)
+
+桌面外壳与 core **独立发版**(`v*` / `desktop-v*`),外壳内嵌一份边车作离线兜底,但每次启动会去 GitHub Releases 查更新的 core 并按需下载,**永不热替换运行中的边车**——更新落到 `userData/core/` 缓存,下次启动由 `packagedSidecarPath()` 优先采用。本节在此机制上加用户可见的提醒与手动入口。**纯桌面能力,经 IPC 实现;core/CLI 与浏览器 WebUI 一行不改**(区块以 `window.metahubDesktop.coreUpdate` 桥存在与否门控,同 §7 快速笔记的桌面守卫)。
+
+### 9.1 自动暂存(已有,`apps/desktop/src/core-updater.ts`)
+
+`maybeUpdateCore()`:拉最新 core release(`v*`,排除 `desktop-v*`)→ 比 `version.json` 已暂存版本 → 下载对应平台边车、校验 SHA256(对 `SHA256SUMS-sidecars.txt`)→ 原子写入缓存 + `version.json`。全程吞错、绝不阻塞启动;`main.ts` 在窗口首帧后(**仅打包态**)后台触发一次。
+
+### 9.2 三版本号状态机(`src/webui/settings.tsx` `VersionFooter`)
+
+更新入口**不单起区块**,收进设置页底部版本行,克制呈现(等宽版本号 + 内联文字链接 + 全局唯一一处呼吸 accent 圆点)。由三个版本驱动:
+
+- **R = 运行中**:边车 `/api/version`(= footer 里显示的 `Core` 版本)
+- **I = 已暂存**:IPC `coreUpdate.installedVersion()` 读 `version.json`(下次启动会用的)
+- **L = GitHub 最新**:IPC `coreUpdate.check()`(**仅手动触发**,不下载)
+
+| 状态 | 条件 | footer 文案 | 动作 |
+|---|---|---|---|
+| idle | `I ≤ R` | `检查更新` | 手动检查 |
+| checking / downloading | — | `检查中… / 下载中…` | 置灰 |
+| available | `L > max(I,R)` | `● 新版本 L  下载` | 下载暂存 |
+| staged | `I > R` | `● I 待重启  重启` | relaunch 生效 |
+| error | 失败 | `检查失败  重试` | 重试 |
+
+**关键**:`staged`(已下载待重启)**无需联网**即可判定——只比 `I > R`,因此 §9.1 的启动静默暂存会被自动 surface 成提醒。手动「检查更新」只负责发现 *更新于 I* 的版本;`download` 复用 `maybeUpdateCore()`,返回 null(已是最新/重复点击)则回退 staged/idle 并 toast,不报错。
+
+### 9.3 IPC 桥与提醒位
+
+- preload `window.metahubDesktop.coreUpdate`(`apps/desktop/src/preload.ts`):`installedVersion` / `check` / `download`(复用 `maybeUpdateCore()`)/ `restart`(`app.relaunch()` + `app.quit()`);`main.ts` `registerIpc()` 对应 4 个 `core:*` handler(`check` 用 `fetchLatestCoreRelease` + `tagToVersion`)。
+- **侧边栏红点**:`app.tsx` 挂载时无联网比 `I > R` → 点亮 `sidebar.tsx` 设置入口的 `.nav-dot`;`VersionFooter` 进入 available/staged 时回调 `onUpdatePending` 同步点亮。浏览器/CLI 无桥 → 无红点、footer 仅 `Core x`。
+
+### 9.4 涉及文件
+
+- 桌面:`apps/desktop/src/{preload,main}.ts`(`coreUpdate` 桥 + `core:*` IPC);既有 `core-updater.ts` / `version-util.ts` 复用不改。
+- 前端:`src/webui/settings.tsx`(`VersionFooter` 折叠状态机)、`src/webui/app.tsx`(共享 `updatePending` + 无联网探测)、`src/webui/sidebar.tsx`(设置入口红点)、`src/webui/desktop.d.ts`(桥类型声明)、`src/core/sync/webui.ts`(footer 内联 CSS:`.ver-*` / `.nav-dot`)。
+
+## 10. 涉及文件
 
 - 外壳(§1–6)新增:`apps/desktop/{package.json,tsconfig.json}`、`apps/desktop/src/{server-entry,main,preload}.ts`
 - 快速笔记(§7)见 §7.5。
 - 生产打包(§8)新增:`apps/desktop/src/{sidecar,server-bundle}.ts`、`apps/desktop/scripts/{build-sidecars,gen-icon}.ts`、`apps/desktop/electron-builder.yml`、`apps/desktop/{README.md,.gitignore}`;改 `apps/desktop/src/{server-entry,main}.ts`、`apps/desktop/package.json`(scripts + `electron-builder` devDep);**core 仅加领域中立缝隙** `setWebuiBundle()`(`src/core/sync/webui.ts`)。
+- 核心更新(§9)见 §9.4。
 - 依赖:`electron`、`electron-builder`(仅 `apps/desktop` 的 devDependency;不进 core/CLI 依赖图)。
-- 改动总结:**外壳本身 core 零业务改动**(纯复用 + 一个通用注入缝隙);快速笔记(§7)在接口侧加了**领域中立**的文档树能力(`parent_id` 透传 + `?parent=` 过滤),core 仍不含任何 quicknote 概念。
+- 改动总结:**外壳本身 core 零业务改动**(纯复用 + 一个通用注入缝隙);快速笔记(§7)在接口侧加了**领域中立**的文档树能力(`parent_id` 透传 + `?parent=` 过滤),核心更新(§9)纯走桌面 IPC,core/CLI 仍不含任何更新或 quicknote 概念。

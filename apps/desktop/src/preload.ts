@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     node: process.versions.node,
   },
   appVersion: () => ipcRenderer.invoke("app:get-version"),
+  coreUpdate: {
+    installedVersion: () => ipcRenderer.invoke("core:installed-version"),
+    check: () => ipcRenderer.invoke("core:check"),
+    download: () => ipcRenderer.invoke("core:download"),
+    restart: () => ipcRenderer.invoke("core:restart"),
+  },
   quicknote: {
     getSettings: () => ipcRenderer.invoke("qn:get-settings"),
     setShortcut: (accelerator: string) => ipcRenderer.invoke("qn:set-shortcut", accelerator),

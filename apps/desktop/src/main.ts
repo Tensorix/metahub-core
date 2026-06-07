@@ -26,7 +26,13 @@ import {
 import { spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cachedBinaryPath, maybeUpdateCore } from "./core-updater";
+import {
+  cachedBinaryPath,
+  fetchLatestCoreRelease,
+  getInstalledCoreVersion,
+  maybeUpdateCore,
+} from "./core-updater";
+import { tagToVersion } from "./version-util";
 
 const HEALTH_PATH = "/health"; // mirrors src/core/sync/protocol.ts
 const HEALTH_TIMEOUT_MS = 15_000;
@@ -433,6 +439,23 @@ function createTray(): void {
 
 function registerIpc(): void {
   ipcMain.handle("app:get-version", () => app.getVersion());
+
+  // Core sidecar update (desktop-only; the WebUI's "软件更新" settings section).
+  // `installed` is the version staged on disk (version.json) — what the NEXT
+  // launch will run; compared against the running core (/api/version) it tells
+  // the UI whether an already-downloaded update is waiting for a restart.
+  ipcMain.handle("core:installed-version", () => getInstalledCoreVersion());
+  ipcMain.handle("core:check", async () => {
+    const release = await fetchLatestCoreRelease();
+    return { latest: release ? tagToVersion(release.tag_name) : null };
+  });
+  // Reuses the startup auto-updater: fetch latest, compare vs staged, download +
+  // verify + stage. Returns the staged version, or null if nothing newer.
+  ipcMain.handle("core:download", () => maybeUpdateCore());
+  ipcMain.handle("core:restart", () => {
+    app.relaunch();
+    app.quit();
+  });
 
   ipcMain.handle("qn:get-settings", () => ({
     shortcut: settings.shortcut,

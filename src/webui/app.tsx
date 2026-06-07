@@ -6,7 +6,7 @@ import { Icon } from "./icons.tsx";
 import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
 import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
-import { SettingsView } from "./settings.tsx";
+import { SettingsView, cmpVer } from "./settings.tsx";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
@@ -38,6 +38,7 @@ function App() {
   const [sbCollapsed, setSbCollapsed] = useState(false);
   const [sbWidth, setSbWidth] = useState(268);
   const [docMode, setDocMode] = useState<DocMode>("blocks");
+  const [updatePending, setUpdatePending] = useState(false);
   const docHandleRef = useRef<DocViewHandle | null>(null);
 
   const onError = useCallback((m: string) => setError(m), []);
@@ -54,6 +55,20 @@ function App() {
   useEffect(() => {
     reloadNav().catch((e) => onError(String(e.message)));
   }, [reloadNav]);
+
+  // Desktop only, no network: light the "设置" sidebar dot if a newer core is
+  // already staged on disk (installed > running) — typically downloaded by the
+  // app's silent startup auto-updater — and only waiting for a restart.
+  useEffect(() => {
+    const cu = typeof window !== "undefined" ? window.metahubDesktop?.coreUpdate : undefined;
+    if (!cu) return;
+    Promise.all([
+      api.version().then((v) => v.version).catch(() => null),
+      cu.installedVersion().catch(() => null),
+    ]).then(([running, installed]) => {
+      if (running && installed && cmpVer(installed, running) > 0) setUpdatePending(true);
+    });
+  }, []);
 
   const navigate = (v: View) => {
     setView(v);
@@ -148,6 +163,7 @@ function App() {
         onCollapse={() => setSbCollapsed(true)}
         onOpenSettings={() => navigate({ kind: "settings" })}
         settingsActive={view.kind === "settings"}
+        updatePending={updatePending}
         reloadNav={reloadNav}
         onError={onError}
         afterDelete={(_, id) => { if ("id" in view && view.id === id) setView({ kind: "empty" }); }}
@@ -198,7 +214,7 @@ function App() {
           {view.kind === "search" && (
             <SearchView q={view.q} onOpenDoc={(id) => navigate({ kind: "doc", id })} onOpenDb={(id) => navigate({ kind: "db", id })} />
           )}
-          {view.kind === "settings" && <SettingsView />}
+          {view.kind === "settings" && <SettingsView onUpdatePending={setUpdatePending} />}
         </div>
       </div>
 

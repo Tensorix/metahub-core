@@ -1,4 +1,5 @@
 /** @jsxImportSource preact */
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
@@ -20,7 +21,7 @@ const THEMES: { value: ThemeChoice; icon: string; name: string; desc: string }[]
   { value: "system", icon: "monitor", name: "跟随系统", desc: "随操作系统外观自动切换" },
 ];
 
-export function SettingsView() {
+export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void } = {}) {
   const [theme, setThemeState] = useState<ThemeChoice>(getTheme());
 
   const pick = (t: ThemeChoice) => {
@@ -56,33 +57,159 @@ export function SettingsView() {
       {typeof window !== "undefined" && window.metahubDesktop?.quicknote && <QuickNotesSettings />}
       <SyncDevices />
       <IssuedGrants />
-      <VersionFooter />
+      <VersionFooter onUpdatePending={onUpdatePending} />
     </div>
   );
 }
 
-// ---- version footer --------------------------------------------------------
+// ---- version footer (+ core update, desktop only) -------------------------
+
+/** Numeric semver-ish compare: >0 if a>b, <0 if a<b, 0 if equal. Tolerates a `v` prefix. */
+export function cmpVer(a: string, b: string): number {
+  const pa = a.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+type UpdateState = "idle" | "checking" | "available" | "downloading" | "staged" | "error";
 
 /**
- * Shows the running core version (from the sidecar's /api/version) and, in the
- * desktop app, the Electron shell's app version. In the plain browser (CLI
- * server) there is no `metahubDesktop` bridge, so only the core line is shown.
+ * The version line in the settings footer, doubling as the (desktop-only) core
+ * update entry. Quiet by design — a mono version line with an inline update
+ * affordance, not a card. Driven by three versions: R = running (sidecar's
+ * /api/version), I = installed/staged on disk (next launch), L = latest on
+ * GitHub (manual check). `I > R` means an update is already downloaded and only
+ * waiting for a restart — surfaced with no network call, since the app's startup
+ * auto-updater may have staged it silently. In the plain browser (CLI server)
+ * there is no `metahubDesktop` bridge, so only the core version shows.
  */
-function VersionFooter() {
-  const [core, setCore] = useState<string | null>(null);
+function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void }) {
+  const cu = typeof window !== "undefined" ? window.metahubDesktop?.coreUpdate : undefined;
   const [appVer, setAppVer] = useState<string | null>(null);
+  const [running, setRunning] = useState<string | null>(null); // R, also the "Core" version shown
+  const [installed, setInstalled] = useState<string | null>(null); // I (desktop only)
+  const [latest, setLatest] = useState<string | null>(null); // L
+  const [state, setState] = useState<UpdateState>("idle");
+  const [errMsg, setErrMsg] = useState("");
 
   useEffect(() => {
-    api.version().then((v) => setCore(v.version)).catch(() => setCore(null));
+    api.version().then((v) => setRunning(v.version)).catch(() => setRunning(null));
     const d = typeof window !== "undefined" ? window.metahubDesktop : undefined;
     d?.appVersion?.().then(setAppVer).catch(() => setAppVer(null));
+    cu?.installedVersion().then(setInstalled).catch(() => setInstalled(null));
   }, []);
+
+  // Once running (R) and installed (I) have both landed, a staged update (I > R)
+  // means one is downloaded and only waiting for a restart — surfaced with no
+  // network call (the startup auto-updater may have staged it silently).
+  useEffect(() => {
+    if (state === "idle" && running && installed && cmpVer(installed, running) > 0) {
+      setState("staged");
+      onUpdatePending?.(true);
+    }
+  }, [running, installed]);
+
+  /** Highest of running/installed — the floor a GitHub release must beat to count as new. */
+  const floor = (): string | null => {
+    if (running && installed) return cmpVer(installed, running) > 0 ? installed : running;
+    return installed ?? running;
+  };
+  const pendingRestart = () => !!(running && installed && cmpVer(installed, running) > 0);
+
+  const check = async () => {
+    setState("checking");
+    setErrMsg("");
+    try {
+      const { latest: l } = await cu!.check();
+      const f = floor();
+      if (l && (!f || cmpVer(l, f) > 0)) {
+        setLatest(l);
+        setState("available");
+        onUpdatePending?.(true);
+      } else {
+        toast("已是最新版本");
+        setState(pendingRestart() ? "staged" : "idle");
+      }
+    } catch (e) {
+      setErrMsg((e as Error).message);
+      setState("error");
+    }
+  };
+
+  const download = async () => {
+    setState("downloading");
+    setErrMsg("");
+    try {
+      const v = await cu!.download();
+      if (v) {
+        setInstalled(v);
+        setState("staged");
+        onUpdatePending?.(true);
+        toast(`已下载 v${v}`);
+      } else {
+        // Nothing newer than what's already staged (e.g. double-click).
+        toast("已是最新版本");
+        setState(pendingRestart() ? "staged" : "idle");
+      }
+    } catch (e) {
+      setErrMsg((e as Error).message);
+      setState("error");
+    }
+  };
+
+  // The inline update affordance — a quiet text link, with the page's only
+  // accent dot when something is actionable. Desktop only.
+  let update: ComponentChildren = null;
+  if (cu) {
+    switch (state) {
+      case "checking":
+        update = <span class="ver-act" aria-disabled="true">检查中…</span>;
+        break;
+      case "downloading":
+        update = <span class="ver-act" aria-disabled="true">下载中…</span>;
+        break;
+      case "available":
+        update = (
+          <span class="ver-up">
+            <span class="ver-dot pulse" />
+            <span>新版本 <span class="ver-num">{latest}</span></span>
+            <button class="ver-act accent" onClick={download} title={`下载并更新到 v${latest}`}>下载</button>
+          </span>
+        );
+        break;
+      case "staged":
+        update = (
+          <span class="ver-up">
+            <span class="ver-dot pulse" />
+            <span><span class="ver-num">{installed}</span> 待重启</span>
+            <button class="ver-act accent" onClick={() => void cu.restart()} title={`重启应用以更新到 v${installed}`}>重启</button>
+          </span>
+        );
+        break;
+      case "error":
+        update = (
+          <span class="ver-up err">
+            <span class="ver-msg">检查失败</span>
+            <button class="ver-act" onClick={check} title={errMsg || "重试"}>重试</button>
+          </span>
+        );
+        break;
+      default:
+        update = <button class="ver-act" onClick={check}>检查更新</button>;
+    }
+  }
 
   return (
     <div class="set-footer">
-      {appVer && <span>App {appVer}</span>}
-      {appVer && core && <span class="set-footer-sep">·</span>}
-      {core && <span>Core {core}</span>}
+      {appVer && <span>App <span class="ver-num">{appVer}</span></span>}
+      {appVer && running && <span class="set-footer-sep">·</span>}
+      {running && <span>Core <span class="ver-num">{running}</span></span>}
+      {update && (running || appVer) && <span class="set-footer-sep">·</span>}
+      {update}
     </div>
   );
 }

@@ -28,6 +28,8 @@ interface SidebarProps {
   onCollapse: () => void;
   onOpenSettings: () => void;
   settingsActive: boolean;
+  /** Show a dot on the settings entry: a core update is staged or available. */
+  updatePending?: boolean;
   reloadNav: () => Promise<void>;
   onError: (msg: string) => void;
   afterDelete: (kind: "db" | "doc", id: string) => void;
@@ -282,6 +284,7 @@ export function Sidebar(props: SidebarProps) {
         >
           <span class="emoji"><Icon name="settings" cls="ico sm" /></span>
           <span class="label">设置</span>
+          {props.updatePending && <span class="nav-dot" title="有可用更新" />}
         </button>
       </div>
 

@@ -123,6 +123,8 @@ const HTML = `<!doctype html>
   .dragging { opacity:.35; }
   .sb-footer { flex:none; padding:6px 8px; border-top:1px solid var(--line); }
   .sb-footer .navitem { font-size:13.5px; }
+  .nav-dot { flex:none; width:7px; height:7px; border-radius:50%; background:var(--danger);
+    box-shadow:0 0 0 2px var(--surface); margin-right:2px; }
 
   /* settings page */
   .set-page { max-width:680px; margin:0 auto; padding:40px 28px 64px; }
@@ -132,8 +134,19 @@ const HTML = `<!doctype html>
   .set-section-head { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px; }
   .set-section-desc { color:var(--fg-soft); margin-bottom:16px; }
   .set-footer { margin-top:40px; padding-top:20px; border-top:1px solid var(--line); display:flex;
-    justify-content:center; gap:8px; color:var(--muted); font-size:12px; }
-  .set-footer-sep { opacity:.5; }
+    flex-wrap:wrap; justify-content:center; align-items:center; gap:7px; color:var(--muted); font-size:12px; }
+  .set-footer-sep { opacity:.45; }
+  .ver-num { font-family:var(--mono); font-size:11px; color:var(--fg-soft); letter-spacing:-.01em; }
+  .ver-up { display:inline-flex; align-items:center; gap:6px; }
+  .ver-up.err .ver-msg { color:var(--danger); }
+  .ver-act { background:none; border:0; padding:0; margin:0; font:inherit; font-size:12px; line-height:1;
+    color:var(--muted); cursor:pointer; transition:color .12s; }
+  .ver-act:hover { color:var(--accent); }
+  .ver-act.accent { color:var(--accent); font-weight:600; }
+  .ver-act[aria-disabled="true"] { opacity:.6; cursor:default; pointer-events:none; }
+  .ver-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; }
+  .ver-dot.pulse { animation:verpulse 1.8s ease-in-out infinite; }
+  @keyframes verpulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
   .theme-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
   .theme-card { position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:10px;
     text-align:left; padding:16px; border:1px solid var(--line-strong); border-radius:var(--radius);

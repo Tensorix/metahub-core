@@ -13,6 +13,19 @@ export interface MetahubDesktop {
   versions: { electron: string; chrome: string; node: string };
   /** Electron shell (desktop app) version, from the main process. */
   appVersion?: () => Promise<string>;
+  /**
+   * Core sidecar auto-update bridge. `installedVersion` is the version staged on
+   * disk (runs next launch); `check` hits GitHub for the latest release without
+   * downloading; `download` downloads+verifies+stages it (returns the staged
+   * version, or null if nothing newer); `restart` relaunches to apply a staged
+   * core. Present only in the desktop app.
+   */
+  coreUpdate?: {
+    installedVersion: () => Promise<string>;
+    check: () => Promise<{ latest: string | null }>;
+    download: () => Promise<string | null>;
+    restart: () => Promise<void>;
+  };
   quicknote?: {
     getSettings: () => Promise<QuickNoteSettings>;
     setShortcut: (accelerator: string) => Promise<QuickNoteSettings>;
