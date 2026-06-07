@@ -125,6 +125,7 @@ if (location.hash === "#quick" && window.metahubDesktop) {
 ### 7.3 原生能力(`apps/desktop/src/main.ts` + `preload.ts`)
 
 - **小窗**:第二个 BrowserWindow——mac `vibrancy:"under-window"` + `visualEffectState:"active"` + `backgroundColor:"#00000000"` + `titleBarStyle:"hiddenInset"`(交通灯浮在拖拽顶栏上);默认右下角、可缩放、记忆 bounds;关闭即隐藏(保活,下次秒开)。
+- **跨全屏空间置顶(Raycast 式)**:mac 上小窗用 `type:"panel"`——Electron 运行时给它加 `NSWindowStyleMaskNonactivatingPanel`,使其能浮在**别的 App 的全屏空间**之上、出现在所有 Space,且**显示时不激活 Metahub**(否则 `show()+focus()` 会激活应用、把焦点切回主窗所在桌面 = 用户感知的「跳回」)。主应用仍保留 Dock 图标,只有这一个窗口表现为面板。创建后再补两步:`setAlwaysOnTop(alwaysOnTop, "screen-saver")`(普通层级被 macOS 10.14+ 禁止浮于全屏之上,须升到 `screen-saver`)+ `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })`(`skipTransformProcessType` 避免调用时进程类型切换导致的 Dock 闪烁)。「始终置顶」开关(`qn:set-always-on-top`)同样按 `screen-saver` 层级设置。
 - **唤起**:`globalShortcut`(默认 `CommandOrControl+Shift+Space`)+ `Tray` 菜单栏图标(`apps/desktop/assets/trayTemplate.png`,构建期脚本生成的单色 template),点击均 toggle 显隐。因常驻托盘,`window-all-closed` 改为 no-op(托盘保活)。
 - **置顶 / 快捷键设置**:经 preload 暴露 `window.metahubDesktop.quicknote`(IPC 频道 `qn:get-settings`/`qn:set-shortcut`/`qn:set-always-on-top`/`qn:hide` 等)。设置页 `settings.tsx` 仅当该桥存在时显示「快速笔记」区块(改快捷键、默认置顶)。
 - **持久化**:快捷键 / 置顶 / 窗口 bounds 存 `app.getPath("userData")/quicknote-settings.json`(本机态,不入 CRDT)。

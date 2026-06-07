@@ -314,6 +314,11 @@ function createQuickNoteWindow(): BrowserWindow {
     // float over the draggable top bar). Other platforms: a plain frameless window.
     ...(isMac
       ? {
+          // panel: non-activating NSPanel mask at runtime, so the window floats
+          // over other apps' full-screen spaces and joins all spaces WITHOUT
+          // activating Metahub (no jump back to the main window's desktop). The
+          // main app keeps its dock icon — only this window behaves like a panel.
+          type: "panel" as const,
           vibrancy: "under-window" as const,
           visualEffectState: "active" as const,
           backgroundColor: "#00000000",
@@ -326,6 +331,17 @@ function createQuickNoteWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   });
+
+  if (isMac) {
+    // screen-saver level floats above full-screened apps; visibleOnFullScreen +
+    // skipTransformProcessType keeps it on every space without the brief dock
+    // flicker that the default process-type transform would cause.
+    win.setAlwaysOnTop(settings.alwaysOnTop, "screen-saver");
+    win.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
+  }
 
   quickReady = false;
   void win.loadURL(`http://127.0.0.1:${serverPort}/#quick`);
@@ -479,7 +495,11 @@ function registerIpc(): void {
 
   ipcMain.handle("qn:set-always-on-top", (_e, on: boolean) => {
     settings.alwaysOnTop = on;
-    if (quickWin && !quickWin.isDestroyed()) quickWin.setAlwaysOnTop(on);
+    if (quickWin && !quickWin.isDestroyed()) {
+      // screen-saver level on macOS so the toggle keeps the window above
+      // full-screened apps, matching the panel's cross-space behavior.
+      quickWin.setAlwaysOnTop(on, process.platform === "darwin" ? "screen-saver" : "normal");
+    }
     saveSettings();
     return on;
   });
