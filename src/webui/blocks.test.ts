@@ -113,20 +113,83 @@ test("blank lines between list items round-trip (tight list stays tight)", () =>
   expect(bodyFromBlocks(blocksFromBody(body))).toBe(body); // idempotent
 });
 
-test("an empty list item is a blank-line spacer, not dropped", () => {
-  // pressing Enter in a list and leaving the item empty = a blank line
+test("an empty list item keeps its type across a round-trip (not a blank line)", () => {
+  // leaving a list item empty = a blank *list item*; its marker is serialized so
+  // it reloads as the same list type, not a plain gap.
   const blocks = [
     { id: "1", type: "bullet" as const, content: "a" },
-    { id: "2", type: "bullet" as const, content: "" }, // empty bullet -> blank line
+    { id: "2", type: "bullet" as const, content: "" }, // empty bullet keeps its marker
     { id: "3", type: "bullet" as const, content: "b" },
   ];
   const body = bodyFromBlocks(blocks);
-  expect(body).toBe("- a\n\n\n- b");
+  expect(body).toBe("- a\n- \n- b");
   expect(blocksFromBody(body).map((b) => [b.type, b.content])).toEqual([
     ["bullet", "a"],
-    ["p", ""],
+    ["bullet", ""],
     ["bullet", "b"],
   ]);
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body); // idempotent
+});
+
+test("an empty ordered item keeps the list ordered across a round-trip", () => {
+  // 1. foo / (empty) / 3. bar — the empty middle stays an ordered item ("2. ")
+  const body = "1. foo\n2. \n3. bar";
+  expect(blocksFromBody(body).map((b) => [b.type, b.content])).toEqual([
+    ["numbered", "foo"],
+    ["numbered", ""],
+    ["numbered", "bar"],
+  ]);
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
+});
+
+test("deleting an item's marker leaves a plain paragraph gap", () => {
+  // user removed the "2." marker -> the middle is a plain (empty) paragraph; it
+  // round-trips as a blank line, staying a paragraph, not an ordered item.
+  const blocks = [
+    { id: "1", type: "numbered" as const, content: "foo" },
+    { id: "2", type: "p" as const, content: "" }, // marker deleted -> plain gap
+    { id: "3", type: "numbered" as const, content: "bar" },
+  ];
+  const body = bodyFromBlocks(blocks);
+  expect(body).toBe("1. foo\n\n\n2. bar");
+  expect(blocksFromBody(body).map((b) => [b.type, b.content])).toEqual([
+    ["numbered", "foo"],
+    ["p", ""],
+    ["numbered", "bar"],
+  ]);
+});
+
+test("a bare marker stripped of its trailing space still parses as an empty item", () => {
+  expect(blocksFromBody("- a\n-\n- b").map((b) => [b.type, b.content])).toEqual([
+    ["bullet", "a"],
+    ["bullet", ""],
+    ["bullet", "b"],
+  ]);
+  // `---` is still a divider, `-foo` still a paragraph
+  expect(blocksFromBody("---")[0]!.type).toBe("divider");
+  expect(blocksFromBody("-foo")[0]!.type).toBe("p");
+});
+
+test("empty list items survive at any nesting depth", () => {
+  const body = "- a\n  - x\n  - \n  - y\n- b";
+  const blocks = blocksFromBody(body);
+  expect(blocks[0]!.children?.map((b) => [b.type, b.content])).toEqual([
+    ["bullet", "x"],
+    ["bullet", ""],
+    ["bullet", "y"],
+  ]);
+  expect(bodyFromBlocks(blocks)).toBe(body);
+});
+
+test("blank-line gaps survive between nested list items", () => {
+  const body = "- a\n  - b\n\n\n  - c";
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
+});
+
+test("blank-line gaps survive inside nested list content", () => {
+  // an extra blank line between two child paragraphs of a list item is kept
+  const body = "- a\n\n  child1\n\n\n  child2";
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
 });
 
 test("a blank line between numbered items keeps the run going (1, 2)", () => {

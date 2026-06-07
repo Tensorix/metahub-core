@@ -358,11 +358,31 @@ textarea 的 `scrollHeight` 以 `rows` 属性为下限，`rows` 默认 **2**，�
 
 **空列表项也是空行(关键补丁)**:用户在列表里加空行的自然手势是回车后留一个**空列表项**(`- ` 空 bullet),而旧 `shouldPersist` 把空列表项直接丢弃 → PATCH body 里列表始终是紧凑单 `\n`,空行存不下。修正:`isBlankParagraph` 升级为 `isBlankSpacer`——空 `p` **或**空列表项(无 content、无 children)都算间距,`bodyFromBlocks` 一律序列化成空行。回读时空行变空 `p`(列表外的可聚焦空行)。`computeListNumbers` 改为对**过滤掉 spacer** 的兄弟计算(`bodyFromBlocks` 与 editor `renderBlocks` 同步),使有序列表中间夹空行不会重置编号(1, 2 而非 1, 1)。`isBlankSpacer` 从 `blocks.ts` 导出供 editor 复用。
 
+> ⚠️ **本补丁(空列表项=spacer)已被 §14.4.3 取代**:把空列表项序列化成空行会**丢类型**(空有序项刷新后变普通空行),且嵌套空行仍丢。§14.4.3 改为「空列表项是带标记的类型块、空行专指空段落」,并把空行处理递归到每一层。`isBlankSpacer` 收窄回「只认空 `p`」、`shouldPersist` 让列表项恒持久化。`computeListNumbers` 仍对过滤 spacer 的兄弟计算(空有序项现在不再是 spacer,故会正常参与编号)。
+
 ### 14.4.2 行首退格合并上一块（`editor.tsx` `onKeyDown` Backspace,2026-06-07)
 
 Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace 无反应(列表项是剥 marker,普通段落什么都不做)。补:非空块、无选区、光标在块首时,若上一块是有可编辑文本的块(非 code/table/divider),把本块文本并入上一块尾部(`prev.content += blockEditorText(b,el)`)、`remove(b.id)`、光标用 `focusBlockAtOffset(prev.id, inlineTextLength(prev.content))` 落在拼接点——即「删掉换行符回到上一块」。列表项仍保留「先剥 marker → 段落」的既有一步。
 
 **光标落点坑(同 §12.2 竞态)**:合并后上一块 content 变了,其 `renderKey` effect 会重写 `innerHTML`;若 rAF 的 `focusBlockAtOffset` 先于 effect 运行,effect 重写会把光标冲回块首(用户报「跑到行首」)。修正:在 rAF 里**先把合并后的 HTML 写进上一块**(`pe.innerHTML = inlineToHtml(prev.content)`),再定位光标——之后 effect 的「HTML 有变才写」守卫看到一致即跳过,光标稳定落在拼接点。
+
+### 14.4.3 空块类型保真:空列表项 ≠ 空行(`webui/blocks.ts`,v2.6,2026-06-07)
+
+§14.4.1 把空列表项当 spacer 引入两个 bug:**① 空有序/无序项刷新后退化成普通空行(类型丢失);② 嵌套层空行刷新后消失(`- a\n  - b\n\n\n  - c` → `- a\n  - b\n  - c`)**。设计见 [design.md §13](./design.md)。core 已验证无损,改动**全部在 `src/webui/blocks.ts`**。
+
+诊断(运行时实测的**解析/序列化不对称**):`blocksFromBody("1. foo\n2. \n3. bar")` 本就回出 `[numbered, numbered "", numbered]`——解析器对;但 `bodyFromBlocks([numbered, numbered "", numbered])` 输出 `"1. foo\n\n\n2. bar"`——序列化器把空有序项当 spacer 销毁。markdown 里 `2. `(标记行)与真空行本就不同,无需推断。
+
+改动:
+
+1. **`isBlankSpacer` 收窄**:`b.type === "p" && b.content.trim() === ""`(去掉 `isListType` 分支)——空列表项不再是 spacer。
+2. **`shouldPersist` 列表项恒 true**:空项也经 `renderListBlock` 输出裸标记(`- `/`2. `/`- [ ] `),类型随 markdown 存活。
+3. **统一递归序列化 `serializeContainer(blocks, indent, isTop)`**:合并旧 `bodyFromBlocks`(顶层)与 `renderContainer`(嵌套、`filter(shouldPersist)` 会丢 spacer)两条路。每层都:跳过空 `p` 但计 `extraBlanks`、真实块间发 `sep + extraBlanks` 空行(`sep = shouldSeparate(prev,b) || extraBlanks>0 ? 1 : 0`)、进入列表 children 用**同一函数**递归;仅 `isTop` 的尾随游程补约定换行符。`renderListBlock` 把**原始** children(不预过滤)交给它,`firstReal` 决定是否在标记行后补空行。`renderContainer` 删除。
+4. **`parseContainer` 去掉 `top` 门槛**:`blocks.length && blankRun>1` 在**每一层**把多余空行游程物化为空 `p`(归属逻辑——遇更浅行 `break` 交还父级——不变,已把游程路由到正确层)。`blocksFromBody` 调用改 3 参。
+5. **`matchListLine` 加固**:`/^(\d+)[.)](?:\s+(.*))?$/`、`/^[-*+](?:\s+(.*))?$/` 让尾随内容可选,裸标记(`-`、`2.`)也解析为空列表项,防尾随空格被 strip 后退化;`---` 仍是分隔线、`-foo`/`2.foo` 仍是段落。
+
+`blocks.test.ts` 旧「an empty list item is a blank-line spacer」断言改为「保留为 bullet」,新增有序空项 round-trip、删标记→p、嵌套空项、嵌套空行间距等用例。
+
+验证:`bun test` 215 通过;`bun -e` 全链路(`bodyFromBlocks`→core `parseDocBlocks/serializeDocBlocks`→`blocksFromBody`)12 场景全部 `in===out` 且幂等(含上面两个曾丢数据的 case);`bunx tsc --noEmit` 改动文件零错误;`bun run build` 成功。
 
 ### 14.5 验证
 

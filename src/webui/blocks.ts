@@ -114,7 +114,7 @@ export function blockToText(b: Block): string {
 export function blocksFromBody(body: string | null | undefined): Block[] {
   const normalized = (body ?? "").replace(/\r\n?/g, "\n");
   const lines = normalized ? normalized.split("\n") : [];
-  const blocks = parseContainer(lines, 0, 0, true).blocks;
+  const blocks = parseContainer(lines, 0, 0).blocks;
   normalizeNumbering(blocks);
   // Blank lines the user left at the very end (for spacing) become empty
   // paragraphs so the gap survives a save/reload. One trailing newline is the
@@ -125,11 +125,14 @@ export function blocksFromBody(body: string | null | undefined): Block[] {
   return blocks;
 }
 
-/** An empty paragraph or empty list item — vertical spacing the user inserted
- *  (e.g. pressing Enter in a list and leaving it blank), not real content. These
- *  are serialized as blank lines instead of dropped, so the gap survives. */
+/** An empty paragraph — pure vertical spacing the user inserted (a blank line),
+ *  not real content. Serialized as a blank line instead of dropped, so the gap
+ *  survives. An empty *list item* is NOT a spacer: it is a typed block whose
+ *  marker (`- `, `2. `, `- [ ] `) carries its kind through Markdown, so it keeps
+ *  its type across a save/reload. Delete the marker and it becomes a `p` — a
+ *  plain blank line. See [[blocks]] doc-block model. */
 export function isBlankSpacer(b: Block): boolean {
-  return (b.type === "p" || isListType(b.type)) && b.content.trim() === "" && !b.children?.length;
+  return b.type === "p" && b.content.trim() === "" && !b.children?.length;
 }
 
 /**
@@ -173,17 +176,27 @@ function normalizeNumbering(blocks: Block[]): void {
   }
 }
 
-/** Editor block tree -> body Markdown. Empty top-level paragraphs are the user's
- *  vertical spacing: each one becomes an extra blank line (beyond the standard
- *  single-blank separator), so interior and trailing gaps survive the round-trip.
- *  Other empty blocks (list items, tables, code) are still dropped. */
+/** Editor block tree -> body Markdown. Empty paragraphs are the user's vertical
+ *  spacing: each becomes an extra blank line (beyond the standard single-blank
+ *  separator), so interior and trailing gaps survive the round-trip. Empty list
+ *  items keep their marker; empty tables/code are dropped. One recursive routine
+ *  renders every container (top level and nested list children) so gaps survive
+ *  at any depth. */
 export function bodyFromBlocks(blocks: Block[]): string {
+  return serializeContainer(blocks, 0, true).join("\n");
+}
+
+/** Render one container's blocks at `indent`. Empty paragraphs are counted as
+ *  extra blank lines between the real blocks; at the document end (`isTop`) a
+ *  trailing run also keeps the conventional terminator newline so trailing empty
+ *  paragraphs round-trip. */
+function serializeContainer(blocks: readonly Block[], indent: number, isTop: boolean): string[] {
   // Spacers don't take part in list numbering, so a blank line between numbered
   // items keeps the run going (1, 2) instead of resetting.
   const numbers = computeListNumbers(blocks.filter((b) => !isBlankSpacer(b)));
   const out: string[] = [];
   let prev: Block | null = null;
-  let extraBlanks = 0; // empty paragraphs/list items seen since the last rendered block
+  let extraBlanks = 0; // empty paragraphs seen since the last rendered block
   for (const b of blocks) {
     if (isBlankSpacer(b)) {
       if (out.length) extraBlanks++; // leading empties are dropped
@@ -192,19 +205,20 @@ export function bodyFromBlocks(blocks: Block[]): string {
     if (!shouldPersist(b)) continue;
     if (out.length) {
       // A standard 1-line separator, unless two list items sit tight together
-      // (no blanks). But once the user put empty paragraphs between them, force
-      // the separator too so the run is `1 + extra` blank lines — that round-trips
-      // back to `extra` empty paragraphs for lists exactly as for paragraphs.
+      // (no blanks). Once the user put empty paragraphs between them, force the
+      // separator too so the run is `1 + extra` blank lines.
       const sep = shouldSeparate(prev, b) || extraBlanks > 0 ? 1 : 0;
       for (let k = 0; k < sep + extraBlanks; k++) out.push("");
     }
-    out.push(...renderBlock(b, 0, numbers.get(b.id) ?? 1));
+    out.push(...renderBlock(b, indent, numbers.get(b.id) ?? 1));
     prev = b;
     extraBlanks = 0;
   }
-  // Trailing empty paragraphs: their blank lines plus the conventional terminator.
-  if (out.length && extraBlanks > 0) for (let k = 0; k <= extraBlanks; k++) out.push("");
-  return out.join("\n");
+  // Trailing empty paragraphs: their blank lines plus, only at the very end of
+  // the document, the conventional terminator newline.
+  if (out.length && extraBlanks > 0)
+    for (let k = 0; k < extraBlanks + (isTop ? 1 : 0); k++) out.push("");
+  return out;
 }
 
 export function shortcutFromInput(text: string, key: " " | "Enter"): Shortcut | null {
@@ -231,7 +245,6 @@ function parseContainer(
   lines: string[],
   start: number,
   minIndent: number,
-  top = false,
 ): { blocks: Block[]; next: number } {
   const blocks: Block[] = [];
   let i = start;
@@ -254,10 +267,12 @@ function parseContainer(
     }
     if (leadingIndent(line) < minIndent) break;
 
-    // Top-level only: blank lines between blocks beyond the single separator are
-    // spacing the user inserted — materialize the extras as empty paragraphs so
-    // they survive the round-trip. Trailing blanks are left for blocksFromBody.
-    if (top && blocks.length && blankRun > 1)
+    // Blank lines between blocks beyond the single separator are spacing the user
+    // inserted — materialize the extras as empty paragraphs so they survive the
+    // round-trip, at every nesting level (the run already belongs to this
+    // container; deeper/shallower runs broke out above). Trailing blanks are left
+    // for blocksFromBody.
+    if (blocks.length && blankRun > 1)
       for (let k = 1; k < blankRun; k++) blocks.push({ id: genId(), type: "p", content: "" });
     blankRun = 0;
 
@@ -486,28 +501,16 @@ function matchListLine(line: string, minIndent: number): ListLine | null {
     };
   }
 
-  m = text.match(/^(\d+)[.)]\s+(.*)$/);
-  if (m) return { indent, type: "numbered", content: m[2]!, num: parseInt(m[1]!, 10) };
+  // Trailing content is optional so a bare marker (`-`, `2.`) round-trips as an
+  // empty list item even if its trailing space was stripped. `-foo`/`2.foo` (no
+  // space) still fall through to a paragraph, and `---` to a divider.
+  m = text.match(/^(\d+)[.)](?:\s+(.*))?$/);
+  if (m) return { indent, type: "numbered", content: m[2] ?? "", num: parseInt(m[1]!, 10) };
 
-  m = text.match(/^[-*+]\s+(.*)$/);
-  if (m) return { indent, type: "bullet", content: m[1]! };
+  m = text.match(/^[-*+](?:\s+(.*))?$/);
+  if (m) return { indent, type: "bullet", content: m[1] ?? "" };
 
   return null;
-}
-
-function renderContainer(blocks: readonly Block[] | undefined, indent: number): string[] {
-  const out: string[] = [];
-  let prev: Block | null = null;
-  const persisted = (blocks ?? []).filter(shouldPersist);
-  const numbers = computeListNumbers(persisted);
-
-  for (const block of persisted) {
-    if (out.length && shouldSeparate(prev, block)) out.push("");
-    out.push(...renderBlock(block, indent, numbers.get(block.id) ?? 1));
-    prev = block;
-  }
-
-  return out;
 }
 
 function renderBlock(block: Block, indent: number, number: number): string[] {
@@ -548,10 +551,14 @@ function renderListBlock(block: Block, indent: number, number: number): string[]
         ? `- [${block.checked ? "x" : " "}] `
         : "- ";
   const lines = [`${pad}${marker}${block.content}`];
-  const children = (block.children ?? []).filter(shouldPersist);
-  if (children.length) {
-    if (!isListType(children[0]!.type) && block.content.trim() !== "") lines.push("");
-    lines.push(...renderContainer(children, indent + 2));
+  const children = block.children ?? [];
+  const firstReal = children.find((c) => !isBlankSpacer(c) && shouldPersist(c));
+  if (firstReal) {
+    // A non-list child (paragraph/quote/code under the item) needs a blank line
+    // after the marker line; a nested list hugs it. Render every child — including
+    // empty-paragraph spacers — through the shared recursive serializer.
+    if (!isListType(firstReal.type) && block.content.trim() !== "") lines.push("");
+    lines.push(...serializeContainer(children, indent + 2, false));
   }
   return lines;
 }
@@ -563,9 +570,9 @@ function shouldSeparate(prev: Block | null, next: Block): boolean {
 
 function shouldPersist(block: Block): boolean {
   if (block.type === "divider") return true;
-  if (isListType(block.type)) {
-    return block.content.trim() !== "" || (block.children ?? []).some(shouldPersist);
-  }
+  // A list item is a typed line: even with no content it serializes as its bare
+  // marker (`- `, `2. `, `- [ ] `) so its kind survives a Markdown round-trip.
+  if (isListType(block.type)) return true;
   if (block.type === "code") return block.content.trim() !== "" || !!block.lang?.trim();
   if (block.type === "table") return (block.rows ?? []).some((r) => r.some((c) => c.trim() !== ""));
   return block.content.trim() !== "";
