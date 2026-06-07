@@ -320,3 +320,59 @@ textarea 的 `scrollHeight` 以 `rows` 属性为下限，`rows` 默认 **2**，�
 - `src/webui/table.tsx`——`SelectMenu` 选项渲染（去 `.lico.plain` 包裹）。
 - `src/core/sync/webui.ts`（内联 CSS）——`.chip` 加 `white-space:nowrap`；底色规则 `.cell:hover` → `td.cell-td:hover`（`transition` 同移到 td）。
 - 验证：`bun run build` + 重启服务 + 硬刷新;把某 cell 撑成多行,hover/选中相邻 cell,确认底色铺满整行高度、底部无缺口;单选/多选 popup 选项为横向 pill、单行。
+
+## 14. v2.5 回车拆分、空行保留、光标确定性、空行无提示（2026-06-07）
+
+配套设计见 [design.md §12](./design.md)。文档编辑器四项修正;前三项纯 WebUI,空行保留连带 core 改造(`doc_blocks.blank_after`,见 [04-block-level-doc-crdt §2.7](../04-block-level-doc-crdt/design.md))。
+
+### 14.1 回车在光标处拆分（`editor.tsx` `onKeyDown` Enter 分支）
+
+普通/列表块的 Enter(非 code、非 shortcut、非空列表项退出)改为:`const { before, after } = splitEditableAtCaret(el)`(复用 §12.3 的 helper);`b.content = before`;`insertAfter(b.id, isListType(b.type) ? b.type : "p", { content: after })`。`insertAfter` 已 `bump()` + 聚焦新块开头;`bump()` 触发的 `useEffect`(HTML 有变才写)把当前块重写成 `before`、新块写 `after`。`after` 为空时即原「新建空行」。原生选区非空时 `splitEditableAtCaret` 天然丢弃选中段(Enter 替换选区)。
+
+### 14.2 光标落点确定性（`editor.tsx` `focusBlock`）
+
+`atEnd=false` 分支原先只 `el.focus()`、不设 caret,依赖浏览器默认 → 结构 op 重写 `innerHTML` 后落到位置 0,与粘贴/拆分落点竞态。改为始终显式建 Range:`selectNodeContents(el)` + `collapse(!atEnd)`(`!atEnd`→始端、`atEnd`→末端),textarea 分支不变(`setSelectionRange`)。与 §12.2 的「HTML 有变才写」守卫共同消除粘贴/删块/拆分后的光标漂移。
+
+### 14.3 空段落的「/」提示仅在聚焦行显示（`editor.tsx` `placeholder` + `webui.ts` CSS）
+
+`placeholder("p")` 保留 `"输入文本,'/' 唤出命令"`(写进 `data-ph`);新增内联 CSS `.b-p .editable:empty:not(:focus)::before { content:"" }` 覆盖基础 `.editable:empty::before`(特异性更高),使**未聚焦**的空段落不渲染提示,光标所在的空行仍提示。标题/引用/代码块等用基础规则始终显示类型提示。空文档入口仍由 `blocks.length===0` 的独立引导 div 兜底。
+
+> 取舍:用户初版只要「空行不显示斜杠」,实现成「`placeholder("p")` 返回 `""`」会**连聚焦行也不提示**,不符直觉;改为焦点条件的 CSS 后,既让闲置空行干净、又保留当前行的「/」入口。
+
+### 14.4 空行往返（`webui/blocks.ts`）
+
+顶层空段落 ⇄ body 空行,与 core `blank_after` 对齐:
+
+- `bodyFromBlocks` 重写为顶层逐块走查:非空块经 `renderBlock` 输出 + `shouldSeparate` 单空行分隔;每个空段落(`isBlankParagraph`)多压一行空行;文末空段落补「空行 + 约定换行符」。其它空块(空列表项/表格/代码)仍按 `shouldPersist` 丢弃。
+- `parseContainer` 加 `top` 参数:**仅顶层**把超出单分隔的空行游程(`blankRun>1`)物化为空 `p`;嵌套(列表子树)不变,空行仍按结构分隔。`blocksFromBody` 以 `top=true` 调用,文末空行仍由既有 `trailingNewlines` 逻辑补空段落。
+- 之所以连带改 core:WebUI 这套之前对**文末**也有等价代码且单测通过,但端到端仍丢——因为 body 经 core `serializeBlocks`(`filter(t.length>0).join("\n\n")`)被规整。core 改造后 body 原样往返,WebUI 映射才生效(见 design §12.3 坑点)。
+
+### 14.4.1 列表项之间的空行(2026-06-07 修正)
+
+首版只验证了**段落**间空行,**列表项**间空行仍丢(用户实测列表文档复现)。两个根因:
+
+1. `bodyFromBlocks` 对相邻列表项 `shouldSeparate` 返回 `false`(紧凑列表 0 空行),故 `[bullet, 空p, bullet]` 只输出 `sep(0)+extra(1)=1` 个空行 `- a\n\n- b`——而 1 个空行正是松散列表的标准分隔,无法与「1 个空 p」区分。修正:`const sep = shouldSeparate(prev,b) || extraBlanks>0 ? 1 : 0`——一旦项间有空段落就强制基准分隔,输出 `1+extra` 个空行,与段落情形统一,`blocksFromBody` 的 `max(0,B-1)` 注入公式即可对列表/段落通用。
+2. `parseListItem` 的子 `parseContainer` 会**吞掉列表项后面的空行**(它们本属父级),顶层因此数不到。修正:`parseContainer` 遇空行先**前瞻**——只有后随更深缩进内容(`indent>=minIndent`)的空行才并入本容器消费,否则 `break` 把空行留给父级计数。嵌套子树内部空行(test 85)仍按缩进归属,行为不变。
+
+`[bullet a, 空p, bullet b]` → `- a\n\n\n- b` → core(`blank_after=1`)→ 回读 `[bullet a, 空p, bullet b]`,端到端往返(`bun ./_e2e` 真库验证)。配 `blocks.test.ts` 「blank lines between list items round-trip」用例。
+
+**空列表项也是空行(关键补丁)**:用户在列表里加空行的自然手势是回车后留一个**空列表项**(`- ` 空 bullet),而旧 `shouldPersist` 把空列表项直接丢弃 → PATCH body 里列表始终是紧凑单 `\n`,空行存不下。修正:`isBlankParagraph` 升级为 `isBlankSpacer`——空 `p` **或**空列表项(无 content、无 children)都算间距,`bodyFromBlocks` 一律序列化成空行。回读时空行变空 `p`(列表外的可聚焦空行)。`computeListNumbers` 改为对**过滤掉 spacer** 的兄弟计算(`bodyFromBlocks` 与 editor `renderBlocks` 同步),使有序列表中间夹空行不会重置编号(1, 2 而非 1, 1)。`isBlankSpacer` 从 `blocks.ts` 导出供 editor 复用。
+
+### 14.4.2 行首退格合并上一块（`editor.tsx` `onKeyDown` Backspace,2026-06-07)
+
+Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace 无反应(列表项是剥 marker,普通段落什么都不做)。补:非空块、无选区、光标在块首时,若上一块是有可编辑文本的块(非 code/table/divider),把本块文本并入上一块尾部(`prev.content += blockEditorText(b,el)`)、`remove(b.id)`、光标用 `focusBlockAtOffset(prev.id, inlineTextLength(prev.content))` 落在拼接点——即「删掉换行符回到上一块」。列表项仍保留「先剥 marker → 段落」的既有一步。
+
+**光标落点坑(同 §12.2 竞态)**:合并后上一块 content 变了,其 `renderKey` effect 会重写 `innerHTML`;若 rAF 的 `focusBlockAtOffset` 先于 effect 运行,effect 重写会把光标冲回块首(用户报「跑到行首」)。修正:在 rAF 里**先把合并后的 HTML 写进上一块**(`pe.innerHTML = inlineToHtml(prev.content)`),再定位光标——之后 effect 的「HTML 有变才写」守卫看到一致即跳过,光标稳定落在拼接点。
+
+### 14.5 验证
+
+- `bun test`:206 通过(新增 core `parseDocBlocks`/`serializeDocBlocks` 往返+幂等、`documents` 端到端「空行存活 + 只改间距块身份不变」、webui 内部空行 round-trip;`webui/blocks.test.ts` 旧「内部空段落丢弃」断言改为「保留为空行」)。
+- `bunx tsc --noEmit`:本次改动文件零错误(既存无关错误同前:`src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`apps/desktop`)。
+- `bun run build`:`dist/webui.js` 打包成功。
+- 手验(重建 + 重启 + 硬刷新):段落中间回车拆成两块;空段落无「/」提示;粘贴 Markdown 后光标落内容末尾;文末/段间加空行 → 保存刷新后仍在。
+
+### 14.6 涉及文件
+
+- core:`src/core/schema.ts`、`src/core/db.ts`、`src/core/blocks.ts`、`src/core/documents.ts`、`src/core/crdt.ts`;测试 `src/core/blocks.test.ts`、`src/core/documents.test.ts`。
+- 前端:`src/webui/editor.tsx`(Enter 拆分、`focusBlock`、`placeholder`)、`src/webui/blocks.ts`(`bodyFromBlocks`、`parseContainer` top、`isBlankParagraph`);测试 `src/webui/blocks.test.ts`。
+- 构建:`dist/webui.js`(改前端须重建)。

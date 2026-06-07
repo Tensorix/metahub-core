@@ -17,6 +17,7 @@ import {
   bodyFromBlocks,
   computeListNumbers,
   genId,
+  isBlankSpacer,
   isListType,
   shortcutFromInput,
 } from "./blocks.ts";
@@ -639,11 +640,36 @@ export function DocView({
           const prev = previousBlock(blocks, b.id);
           if (prev) { remove(b.id); requestAnimationFrame(() => focusBlock(prev.id, true)); }
         }
-      } else if (isListType(b.type) && !hasExpandedSelection() && caretAtBlockStart(el)) {
-        // Backspace at the very start of a non-empty list item strips the list
-        // marker, turning it into a plain paragraph while keeping its text.
-        e.preventDefault();
-        convert(b.id, "p", { content: blockEditorText(b, el) });
+      } else if (!hasExpandedSelection() && caretAtBlockStart(el)) {
+        if (isListType(b.type)) {
+          // Backspace at the very start of a non-empty list item strips the list
+          // marker, turning it into a plain paragraph while keeping its text.
+          e.preventDefault();
+          convert(b.id, "p", { content: blockEditorText(b, el) });
+        } else {
+          // Backspace at the start of a non-empty block merges it up into the
+          // previous text block (deletes the "line break" — the inverse of the
+          // Enter split). Skip when there is no previous block or it has no
+          // editable text (code/table/divider).
+          const prev = previousBlock(blocks, b.id);
+          if (prev && prev.type !== "code" && prev.type !== "table" && prev.type !== "divider") {
+            e.preventDefault();
+            const offset = inlineTextLength(prev.content); // caret lands at the join
+            prev.content += blockEditorText(b, el);
+            remove(b.id);
+            requestAnimationFrame(() => {
+              // Write the merged HTML ourselves before placing the caret, so the
+              // block's own renderKey effect sees matching HTML and won't rewrite
+              // it afterwards (which would reset the caret to the block start).
+              const pe = document.querySelector(`.block[data-bid="${prev.id}"] .editable`) as HTMLElement | null;
+              if (pe) {
+                const html = inlineToHtml(prev.content);
+                if (pe.innerHTML !== html) pe.innerHTML = html;
+              }
+              focusBlockAtOffset(prev.id, offset);
+            });
+          }
+        }
       }
     }
   };
@@ -730,7 +756,7 @@ export function DocView({
 
   const selectedSet = new Set(selectedIds);
   const renderBlocks = (items: Block[], depth = 0): ComponentChildren => {
-    const numbers = computeListNumbers(items);
+    const numbers = computeListNumbers(items.filter((b) => !isBlankSpacer(b)));
     return items.map((b) => (
       <BlockRow
         key={b.id}
@@ -970,10 +996,11 @@ function BlockRow({
 }
 
 function placeholder(t: BlockType): string {
-  // Typed blocks hint their kind; a plain empty paragraph stays blank (no "/"
-  // prompt) so blank lines read as real empty space. The whole-document entry
-  // hint is handled separately when there are no blocks at all.
-  return ({ h1: "标题 1", h2: "标题 2", h3: "标题 3", code: "输入代码…", quote: "引用" } as Record<string, string>)[t] ?? "";
+  // The paragraph hint shows only while the block is focused (see the
+  // `.b-p .editable:empty:not(:focus)` CSS rule), so idle blank lines read as
+  // real empty space but the line with the caret still prompts "/". Typed blocks
+  // keep their kind hint always.
+  return ({ h1: "标题 1", h2: "标题 2", h3: "标题 3", code: "输入代码…", quote: "引用" } as Record<string, string>)[t] ?? "输入文本，“/” 唤出命令";
 }
 
 // ---- code block: transparent textarea over a highlight.js mirror ----

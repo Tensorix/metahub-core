@@ -125,9 +125,11 @@ export function blocksFromBody(body: string | null | undefined): Block[] {
   return blocks;
 }
 
-/** An empty top-level paragraph — vertical spacing the user inserted. */
-function isBlankParagraph(b: Block): boolean {
-  return b.type === "p" && b.content.trim() === "" && !b.children?.length;
+/** An empty paragraph or empty list item — vertical spacing the user inserted
+ *  (e.g. pressing Enter in a list and leaving it blank), not real content. These
+ *  are serialized as blank lines instead of dropped, so the gap survives. */
+export function isBlankSpacer(b: Block): boolean {
+  return (b.type === "p" || isListType(b.type)) && b.content.trim() === "" && !b.children?.length;
 }
 
 /**
@@ -176,18 +178,24 @@ function normalizeNumbering(blocks: Block[]): void {
  *  single-blank separator), so interior and trailing gaps survive the round-trip.
  *  Other empty blocks (list items, tables, code) are still dropped. */
 export function bodyFromBlocks(blocks: Block[]): string {
-  const numbers = computeListNumbers(blocks);
+  // Spacers don't take part in list numbering, so a blank line between numbered
+  // items keeps the run going (1, 2) instead of resetting.
+  const numbers = computeListNumbers(blocks.filter((b) => !isBlankSpacer(b)));
   const out: string[] = [];
   let prev: Block | null = null;
-  let extraBlanks = 0; // empty paragraphs seen since the last rendered block
+  let extraBlanks = 0; // empty paragraphs/list items seen since the last rendered block
   for (const b of blocks) {
-    if (isBlankParagraph(b)) {
+    if (isBlankSpacer(b)) {
       if (out.length) extraBlanks++; // leading empties are dropped
       continue;
     }
     if (!shouldPersist(b)) continue;
     if (out.length) {
-      const sep = shouldSeparate(prev, b) ? 1 : 0;
+      // A standard 1-line separator, unless two list items sit tight together
+      // (no blanks). But once the user put empty paragraphs between them, force
+      // the separator too so the run is `1 + extra` blank lines — that round-trips
+      // back to `extra` empty paragraphs for lists exactly as for paragraphs.
+      const sep = shouldSeparate(prev, b) || extraBlanks > 0 ? 1 : 0;
       for (let k = 0; k < sep + extraBlanks; k++) out.push("");
     }
     out.push(...renderBlock(b, 0, numbers.get(b.id) ?? 1));
@@ -232,8 +240,16 @@ function parseContainer(
   while (i < lines.length) {
     const line = lines[i]!;
     if (line.trim() === "") {
-      blankRun++;
-      i++;
+      // A blank run is consumed only if more content at this container's indent
+      // follows it; a run before a shallower line (e.g. the next top-level block
+      // after a list item) belongs to the parent — leave it so the parent counts
+      // it (otherwise a list item would swallow the blank lines that separate it
+      // from the next block, losing user spacing between list items).
+      let j = i;
+      while (j < lines.length && lines[j]!.trim() === "") j++;
+      if (j >= lines.length || leadingIndent(lines[j]!) < minIndent) break;
+      blankRun += j - i;
+      i = j;
       continue;
     }
     if (leadingIndent(line) < minIndent) break;

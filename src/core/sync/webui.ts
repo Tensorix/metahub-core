@@ -228,6 +228,8 @@ const HTML = `<!doctype html>
   .block.list-code-host + .block-wrap.nested .gutter { display:none; }
   .editable { outline:none; flex:1; min-width:0; padding:3px 2px; line-height:1.6; }
   .editable:empty::before { content:attr(data-ph); color:var(--muted); pointer-events:none; }
+  /* A plain empty paragraph only prompts on the focused line; idle blank lines stay blank. */
+  .b-p .editable:empty:not(:focus)::before { content:""; }
   .b-h1 .editable { font-size:28px; font-weight:700; letter-spacing:-.02em; padding-top:12px; }
   .b-h2 .editable { font-size:22px; font-weight:650; letter-spacing:-.01em; padding-top:8px; }
   .b-h3 .editable { font-size:18px; font-weight:600; padding-top:4px; }

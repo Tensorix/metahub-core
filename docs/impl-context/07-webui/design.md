@@ -238,3 +238,25 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 
 - **改前端不生效**：`/webui.js` 经 `getJs()` 提供，优先读预构建 `dist/webui.js` + 进程内 `cachedJs` 仅构建一次，且 `editor.tsx` 不在 `--hot` import 图内。改完须 `bun run build` + 重启进程 + 浏览器硬刷新。
 - **全局 `renderKey` 重置光标**：结构 op 经 `bump()` 让全部块重渲染、重写 `innerHTML` 冲掉光标 → `useEffect` 改为「HTML 有变才写」。
+
+## 12. v2.5 回车拆分、空行保留、光标确定性、空行无提示（2026-06-07）
+
+文档编辑器四项修正,前三项是纯 WebUI 交互,空行保留连带 core 改造(见 [04-block-level-doc-crdt §2.7](../04-block-level-doc-crdt/design.md) 与 [data-model](../../system-design/data-model.md) `doc_blocks`)。实现见 [implementation.md §14](./implementation.md)。
+
+### 12.1 关键设计决策
+
+- **回车在光标处拆分块**：原 Enter 只 `insertAfter` 新建空块,后半段不动。改为复用既有 `splitEditableAtCaret(el)` 取光标前/后两段:`before` 留当前块、`after` 进新块、光标落新块开头;列表块续同类型,否则新建 `p`;`after` 为空即退化为原「下方新建空行」。
+- **光标落点确定性**:`focusBlock(atEnd=false)` 原本只 `el.focus()`、不显式设 caret,依赖浏览器默认——结构 op 重写 `innerHTML` 后 caret 回退到位置 0,与粘贴/拆分的落点策略竞态。改为两种情形都显式 `selectNodeContents` + `collapse(!atEnd)`(始端/末端),消除竞态。补 §11.3 的 innerHTML 守卫成为完整修复。
+- **空段落的「/」提示仅在聚焦行显示**(Notion 式):空白段落保留 `data-ph` 的「/」提示文案,但 CSS `.b-p .editable:empty:not(:focus)::before { content:"" }` 让**未聚焦**的空行不显示提示——光标所在的空行仍提示「输入文本,'/' 唤出命令」,其余空行读作真正的留白。标题/引用/代码等有语义的块仍始终显示类型提示。整篇空文档入口仍由「无块时的独立引导」兜底。
+- **空行往返**:WebUI 把**顶层**空段落映射为 body 里的空行(`bodyFromBlocks` 每个空 `p` 多输出一行空行,`blocksFromBody`/`parseContainer(top)` 把超出分隔的空行游程解析回可聚焦的空 `p`);core 用 `blank_after` 真正持久化(否则 WebUI 这套端到端无效——之前正是 core 的 `serializeBlocks` 把空行规整掉)。嵌套(列表子树)内的空行仍按结构分隔处理,不变成空段落。**列表项之间**的空行需额外处理(见 implementation §14.4.1):紧凑列表 `shouldSeparate=false` 会把空段落坍缩进松散分隔,且列表解析器会吞掉项后空行——故 `bodyFromBlocks` 在有空段落时强制基准分隔、`parseContainer` 前瞻只消费属于本容器的空行。此外用户在列表里加空行的自然手势会留下**空列表项**(不是空段落),故 `isBlankSpacer` 把空 `p` 与空列表项一视同仁当间距(否则空列表项被 `shouldPersist` 丢弃);`computeListNumbers` 对过滤掉 spacer 的兄弟计算,使夹空行的有序列表不重置编号。
+- **行首退格合并**:非空块光标在行首按 Backspace,把本块文本并入上一个文本块(删「换行符」,Enter 拆分的逆操作);列表项仍先剥列表符号→段落;code/table/divider 无可编辑文本,不合并。
+
+### 12.2 暂不实现
+
+- 行内 / 字符级跨块选区(仍块级)。
+- 前导空行保留(文档开头的空行规整掉,中间与文末保留)。
+- 空行间距的可视标尺 / 自定义行距;空行仍是「一个可聚焦空段落 = 一行空行」的离散模型。
+
+### 12.3 工程坑点（供后续 debug 参考）
+
+- **「已工作」需端到端验证**:WebUI 早有保留文末空行的代码且单测通过,但端到端仍丢——因为文档 body **不按原文存**,而是经 core `parseBlocks`/`serializeBlocks` 规整成块再重建。判断某行为是否生效务必走真实持久化路径,勿只看前端纯函数单测。

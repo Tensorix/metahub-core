@@ -180,7 +180,7 @@ documents(id, title, body, database_id, parent_id, created_hlc, __deleted)
 文档正文的权威数据:
 
 ```text
-doc_blocks(id, doc_id, text, order_key, __deleted)
+doc_blocks(id, doc_id, text, order_key, blank_after, __deleted)
 ```
 
 语义:
@@ -188,8 +188,9 @@ doc_blocks(id, doc_id, text, order_key, __deleted)
 - 每个 block 有独立 CRDT register。
 - `order_key` 使用 fractional index。
 - 展示时按 `ORDER BY order_key, id` 排序。
-- 正文序列化时用空行连接 blocks。
-- WebUI 的文档编辑器会在前端把 Markdown 解析成更丰富的逻辑块树（例如列表项 `children`、代码块 `lang`、有序列表 `start` 起始号）,但这些字段不入库。保存仍写完整 Markdown body,再由 core 按段落/fenced code 重建或 reconcile `doc_blocks`；有序列表起始号通过 Markdown 序号本身往返。
+- 正文序列化时块间用单个空行连接。
+- `blank_after`(默认 0)记录该块后面**额外**的空行数(超出标准单空行分隔的部分;最后一块则是末尾留白行数)。这让用户刻意留下的竖向间距(段落之间、文末)在 save/reload 后存活,而**不必**把空行表示成零内容的块——零内容块会让基于文本相等的 reconcile 抖动。空行不是独立块,而是相邻块上的间距属性,故并发改间距按块 LWW 干净合并。见 [04-block-level-doc-crdt](../impl-context/04-block-level-doc-crdt/design.md) §2.7。
+- WebUI 的文档编辑器会在前端把 Markdown 解析成更丰富的逻辑块树（例如列表项 `children`、代码块 `lang`、有序列表 `start` 起始号）,但这些字段不入库。保存仍写完整 Markdown body,再由 core 按段落/fenced code 重建或 reconcile `doc_blocks`；有序列表起始号通过 Markdown 序号本身往返；空行游程通过 body 里的空行往返(WebUI 把文末/段间空段落映射为空行,core 用 `blank_after` 持久化)。
 
 ## peers / peer_grants / pairing_codes
 

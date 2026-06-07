@@ -93,6 +93,52 @@ test("interior blank runs round-trip as empty paragraphs", () => {
   expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
 });
 
+test("blank lines between list items round-trip (tight list stays tight)", () => {
+  // no blank between items -> tight list, no empty paragraph
+  expect(bodyFromBlocks(blocksFromBody("- a\n- b"))).toBe("- a\n- b");
+
+  // an empty paragraph between two bullets survives as one extra blank line
+  const blocks = [
+    { id: "1", type: "bullet" as const, content: "a" },
+    { id: "2", type: "p" as const, content: "" },
+    { id: "3", type: "bullet" as const, content: "b" },
+  ];
+  const body = bodyFromBlocks(blocks);
+  expect(body).toBe("- a\n\n\n- b");
+  expect(blocksFromBody(body).map((b) => [b.type, b.content])).toEqual([
+    ["bullet", "a"],
+    ["p", ""],
+    ["bullet", "b"],
+  ]);
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body); // idempotent
+});
+
+test("an empty list item is a blank-line spacer, not dropped", () => {
+  // pressing Enter in a list and leaving the item empty = a blank line
+  const blocks = [
+    { id: "1", type: "bullet" as const, content: "a" },
+    { id: "2", type: "bullet" as const, content: "" }, // empty bullet -> blank line
+    { id: "3", type: "bullet" as const, content: "b" },
+  ];
+  const body = bodyFromBlocks(blocks);
+  expect(body).toBe("- a\n\n\n- b");
+  expect(blocksFromBody(body).map((b) => [b.type, b.content])).toEqual([
+    ["bullet", "a"],
+    ["p", ""],
+    ["bullet", "b"],
+  ]);
+});
+
+test("a blank line between numbered items keeps the run going (1, 2)", () => {
+  const blocks = [
+    { id: "1", type: "numbered" as const, content: "a" },
+    { id: "2", type: "p" as const, content: "" },
+    { id: "3", type: "numbered" as const, content: "b" },
+  ];
+  expect(bodyFromBlocks(blocks)).toBe("1. a\n\n\n2. b");
+  expect(bodyFromBlocks(blocksFromBody("1. a\n\n\n2. b"))).toBe("1. a\n\n\n2. b");
+});
+
 test("nested ordered lists keep child paragraphs, quotes, and fenced code", () => {
   const body = [
     "4. Parent",
