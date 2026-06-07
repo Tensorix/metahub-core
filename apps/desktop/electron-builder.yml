@@ -25,6 +25,12 @@ files:
   - package.json
 asar: true
 
+# Consistent, arch-explicit dmg names (default leaves x64 without an arch tag).
+# The Homebrew cask is generated from whatever the release actually contains
+# (see scripts/gen-cask.ts), so this is just for clarity going forward.
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
 mac:
   category: public.app-category.productivity
   identity: null # ad-hoc: unsigned / not notarized for now

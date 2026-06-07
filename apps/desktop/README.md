@@ -11,6 +11,18 @@ Bun **sidecar** over loopback HTTP.
 
 Data lives in `~/.metahub` (shared with the `mh` CLI). Override via `METAHUB_HOME`.
 
+## Install (Homebrew)
+
+```sh
+brew install --cask tensorix/tap/metahub-app
+```
+
+Unsigned (open-source). Via Homebrew the app isn't browser-quarantined; if
+Gatekeeper still blocks it, add `--no-quarantine`. The CLI is a separate formula:
+`brew install tensorix/tap/metahub-cli`. Both are kept current by CI on each
+release (see `apps/desktop/scripts/gen-cask.ts`, `scripts/gen-formula.ts`, and
+the `update-tap` jobs). Tap repo: <https://github.com/Tensorix/homebrew-tap>.
+
 ## Develop
 
 ```sh

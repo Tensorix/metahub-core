@@ -126,8 +126,9 @@ mh --server --port 7777            # 浏览器打开 http://localhost:7777/sites
 import { openMetahub, createDatabase, createRecord, search } from "@tensorix/metahub";
 
 # 2) 作为 CLI
-npm i -g @tensorix/metahub   # 然后用 metahub / mh
-bunx @tensorix/metahub <cmd> # 免安装
+brew install tensorix/tap/metahub-cli   # macOS / Linux，装 mh
+npm i -g @tensorix/metahub              # 或 npm，然后用 metahub / mh
+bunx @tensorix/metahub <cmd>            # 免安装
 
 # 3) 独立二进制（免运行时）
 chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
