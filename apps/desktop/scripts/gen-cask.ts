@@ -77,10 +77,14 @@ const cask = `cask "metahub-app" do
 
   app "Metahub.app"
 
-  # Unsigned, by design (open-source — no Apple Developer signing). Installed via
-  # Homebrew the binary is not quarantined the way a browser download is; if you
-  # still hit Gatekeeper, install with \`--no-quarantine\` or allow it once in
-  # System Settings → Privacy & Security.
+  # Unsigned, by design (open-source — no Apple Developer signing). macOS would
+  # otherwise flag the freshly installed .app as "damaged" (the quarantine
+  # attribute on an unsigned, un-notarized bundle). Strip it on install so the
+  # app opens on first launch without a Gatekeeper detour.
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Metahub.app"]
+  end
 
   zap trash: [
     "~/Library/Application Support/Metahub",
