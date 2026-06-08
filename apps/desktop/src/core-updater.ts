@@ -33,7 +33,14 @@ const CORE_TAG_RE = /^v\d+\.\d+\.\d+/;
 /** Must match exactly what the core release workflow uploads (see release.yml). */
 const SHA256SUMS_ASSET = "SHA256SUMS-sidecars.txt";
 const USER_AGENT = "metahub-desktop-updater";
-const FETCH_TIMEOUT_MS = 10_000;
+/** Short budget for the GitHub API call (small JSON). */
+const API_TIMEOUT_MS = 10_000;
+/**
+ * Generous budget for the actual sidecar download (~64 MB) + checksum file.
+ * Must NOT share the API budget: on a slow link, a 10 s cap aborts the binary
+ * download every time, silently skipping the update and stranding the client.
+ */
+const DOWNLOAD_TIMEOUT_MS = 180_000;
 
 interface CoreVersionMeta {
   version: string;
@@ -263,8 +270,7 @@ async function downloadAndStage(release: GhRelease, signal?: AbortSignal): Promi
  */
 export async function maybeUpdateCore(): Promise<string | null> {
   try {
-    const signal = timeoutSignal(FETCH_TIMEOUT_MS);
-    const release = await fetchLatestCoreRelease(signal);
+    const release = await fetchLatestCoreRelease(timeoutSignal(API_TIMEOUT_MS));
     if (!release) return null;
 
     const installed = await getInstalledCoreVersion();
@@ -275,7 +281,8 @@ export async function maybeUpdateCore(): Promise<string | null> {
     }
 
     console.log(`[core-updater] updating core ${installed} → ${latest}`);
-    const meta = await downloadAndStage(release, signal);
+    // Fresh, generous budget for the ~64 MB download — not the API budget.
+    const meta = await downloadAndStage(release, timeoutSignal(DOWNLOAD_TIMEOUT_MS));
     console.log(`[core-updater] staged core ${meta.version}; applies on next launch`);
     return meta.version;
   } catch (err) {
