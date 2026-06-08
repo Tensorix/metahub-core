@@ -230,6 +230,7 @@ function closeSplash(): void {
 }
 
 function createWindow(port: number): void {
+  const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
     width: 1280,
     height: 832,
@@ -240,6 +241,12 @@ function createWindow(port: number): void {
     // Stay hidden until the renderer has painted its first frame, then reveal
     // and hand off from the splash — no white flash, no blank window.
     show: false,
+    // macOS: hide the native title bar but keep the inset traffic lights; the
+    // WebUI reserves space for them and defines its own drag regions. Other
+    // platforms keep the default native frame.
+    ...(isMac
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 18, y: 17 } }
+      : {}),
     webPreferences: {
       preload: appFile("dist", "preload.js"),
       contextIsolation: true,

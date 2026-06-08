@@ -294,6 +294,14 @@ function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: str
   );
 }
 
+// Inside the desktop shell, tag <body> so the WebUI can adapt its chrome: the
+// frameless macOS window drops the sidebar logo and reserves a draggable strip
+// for the inset traffic lights. A browser leaves these classes off entirely.
+if (typeof window !== "undefined" && window.metahubDesktop) {
+  document.body.classList.add("desktop");
+  if (window.metahubDesktop.platform === "darwin") document.body.classList.add("desktop-mac");
+}
+
 // The desktop Quick Notes window loads this same bundle at `…/#quick`. Mount the
 // compact note view there — but only inside the desktop shell (guarded on the
 // preload bridge), so a browser hitting `/#quick` just gets the full app.

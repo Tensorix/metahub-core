@@ -203,6 +203,18 @@ const HTML = `<!doctype html>
   .btn-primary:hover { filter:brightness(1.07); }
   .btn-danger { background:var(--danger); color:#fff; } .btn-danger:hover { filter:brightness(1.05); }
 
+  /* desktop app (frameless): drop the sidebar logo; on macOS reserve a draggable
+     strip for the inset traffic lights so they never overlap our controls */
+  body.desktop .brand { display:none; }
+  /* logo gone → keep the collapse button on the right (where .brand's flex used to push it) */
+  body.desktop .sb-head .iconbtn { margin-left:auto; }
+  body.desktop-mac .sb-head { -webkit-app-region:drag; }
+  body.desktop-mac .sb-head .iconbtn { -webkit-app-region:no-drag; }
+  body.desktop-mac .topbar { -webkit-app-region:drag; }
+  body.desktop-mac .topbar .iconbtn, body.desktop-mac .topbar .btn { -webkit-app-region:no-drag; }
+  /* sidebar collapsed → traffic lights sit over the main header; clear the hamburger */
+  body.desktop-mac .sidebar.collapsed ~ .main .topbar { padding-left:80px; }
+
   /* document editor */
   .doc { max-width:740px; margin:0 auto; padding:60px 60px 36vh; }
   .doc-title { font-size:38px; font-weight:700; letter-spacing:-.02em; outline:none; line-height:1.15; margin-bottom:4px; }

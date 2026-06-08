@@ -241,7 +241,19 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 - 桌面:`apps/desktop/src/{preload,main}.ts`(`coreUpdate` 桥 + `core:*` IPC);既有 `core-updater.ts` / `version-util.ts` 复用不改。
 - 前端:`src/webui/settings.tsx`(`VersionFooter` 折叠状态机)、`src/webui/app.tsx`(共享 `updatePending` + 无联网探测)、`src/webui/sidebar.tsx`(设置入口红点)、`src/webui/desktop.d.ts`(桥类型声明)、`src/core/sync/webui.ts`(footer 内联 CSS:`.ver-*` / `.nav-dot`)。
 
-## 10. 涉及文件
+## 10. 主窗口窗框(macOS 无标题栏)
+
+主窗口在 macOS 复用 §7.3 小窗同样的 `titleBarStyle:"hiddenInset"`——隐藏系统原生标题栏、保留内嵌交通灯、内容上移至顶端,呈现原生 app 观感;同时 app 版去掉侧栏左上角 logo。其它平台保持默认原生边框不变。**纯桌面外壳 + WebUI 样式,core 零改动**;以桌面守卫 `window.metahubDesktop` 门控(同 §7 快速笔记),浏览器版完全不受影响。
+
+- **窗框(`apps/desktop/src/main.ts` `createWindow()`)**:mac 下 `titleBarStyle:"hiddenInset"` + `trafficLightPosition:{x:18,y:17}`(让交通灯在 ~49px 顶栏内垂直居中);非 mac 不传、保留原生边框。
+- **桌面标记(`src/webui/app.tsx` 入口)**:存在 `window.metahubDesktop` 时给 `<body>` 加 `desktop`,平台为 `darwin` 再加 `desktop-mac`(渲染前置,首帧布局即正确)。
+- **样式(`src/core/sync/webui.ts` 内联 CSS)**:
+  - `body.desktop .brand{display:none}`——去掉侧栏左上角 logo;折叠按钮 `margin-left:auto` 仍贴侧栏右侧(位置与浏览器版一致)。
+  - `body.desktop-mac` 把 `.sb-head` / `.topbar` 设 `-webkit-app-region:drag` 实现拖拽移窗,内部 `.iconbtn`/`.btn` 设 `no-drag` 保持可点。
+  - 侧栏折叠时交通灯落在主区顶栏,`.sidebar.collapsed ~ .main .topbar` 加左留白给汉堡按钮让位。
+- **涉及文件**:`apps/desktop/src/main.ts`(主窗 hiddenInset)、`src/webui/app.tsx`(body 标记)、`src/core/sync/webui.ts`(内联 CSS)。
+
+## 11. 涉及文件
 
 - 外壳(§1–6)新增:`apps/desktop/{package.json,tsconfig.json}`、`apps/desktop/src/{server-entry,main,preload}.ts`
 - 快速笔记(§7)见 §7.5。
