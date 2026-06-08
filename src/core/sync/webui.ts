@@ -35,6 +35,7 @@ const HTML = `<!doctype html>
     --radius:8px; --radius-sm:6px;
     --ui:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
     --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
+    --note-lh:1.6;
     --code-bg:#f8f8f6;
     --hl-cmt:#9a9aa2; --hl-key:#a626a4; --hl-str:#28823f; --hl-num:#b76a00;
     --hl-fn:#3f51d6; --hl-type:#0a7ea4; --hl-var:#c2410c;
@@ -239,7 +240,7 @@ const HTML = `<!doctype html>
   /* The list item's host gutter controls the whole unit, so suppress the nested
      code block's own gutter (it would overlap the list marker on the same row). */
   .block.list-code-host + .block-wrap.nested .gutter { display:none; }
-  .editable { outline:none; flex:1; min-width:0; padding:3px 2px; line-height:1.6; }
+  .editable { outline:none; flex:1; min-width:0; padding:3px 2px; line-height:var(--note-lh); }
   .editable:empty::before { content:attr(data-ph); color:var(--muted); pointer-events:none; }
   /* The generic "/" prompt only shows on the focused line; idle blank lines (paragraphs and list items, any depth) stay blank. */
   .editable[data-ph-hint="slash"]:empty:not(:focus)::before { content:""; }
@@ -294,7 +295,8 @@ const HTML = `<!doctype html>
   .hljs-emphasis { font-style:italic; }
   .hljs-strong { font-weight:700; }
   .marker { width:24px; flex:none; text-align:center; color:var(--fg-soft); user-select:none; padding-top:4px; }
-  .b-todo .marker { padding-top:5px; }
+  .b-todo .marker { box-sizing:content-box; padding-top:3px; height:calc(1em * var(--note-lh));
+    display:flex; align-items:center; justify-content:center; }
   .b-todo .marker input { width:15px; height:15px; accent-color:var(--accent); cursor:pointer; }
   .b-divider { padding:10px 0; }
   .b-divider hr { border:0; border-top:1px solid var(--line-strong); margin:0; width:100%; }
