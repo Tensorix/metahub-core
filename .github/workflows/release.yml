@@ -133,7 +133,46 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "${GITHUB_REF_NAME}" --draft=false
 
-  # ── 5. 更新 Homebrew tap 里的 CLI formula（metahub-cli）──────────────────
+  # ── 5. 发布到 npm（@tensorix/metahub）──────────────────────────────────
+  # 需要 secret NPM_TOKEN（npm automation token）。未配置则跳过、不影响发版。
+  # 认证走仓库已提交的 .npmrc（//registry.npmjs.org/:_authToken=${NPM_TOKEN}）。
+  publish-npm:
+    name: Publish to npm
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Skip if token missing or version already published
+        id: guard
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::warning::NPM_TOKEN 未配置 — 跳过 npm 发布"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          want="${GITHUB_REF_NAME#v}"
+          if [ -n "$(npm view @tensorix/metahub@"$want" version 2>/dev/null)" ]; then
+            echo "@tensorix/metahub@$want 已在 npm — 跳过"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - if: steps.guard.outputs.skip == 'false'
+        run: bun install --frozen-lockfile
+      - if: steps.guard.outputs.skip == 'false'
+        run: bun run build
+      - if: steps.guard.outputs.skip == 'false'
+        name: Publish
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bun publish
+
+  # ── 6. 更新 Homebrew tap 里的 CLI formula（metahub-cli）──────────────────
   # 同 desktop：需要 secret HOMEBREW_TAP_TOKEN（对 homebrew-tap 有 contents:write
   # 的 PAT）。未配置则跳过、不影响发版。
   update-tap:
