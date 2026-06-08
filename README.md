@@ -1,208 +1,127 @@
 # metahub
 
-给 AI 用的本地知识库 CLI：在 `~/.metahub/` 下用 SQLite 管理 notion 风格的**类型化数据库（表 + 行）**和 **markdown 文档**，单机可用，也能通过简单的 C-S 服务端在多机之间用 **CRDT 最终一致**同步。库 + CLI + 独立二进制三合一。
+**Give your AI a local knowledge base.**
 
-> 运行时依赖 **Bun**（使用 `bun:sqlite` / `Bun.serve`）。用 `bunx`、全局安装后的 `metahub`，或下载独立二进制。
+English · [简体中文](./README.zh-CN.md)
 
-## 数据存储
+metahub is a local-first knowledge base CLI built on Bun + SQLite. It gives an AI agent a durable, syncable working memory: Notion-style **typed tables** for structured data, **Markdown documents** for long-form knowledge, and a `Read / Edit / Write`-style editing interface. Everything lives on your own machine under `~/.metahub/` — offline on one machine, and consistent across many.
 
-```text
-~/.metahub/
-  metahub.db   # SQLite：数据库/属性/记录/文档 + CRDT oplog
-  cache/       # 内容寻址 blob（附件）
-```
+> Requires [Bun](https://bun.sh). Use `bunx`, a global `mh` install, or a standalone binary.
 
-可用 `METAHUB_HOME` 环境变量覆盖目录（便于多实例 / 测试）。
+## Why metahub
 
-## 快速开始
+- **Built for AI read/write** — `doc read` returns the body plus a version token; `doc edit --old/--new` does an anchored find-and-replace that sends only the delta. Refer to anything by id prefix or name — no pasting full ids.
+- **Structured and unstructured in one place** — typed tables (rows, columns, 8 property types) for tasks, ledgers, contacts; Markdown documents for notes and specs.
+- **Local-first and syncable** — your data sits on your own disk and works offline; multiple machines merge cleanly, and edits to different paragraphs don't clobber each other.
+- **GUI and API included** — `mh --server` starts a browser WebUI (browse, inline-edit, full-text search), a `/api/*` REST interface, and auto-generated OpenAPI docs.
+
+<!-- TODO screenshots: docs/assets/webui.png (WebUI), docs/assets/desktop.png (desktop app) -->
+> Want to see the UI? Install the [desktop app](#install) or run `mh --server` and open `http://localhost:7777/`.
+
+## Quick start
 
 ```bash
-bunx @tensorix/metahub init                      # 创建 ~/.metahub
-mh db create "Tasks"                             # 建一张表 -> 返回 id 如 db_tasks-k3f9c1
-mh use tasks                                     # 设为「当前库」,之后 record/prop 免带库参数
-mh prop add Title  --type text                   # 作用于当前库
+bunx @tensorix/metahub init                          # create ~/.metahub
+mh db create "Tasks"                                 # create a table → returns an id like db_tasks-k3f9c1
+mh use tasks                                         # set the "current db"; record/prop commands target it
+mh prop add Title  --type text
 mh prop add Status --type select --options "todo,doing,done"
-mh record create --data '{"Title":"写设计稿","Status":"todo"}'
-mh record update fix-login --data '{"Status":"doing"}'   # 用唯一前缀/名字,不必粘完整 id
-mh doc create --title "架构说明" --body @arch.md  # @file / @- / 直接字符串
-mh search "架构"
-mh get tasks                                     # 通用查找:按 id/前缀/名字,自动判类型
-mh edit <ref>                                    # 在 $EDITOR 里改文档正文 / 记录字段(给人用)
-
-# 给 AI 用的非交互增量编辑(对标 Read / Edit / Write):
-mh doc read <ref>                                # 读正文 + version(改前先读)
-mh doc edit <ref> --old "旧文本" --new "新文本"  # 锚定查找替换,只传增量
-mh doc append <ref> --body "追加段落"            # 也有 prepend
+mh record create --data '{"Title":"Write spec","Status":"todo"}'
+mh doc create --title "Architecture" --body @arch.md  # @file / @- / inline string
+mh search "architecture"                             # full-text over documents + records
 ```
 
-输出按受众自动切换：终端（人）显示表格 / markdown，被管道或子进程调用（AI）输出 **JSON**；`--json` / `--pretty` 可强制。
+Refer to entities by **full id, unique prefix, or name** — ambiguity is reported with candidates.
 
-### ID 与引用
-
-每个实体 id = `类型_名字slug-随机后缀`（如 `db_tasks-k3f9c1`、`rec_fix-login-bug-7j02an`）。类型前缀让 id 自解释（一眼区分 db/rec/doc/prop），随机后缀保证多机离线创建几乎不撞。
-
-凡接受 id 的地方（`get`/`update`/`delete`/`--db`/`--parent`/`--target` 等）都接受**引用**，按以下顺序解析，省去粘贴完整 id：
-
-- **完整 id**（永远可用，跨库亦可）
-- **唯一前缀**（git 短 SHA 风格，`rec_fix-log` 或裸 slug `fix-log`）
-- **名字/标题**（db 名、doc 标题、prop 名，大小写不敏感）
-
-歧义时报错并列出候选；用 `mh use <db>` 设当前库后，record/prop 的引用与列举自动限定在该库内。Tab 补全见 `mh completion`。
-
-### 属性类型
-
-`text · number · checkbox · select · multi_select · date · relation · url`
-（select/multi_select 用 `--options a,b,c`；relation 用 `--target <db引用>`）
-
-relation 字段的**值**也接受引用：`--data '{"assignee":"Alice Chen"}'` 会在目标库里按名字/前缀解析成记录 id（数组逐个解析）；歧义或找不到会报错，完整 `rec_…` id 始终直通。
-
-## 多机同步（CRDT）
-
-每次写入都进 oplog（Hybrid Logical Clock + 按字段 Last-Write-Wins），合并可交换、幂等、最终一致。
-
-文档正文按**块（block）**切分(段落级,fenced code 整块),每块是独立 register、用分数索引(fractional index)排序。所以两台机器改同一篇文档的**不同段落**能干净合并、互不覆盖；`mh doc edit` 的锚定替换通常只改命中那一块。`documents.body` 是由块重算的物化缓存。
+**Incremental editing for AI** (mirrors `Read / Edit / Write`):
 
 ```bash
-# A 机：启动同步服务端（服务端也是一个 metahub 节点）
+mh doc read <ref>                                    # read body + version (read before editing)
+mh doc edit <ref> --old "old text" --new "new text"  # anchored replace; delta only
+mh doc append <ref> --body "a new paragraph"         # prepend also exists
+```
+
+Output adapts to the audience: a terminal (human) gets tables / Markdown, a pipe or subprocess (AI) gets **JSON**. Force it with `--json` / `--pretty`.
+
+## Install
+
+| Form | Install | For |
+| --- | --- | --- |
+| **Desktop app** (GUI) | `brew install --cask tensorix/tap/metahub-app` | A graphical, Notion-like experience |
+| **CLI** | `brew install tensorix/tap/metahub-cli`, or `npm i -g @tensorix/metahub`, or `bunx @tensorix/metahub <cmd>` | AI agents and the command line |
+| **Library** (Bun) | `bun add @tensorix/metahub` | Calling metahub from your own Bun program |
+| **Standalone binary** | download for your platform, `chmod +x`, run | No runtime to install |
+
+```ts
+// As a library: every core capability is exported from the package root
+import { openMetahub, createDatabase, createRecord, search } from "@tensorix/metahub";
+```
+
+Platforms: `darwin-arm64` / `darwin-x64` / `linux-x64` / `linux-arm64` / `windows-x64`. Library API: see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## Sync across machines
+
+Run a server on one machine and sync from another. Documents merge at the paragraph level, so concurrent edits to different parts of the same document combine cleanly.
+
+```bash
+# machine A: start the sync server (it is itself a metahub node)
 mh --server --port 7777
 
-# B 机：与服务端推/拉一轮
+# machine B: push/pull one round
 mh sync http://a-host:7777
-
-# 同一条 sync 命令也能在「单个文档/数据表」与「本地文件」间导出/导入，
-# 方向按参数自动判别：哪一侧能解析成库内实体，另一侧就是文件路径。
-# 格式按实体类型固定——文档↔markdown、数据表↔CSV。
-mh sync architecture arch.md   # 导出：文档 → markdown
-mh sync tasks tasks.csv        # 导出：数据表 → CSV（表头=属性名，CSV 含 id 列）
-mh sync arch.md architecture   # 导入：markdown → 文档（更新已存在的文档）
-mh sync tasks.csv tasks        # 导入：CSV → 数据表（有 id 列则按 id upsert）
 ```
 
-服务端在根路径 `/` 还内置一个**浏览器 WebUI**（Preact）：左侧列出数据库与文档，可浏览/行内编辑数据表、用块级所见即所得编辑 markdown 文档（含嵌套列表、代码语言名与常用 Markdown 快捷输入）、全文搜索；编辑走与 CLI 同一套 core 写入路径，进 CRDT oplog 后随 `mh sync` 复制。同时暴露一组 `/api/*` REST 接口与自动生成的 OpenAPI 文档（`/docs`）。WebUI 资源（含 Preact）单独打包为 `dist/webui.js`，仅在浏览器首次访问 `/` 时懒加载，**不进入 CLI 启动路径，对命令行性能零影响**。设计见 [docs/impl-context/07-webui/design.md](docs/impl-context/07-webui/design.md)。
+Pair two devices once and they sync both ways on a timer — no need to run `mh sync` each time. The same `sync` command also moves a single document or table to/from a local file (document ↔ Markdown, table ↔ CSV). See the [system-design docs](./docs/system-design/) for how it works.
 
-## 多设备配对与自动同步
+## WebUI, API, and agent-hosted sites
 
-不必每次手敲 `mh sync`：两台设备**配对**一次后,server 内置定时器就会**周期性双向同步**(默认 30s)。配对用**一次性配对码**引导,认证通过后两端**互相签发长期凭据**(主 token 不外泄,配对码用完即废),之后 `/sync` 用该凭据鉴权。
+`mh --server` serves a browser **WebUI** at `/` (browse and inline-edit tables, block-level WYSIWYG document editing, full-text search). The same server also exposes:
 
-```bash
-# A 机：生成一次性配对码(随机 12 位、默认 10 分钟、单次)
-mh config peer code
+- `/api/*` — REST endpoints over your tables and documents.
+- `/docs` — auto-generated OpenAPI documentation.
+- `/sites/<name>/` — `mh site publish` hosts the HTML/CSS/JS an agent generates; pages call `/api/*` same-origin to read your data (a local mini-Supabase).
 
-# B 机：填入 A 的地址 + 配对码完成配对(--self-url 让 A 也登记 B → 真正互配)
-mh config peer add --url http://a-host:7777 --code <code> --self-url http://b-host:7777
+Requests are guarded by a single token (persisted in `~/.metahub`). The server binds `127.0.0.1` by default; only `--host 0.0.0.0` exposes it, and credentials travel as plaintext Bearer — put it behind a trusted network or TLS. Details in the [system-design docs](./docs/system-design/).
 
-# 此后两端后台自动双向同步。查看 / 管理：
-mh config show                 # 当前配置 + peer 状态
-mh config peer list|sync|enable|disable|rm --url <url>
-mh config grant list|revoke --token <token或前缀>   # 列出/吊销本机签发的入站凭据
-```
+## Command reference
 
-`mh config` 无参数进**方向键交互式向导**(`@clack/prompts`:↑↓ 移动 / Enter 选择 / Esc 取消,移除·启停 peer 与吊销凭据都从列表里选,不必手敲 URL/token),带 `--flag` 则直配(服务器 host/port/同步间隔/开关、配对、撤销);WebUI 设置页是其 GUI 镜像(「同步设备」+「已授权设备」)。配对后 `/sync` **强制鉴权**:此后无凭据的 `mh sync <url>` 在交互终端会提示输入 token(可用对端主 token)、走完并记住,下次直连。删 peer 会连带吊销签发给对方的凭据;单向配对(没传 `--self-url`)产生的无主凭据用 `grant revoke` 兜底。设计见 [docs/impl-context/11-device-pairing-sync/design.md](docs/impl-context/11-device-pairing-sync/design.md)。
+<details>
+<summary>Full command table</summary>
 
-## Agent 托管静态站点
+| Command | Description |
+| --- | --- |
+| `mh init` | Create `~/.metahub` |
+| `mh db create\|list\|get\|delete` | Manage databases (tables) |
+| `mh use [<db>] [--clear]` | Set/show the "current db" (record/prop default to it) |
+| `mh get <ref>` | Universal lookup: resolve by id/prefix/name, auto-detect type |
+| `mh prop add\|list\|update\|remove` | Manage properties (columns); `add` takes `--db` (defaults to current db) |
+| `mh record create\|list\|get\|update\|delete` | Manage records (rows) |
+| `mh doc create\|list\|get\|update\|delete` | Manage Markdown documents |
+| `mh doc read <id>` | Read body + version token (AI reads before editing) |
+| `mh doc edit <id> --old --new` | Anchored find-and-replace (`--replace-all` / `--if-match`) |
+| `mh doc append\|prepend <id> --body` | Append a block at the document head/tail |
+| `mh edit <id>` | Edit a document/record interactively in `$EDITOR` (for humans) |
+| `mh search <query>` | Full-text search (documents + records) |
+| `mh doctor` | Read-only health check: list integrity issues (orphan refs/cells, duplicate paths, doc cycles, name clashes) |
+| `mh repair [--dry-run]` | Deterministic, idempotent repair of auto-fixable issues (changes replicate via oplog); `--dry-run` previews (same as doctor) |
+| `mh site create\|put\|publish\|list\|files\|rm\|delete` | Host static sites (HTML/CSS/JS) an agent generates, served by `--server` at `/sites/<name>/` |
+| `mh token [show\|refresh]` | Show/rotate the persisted server auth token (stored in `~/.metahub`, rotates at 30-day expiry by default) |
+| `mh completion <bash\|zsh\|fish>` | Print a completion script: `eval "$(mh completion zsh)"` |
+| `mh sync <url>` | Sync one round with a server (CRDT push/pull); uses a stored credential when `/sync` is protected, otherwise prompts for a token in an interactive terminal and remembers it (`--token` for non-interactive) |
+| `mh sync <src> <dst>` | Move a single document/table to/from a file: document ↔ Markdown, table ↔ CSV; direction inferred from which side is an in-repo entity |
+| `mh config` | Configure the server and sync devices: no args opens an interactive wizard, `--flag` sets directly (`--host/--port/--sync-interval/--auto-sync`) |
+| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | Multi-device pairing and management: generate a one-time code / pair / list / sync now / enable-disable / remove (also revokes the credential issued to the peer) |
+| `mh config grant list\|revoke` | List/revoke inbound sync credentials this machine issued (`revoke --token` accepts an exact value or prefix) |
+| `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync]` | Start the server: `/sync` (master token or pairing credential) + WebUI at `/` + `/api/*` REST + `/docs` (OpenAPI) + static sites `/sites/<name>/` + token exchange `/auth/token` + pairing `/api/pair`; a built-in timer auto-syncs paired peers |
 
-AI agent 用 CLI 把生成好的 HTML/CSS/JS **发布**成一个命名「站点」，`mh --server` 把它在 `/sites/<name>/` serve 出去；页面同源调用上面的 `/api/*` 即可读取本库的数据表与文档——等于一个本地 mini-Supabase（静态托管 + 数据 API）。
+</details>
 
-```bash
-# agent 把生成的文件写到一个目录,再整目录发布(站点不存在则自动创建)
-mh site publish blog ./dist
-mh site files blog                 # 查看清单
-mh site put blog index.html --content @-   # 也可单文件上传(--from <file> / --content @file|@-)
+## Documentation
 
-# serve 出去
-mh --server --port 7777            # 浏览器打开 http://localhost:7777/sites/blog/
-```
+- [System design](./docs/system-design/) — architecture, data model, capabilities, usage flows.
+- [Contributing](./CONTRIBUTING.md) — local development, build, release, project layout, library API.
+- [Desktop app](./apps/desktop/README.md) — Electron shell + Bun sidecar.
 
-站点与文件**和其它数据一样进 CRDT oplog**，随 `mh sync` 跨机复制：文本与小二进制内联存储；超过阈值的大二进制走内容寻址 blob（`cache/`，其字节暂为本机、不随 oplog 复制，清单照常同步）。
+## License
 
-**鉴权**：`--debug` 全开（无鉴权）；否则单 token 守护**每个请求**。token **默认持久化在 `~/.metahub`**（重启复用，`mh token` 查看），带有效期（默认 30 天），**到期或 `mh token refresh` 时才轮换**；轮换后旧 token 在宽限期内（默认 7 天）仍可换到新 token，浏览器**无感续期**。`--token` / `METAHUB_TOKEN` 则固定一个不持久化、不过期的 token（脚本/CI 用）。浏览器首次访问会弹**解锁页**输入 token，存入 `localStorage`+cookie 后刷新；之后注入的 fetch 套壳自动给同源 `/api/*` 调用带上 `Authorization: Bearer`，并在轮换后透明地用 `GET /auth/token` 换新 token 重试，所以 agent 写的页面无需把 token 写进源码。token 可经 `Authorization: Bearer`、Cookie `mh_token` 或 `?token=` 任一方式携带；有效期/宽限期可经 `METAHUB_TOKEN_TTL` / `METAHUB_TOKEN_GRACE` 调整。服务端默认只绑 `127.0.0.1`，`--host 0.0.0.0` 才对外。
-
-`/sync` 不再豁免鉴权（信任对等模型已移除）：非 `--debug` 下它接受**主 token 或任一配对凭据**（见上「多设备配对」）。配对凭据是服务器签发、托管在本地 DB 的长期 bearer 凭据,**目前无过期**,靠 `peer rm` / `grant revoke` 撤销。注意凭据/token 以**明文 Bearer**传输且默认无 TLS:对外暴露（`--host 0.0.0.0`）请置于可信网络或前置 TLS/反代。设计见 [docs/impl-context/08-agent-sites/design.md](docs/impl-context/08-agent-sites/design.md)、[docs/impl-context/10-persistent-token/design.md](docs/impl-context/10-persistent-token/design.md)、[docs/impl-context/11-device-pairing-sync/design.md](docs/impl-context/11-device-pairing-sync/design.md)。
-
-## 三种用法
-
-```bash
-# 1) 作为库（Bun）
-import { openMetahub, createDatabase, createRecord, search } from "@tensorix/metahub";
-
-# 2) 作为 CLI
-brew install tensorix/tap/metahub-cli   # macOS / Linux，装 mh
-npm i -g @tensorix/metahub              # 或 npm，然后用 metahub / mh
-bunx @tensorix/metahub <cmd>            # 免安装
-
-# 3) 独立二进制（免运行时）
-chmod +x metahub-darwin-arm64 && ./metahub-darwin-arm64 init
-```
-
-支持平台：`darwin-arm64` / `darwin-x64` / `linux-x64` / `linux-arm64` / `windows-x64`。
-
-## 命令
-
-| 命令 | 说明 |
-|------|------|
-| `mh init` | 创建 `~/.metahub` |
-| `mh db create\|list\|get\|delete` | 管理数据库（表） |
-| `mh use [<db>] [--clear]` | 设置/显示「当前库」（record/prop 默认作用于它） |
-| `mh get <ref>` | 通用查找：按 id/前缀/名字解析，自动判别类型 |
-| `mh prop add\|list\|update\|remove` | 管理属性（列）；`add` 用 `--db` 指定库（默认当前库） |
-| `mh record create\|list\|get\|update\|delete` | 管理记录（行） |
-| `mh doc create\|list\|get\|update\|delete` | 管理 markdown 文档 |
-| `mh doc read <id>` | 读正文 + version token（AI 改前先读） |
-| `mh doc edit <id> --old --new` | 锚定查找替换（`--replace-all` / `--if-match`） |
-| `mh doc append\|prepend <id> --body` | 在文档首/尾追加块 |
-| `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
-| `mh search <query>` | 全文检索（文档 + 记录） |
-| `mh doctor` | 只读体检：列出逻辑完整性问题（孤儿引用/单元格、重复路径、文档环、重名等） |
-| `mh repair [--dry-run]` | 确定性、幂等修复可自动修的问题（改动随 oplog 复制）；`--dry-run` 仅预览（等价 doctor） |
-| `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
-| `mh token [show\|refresh]` | 查看 / 轮换持久化的服务器鉴权 token（存于 `~/.metahub`，默认 30 天到期轮换） |
-| `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
-| `mh sync <url>` | 与服务端同步一轮（CRDT 推/拉）；`/sync` 受保护时按已存凭据直连，否则在交互终端提示输入 token 并记住（`--token` 非交互） |
-| `mh sync <src> <dst>` | 单个文档/数据表与文件互导：文档↔markdown、数据表↔CSV；方向按参数判别（哪侧是库内实体），格式按实体类型固定 |
-| `mh config` | 配置服务器与同步设备：无参进交互向导，`--flag` 直配（`--host/--port/--sync-interval/--auto-sync`） |
-| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | 多设备配对与管理：生成一次性配对码 / 配对 / 列出 / 立即同步 / 启停 / 移除（连带吊销签发给对方的凭据） |
-| `mh config grant list\|revoke` | 列出 / 吊销本机签发的入站同步凭据（`revoke --token` 支持精确或前缀） |
-| `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync]` | 启动服务端：`/sync`（接受主 token 或配对凭据）+ 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/` + token 交换 `/auth/token` + 配对 `/api/pair`；内置定时器自动同步已配对 peer |
-
-## 开发
-
-```bash
-bun install
-bun run dev init                  # 热重载运行 CLI
-bun test                          # 跑测试（含 CRDT 收敛测试）
-bun run build                     # 产出 dist/（库 + CLI + 类型声明）
-bun run build:binaries            # 产出 binaries/ 五平台二进制
-```
-
-## 发布
-
-core 与 desktop **独立版本、独立发布**（推 tag 触发 GitHub Actions）：
-
-```sh
-# core（CLI 二进制 + sidecar 二进制 + 校验和 → .github/workflows/release.yml）
-#   先改根 package.json 版本并在 main 上提交，然后：
-bun run release                     # 打 v<version> 并推送
-
-# desktop 桌面 App（三平台安装包 → release-desktop.yml）
-#   先改 apps/desktop/package.json 版本并提交，然后：
-cd apps/desktop && bun run release  # 打 desktop-v<version> 并推送
-```
-
-core Release 里的 sidecar 二进制同时是**桌面端运行时自动更新 core 的下载源**：桌面 App 每次启动
-后台检查 core 最新版、下载校验后缓存，下次启动生效——故 core 高频发版无需重打包桌面 App。详见
-`apps/desktop/README.md`。
-
-## 目录结构
-
-```text
-src/
-  core/        # 业务逻辑（库和 CLI 共享）；含 sites.ts（静态站点模型，进 CRDT）、csv.ts（文件导入导出用）、config.ts（服务器级设置，存 meta）
-    sync/      # CRDT 同步协议 + 服务端 + 客户端 + WebUI/REST 路由 + 静态站点托管与鉴权
-               #   （routes/webui-routes/openapi/webui/sites-routes/sites-serve/auth）
-               #   files.ts：单文档/数据表与文件互导（markdown/CSV）
-               #   pairing.ts/peers.ts/peers-routes.ts：多设备配对、peer 管理与自动同步
-  cli/         # citty 子命令（含 site、config）
-  webui/       # 浏览器 WebUI（Preact，独立打包为 dist/webui.js）
-  index.ts     # 库入口
-scripts/       # 构建脚本（含 webui 打包入口）
-```
+[AGPL-3.0-only](./LICENSE).

@@ -1,6 +1,12 @@
 # Metahub Desktop
 
-Electron shell over the core sync server. The window loads the WebUI served by a
+English · [简体中文](./README.zh-CN.md) · [Project README](../../README.md)
+
+The desktop app for [metahub](../../README.md): a Notion-like GUI over the core
+sync server, plus a **Quick Notes** float window (global hotkey / tray, stays
+above fullscreen apps on any Space).
+
+Under the hood it is an Electron shell; the window loads the WebUI served by a
 Bun **sidecar** over loopback HTTP.
 
 - **dev**: the sidecar runs from source via `bun run src/server-entry.ts`
@@ -92,3 +98,7 @@ bun run release                          # tags v<version>
 ```
 
 Out of scope for now: code signing/notarization (unsigned/ad-hoc by design).
+
+## License
+
+[AGPL-3.0-only](../../LICENSE).

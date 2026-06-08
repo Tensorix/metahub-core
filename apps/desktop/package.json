@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Metahub desktop app (Electron shell over the core sync server)",
+  "license": "AGPL-3.0-only",
   "author": "Tensorix <noahc1510@gmail.com>",
   "homepage": "https://github.com/Tensorix/metahub-core",
   "repository": {

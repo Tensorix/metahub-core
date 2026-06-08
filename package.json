@@ -2,6 +2,7 @@
   "name": "@tensorix/metahub",
   "version": "0.1.4",
   "description": "Metahub core library and CLI",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -19,7 +20,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "bun --hot src/cli/index.ts",
