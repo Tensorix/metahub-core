@@ -38,14 +38,14 @@ interface SidebarProps {
 let dragId: string | null = null;
 
 export function Sidebar(props: SidebarProps) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
   const startResize = useResize(props.onResize);
 
   const toggle = (id: string) => {
-    const next = new Set(collapsed);
+    const next = new Set(expanded);
     next.has(id) ? next.delete(id) : next.add(id);
-    setCollapsed(next);
+    setExpanded(next);
   };
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => props.onError(String(e.message)));
@@ -53,7 +53,7 @@ export function Sidebar(props: SidebarProps) {
   const newDoc = (parent: string | null) =>
     guard(async () => {
       const doc = await api.createDocument({ title: "", ...(parent ? { parent_id: parent } : {}) });
-      if (parent) collapsed.delete(parent);
+      if (parent) expanded.add(parent);
       await props.reloadNav();
       props.onOpenDoc(doc.id);
     });
@@ -64,7 +64,7 @@ export function Sidebar(props: SidebarProps) {
       if (isAncestor(props.docs, srcId, tgt.id)) return; // no cycles
       const parent = where === "into" ? tgt.id : tgt.parent_id;
       await api.updateDocument(srcId, { parent_id: parent });
-      if (where === "into") collapsed.delete(tgt.id);
+      if (where === "into") expanded.add(tgt.id);
       await props.reloadNav();
     });
 
@@ -173,7 +173,7 @@ export function Sidebar(props: SidebarProps) {
     const children = props.docs.filter((d) => d.parent_id === parentId);
     return children.map((d) => {
       const kids = props.docs.filter((x) => x.parent_id === d.id);
-      const open = kids.length > 0 && !collapsed.has(d.id);
+      const open = kids.length > 0 && expanded.has(d.id);
       return (
         <div key={d.id} class={depth ? "navchildren" : ""}>
           <div
