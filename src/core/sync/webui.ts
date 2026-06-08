@@ -707,6 +707,17 @@ const HTML = `<!doctype html>
   .qn-body .doc { max-width:none; margin:0; padding:14px 22px 30vh; }
   .qn-body .doc-title { font-size:24px; margin-bottom:2px; }
   .qn-body .doc-meta { display:none; }
+  /* A native checkbox paints an opaque white box when unchecked, which breaks
+     the window's vibrancy blur. Draw a custom box so the unchecked background
+     stays transparent; checked falls back to the accent fill + checkmark. */
+  body.quicknote .b-todo .marker input {
+    appearance:none; -webkit-appearance:none; box-sizing:border-box;
+    border:1.5px solid color-mix(in srgb, var(--fg-soft) 55%, transparent);
+    border-radius:4px; background:transparent; }
+  body.quicknote .b-todo .marker input:checked {
+    border-color:var(--accent);
+    background:var(--accent) center/10px no-repeat
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5L20 7'/%3E%3C/svg%3E"); }
   /* Compact menus inside the quick-note window only (dropdown + slash command
      share .pop/.item/.lico with the main app; scope under body.quicknote so the
      main app keeps its roomier density). */
