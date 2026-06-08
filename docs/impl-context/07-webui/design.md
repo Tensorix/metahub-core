@@ -231,7 +231,7 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 ### 11.2 暂不实现
 
 - 跨块**文本级**选区（仍是块级整选）。
-- 粘贴 **HTML 富文本**来源（仅取 `text/plain` 的 Markdown）。
+- ~~粘贴 **HTML 富文本**来源（仅取 `text/plain` 的 Markdown）。~~ **已由 §15 实现**：优先解析 `text/html`。
 - 粘贴时的光标精确还原在含 Markdown 标记的混排场景下为近似（落到末块边界）。
 
 ### 11.3 工程坑点（供后续 debug 参考）
@@ -295,3 +295,17 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 
 - **触发判定**:仅当 mousedown 落在 `.doc` 容器自身(非标题/meta/块/占位符)且 `clientY` 在最后一个 `.block` 底缘之下时生效,避开标题上方的顶部内边距。
 - **建/聚焦决策复用 `isBlankSpacer`**(空段落):末块为空段落 → `focusBlock(last, atEnd)` 把光标放进既有空行;否则 `insertAfter(null)` 追加空 `p` 并自动聚焦(走既有 undo/save)。空列表项不算空行(它是带标记的类型块,见 §13),故其下点击仍新建空段落。整篇空文档仍由「无块时的独立引导」入口兜底。
+
+## 15. v2.8 粘贴 HTML 富文本来源（ChatGPT 等）（2026-06-09）
+
+从浏览器（如 ChatGPT）复制的内容粘贴进文档编辑器时,一部分应是代码块/标题/列表的内容塌成普通段落。根因:`onContentPaste` 只读 `text/plain`,而浏览器复制时富结构只存在于 `text/html`——`text/plain` 已丢掉代码围栏 ```` ``` ````、标题 `#`、列表缩进。改为优先解析 `text/html`(对齐 Typora),修订 §11.2 的「暂不实现」。不改后端 API/schema/CRDT/sync。实现见 [implementation.md §16](./implementation.md)。
+
+### 15.1 关键设计决策
+
+- **粘贴优先 `text/html` → Markdown → `blocksFromBody`**:剪贴板从渲染页复制时同时含 `text/html`(完整 DOM 结构)与 `text/plain`(渲染后纯文本,已丢块级标记)。改为有 `text/html` 就用 turndown 转成规范 Markdown,再走既有 `blocksFromBody` 块解析;无 `text/html` 回退原 `text/plain` 路径。编辑器行内格式本就以 Markdown 串存在 `block.content`,故「HTML→Markdown 串→块」与现有模型天然契合,无需改 block 模型。
+- **选 turndown(+turndown-plugin-gfm)而非手写 DOM 遍历**:成熟、覆盖全(标题/列表/引用/表格/删除线/inline)。运行时用浏览器原生 `DOMParser`,故 domino 回退不进浏览器包,`webui.js` 仅 +~13KB。
+- **健壮的代码块 rule**:ChatGPT 的 `<pre>` 内含工具条 div(语言标签 + Copy 按钮),默认 `pre>code` 首子规则会漏语言或把工具条文本折进代码。自定义 rule 取 `<code>` 子孙的 `textContent` 与 `language-xxx` class,输出带语言围栏。
+
+### 15.2 暂不实现
+
+- 补 `text/plain` 解析器的次要缺口(`RE.h` 仅 h1–h3、续行无 `>` 的多行引用、`~~删除线~~`)——`text/html` 路径已覆盖主场景,纯文本兜底改善优先级低。

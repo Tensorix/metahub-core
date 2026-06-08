@@ -5,6 +5,7 @@ import { api } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "./ui.tsx";
 import hljs from "highlight.js/lib/common";
+import { htmlToMarkdown } from "./html-md.ts";
 import {
   type Block,
   type BlockDraft,
@@ -307,13 +308,17 @@ export function DocView({
     scheduleSave();
   };
 
-  // Paste: parse the clipboard's plain text as Markdown so it renders as real
-  // inline formatting and block structure, instead of dropping in literal "**…**"
-  // or collapsing everything into one flat paragraph. Non-text payloads (images,
-  // files) fall through to the browser default.
+  // Paste: parse the clipboard as Markdown so it renders as real inline
+  // formatting and block structure, instead of dropping in literal "**…**" or
+  // collapsing everything into one flat paragraph. Prefer the `text/html` flavor
+  // (which preserves code fences, headings, and lists when copied from a rendered
+  // page like ChatGPT) and convert it to Markdown; fall back to `text/plain`.
+  // Non-text payloads (images, files) fall through to the browser default.
   const onContentPaste = (e: ClipboardEvent, b: Block, el: HTMLElement) => {
-    const text = (e.clipboardData?.getData("text/plain") ?? "").replace(/\r\n?/g, "\n");
-    if (!text) return;
+    const html = e.clipboardData?.getData("text/html");
+    const raw = html ? htmlToMarkdown(html) : (e.clipboardData?.getData("text/plain") ?? "");
+    const text = raw.replace(/\r\n?/g, "\n");
+    if (!text.trim()) return;
     e.preventDefault();
     const parsed = blocksFromBody(text);
     if (!parsed.length) return;

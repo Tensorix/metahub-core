@@ -408,3 +408,16 @@ Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace
 验证:`bun run build` 成功;手验(重建+重启+硬刷新):末行有字 → 点下方空白建新空行并落光标;末行已空 → 光标进该行且 `.doc-meta` 块计数不增;点标题附近不建行;空文档占位符照旧。
 
 涉及文件:`src/webui/editor.tsx`(`onDocMouseDown`);构建 `dist/webui.js`(改前端须重建)。
+
+## 16. v2.8 粘贴 HTML 富文本来源（`editor.tsx` `onContentPaste` + `html-md.ts`，2026-06-09）
+
+设计见 [design.md §15](./design.md)。原 `onContentPaste` 只取 `clipboardData.getData("text/plain")`,从 ChatGPT 等渲染页复制时,`text/plain` 已丢失代码围栏 / 标题 `#` / 列表缩进 → `blocksFromBody` 一路 fall through 到 `parseParagraph`,代码与标题塌成 `p`。Typora 正常是因为它读 `text/html`,本次对齐。
+
+- **新增 `src/webui/html-md.ts`**:`htmlToMarkdown(html)` 单例封装 `TurndownService`(`codeBlockStyle:"fenced"`、`headingStyle:"atx"`、`bulletListMarker:"-"`)+ `use(gfm)`。自定义 `fencedCodeWithLang` rule:`filter` 命中含 `<code>` 的 `<pre>`,`replacement` 取 `<code>` 子孙 `textContent` + 从 `language-xxx`/`lang-xxx` class 提语言,输出带语言围栏(规避 ChatGPT 工具条 div 被折进代码)。
+- **`onContentPaste` 接线**:`const html = clipboardData.getData("text/html"); const raw = html ? htmlToMarkdown(html) : getData("text/plain")`,再 `.replace(/\r\n?/g,"\n")`;后续围绕光标拼接(单段落就地行内 / 多块拆插)逻辑不变。空白(`!text.trim()`)放行浏览器默认。
+- **依赖**:`turndown`、`turndown-plugin-gfm`(+ `@types/turndown`);`turndown-plugin-gfm` 无类型,补 `src/webui/turndown-plugin-gfm.d.ts` ambient 声明。
+- **包体**:turndown 运行时用浏览器原生 `DOMParser`,Bun browser 构建未打进 domino 回退,`dist/webui.js` 313KB→327KB(+13KB)。
+
+验证:新增 `src/webui/html-md.test.ts` 7 用例(标题 h1–h6、带语言围栏、ChatGPT 工具条不折进、有/无序列表、引用、inline strong/em/code/link、ChatGPT 风总合),经 `htmlToMarkdown → blocksFromBody` 断言块类型与代码内容;`bun test` 215 全通过;`tsc -p src/webui/tsconfig.json` 零错;`bun run build` 成功。手验(重建+重启+硬刷新):从 ChatGPT 选「标题+番号列表+多个代码块+引用」粘贴,代码块带语言、标题/列表正确成块,不再塌成段落;纯文本来源(无 `text/html`)仍走原 Markdown 解析。
+
+涉及文件:新增 `src/webui/{html-md.ts,html-md.test.ts,turndown-plugin-gfm.d.ts}`、改 `src/webui/editor.tsx`(`onContentPaste` + import)、`package.json`(依赖);复用 `blocksFromBody`(`blocks.ts`);构建 `dist/webui.js`(改前端须重建)。
