@@ -35,6 +35,17 @@ jobs:
             exit 1
           fi
 
+      # tag 版本必须等于该 commit 树里 apps/desktop/package.json 的版本，否则中止。
+      # 防止把 desktop-v* tag 打在「还没 bump 版本」的 commit 上。
+      - name: Ensure tag matches package.json version
+        run: |
+          want="${GITHUB_REF_NAME#desktop-v}"
+          have="$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "$want" != "$have" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} → version ${want}, but apps/desktop/package.json is ${have}. The tag points at a commit whose version was not bumped; refusing to release."
+            exit 1
+          fi
+
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}

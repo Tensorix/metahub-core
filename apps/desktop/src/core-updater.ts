@@ -18,9 +18,10 @@
  * its own errors: a failed/aborted update must never block startup.
  */
 import { app } from "electron";
-import { mkdir, readFile, writeFile, rename, rm, chmod, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rename, rm, chmod, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BUNDLED_CORE_VERSION } from "./core-version";
 import { compareSemver, parseSha256Sums, sidecarAssetName, tagToVersion } from "./version-util";
@@ -120,14 +121,61 @@ async function stripQuarantine(path: string): Promise<void> {
   });
 }
 
-/** Remove any leftover `*.tmp` from an interrupted previous download. */
+/** Remove any leftover staging files/dirs from an interrupted previous download. */
 async function sweepStaleTmp(dir: string): Promise<void> {
   try {
     for (const name of await readdir(dir)) {
-      if (name.endsWith(".tmp")) await rm(join(dir, name), { force: true });
+      if (name.endsWith(".tmp") || name.startsWith("stage-")) {
+        await rm(join(dir, name), { recursive: true, force: true });
+      }
     }
   } catch {
     /* dir may not exist yet */
+  }
+}
+
+/**
+ * Boot a staged sidecar binary on a throwaway data dir and read the version it
+ * ACTUALLY self-reports (GET /docs.json → info.version). The release's tag name
+ * is not trustworthy on its own: a tag can be (re)pushed onto a commit whose
+ * version was not bumped, so CI publishes a binary whose real version differs
+ * from the tag. Recording the tag in that case strands the updater forever
+ * (installed == tag, so it never re-downloads the corrected asset). We verify
+ * the real version here so a mislabeled asset is rejected, not enshrined.
+ */
+async function reportedVersion(binPath: string): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), "mh-core-verify-"));
+  const child = spawn(binPath, [], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+  });
+  try {
+    // Contract with sidecar.ts: the bound port is printed as `METAHUB_PORT=<n>`.
+    const port = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out reading sidecar port")), 20_000);
+      const onData = (chunk: Buffer): void => {
+        const m = chunk.toString().match(/METAHUB_PORT=(\d+)/);
+        if (m) {
+          clearTimeout(timer);
+          resolve(Number(m[1]));
+        }
+      };
+      child.stdout?.on("data", onData);
+      child.stderr?.on("data", onData);
+      child.on("exit", (code) => {
+        clearTimeout(timer);
+        reject(new Error(`sidecar exited (code ${code}) before announcing a port`));
+      });
+      child.on("error", reject);
+    });
+    const res = await fetch(`http://127.0.0.1:${port}/docs.json`);
+    if (!res.ok) throw new Error(`/docs.json returned ${res.status}`);
+    const v = ((await res.json()) as { info?: { version?: string } }).info?.version;
+    if (!v) throw new Error("sidecar /docs.json missing info.version");
+    return v;
+  } finally {
+    child.kill();
+    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -156,7 +204,12 @@ async function downloadAndStage(release: GhRelease, signal?: AbortSignal): Promi
   const expected = parseSha256Sums(await sumsRes.text()).get(assetName);
   if (!expected) throw new Error(`no checksum for ${assetName}`);
 
-  const tmpPath = join(dir, `${assetName}.tmp`);
+  // Stage into a throwaway subdir (same filesystem as the cache, so the final
+  // promote is an atomic rename) with the real launch filename — so the binary
+  // is executable as-is on every platform and a prior good cache stays intact
+  // until the new one is proven good.
+  const stageDir = await mkdtemp(join(dir, "stage-"));
+  const stagedBin = join(stageDir, cachedBinaryFileName());
   try {
     const binRes = await fetch(asset.browser_download_url, {
       headers: { "User-Agent": USER_AGENT },
@@ -169,15 +222,27 @@ async function downloadAndStage(release: GhRelease, signal?: AbortSignal): Promi
     if (actual.toLowerCase() !== expected.toLowerCase()) {
       throw new Error(`checksum mismatch for ${assetName}`);
     }
-    await writeFile(tmpPath, bytes);
+    await writeFile(stagedBin, bytes);
 
-    if (process.platform !== "win32") await chmod(tmpPath, 0o755);
-    await stripQuarantine(tmpPath);
+    if (process.platform !== "win32") await chmod(stagedBin, 0o755);
+    await stripQuarantine(stagedBin);
 
-    await rename(tmpPath, cachedBinaryPath()); // atomic within the same dir
+    // Trust the binary, not the tag: record what it actually self-reports, and
+    // reject an asset whose real version disagrees with the tag (a mislabeled
+    // release) rather than caching a permanent restart-pending mismatch.
+    const tagVersion = tagToVersion(release.tag_name);
+    const realVersion = await reportedVersion(stagedBin);
+    if (realVersion !== tagVersion) {
+      throw new Error(
+        `release ${release.tag_name} asset ${assetName} self-reports ${realVersion}, ` +
+          `not ${tagVersion} — refusing to stage a mislabeled core binary`,
+      );
+    }
+
+    await rename(stagedBin, cachedBinaryPath()); // atomic within the same fs
 
     const meta: CoreVersionMeta = {
-      version: tagToVersion(release.tag_name),
+      version: realVersion,
       sha256: expected.toLowerCase(),
       installedAt: new Date().toISOString(),
     };
@@ -185,9 +250,8 @@ async function downloadAndStage(release: GhRelease, signal?: AbortSignal): Promi
     await writeFile(metaTmp, JSON.stringify(meta, null, 2));
     await rename(metaTmp, metaPath());
     return meta;
-  } catch (err) {
-    await rm(tmpPath, { force: true });
-    throw err;
+  } finally {
+    await rm(stageDir, { recursive: true, force: true });
   }
 }
 

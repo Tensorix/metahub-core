@@ -35,12 +35,22 @@ const assets: Asset[] = JSON.parse(
   await $`gh release view ${tag} --repo ${REPO} --json assets --jq .assets`.text(),
 );
 
-const dmgs = assets.filter((a) => a.name.toLowerCase().endsWith(".dmg"));
+// Match the .dmg whose filename version matches the tag exactly. A release can
+// carry stale assets from an earlier build (e.g. both Metahub-0.1.0-*.dmg and
+// Metahub-0.1.1-*.dmg) — picking the first arch match would silently grab the
+// wrong version, so require the tag's version in the name and fail loudly if a
+// build for this tag never made it to the release.
+const allDmgs = assets.filter((a) => a.name.toLowerCase().endsWith(".dmg"));
+const dmgs = allDmgs.filter((a) => a.name.includes(`-${version}-`));
 const armDmg = dmgs.find((a) => /arm64/i.test(a.name));
 const intelDmg = dmgs.find((a) => !/arm64/i.test(a.name));
 if (!armDmg || !intelDmg) {
   throw new Error(
-    `expected an arm64 and an intel .dmg in ${tag}; found: ${dmgs.map((d) => d.name).join(", ") || "none"}`,
+    `expected an arm64 and an intel .dmg for version ${version} in ${tag}; ` +
+      `matched: ${dmgs.map((d) => d.name).join(", ") || "none"} ` +
+      `(all .dmg assets: ${allDmgs.map((d) => d.name).join(", ") || "none"}). ` +
+      `If a different version is present, the build for ${tag} did not produce ` +
+      `version ${version} — rebuild/re-upload before regenerating the cask.`,
   );
 }
 

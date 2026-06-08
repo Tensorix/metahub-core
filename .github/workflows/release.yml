@@ -39,6 +39,18 @@ jobs:
             exit 1
           fi
 
+      # tag 版本必须等于该 commit 树里 package.json 的版本，否则中止。
+      # 防止把 tag 打在「还没 bump 版本」的 commit 上 —— 那会让 CI 忠实地构建出
+      # 一个内容版本与 tag 名不符的二进制（见此问题的根因）。
+      - name: Ensure tag matches package.json version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          have="$(node -p "require('./package.json').version")"
+          if [ "$want" != "$have" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} → version ${want}, but package.json is ${have}. The tag points at a commit whose version was not bumped; refusing to release."
+            exit 1
+          fi
+
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
