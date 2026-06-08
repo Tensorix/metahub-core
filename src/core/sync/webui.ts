@@ -804,6 +804,11 @@ export async function serveWebui(req: Request): Promise<Response | null> {
         headers: { "content-type": "text/javascript; charset=utf-8" },
       });
     } catch (e) {
+      // This catch is the only thing between the error and oblivion: Bun only
+      // auto-logs *uncaught* handler errors, and we catch this one. Log the full
+      // error object (not `${e}`) so getJs's AggregateError sub-logs surface —
+      // otherwise the 500 lives solely in the response body, never the logs.
+      console.error("[webui] failed to serve /webui.js —", e);
       return new Response(`webui build failed: ${e}`, { status: 500 });
     }
   }

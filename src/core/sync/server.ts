@@ -195,7 +195,11 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   let timer: ReturnType<typeof setInterval> | null = null;
   if (autoSync && syncIntervalMs > 0) {
     timer = setInterval(() => {
-      void syncAllPeers(db).catch(() => {});
+      // Per-peer errors are already recorded in the DB (last_error) by syncPeer
+      // and surfaced via CLI/WebUI, so we don't re-log those every tick. This
+      // catch only covers an *unexpected* tick crash, which would otherwise be
+      // wholly silent.
+      void syncAllPeers(db).catch((e) => console.error("[sync] auto-sync tick failed —", e));
     }, syncIntervalMs);
     timer.unref?.();
   }
