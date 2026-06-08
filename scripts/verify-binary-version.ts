@@ -87,7 +87,13 @@ export async function verifyBinaryVersion(binPath: string, opts: VerifyOpts): Pr
     }
     console.log(`✓ ${binPath} self-reports ${reported}`);
   } finally {
-    child.kill("SIGTERM");
-    await rm(home, { recursive: true, force: true });
+    child.kill();
+    // Best-effort cleanup: the version check is the result; deleting a throwaway
+    // temp dir must never fail the build. On Windows the killed child briefly
+    // holds handles to it, racing the removal into EBUSY — rm backs off and
+    // retries, and if it still can't delete, we only warn.
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(
+      (err) => console.warn(`⚠ could not remove temp dir ${home}: ${err}`),
+    );
   }
 }
