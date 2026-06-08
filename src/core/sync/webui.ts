@@ -68,7 +68,7 @@ const HTML = `<!doctype html>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body { font-family: var(--ui); font-size: 14px; line-height: 1.55; color: var(--fg); background: var(--bg);
-    overflow: hidden; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+    overflow: hidden; text-rendering: auto; }
   button { font: inherit; color: inherit; cursor: pointer; background: none; border: 0; padding: 0; }
   input, textarea { font: inherit; color: inherit; }
   .muted { color: var(--muted); }
