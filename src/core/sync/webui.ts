@@ -103,7 +103,7 @@ const HTML = `<!doctype html>
   .sb-section-head .add { opacity:0; padding:3px; border-radius:5px; color:var(--muted); transition:opacity .12s; }
   .sb-section:hover .add { opacity:1; }
   .sb-section-head .add:hover { background:var(--hover-2); color:var(--fg); }
-  .navitem { display:flex; align-items:center; gap:3px; width:100%; text-align:left; padding:5px 6px; border-radius:var(--radius-sm);
+  .navitem { display:flex; align-items:center; gap:3px; width:100%; text-align:left; padding:5px 6px; margin-bottom:2px; border-radius:var(--radius-sm);
     color:var(--fg-soft); font-size:13.5px; position:relative; white-space:nowrap; transition:background .1s; }
   .navitem:hover { background:var(--hover-2); }
   .navitem.active { background:var(--bg); color:var(--fg); font-weight:600; box-shadow:var(--shadow-sm); }
