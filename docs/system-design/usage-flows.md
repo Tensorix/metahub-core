@@ -210,7 +210,7 @@ mh --server --port 7777
 
 ### 2. 侧栏：导航与组织
 
-- 左侧栏分「数据库」「文档」两组；文档为**树**，可折叠、拖拽改嵌套（drop-into 设父、before/after 设同级，经 `PATCH /api/document` 的 `parent_id` 持久化）。
+- 左侧栏分「数据库」「文档」两组；文档为**树**，可折叠、拖拽改嵌套与排序（drop-into 嵌为子页、before/after 在同级间重排，均经 `PATCH /api/document/move` 持久化——`parent_id` 与 `order_key` 一次原子更新）。
 - 悬停条目出现「+ 子页」与 ⋯ 菜单（重命名/复制/删除/移到顶层）。「数据库」组的「+」弹**新建数据库 Modal**（名称 + 图标 + 模板：空白/任务/联系人）。侧栏宽度可拖拽；窄屏（≤768px）变抽屉。
 
 ### 3. 表格（Notion-like）

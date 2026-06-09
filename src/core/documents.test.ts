@@ -6,11 +6,13 @@ import {
   createDocument,
   getDocument,
   updateDocument,
+  moveDocument,
   editDocument,
   appendDocument,
   prependDocument,
   documentVersion,
   listDocuments,
+  backfillDocumentOrderKeys,
 } from "./documents.ts";
 
 function makeNode(id: string): Database {
@@ -175,6 +177,62 @@ test("update rejects parent cycles (self and descendant)", () => {
   expect(() => updateDocument(db, a.id, { parent_id: b.id })).toThrow(/cycle/);
   // Unaffected edge stays intact.
   expect(getDocument(db, b.id)!.parent_id).toBe(a.id);
+});
+
+test("new documents append to the end of their sibling group", () => {
+  const db = makeNode("aaaa");
+  const a = createDocument(db, { title: "A" });
+  const b = createDocument(db, { title: "B" });
+  const c = createDocument(db, { title: "C" });
+  expect(listDocuments(db).map((d) => d.title)).toEqual(["A", "B", "C"]);
+  expect([a, b, c].every((d) => getDocument(db, d.id)!.order_key != null)).toBe(true);
+});
+
+test("moveDocument reorders siblings (before/after)", () => {
+  const db = makeNode("aaaa");
+  const a = createDocument(db, { title: "A" });
+  const b = createDocument(db, { title: "B" });
+  const c = createDocument(db, { title: "C" });
+
+  moveDocument(db, c.id, a.id, "before"); // C jumps to the front
+  expect(listDocuments(db).map((d) => d.title)).toEqual(["C", "A", "B"]);
+
+  moveDocument(db, a.id, b.id, "after"); // A drops to the end
+  expect(listDocuments(db).map((d) => d.title)).toEqual(["C", "B", "A"]);
+});
+
+test("moveDocument into nests as the last child", () => {
+  const db = makeNode("aaaa");
+  const parent = createDocument(db, { title: "P" });
+  createDocument(db, { title: "X", parent_id: parent.id });
+  const y = createDocument(db, { title: "Y" }); // top level
+
+  moveDocument(db, y.id, parent.id, "into");
+  expect(getDocument(db, y.id)!.parent_id).toBe(parent.id);
+  expect(listDocuments(db, { parent_id: parent.id }).map((d) => d.title)).toEqual(["X", "Y"]);
+});
+
+test("moveDocument rejects nesting into a descendant", () => {
+  const db = makeNode("aaaa");
+  const a = createDocument(db, { title: "A" });
+  const b = createDocument(db, { title: "B", parent_id: a.id });
+  expect(() => moveDocument(db, a.id, b.id, "into")).toThrow(/cycle/);
+});
+
+test("backfill assigns order_key to legacy docs, preserving created_hlc order", () => {
+  const db = makeNode("aaaa");
+  // Legacy top-level documents emitted without an order_key.
+  for (const [id, hlc] of [["d-a", "1"], ["d-b", "2"], ["d-c", "3"]] as const) {
+    emit(db, "documents", id, "title", id);
+    emit(db, "documents", id, "created_hlc", hlc);
+  }
+  expect(listDocuments(db).every((d) => d.order_key == null)).toBe(true);
+  expect(listDocuments(db).map((d) => d.id)).toEqual(["d-a", "d-b", "d-c"]);
+
+  backfillDocumentOrderKeys(db);
+  const after = listDocuments(db);
+  expect(after.map((d) => d.id)).toEqual(["d-a", "d-b", "d-c"]);
+  expect(after.every((d) => d.order_key != null)).toBe(true);
 });
 
 test("PAYOFF: concurrent edits to different blocks of one doc both survive", () => {

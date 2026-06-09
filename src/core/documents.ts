@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { parseDocBlocks, serializeDocBlocks, reconcile, type DocBlock } from "./blocks.ts";
-import { keysBetween } from "./fracdex.ts";
+import { keyBetween, keysBetween } from "./fracdex.ts";
 
 export interface DocumentRow {
   id: string;
@@ -11,6 +11,7 @@ export interface DocumentRow {
   database_id: string | null;
   parent_id: string | null;
   created_hlc: string;
+  order_key: string | null;
 }
 
 export type DocumentSummary = Omit<DocumentRow, "body">;
@@ -129,6 +130,7 @@ export function createDocument(
   emit(db, "documents", id, "created_hlc", first.hlc);
   if (opts.database_id !== undefined) emit(db, "documents", id, "database_id", opts.database_id);
   if (opts.parent_id !== undefined) emit(db, "documents", id, "parent_id", opts.parent_id);
+  placeInSiblings(db, id, opts.parent_id ?? null); // append to the end of its sibling group
   if (opts.body !== undefined) {
     const blocks = parseDocBlocks(opts.body);
     if (blocks.length) insertBlocks(db, id, blocks, null, null);
@@ -139,26 +141,184 @@ export function createDocument(
 export function getDocument(db: Database, id: string): DocumentRow | null {
   return db
     .query(
-      "SELECT id, title, body, database_id, parent_id, created_hlc FROM documents WHERE id = ? AND __deleted = 0",
+      "SELECT id, title, body, database_id, parent_id, created_hlc, order_key FROM documents WHERE id = ? AND __deleted = 0",
     )
     .get(id) as DocumentRow | null;
 }
+
+/** Display order among siblings: explicit order_key first, NULLs fall back to
+ *  creation time so an un-backfilled tree still renders in its historical order. */
+const ORDER_BY = "ORDER BY order_key IS NULL, order_key, created_hlc, id";
 
 export function listDocuments(
   db: Database,
   opts: { database_id?: string; parent_id?: string } = {},
 ): DocumentSummary[] {
   const cols =
-    "SELECT id, title, database_id, parent_id, created_hlc FROM documents WHERE __deleted = 0";
+    "SELECT id, title, database_id, parent_id, created_hlc, order_key FROM documents WHERE __deleted = 0";
   if (opts.parent_id !== undefined)
     return db
-      .query(`${cols} AND parent_id = ? ORDER BY created_hlc`)
+      .query(`${cols} AND parent_id = ? ${ORDER_BY}`)
       .all(opts.parent_id) as DocumentSummary[];
   if (opts.database_id)
     return db
-      .query(`${cols} AND database_id = ? ORDER BY created_hlc`)
+      .query(`${cols} AND database_id = ? ${ORDER_BY}`)
       .all(opts.database_id) as DocumentSummary[];
-  return db.query(`${cols} ORDER BY created_hlc`).all() as DocumentSummary[];
+  return db.query(`${cols} ${ORDER_BY}`).all() as DocumentSummary[];
+}
+
+// ---- sibling ordering (fractional index scoped per parent_id) --------------
+
+interface SiblingRow {
+  id: string;
+  order_key: string | null;
+}
+
+/** WHERE fragment + args selecting siblings under `parentId` (null = top level). */
+function siblingWhere(parentId: string | null): { clause: string; args: string[] } {
+  return parentId === null
+    ? { clause: "parent_id IS NULL", args: [] }
+    : { clause: "parent_id = ?", args: [parentId] };
+}
+
+function canEmitOrderKeys(db: Database): boolean {
+  return tableExists(db, "meta") && tableExists(db, "crdt_changes");
+}
+
+function tableExists(db: Database, table: string): boolean {
+  return (
+    db
+      .query("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table) != null
+  );
+}
+
+/** Greatest order_key among siblings (optionally ignoring one row being placed). */
+function lastSiblingOrderKey(
+  db: Database,
+  parentId: string | null,
+  excludeId?: string,
+): string | null {
+  const w = siblingWhere(parentId);
+  const exclude = excludeId ? " AND id <> ?" : "";
+  const row = db
+    .query(
+      `SELECT order_key FROM documents WHERE ${w.clause}${exclude}
+       AND __deleted = 0 AND order_key IS NOT NULL
+       ORDER BY order_key DESC, id DESC LIMIT 1`,
+    )
+    .get(...w.args, ...(excludeId ? [excludeId] : [])) as { order_key: string | null } | null;
+  return row?.order_key ?? null;
+}
+
+function orderedSiblings(db: Database, parentId: string | null): SiblingRow[] {
+  const w = siblingWhere(parentId);
+  return db
+    .query(`SELECT id, order_key FROM documents WHERE ${w.clause} AND __deleted = 0 ${ORDER_BY}`)
+    .all(...w.args) as SiblingRow[];
+}
+
+/** Re-space every sibling's key evenly — escape hatch when fractional keys collide. */
+function rebalanceSiblings(db: Database, parentId: string | null): void {
+  const rows = orderedSiblings(db, parentId);
+  const keys = keysBetween(null, null, rows.length);
+  rows.forEach((row, i) => {
+    if (row.order_key !== keys[i]) emit(db, "documents", row.id, "order_key", keys[i]!);
+  });
+}
+
+/** Assign keys to siblings that still lack one, appending in creation order. */
+function backfillSiblings(db: Database, parentId: string | null): void {
+  const emitChange = canEmitOrderKeys(db);
+  const w = siblingWhere(parentId);
+  const missing = db
+    .query(
+      `SELECT id FROM documents WHERE ${w.clause} AND __deleted = 0 AND order_key IS NULL
+       ORDER BY created_hlc, id`,
+    )
+    .all(...w.args) as { id: string }[];
+  if (!missing.length) return;
+  const keys = keysBetween(lastSiblingOrderKey(db, parentId), null, missing.length);
+  missing.forEach((row, i) => {
+    if (emitChange) emit(db, "documents", row.id, "order_key", keys[i]!);
+    else db.query("UPDATE documents SET order_key = ? WHERE id = ?").run(keys[i]!, row.id);
+  });
+}
+
+/** Backfill order_key for every parent group that has un-keyed live documents. */
+export function backfillDocumentOrderKeys(db: Database): void {
+  const parents = db
+    .query("SELECT DISTINCT parent_id FROM documents WHERE __deleted = 0 AND order_key IS NULL")
+    .all() as { parent_id: string | null }[];
+  for (const p of parents) backfillSiblings(db, p.parent_id);
+}
+
+/**
+ * Place `id` under `parentId` at the given position — the single point where a
+ * document's parent_id and order_key are kept consistent (reparent always
+ * implies a new sibling scope). No `anchor` appends to the end of the group.
+ */
+function placeInSiblings(
+  db: Database,
+  id: string,
+  parentId: string | null,
+  anchor?: { targetId: string; where: "before" | "after" },
+): void {
+  // Walk the prospective ancestor chain; reaching `id` would form a cycle and
+  // make the tree unrenderable. Guarded here so every caller is protected.
+  let cur: string | null | undefined = parentId;
+  while (cur) {
+    if (cur === id) throw new Error(`cannot set parent_id: would create a cycle (${id})`);
+    cur = getDocument(db, cur)?.parent_id ?? null;
+  }
+
+  const current = getDocument(db, id);
+  if (current && (current.parent_id ?? null) !== parentId)
+    emit(db, "documents", id, "parent_id", parentId);
+
+  let key: string;
+  if (!anchor) {
+    key = keyBetween(lastSiblingOrderKey(db, parentId, id), null);
+  } else {
+    backfillSiblings(db, parentId); // ensure neighbors carry comparable keys
+    const neighbors = (): [string | null, string | null] => {
+      const rows = orderedSiblings(db, parentId).filter((r) => r.id !== id);
+      const to = rows.findIndex((r) => r.id === anchor.targetId);
+      if (to < 0) throw new Error(`no such target document: ${anchor.targetId}`);
+      return anchor.where === "before"
+        ? [rows[to - 1]?.order_key ?? null, rows[to]!.order_key]
+        : [rows[to]!.order_key, rows[to + 1]?.order_key ?? null];
+    };
+    let [left, right] = neighbors();
+    if (left !== null && right !== null && left >= right) {
+      rebalanceSiblings(db, parentId);
+      [left, right] = neighbors();
+    }
+    key = keyBetween(left, right);
+  }
+  emit(db, "documents", id, "order_key", key);
+}
+
+/**
+ * Move a document next to / into another, atomically updating both its parent
+ * and its order_key. `into` nests it as the last child of `targetId`;
+ * `before`/`after` re-orders (and reparents if needed) among the target's siblings.
+ */
+export function moveDocument(
+  db: Database,
+  id: string,
+  targetId: string,
+  where: "before" | "after" | "into",
+): DocumentRow {
+  const src = getDocument(db, id);
+  if (!src) throw new Error(`no such document: ${id}`);
+  if (id === targetId) return src;
+  const target = getDocument(db, targetId);
+  if (!target) throw new Error(`no such target document: ${targetId}`);
+
+  if (where === "into") placeInSiblings(db, id, targetId);
+  else placeInSiblings(db, id, target.parent_id, { targetId, where });
+  return getDocument(db, id)!;
 }
 
 export function updateDocument(
@@ -170,15 +330,12 @@ export function updateDocument(
   if (fields.title !== undefined) emit(db, "documents", id, "title", fields.title);
   if (fields.database_id !== undefined) emit(db, "documents", id, "database_id", fields.database_id);
   if (fields.parent_id !== undefined) {
-    // Walk the prospective ancestor chain; reaching `id` (including self) would
-    // form a cycle and make the document tree unrenderable. Guard in core so
-    // every caller (CLI, WebUI, sync) is protected, not just the WebUI.
-    let cur: string | null | undefined = fields.parent_id;
-    while (cur) {
-      if (cur === id) throw new Error(`cannot set parent_id: would create a cycle (${id})`);
-      cur = getDocument(db, cur)?.parent_id ?? null;
-    }
-    emit(db, "documents", id, "parent_id", fields.parent_id);
+    // Reparenting moves the document into a new sibling scope, so its order_key
+    // must be reassigned too — placeInSiblings keeps both consistent (and guards
+    // against cycles) for every caller: CLI, WebUI, sync. Only act on a real
+    // change so a no-op PATCH doesn't silently jump the document to the end.
+    const next = fields.parent_id ?? null;
+    if ((getDocument(db, id)!.parent_id ?? null) !== next) placeInSiblings(db, id, next);
   }
   if (fields.body !== undefined) {
     ensureBlocks(db, id);

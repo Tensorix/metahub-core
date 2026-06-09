@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dbPath, cacheDir, metahubHome } from "./paths.ts";
 import { CORE_SCHEMA, FTS_SCHEMA } from "./schema.ts";
 import { backfillRecordOrderKeys } from "./records.ts";
+import { backfillDocumentOrderKeys } from "./documents.ts";
 
 export function ensureDirs(): void {
   mkdirSync(metahubHome(), { recursive: true });
@@ -98,6 +99,18 @@ export function migrateDocBlocks(db: Database): void {
     db.exec("ALTER TABLE doc_blocks ADD COLUMN blank_after INTEGER NOT NULL DEFAULT 0");
 }
 
+/**
+ * Add the `order_key` column to a legacy `documents` table and backfill it.
+ * Idempotent — guarded by hasColumn; backfill only touches rows with a NULL key,
+ * assigning per-parent fractional indices in current created_hlc order, so the
+ * displayed document order is unchanged until the user first drags something.
+ */
+export function migrateDocuments(db: Database): void {
+  if (!hasColumn(db, "documents", "order_key"))
+    db.exec("ALTER TABLE documents ADD COLUMN order_key TEXT");
+  backfillDocumentOrderKeys(db);
+}
+
 /** Open (and migrate) the on-disk metahub database for the resolved home. */
 export function openMetahub(): Database {
   ensureDirs();
@@ -107,5 +120,6 @@ export function openMetahub(): Database {
   migrateRecords(db);
   migratePeers(db);
   migrateDocBlocks(db);
+  migrateDocuments(db);
   return db;
 }

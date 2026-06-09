@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS documents (
   database_id TEXT,
   parent_id   TEXT,
   created_hlc TEXT,
+  order_key   TEXT,        -- fractional index among siblings (same parent_id); ties broken by created_hlc,id
   __deleted   INTEGER NOT NULL DEFAULT 0
 );
 

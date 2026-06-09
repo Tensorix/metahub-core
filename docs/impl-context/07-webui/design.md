@@ -105,7 +105,7 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 ### 7.1 范围与目标
 - 文档：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、行内格式条、待办/列表/引用/代码/分隔线）。
 - 表格：Notion-like——按类型行内编辑、列头菜单（改名/**改类型**/选项增删/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。
-- 侧栏：文档**树**（折叠/拖拽改嵌套）、宽度可拖拽、移动端抽屉；条目菜单与新建数据库 Modal（模板）。
+- 侧栏：文档**树**（折叠/拖拽改嵌套；同级拖拽排序见下「后续补充」）、宽度可拖拽、移动端抽屉；条目菜单与新建数据库 Modal（模板）。
 - 全面 CRUD + 真实弹窗/菜单/SVG 图标，移动端适配，明暗主题。
 
 ### 7.2 关键设计决策
@@ -117,7 +117,8 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 ### 7.3 v1 范围外（避免改 schema，明确标注）
 - 数据库描述字段、文档独立 emoji 图标（需加列）。
 - 保存视图 / 持久化筛选排序（v2 排序为客户端临时态；看板/日历占位）。
-- 文档同级顺序、表格行手动拖拽顺序的**持久化**（跨层级移动 `parent_id` 已持久化）。
+- ~~文档同级顺序~~、表格行手动拖拽顺序的**持久化**（跨层级移动 `parent_id` 已持久化）。
+  - **后续补充**：文档同级顺序已落地——documents 新增 `order_key`（per-parent fractional index），WebUI 侧栏拖拽走 `PATCH /api/document/move`（`moveDocument` before/after/into），父级与顺序由 core `placeInSiblings` 一处保持一致；详见 [data-model.md](../../system-design/data-model.md) 的 documents 段。表格行手动排序仍为缺口。
 
 ### 7.4 涉及文件（增量）
 - 后端：改 `src/core/databases.ts`、`src/core/properties.ts`、`src/core/sync/webui-routes.ts`；新增 `src/core/{databases,properties}.test.ts`。

@@ -168,12 +168,14 @@ WHERE database_id = '<db>' AND __deleted = 0;
 文档表示一篇 Markdown 文档:
 
 ```text
-documents(id, title, body, database_id, parent_id, created_hlc, __deleted)
+documents(id, title, body, database_id, parent_id, created_hlc, order_key, __deleted)
 ```
 
 当前 `body` 是缓存列,不是文档正文的权威来源。对于 block-managed 文档,正文由 `doc_blocks` 重算。
 
-删除文档会**级联**:`deleteDocument` 软删自身后,软删其 `doc_blocks`(派生正文)、并把直接子文档 unparent(置空 `parent_id`,作为顶层文档保留)。改 `parent_id` 时 core 做防环校验;sync 仍可能合出环,由 `repairHub` 兜底打断(见「完整性约束」)。
+`order_key` 与 records 同为 fractional index,但**作用域按 `parent_id` 分组**(同一父级下的兄弟,`NULL` = 顶层):展示时 `listDocuments` 按 `ORDER BY order_key IS NULL, order_key, created_hlc, id` 排,`NULL` 兜底回落到创建时间,故旧库未回填前顺序不变。`createDocument` 追加到同级末尾;`moveDocument(before|after|into)` 是**唯一**的放置入口——因为 reparent 必然进入新的兄弟作用域,父级与顺序由内部 `placeInSiblings` 一处保持一致。迁移 `migrateDocuments` 幂等回填(按现有 `created_hlc` 顺序),首次拖拽后才真正落键。
+
+删除文档会**级联**:`deleteDocument` 软删自身后,软删其 `doc_blocks`(派生正文)、并把直接子文档 unparent(置空 `parent_id`,作为顶层文档保留)。改 `parent_id`/排序时 core 做防环校验;sync 仍可能合出环,由 `repairHub` 兜底打断(见「完整性约束」)。
 
 ## doc_blocks
 

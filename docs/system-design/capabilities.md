@@ -98,7 +98,7 @@ mh doc update <doc-ref> [--title] [--body] [--parent <doc-ref>]
 mh doc delete <doc-ref>
 ```
 
-文档层级:`--parent <doc-ref>` 把文档挂到某个父文档下,`--parent ""`(空值)移回顶层(清空 parent_id)。core 在改 parent 时做防环校验(不能挂到自身或后代下)。CLI 与 WebUI 拖拽改嵌套共用同一 `updateDocument(parent_id)` 路径。
+文档层级:`--parent <doc-ref>` 把文档挂到某个父文档下,`--parent ""`(空值)移回顶层(清空 parent_id)。core 在改 parent 时做防环校验(不能挂到自身或后代下)。同级**顺序**由 `order_key`(per-parent fractional index)决定:WebUI 侧栏拖拽走 `moveDocument(before|after|into)`,一次原子更新父级与顺序;CLI 的 `--parent` 走 `updateDocument(parent_id)`,reparent 时自动落到新父级末尾(尚无单独的 CLI 重排命令)。两条路径的父级+顺序一致性都收口在 core 的 `placeInSiblings`。
 
 AI 增量编辑:
 
@@ -278,6 +278,7 @@ GET    /api/records          POST /api/records             # ?db=<id>
 GET    /api/record           PATCH/DELETE /api/record       # ?id=<id>
 GET    /api/documents        POST /api/documents
 GET    /api/document         PATCH/DELETE /api/document      # ?id=<id>
+                             PATCH /api/document/move        # ?id=<id>（拖拽：before/after/into，改父级+重排）
 GET    /api/search           # ?q=<text>&limit=<n>
 
 GET    /api/sites            GET /api/site/files          # 站点 / 文件清单（只读，?site=<id|name>）
@@ -289,7 +290,7 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
 当前能力:
 
 - 浏览器打开 `http://localhost:<port>/` 即用，**Notion-like 模块化 Preact 应用**（v2，见 [07-webui/implementation.md](../impl-context/07-webui/implementation.md)）：
-  - **侧栏**：文档树（折叠/拖拽改嵌套）、宽度可拖拽、整栏可收起/展开、移动端抽屉；条目菜单（重命名/复制/删除/新建子页）、新建数据库 Modal（模板）。
+  - **侧栏**：文档树（折叠/拖拽改嵌套与同级排序）、宽度可拖拽、整栏可收起/展开、移动端抽屉；条目菜单（重命名/复制/删除/新建子页）、新建数据库 Modal（模板）。
   - **表格**：按类型行内编辑（checkbox/select/multi_select/relation/text/number/date/url）、列头菜单（改名/**改类型**/选项增删/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。
   - **文档**：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、单块选中浮动格式条、待办/列表/引用/代码/分隔线）；支持 Typora 风格核心快捷输入（标题、列表、待办、引用、代码 fence）、列表 Tab/Shift+Tab 嵌套、列表内段落/引用/代码块/子列表、代码语言名。代码块为 textarea + highlight.js 高亮镜像，含**语法高亮**、行号、语言下拉、复制（右下角 hover）与键盘退出（末行空行 Enter / 末行 ↓）；空列表项内删除空代码块会保留当前编号/marker。
     - **多块选中**（v2.3）：拖拽跨块或左侧空白拖拽框选整块、Shift+点击扩展，选中块加底色（无浮动工具栏）；键盘批量删除/缩进/复制·剪切为 Markdown/复制(Cmd+D)/全选(Cmd+A)/Shift+↑↓ 扩展，多块整组拖拽移动。

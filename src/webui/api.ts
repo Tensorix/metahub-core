@@ -45,6 +45,7 @@ export interface DocSummary {
   database_id: string | null;
   parent_id: string | null;
   created_hlc?: string;
+  order_key?: string | null;
 }
 export type Doc = DocSummary & { body: string | null };
 export interface Hit {
@@ -145,6 +146,8 @@ export const api = {
   getDocument: (id: string) => req<Doc>("GET", `/api/document?id=${q(id)}`),
   updateDocument: (id: string, b: { title?: string; body?: string; parent_id?: string | null }) =>
     req<Doc>("PATCH", `/api/document?id=${q(id)}`, b),
+  moveDocument: (id: string, target: string, where: "before" | "after" | "into") =>
+    req<Doc>("PATCH", `/api/document/move?id=${q(id)}`, { target, where }),
   deleteDocument: (id: string) => req<{ ok: boolean }>("DELETE", `/api/document?id=${q(id)}`),
 
   // search

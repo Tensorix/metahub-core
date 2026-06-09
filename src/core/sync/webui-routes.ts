@@ -23,6 +23,7 @@ import {
   getDocument,
   createDocument,
   updateDocument,
+  moveDocument,
   deleteDocument,
 } from "../documents.ts";
 import { search } from "../search.ts";
@@ -64,6 +65,11 @@ const DocumentSummarySchema = z.object({
   database_id: z.string().nullable(),
   parent_id: z.string().nullable(),
   created_hlc: z.string(),
+  order_key: z.string().nullable(),
+});
+const MoveDocumentReq = z.object({
+  target: z.string(),
+  where: z.enum(["before", "after", "into"]),
 });
 const DocumentSchema = DocumentSummarySchema.extend({ body: z.string().nullable() });
 const SearchHitSchema = z.object({
@@ -345,6 +351,17 @@ export const webuiRoutes: Route[] = [
     handler: handle(async (req, { db }) => {
       const body = (await req.json()) as { title?: string; body?: string; parent_id?: string | null };
       return updateDocument(db, need(req, "id"), body);
+    }),
+  },
+  {
+    method: "PATCH",
+    path: "/api/document/move",
+    summary: "Move a document before/after another, or into it as a child. Query: ?id=<id>",
+    request: MoveDocumentReq,
+    response: DocumentSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { target: string; where: "before" | "after" | "into" };
+      return moveDocument(db, need(req, "id"), body.target, body.where);
     }),
   },
   {

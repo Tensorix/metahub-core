@@ -62,8 +62,9 @@ export function Sidebar(props: SidebarProps) {
     guard(async () => {
       if (srcId === tgt.id) return;
       if (isAncestor(props.docs, srcId, tgt.id)) return; // no cycles
-      const parent = where === "into" ? tgt.id : tgt.parent_id;
-      await api.updateDocument(srcId, { parent_id: parent });
+      // One call handles both reparenting and sibling ordering — the core keeps
+      // parent_id and order_key consistent for every drop position.
+      await api.moveDocument(srcId, tgt.id, where);
       if (where === "into") expanded.add(tgt.id);
       await props.reloadNav();
     });

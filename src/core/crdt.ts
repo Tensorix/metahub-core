@@ -28,7 +28,7 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
   },
   documents: {
     table: "documents",
-    cols: new Set(["title", "body", "database_id", "parent_id", "created_hlc", "__deleted"]),
+    cols: new Set(["title", "body", "database_id", "parent_id", "created_hlc", "order_key", "__deleted"]),
   },
   doc_blocks: {
     table: "doc_blocks",
