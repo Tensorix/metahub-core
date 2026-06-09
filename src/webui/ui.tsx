@@ -127,6 +127,24 @@ export function MenuItem({
   );
 }
 
+// ---- drawer transition -----------------------------------------------------
+// Slide-in/out for the right-side peek drawers. The drawer is conditionally
+// mounted by its parent, so to play the CSS transition we mount with open=false
+// (translateX(100%)) and flip to true on the next frame; on close we slide out
+// first, then let the parent unmount after the animation finishes.
+export function useDrawerTransition(onClose: () => void, durationMs = 240) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+  const close = () => {
+    setOpen(false);
+    setTimeout(onClose, durationMs);
+  };
+  return { open, close };
+}
+
 // ---- modal -----------------------------------------------------------------
 const modalStore = makeStore<VNode | null>(null);
 export function openModal(node: VNode) {

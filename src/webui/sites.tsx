@@ -12,6 +12,7 @@ import {
   openModal,
   closeModal,
   Modal,
+  useDrawerTransition,
 } from "./ui.tsx";
 
 // "站点管理" — GUI over the static-file sites the `mh site` CLI publishes. Sites
@@ -299,6 +300,7 @@ function SitePeek({
 }) {
   const [files, setFiles] = useState<SiteFile[] | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const { open, close } = useDrawerTransition(onClose);
 
   const reload = () =>
     api
@@ -341,10 +343,10 @@ function SitePeek({
   const url = siteUrl(site.name);
   return (
     <>
-      <div class="scrim open" onClick={onClose} />
-      <div class="peek open">
+      <div class={"scrim" + (open ? " open" : "")} onClick={close} />
+      <div class={"peek" + (open ? " open" : "")}>
         <div class="peek-head">
-          <button class="iconbtn" onClick={onClose}>
+          <button class="iconbtn" onClick={close}>
             <Icon name="x" />
           </button>
           <div

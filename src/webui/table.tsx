@@ -17,6 +17,7 @@ import {
   MenuLabel,
   MenuSep,
   confirmDialog,
+  useDrawerTransition,
 } from "./ui.tsx";
 import { Chip, CellDisplay, coerceInput, cellText } from "./cells.tsx";
 import { BoardView } from "./board.tsx";
@@ -985,13 +986,14 @@ function RecordPeek({
   onClose: () => void; onCommit: (p: Prop, v: unknown) => void; onDelete: () => void; onDuplicate: () => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const { open, close } = useDrawerTransition(onClose);
   const titleProp = props[0];
   return (
     <>
-      <div class="scrim open" onClick={onClose} />
-      <div class="peek open">
+      <div class={"scrim" + (open ? " open" : "")} onClick={close} />
+      <div class={"peek" + (open ? " open" : "")}>
         <div class="peek-head">
-          <button class="iconbtn" onClick={onClose}><Icon name="x" /></button>
+          <button class="iconbtn" onClick={close}><Icon name="x" /></button>
           <div style={{ flex: 1 }} />
           <button class="iconbtn" title="更多" onClick={(e) =>
             openMenu(e, (close) => (
