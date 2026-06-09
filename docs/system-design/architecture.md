@@ -135,7 +135,7 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 
 ## HTTP 路由与 WebUI
 
-`Bun.serve()` 的 fetch handler 用精确路径匹配分发,路由表 `src/core/sync/routes.ts` 是单一来源——`syncRoutes`(`/sync`、`/health`)、`webuiRoutes`(`/api/*`)与 `sitesRoutes`(`/api/sites`、`/api/site/files` 只读)合并后,既被 fetch handler 命中,也被 `openapi.ts` 遍历生成 OpenAPI(`/docs`、`/docs.json`),无 codegen。静态站点用一个 `startsWith("/sites/")` **前缀分支**(精确匹配做不到任意路径)单独处理。
+`Bun.serve()` 的 fetch handler 用精确路径匹配分发,路由表 `src/core/sync/routes.ts` 是单一来源——`syncRoutes`(`/sync`、`/health`)、`webuiRoutes`(`/api/*`)与 `sitesRoutes`(`/api/sites`、`/api/site/files`,以及 v2.9 起的 `POST /api/sites`、`PATCH/DELETE /api/site`、`POST/DELETE /api/site/file` 写接口,供 WebUI 站点管理用)合并后,既被 fetch handler 命中,也被 `openapi.ts` 遍历生成 OpenAPI(`/docs`、`/docs.json`),无 codegen。静态站点用一个 `startsWith("/sites/")` **前缀分支**(精确匹配做不到任意路径)单独处理。
 
 - **REST API**(`src/core/sync/webui-routes.ts`):一组只读 + 写入路由,**复用与 CLI 同一套 core 函数**(`listDatabases`/`updateDatabase`/`listRecords`/`createRecord`/`updateProperty`/`updateDocument`/`search` 等),因此写操作同样经 `emit()` 进 CRDT oplog、随 sync 复制。id 用 query 参数携带(`?db=`/`?id=`),以保持精确路径匹配与 OpenAPI 生成不变;`Route.method` 扩展出 `PATCH`/`DELETE`(含 `PATCH/DELETE /api/database`、`PATCH/DELETE /api/property`)。handler 统一包一层 try/catch,异常转 `{error}` 400。
 - **浏览器 WebUI**(`src/webui/`,Preact):根路径 `/` 返回内联 HTML 外壳,`/webui.js` 返回应用 bundle。服务模块 `src/core/sync/webui.ts` 经 `server.ts` 的 `await import("./webui.ts")` **懒加载**,优先读打包产物 `dist/webui.js`,开发态(从源码运行、无 dist)即时 `Bun.build` 兜底并缓存。v2 为 Notion-like 模块化应用(`app.tsx` 为唯一构建入口,拆 `api/icons/ui/blocks/markdown/sidebar/table/editor`):块级所见即所得文档编辑(前端逻辑块树支持嵌套列表、列表内段落/引用/代码块、代码语言名与 Markdown 快捷转换；保存为 body 走 `reconcileBody`,无需 block 级 API)、Notion-like 表格、文档树侧栏(拖拽改嵌套)、移动端适配。见 [07-webui](../impl-context/07-webui/implementation.md)。

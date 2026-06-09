@@ -7,6 +7,7 @@ import {
   getSite,
   getSiteByName,
   listSites,
+  updateSite,
   deleteSite,
   resolveSite,
   putFile,
@@ -41,6 +42,25 @@ test("duplicate live site name is rejected", () => {
   const db = makeNode("n1");
   createSite(db, { name: "demo" });
   expect(() => createSite(db, { name: "demo" })).toThrow();
+});
+
+test("updateSite renames and changes title; guards duplicate names", () => {
+  const db = makeNode("n1");
+  const s = createSite(db, { name: "demo", title: "Demo" });
+  createSite(db, { name: "taken" });
+
+  const renamed = updateSite(db, s.id, { name: "docs", title: "产品官网" });
+  expect(renamed.name).toBe("docs");
+  expect(renamed.title).toBe("产品官网");
+  expect(getSiteByName(db, "docs")?.id).toBe(s.id);
+
+  // changing only the title leaves the name intact
+  expect(updateSite(db, s.id, { title: "新标题" }).name).toBe("docs");
+
+  // renaming onto an existing live name is rejected
+  expect(() => updateSite(db, s.id, { name: "taken" })).toThrow();
+  // updating a missing site throws
+  expect(() => updateSite(db, "site_missing", { title: "x" })).toThrow();
 });
 
 test("text files store as utf8 and round-trip via getFileForServe", async () => {

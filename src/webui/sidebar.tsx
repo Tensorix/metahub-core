@@ -28,6 +28,8 @@ interface SidebarProps {
   onCollapse: () => void;
   onOpenSettings: () => void;
   settingsActive: boolean;
+  onOpenSites: () => void;
+  sitesActive: boolean;
   /** Show a dot on the settings entry: a core update is staged or available. */
   updatePending?: boolean;
   reloadNav: () => Promise<void>;
@@ -279,6 +281,13 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <div class="sb-footer">
+        <button
+          class={"navitem" + (props.sitesActive ? " active" : "")}
+          onClick={props.onOpenSites}
+        >
+          <span class="emoji"><Icon name="globe" cls="ico sm" /></span>
+          <span class="label">站点</span>
+        </button>
         <button
           class={"navitem" + (props.settingsActive ? " active" : "")}
           onClick={props.onOpenSettings}

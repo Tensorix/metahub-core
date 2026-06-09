@@ -421,3 +421,20 @@ Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace
 验证:新增 `src/webui/html-md.test.ts` 7 用例(标题 h1–h6、带语言围栏、ChatGPT 工具条不折进、有/无序列表、引用、inline strong/em/code/link、ChatGPT 风总合),经 `htmlToMarkdown → blocksFromBody` 断言块类型与代码内容;`bun test` 215 全通过;`tsc -p src/webui/tsconfig.json` 零错;`bun run build` 成功。手验(重建+重启+硬刷新):从 ChatGPT 选「标题+番号列表+多个代码块+引用」粘贴,代码块带语言、标题/列表正确成块,不再塌成段落;纯文本来源(无 `text/html`)仍走原 Markdown 解析。
 
 涉及文件:新增 `src/webui/{html-md.ts,html-md.test.ts,turndown-plugin-gfm.d.ts}`、改 `src/webui/editor.tsx`(`onContentPaste` + import)、`package.json`(依赖);复用 `blocksFromBody`(`blocks.ts`);构建 `dist/webui.js`(改前端须重建)。
+
+## 17. v2.9 站点管理页面（`src/webui/sites.tsx`，2026-06-09）
+
+设计见 [design.md §16](./design.md)。给静态站点(08-agent-sites)补 WebUI GUI;后端 5 条 `/api/site*` 写接口 + `updateSite` + `GET /api/sites` 加 `file_count` 详见 [08-agent-sites/design.md §6](../08-agent-sites/design.md)。本节记前端。
+
+- **新增 `src/webui/sites.tsx`**:
+  - `SitesView` — `useState<Site[]|null>` + `useEffect` 拉 `api.listSites()`(仿 `settings.tsx` 的 `SyncDevices` 取数);卡片网格;`peek`/`preview` 两个本地状态控制抽屉与预览。
+  - `NewSiteModal` — `openModal(<Modal>)`,名字 slug 化(`[^a-z0-9-]→-`)+ 调 `api.createSite`。
+  - `SitePeek` — 复用 `.scrim.open`/`.peek.open`;拉 `api.listSiteFiles`;隐藏 `<input type=file multiple>` → 逐个 `api.uploadSiteFile`(裸 `fetch`,二进制不走会 JSON 化的 `req()`);文件行预览/复制路径/删除(`confirmDialog`)。
+  - `FilePreviewModal` — `fetch('/sites/<name>/<path>')`:文本 → `<pre class="preview-box">`,图片 → `<img src>` 指同 URL,blob → 占位。
+  - `SitePreview` — 近全屏 overlay(`.spv-*`,带浏览器外框)+ `<iframe src="/sites/<name>/" sandbox="allow-scripts allow-same-origin">`;Esc / 点遮罩关。**不内联**(服务端已 serve)。
+- **接线**:`app.tsx` `View` 加 `{kind:"sites"}` + 内容区 / 面包屑分支 + 传 `onOpenSites/sitesActive`;`sidebar.tsx` `SidebarProps` 加 `onOpenSites/sitesActive`,页脚「站点」按钮(紧挨「设置」);`icons.tsx` 加 `globe/eye/lock/upload/externalLink`;`api.ts` 加站点方法 + `Site/SiteFile` 类型(`Site.file_count`)。
+- **CSS(`src/core/sync/webui.ts` 内联)**:追加 `.sites-grid`/`.site-card*`/`.site-addr`/`.acc-link`/`.filerow`/`.enc-badge`/`.preview-*`/`.spv-*`;复用既有 `.db`/`.toolbar`/`.scrim`/`.peek`/`.modal`/`.btn`。空状态类命名为 `.site-empty`,**避开**已存在的全屏 `.empty`。
+
+验证:`tsc` 改动文件零错(既存无关错误同前:`src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`apps/desktop`)。`bun test` 221 全通过(`sites.test.ts` +`updateSite` 用例,11/11)。`bun run build` 成功,`dist/webui.js` 含站点代码。HTTP 端到端冒烟(`--server --debug`)建站→传文件→`/sites/demo/` 真发→改标题→删文件→删站点全通(详见 08 §6.3)。
+
+涉及文件:新增 `src/webui/sites.tsx`;改 `src/webui/{api.ts,app.tsx,sidebar.tsx,icons.tsx}`、`src/core/sync/webui.ts`(CSS);后端见 08 §6;构建 `dist/webui.js`(改前端须重建)。

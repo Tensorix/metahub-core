@@ -75,7 +75,7 @@ Pair two devices once and they sync both ways on a timer — no need to run `mh 
 
 ## WebUI, API, and agent-hosted sites
 
-`mh --server` serves a browser **WebUI** at `/` (browse and inline-edit tables, block-level WYSIWYG document editing, full-text search). The same server also exposes:
+`mh --server` serves a browser **WebUI** at `/` (browse and inline-edit tables, block-level WYSIWYG document editing, full-text search, manage agent sites). The same server also exposes:
 
 - `/api/*` — REST endpoints over your tables and documents.
 - `/docs` — auto-generated OpenAPI documentation.

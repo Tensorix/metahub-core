@@ -250,6 +250,89 @@
   .gridfoot { display: flex; gap: 18px; color: var(--muted); font-size: 12px; padding: 8px 2px; }
   input.inlineedit, select.inlineedit { width: 100%; border: 0; outline: 2px solid var(--accent); border-radius: 4px; padding: 7px 9px; background: var(--bg); color: var(--fg); font: inherit; }
 
+  /* ---------------- sites (card grid) ---------------- */
+  .sites-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 14px; margin-top: 6px; }
+  .site-card { display: flex; flex-direction: column; gap: 13px; padding: 16px 16px 14px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow-sm); cursor: pointer; transition: box-shadow .16s, border-color .16s, transform .16s; }
+  .site-card:hover { box-shadow: var(--shadow-md); border-color: var(--line-strong); transform: translateY(-1px); }
+  .site-card-head { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .site-card .si { width: 40px; height: 40px; border-radius: 11px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; flex: none; }
+  .site-card .si svg { width: 20px; height: 20px; }
+  .site-card-id { min-width: 0; }
+  .site-card .slug { font-family: var(--mono); font-weight: 600; font-size: 14.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-card .ttl { font-size: 12px; color: var(--fg-soft); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-card .ttl.muted { color: var(--muted); font-style: italic; }
+  .site-addr { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 6px 9px; color: var(--muted); font-family: var(--mono); font-size: 11.5px; transition: border-color .12s, color .12s; }
+  .site-addr svg { flex: none; }
+  .site-addr span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-addr:hover { border-color: var(--accent); color: var(--accent); }
+  .site-card-meta { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+  .site-card-meta b { color: var(--fg-soft); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .site-card-meta .dot { color: var(--line-strong); }
+  .site-card-foot { display: flex; align-items: center; gap: 6px; padding-top: 12px; margin-top: 1px; border-top: 1px solid var(--line); }
+  .site-card-foot .btn-secondary { padding: 6px 12px; justify-content: center; }
+
+  .enc-badge { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 10.5px; font-weight: 500; letter-spacing: .02em;
+    padding: 2px 6px; border-radius: 5px; background: var(--surface-2); color: var(--fg-soft); border: 1px solid var(--line); }
+  .enc-badge.blob { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+
+  /* peek: site file manager */
+  .acc-link { display: flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 8px 7px 11px; margin-bottom: 16px; }
+  .acc-link .url { flex: 1; font-family: var(--mono); font-size: 12.5px; color: var(--fg-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acc-link button { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); flex: none; }
+  .acc-link button:hover { background: var(--hover-2); color: var(--fg); }
+  .acc-link button.accent { color: var(--accent); }
+  .site-meta { display: flex; gap: 18px; color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .site-meta b { color: var(--fg); font-weight: 600; }
+  .files-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 4px; }
+  .filerow { display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: var(--radius-sm); cursor: pointer; border-bottom: 1px solid var(--line); }
+  .filerow:last-child { border-bottom: 0; }
+  .filerow:hover { background: var(--hover); }
+  .filerow .fi { color: var(--muted); display: grid; place-items: center; flex: none; }
+  .filerow .fpath { flex: 1; font-family: var(--mono); font-size: 12.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .filerow .fsize { font-size: 12px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+  .filerow .facts { display: flex; gap: 1px; opacity: 0; flex: none; }
+  .filerow:hover .facts { opacity: 1; }
+  .filerow .facts button { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+  .filerow .facts button:hover { background: var(--hover-2); color: var(--fg); }
+  .filerow .facts button.del:hover { color: var(--danger); }
+
+  .empty { text-align: center; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 48px 24px; margin-top: 8px; }
+  .empty .ei { font-size: 30px; margin-bottom: 10px; }
+  .empty .et { font-size: 14px; color: var(--fg-soft); margin-bottom: 4px; font-weight: 600; }
+  .empty .ed { font-size: 12.5px; margin-bottom: 16px; }
+
+  .preview-box { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 16px; max-height: 52vh; overflow: auto; white-space: pre-wrap; line-height: 1.6; color: var(--fg); }
+  .preview-bin { text-align: center; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 40px 20px; }
+  .preview-bin .pi { font-size: 28px; margin-bottom: 8px; }
+  .preview-bin .pt { color: var(--fg-soft); font-size: 13px; }
+
+  /* in-app site preview (browser-framed iframe) */
+  .spv-scrim { position: fixed; inset: 0; background: rgba(15,15,25,.5); z-index: 100; display: grid; place-items: center; padding: 28px;
+    opacity: 0; pointer-events: none; transition: opacity .16s; }
+  .spv-scrim.open { opacity: 1; pointer-events: auto; }
+  .spv { width: min(1100px, 92vw); height: 88vh; background: var(--bg); border-radius: 14px; box-shadow: var(--shadow-lg);
+    display: flex; flex-direction: column; overflow: hidden; transform: scale(.985); transition: transform .16s; }
+  .spv-scrim.open .spv { transform: none; }
+  .spv-chrome { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+  .spv-dots { display: flex; gap: 6px; flex: none; }
+  .spv-dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--line-strong); }
+  .spv-url { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 7px; padding: 5px 10px; color: var(--fg-soft); font-family: var(--mono); font-size: 12px; }
+  .spv-url svg { color: var(--muted); }
+  .spv-url span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .spv-btn { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 6px 10px; border-radius: 7px; color: var(--fg-soft); font-size: 12.5px; font-weight: 500; }
+  .spv-btn:hover { background: var(--hover-2); color: var(--fg); }
+  .spv-btn.icon { padding: 6px; }
+  .spv-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+  .spv-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); gap: 8px; }
+  .spv-empty .pi { font-size: 34px; }
+  .spv-empty .pt { font-size: 14px; color: var(--fg-soft); }
+
+  .sb-foot-nav { display: flex; flex-direction: column; gap: 1px; }
+
   /* selection action bar */
   .selbar { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(0); z-index: 65;
     display: flex; align-items: center; gap: 4px; background: var(--fg); color: var(--bg); padding: 7px 8px 7px 14px; border-radius: 11px; box-shadow: var(--shadow-lg); }
@@ -394,6 +477,12 @@ const PATHS = {
   settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
   bulb:'<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a6 6 0 0 0-4-10z"/>',
   eyeOff:'<path d="M4 4l16 16M9.5 9.5a3 3 0 0 0 4 4M6.5 6.7C4.5 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3-.4 4.4-1.1M9.5 5.2A9.7 9.7 0 0 1 12 5c4 0 8 3 10 7-.6 1.3-1.5 2.5-2.5 3.5"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.5 3.7 5.7 3.7 9S14.4 18.5 12 21c-2.4-2.5-3.7-5.7-3.7-9S9.6 5.5 12 3z"/>',
+  eye:'<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  lock:'<rect x="4.5" y="11" width="15" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  upload:'<path d="M12 16V4M8 8l4-4 4 4M5 20h14"/>',
+  download:'<path d="M12 4v12M8 12l4 4 4-4M5 20h14"/>',
+  externalLink:'<path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
 };
 function svg(name, cls='ico'){ return `<svg class="${cls}" viewBox="0 0 24 24">${PATHS[name]||''}</svg>`; }
 function iconEl(name, cls='ico'){ const s=document.createElement('span'); s.style.display='contents'; s.innerHTML=svg(name,cls); return s.firstChild; }
@@ -466,6 +555,23 @@ const state = {
         {id:'a1',type:'p',text:'记录核心数据模型与同步设计。'},
       ] },
   ],
+  sites: [
+    { id:'site_docs', name:'docs', title:'产品官网', created:'2026-05-28', files:[
+        {path:'index.html', type:'text/html', enc:'utf8', size:4210, body:'<!doctype html>\n<html lang="zh">\n  <head>\n    <meta charset="utf-8">\n    <link rel="stylesheet" href="style.css">\n    <title>Metahub</title>\n  </head>\n  <body>\n    <main class="hero">\n      <h1>本地优先的知识中枢</h1>\n      <p>数据库 · 文档 · 站点，全部随 CRDT 多端无冲突合并。</p>\n      <a class="cta" href="/sites/demo/">查看 Demo</a>\n    </main>\n    <script src="app.js"><\/script>\n  </body>\n</html>'},
+        {path:'style.css', type:'text/css', enc:'utf8', size:1830, body:':root{--accent:#4a55d6}\nbody{margin:0;font-family:system-ui;color:#222}\n.hero{max-width:680px;margin:14vh auto;padding:0 24px;text-align:center}\n.hero h1{font-size:44px;letter-spacing:-.02em}\n.cta{display:inline-block;margin-top:18px;padding:12px 22px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none}'},
+        {path:'app.js', type:'text/javascript', enc:'utf8', size:2640, body:'document.querySelector(".cta")?.addEventListener("click", (e) => {\n  console.log("navigating to demo");\n});\n'},
+        {path:'logo.svg', type:'image/svg+xml', enc:'utf8', size:920, body:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4a55d6" stroke-width="2">\n  <path d="M21 7.5 12 2 3 7.5v9L12 22l9-5.5z"/>\n  <path d="m3 7.5 9 5.5 9-5.5M12 22v-9"/>\n</svg>'},
+        {path:'hero.png', type:'image/png', enc:'base64', size:184320},
+      ] },
+    { id:'site_demo', name:'demo', title:'Demo 落地页', created:'2026-06-01', files:[
+        {path:'index.html', type:'text/html', enc:'utf8', size:3120, body:'<!doctype html>\n<title>Demo</title>\n<h1>实时协作演示</h1>\n<canvas id="board"></canvas>\n<script src="assets/main.js"><\/script>'},
+        {path:'assets/main.js', type:'text/javascript', enc:'utf8', size:5400, body:'const board = document.getElementById("board");\nconst ctx = board.getContext("2d");\n// 演示用绘制循环\nfunction frame(){ /* ... */ requestAnimationFrame(frame); }\nframe();'},
+        {path:'assets/bg.jpg', type:'image/jpeg', enc:'blob', size:1572864},
+      ] },
+    { id:'site_status', name:'status', title:'状态页', created:'2026-06-07', files:[
+        {path:'index.html', type:'text/html', enc:'utf8', size:1024, body:'<!doctype html>\n<title>状态</title>\n<h1>全部系统正常 ✅</h1>'},
+      ] },
+  ],
 };
 
 //=========================== app state & helpers ===========================
@@ -523,6 +629,15 @@ function renderSidebar(){
   scroll.append(docSec);
   sb.append(scroll);
 
+  const foot=el('div','sb-foot'); const fnav=el('div','sb-foot-nav');
+  const sitesBtn=el('button','navitem'+(view.kind==='sites'?' active':''));
+  sitesBtn.innerHTML=`<span class="emoji">${svg('globe','ico sm')}</span><span class="label">站点</span>`;
+  sitesBtn.onclick=()=>{ view={kind:'sites'}; if(innerWidth<=768)toggleSidebar(false); render(); };
+  const setBtn=el('button','navitem');
+  setBtn.innerHTML=`<span class="emoji">${svg('settings','ico sm')}</span><span class="label">设置</span>`;
+  setBtn.onclick=()=>toast('设置页原型暂未包含');
+  fnav.append(sitesBtn,setBtn); foot.append(fnav); sb.append(foot);
+
   const rez=el('div','sb-resizer'); rez.onmousedown=startSidebarResize; sb.append(rez);
   return sb;
 }
@@ -553,14 +668,17 @@ function renderMain(){
   const top=el('div','topbar');
   const ham=el('button','iconbtn hamburger'); ham.innerHTML=svg('panelLeft'); ham.onclick=()=>toggleSidebar(true); top.append(ham);
   const crumb=el('div','crumb');
-  if(view.kind==='doc'){ const d=getDoc(); crumb.innerHTML=`<span class="emoji">${d?.icon||'📄'}</span><span>${esc(d?.title||'无标题')}</span>`; }
+  if(view.kind==='sites'){ crumb.innerHTML=`<span class="emoji">🌐</span><span>站点管理</span><span class="sub">· ${state.sites.length} 个站点</span>`; }
+  else if(view.kind==='doc'){ const d=getDoc(); crumb.innerHTML=`<span class="emoji">${d?.icon||'📄'}</span><span>${esc(d?.title||'无标题')}</span>`; }
   else { const db=getDb(); crumb.innerHTML=`<span class="emoji">${db.icon}</span><span>${esc(db.name)}</span><span class="sub">· ${db.rows.length} 条</span>`; }
   top.append(crumb);
-  const share=el('button','btn btn-ghost'); share.innerHTML=`${svg('share','ico sm')}分享`; top.append(share);
-  const more=el('button','iconbtn'); more.innerHTML=svg('dots'); more.onclick=(e)=> view.kind==='doc'? openDocMenu(e,getDoc()) : openDbMenu(e,getDb()); top.append(more);
+  if(view.kind!=='sites'){
+    const share=el('button','btn btn-ghost'); share.innerHTML=`${svg('share','ico sm')}分享`; top.append(share);
+    const more=el('button','iconbtn'); more.innerHTML=svg('dots'); more.onclick=(e)=> view.kind==='doc'? openDocMenu(e,getDoc()) : openDbMenu(e,getDb()); top.append(more);
+  }
   main.append(top);
   const content=el('div','content');
-  content.append(view.kind==='doc'? renderDoc() : renderDb());
+  content.append(view.kind==='sites'? renderSites() : view.kind==='doc'? renderDoc() : renderDb());
   main.append(content);
   return main;
 }
@@ -876,6 +994,205 @@ function openDbMenu(e,db){ e.stopPropagation?.(); const pop=el('div','pop');
 
 function createDoc(parent){ const d={id:uid('d'),title:'',icon:'📄',parent,blocks:[]}; state.docs.push(d); if(parent)collapsed.delete(parent); view={kind:'doc',id:d.id}; render(); setTimeout(()=>$('.doc-title')?.focus(),0); }
 
+//=========================== sites / static file buckets ===========================
+function fmtSize(b){ if(b<1024)return b+' B'; if(b<1048576)return (b/1024).toFixed(b<10240?1:0)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
+function siteUrl(name){ const o=location.origin; const base=(o&&o!=='null'&&!o.startsWith('file'))?o:'http://localhost:7777'; return base+`/sites/${name}/`; }
+function siteSize(s){ return s.files.reduce((n,f)=>n+(f.size||0),0); }
+function copyText(t){ try{ navigator.clipboard.writeText(t); }catch(e){} toast('已复制'); }
+function fileExt(p){ const m=/\.([a-z0-9]+)$/i.exec(p); return m?m[1].toLowerCase():''; }
+function isImage(p){ return ['svg','png','jpg','jpeg','gif','webp','avif','ico'].includes(fileExt(p)); }
+function fileIcon(p){ const e=fileExt(p); if(['html','htm','js','mjs','css','json','xml'].includes(e))return 'code'; if(isImage(p))return 'file'; if(['md','txt'].includes(e))return 'text'; return 'file'; }
+function guessType(p){ const e=fileExt(p); const m={html:'text/html',htm:'text/html',css:'text/css',js:'text/javascript',mjs:'text/javascript',json:'application/json',svg:'image/svg+xml',md:'text/markdown',txt:'text/plain',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp'}; return m[e]||'application/octet-stream'; }
+
+function renderSites(){
+  const root=el('div','db');
+  const head=el('div','db-head');
+  head.innerHTML=`<div class="db-icon">🌐</div><div><div class="db-title">站点管理</div><div class="db-desc">静态文件站点 · 通过 /sites/&lt;name&gt;/ 对外提供，随同步无冲突复制</div></div>`;
+  root.append(head);
+
+  const tb=el('div','toolbar');
+  const srch=el('button','tbtn'); srch.innerHTML=`${svg('search','ico sm')}搜索`;
+  const sp=el('div','spacer');
+  const nw=el('button','btn btn-primary'); nw.innerHTML=`${svg('plus','ico sm')}新建站点`; nw.onclick=openCreateSite;
+  tb.append(srch,sp,nw); root.append(tb);
+
+  if(!state.sites.length){
+    const e=el('div','empty');
+    e.innerHTML=`<div class="ei">🌐</div><div class="et">还没有站点</div><div class="ed">站点是一个命名文件桶，发布后可通过 /sites/&lt;name&gt;/ 直接访问。</div>`;
+    const b=el('button','btn btn-primary'); b.innerHTML=`${svg('plus','ico sm')}新建站点`; b.onclick=openCreateSite; e.append(b);
+    root.append(e); return root;
+  }
+
+  const grid=el('div','sites-grid');
+  state.sites.forEach(s=>{
+    const card=el('div','site-card'); card.onclick=()=>openSitePeek(s);
+    const head=el('div','site-card-head');
+    head.innerHTML=`<span class="si">${svg('globe')}</span><div class="site-card-id"><div class="slug">${esc(s.name)}</div>${s.title?`<div class="ttl">${esc(s.title)}</div>`:'<div class="ttl muted">未命名站点</div>'}</div>`;
+    card.append(head);
+
+    const addr=el('button','site-addr'); addr.title='点击复制访问地址';
+    addr.innerHTML=`${svg('link','ico sm')}<span>${esc(siteUrl(s.name))}</span>`;
+    addr.onclick=(e)=>{ e.stopPropagation(); copyText(siteUrl(s.name)); };
+    card.append(addr);
+
+    const meta=el('div','site-card-meta');
+    meta.innerHTML=`<span><b>${s.files.length}</b> 文件</span><span class="dot">·</span><span><b>${fmtSize(siteSize(s))}</b></span><span class="dot">·</span><span>${esc(s.created)}</span>`;
+    card.append(meta);
+
+    const foot=el('div','site-card-foot');
+    const visit=el('button','btn btn-secondary'); visit.style.flex='1'; visit.innerHTML=`${svg('globe','ico sm')}访问`;
+    visit.onclick=(e)=>{ e.stopPropagation(); openSitePreview(s); };
+    const mg=el('button','iconbtn'); mg.innerHTML=svg('dots'); mg.title='更多'; mg.onclick=(e)=>{ e.stopPropagation(); openSiteMenu(e,s); };
+    foot.append(visit,mg); card.append(foot);
+    grid.append(card);
+  });
+  root.append(grid);
+  root.append(el('div','gridfoot',`<span>共 ${state.sites.length} 个站点</span><span>${state.sites.reduce((n,s)=>n+s.files.length,0)} 个文件</span>`));
+  return root;
+}
+
+function openSitePeek(site){
+  const peek=$('#peek'); peek.innerHTML='';
+  const head=el('div','peek-head');
+  const close=el('button','iconbtn'); close.innerHTML=svg('x'); close.onclick=closePeek;
+  const title=el('div'); title.style.cssText='flex:1;display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;min-width:0';
+  title.innerHTML=`<span>🌐</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(site.name)}</span>`;
+  const up=el('button','btn btn-secondary'); up.innerHTML=`${svg('upload','ico sm')}上传文件`; up.onclick=()=>openUpload(site);
+  const more=el('button','iconbtn'); more.innerHTML=svg('dots'); more.onclick=(e)=>openSiteMenu(e,site,true);
+  head.append(close,title,up,more); peek.append(head);
+
+  const body=el('div','peek-body');
+  const h=el('h2'); h.textContent=site.title||site.name; body.append(h);
+
+  const url=siteUrl(site.name);
+  const acc=el('div','acc-link'); acc.append(el('span','url',esc(url)));
+  const cp=el('button'); cp.innerHTML=svg('copy','ico sm'); cp.title='复制地址'; cp.onclick=()=>copyText(url);
+  const vis=el('button','accent'); vis.innerHTML=svg('globe','ico sm'); vis.title='访问站点'; vis.onclick=()=>openSitePreview(site);
+  acc.append(cp,vis); body.append(acc);
+
+  const meta=el('div','site-meta');
+  meta.innerHTML=`<span><b>${site.files.length}</b> 个文件</span><span><b>${fmtSize(siteSize(site))}</b> 总大小</span><span>创建于 ${esc(site.created)}</span>`;
+  body.append(meta);
+
+  const fh=el('div','files-head'); fh.innerHTML=`<span>文件</span><span>${site.files.length}</span>`; body.append(fh);
+  if(!site.files.length){
+    const e=el('div','empty'); e.style.marginTop='4px';
+    e.innerHTML=`<div class="ei">📁</div><div class="et">站点还没有文件</div><div class="ed">上传文件后即可通过站点地址访问。</div>`;
+    const b=el('button','btn btn-secondary'); b.innerHTML=`${svg('upload','ico sm')}上传文件`; b.onclick=()=>openUpload(site); e.append(b);
+    body.append(e);
+  } else {
+    const list=el('div'); site.files.forEach(f=>list.append(fileRow(site,f))); body.append(list);
+  }
+  peek.append(body);
+  $('#scrim').classList.add('open'); peek.classList.add('open');
+}
+
+function fileRow(site,f){
+  const row=el('div','filerow'); row.onclick=()=>openFilePreview(site,f);
+  const ic=el('span','fi',svg(fileIcon(f.path),'ico sm'));
+  const path=el('span','fpath',esc(f.path));
+  const badge=el('span','enc-badge'+(f.enc==='blob'?' blob':'')); badge.textContent=f.enc;
+  const size=el('span','fsize',fmtSize(f.size));
+  const acts=el('div','facts');
+  const prev=el('button'); prev.innerHTML=svg('eye','ico sm'); prev.title='预览'; prev.onclick=(e)=>{ e.stopPropagation(); openFilePreview(site,f); };
+  const cp=el('button'); cp.innerHTML=svg('copy','ico sm'); cp.title='复制路径'; cp.onclick=(e)=>{ e.stopPropagation(); copyText(`/sites/${site.name}/${f.path}`); };
+  const del=el('button','del'); del.innerHTML=svg('trash','ico sm'); del.title='删除'; del.onclick=(e)=>{ e.stopPropagation();
+    confirmDialog('删除文件？',`「${f.path}」将从站点「${site.name}」中删除。`,'删除',()=>{ site.files.splice(site.files.indexOf(f),1); openSitePeek(site); rerenderMain(); }); };
+  acts.append(prev,cp,del);
+  row.append(ic,path,badge,size,acts);
+  return row;
+}
+
+function openFilePreview(site,f){
+  const body=el('div');
+  const sub=el('div'); sub.style.cssText='display:flex;gap:10px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:12px;margin-bottom:12px';
+  sub.innerHTML=`<span>${esc(f.type||guessType(f.path))}</span><span class="enc-badge${f.enc==='blob'?' blob':''}">${f.enc}</span><span>${fmtSize(f.size)}</span>`;
+  body.append(sub);
+  if(f.enc==='utf8' && f.body!=null){ const pre=el('div','preview-box'); pre.textContent=f.body; body.append(pre); }
+  else if(f.enc==='base64'){ const box=el('div','preview-bin'); box.innerHTML=`<div class="pi">🖼️</div><div class="pt">二进制文件 · 以 base64 内联随同步复制</div>`; body.append(box); }
+  else { const box=el('div','preview-bin'); box.innerHTML=`<div class="pi">📦</div><div class="pt">大文件 · 存于内容寻址缓存（node-local，不随 oplog 内联）</div>`; body.append(box); }
+  modal(f.path, `/sites/${site.name}/${f.path}`, body, [
+    {label:'复制路径',cls:'btn-secondary',onClick:()=>copyText(`/sites/${site.name}/${f.path}`)},
+    {label:'关闭',cls:'btn-primary',onClick:closeModal},
+  ]);
+}
+
+function openUpload(site){
+  const body=el('div');
+  body.innerHTML=`<div class="field-label">文件路径</div><input class="text-input" id="up-path" placeholder="例如：about.html 或 assets/app.js">
+    <div class="field-label">内容（文本，可选）</div><textarea class="text-input" id="up-body" rows="6" style="font-family:var(--mono);font-size:12.5px;resize:vertical" placeholder="留空则创建占位二进制文件…"></textarea>`;
+  modal('上传文件', `添加到站点「${site.name}」`, body, [
+    {label:'取消',cls:'btn-secondary',onClick:closeModal},
+    {label:'添加',cls:'btn-primary',onClick:()=>{
+      const path=((body.querySelector('#up-path').value)||'').trim().replace(/^\/+/,''); if(!path)return toast('请填写文件路径');
+      if(site.files.some(x=>x.path===path))return toast('该路径已存在');
+      const content=body.querySelector('#up-body').value;
+      const img=isImage(path);
+      const f={ path, type:guessType(path), enc: content?'utf8':(img?'base64':'utf8'), size: content? new Blob([content]).size : 2048, body: content||undefined };
+      site.files.push(f); closeModal(); openSitePeek(site); rerenderMain(); toast('已添加 '+path);
+    }},
+  ]);
+  setTimeout(()=>body.querySelector('#up-path').focus(),50);
+}
+
+function openCreateSite(){
+  const body=el('div');
+  body.innerHTML=`<div class="field-label">名称（slug）</div><input class="text-input" id="cs-name" placeholder="例如：docs、demo、status">
+    <div class="field-label">标题（可选）</div><input class="text-input" id="cs-title" placeholder="人类可读的标题">
+    <div class="muted" style="font-size:12px;margin-top:10px">将通过 <span style="font-family:var(--mono)">/sites/&lt;名称&gt;/</span> 对外提供。</div>`;
+  modal('新建站点','创建一个命名文件桶，随同步无冲突复制。', body, [
+    {label:'取消',cls:'btn-secondary',onClick:closeModal},
+    {label:'创建',cls:'btn-primary',onClick:()=>{
+      const name=((body.querySelector('#cs-name').value)||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
+      if(!name)return toast('请填写站点名称');
+      if(state.sites.some(s=>s.name===name))return toast('站点名称已存在');
+      const title=((body.querySelector('#cs-title').value)||'').trim();
+      const site={ id:uid('site'), name, title, created:new Date().toISOString().slice(0,10), files:[] };
+      state.sites.push(site); view={kind:'sites'}; closeModal(); render(); toast('已创建站点「'+name+'」'); openSitePeek(site);
+    }},
+  ]);
+  setTimeout(()=>body.querySelector('#cs-name').focus(),50);
+}
+
+function openSiteMenu(e,site,fromPeek){
+  e.stopPropagation?.(); const pop=el('div','pop');
+  pop.append(menuItem('upload','上传文件',()=>{ closePop(); openSitePeek(site); openUpload(site); }));
+  pop.append(menuItem('externalLink','复制访问地址',()=>{ closePop(); copyText(siteUrl(site.name)); }));
+  pop.append(menuItem('settings','重命名…',()=>{ closePop(); renameDialog('重命名站点',site.title||site.name,(v)=>{ site.title=v; if(fromPeek)openSitePeek(site); rerenderMain(); }); }));
+  pop.append(el('div','sep'));
+  pop.append(menuItem('trash','删除站点',()=>{ confirmDialog('删除站点？',`「${site.name}」及其 ${site.files.length} 个文件将被删除。`,'删除',()=>{ const i=state.sites.indexOf(site); if(i>=0)state.sites.splice(i,1); if(fromPeek)closePeek(); rerenderMain(); }); closePop(); }, true));
+  placePop(pop,e);
+}
+
+//---- in-app site preview (browser-framed iframe) ----
+function siteFile(site,p){ p=p.replace(/^\.?\//,''); return site.files.find(f=>f.path===p); }
+function buildSiteHtml(site){
+  const idx=site.files.find(f=>/(^|\/)index\.html$/i.test(f.path)) || site.files.find(f=>/\.html?$/i.test(f.path));
+  if(!idx||idx.body==null) return null;
+  let html=idx.body;
+  html=html.replace(/<link\b[^>]*?href=["']([^"']+)["'][^>]*>/gi,(m,href)=>{ if(/stylesheet/i.test(m)){ const f=siteFile(site,href); if(f&&f.body!=null) return `<style>${f.body}</style>`; } return m; });
+  html=html.replace(/<script\b[^>]*?\bsrc=["']([^"']+)["'][^>]*><\/script>/gi,(m,src)=>{ const f=siteFile(site,src); if(f&&f.body!=null) return `<script>${f.body}<\/script>`; return m; });
+  html=html.replace(/(<img\b[^>]*?\bsrc=)["']([^"']+)["']/gi,(m,pre,src)=>{ const f=siteFile(site,src); if(f&&f.enc==='utf8'&&f.body!=null&&/\.svg$/i.test(src)) return pre+`"data:image/svg+xml;utf8,${encodeURIComponent(f.body)}"`; return m; });
+  return html;
+}
+function openSitePreview(site){
+  closeSitePreview();
+  const scrim=el('div','spv-scrim'); scrim.id='spv-scrim';
+  const panel=el('div','spv');
+  const chrome=el('div','spv-chrome');
+  const dots=el('div','spv-dots','<i></i><i></i><i></i>');
+  const urlbar=el('div','spv-url'); urlbar.innerHTML=`${svg('lock','ico sm')}<span>${esc(siteUrl(site.name))}</span>`;
+  const open=el('button','spv-btn'); open.innerHTML=`${svg('externalLink','ico sm')}新标签`; open.title='在新标签打开真实地址'; open.onclick=()=>{ window.open(`/sites/${site.name}/`,'_blank'); };
+  const close=el('button','spv-btn icon'); close.innerHTML=svg('x'); close.title='关闭'; close.onclick=closeSitePreview;
+  chrome.append(dots,urlbar,open,close); panel.append(chrome);
+  const html=buildSiteHtml(site);
+  if(html==null){ panel.append(el('div','spv-empty',`<div class="pi">🚫</div><div class="pt">该站点没有 index.html，无法预览</div>`)); }
+  else { const frame=el('iframe','spv-frame'); frame.setAttribute('sandbox','allow-scripts'); frame.srcdoc=html; panel.append(frame); }
+  scrim.append(panel); scrim.onclick=(e)=>{ if(e.target===scrim)closeSitePreview(); };
+  document.body.append(scrim); requestAnimationFrame(()=>scrim.classList.add('open'));
+}
+function closeSitePreview(){ const s=$('#spv-scrim'); if(s){ s.classList.remove('open'); setTimeout(()=>s.remove(),160); } }
+
 //=========================== create-database modal ===========================
 function openCreateDb(){
   let icon='🗂️', tmpl='blank';
@@ -968,7 +1285,7 @@ document.addEventListener('mousedown',e=>{
 function toggleSidebar(open){ sidebarOpen=open; $('#sidebar')?.classList.toggle('open',open); $('#backdrop')?.classList.toggle('show',open); }
 $('#backdrop').onclick=()=>toggleSidebar(false);
 $('#scrim').onclick=closePeek;
-addEventListener('keydown',e=>{ if(e.key==='Escape'){ closePop(); closeModal(); closePeek(); } });
+addEventListener('keydown',e=>{ if(e.key==='Escape'){ closePop(); closeModal(); closePeek(); closeSitePreview(); } });
 
 render();
 </script>

@@ -310,3 +310,19 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 ### 15.2 暂不实现
 
 - 补 `text/plain` 解析器的次要缺口(`RE.h` 仅 h1–h3、续行无 `>` 的多行引用、`~~删除线~~`)——`text/html` 路径已覆盖主场景,纯文本兜底改善优先级低。
+
+## 16. v2.9 站点管理页面（2026-06-09）
+
+WebUI 新增「站点管理」视图,给既有静态站点功能([08-agent-sites](../08-agent-sites/design.md))补一套 GUI——此前站点只能用 `mh site` CLI 管理。后端为此补了 `/api/site*` 写接口 + `updateSite`,数据/路由细节见 [08-agent-sites/design.md §6](../08-agent-sites/design.md);本节只记 WebUI 侧。实现见 [implementation.md §17](./implementation.md)。
+
+### 16.1 关键设计决策
+
+- **入口放侧栏页脚、紧挨「设置」**(单色 `globe` 图标):站点是「内容」不是配置,但比数据库/文档次级,故不进顶级区块、也不塞进设置页内。
+- **列表用卡片网格而非表格**:站点是少量「项目」,卡片让操作(访问 / 更多)常驻可见,避免表格的空操作列 + hover 才出现按钮的别扭。卡片显示 slug / 标题 / 可复制的访问地址 / 文件数 · 创建日期。
+- **详情用右侧 peek 抽屉**:复用 `RecordPeek` 的 `.scrim/.peek` 范式列文件;文件操作(预览 / 复制路径 / 删除)就地,上传走隐藏 `<input type=file multiple>`。
+- **访问站点 = 应用内 iframe 预览**(带浏览器外框 overlay):`src` 直指服务端已 serve 的 `/sites/<name>/`,**不内联** css/js;另给「↗ 新标签」。文件预览同理 `fetch` 已 serve 的真实 URL。
+- **零新 UI 原语**:建站 / 重命名 / 删除 / 提示复用 `ui.tsx` 的 `openModal`/`Modal`/`openMenu`/`confirmDialog`/`promptDialog`/`toast`。
+
+### 16.2 暂不实现
+
+- 文件字节大小(清单接口不含 → 卡片改显「文件数 · 日期」)、拖拽上传、列表内搜索过滤、blob 大文件同步(沿用 08 的取舍)。

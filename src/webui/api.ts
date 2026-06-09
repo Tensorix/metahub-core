@@ -84,6 +84,20 @@ export interface Grant {
   node_id: string | null;
   created_at: number | null;
 }
+export interface Site {
+  id: string;
+  name: string;
+  title: string | null;
+  created_hlc: string;
+  file_count: number;
+}
+export interface SiteFile {
+  id: string;
+  site_id: string;
+  path: string;
+  content_type: string;
+  encoding: string; // "utf8" | "base64" | "blob"
+}
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -168,6 +182,29 @@ export const api = {
   syncPeer: (url: string) => req<PeerSyncOutcome>("POST", `/api/peer/sync?url=${q(url)}`),
   listGrants: () => req<Grant[]>("GET", "/api/grants"),
   revokeGrant: (token: string) => req<{ revoked: number }>("DELETE", `/api/grant?token=${q(token)}`),
+
+  // sites (static file buckets served at /sites/<name>/)
+  listSites: () => req<Site[]>("GET", "/api/sites"),
+  listSiteFiles: (site: string) => req<SiteFile[]>("GET", `/api/site/files?site=${q(site)}`),
+  createSite: (b: { name: string; title?: string }) => req<Site>("POST", "/api/sites", b),
+  updateSite: (id: string, b: { name?: string; title?: string }) =>
+    req<Site>("PATCH", `/api/site?id=${q(id)}`, b),
+  deleteSite: (id: string) => req<{ ok: boolean }>("DELETE", `/api/site?id=${q(id)}`),
+  deleteSiteFile: (site: string, path: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/site/file?site=${q(site)}&path=${q(path)}`),
+  /** Raw-bytes upload — can't use req() (it JSON-stringifies the body). */
+  uploadSiteFile: async (site: string, path: string, file: Blob): Promise<SiteFile> => {
+    const res = await fetch(`/api/site/file?site=${q(site)}&path=${q(path)}`, {
+      method: "POST",
+      headers: { "content-type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || (data && (data as any).error)) {
+      throw new Error((data && (data as any).error) || `${res.status} ${res.statusText}`);
+    }
+    return data as SiteFile;
+  },
 
   // version of the running core (sidecar)
   version: () => req<{ version: string }>("GET", "/api/version"),

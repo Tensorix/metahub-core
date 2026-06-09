@@ -128,6 +128,22 @@ export function resolveSite(db: Database, ref: string): SiteRow {
   return site;
 }
 
+/** Rename a site and/or change its title. Guards against duplicate names. */
+export function updateSite(
+  db: Database,
+  id: string,
+  opts: { name?: string; title?: string },
+): SiteRow {
+  if (!getSite(db, id)) throw new Error(`no such site: ${id}`);
+  if (opts.name !== undefined) {
+    const dup = getSiteByName(db, opts.name);
+    if (dup && dup.id !== id) throw new Error(`site name already exists: ${opts.name}`);
+    emit(db, "sites", id, "name", opts.name);
+  }
+  if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
+  return getSite(db, id)!;
+}
+
 export function deleteSite(db: Database, id: string): boolean {
   if (!getSite(db, id)) return false;
   const files = db

@@ -2,7 +2,9 @@
 
 承接 [07-webui/design.md](../07-webui/design.md)、[05-json-record-storage/design.md](../05-json-record-storage/design.md)、[06-friendly-ids/design.md](../06-friendly-ids/design.md)。本文记录让一个**驱动 `mh` CLI 的 AI agent** 把自己生成的 HTML/CSS/JS **发布**为命名「站点」,由 `mh --server` 在 `/sites/<name>/` serve 出去;被托管的页面同源调用既有 `/api/*` 读取数据表与文档——`mh --server` 由此成为一个本地 mini-Supabase(静态托管 + 数据 API),并配一套 token 解锁鉴权使其可对外暴露。
 
-**关键定位:发布是 CLI 路径,不是 HTTP 写接口。** 外部「agent」指的是用 `mh` 命令行的 AI(如 Claude Code),所以建站/上传/删除走 `mh site` 子命令;`--server` 的 HTTP 角色只是**serve 站点 + 只读数据 API + 鉴权**。**底层 core / oplog / sync 协议不改**——站点与文件经 `emit()` 进 CRDT,与 records/documents 一样自然可同步。
+**关键定位(v1):发布是 CLI 路径,不是 HTTP 写接口。** 外部「agent」指的是用 `mh` 命令行的 AI(如 Claude Code),所以建站/上传/删除走 `mh site` 子命令;`--server` 的 HTTP 角色只是**serve 站点 + 只读数据 API + 鉴权**。**底层 core / oplog / sync 协议不改**——站点与文件经 `emit()` 进 CRDT,与 records/documents 一样自然可同步。
+
+> **v2(2026-06-09)更新:** WebUI 加「站点管理」页后,GUI 需要建站/上传/删除,故补了一套 `/api/site*` HTTP 写接口 + `updateSite`(见 §6)。CLI 仍是 agent 的主路径,写仍是同一套 `emit()`,存储/同步不变。
 
 ## 1. 背景与目标
 
@@ -102,3 +104,37 @@ if (req.method === "GET" && url.pathname.startsWith("/sites/")) {
 - **`new Response(Uint8Array)` 的 TS 兼容**:`getFileForServe` 多分支返回的 `Uint8Array<ArrayBufferLike>` 在当前 lib 下与 `BodyInit` 联合匹配出错,serve 处 `as BodyInit` 收口(运行时正确)。
 - **cookie 与套壳双保险**:同源 cookie 已能让导航与 fetch 都过门禁;额外注入的 Authorization 套壳满足「存浏览器、所有请求带 token」的要求,且 cookie 被禁时仍可用。解锁页不内嵌密钥(运行时由用户输入)。
 - **端到端已验证**:`mh site publish` 推 3 文件(png→base64、html/css→utf8、MIME 正确);`--server --debug` 下 `/sites/demo/`、子路径、二进制、`/sites/demo`→301、`/api/sites`、`/api/site/files`、`/docs.json` 含新路由、缺失→404 全通。非 debug:无 token→401,`?token`/`Bearer`→200,错 token→401,浏览器导航→解锁页,带正确 cookie→页面 + 注入套壳。跨节点:`ingest(changesSince)` 后另一节点能取到站点与内联文件。`bun test` 69 通过(新增 `sites.test.ts` 10 例),零回归。
+
+## 6. v2:WebUI 站点管理 + HTTP 写接口(2026-06-09)
+
+承 §2.4 / §3 的「v1 只读、写在 CLI」取舍。WebUI 加「站点管理」页后,GUI 需要建站/上传/删除,故把既有 core 函数补成 HTTP 写接口——**仍是同一套 `emit()`,不改存储/同步/schema**。前端实现见 [07-webui/implementation.md §17](../07-webui/implementation.md)。
+
+### 6.1 后端
+
+- `src/core/sites.ts` 新增 `updateSite(db, id, {name?, title?})`:rename / 改标题,改名时 `getSiteByName` 查重(`__deleted=0` 的同名)。
+- `src/core/sync/sites-routes.ts` 新增 5 条写路由(沿用 `handle()`/`need()`,统一受 `server.ts` 的 master-token 门禁,无需逐路由鉴权):
+  - `POST /api/sites` `{name, title?}` → `createSite`
+  - `PATCH /api/site?id=<id>` `{name?, title?}` → `updateSite`
+  - `DELETE /api/site?id=<id>` → `deleteSite` → `{ok}`
+  - `POST /api/site/file?site=<id|name>&path=<path>`,**body 为裸字节** → `putFile`(content-type 缺省 / `application/octet-stream` 时按 path 推断,故 `.css`/`.js` 仍存 utf8 而非 base64);返回去掉 `content` 的清单项。
+  - `DELETE /api/site/file?site=<id|name>&path=<path>` → `deleteFile` → `{ok}`
+- `GET /api/sites` 响应加 `file_count`(路由层 `listSites(db).map(s => ({...s, file_count: listFiles(db,s.id).length}))`,核心 `listSites` 不变,`mh site list` 不受影响)。
+- OpenAPI 自动收录:`buildOpenApi` 走路由注册表,加路由即进 `/docs.json`,无 codegen。
+
+### 6.2 前端(`src/webui/`)
+
+- `api.ts`:`listSites / listSiteFiles / createSite / updateSite / deleteSite / deleteSiteFile`;二进制上传 `uploadSiteFile` 走**裸 `fetch`**(共用的 `req()` 会把 body JSON 化)。
+- 新增 `src/webui/sites.tsx`:`SitesView`(卡片网格)+ 右侧 peek 文件抽屉(复用 `.scrim/.peek`)+ 应用内 iframe 预览。
+- **预览不内联**:服务端已 serve `/sites/<name>/`,故 `<iframe src="/sites/<name>/">` 直接渲染,文件预览 `fetch('/sites/<name>/<path>')`——比早期原型省掉 HTML 内联逻辑。
+- 入口:侧栏页脚「站点」(单色 `globe` 图标),与「设置」并列。
+
+### 6.3 偏差 / 验证
+
+- 与 §3「将来再补 `POST /api/sites/publish`」一致,但按 REST 拆成 site / file 粒度(对齐 databases/documents),而非单个 publish 端点。
+- 清单接口不含字节大小,故 WebUI 卡片显示「文件数 · 创建日期」而非大小(留作后续给 manifest 加 `size`)。
+- `sites.test.ts` 新增 `updateSite` 用例(rename / 改标题 / 重名拒绝 / 缺失抛错),11/11;`bun test` 221 全通过;`bun run build` OK,`dist/webui.js` 含站点代码;HTTP 端到端冒烟(`--server --debug`):建站 → 传 `index.html`(text/html→utf8)/ `style.css`(octet-stream→推断 text/css utf8)→ `GET /api/sites` 见 `file_count` → `/sites/demo/` 真发上传内容 → PATCH 改标题 → 删文件 → 删站点,全通。
+
+### 6.4 涉及文件
+
+- 修改:`src/core/sites.ts`(`updateSite`)、`src/core/sync/sites-routes.ts`(5 路由 + `file_count`)、`src/webui/{api.ts, app.tsx, sidebar.tsx, icons.tsx}`、`src/core/sync/webui.ts`(CSS)、`src/core/sites.test.ts`。
+- 新增:`src/webui/sites.tsx`。

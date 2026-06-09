@@ -7,6 +7,7 @@ import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
 import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView, cmpVer } from "./settings.tsx";
+import { SitesView } from "./sites.tsx";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
@@ -27,7 +28,8 @@ type View =
   | { kind: "db"; id: string }
   | { kind: "doc"; id: string }
   | { kind: "search"; q: string }
-  | { kind: "settings" };
+  | { kind: "settings" }
+  | { kind: "sites" };
 
 function App() {
   const [databases, setDatabases] = useState<Db[]>([]);
@@ -163,6 +165,8 @@ function App() {
         onCollapse={() => setSbCollapsed(true)}
         onOpenSettings={() => navigate({ kind: "settings" })}
         settingsActive={view.kind === "settings"}
+        onOpenSites={() => navigate({ kind: "sites" })}
+        sitesActive={view.kind === "sites"}
         updatePending={updatePending}
         reloadNav={reloadNav}
         onError={onError}
@@ -185,6 +189,7 @@ function App() {
             {view.kind === "db" && <><span class="emoji">{activeDb?.icon || "🗂️"}</span><span>{activeDb?.name}</span></>}
             {view.kind === "search" && <span>搜索：“{view.q}”</span>}
             {view.kind === "settings" && <><span class="emoji"><Icon name="settings" cls="ico sm" /></span><span>设置</span></>}
+            {view.kind === "sites" && <><span class="emoji"><Icon name="globe" cls="ico sm" /></span><span>站点管理</span></>}
           </div>
           {(view.kind === "doc" || view.kind === "db") && (
             <>
@@ -215,6 +220,7 @@ function App() {
             <SearchView q={view.q} onOpenDoc={(id) => navigate({ kind: "doc", id })} onOpenDb={(id) => navigate({ kind: "db", id })} />
           )}
           {view.kind === "settings" && <SettingsView onUpdatePending={setUpdatePending} />}
+          {view.kind === "sites" && <SitesView />}
         </div>
       </div>
 
