@@ -53,7 +53,11 @@ const PropertySchema = z.object({
 const RecordSchema = z.object({
   id: z.string(),
   database_id: z.string(),
-  values: z.record(z.string(), z.any()),
+  values: z
+    .record(z.string(), z.any())
+    .describe(
+      'Field values keyed by property name (e.g. {"Amount":35}). Reads nest cells here; writes take a flat {column: value} map.',
+    ),
 });
 const MoveRecordReq = z.object({
   target: z.string(),
@@ -99,7 +103,9 @@ const UpdatePropertyReq = z.object({
   position: z.number().optional(),
 });
 const SetWidthReq = z.object({ width: z.number() });
-const RecordValuesReq = z.record(z.string(), z.any());
+const RecordValuesReq = z
+  .record(z.string(), z.any())
+  .describe('Flat { column: value } cell patch (keyed by property name).');
 const CreateDocumentReq = z.object({
   title: z.string(),
   body: z.string().optional(),

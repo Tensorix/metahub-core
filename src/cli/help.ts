@@ -19,7 +19,9 @@ USAGE
 CONCEPTS
   database (db)    A typed table. Owns properties and records.
   property (prop)  A column with a type (text|number|...). Belongs to a db.
-  record (rec)     A row: a { column: value } map inside a db.
+  record (rec)     A row of cells. Write a flat { column: value } map; reads
+                   wrap them as { id, database_id, values: { column: value } }
+                   — field values live under "values", keyed by property name.
   document (doc)   A markdown doc, stored as ordered blocks (block-level CRDT).
   site (site)      A named bucket of files (HTML/CSS/JS) served at /sites/<name>/.
   Every id is "<kind>_<slug>-<rand>", e.g. db_tasks-k3f9c1, rec_fix-login-7j02an.
@@ -115,6 +117,13 @@ AI WORKFLOW  (edit a doc without clobbering concurrent changes)
   mh doc read <ref>                                   # note the version token
   mh doc edit <ref> --old "old text" --new "new text" --if-match <version>
   mh doc append <ref> --body "a new paragraph"
+
+SITE DATA  (read a table from a hosted page — field values nest under "values")
+  // a page served at /sites/<name>/ reads this library same-origin:
+  const rs = await fetch('/api/records?db=tasks').then(r => r.json());
+  // rs.records: [{ id, database_id, values: { Title, Status } }]
+  rs.records.forEach(r => render(r.values.Title, r.values.Status));
+  // NOTE: writes take a flat { column: value } map; reads wrap cells in .values
 
 Run 'mh <command> --help' for arguments and examples of a specific command.`;
 
