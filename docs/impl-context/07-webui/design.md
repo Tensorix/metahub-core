@@ -326,3 +326,24 @@ WebUI 新增「站点管理」视图,给既有静态站点功能([08-agent-sites
 ### 16.2 暂不实现
 
 - 文件字节大小(清单接口不含 → 卡片改显「文件数 · 日期」)、拖拽上传、列表内搜索过滤、blob 大文件同步(沿用 08 的取舍)。
+
+## 17. v3.0 移动端适配:整页 Sidebar 首页 + 触摸优化 + 状态栏跟随（2026-06-10）
+
+v1（§7.1）即把「无移动端」列为缺口,v2 的「移动端抽屉」(≤768px 把侧栏做成覆盖在内容上的滑入抽屉)只是把桌面布局塞进窄屏,并非为触摸设计:字号偏小(body 14px、输入框继承 14px 触发 iOS 自动放大)、行内操作按钮依赖 hover 才显示、无 `theme-color`(移动端状态栏不跟随主题)、视口缺 `viewport-fit=cover`(刘海/安全区不处理)。本节把移动端重做为**整页下钻导航 + 触摸优先**,**桌面端零改动**,且不动 core/oplog/sync/REST。**本节取代 §7 的移动抽屉。** 代码级实现见 [implementation.md §18](./implementation.md)。
+
+### 17.1 关键设计决策
+
+1. **检测 = 窄宽度 + 触摸指针,而非纯宽度或 UA**:判据为 `(max-width: 768px) and (pointer: coarse)`。纯宽度会让**桌面浏览器拖窄窗口**就误入移动样式,并在跨 768px 那一刻字号/按钮「啪」地跳变(用户实测的抖动根因);指针类型不随窗口缩放变化,故桌面(精确指针)无论多窄都保持桌面样式。CSS `@media` 与 JS `matchMedia` 共用同一条查询字符串(`MOBILE_MQ`),CSS 与 JS 判定永远一致。不用 UA 嗅探(易碎、平板/窄窗误判、不随旋转变化)。DevTools 设备模式会模拟 `pointer:coarse`,预览不受影响。
+
+2. **导航模型 = 整页 Sidebar 首页 + 整屏内容下钻 + 顶部返回**,完全取代抽屉。移动端「首页」就是占满全屏的导航列表(侧栏);点条目下钻到整屏内容,顶栏汉堡变「← 返回」回到导航。靠 `<body>` 上的 `mobile` / `mobile-content` 两个类驱动(沿用既有 `desktop`/`quicknote` 的 body-class 切 chrome 范式),CSS 用 `translateX` 让侧栏与内容两个全屏层互相滑入滑出;`.backdrop` 抽屉遮罩在移动端弃用。
+
+3. **触摸优先:无 hover + ≥16px**。行内/分区操作按钮(条目 `•••`、分区 `+`)在移动端**常显**(去掉 hover 依赖);点击区放大到 ≥40px(`.iconbtn` 40px、`.btn` min-height 40px、菜单项加 padding);**所有 `input/textarea` 字号 16px**——这是阻止 iOS Safari 聚焦时自动放大页面的关键;文档正文 `.editable` 也提到 16px(用户明确要求正文也改)。
+
+4. **状态栏(`theme-color`)随主题动态跟随**。移动浏览器顶部 chrome 会按 `<meta name="theme-color">` 着色。静态 `prefers-color-scheme` meta 无法覆盖用户在**应用内手动**切 light/dark/system 的情况(它跟的是系统而非 `data-theme`),故改为 JS:`syncThemeColor()` 读取顶部可见面(首页=侧栏 `--sidebar`、内容/桌面=页面 `--bg`)的解析后背景写入 meta,在 `setTheme()`、视图/移动态变化、以及 OS `prefers-color-scheme` 变化时触发。配 `viewport-fit=cover` + `env(safe-area-inset-*)` 让顶栏/侧栏头/文档底避开刘海与 Home 指示条;另加 `apple-mobile-web-app-*` meta。
+
+### 17.2 暂不实现
+
+- 平板专属布局(iPad 横屏宽度 >768px → 走桌面布局,可接受)。
+- 移动端下钻的浏览器历史/后退键集成(返回仅靠顶栏「←」,未接 `history.pushState`)。
+- 移动端表格(`DatabaseView`)的专门重排;当前沿用桌面网格 + 横向滚动。
+- PWA 安装(manifest/Service Worker)、离线缓存。

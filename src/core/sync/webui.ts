@@ -11,7 +11,12 @@ const HTML = `<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- Mobile browser chrome (status/address bar) tints to theme-color; app.tsx
+     keeps #theme-color-meta in sync with the active theme + visible surface. -->
+<meta name="theme-color" id="theme-color-meta" content="#ffffff" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <title>Metahub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -766,17 +771,56 @@ const HTML = `<!doctype html>
 
   /* mobile */
   .backdrop { display:none; }
-  @media (max-width: 768px) {
-    .sidebar { position:fixed; z-index:80; height:100%; margin-left:-300px; }
-    .sidebar.open { margin-left:0; box-shadow:var(--shadow-lg); }
-    .backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:79; }
-    .backdrop.show { display:block; }
-    .topbar .hamburger { display:grid; }
+  /* Gate on a coarse pointer, not width alone: a narrow *desktop* window keeps
+     the desktop layout/sizes (no jarring snap to 16px fonts + 40px buttons when
+     it crosses 768px), while phones/tablets (and DevTools device mode, which
+     emulates coarse) get the touch treatment. JS useIsMobile mirrors this query. */
+  @media (max-width: 768px) and (pointer: coarse) {
+    /* Full-page navigation: the sidebar fills the screen as the "home", and the
+       picked view slides in over it as a separate full-screen layer. Driven by
+       body.mobile-content (toggled in app.tsx), replacing the old slide-in
+       drawer entirely. Both panes are fixed + full-bleed and swap via transform. */
+    .sidebar { position:fixed; inset:0; width:100% !important; height:100%; margin-left:0 !important;
+      z-index:40; border-right:0; transition:transform .25s cubic-bezier(.4,0,.2,1); }
+    body.mobile-content .sidebar { transform:translateX(-100%); }
+    .main { position:fixed; inset:0; z-index:50; transform:translateX(100%);
+      transition:transform .25s cubic-bezier(.4,0,.2,1); }
+    body.mobile-content .main { transform:translateX(0); }
+    .backdrop { display:none !important; }      /* drawer model retired */
+    .sb-head .iconbtn { display:none; }          /* no collapse on mobile */
     .sb-resizer { display:none; }
-    .doc { padding:28px 20px 36vh; } .doc-title { font-size:30px; }
+    .topbar .hamburger { display:grid; }         /* serves as the back button */
+
+    /* Touch: no hover, so row/section actions are always visible; enlarge tap
+       targets and text. 16px on every input is what stops iOS Safari from
+       auto-zooming the page when a field is focused. */
+    .navitem { padding:9px 8px; font-size:16px; }
+    .navitem .acts, .sb-section-head .add { opacity:1; }
+    .navitem .acts button { width:34px; height:34px; }
+    .navitem .emoji { font-size:18px; }
+    .navitem .tw { width:26px; height:26px; }
+    .sb-footer .navitem { font-size:16px; }
+    .sb-section-head { font-size:12px; }
+    .iconbtn { width:40px; height:40px; }
+    .btn { padding:9px 14px; font-size:15px; min-height:40px; }
+    .crumb { font-size:16px; }
+    .pop .item { padding:11px 10px; font-size:16px; }
+    .pop .item .t { font-size:16px; }
+    input, textarea { font-size:16px; }
+
+    /* Document: bigger body text, tighter side padding for narrow screens. */
+    .doc { padding:24px 18px calc(36vh + env(safe-area-inset-bottom)); }
+    .doc-title { font-size:30px; }
+    .doc .editable { font-size:16px; }
+    .codeblock { --code-fs:14px; }
     .block .gutter { display:none; }
     .db { padding:16px 14px 90px; }
     .peek { width:100%; }
+
+    /* Safe areas (viewport-fit=cover): keep chrome clear of the notch / home bar. */
+    .sb-head { padding-top:calc(14px + env(safe-area-inset-top)); }
+    .topbar { padding-top:calc(10px + env(safe-area-inset-top)); }
+    .sb-footer { padding-bottom:calc(6px + env(safe-area-inset-bottom)); }
   }
 
   /* Quick Notes window (desktop, loaded at #quick). A transparent body lets the

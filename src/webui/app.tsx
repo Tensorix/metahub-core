@@ -8,6 +8,7 @@ import { DatabaseView } from "./table.tsx";
 import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView, cmpVer } from "./settings.tsx";
 import { SitesView } from "./sites.tsx";
+import { syncThemeColor } from "./theme.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
@@ -31,6 +32,26 @@ type View =
   | { kind: "settings" }
   | { kind: "sites" };
 
+const MOBILE_MQ = "(max-width: 768px) and (pointer: coarse)";
+
+// Drive the mobile navigation model off device capability, not UA sniffing: a
+// narrow window only flips to the full-page-sidebar layout on a *touch* device
+// (coarse pointer) — so resizing a desktop window never snaps it into mobile,
+// which was the source of the size jitter. Rotation/resize still update live.
+// Same query the mobile CSS in core/sync/webui.ts keys off, so JS+CSS lockstep.
+function useIsMobile(): boolean {
+  const [m, setM] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_MQ);
+    const on = () => setM(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return m;
+}
+
 function App() {
   const [databases, setDatabases] = useState<Db[]>([]);
   const [docs, setDocs] = useState<DocSummary[]>([]);
@@ -42,6 +63,7 @@ function App() {
   const [docMode, setDocMode] = useState<DocMode>("blocks");
   const [updatePending, setUpdatePending] = useState(false);
   const docHandleRef = useRef<DocViewHandle | null>(null);
+  const isMobile = useIsMobile();
 
   const onError = useCallback((m: string) => setError(m), []);
   const registerDocHandle = useCallback((handle: DocViewHandle | null) => {
@@ -89,6 +111,26 @@ function App() {
   useEffect(() => {
     setDocMode("blocks");
   }, [activeDocId]);
+
+  // Reflect the mobile navigation state onto <body> (same body-class pattern as
+  // `desktop`/`quicknote`): `mobile` swaps to the full-page sidebar layout, and
+  // `mobile-content` slides the picked view in over it. Then retint the status
+  // bar to whatever surface now fills the top of the screen.
+  const contentActive = view.kind !== "empty";
+  useEffect(() => {
+    document.body.classList.toggle("mobile", isMobile);
+    document.body.classList.toggle("mobile-content", isMobile && contentActive);
+    syncThemeColor();
+  }, [isMobile, contentActive]);
+
+  // When following the system theme, the OS flipping dark/light changes the CSS
+  // vars but fires no app event — retint the status bar on the media change too.
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const on = () => syncThemeColor();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
 
   const moreMenu = (e: MouseEvent) => {
     if (view.kind === "doc" && activeDoc) {
@@ -179,10 +221,16 @@ function App() {
         <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
           <button
             class={"iconbtn hamburger" + (sbCollapsed ? " show-collapsed" : "")}
-            title={sbCollapsed ? "展开侧栏" : "菜单"}
-            onClick={() => (sbCollapsed ? setSbCollapsed(false) : setDrawerOpen(true))}
+            title={isMobile ? "返回" : sbCollapsed ? "展开侧栏" : "菜单"}
+            onClick={() =>
+              isMobile
+                ? navigate({ kind: "empty" })
+                : sbCollapsed
+                  ? setSbCollapsed(false)
+                  : setDrawerOpen(true)
+            }
           >
-            <Icon name="panelLeft" />
+            <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
           </button>
           <div class="crumb">
             {view.kind === "doc" && <><span class="emoji"><Icon name="file" cls="ico sm" /></span><span>{activeDoc?.title || "无标题"}</span></>}

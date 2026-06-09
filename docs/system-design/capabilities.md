@@ -292,14 +292,15 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
 当前能力:
 
 - 浏览器打开 `http://localhost:<port>/` 即用，**Notion-like 模块化 Preact 应用**（v2，见 [07-webui/implementation.md](../impl-context/07-webui/implementation.md)）：
-  - **侧栏**：文档树（折叠/拖拽改嵌套与同级排序）、宽度可拖拽、整栏可收起/展开、移动端抽屉；条目菜单（重命名/复制/删除/新建子页）、新建数据库 Modal（模板）。
+  - **侧栏**：文档树（折叠/拖拽改嵌套与同级排序）、宽度可拖拽、整栏可收起/展开；条目菜单（重命名/复制/删除/新建子页）、新建数据库 Modal（模板）。
   - **表格**：按类型行内编辑（checkbox/select/multi_select/relation/text/number/date/url）、列头菜单（改名/**改类型**/选项增删/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。
   - **文档**：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、单块选中浮动格式条、待办/列表/引用/代码/分隔线）；支持 Typora 风格核心快捷输入（标题、列表、待办、引用、代码 fence）、列表 Tab/Shift+Tab 嵌套、列表内段落/引用/代码块/子列表、代码语言名。代码块为 textarea + highlight.js 高亮镜像，含**语法高亮**、行号、语言下拉、复制（右下角 hover）与键盘退出（末行空行 Enter / 末行 ↓）；空列表项内删除空代码块会保留当前编号/marker。
     - **多块选中**（v2.3）：拖拽跨块或左侧空白拖拽框选整块、Shift+点击扩展，选中块加底色（无浮动工具栏）；键盘批量删除/缩进/复制·剪切为 Markdown/复制(Cmd+D)/全选(Cmd+A)/Shift+↑↓ 扩展，多块整组拖拽移动。
     - **撤销/重做**（v2.3）：Cmd/Ctrl+Z 撤销、Cmd/Ctrl+Shift+Z 或 Ctrl+Y 重做，覆盖结构性块操作与文字输入（接管原生撤销，连续打字合并为一步）。
     - **有序列表起始号**（v2.3）：按用户输入的首项数字起算（`5.` 从 5 递增），后续自动递增；插入/删除/重排后序号自动重建。
     - 防抖保存复用 `PATCH /api/document` 的按块 reconcile,保存 Markdown 会规范化缩进，并保留同级有序列表的起始号。
-  - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题、移动端适配。
+  - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题。
+  - **移动端适配**（v3.0，触摸设备 + ≤768px）：首页变整页导航侧栏、点条目下钻到整屏内容、顶栏「←」返回；操作按钮无 hover 常显、≥16px 字号与触点（输入框 16px 防 iOS 放大）；状态栏 `theme-color` 随主题跟随、安全区适配。桌面端不受影响（判据含 `pointer:coarse`，拖窄桌面窗口不会切移动样式）。
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
 - REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
 - WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。

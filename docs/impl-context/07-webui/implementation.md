@@ -438,3 +438,48 @@ Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace
 验证:`tsc` 改动文件零错(既存无关错误同前:`src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`apps/desktop`)。`bun test` 221 全通过(`sites.test.ts` +`updateSite` 用例,11/11)。`bun run build` 成功,`dist/webui.js` 含站点代码。HTTP 端到端冒烟(`--server --debug`)建站→传文件→`/sites/demo/` 真发→改标题→删文件→删站点全通(详见 08 §6.3)。
 
 涉及文件:新增 `src/webui/sites.tsx`;改 `src/webui/{api.ts,app.tsx,sidebar.tsx,icons.tsx}`、`src/core/sync/webui.ts`(CSS);后端见 08 §6;构建 `dist/webui.js`(改前端须重建)。
+
+## 18. v3.0 移动端适配:整页 Sidebar 首页 + 触摸优化 + 状态栏跟随（2026-06-10）
+
+配套设计见 [design.md §17](./design.md)。把移动端从 v2 的「滑入抽屉」重做为整页下钻导航 + 触摸优先;**取代 §3/§7 描述的 ≤768px 抽屉**。不改后端 API/schema/CRDT/sync,纯前端 + 内联 CSS。
+
+### 18.1 移动判定（`app.tsx` `useIsMobile`）
+
+- 模块级常量 `MOBILE_MQ = "(max-width: 768px) and (pointer: coarse)"`——**CSS `@media` 与 JS 共用此判据**。`useIsMobile()`:`useState` 初值同步取 `window.matchMedia(MOBILE_MQ).matches`(首帧即正确,返回箭头/布局无翻动),`useEffect` 注册 `mq.addEventListener("change", …)` 跟随旋转/设备模式切换。
+- 之所以加 `(pointer: coarse)`:纯宽度让桌面拖窄窗口误入移动样式并在 768px 跳变(抖动根因);指针类型不随缩放变化,桌面恒精确指针 → 永不进移动样式。
+
+### 18.2 导航模型与 body 类（`app.tsx`）
+
+- `const contentActive = view.kind !== "empty"`;`useEffect([isMobile, contentActive])` 里 `document.body.classList.toggle("mobile", isMobile)` 与 `toggle("mobile-content", isMobile && contentActive)`,随后 `syncThemeColor()`。沿用 §文件底部既有 `body.desktop`/`quicknote` 的 body-class 范式。
+- 顶栏汉堡按钮(原桌面折叠/抽屉双用)在移动端语义改为「返回」:`onClick` 为 `isMobile ? navigate({kind:"empty"}) : (sbCollapsed ? setSbCollapsed(false) : setDrawerOpen(true))`,图标 `isMobile ? "arrowLeft" : "panelLeft"`,title 同步。`drawerOpen`/`DrawerClass`/`.backdrop` 在移动端保持惰性(CSS 隐藏),桌面端逻辑原样不动。
+
+### 18.3 状态栏同步（`theme.ts` + `app.tsx`）
+
+- `theme.ts` 新增并导出 `syncThemeColor()`:取 `#theme-color-meta`,按 `body.mobile && !body.mobile-content`(移动首页)选 `.sidebar`、否则 `document.body`,`getComputedStyle(el).backgroundColor` 写入 meta `content`——读解析后色值,故随 `data-theme`(含手动切换)实时正确。`setTheme()` 末尾调用它(手动切 light/dark/system 立即跟随)。
+- `app.tsx` 另注册一次性 `matchMedia("(prefers-color-scheme: dark)")` 的 `change` 监听 → `syncThemeColor()`,覆盖「跟随系统」时 OS 切深浅色(只变 CSS 变量、无应用事件)的情形。
+
+### 18.4 Head meta（`src/core/sync/webui.ts` HTML 外壳）
+
+- 视口加 `viewport-fit=cover`(启用安全区);**不**加 `maximum-scale`/`user-scalable=no`(保留可访问性缩放,靠 16px 输入框规避 iOS 自动放大)。
+- 新增 `<meta name="theme-color" id="theme-color-meta" content="#ffffff">`(初值,JS 覆盖)、`apple-mobile-web-app-capable=yes`、`apple-mobile-web-app-status-bar-style=default`。
+
+### 18.5 移动端 CSS（`webui.ts` 内联,重写 `@media` 块）
+
+媒体查询由 `@media (max-width: 768px)` 改为 **`@media (max-width: 768px) and (pointer: coarse)`**(与 `MOBILE_MQ` 同步);整块由「抽屉」重写为:
+
+- **整页下钻**:`.sidebar{ position:fixed; inset:0; width:100% !important; margin-left:0 !important; … transition:transform .25s }`(覆盖 sidebar.tsx 内联的 `width`/`marginLeft`);`.main{ position:fixed; inset:0; transform:translateX(100%); transition:transform .25s }`;`body.mobile-content .main{ transform:translateX(0) }`、`body.mobile-content .sidebar{ transform:translateX(-100%) }`;`.backdrop{ display:none !important }`;隐藏 `.sb-head .iconbtn`(移动端无折叠)与 `.sb-resizer`;`.topbar .hamburger{ display:grid }`(作返回键)。
+- **触摸尺寸/无 hover**:`.navitem .acts, .sb-section-head .add{ opacity:1 }`(常显);`.navitem`/`.sb-footer .navitem`/`.crumb`/`.pop .item` 字号 16px、加 padding;`.iconbtn{ 40×40 }`、`.btn{ min-height:40px }`、`.navitem .acts button{ 34×34 }`;**`input, textarea{ font-size:16px }`**(iOS 防放大);`.doc .editable{ font-size:16px }`、`.codeblock{ --code-fs:14px }`。
+- **安全区**:`.sb-head`/`.topbar` 顶部、`.sb-footer`/`.doc` 底部叠加 `env(safe-area-inset-*)`。
+- `.theme-grid` 等纯排版断点(`max-width:560px`)保持纯宽度,不引起尺寸跳变,未改。
+
+### 18.6 验证
+
+- `bun install`(首次)+ `bun run build`:`dist/webui.js` 打包成功。
+- `bunx tsc --noEmit`:改动文件(`app.tsx`/`theme.ts`/`icons.tsx`/`webui.ts`)零错误(既存无关错误同前:`src/cli/index.ts`、`src/core/sync/sites-serve.ts`、`apps/desktop`、`dist/webui` 模块型)。
+- 手验(重建 + 重启服务 + 硬刷新):**桌面**反复拖宽/窄跨 768px → 字号/按钮/布局恒桌面、零跳变;**DevTools 设备模式/真机** → 首页整页导航、点条目整屏滑入、顶栏「←」返回;条目/分区操作常显;聚焦搜索/标题/正文/源码框 iOS 不自动放大;应用内切 light/dark/system 与系统切深浅色时状态栏实时跟随;刘海机顶栏/底部不被遮挡。
+
+### 18.7 涉及文件
+
+- 前端:`src/webui/app.tsx`(`useIsMobile`/`MOBILE_MQ`、body 类 effect、返回键、`prefers-color-scheme` 监听)、`src/webui/theme.ts`(`syncThemeColor` + `setTheme` 接线)、`src/webui/icons.tsx`(新增 `arrowLeft`)。
+- CSS/外壳:`src/core/sync/webui.ts`(head meta + 重写移动 `@media` 块)。
+- 构建:`dist/webui.js`(改前端须重建)。

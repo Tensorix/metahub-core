@@ -6,6 +6,7 @@ const PATHS: Record<string, string> = {
   cube: '<path d="M21 7.5 12 2 3 7.5v9L12 22l9-5.5z"/><path d="m3 7.5 9 5.5 9-5.5M12 22v-9"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
+  arrowLeft: '<path d="M15 18l-6-6 6-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   pin: '<path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 16v5"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/>',
