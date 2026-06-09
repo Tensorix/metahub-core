@@ -212,6 +212,9 @@ const HTML = `<!doctype html>
   body.desktop-mac .sb-head .iconbtn { -webkit-app-region:no-drag; }
   body.desktop-mac .topbar { -webkit-app-region:drag; }
   body.desktop-mac .topbar .iconbtn, body.desktop-mac .topbar .btn { -webkit-app-region:no-drag; }
+  /* peek drawer header overlaps the topbar drag region → clear its buttons so they stay clickable */
+  body.desktop-mac .peek-head { -webkit-app-region:drag; }
+  body.desktop-mac .peek-head .iconbtn, body.desktop-mac .peek-head .btn { -webkit-app-region:no-drag; }
   /* sidebar collapsed → traffic lights sit over the main header; clear the hamburger */
   body.desktop-mac .sidebar.collapsed ~ .main .topbar { padding-left:80px; }
 
