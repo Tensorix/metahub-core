@@ -30,6 +30,11 @@ const SiteFileSchema = z.object({
   content_type: z.string(),
   encoding: z.string(),
 });
+// Request bodies — used both for the OpenAPI doc and to .parse() at runtime so a
+// malformed body is a clean 400 rather than an `as`-cast lie. Semantic rules
+// (slug/path shape) live in core (normalizeSiteName/normalizeSitePath).
+const CreateSiteBody = z.object({ name: z.string(), title: z.string().optional() });
+const UpdateSiteBody = z.object({ name: z.string().optional(), title: z.string().optional() });
 
 function need(req: Request, key: string): string {
   const v = new URL(req.url).searchParams.get(key);
@@ -68,10 +73,10 @@ export const sitesRoutes: Route[] = [
     method: "POST",
     path: "/api/sites",
     summary: "Create a site",
-    request: z.object({ name: z.string(), title: z.string().optional() }),
+    request: CreateSiteBody,
     response: SiteSchema,
     handler: handle(async (req, { db }) => {
-      const body = (await req.json()) as { name: string; title?: string };
+      const body = CreateSiteBody.parse(await req.json());
       return createSite(db, body);
     }),
   },
@@ -79,10 +84,10 @@ export const sitesRoutes: Route[] = [
     method: "PATCH",
     path: "/api/site",
     summary: "Rename a site or change its title. Query: ?id=<id>",
-    request: z.object({ name: z.string().optional(), title: z.string().optional() }),
+    request: UpdateSiteBody,
     response: SiteSchema,
     handler: handle(async (req, { db }) => {
-      const body = (await req.json()) as { name?: string; title?: string };
+      const body = UpdateSiteBody.parse(await req.json());
       return updateSite(db, need(req, "id"), body);
     }),
   },

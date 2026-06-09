@@ -76,16 +76,20 @@ export function SitesView() {
         />
         <MenuItem
           icon="settings"
-          label="重命名…"
+          label="修改标题…"
           onClick={async () => {
             close();
             const t = await promptDialog({
-              title: "重命名站点",
+              title: "修改标题",
               label: "标题",
               value: s.title ?? s.name,
             });
             if (t == null) return;
-            await api.updateSite(s.id, { title: t }).catch((err) => toast(err.message));
+            try {
+              await api.updateSite(s.id, { title: t });
+            } catch (err) {
+              return toast((err as Error).message);
+            }
             reload();
           }}
         />
@@ -103,7 +107,11 @@ export function SitesView() {
               danger: true,
             });
             if (!ok) return;
-            await api.deleteSite(s.id).catch((err) => toast(err.message));
+            try {
+              await api.deleteSite(s.id);
+            } catch (err) {
+              return toast((err as Error).message);
+            }
             if (fromPeek) setPeek(null);
             reload();
           }}
@@ -308,8 +316,18 @@ function SitePeek({
       .then(setFiles)
       .catch((e) => toast(e.message));
 
+  // Load on site switch; ignore a stale response if the drawer moved to another
+  // site before this one returned (avoids one site's files flashing under another).
   useEffect(() => {
-    reload();
+    let cancelled = false;
+    setFiles(null);
+    api
+      .listSiteFiles(site.id)
+      .then((fs) => !cancelled && setFiles(fs))
+      .catch((e) => !cancelled && toast(e.message));
+    return () => {
+      cancelled = true;
+    };
   }, [site.id]);
 
   const onPick = async (e: Event) => {
@@ -317,13 +335,20 @@ function SitePeek({
     const list = Array.from(input.files ?? []);
     input.value = "";
     if (!list.length) return;
+    // Upload sequentially; on a mid-batch failure, report what actually landed
+    // and always refresh from the server so the list reflects real state.
+    let done = 0;
     try {
-      for (const f of list) await api.uploadSiteFile(site.id, f.name, f);
-      toast(`已上传 ${list.length} 个文件`);
+      for (const f of list) {
+        await api.uploadSiteFile(site.id, f.name, f);
+        done++;
+      }
+      toast(`已上传 ${done} 个文件`);
+    } catch (err) {
+      toast(`已上传 ${done}/${list.length} 个，其余失败：${(err as Error).message}`);
+    } finally {
       reload();
       onChanged();
-    } catch (err) {
-      toast((err as Error).message);
     }
   };
 
@@ -335,7 +360,11 @@ function SitePeek({
       danger: true,
     });
     if (!ok) return;
-    await api.deleteSiteFile(site.id, f.path).catch((e) => toast(e.message));
+    try {
+      await api.deleteSiteFile(site.id, f.path);
+    } catch (e) {
+      return toast((e as Error).message);
+    }
     reload();
     onChanged();
   };

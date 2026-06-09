@@ -15,6 +15,8 @@ import {
   deleteFile,
   getFileForServe,
   inferContentType,
+  normalizeSiteName,
+  normalizeSitePath,
 } from "./sites.ts";
 
 function makeNode(id: string): Database {
@@ -61,6 +63,53 @@ test("updateSite renames and changes title; guards duplicate names", () => {
   expect(() => updateSite(db, s.id, { name: "taken" })).toThrow();
   // updating a missing site throws
   expect(() => updateSite(db, "site_missing", { title: "x" })).toThrow();
+});
+
+test("normalizeSiteName slugifies and rejects empty results", () => {
+  expect(normalizeSiteName("My Blog")).toBe("my-blog");
+  expect(normalizeSiteName("  Docs!! ")).toBe("docs");
+  expect(normalizeSiteName("a/b")).toBe("a-b");
+  expect(normalizeSiteName("--Hi--")).toBe("hi");
+  expect(() => normalizeSiteName("")).toThrow();
+  expect(() => normalizeSiteName("///")).toThrow();
+});
+
+test("createSite stores the canonical slug; lookups are case-insensitive", () => {
+  const db = makeNode("n1");
+  const s = createSite(db, { name: "My Blog", title: "Blog" });
+  expect(s.name).toBe("my-blog");
+  expect(getSiteByName(db, "My Blog")?.id).toBe(s.id);
+  expect(resolveSite(db, "MY-BLOG").id).toBe(s.id);
+  // a name that normalizes to an existing slug is a duplicate
+  expect(() => createSite(db, { name: "my  blog" })).toThrow();
+  // an unusable name is rejected outright
+  expect(() => createSite(db, { name: "  " })).toThrow();
+});
+
+test("normalizeSitePath canonicalizes and resolves within the bucket", () => {
+  expect(normalizeSitePath("/index.html")).toBe("index.html");
+  expect(normalizeSitePath("css//app.css")).toBe("css/app.css");
+  expect(normalizeSitePath("./a/./b.js")).toBe("a/b.js");
+  expect(normalizeSitePath("a/../b.txt")).toBe("b.txt");
+  expect(normalizeSitePath("")).toBe("");
+  expect(normalizeSitePath("/")).toBe("");
+});
+
+test("putFile normalizes the path so noisy variants hit one stored file", async () => {
+  const db = makeNode("n1");
+  const s = createSite(db, { name: "demo" });
+  const f = await putFile(db, s.id, "/css//app.css", { data: "a{}" });
+  expect(f.path).toBe("css/app.css");
+  // re-upload via a different-but-equivalent path merges into the same row
+  const again = await putFile(db, s.id, "css/app.css", { data: "b{}" });
+  expect(again.id).toBe(f.id);
+  expect(listFiles(db, s.id).length).toBe(1);
+  // served + deleted via equivalent noisy paths
+  expect(dec((await getFileForServe(db, s.id, "/css/app.css"))!.bytes)).toBe("b{}");
+  expect(deleteFile(db, s.id, "css//app.css")).toBe(true);
+  expect(listFiles(db, s.id).length).toBe(0);
+  // a path that normalizes to nothing is rejected
+  await expect(putFile(db, s.id, "/", { data: "x" })).rejects.toThrow();
 });
 
 test("text files store as utf8 and round-trip via getFileForServe", async () => {

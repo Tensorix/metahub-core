@@ -69,6 +69,42 @@ export function inferContentType(path: string): string {
   return MIME[ext] ?? "application/octet-stream";
 }
 
+// ---- name / path normalization ---------------------------------------------
+
+/**
+ * Canonical site slug: lowercase, [a-z0-9-] only, no leading/trailing/repeated
+ * dashes. Applied at every write and lookup so the served URL (/sites/<name>/),
+ * duplicate detection, and sync replication all agree on one form regardless of
+ * how the name was typed (CLI, API, or browser). Throws when nothing usable
+ * remains (empty, or all-punctuation). Matches the WebUI's slugify exactly.
+ */
+export function normalizeSiteName(raw: string): string {
+  const slug = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!slug) throw new Error(`invalid site name: ${JSON.stringify(raw)}`);
+  return slug;
+}
+
+/**
+ * Canonical in-site file path: drop empty / "." segments, resolve ".." within
+ * the bucket, strip leading and duplicate slashes. Files live in SQLite keyed by
+ * this exact string (there is no filesystem behind them), so normalizing at the
+ * write/serve boundary keeps storage, URL routing, and deletes consistent no
+ * matter how the path was typed or percent-encoded. May return "" (caller decides).
+ */
+export function normalizeSitePath(raw: string): string {
+  const segs: string[] = [];
+  for (const seg of raw.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") segs.pop();
+    else segs.push(seg);
+  }
+  return segs.join("/");
+}
+
 /** Text-ish types are stored as readable utf8; everything else is binary. */
 function isTextType(contentType: string): boolean {
   const ct = contentType.toLowerCase();
@@ -91,9 +127,10 @@ function toBytes(data: string | Uint8Array | ArrayBuffer): Uint8Array {
 // ---- sites -----------------------------------------------------------------
 
 export function createSite(db: Database, opts: { name: string; title?: string }): SiteRow {
-  if (getSiteByName(db, opts.name)) throw new Error(`site name already exists: ${opts.name}`);
-  const id = newId("site", opts.name);
-  const first = emit(db, "sites", id, "name", opts.name);
+  const name = normalizeSiteName(opts.name);
+  if (getSiteByName(db, name)) throw new Error(`site name already exists: ${name}`);
+  const id = newId("site", name);
+  const first = emit(db, "sites", id, "name", name);
   emit(db, "sites", id, "created_hlc", first.hlc);
   if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
   return getSite(db, id)!;
@@ -107,11 +144,19 @@ export function getSite(db: Database, id: string): SiteRow | null {
 
 /** Most recently created live site with this name (URL routing). */
 export function getSiteByName(db: Database, name: string): SiteRow | null {
+  // Normalize so lookups, dedup, and URL routing all key off the canonical slug
+  // (e.g. "Demo" and "demo" collide). An unusable name simply matches nothing.
+  let slug: string;
+  try {
+    slug = normalizeSiteName(name);
+  } catch {
+    return null;
+  }
   return db
     .query(
       "SELECT id, name, title, created_hlc FROM sites WHERE name = ? AND __deleted = 0 ORDER BY created_hlc DESC LIMIT 1",
     )
-    .get(name) as SiteRow | null;
+    .get(slug) as SiteRow | null;
 }
 
 export function listSites(db: Database): SiteRow[] {
@@ -136,9 +181,10 @@ export function updateSite(
 ): SiteRow {
   if (!getSite(db, id)) throw new Error(`no such site: ${id}`);
   if (opts.name !== undefined) {
-    const dup = getSiteByName(db, opts.name);
-    if (dup && dup.id !== id) throw new Error(`site name already exists: ${opts.name}`);
-    emit(db, "sites", id, "name", opts.name);
+    const name = normalizeSiteName(opts.name);
+    const dup = getSiteByName(db, name);
+    if (dup && dup.id !== id) throw new Error(`site name already exists: ${name}`);
+    emit(db, "sites", id, "name", name);
   }
   if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
   return getSite(db, id)!;
@@ -171,7 +217,9 @@ export async function putFile(
   path: string,
   opts: { data: string | Uint8Array | ArrayBuffer; contentType?: string },
 ): Promise<SiteFileRow> {
-  const contentType = opts.contentType ?? inferContentType(path);
+  const cleanPath = normalizeSitePath(path);
+  if (!cleanPath) throw new Error(`invalid file path: ${JSON.stringify(path)}`);
+  const contentType = opts.contentType ?? inferContentType(cleanPath);
   const bytes = toBytes(opts.data);
 
   let encoding: FileEncoding;
@@ -187,11 +235,11 @@ export async function putFile(
     content = (await putBlob(bytes)).hash;
   }
 
-  const existing = fileIdFor(db, siteId, path);
-  const id = existing ?? newId("sf", path);
+  const existing = fileIdFor(db, siteId, cleanPath);
+  const id = existing ?? newId("sf", cleanPath);
   if (!existing) {
     const first = emit(db, "site_files", id, "site_id", siteId);
-    emit(db, "site_files", id, "path", path);
+    emit(db, "site_files", id, "path", cleanPath);
     emit(db, "site_files", id, "created_hlc", first.hlc);
   }
   emit(db, "site_files", id, "content_type", contentType);
@@ -215,7 +263,7 @@ export function listFiles(db: Database, siteId: string): SiteFileSummary[] {
 }
 
 export function deleteFile(db: Database, siteId: string, path: string): boolean {
-  const id = fileIdFor(db, siteId, path);
+  const id = fileIdFor(db, siteId, normalizeSitePath(path));
   if (!id) return false;
   const live = db.query("SELECT __deleted AS d FROM site_files WHERE id = ?").get(id) as {
     d: number;
@@ -231,7 +279,12 @@ export async function getFileForServe(
   siteId: string,
   path: string,
 ): Promise<{ contentType: string; bytes: Uint8Array } | null> {
-  const p = path === "" || path.endsWith("/") ? `${path}index.html` : path;
+  // Resolve directory-style requests to index.html *before* normalizing (the
+  // trailing-slash signal is lost once empty segments are dropped), then key the
+  // lookup off the same canonical path putFile stored.
+  const withIndex = path === "" || path.endsWith("/") ? `${path}index.html` : path;
+  const p = normalizeSitePath(withIndex);
+  if (!p) return null;
   const row = db
     .query(
       "SELECT content_type, encoding, content FROM site_files WHERE site_id = ? AND path = ? AND __deleted = 0 ORDER BY created_hlc LIMIT 1",
