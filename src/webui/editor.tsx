@@ -89,6 +89,7 @@ export function DocView({
   const [version, setVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [slash, setSlash] = useState<{ blockId: string; x: number; y: number; query: string; idx: number } | null>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   const [bar, setBar] = useState<{ x: number; y: number } | null>(null);
   // Block-level (multi-block) selection: a continuous anchor..focus range.
   // Independent from native text selection, because each block is its own
@@ -592,6 +593,14 @@ export function DocView({
     return () => document.removeEventListener("keydown", h, true);
   }, []);
 
+  // Keep the keyboard-highlighted slash item visible: the menu (.pop) is an
+  // overflow:auto container, so arrow-key navigation must scroll the selected
+  // item into view (block:"nearest" only scrolls when it's off-screen).
+  useEffect(() => {
+    if (!slash) return;
+    popRef.current?.querySelector(".item.sel")?.scrollIntoView({ block: "nearest" });
+  }, [slash?.idx, slash?.blockId]);
+
   const onKeyDown = (e: KeyboardEvent, b: Block, el: HTMLElement) => {
     if (slash && slash.blockId === b.id) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSlash({ ...slash, idx: Math.min(slash.idx + 1, slashMatches.length - 1) }); return; }
@@ -890,7 +899,7 @@ export function DocView({
           ? { left, top: slash.y + GAP, maxHeight, minWidth: 260 }
           : { left, bottom: innerHeight - slash.y + 6, maxHeight, minWidth: 260 };
         return (
-          <div class="pop" style={style}>
+          <div class="pop" style={style} ref={popRef}>
             <MenuLabel>基础块</MenuLabel>
             {slashMatches.map((m, i) => (
               <button key={m.type} class={"item" + (i === slash.idx ? " sel" : "")} onMouseDown={(e) => { e.preventDefault(); applySlash(m); }}>
