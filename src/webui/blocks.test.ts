@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { blocksFromBody, bodyFromBlocks, textToBlock, blockToText, shortcutFromInput } from "./blocks.ts";
+import { blocksFromBody, bodyFromBlocks, textToBlock, blockToText, shortcutFromInput, bulletTodoShortcut } from "./blocks.ts";
 
 test("textToBlock recognises each block type", () => {
   expect(textToBlock("# Title").type).toBe("h1");
@@ -346,4 +346,13 @@ test("typing shortcuts recognise markdown prefixes", () => {
   expect(shortcutFromInput("- [x] ", " ")).toMatchObject({ type: "todo", checked: true });
   expect(shortcutFromInput("## ", " ")).toMatchObject({ type: "h2", content: "" });
   expect(shortcutFromInput("```python", "Enter")).toMatchObject({ type: "code", lang: "python" });
+});
+
+test("a bullet promotes to a todo when its '[ ]'/'[x]' prefix completes", () => {
+  expect(bulletTodoShortcut("[ ]")).toEqual({ checked: false });
+  expect(bulletTodoShortcut("[x]")).toEqual({ checked: true });
+  expect(bulletTodoShortcut("[X]")).toEqual({ checked: true });
+  expect(bulletTodoShortcut("[ ]x")).toBeNull();
+  expect(bulletTodoShortcut("abc")).toBeNull();
+  expect(bulletTodoShortcut("")).toBeNull();
 });

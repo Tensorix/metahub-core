@@ -16,6 +16,7 @@ import {
   blockToText,
   blocksFromBody,
   bodyFromBlocks,
+  bulletTodoShortcut,
   computeListNumbers,
   genId,
   isBlankSpacer,
@@ -622,17 +623,30 @@ export function DocView({
         if (next) { e.preventDefault(); focusBlock(next.id); return; }
       }
     }
-    if (e.key === " " && b.type === "p" && !hasExpandedSelection()) {
+    if (e.key === " " && !hasExpandedSelection() && (b.type === "p" || b.type === "bullet")) {
       // Match the marker against the text *before* the caret, not the whole line,
       // so a prefix typed at the start of a paragraph that already has content
       // ("1. " before "hello") still promotes the block — keeping the trailing
       // text as the new content.
       const { before, after } = splitEditableAtCaret(el);
-      const shortcut = shortcutFromInput(before + " ", " ");
-      if (shortcut) {
-        e.preventDefault();
-        applyShortcut(b, { ...shortcut, content: after });
-        return;
+      if (b.type === "p") {
+        const shortcut = shortcutFromInput(before + " ", " ");
+        if (shortcut) {
+          e.preventDefault();
+          applyShortcut(b, { ...shortcut, content: after });
+          return;
+        }
+      } else {
+        // A bullet completes the "- [ ]" prefix in a second stage: once "- "
+        // already turned the block into a bullet, "[ ] "/"[x] " promotes it to a
+        // todo. Keep any trailing text as the todo's content, mirroring the
+        // paragraph path above.
+        const todo = bulletTodoShortcut(before);
+        if (todo) {
+          e.preventDefault();
+          convert(b.id, "todo", { content: after, checked: todo.checked });
+          return;
+        }
       }
     }
     if (e.key === "Enter" && !e.shiftKey && b.type !== "code") {

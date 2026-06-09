@@ -231,7 +231,7 @@ export function shortcutFromInput(text: string, key: " " | "Enter"): Shortcut | 
     const numbered = text.match(/^(\d+)[.)] $/);
     if (numbered) return { type: "numbered", content: "", start: parseInt(numbered[1]!, 10) };
 
-    const todo = text.match(/^[-*+]\s+\[([ xX])\]\s$/);
+    const todo = text.match(/^[-*+]\s+\[([ xX])\]\s*$/);
     if (todo) return { type: "todo", content: "", checked: todo[1]!.toLowerCase() === "x" };
     return null;
   }
@@ -239,6 +239,15 @@ export function shortcutFromInput(text: string, key: " " | "Enter"): Shortcut | 
   const code = text.match(/^```([A-Za-z0-9_+.#-]*)$/);
   if (code) return { type: "code", content: "", lang: cleanLang(code[1] ?? "") };
   return null;
+}
+
+// In a bullet, "[ ]" / "[x]" before the caret followed by a space promotes it
+// to a todo. "- [ ]" is typed in two stages — "- "→bullet, then "[ ] " completes
+// the prefix — so the todo marker is only recognised once the block is already a
+// bullet (its "- " marker is rendered, not part of the editable text).
+export function bulletTodoShortcut(before: string): { checked: boolean } | null {
+  const m = before.match(/^\[([ xX])\]$/);
+  return m ? { checked: m[1]!.toLowerCase() === "x" } : null;
 }
 
 function parseContainer(
