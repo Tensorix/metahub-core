@@ -601,6 +601,17 @@ export function DocView({
     popRef.current?.querySelector(".item.sel")?.scrollIntoView({ block: "nearest" });
   }, [slash?.idx, slash?.blockId]);
 
+  // Dismiss the slash menu when the editing block loses focus. The menu items
+  // suppress focus shift via onMouseDown+preventDefault, so clicking one keeps
+  // the editable focused (no focusout) and lets its apply handler run; clicking
+  // or tabbing anywhere else blurs the editable and closes the menu.
+  useEffect(() => {
+    if (!slash) return;
+    const onBlur = () => setSlash(null);
+    document.addEventListener("focusout", onBlur);
+    return () => document.removeEventListener("focusout", onBlur);
+  }, [!!slash]);
+
   const onKeyDown = (e: KeyboardEvent, b: Block, el: HTMLElement) => {
     if (slash && slash.blockId === b.id) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSlash({ ...slash, idx: Math.min(slash.idx + 1, slashMatches.length - 1) }); return; }
