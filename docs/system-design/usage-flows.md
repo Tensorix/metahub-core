@@ -168,6 +168,37 @@ mh edit <doc-ref> --vscode
 - 返回具体 changed block。
 - 富附件引用和 blob 同步。
 
+## 误改/误删恢复当前流程
+
+任何实体粒度的恢复都不再需要整库快照回滚:
+
+### 1. 查历史定位版本
+
+```bash
+mh doc history <doc-ref>                 # 修订列表:version / 时间 / 设备 / 摘要
+mh record history <rec-ref> --field 金额  # 单字段的值变迁
+mh prop history <prop-ref>               # 列改名/改类型/删除史(含级联清格计数)
+mh doc get <doc-ref> --at <version>      # 先预览再决定
+```
+
+### 2. 回滚
+
+```bash
+mh doc revert <doc-ref> --to <version> --if-match <v>   # 正文+标题恢复
+mh record revert <rec-ref> --to <version>               # 字段恢复
+mh prop revert <prop-ref> --to <version>                # 误改类型/误删列:连同被清的单元格一起恢复
+```
+
+误删恢复:对已删除的文档/记录/列,用**完整 id** 走同样的 history/revert,revert 即复活。回滚本身是新修订,后悔可再回滚。WebUI 中文档「…」菜单与记录 peek 提供同等能力(预览 + diff + 恢复)。
+
+### 3. 磁盘维护(可选)
+
+```bash
+mh doctor                  # 末行报告 oplog 行数 / 可压缩量 / 库大小
+mh compact --dry-run       # 预览
+mh compact --keep 90       # 窗口外历史坍缩为基线;当前数据不变;纯本地
+```
+
 ## 快照和同步当前流程
 
 ### 快照

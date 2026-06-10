@@ -64,6 +64,8 @@ SQLite + cache
 
 当前 register 由 `(dataset, row_id, col)` 定义。记录单元格也是 register,其中 `col` 是 property id。
 
+所有公开变更函数由 `grouped()`/`withChangeGroup`(`crdt.ts`)包裹:一次逻辑变更的全部 emit 共享一个 `txn` 分组 id(嵌套调用保持外层),供历史按"修订"聚簇;repair/revert 用带前缀的 label 标记来源。txn 随 sync 复制,不参与 LWW。
+
 新建实体的 `row_id` 带类型前缀(`<kind>_<slug>-<rand>`,见 `src/core/ids.ts`),对 oplog/物化/同步完全不透明;旧的无前缀 id 与之共存。
 
 ## 引用解析路径
@@ -142,6 +144,19 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 - **CLI 性能隔离**:WebUI 与 Preact 单独打包为 `dist/webui.js`,**不进入 `cli.js` 的启动 import 图**;懒加载使其仅在浏览器首次访问 `/` 时载入,普通 `mh <命令>` 启动不受影响。
 - **静态站点托管**(`src/core/sync/sites-serve.ts`,经 `server.ts` 懒加载):`GET /sites/<name>/<path...>` 按名字 resolve 站点、查 `site_files`(默认 `index.html`),返回字节 + MIME;站点经 `mh site` CLI 发布,文件经 `emit()` 进 CRDT(见 [08-agent-sites](../impl-context/08-agent-sites/design.md))。
 - **鉴权**(`src/core/sync/auth.ts`、`src/core/sync/token.ts`):fetch handler 顶部一处 token 门禁,`--debug` 跳过。`/sync` **不再豁免**——经 `acceptsSyncToken` 单独门禁,接受**主 token 或任一配对凭据**(旧的开放信任对等模型已移除,凭据由配对分发,见 `src/core/sync/pairing.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。仅 `/health`、`/auth/token`、`/api/pair` 豁免该 token 门禁(分别为:peer 健康检查;让持过期 token 者仍能换新;配对握手在 handler 内用一次性配对码自证)。其余请求需经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带 token。**token 默认持久化在 `~/.metahub` 的 `meta` 表**(非 `--token`/`METAHUB_TOKEN` 静态覆盖时),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token refresh` 时**惰性轮换**(以 DB 为单一来源、每请求读,故另一进程刷新立即生效);轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 换到新 token,实现浏览器**无感续期**。浏览器导航无 token 返回解锁页(存 `localStorage`+cookie,并先尝试 `/auth/token` 静默续期),其后 HTML 响应经 `withShim` 注入 fetch 套壳自动带 `Bearer`、并在 401 时自动换取并重试一次。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)。
+
+## 历史与回滚架构
+
+oplog 是 append-only 的,历史是纯读侧能力(`src/core/history.ts`,见 [15-history-rollback-compaction](../impl-context/15-history-rollback-compaction/design.md)):
+
+- **重建**:时点 T 的状态 = 每个 register 取 `hlc ≤ T` 的最大值(与头部物化同一条 LWW 规则);文档经 `serializeDocBlocks` 还原正文,legacy body 寄存器按 `isBlockManaged` 同款规则回退。
+- **修订聚簇**:按 `txn` 分组(无 txn 的存量数据退回 node+时间间隙启发式);聚簇是 oplog 内容的纯函数,各端视图一致。
+- **回滚 = 正向写入**:重建旧状态 → diff → 作为新 emit 写回(文档复用 `updateDocument` 的块 reconcile 与 `if-match`),不删改 oplog,随 sync 收敛;revert 自身是 kind=revert 的新修订。
+- **schema 回滚**:`revertProperty` 直接 emit 寄存器恢复列定义(不走 `updateProperty`,避免其改类型级联再次清格),单元格凭共享 txn 区分"级联清格"与"用户后写",只恢复前者。
+
+## 存储压缩架构
+
+`mh compact`(`src/core/compact.ts`)做保留窗口式 oplog 压缩:窗口外每 register 只留"截止点胜者"。四条承重不变量:只删 LWW 输家(收敛不变)、墓碑胜者存活(不复活)、保护 `MAX(rowid)` 行(防 rowid 复用跳 peer 游标)、纯本地不复制(各节点独立清理)。配套 blob GC(引用集 = 剩余 oplog site_files.content ∪ 物化行)与 `VACUUM`。代价:窗口外 `history`/`revert` 坍缩为基线。
 
 ## 快照架构
 

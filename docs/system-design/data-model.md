@@ -65,6 +65,7 @@ interface Change {
   row_id: string;
   col: string;
   value: string | null;
+  txn?: string | null; // 修订分组 id:同一次逻辑变更(一次保存/一次 API 调用)的 changes 共享
 }
 ```
 
@@ -75,6 +76,14 @@ interface Change {
 ```
 
 物化时同一 register 中 HLC 最大的 change 胜出。
+
+**oplog 即历史**:表是 append-only(`INSERT OR IGNORE`,旧版本永不覆盖),任意时点 T 的状态 = 每个 register 取 `hlc ≤ T` 的最大值,据此 `src/core/history.ts` 提供修订列表/时点重建/回滚(回滚是正向写入,见 [15-history-rollback-compaction](../impl-context/15-history-rollback-compaction/design.md))。
+
+`txn` 由 `withChangeGroup`/`grouped()`(`crdt.ts`)在公开变更函数边界盖戳,**随 sync 复制**(各端历史聚簇一致);label 前缀 `repair:`/`revert:` 用于推导修订 kind(user/repair/revert)。存量行/旧 peer 的 change 为 NULL,历史聚簇退回 (node_id + 1.5s 间隙) 启发式。存量库经 `migrateOplog`(db.ts)补列。
+
+索引:`idx_changes_hlc(hlc)`;局部索引 `idx_changes_docref(value) WHERE dataset='doc_blocks' AND col='doc_id'` 服务历史的按文档找块(局部是为了不给携带大 value 的 site_files 行建索引)。
+
+**压缩**(`mh compact`,`src/core/compact.ts`):保留窗口(默认 90 天)外每 register 只留"截止点胜者",删除被取代的输家;墓碑胜者必存活、`MAX(rowid)` 行受保护(防 SQLite rowid 复用使 peer 游标跳过新变更)、纯本地不复制。头部物化状态压缩前后逐字节不变;窗口外历史坍缩为基线,配套 blob GC + VACUUM。
 
 ## databases
 

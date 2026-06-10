@@ -44,6 +44,8 @@ mh db delete <ref>
 mh prop add <name> --type <type> [--db <db>] [--options a,b] [--target <db>] [--config JSON] [--position N]
 mh prop list [<db>]
 mh prop update <ref> [--name] [--options] [--target] [--config] [--position]
+mh prop history <ref>                  # 列定义修订历史(改名/类型/选项/删除,含级联清格计数)
+mh prop revert <ref> --to <version>    # schema 回滚:恢复列定义 + 被级联清掉的单元格(用户后写保留)
 mh prop remove <ref>
 ```
 
@@ -63,6 +65,8 @@ mh record create [<db>] --data '{"field":"value"}'      # db 省略时用当前�
 mh record list [<db>] [--filter '{"field":"value"}'] [--sort field] [--desc] [--limit N]
 mh record get <ref>
 mh record update <ref> --data '{"field":"value"}'
+mh record history <ref> [--field <名>]   # 修订历史(逐修订字段;--field 看单元格值变迁)
+mh record revert <ref> --to <version>    # 恢复历史值;对已删记录(完整 id)= 复活
 mh record delete <ref>
 ```
 
@@ -107,6 +111,14 @@ mh doc read <doc-ref>
 mh doc edit <doc-ref> --old "old text" --new "new text" [--replace-all] [--if-match <version>]
 mh doc append <doc-ref> --body "markdown"
 mh doc prepend <doc-ref> --body "markdown"
+```
+
+历史与回滚:
+
+```bash
+mh doc history <doc-ref>                            # 修订列表(新→旧,含来源设备与 kind)
+mh doc get <doc-ref> --at <version>                 # 任意历史版本的标题/正文
+mh doc revert <doc-ref> --to <version> [--if-match] # 恢复;对已删文档(完整 id)= 复活
 ```
 
 文档引用 `<doc-ref>` 支持完整 id、唯一前缀或标题。`--db`/`--parent` 同样接受引用;文档可独立存在(`--db` 不默认当前库)。
@@ -174,6 +186,19 @@ mh __complete <kind|any> <prefix> # (内部)补全脚本回调,逐行返回候�
 - 补全脚本按子命令推断要补的类型(db/rec/doc/prop),回调 `__complete` 实时查库。
 - rec/prop 候选按当前库 scope;doc 列全部(可独立/跨库)。
 
+## 历史与回滚
+
+已实现(`src/core/history.ts`,见 [15-history-rollback-compaction](../impl-context/15-history-rollback-compaction/design.md);命令分散在文档/记录/属性各节):
+
+- **oplog 即历史**:每次字段写入都在 append-only 的 `crdt_changes` 里,任意时点状态可重建,无额外存储。
+- **修订聚簇**:同一次逻辑变更的 changes 共享 `txn` 分组 id(随 sync 复制,各端历史视图一致);`kind` 区分 `user`/`repair`/`revert` 来源。
+- **回滚 = 正向写入**:revert 作为新修订落库(不删改历史),随 sync 收敛,自身可再回滚;"任何版本永远可从历史找回"。
+- **复活**:对已墓碑的文档/记录/属性,revert 到存活版本即恢复(CLI 用完整 id 直通已删实体);回滚到"已删除状态"被拒绝(`invalid_input`)。
+- **schema 回滚跳过策略**:`prop revert` 恢复被级联清掉的单元格时,凭共享 txn 识别级联写入,用户后来手填的值一律保留(`skipped_cells` 报告)。
+- 错误契约沿用:版本不存在 → `not_found`(exit 3),`--if-match` 失败 → `stale`(exit 5)。
+
+当前未实现:表级活动流(整表聚合的修订 feed)、sites/site_files 历史、revert 还原 parent_id/order_key 等元数据。
+
 ## 快照和恢复
 
 已实现:
@@ -196,7 +221,7 @@ mh restore <file.mhpack> --reset --force
 已实现(见 [data-model.md](./data-model.md) 的「完整性约束」、[13-data-integrity](../impl-context/13-data-integrity/design.md)):
 
 ```bash
-mh doctor                 # 只读体检,列出逻辑完整性问题
+mh doctor                 # 只读体检,列出逻辑完整性问题 + oplog/磁盘统计与可压缩量
 mh repair                 # 确定性修复可自动修的问题(幂等,改动随 oplog 复制)
 mh repair --dry-run       # 仅报告将要修复什么,不改动(等价 doctor)
 ```
@@ -207,6 +232,22 @@ mh repair --dry-run       # 仅报告将要修复什么,不改动(等价 doctor)
 - `doctor` 归类:`broken_ref`(引用指向已删目标)、`orphan_cell`(已删属性残留单元格)、`dup_path`(同 site 同 path 冗余文件)、`parent_cycle`(文档父子环)为可自动修;`dup_name`(同库重名 database/property)、`bad_config`(非法 type/relation/select 配置)为仅报告。
 - `repair` 确定性、幂等(循环到不动点),winner 用 `(created_hlc, id)` 全序;只对 tombstone 动手(容忍尚未到达的前向引用),**绝不 hard-delete 用户内容**(重名只报告)。
 - 删除 database/property/document 时已内置写时级联(主路径);`repair` 兜底 sync 引入的坏数据(如 A 删库时 B 并发建记录)。
+
+## 存储压缩
+
+已实现(`src/core/compact.ts`,见 [15-history-rollback-compaction](../impl-context/15-history-rollback-compaction/design.md)):
+
+```bash
+mh compact [--keep <days>] [--dry-run] [--no-vacuum]   # 默认 keep 90 天;0 = 只留头部状态
+```
+
+当前能力:
+
+- 保留窗口式 oplog 压缩:窗口内历史完整,窗口外每 register 坍缩为"截止点胜者"(头部物化状态逐字节不变);窗口外的 `history`/`revert` 退化为单一基线。
+- 安全不变量:只删 LWW 输家(任何 peer 拿到幸存者即收敛)、墓碑胜者必存活(不复活已删行)、保护 `MAX(rowid)` 行(防 SQLite rowid 复用跳 peer 游标)。
+- **纯本地操作**(不 emit、不同步),各节点独立清理;配套 blob GC(删不再被引用的 cache 文件)与 `VACUUM` 还盘。
+
+当前未实现:自动定时压缩(规划归 `mh config`)、"彻底抹除已删数据"(需全 peer 墓碑确认)。
 
 ## 同步
 
@@ -281,6 +322,12 @@ GET    /api/document         PATCH/DELETE /api/document      # ?id=<id>
                              PATCH /api/document/move        # ?id=<id>（拖拽：before/after/into，改父级+重排）
 GET    /api/search           # ?q=<text>&limit=<n>
 
+GET    /api/document/history   /api/record/history   /api/property/history   # ?id= 修订列表（新→旧）
+GET    /api/document/at        /api/record/at        # ?id=&version= 任意历史版本状态
+GET    /api/record/field-history                     # ?id=&prop= 单元格值变迁
+POST   /api/document/revert    /api/record/revert    /api/property/revert    # ?id= body {to[, if_match]}
+GET    /api/nodes              # 本机 + 已配对 peer 的 node_id→设备名映射（历史列表显示用）
+
 GET    /api/sites            POST /api/sites                # 站点列表（含 file_count）/ 建站
 GET    /api/site/files       PATCH/DELETE /api/site          # 文件清单（?site=）/ 改名·改标题·删站（?id=）
 POST   /api/site/file        DELETE /api/site/file          # 上传(裸字节)/删文件（?site=&path=）
@@ -299,6 +346,7 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
     - **撤销/重做**（v2.3）：Cmd/Ctrl+Z 撤销、Cmd/Ctrl+Shift+Z 或 Ctrl+Y 重做，覆盖结构性块操作与文字输入（接管原生撤销，连续打字合并为一步）。
     - **有序列表起始号**（v2.3）：按用户输入的首项数字起算（`5.` 从 5 递增），后续自动递增；插入/删除/重排后序号自动重建。
     - 防抖保存复用 `PATCH /api/document` 的按块 reconcile,保存 Markdown 会规范化缩进，并保留同级有序列表的起始号。
+  - **版本历史**：文档「…」菜单 → 右侧抽屉（修订列表 + 任意版本只读预览 + 「对比当前」git 式行级 diff，行内改动深浅双层高亮）；记录 peek「…」菜单 → 历史视图（逐修订字段 diff、恢复）。恢复带 `if_match`（409 stale → 提示刷新重试）；repair 修订默认隐藏（「显示修复」开关）；设备名经 `/api/nodes` 解析。
   - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题。
   - **移动端适配**（v3.0，触摸设备 + ≤768px）：首页变整页导航侧栏、点条目下钻到整屏内容、顶栏「←」返回；操作按钮无 hover 常显、≥16px 字号与触点（输入框 16px 防 iOS 放大）；状态栏 `theme-color` 随主题跟随、安全区适配。桌面端不受影响（判据含 `pointer:coarse`，拖窄桌面窗口不会切移动样式）。
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
