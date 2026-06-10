@@ -19,6 +19,7 @@ import {
   confirmDialog,
   promptDialog,
   toast,
+  MOBILE_MQ,
 } from "./ui.tsx";
 
 // Single-page Preact app: browse/edit databases (Notion-like tables) and
@@ -70,8 +71,6 @@ function parseHash(h: string): View {
   }
   return { kind: "empty" };
 }
-
-const MOBILE_MQ = "(max-width: 768px) and (pointer: coarse)";
 
 // Drive the mobile navigation model off device capability, not UA sniffing: a
 // narrow window only flips to the full-page-sidebar layout on a *touch* device

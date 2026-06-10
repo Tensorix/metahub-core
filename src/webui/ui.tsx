@@ -7,6 +7,10 @@ import { Icon } from "./icons.tsx";
 // stores, so any code can pop a menu or dialog without prop-drilling. Mount
 // <UiHost/> once at the app root. Replaces native alert/prompt/confirm.
 
+/** The phone layout/interaction gate (see the mobile block in styles.css and
+ *  useIsMobile in app.tsx — all three key off this same query). */
+export const MOBILE_MQ = "(max-width: 768px) and (pointer: coarse)";
+
 function makeStore<T>(init: T) {
   let value = init;
   const subs = new Set<(v: T) => void>();
@@ -62,22 +66,27 @@ function MenuHost() {
   const state = menuStore.use();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  // Phone: an anchored popover under a finger is cramped and clips at screen
+  // edges — pin these discrete menus to the bottom as an action sheet instead.
+  // The editor's slash menu / format bar render their own .pop and stay
+  // caret-anchored on purpose. Read per open; menus never survive a rotation.
+  const sheet = matchMedia(MOBILE_MQ).matches;
   useLayoutEffect(() => {
-    if (!state || !ref.current) return setPos(null);
+    if (!state || !ref.current || sheet) return setPos(null);
     const { x, y } = anchorPoint(state.anchor);
     const r = ref.current.getBoundingClientRect();
     setPos({
       left: Math.min(x, innerWidth - r.width - 10),
       top: Math.min(y + 4, innerHeight - r.height - 10),
     });
-  }, [state]);
+  }, [state, sheet]);
   if (!state) return null;
   return (
     <div class="menu-layer" onMouseDown={(e) => e.target === e.currentTarget && closeMenu()}>
       <div
         ref={ref}
-        class="pop"
-        style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999, minWidth: state.minWidth }}
+        class={"pop" + (sheet ? " sheet" : "")}
+        style={sheet ? undefined : { left: pos?.left ?? -9999, top: pos?.top ?? -9999, minWidth: state.minWidth }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {state.render(closeMenu)}
