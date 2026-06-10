@@ -820,16 +820,39 @@
      it crosses 768px), while phones/tablets (and DevTools device mode, which
      emulates coarse) get the touch treatment. JS useIsMobile mirrors this query. */
   @media (max-width: 768px) and (pointer: coarse) {
-    /* Full-page navigation: the sidebar fills the screen as the "home", and the
-       picked view slides in over it as a separate full-screen layer. Driven by
-       body.mobile-content (toggled in app.tsx), replacing the old slide-in
-       drawer entirely. Both panes are fixed + full-bleed and swap via transform. */
-    .sidebar { position:fixed; inset:0; width:100% !important; height:100%; margin-left:0 !important;
-      z-index:40; border-right:0; transition:transform .25s cubic-bezier(.4,0,.2,1); }
-    body.mobile-content .sidebar { transform:translateX(-100%); }
-    .main { position:fixed; inset:0; z-index:50; transform:translateX(100%);
-      transition:transform .25s cubic-bezier(.4,0,.2,1); }
-    body.mobile-content .main { transform:translateX(0); }
+    /* Full-page navigation, document-scrolled: the active view (home sidebar
+       or the picked content view, via body.mobile-content from app.tsx) sits
+       in normal flow and the *document* scrolls; the inactive view is
+       display:none. This is structural for iOS 26 Safari: its liquid-glass
+       bars only composite pixels from the document's scrolled canvas — a
+       fixed pane with an inner scroller never paints under the bottom bar,
+       so the chrome degrades to a tint sampled once and frozen (opaque pane
+       bg) or fallback white (transparent pane); no see-through, and theme
+       switches never propagate. In-flow content gets both for free: glass
+       blurs live pixels, colors follow theme/navigation in real time.
+       (app.tsx owns the scroll handoff between the two views.) */
+    body { overflow:auto; }
+    #app { display:block; height:auto; }
+    .sidebar { width:100% !important; min-height:100dvh; margin-left:0 !important;
+      border-right:0; transition:none; }
+    body.mobile-content .sidebar { display:none; }
+    .main { display:none; }
+    body.mobile-content .main { display:flex; min-height:100dvh; overflow:visible;
+      animation:page-in .22s cubic-bezier(.4,0,.2,1); }
+    .sb-scroll { flex:none; overflow:visible; }
+    .content { flex:none; overflow:visible; }
+    /* Keep the back-button header pinned while the document scrolls. Its
+       background must sit on the sticky box itself: the status-bar tint is
+       sampled from edge-touching sticky elements' own background-color — a
+       transparent box samples as a fallback white. Each home↔content switch
+       toggles the pane's display, a real render-tree entry, so the tint
+       re-samples on navigation. */
+    .topbar { position:sticky; top:0; z-index:30; background:var(--bg); }
+    /* With no sticky element at an edge (home top, all bottoms) the chrome
+       derives from the html/body backgrounds and the scrolled canvas — keep
+       all of them tracking the active surface so bars and overscroll blend. */
+    html:has(body.mobile), body.mobile { background:var(--sidebar); }
+    html:has(body.mobile-content), body.mobile-content { background:var(--bg); }
     .sb-head .iconbtn { display:none; }          /* no collapse on mobile */
     .sb-resizer { display:none; }
     .topbar .hamburger { display:grid; }         /* serves as the back button */
@@ -887,6 +910,9 @@
     .selbar { bottom:calc(16px + env(safe-area-inset-bottom)); max-width:calc(100vw - 24px); }
   }
   @keyframes sheet-up { from { transform:translateY(100%); } }
+  /* In-flow stand-in for the old two-pane slide: only the entering view
+     animates (the other is display:none, document-scroll layout above). */
+  @keyframes page-in { from { transform:translateX(28px); opacity:0; } }
 
   /* Touch ergonomics, decoupled from width: tablets (iPad portrait is 820px+)
      keep the desktop layout above but still tap with fingers, so target sizes,

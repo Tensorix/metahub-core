@@ -146,14 +146,22 @@ function App() {
 
   // Reflect the mobile navigation state onto <body> (same body-class pattern as
   // `desktop`/`quicknote`): `mobile` swaps to the full-page sidebar layout, and
-  // `mobile-content` slides the picked view in over it. Then retint the status
-  // bar to whatever surface now fills the top of the screen.
+  // `mobile-content` shows the picked view instead of it. Both views share the
+  // *document* scroll (the layout is in normal flow on mobile — structural for
+  // iOS 26 Safari's chrome, see styles.css), so hide/show drops the position:
+  // remember the home list offset across a detour into content, and start every
+  // newly opened view at the top. `view` is a dep so doc→doc jumps reset too.
   const contentActive = view.kind !== "empty";
+  const homeScroll = useRef(0);
   useEffect(() => {
+    const nowContent = isMobile && contentActive;
+    if (nowContent && !document.body.classList.contains("mobile-content"))
+      homeScroll.current = window.scrollY;
     document.body.classList.toggle("mobile", isMobile);
-    document.body.classList.toggle("mobile-content", isMobile && contentActive);
+    document.body.classList.toggle("mobile-content", nowContent);
     syncThemeColor();
-  }, [isMobile, contentActive]);
+    if (isMobile) window.scrollTo(0, nowContent ? 0 : homeScroll.current);
+  }, [isMobile, contentActive, view]);
 
   // ⌘K / Ctrl+K — the shortcut behind the search box's kbd badge: focus the
   // sidebar search from anywhere (same DOM reach the box's own click handler

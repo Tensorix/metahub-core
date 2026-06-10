@@ -100,7 +100,9 @@ function DocToc({ blocks }: { blocks: Block[] }) {
     // the topbar. Reading rects on each cross/scroll is cheap for a handful of
     // headings and avoids guessing from intersection ratios alone.
     const compute = () => {
-      const line = (scroller ? scroller.getBoundingClientRect().top : 0) + 100;
+      // Clamp at 0: on mobile the document scrolls (not .content), carrying
+      // the container's top above the viewport — the line stays put instead.
+      const line = Math.max(scroller ? scroller.getBoundingClientRect().top : 0, 0) + 100;
       let active = headings[0]!.id;
       for (const h of headings) {
         const el = document.querySelector(`.block[data-bid="${h.id}"]`);
@@ -122,9 +124,11 @@ function DocToc({ blocks }: { blocks: Block[] }) {
       if (el) obs.observe(el);
     }
     scroller?.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true }); // mobile: document scrolls
     return () => {
       obs.disconnect();
       scroller?.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
   }, [ids]);

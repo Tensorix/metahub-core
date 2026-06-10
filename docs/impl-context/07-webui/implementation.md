@@ -517,3 +517,11 @@ Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace
 - 前端:`src/webui/editor.tsx`(`stripInline`、`DocToc`、`DocView` 渲染接入)。
 - CSS:`src/core/sync/webui.ts`(`.doc-toc`/`.toc-*` 样式 + `.block` `scroll-margin-top`)。
 - 构建:`dist/webui.js`(改前端须重建)。
+
+## 20. v3.2 移动端改文档流滚动:iOS 26 Safari chrome 适配（2026-06-10）
+
+**取代 §18.5 的「整页下钻」fixed 双面板布局**(`.sidebar`/`.main` fixed + transform 滑动),并修正 §18.4 的认知——iOS 26 Safari 完全忽略 `theme-color` meta,`syncThemeColor()` 仅对 Android Chrome 生效。
+
+盒装布局(fixed 全屏面板 + 内部滚动)在 iOS 26 Safari 上结构性拿不到玻璃透视与实时变色:玻璃栏只合成**文档画布**滚到其下方的像素。移动端因此改为文档流滚动:活动视图入流(`min-height:100dvh`),document 自己滚,非活动视图 `display:none`(导航即真实渲染树进出 → 顶部实色扩展每次导航重采样);`.topbar` 吸顶且背景必须在自身;html/body 背景随 `body.mobile`/`.mobile-content` 跟随当前表面;页面切换动画改单视图 `page-in`;app.tsx 负责两个视图间的 document 滚动位置交接;DocToc 兼容 window 滚动。
+
+机制、5 轮踩坑过程与今后改动检查清单详见 **[ios26-safari-chrome.md](./ios26-safari-chrome.md)**。涉及文件:`src/webui/styles.css`(移动端 MQ 块)、`src/webui/app.tsx`(导航 effect)、`src/webui/theme.ts`(移除重采样 hack)、`src/webui/editor.tsx`(DocToc)。
