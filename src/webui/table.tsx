@@ -61,7 +61,8 @@ export function DatabaseView({
   const [tab, setTab] = useState(0);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ id: string; desc: boolean } | null>(null);
-  const [editing, setEditing] = useState<{ rec: string; prop: string } | null>(null);
+  // seed: type-to-edit's first character — the editor opens with it, replacing the old value.
+  const [editing, setEditing] = useState<{ rec: string; prop: string; seed?: string } | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
   const [cellSel, setCellSel] = useState<CellSel | null>(null);
   // Column width lives in prop.config.width (persisted + replicated); 180 is the default.
@@ -80,15 +81,26 @@ export function DatabaseView({
     setPeek(null);
     setTab(0);
     setCellSel(null);
+    setEditing(null);
     reload().catch((e) => onError(String(e.message)));
   }, [db.id]);
 
-  const commit = (rec: Rec, prop: Prop, value: unknown) =>
-    guard(async () => {
-      const updated = await api.updateRecord(rec.id, { [prop.id]: value });
-      setRecords((rs) => rs.map((r) => (r.id === rec.id ? updated : r)));
-      setEditing(null);
-    });
+  // Optimistic: apply locally and exit edit mode synchronously, reconcile with
+  // the server response in the background, roll back via reload() on failure.
+  const commit = (rec: Rec, prop: Prop, value: unknown) => {
+    setEditing(null);
+    setRecords((rs) => rs.map((r) =>
+      r.id === rec.id
+        ? { ...r, cells: { ...r.cells, [prop.id]: value }, values: { ...r.values, [prop.name]: value } }
+        : r,
+    ));
+    api.updateRecord(rec.id, { [prop.id]: value })
+      .then((updated) => setRecords((rs) => rs.map((r) => (r.id === updated.id ? updated : r))))
+      .catch((e) => {
+        onError(String(e.message));
+        reload().catch((err) => onError(String(err.message)));
+      });
+  };
 
   const createRecordWith = (values: Record<string, unknown>) =>
     guard(async () => {
@@ -198,6 +210,32 @@ export function DatabaseView({
     });
   };
 
+  // ---- keyboard cell navigation / editing ----
+  const isEditable = (t: PropType) => t !== "checkbox" && t !== "select" && t !== "multi_select";
+  const clampN = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+  const scrollCellIntoView = (r: number, c: number) =>
+    requestAnimationFrame(() => {
+      document.querySelector(`td.cell-td[data-r="${r}"][data-c="${c}"]`)
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  const selectCell = (r: number, c: number) => {
+    setCellSel({ a: { r, c }, b: { r, c } });
+    scrollCellIntoView(r, c);
+  };
+  const startEditAt = (r: number, c: number, seed?: string) => {
+    const rec = sorted[r];
+    const p = props[c];
+    if (!rec || !p) return;
+    selectCell(r, c);
+    // checkbox/select columns: keyboard just selects; their value UI stays click-driven.
+    if (isEditable(p.type)) setEditing({ rec: rec.id, prop: p.id, seed });
+  };
+  const moveEditNeighbor = (r: number, c: number, dc: number) => {
+    const nc = c + dc;
+    if (nc < 0 || nc >= props.length) { selectCell(r, c); return; }
+    startEditAt(r, nc);
+  };
+
   // Apply a value to every cell in the current selection, batching all changed
   // columns per record into a single updateRecord call.
   const applyToSelection = (valueFor: (p: Prop) => unknown) =>
@@ -246,18 +284,45 @@ export function DatabaseView({
   const peekRec = records.find((r) => r.id === peek) ?? null;
   const cr = cellSel ? normRect(cellSel) : null;
 
-  // Keyboard: copy (Cmd/Ctrl+C), clear (Delete/Backspace), dismiss (Escape) on the cell selection.
+  // Keyboard on the cell selection: arrows move (Shift extends), Cmd/Ctrl+C copies,
+  // Delete/Backspace clears, Escape dismisses, Enter/F2 edits, and typing a
+  // printable character starts editing with it (replacing the old value).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!cellSel || editing) return;
       const ae = document.activeElement as HTMLElement | null;
       const tag = (ae?.tagName || "").toLowerCase();
       if (tag === "input" || tag === "textarea" || ae?.isContentEditable) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copySelection(); }
-      else if (e.key === "Escape") { setCellSel(null); }
-      else if ((e.key === "Delete" || e.key === "Backspace")) {
-        const r = normRect(cellSel);
-        if (r.r0 !== r.r1 || r.c0 !== r.c1) { e.preventDefault(); applyToSelection(() => null); }
+      const single = cellSel.a.r === cellSel.b.r && cellSel.a.c === cellSel.b.c;
+      const { r, c } = cellSel.b;
+      const ARROWS: Record<string, [number, number]> = {
+        ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
+      };
+      if (e.key in ARROWS) {
+        e.preventDefault();
+        const [dr, dc] = ARROWS[e.key]!;
+        const b = { r: clampN(r + dr, 0, sorted.length - 1), c: clampN(c + dc, 0, props.length - 1) };
+        setCellSel(e.shiftKey ? { a: cellSel.a, b } : { a: b, b });
+        scrollCellIntoView(b.r, b.c);
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        copySelection();
+      } else if (e.key === "Escape") {
+        setCellSel(null);
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        applyToSelection(() => null);
+      } else if (single && (e.key === "Enter" || e.key === "F2")) {
+        e.preventDefault();
+        startEditAt(r, c);
+      } else if (single && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
+        // Type-to-edit. Known limit: an IME composition's first key (keyCode 229)
+        // can't seed the editor — enter editing via Enter / double-click first.
+        const p = props[c];
+        if (!p || !isEditable(p.type) || p.type === "date") return; // date: Enter/F2 only
+        if (p.type === "number" && !/[0-9.+-]/.test(e.key)) return;
+        e.preventDefault();
+        startEditAt(r, c, e.key);
       }
     };
     addEventListener("keydown", onKey);
@@ -439,9 +504,19 @@ export function DatabaseView({
                             prop={p}
                             first={ci === 0}
                             editing={editing?.rec === rec.id && editing?.prop === p.id}
-                            onEdit={() => setEditing({ rec: rec.id, prop: p.id })}
-                            onCancel={() => setEditing(null)}
+                            seed={editing?.rec === rec.id && editing?.prop === p.id ? editing.seed : undefined}
+                            onEdit={() => { selectCell(ri, ci); setEditing({ rec: rec.id, prop: p.id }); }}
                             onCommit={(v) => commit(rec, p, v)}
+                            onDone={(end) => {
+                              setEditing(null);
+                              if (end.reason !== "cancel" && end.changed) commit(rec, p, end.value);
+                              // Tab/Shift+Tab walk the row; Enter moves the selection down
+                              // (Airtable-style) without editing. With an active sort the
+                              // commit may re-order rows — the move targets pre-commit indices.
+                              if (end.reason === "tab") moveEditNeighbor(ri, ci, +1);
+                              else if (end.reason === "shifttab") moveEditNeighbor(ri, ci, -1);
+                              else if (end.reason === "enter") selectCell(clampN(ri + 1, 0, sorted.length - 1), ci);
+                            }}
                             onOpen={() => setPeek(rec.id)}
                             onRowMenu={(e) => openRowMenu(e, rec, () => setPeek(rec.id), () => duplicateRecord(rec), () => deleteRecords([rec.id]))}
                           />
@@ -510,35 +585,70 @@ export function DatabaseView({
 }
 
 // ---- cell ----
-/** Single-field inline editor for text/number/date/url/relation values:
- *  commits on blur or Enter, cancels on Escape. Shared by the grid cells and
- *  the record peek panel. */
+/** How an editing session ended: cancel discards; every other reason carries
+ *  the coerced value plus whether it differs from what the editor opened with —
+ *  callers skip the API call (and the history entry) when nothing changed. */
+type EditEnd =
+  | { reason: "cancel" }
+  | { reason: "blur" | "enter" | "tab" | "shifttab"; changed: boolean; value: unknown };
+
+/** Single-field inline editor for text/number/date/url/relation values.
+ *  Shared by the grid cells and the record peek panel.
+ *
+ *  Uncontrolled on purpose: the DOM value is seeded once on mount. A controlled
+ *  `value=` prop would be re-applied by any parent re-render that lands before
+ *  blur (e.g. pointerdown on another cell updating the selection), wiping what
+ *  the user typed and committing the stale value — the old "must press Enter
+ *  or lose the edit" bug. */
 function InlineEditInput({
-  prop, val, onCommit, onCancel,
+  prop, val, seed, captureTab, onDone,
 }: {
-  prop: Prop; val: unknown; onCommit: (v: unknown) => void; onCancel?: () => void;
+  prop: Prop; val: unknown;
+  /** type-to-edit: opens the editor with this text, replacing the old value */
+  seed?: string;
+  /** grid: Tab commits and moves to the neighbor; peek: leave Tab to the browser */
+  captureTab?: boolean;
+  onDone: (end: EditEnd) => void;
 }) {
   const initial = Array.isArray(val) ? (val as string[]).join(", ") : val == null ? "" : String(val);
+  const ref = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  useEffect(() => {
+    const el = ref.current!;
+    el.value = seed ?? initial;
+    el.focus();
+    try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* number/date inputs throw */ }
+  }, []);
+  // Single exit point: Enter/Escape/Tab unmount the input, which fires a blur —
+  // the `done` flag keeps that trailing blur from reporting a second end.
+  const finish = (reason: EditEnd["reason"]) => {
+    if (done.current) return;
+    done.current = true;
+    if (reason === "cancel") return onDone({ reason: "cancel" });
+    const raw = ref.current!.value;
+    onDone({ reason, changed: raw !== initial, value: coerceInput(prop.type, raw) });
+  };
   return (
     <input
+      ref={ref}
       class="inlineedit"
       type={prop.type === "number" ? "number" : prop.type === "date" ? "date" : "text"}
-      value={initial}
-      autofocus
-      onBlur={(e) => onCommit(coerceInput(prop.type, (e.target as HTMLInputElement).value))}
+      onBlur={() => finish("blur")}
       onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        if (e.key === "Escape") onCancel?.();
+        if (e.isComposing || e.keyCode === 229) return; // IME: Enter confirms the candidate, not the cell
+        if (e.key === "Enter") { e.preventDefault(); finish("enter"); }
+        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish("cancel"); }
+        else if (e.key === "Tab" && captureTab) { e.preventDefault(); finish(e.shiftKey ? "shifttab" : "tab"); }
       }}
     />
   );
 }
 
 function CellView({
-  rec, prop, first, editing, onEdit, onCancel, onCommit, onOpen, onRowMenu,
+  rec, prop, first, editing, seed, onEdit, onCommit, onDone, onOpen, onRowMenu,
 }: {
-  rec: Rec; prop: Prop; first: boolean; editing: boolean;
-  onEdit: () => void; onCancel: () => void; onCommit: (v: unknown) => void;
+  rec: Rec; prop: Prop; first: boolean; editing: boolean; seed?: string;
+  onEdit: () => void; onCommit: (v: unknown) => void; onDone: (end: EditEnd) => void;
   onOpen: () => void; onRowMenu: (e: MouseEvent) => void;
 }) {
   const val = rec.cells[prop.id];
@@ -551,16 +661,6 @@ function CellView({
     );
   }
 
-  // select / multi_select never enter the editing state — their menu opens on
-  // click instead (see onActivate below) — so this branch covers the rest.
-  if (editing && prop.type !== "select" && prop.type !== "multi_select") {
-    return (
-      <div class="cell">
-        <InlineEditInput prop={prop} val={val} onCommit={onCommit} onCancel={onCancel} />
-      </div>
-    );
-  }
-
   // Single click selects the cell (handled by the <td> pointer handler); double click edits.
   const onActivate = (e: MouseEvent) => {
     if (prop.type === "select" || prop.type === "multi_select") openSelectMenu(e, prop, val, onCommit);
@@ -568,21 +668,34 @@ function CellView({
   };
 
   const body = <CellDisplay prop={prop} val={val} />;
-  if (first) {
-    return (
-      <div class="cell" onDblClick={onActivate} onContextMenu={(e) => { e.preventDefault(); onRowMenu(e); }}>
-        <div class="firstcell">
-          {body}
-          <div class="rowactions">
-            <button class="rowopen" title="打开" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
-              <Icon name="openPeek" cls="ico sm" />
-            </button>
-          </div>
+  const display = first ? (
+    <div class="cell" onDblClick={onActivate} onContextMenu={(e) => { e.preventDefault(); onRowMenu(e); }}>
+      <div class="firstcell">
+        {body}
+        <div class="rowactions">
+          <button class="rowopen" title="打开" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+            <Icon name="openPeek" cls="ico sm" />
+          </button>
         </div>
       </div>
-    );
-  }
-  return <div class="cell" onDblClick={onActivate}>{body}</div>;
+    </div>
+  ) : (
+    <div class="cell" onDblClick={onActivate}>{body}</div>
+  );
+
+  // The editor overlays the td (.celledit is absolute over the relative cell-td)
+  // while the display content stays in flow — the row height never changes.
+  // select / multi_select never enter the editing state (menu opens on click).
+  return (
+    <>
+      {display}
+      {editing && prop.type !== "select" && prop.type !== "multi_select" && (
+        <div class="celledit">
+          <InlineEditInput prop={prop} val={val} seed={seed} captureTab onDone={onDone} />
+        </div>
+      )}
+    </>
+  );
 }
 
 function reorderById<T extends { id: string }>(items: T[], srcId: string, targetId: string, where: DropWhere): T[] {
@@ -855,6 +968,7 @@ function RecordPeek({
                     editing={editing === p.id}
                     onEdit={() => setEditing(p.id)}
                     onCommit={(v) => { onCommit(p, v); setEditing(null); }}
+                    onCloseEdit={() => setEditing(null)}
                   />
                 </div>
               ))}
@@ -866,16 +980,28 @@ function RecordPeek({
   );
 }
 
-function PeekValue({ prop, rec, editing, onEdit, onCommit }: { prop: Prop; rec: Rec; editing: boolean; onEdit: () => void; onCommit: (v: unknown) => void }) {
+function PeekValue({ prop, rec, editing, onEdit, onCommit, onCloseEdit }: {
+  prop: Prop; rec: Rec; editing: boolean;
+  onEdit: () => void; onCommit: (v: unknown) => void; onCloseEdit: () => void;
+}) {
   const val = rec.cells[prop.id];
   if (prop.type === "checkbox")
     return <div class="v"><input type="checkbox" checked={!!val} style={{ width: 16, height: 16, accentColor: "var(--accent)" }} onChange={() => onCommit(!val)} /></div>;
   if (prop.type === "select" || prop.type === "multi_select")
     return <div class="v" onClick={(e) => openSelectMenu(e as unknown as MouseEvent, prop, val, onCommit)}><CellDisplay prop={prop} val={val} /></div>;
   if (editing) {
+    // No captureTab: in the peek panel Tab follows native focus order and the
+    // resulting blur commits. onCommit closes the editor via the parent.
     return (
       <div class="v">
-        <InlineEditInput prop={prop} val={val} onCommit={onCommit} />
+        <InlineEditInput
+          prop={prop}
+          val={val}
+          onDone={(end) => {
+            if (end.reason !== "cancel" && end.changed) onCommit(end.value);
+            else onCloseEdit();
+          }}
+        />
       </div>
     );
   }
