@@ -57,7 +57,6 @@ function App() {
   const [docs, setDocs] = useState<DocSummary[]>([]);
   const [view, setView] = useState<View>({ kind: "empty" });
   const [error, setError] = useState("");
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [sbCollapsed, setSbCollapsed] = useState(false);
   const [sbWidth, setSbWidth] = useState(268);
   const [docMode, setDocMode] = useState<DocMode>("blocks");
@@ -112,7 +111,6 @@ function App() {
 
   const navigate = (v: View) => {
     setView(v);
-    setDrawerOpen(false);
   };
 
   const newEmptyDoc = () =>
@@ -229,21 +227,12 @@ function App() {
         onError={onError}
         afterDelete={(_, id) => { if ("id" in view && view.id === id) setView({ kind: "empty" }); }}
       />
-      {/* mobile drawer state is applied as the `open` class on .sidebar */}
-      <DrawerClass open={drawerOpen} />
-
       <div class="main">
         <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
           <button
             class={"iconbtn hamburger" + (sbCollapsed ? " show-collapsed" : "")}
             title={isMobile ? "返回" : sbCollapsed ? "展开侧栏" : "菜单"}
-            onClick={() =>
-              isMobile
-                ? navigate({ kind: "empty" })
-                : sbCollapsed
-                  ? setSbCollapsed(false)
-                  : setDrawerOpen(true)
-            }
+            onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
           >
             <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
           </button>
@@ -286,7 +275,6 @@ function App() {
         </div>
       </div>
 
-      <div class={"backdrop" + (drawerOpen ? " show" : "")} onClick={() => setDrawerOpen(false)} />
       <UiHost />
     </>
   );
@@ -325,15 +313,6 @@ function EmptyState({ onNewDoc }: { onNewDoc: () => void }) {
       <button class="estate-link" onClick={onNewDoc}>＋ 新建文档</button>
     </div>
   );
-}
-
-/** Toggles the mobile-drawer `open` class on the already-rendered .sidebar. */
-function DrawerClass({ open }: { open: boolean }) {
-  useEffect(() => {
-    const sb = document.querySelector(".sidebar");
-    if (sb) sb.classList.toggle("open", open);
-  }, [open]);
-  return null;
 }
 
 function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: string) => void; onOpenDb: (id: string) => void }) {
