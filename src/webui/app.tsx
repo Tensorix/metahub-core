@@ -18,6 +18,7 @@ import {
   MenuSep,
   confirmDialog,
   promptDialog,
+  toast,
 } from "./ui.tsx";
 
 // Single-page Preact app: browse/edit databases (Notion-like tables) and
@@ -198,6 +199,20 @@ function App() {
     syncThemeColor();
   }, [isMobile, contentActive]);
 
+  // ⌘K / Ctrl+K — the shortcut behind the search box's kbd badge: focus the
+  // sidebar search from anywhere (same DOM reach the box's own click handler
+  // uses, see sidebar.tsx).
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        document.querySelector<HTMLInputElement>(".sb-search input")?.focus();
+      }
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
+
   // When following the system theme, the OS flipping dark/light must re-resolve
   // <html data-resolved> (CSS keys off it alone — see theme.ts) and then retint
   // the status bar to the surface that just changed under it.
@@ -211,6 +226,43 @@ function App() {
     return () => mq.removeEventListener("change", on);
   }, []);
 
+  // Export actions, shared between the "…" menu and the share menu.
+  const exportDocMarkdown = (doc: DocSummary) => {
+    const body = docHandleRef.current?.snapshotMarkdown();
+    docHandleRef.current?.flushSave();
+    const fallback = body == null ? api.getDocument(doc.id).then((d) => d.body ?? "") : Promise.resolve(body);
+    fallback
+      .then((text) => downloadText(safeFilename(doc.title || doc.id, ".md"), text, "text/markdown;charset=utf-8"))
+      .catch((err) => onError(String(err.message)));
+  };
+  const exportDbCsv = (db: Db) => {
+    Promise.all([api.listProperties(db.id), api.listRecords(db.id)])
+      .then(([props, records]) =>
+        downloadText(safeFilename(db.name || db.id, ".csv"), databaseToCsv(props, records), "text/csv;charset=utf-8"),
+      )
+      .catch((err) => onError(String(err.message)));
+  };
+
+  const shareMenu = (e: MouseEvent) => {
+    openMenu(e, (close) => (
+      <>
+        <MenuItem icon="link" label="复制链接" onClick={() => {
+          close();
+          // The hash route *is* the shareable address (same host).
+          navigator.clipboard.writeText(location.origin + location.pathname + viewToHash(view))
+            .then(() => toast("链接已复制"))
+            .catch((err) => onError(String(err.message)));
+        }} />
+        {view.kind === "doc" && activeDoc && (
+          <MenuItem icon="download" label="导出 Markdown" onClick={() => { close(); exportDocMarkdown(activeDoc); }} />
+        )}
+        {view.kind === "db" && activeDb && (
+          <MenuItem icon="download" label="导出 CSV" onClick={() => { close(); exportDbCsv(activeDb); }} />
+        )}
+      </>
+    ));
+  };
+
   const moreMenu = (e: MouseEvent) => {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
@@ -219,15 +271,7 @@ function App() {
             close();
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
           }} />
-          <MenuItem icon="download" label="导出 Markdown" onClick={() => {
-            close();
-            const body = docHandleRef.current?.snapshotMarkdown();
-            docHandleRef.current?.flushSave();
-            const fallback = body == null ? api.getDocument(activeDoc.id).then((d) => d.body ?? "") : Promise.resolve(body);
-            fallback
-              .then((text) => downloadText(safeFilename(activeDoc.title || activeDoc.id, ".md"), text, "text/markdown;charset=utf-8"))
-              .catch((err) => onError(String(err.message)));
-          }} />
+          <MenuItem icon="download" label="导出 Markdown" onClick={() => { close(); exportDocMarkdown(activeDoc); }} />
           <MenuSep />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
@@ -245,14 +289,7 @@ function App() {
     } else if (view.kind === "db" && activeDb) {
       openMenu(e, (close) => (
         <>
-          <MenuItem icon="download" label="导出 CSV" onClick={() => {
-            close();
-            Promise.all([api.listProperties(activeDb.id), api.listRecords(activeDb.id)])
-              .then(([props, records]) =>
-                downloadText(safeFilename(activeDb.name || activeDb.id, ".csv"), databaseToCsv(props, records), "text/csv;charset=utf-8"),
-              )
-              .catch((err) => onError(String(err.message)));
-          }} />
+          <MenuItem icon="download" label="导出 CSV" onClick={() => { close(); exportDbCsv(activeDb); }} />
           <MenuSep />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
@@ -317,7 +354,7 @@ function App() {
           </div>
           {(view.kind === "doc" || view.kind === "db") && (
             <>
-              <button class="btn btn-ghost"><Icon name="share" cls="ico sm" />分享</button>
+              <button class="btn btn-ghost" onClick={shareMenu}><Icon name="share" cls="ico sm" />分享</button>
               <button class="iconbtn" onClick={moreMenu}><Icon name="dots" /></button>
             </>
           )}

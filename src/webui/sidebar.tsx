@@ -38,6 +38,13 @@ interface SidebarProps {
 
 let dragId: string | null = null;
 
+// For the search shortcut badge only (navigator.platform is deprecated but
+// remains the fallback where userAgentData hasn't shipped).
+const IS_MAC = /mac/i.test(
+  (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+    navigator.platform,
+);
+
 export function Sidebar(props: SidebarProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
@@ -232,6 +239,8 @@ export function Sidebar(props: SidebarProps) {
           onInput={(e) => setQ((e.target as HTMLInputElement).value)}
           onKeyDown={(e) => { if (e.key === "Enter" && q.trim()) props.onSearch(q.trim()); }}
         />
+        {/* the shortcut itself lives in app.tsx (global keydown) */}
+        <kbd>{IS_MAC ? "⌘K" : "Ctrl K"}</kbd>
       </div>
 
       <div class="sb-scroll">
