@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MhError } from "../../core/errors.ts";
 import { errorResponse, type Route, type RouteCtx } from "../../core/sync/routes.ts";
 import { listDatabases, createDatabase, updateDatabase, deleteDatabase } from "../../core/databases.ts";
 import {
@@ -290,8 +291,10 @@ export const webuiRoutes: Route[] = [
     summary: "Get one record. Query: ?id=<id>",
     response: RecordSchema,
     handler: handle((req, { db }) => {
-      const rec = getRecord(db, need(req, "id"));
-      return rec ?? new Response("not found", { status: 404 });
+      const id = need(req, "id");
+      const rec = getRecord(db, id);
+      if (!rec) throw new MhError("not_found", `no such record: ${id}`);
+      return rec;
     }),
   },
   {
@@ -354,8 +357,9 @@ export const webuiRoutes: Route[] = [
     summary: "Get one document with full body. Query: ?id=<id>",
     response: DocumentSchema,
     handler: handle((req, { db }) => {
-      const doc = getDocument(db, need(req, "id"));
-      if (!doc) return new Response("not found", { status: 404 });
+      const id = need(req, "id");
+      const doc = getDocument(db, id);
+      if (!doc) throw new MhError("not_found", `no such document: ${id}`);
       return { ...doc, version: documentVersion(db, doc.id) };
     }),
   },
