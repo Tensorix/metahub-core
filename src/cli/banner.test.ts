@@ -11,7 +11,7 @@ const base: BannerInfo = {
   version: "0.1.3",
   host: "127.0.0.1",
   port: 7777,
-  webuiUrl: "http://localhost:7777",
+  endpoints: [{ scope: "loopback", url: "http://localhost:7777" }],
   docsUrl: "http://localhost:7777/docs",
   authMode: "managed",
   token: "z89tth0oflam5qip7izuvs4u",
@@ -63,6 +63,26 @@ test("debug mode hides the token and shows disabled auth", () => {
 test("non-loopback host warns about network exposure", () => {
   const out = renderStartupBanner({ ...base, host: "0.0.0.0" });
   expect(out).toContain("reachable on your network");
+  const widths = out.split("\n").map(visibleWidth);
+  expect(new Set(widths).size).toBe(1);
+});
+
+test("multiple endpoints render scope labels; alignment holds", () => {
+  const out = renderStartupBanner({
+    ...base,
+    host: "0.0.0.0",
+    endpoints: [
+      { scope: "loopback", url: "http://localhost:7777" },
+      { scope: "lan", url: "http://192.168.1.42:7777" },
+      { scope: "public", url: "http://203.0.113.5:7777" },
+    ],
+  });
+  expect(out).toContain("Local");
+  expect(out).toContain("LAN");
+  expect(out).toContain("Public");
+  expect(out).toContain("http://192.168.1.42:7777");
+  expect(out).toContain("http://203.0.113.5:7777");
+  expect(out).not.toContain("WebUI"); // multi-endpoint uses scope labels instead
   const widths = out.split("\n").map(visibleWidth);
   expect(new Set(widths).size).toBe(1);
 });

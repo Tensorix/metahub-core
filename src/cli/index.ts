@@ -22,6 +22,7 @@ import { parseDuration } from "../core/sync/token.ts";
 import { startServer, PortInUseError } from "../core/sync/server.ts";
 import { print, fail } from "./output.ts";
 import { renderStartupBanner } from "./banner.ts";
+import { resolveEndpoints } from "./netaddr.ts";
 import { showUsage } from "./help.ts";
 
 const main = defineCommand({
@@ -91,7 +92,10 @@ if (argv.includes("--server")) {
     // A clean one-line message + exit 1 instead of Bun's bind stack trace.
     fail(e instanceof Error ? e.message : String(e), e instanceof PortInUseError ? 98 : 1);
   }
-  const webui = `http://localhost:${s.port}`;
+  // Reachable base URLs (synchronous: enumerates real NIC addresses only, no
+  // network probe). Loopback bind → just localhost; wildcard/explicit → + LAN/public.
+  const endpoints = resolveEndpoints(s.host, s.port);
+  const webui = endpoints[0]!.url; // localhost is always first
   const docs = `${webui}/docs`;
   print(
     {
@@ -101,6 +105,7 @@ if (argv.includes("--server")) {
       nodeId: s.node,
       docs: `/docs`,
       webui,
+      addresses: endpoints,
       authMode: s.authMode,
       token: s.token,
       exp: s.exp != null && Number.isFinite(s.exp) ? s.exp : null,
@@ -112,7 +117,7 @@ if (argv.includes("--server")) {
         version: pkg.version,
         host: s.host,
         port: s.port,
-        webuiUrl: webui,
+        endpoints,
         docsUrl: docs,
         authMode: s.authMode,
         token: s.token,

@@ -233,13 +233,45 @@ const HTML = `<!doctype html>
   .doc-source { display:block; width:100%; min-height:calc(100vh - 210px); resize:none; border:0;
     background:transparent; color:var(--fg); outline:none; overflow:hidden; padding:3px 2px 36vh;
     font-family:var(--ui); font-size:15px; line-height:1.7; tab-size:2; }
+  /* floating table of contents: a column of indented tick marks in the right
+     gutter that expands to a labelled list on hover (Notion / Vercel-docs style).
+     Fixed to the viewport so it never disturbs the centred .doc column. */
+  .doc-toc { position:fixed; top:72px; right:18px; z-index:40; display:flex; flex-direction:column; gap:2px;
+    width:24px; max-height:calc(100vh - 120px); padding:6px; box-sizing:content-box; overflow:hidden;
+    border:1px solid transparent; border-radius:var(--radius); background:transparent;
+    transition:width .22s ease, background .22s ease, border-color .22s ease, box-shadow .22s ease; }
+  .doc-toc:hover { width:228px; overflow-y:auto; background:var(--surface); border-color:var(--line);
+    box-shadow:var(--shadow-md); }
+  .toc-row { display:flex; align-items:center; gap:8px; width:100%; height:24px; padding:0 2px; border-radius:var(--radius-sm);
+    color:var(--muted); text-align:left; cursor:pointer; transition:color .12s, background .12s; }
+  .doc-toc:hover .toc-row { padding:3px 8px; height:auto; min-height:26px; }
+  .doc-toc:hover .toc-row:hover { background:var(--hover); color:var(--fg); }
+  .toc-row.active { color:var(--accent); }
+  /* collapsed: right-aligned ticks, length by heading level; active is accented */
+  .toc-tick { flex:none; margin-left:auto; height:2px; border-radius:2px; background:var(--line-strong);
+    transition:background .12s, width .22s ease, margin .22s ease; }
+  .toc-row.lvl-1 .toc-tick { width:16px; }
+  .toc-row.lvl-2 .toc-tick { width:11px; }
+  .toc-row.lvl-3 .toc-tick { width:7px; }
+  .toc-row.active .toc-tick { background:var(--accent); }
+  .doc-toc:hover .toc-tick { width:0; margin:0; }
+  /* expanded: labels, indented by level; hidden until hover */
+  .toc-label { flex:1; min-width:0; font-size:13px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    opacity:0; transition:opacity .18s ease; }
+  .doc-toc:hover .toc-label { opacity:1; }
+  .toc-row.lvl-2 .toc-label { padding-left:12px; font-size:12.5px; }
+  .toc-row.lvl-3 .toc-label { padding-left:24px; font-size:12.5px; color:var(--fg-soft); }
+  .toc-row.active .toc-label { color:var(--accent); font-weight:550; }
+  /* not enough room for the gutter → hide entirely (also covers mobile) */
+  @media (max-width:1100px) { .doc-toc { display:none; } }
+
   .block-wrap { position:relative; }
   .block-wrap.nested { padding-left:24px; }
   /* Subtle indent guide only for true sub-lists; suppressed for code/other
      nested content so code-in-list items don't stack a thicket of lines. */
   .block-wrap.nested:has(> .block.b-bullet, > .block.b-numbered, > .block.b-todo)::before {
     content:""; position:absolute; left:8px; top:2px; bottom:2px; width:1px; background:var(--line); }
-  .block { position:relative; display:flex; align-items:flex-start; padding:1px 0; border-radius:4px; }
+  .block { position:relative; display:flex; align-items:flex-start; padding:1px 0; border-radius:4px; scroll-margin-top:60px; }
   .block .gutter { position:absolute; left:-52px; top:2px; display:flex; gap:1px; opacity:0; transition:opacity .12s; }
   .block:hover .gutter, .block.drop-before .gutter, .block.drop-after .gutter, .block.dragging .gutter { opacity:1; }
   .gutter button { width:22px; height:24px; display:grid; place-items:center; color:var(--muted); border-radius:5px; }

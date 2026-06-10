@@ -68,6 +68,89 @@ function highlightCode(code: string, lang?: string): string {
   return code.endsWith("\n") ? html + "\n" : html;
 }
 
+/** Strip inline markdown markers so a heading reads as plain text in the TOC. */
+function stripInline(s: string): string {
+  return s
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(\*|_)([^*_]+)\1/g, "$2")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .trim();
+}
+
+/** Floating table-of-contents for the document's h1/h2/h3 blocks.
+ *  Collapsed to a column of indented tick marks in the right gutter; expands to
+ *  a labelled list on hover (CSS). Click jumps to the heading; a scroll-spy keeps
+ *  the current section highlighted. Re-rendered with DocView's `version` bump via
+ *  its `key`, so edits to headings flow through automatically. */
+function DocToc({ blocks }: { blocks: Block[] }) {
+  const headings = flattenBlocks(blocks)
+    .filter((b) => b.type === "h1" || b.type === "h2" || b.type === "h3")
+    .map((b) => ({ id: b.id, level: Number(b.type.slice(1)), text: stripInline(b.content) || "无标题" }));
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const ids = headings.map((h) => h.id).join("|");
+
+  useEffect(() => {
+    if (!headings.length) return;
+    const scroller = document.querySelector(".content");
+    let raf = 0;
+    // Active = the last heading whose top has scrolled above a line just below
+    // the topbar. Reading rects on each cross/scroll is cheap for a handful of
+    // headings and avoids guessing from intersection ratios alone.
+    const compute = () => {
+      const line = (scroller ? scroller.getBoundingClientRect().top : 0) + 100;
+      let active = headings[0]!.id;
+      for (const h of headings) {
+        const el = document.querySelector(`.block[data-bid="${h.id}"]`);
+        if (!el) continue;
+        if (el.getBoundingClientRect().top - line <= 1) active = h.id;
+        else break;
+      }
+      setActiveId(active);
+    };
+    const onScroll = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; compute(); }); };
+    compute();
+    const obs = new IntersectionObserver(compute, {
+      root: scroller as Element | null,
+      rootMargin: "-90px 0px -70% 0px",
+      threshold: [0, 1],
+    });
+    for (const h of headings) {
+      const el = document.querySelector(`.block[data-bid="${h.id}"]`);
+      if (el) obs.observe(el);
+    }
+    scroller?.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      obs.disconnect();
+      scroller?.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [ids]);
+
+  if (!headings.length) return null;
+
+  const jump = (id: string) => {
+    document.querySelector(`.block[data-bid="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return (
+    <nav class="doc-toc" aria-label="文档目录">
+      {headings.map((h) => (
+        <button
+          key={h.id}
+          class={"toc-row lvl-" + h.level + (h.id === activeId ? " active" : "")}
+          title={h.text}
+          onClick={() => jump(h.id)}
+        >
+          <span class="toc-tick" />
+          <span class="toc-label">{h.text}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 export function DocView({
   docId,
   onTitleChange,
@@ -856,6 +939,8 @@ export function DocView({
   };
 
   return (
+    <>
+    {mode === "blocks" && <DocToc key={version} blocks={blocks} />}
     <div
       class={"doc" + (mode === "source" ? " source-mode" : "")}
       onMouseDown={(e) => onDocMouseDown(e as MouseEvent)}
@@ -924,6 +1009,7 @@ export function DocView({
 
       {bar && !sel && <FormatBar x={bar.x} y={bar.y} onCommand={applyFormatCommand} />}
     </div>
+    </>
   );
 }
 

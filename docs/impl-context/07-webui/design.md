@@ -347,3 +347,23 @@ v1（§7.1）即把「无移动端」列为缺口,v2 的「移动端抽屉」(�
 - 移动端下钻的浏览器历史/后退键集成(返回仅靠顶栏「←」,未接 `history.pushState`)。
 - 移动端表格(`DatabaseView`)的专门重排;当前沿用桌面网格 + 横向滚动。
 - PWA 安装(manifest/Service Worker)、离线缓存。
+
+## 18. v3.1 文档目录(右侧悬浮刻度条)(2026-06-10)
+
+长文档缺少结构概览与快速跳转。本节在文档编辑器右侧空白处加一个 **Notion / Vercel-docs 风格的悬浮目录**:默认折叠为一列按层级缩进的细刻度线,鼠标悬停展开为带标题文字的列表,点击平滑跳转,随滚动高亮当前章节。纯前端 + 内联 CSS,不动 core/oplog/sync/REST。代码级实现见 [implementation.md §19](./implementation.md)。
+
+### 18.1 关键设计决策
+
+1. **数据源 = 文档的 h1/h2/h3 块,随 `version` 实时更新**。目录条目由 `flattenBlocks(blocks)` 过滤标题块得到,标题文字经 `stripInline()` 去掉行内 markdown 标记(`**`/`*`/`` ` ``/`~~`/链接)再展示,空标题占位「无标题」。组件以 DocView 的 `version` 作 `key`——每次编辑都 bump,标题增删改自动反映到目录,无需额外订阅或上抬状态。
+
+2. **定位 = `position: fixed` 锚定视口右侧,而非重构三栏布局**。`.doc` 固定 `max-width:740px` 居中,两侧留白充裕。目录用 fixed 浮在右侧留白上,既不挤压正文宽度、也不必把 `app.tsx` 的「侧栏 + main」二栏改成三栏 flex(目录是文档专属,放进 `DocView` 渲染最贴合关注点分离;db/搜索/设置视图天然无目录)。仅在 `mode === "blocks"` 时渲染(源码模式隐藏)。
+
+3. **折叠/展开 = 纯 CSS hover 过渡**。折叠态宽 24px,仅显示右对齐刻度线(h1/h2/h3 长度递减、当前章节用 `--accent`);`:hover` 过渡到 228px,刻度收为 0、标题文字淡入。全程复用既有 CSS 变量(`--accent`/`--muted`/`--line`/`--surface`/`--shadow-md` 等),深色模式自动生效。
+
+4. **当前章节高亮 = 读 rect 计算,而非纯交叉比**。`IntersectionObserver`(`root` 取 `.content` 滚动容器)+ rAF 节流的 `scroll` 监听共同触发重算;每次取「顶部已滚过顶栏下方约 100px 基准线的最后一个标题」为当前项——对少量标题读 `getBoundingClientRect()` 足够廉价且判定确定,避免仅靠 intersection ratio 在多标题同屏时的歧义。标题列表变化时(`useEffect` 依赖标题 id 串)重建 observer。跳转用 `scrollIntoView({behavior:"smooth"})`,`.block` 加 `scroll-margin-top:60px` 避开顶栏。
+
+### 18.2 暂不实现
+
+- 窄屏 / 移动端的目录:`@media (max-width:1100px)` 直接隐藏(留白不足以容纳),不做顶栏按钮唤出的浮层。
+- 目录拖拽、固定展开(pin)、折叠分组等交互;当前仅悬停展开。
+- h4+ 更深层级(数据模型仅 h1–h3)。

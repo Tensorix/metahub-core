@@ -483,3 +483,37 @@ Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace
 - 前端:`src/webui/app.tsx`(`useIsMobile`/`MOBILE_MQ`、body 类 effect、返回键、`prefers-color-scheme` 监听)、`src/webui/theme.ts`(`syncThemeColor` + `setTheme` 接线)、`src/webui/icons.tsx`(新增 `arrowLeft`)。
 - CSS/外壳:`src/core/sync/webui.ts`(head meta + 重写移动 `@media` 块)。
 - 构建:`dist/webui.js`(改前端须重建)。
+
+## 19. v3.1 文档目录:右侧悬浮刻度条(`editor.tsx` `DocToc`,2026-06-10)
+
+配套设计见 [design.md §18](./design.md)。文档编辑器右侧加悬浮目录(折叠刻度线 / 悬停展开 / 点击跳转 / 滚动高亮),纯前端 + 内联 CSS。
+
+### 19.1 `DocToc` 组件(`editor.tsx`)
+
+- `stripInline(s)`:正则依次去掉 `` `code` ``、`**b**`、`*i*`/`_i_`、`~~s~~`、`[t](url)` 标记,得到纯文本标签。
+- `DocToc({ blocks })`:`flattenBlocks(blocks).filter(type ∈ {h1,h2,h3})` → `{id, level, text}`(`level = Number(type.slice(1))`,`text = stripInline(content) || "无标题"`)。无标题时返回 `null`。渲染 `<nav class="doc-toc">`,每条为 `<button class="toc-row lvl-N {active}">` 内含 `.toc-tick`(折叠刻度)+ `.toc-label`(展开文字),`title` 设为完整标题。
+- **滚动高亮**:`useEffect` 依赖 `headings.map(h=>h.id).join("|")`。`compute()` 取 `.content` 滚动容器顶 + 100px 为基准线,顺序找「top ≤ 基准线的最后一个标题」设为 `activeId`;`IntersectionObserver`(`root=.content`,`rootMargin:"-90px 0px -70% 0px"`)+ rAF 节流 `scroll` 监听共同触发 `compute`;卸载/标题变更 `obs.disconnect()` + 移除监听 + `cancelAnimationFrame`。
+- **跳转**:`document.querySelector('.block[data-bid="ID"]')?.scrollIntoView({behavior:"smooth", block:"start"})`。
+
+### 19.2 接入点(`editor.tsx` `DocView` 渲染)
+
+- `DocView` 返回值由单个 `.doc` 改包成 fragment;在 `mode === "blocks"` 时于 `.doc` 前渲染 `<DocToc key={version} blocks={blocks} />`(`version` 每次编辑 bump → 目录随之重渲染,标题实时同步)。源码模式不渲染。
+
+### 19.3 CSS(`webui.ts` 内联,「document editor」段)
+
+- `.doc-toc`:`position:fixed; top:72px; right:18px; z-index:40`;折叠态 `width:24px; overflow:hidden`,`:hover` → `width:228px; overflow-y:auto; background:var(--surface); border:var(--line); box-shadow:var(--shadow-md)`;`transition` 宽度/背景/边框/阴影。
+- `.toc-tick`:右对齐刻度,`.lvl-1/2/3` 宽 16/11/7px,`.active` 用 `--accent`;`:hover` 时收为 `width:0`。
+- `.toc-label`:`opacity:0` → `:hover` 时 `1`;`.lvl-2/3` 左缩进 12/24px;`.active` 用 `--accent` + `font-weight:550`。
+- `.block` 加 `scroll-margin-top:60px`(跳转避开顶栏)。
+- `@media (max-width:1100px){ .doc-toc{ display:none } }`(窄屏/移动端隐藏)。
+
+### 19.4 验证
+
+- `bun run build`:`dist/webui.js` 打包成功;`bunx tsc --noEmit`:改动文件(`editor.tsx`/`webui.ts`)零错误。
+- 手验(重建 + 重启服务 + 硬刷新):多标题文档右侧出刻度条,悬停展开标题列表,点击平滑跳转,滚动时当前章节刻度/条目高亮跟随;编辑标题文字实时更新、增删标题块条目随之增减;源码模式目录消失;窗口拖窄至 <1100px / 移动端目录隐藏;深色模式配色正常。
+
+### 19.5 涉及文件
+
+- 前端:`src/webui/editor.tsx`(`stripInline`、`DocToc`、`DocView` 渲染接入)。
+- CSS:`src/core/sync/webui.ts`(`.doc-toc`/`.toc-*` 样式 + `.block` `scroll-margin-top`)。
+- 构建:`dist/webui.js`(改前端须重建)。

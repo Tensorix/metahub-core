@@ -3,13 +3,22 @@
 // non-TTY path is handled upstream by print()/wantJson(), so this only ever
 // renders for a human terminal (or `--pretty`).
 
+import type { Scope } from "./netaddr.ts";
+
 export type AuthMode = "managed" | "static" | "disabled";
+
+/** One reachable base URL, tagged with its network scope. */
+export interface Endpoint {
+  scope: Scope;
+  url: string;
+}
 
 export interface BannerInfo {
   version: string;
   host: string;
   port: number;
-  webuiUrl: string;
+  /** Base URLs the server answers on. One entry → rendered as a plain "WebUI". */
+  endpoints: Endpoint[];
   docsUrl: string;
   authMode: AuthMode;
   token: string | null;
@@ -118,11 +127,19 @@ export function renderStartupBanner(info: BannerInfo): string {
   }
   push("", ""); // spacer
 
-  // links
-  push(
-    `${"WebUI".padEnd(LABEL_W)}${info.webuiUrl}`,
-    `${label("WebUI")}${c.cyan(info.webuiUrl)}`,
-  );
+  // links — a single endpoint stays the familiar "WebUI <url>"; multiple are
+  // labelled by scope (Local / LAN / Public) so the user knows which reaches them.
+  const SCOPE_LABEL: Record<Scope, string> = { loopback: "Local", lan: "LAN", public: "Public" };
+  if (info.endpoints.length <= 1) {
+    const url = info.endpoints[0]?.url ?? info.docsUrl.replace(/\/docs$/, "");
+    push(`${"WebUI".padEnd(LABEL_W)}${url}`, `${label("WebUI")}${c.cyan(url)}`);
+  } else {
+    for (const ep of info.endpoints) {
+      const name = SCOPE_LABEL[ep.scope];
+      const paint = ep.scope === "public" ? c.yellow(name.padEnd(LABEL_W)) : c.dim(name.padEnd(LABEL_W));
+      push(`${name.padEnd(LABEL_W)}${ep.url}`, `${paint}${c.cyan(ep.url)}`);
+    }
+  }
   push(
     `${"Docs".padEnd(LABEL_W)}${info.docsUrl}`,
     `${label("Docs")}${c.cyan(info.docsUrl)}`,
