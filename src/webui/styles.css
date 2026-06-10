@@ -881,6 +881,12 @@
     .navitem .tw { width:26px; height:26px; }
     .sb-section-head { font-size:12px; }
     .sb-search kbd { display:none; }  /* no hardware keyboard, no shortcut hint */
+    /* Search box is hidden until the header search button reveals it; it then
+       slides+fades down in. Desktop base (.sb-search{display:flex}) is untouched,
+       so search stays always-on there. reduced-motion is handled globally. */
+    .sb-search { display:none; }
+    .sb-search.open { display:flex; animation:search-reveal .22s cubic-bezier(.32,.72,0,1); }
+    @keyframes search-reveal { from { opacity:0; transform:translateY(-8px); } }
     .btn { font-size:15px; }
     .crumb { font-size:16px; }
     .pop .item { font-size:16px; }

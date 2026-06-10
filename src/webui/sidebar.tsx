@@ -44,12 +44,22 @@ export function Sidebar(props: SidebarProps) {
   const { view, navigate } = props;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
+  // Mobile only: the search box is hidden until the header's search button
+  // reveals it (CSS-gated, like the sites/settings .sb-act buttons). Desktop
+  // ignores this and always shows the box.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [version, setVersion] = useState<string | null>(null);
   const startResize = useResize(props.onResize);
 
   useEffect(() => {
     api.version().then((v) => setVersion(v.version)).catch(() => setVersion(null));
   }, []);
+
+  // Focus the input as it reveals so the soft keyboard comes up immediately.
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
 
   const toggle = (id: string) => {
     const next = new Set(expanded);
@@ -235,7 +245,16 @@ export function Sidebar(props: SidebarProps) {
         </div>
         {/* Mobile-only (CSS-gated, like the collapse button below): on the
             full-page home the sites/settings entries live up here as icon
-            buttons instead of the desktop .sb-footer rows, freeing the bottom. */}
+            buttons instead of the desktop .sb-footer rows, freeing the bottom.
+            The search button reveals the (mobile-hidden) search box below. */}
+        <button
+          class={"sb-act" + (searchOpen ? " active" : "")}
+          title="搜索"
+          aria-label="搜索"
+          onClick={() => setSearchOpen((v) => !v)}
+        >
+          <Icon name="search" cls="ico" />
+        </button>
         <button
           class={"sb-act" + (view.kind === "sites" ? " active" : "")}
           title="站点"
@@ -258,9 +277,10 @@ export function Sidebar(props: SidebarProps) {
         </button>
       </div>
 
-      <div class="sb-search" onClick={(e) => (e.currentTarget.querySelector("input") as HTMLInputElement)?.focus()}>
+      <div class={"sb-search" + (searchOpen ? " open" : "")} onClick={(e) => (e.currentTarget.querySelector("input") as HTMLInputElement)?.focus()}>
         <Icon name="search" cls="ico sm" />
         <input
+          ref={searchRef}
           placeholder="搜索…"
           value={q}
           onInput={(e) => setQ((e.target as HTMLInputElement).value)}
