@@ -149,14 +149,22 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
         const exempt =
           url.pathname === HEALTH_PATH ||
           url.pathname === RENEW_PATH ||
-          url.pathname === PAIR_PATH;
+          url.pathname === PAIR_PATH ||
+          // PWA install metadata + the worker script: browsers fetch these
+          // without credentials, and they carry nothing sensitive (app name,
+          // icons, generic caching code), so they sit outside the token gate.
+          url.pathname === "/manifest.webmanifest" ||
+          url.pathname === "/sw.js" ||
+          url.pathname.startsWith("/icons/");
 
         // Token gate (no-op in --debug). A browser without a token gets the
         // unlock page; everything else gets 401. Once the unlock page sets the
         // cookie the reload passes here and the real content is served.
         if (!exempt && !hasValidToken(req, url, auth)) {
           return wantsHtml(req)
-            ? new Response(unlockPage(), { headers: HTML_HEADERS })
+            ? // x-mh-unlock tells the service worker this 200 is the unlock
+              // page, not the app shell — caching it would brick offline starts.
+              new Response(unlockPage(), { headers: { ...HTML_HEADERS, "x-mh-unlock": "1" } })
             : unauthorized();
         }
       }

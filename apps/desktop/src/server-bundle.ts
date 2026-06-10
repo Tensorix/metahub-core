@@ -9,8 +9,9 @@
  * before starting. Requires `dist/webui.js` (root `bun run build`) at compile time.
  */
 import webuiBundle from "../../../dist/webui.js" with { type: "text" };
+import swBundle from "../../../dist/sw.js" with { type: "text" };
 import { setWebuiBundle } from "../../../src/webui/server/assets.ts";
 import { runSidecar } from "./sidecar.ts";
 
-setWebuiBundle(webuiBundle);
+setWebuiBundle({ js: webuiBundle, sw: swBundle });
 runSidecar();

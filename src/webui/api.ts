@@ -194,8 +194,57 @@ function touchesNav(method: string, path: string): boolean {
   return method !== "GET" && (path.startsWith("/api/database") || path.startsWith("/api/document"));
 }
 
+// ---- auth -------------------------------------------------------------------
+// The app attaches the stored token itself instead of relying on the
+// server-injected fetch shim: a PWA shell served from the service worker cache
+// is byte-identical to what the server sent, but new worker contexts and
+// non-window fetches never pass through window.fetch, and owning the logic
+// here keeps renewal behavior identical online and offline. The shim still
+// covers hosted /sites/* pages; it skips requests that already carry an
+// authorization header, so the two never fight.
+
+const TOKEN_KEY = "mh_token";
+const RENEW_PATH = "/auth/token";
+
+function storedToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveToken(t: string): void {
+  try {
+    localStorage.setItem(TOKEN_KEY, t);
+  } catch {
+    /* private mode */
+  }
+  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(t)}; path=/; SameSite=Strict; Max-Age=31536000`;
+}
+
+/** fetch with the stored Bearer token; on 401, swap an in-grace token for the
+ *  current one via /auth/token and retry once (seamless rotation). */
+export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const t = storedToken();
+  const headers = new Headers(init.headers);
+  if (t && !headers.has("authorization")) headers.set("authorization", `Bearer ${t}`);
+  const res = await fetch(path, { ...init, headers });
+  if (res.status !== 401 || !t) return res;
+
+  const renewed = await fetch(RENEW_PATH, {
+    headers: { authorization: `Bearer ${t}` },
+  }).catch(() => null);
+  if (!renewed?.ok) return res;
+  const d = (await renewed.json().catch(() => null)) as { token?: string } | null;
+  if (!d?.token) return res;
+  saveToken(d.token);
+  headers.set("authorization", `Bearer ${d.token}`);
+  return fetch(path, { ...init, headers });
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await authFetch(path, {
     method,
     headers: body !== undefined ? { "content-type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -318,7 +367,7 @@ export const api = {
     req<{ ok: boolean }>("DELETE", `/api/site/file?site=${q(site)}&path=${q(path)}`),
   /** Raw-bytes upload — can't use req() (it JSON-stringifies the body). */
   uploadSiteFile: async (site: string, path: string, file: Blob): Promise<SiteFile> => {
-    const res = await fetch(`/api/site/file?site=${q(site)}&path=${q(path)}`, {
+    const res = await authFetch(`/api/site/file?site=${q(site)}&path=${q(path)}`, {
       method: "POST",
       headers: { "content-type": file.type || "application/octet-stream" },
       body: file,

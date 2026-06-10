@@ -11,10 +11,11 @@
  * runMain on import, so we dynamic-import it *after* setWebuiBundle() to
  * guarantee the bundle is registered before the server can serve a request.
  *
- * Requires dist/webui.js (root `bun run build`) at compile time.
+ * Requires dist/webui.js + dist/sw.js (root `bun run build`) at compile time.
  */
 import webuiBundle from "../../dist/webui.js" with { type: "text" };
+import swBundle from "../../dist/sw.js" with { type: "text" };
 import { setWebuiBundle } from "../webui/server/assets.ts";
 
-setWebuiBundle(webuiBundle);
+setWebuiBundle({ js: webuiBundle, sw: swBundle });
 await import("./index.ts");

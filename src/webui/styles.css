@@ -798,6 +798,7 @@
     .kg-particle { opacity:0 !important; }
   }
   .error-bar { margin:12px 24px; padding:10px 14px; background:var(--danger-soft); color:var(--danger); border-radius:var(--radius-sm); font-size:13px; cursor:pointer; }
+  .offline-bar { margin:12px 24px 0; padding:8px 14px; background:var(--surface-2); color:var(--fg-soft); border-radius:var(--radius-sm); font-size:12.5px; }
   .search-hit { margin:0 0 8px; padding:10px 14px; background:var(--surface); border-radius:var(--radius-sm); font-size:13px; cursor:pointer; }
   .search-hit:hover { background:var(--surface-2); }
   .search-hit mark { background:transparent; color:var(--accent); font-weight:600; }

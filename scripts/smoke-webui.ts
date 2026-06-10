@@ -32,7 +32,19 @@ export async function smokeWebui(binaryPath: string): Promise<void> {
     }
     const body = await res.text();
     if (body.length === 0) throw new Error("/webui.js body is empty");
-    console.log(`✅ webui smoke ok (${(body.length / 1024).toFixed(0)}KB) — ${binaryPath}`);
+
+    // PWA surface: the service worker (embedded like the app bundle, with the
+    // version hash stamped in) and the install manifest must both serve.
+    const sw = await fetch(`http://127.0.0.1:${port}/sw.js`);
+    const swBody = await sw.text();
+    if (sw.status !== 200) throw new Error(`/sw.js → ${sw.status} (expected 200): ${swBody}`);
+    if (swBody.includes("__MH_SW_VERSION__")) {
+      throw new Error("/sw.js still contains the unstamped __MH_SW_VERSION__ placeholder");
+    }
+    const mf = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`);
+    if (mf.status !== 200) throw new Error(`/manifest.webmanifest → ${mf.status} (expected 200)`);
+
+    console.log(`✅ webui smoke ok (${(body.length / 1024).toFixed(0)}KB app, ${(swBody.length / 1024).toFixed(1)}KB sw) — ${binaryPath}`);
   } finally {
     proc.kill("SIGKILL");
   }

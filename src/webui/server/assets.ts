@@ -5,6 +5,7 @@ import { join } from "node:path";
 // compiled binaries carry the stylesheet with no extra asset file. In dev the
 // file is re-read from disk per request instead — see getCss().
 import APP_CSS from "../styles.css" with { type: "text" };
+import { ICON_192, ICON_512, ICON_180 } from "./icons.ts";
 
 // Serves the browser WebUI at `/`. Core never imports this module: it is wired
 // into the server through startServer's `ui` option (see core/sync/server.ts),
@@ -43,6 +44,8 @@ const HTML = `<!doctype html>
      alone, so the dark palette exists exactly once — see styles.css. Dark also
      pre-tints the status bar (hex mirrors --bg) so the first frame isn't white. -->
 <script>try{var t=localStorage.getItem('mh-theme'),d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.resolved=d?'dark':'light';if(d)document.getElementById('theme-color-meta').content='#1a1a1c'}catch(e){}</script>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
 <link rel="stylesheet" href="/webui.css">
 </head>
 <body>
@@ -51,18 +54,22 @@ const HTML = `<!doctype html>
 </body>
 </html>`;
 
-/** Bundle injected by `bun build --compile` binaries (e.g. the desktop
- *  sidecar), where neither a sibling dist/webui.js nor the source tree exists
- *  at runtime — the bundle is embedded at build time and handed in here. */
+/** Bundles injected by `bun build --compile` binaries (e.g. the desktop
+ *  sidecar), where neither a sibling dist/ nor the source tree exists at
+ *  runtime — embedded at build time and handed in here. */
 let injectedJs: string | null = null;
+let injectedSw: string | null = null;
 
-export function setWebuiBundle(js: string): void {
-  injectedJs = js;
+export function setWebuiBundle(bundle: { js: string; sw: string }): void {
+  injectedJs = bundle.js;
+  injectedSw = bundle.sw;
 }
 
 let cachedJs: string | null = null;
 /** Dev only: newest src/webui mtime baked into cachedJs (cache key). */
 let cachedJsMtime = 0;
+let cachedSw: string | null = null;
+let cachedSwMtime = 0;
 
 /** Newest mtime across the browser-bundle sources (src/webui/**.ts[x]).
  *  ./server is skipped — server-side code never enters the browser bundle. */
@@ -118,6 +125,64 @@ async function getCss(): Promise<string> {
   return APP_CSS;
 }
 
+/** The service worker source, resolved like getJs(): embedded > dev rebuild >
+ *  prebuilt dist/sw.js. Version interpolation happens in getSw() below. */
+async function getSwRaw(): Promise<string> {
+  if (injectedSw != null) return injectedSw;
+
+  if (RUNNING_FROM_SOURCE) {
+    const srcDir = fileURLToPath(new URL("..", import.meta.url));
+    const newest = newestSourceMtime(srcDir);
+    if (cachedSw == null || newest > cachedSwMtime) {
+      const entry = fileURLToPath(new URL("../sw.ts", import.meta.url));
+      const res = await Bun.build({ entrypoints: [entry], target: "browser" });
+      if (!res.success) throw new AggregateError(res.logs, "sw build failed");
+      cachedSw = await res.outputs[0]!.text();
+      cachedSwMtime = newest;
+    }
+    return cachedSw;
+  }
+
+  if (cachedSw == null) {
+    const prebuilt = Bun.file(fileURLToPath(new URL("./sw.js", import.meta.url)));
+    if (!(await prebuilt.exists())) {
+      throw new Error("sw bundle missing: dist/sw.js was not built — run `bun run build`");
+    }
+    cachedSw = await prebuilt.text();
+  }
+  return cachedSw;
+}
+
+/** /sw.js with its cache version stamped in: a hash of the current js+css, so
+ *  any bundle change byte-diffs the worker (the browser's update trigger) and
+ *  stale shell caches are dropped on activation. */
+async function getSw(): Promise<string> {
+  const [raw, js, css] = await Promise.all([getSwRaw(), getJs(), getCss()]);
+  const version = new Bun.CryptoHasher("sha256").update(js).update(css).digest("hex").slice(0, 16);
+  return raw.replaceAll("__MH_SW_VERSION__", version);
+}
+
+/** Web app manifest: installability metadata for add-to-home-screen/PWA. */
+const MANIFEST = JSON.stringify({
+  name: "Metahub",
+  short_name: "Metahub",
+  start_url: "/",
+  scope: "/",
+  display: "standalone",
+  background_color: "#ffffff",
+  theme_color: "#ffffff",
+  icons: [
+    { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+  ],
+});
+
+const ICONS: Record<string, string> = {
+  "/icons/icon-192.png": ICON_192,
+  "/icons/icon-512.png": ICON_512,
+  "/icons/icon-180.png": ICON_180,
+};
+
 /** Pre-build & cache the JS bundle ahead of the first request. In dev the first
  *  `/webui.js` hit otherwise pays for a `Bun.build` (1–3s) that blocks the
  *  WebUI's first paint; warming it right after the server starts listening
@@ -147,15 +212,24 @@ export async function serveWebui(req: Request): Promise<Response | null> {
 
   if (pathname === "/") return asset(HTML, "text/html; charset=utf-8");
   if (pathname === "/webui.css") return asset(await getCss(), "text/css; charset=utf-8");
-  if (pathname === "/webui.js") {
+  if (pathname === "/manifest.webmanifest") return asset(MANIFEST, "application/manifest+json");
+  const icon = ICONS[pathname];
+  if (icon) {
+    return new Response(Buffer.from(icon, "base64"), {
+      // Icons never change within a deploy; let the browser keep them a day.
+      headers: { "content-type": "image/png", "cache-control": "public, max-age=86400" },
+    });
+  }
+  if (pathname === "/webui.js" || pathname === "/sw.js") {
     try {
-      return asset(await getJs(), "text/javascript; charset=utf-8");
+      const body = pathname === "/sw.js" ? await getSw() : await getJs();
+      return asset(body, "text/javascript; charset=utf-8");
     } catch (e) {
       // This catch is the only thing between the error and oblivion: Bun only
       // auto-logs *uncaught* handler errors, and we catch this one. Log the full
       // error object (not `${e}`) so getJs's AggregateError sub-logs surface —
       // otherwise the 500 lives solely in the response body, never the logs.
-      console.error("[webui] failed to serve /webui.js —", e);
+      console.error(`[webui] failed to serve ${pathname} —`, e);
       return new Response(`webui build failed: ${e}`, { status: 500 });
     }
   }

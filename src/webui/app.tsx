@@ -97,6 +97,41 @@ function App() {
     };
   }, [reloadNav, onError]);
 
+  // PWA: register the service worker (offline shell + stale read mirror).
+  // Secure-context only — plain-HTTP LAN setups keep today's behavior. On an
+  // update taking control mid-session the running page is one bundle behind;
+  // first-install claims are silent (hadController distinguishes the two).
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    if (!window.isSecureContext) return;
+    const hadController = navigator.serviceWorker.controller != null;
+    let notified = false;
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* registration is progressive enhancement; never block the app */
+    });
+    const onChange = () => {
+      if (!hadController || notified) return;
+      notified = true;
+      toast("界面已更新,刷新页面生效");
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", onChange);
+    return () => navigator.serviceWorker.removeEventListener("controllerchange", onChange);
+  }, []);
+
+  // Online/offline indicator: phase 1 offline is a stale read-only mirror, so
+  // surface the state instead of letting writes fail mysteriously.
+  const [offline, setOffline] = useState(typeof navigator !== "undefined" && !navigator.onLine);
+  useEffect(() => {
+    const on = () => setOffline(false);
+    const off = () => setOffline(true);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+
   // Desktop only, no network: light the "设置" sidebar dot if a newer core is
   // already staged on disk (installed > running) — typically downloaded by the
   // app's silent startup auto-updater — and only waiting for a restart.
@@ -341,6 +376,7 @@ function App() {
           )}
         </div>
 
+        {offline && <div class="offline-bar">⚡ 离线 — 可浏览已缓存的内容,修改会失败;恢复网络后自动恢复</div>}
         {error && <div class="error-bar" onClick={() => setError("")}>⚠ {error}（点击关闭）</div>}
 
         <div class="content">
