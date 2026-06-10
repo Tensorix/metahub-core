@@ -238,7 +238,16 @@ function App() {
             close();
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
           }} />
-          <MenuItem icon="download" label="导出 Markdown" onClick={() => { close(); exportDocMarkdown(activeDoc); }} />
+          <MenuItem icon="copy" label="创建副本" onClick={async () => {
+            close();
+            // The copy is made server-side, so flush pending edits first.
+            docHandleRef.current?.flushSave();
+            try {
+              const d = await api.duplicateDocument(activeDoc.id, { title: `${activeDoc.title || "无标题"} 副本` });
+              navigate({ kind: "doc", id: d.id });
+              toast("已创建副本");
+            } catch (err) { onError(String((err as Error).message)); }
+          }} />
           <MenuItem icon="history" label="版本历史" onClick={() => {
             close();
             // Flush pending edits first so the history list includes them.
@@ -262,7 +271,14 @@ function App() {
     } else if (view.kind === "db" && activeDb) {
       openMenu(e, (close) => (
         <>
-          <MenuItem icon="download" label="导出 CSV" onClick={() => { close(); exportDbCsv(activeDb); }} />
+          <MenuItem icon="copy" label="创建副本" onClick={async () => {
+            close();
+            try {
+              const nd = await api.duplicateDatabase(activeDb.id, { name: `${activeDb.name} 副本` });
+              navigate({ kind: "db", id: nd.id });
+              toast("已创建副本");
+            } catch (err) { onError(String((err as Error).message)); }
+          }} />
           <MenuSep />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();

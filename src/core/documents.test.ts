@@ -10,6 +10,7 @@ import {
   editDocument,
   appendDocument,
   prependDocument,
+  duplicateDocument,
   documentVersion,
   listDocuments,
   backfillDocumentOrderKeys,
@@ -37,6 +38,46 @@ test("create stores body as blocks; getDocument returns serialized body", () => 
   const doc = createDocument(db, { title: "Spec", body: "alpha\n\nbeta\n\ngamma" });
   expect(getDocument(db, doc.id)!.body).toBe("alpha\n\nbeta\n\ngamma");
   expect(blockIds(db, doc.id).length).toBe(3);
+});
+
+test("duplicateDocument copies title + blocks into a new doc placed after the source", () => {
+  const db = makeNode("aaaa");
+  const a = createDocument(db, { title: "A", body: "" });
+  const src = createDocument(db, { title: "Spec", body: "alpha\n\nbeta" });
+  const z = createDocument(db, { title: "Z", body: "" });
+
+  const dup = duplicateDocument(db, src.id);
+  expect(dup.id).not.toBe(src.id);
+  expect(dup.title).toBe("Spec");
+  expect(dup.body).toBe("alpha\n\nbeta");
+  // Fresh block ids, not shared with the source.
+  expect(blockIds(db, dup.id).length).toBe(2);
+  expect(blockIds(db, dup.id).some((id) => blockIds(db, src.id).includes(id))).toBe(false);
+  // Editing the copy must not touch the source.
+  updateDocument(db, dup.id, { body: "changed" });
+  expect(getDocument(db, src.id)!.body).toBe("alpha\n\nbeta");
+
+  // Sits immediately after its source among siblings.
+  const order = listDocuments(db).map((d) => d.id);
+  expect(order).toEqual([a.id, src.id, dup.id, z.id]);
+
+  // Optional title override.
+  const named = duplicateDocument(db, src.id, { title: "Spec 副本" });
+  expect(named.title).toBe("Spec 副本");
+});
+
+test("duplicateDocument preserves database_id and parent_id", () => {
+  const db = makeNode("aaaa");
+  const parent = createDocument(db, { title: "Parent" });
+  const src = createDocument(db, { title: "Child", body: "x", parent_id: parent.id, database_id: "db_scope" });
+  const dup = duplicateDocument(db, src.id);
+  expect(dup.parent_id).toBe(parent.id);
+  expect(dup.database_id).toBe("db_scope");
+});
+
+test("duplicateDocument throws for a missing document", () => {
+  const db = makeNode("aaaa");
+  expect(() => duplicateDocument(db, "doc_missing")).toThrow(/no such document/);
 });
 
 test("create with no body leaves body null and no blocks", () => {

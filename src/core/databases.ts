@@ -2,6 +2,8 @@ import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
 import { MhError } from "./errors.ts";
+import { addProperty, listProperties, type PropertyConfig } from "./properties.ts";
+import { createRecord, listRecords } from "./records.ts";
 
 export interface DatabaseRow {
   id: string;
@@ -30,6 +32,34 @@ export const updateDatabase = grouped(function updateDatabase(
   if (fields.name !== undefined) emit(db, "databases", id, "name", fields.name);
   if (fields.icon !== undefined) emit(db, "databases", id, "icon", fields.icon);
   return getDatabase(db, id)!;
+});
+
+/**
+ * Copy a database whole — name, icon, every property (type/config/position
+ * preserved) and every record (in order, values carried by property name). A
+ * relation column pointing back at the *source* database is remapped to the
+ * copy so it stays self-referential; relations to other databases keep their
+ * target. `name`/`icon` override the defaults; the locale "copy" suffix is the
+ * caller's job. All emits share one txn, so the copy syncs as one revision.
+ */
+export const duplicateDatabase = grouped(function duplicateDatabase(
+  db: Database,
+  id: string,
+  opts: { name?: string; icon?: string } = {},
+): DatabaseRow {
+  const src = getDatabase(db, id);
+  if (!src) throw new MhError("not_found", `no such database: ${id}`);
+  const dup = createDatabase(db, {
+    name: opts.name ?? src.name,
+    icon: (opts.icon ?? src.icon) ?? undefined,
+  });
+  for (const p of listProperties(db, id)) {
+    const config: PropertyConfig | undefined =
+      p.config?.database === id ? { ...p.config, database: dup.id } : (p.config ?? undefined);
+    addProperty(db, dup.id, { name: p.name, type: p.type, config, position: p.position });
+  }
+  for (const r of listRecords(db, id)) createRecord(db, dup.id, r.values);
+  return getDatabase(db, dup.id)!;
 });
 
 export function getDatabase(db: Database, id: string): DatabaseRow | null {

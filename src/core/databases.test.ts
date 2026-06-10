@@ -5,8 +5,11 @@ import {
   createDatabase,
   getDatabase,
   updateDatabase,
+  duplicateDatabase,
   deleteDatabase,
 } from "./databases.ts";
+import { addProperty, listProperties } from "./properties.ts";
+import { createRecord, listRecords } from "./records.ts";
 
 function newDb(node = "test-node"): Database {
   const db = new Database(":memory:");
@@ -30,6 +33,52 @@ test("updateDatabase renames and changes icon", () => {
   // clearing the icon
   const cleared = updateDatabase(db, d.id, { icon: null });
   expect(cleared.icon).toBeNull();
+});
+
+test("duplicateDatabase copies schema (order/type) and all records", () => {
+  const db = newDb();
+  const src = createDatabase(db, { name: "Tasks", icon: "✅" });
+  addProperty(db, src.id, { name: "Title", type: "text" });
+  addProperty(db, src.id, { name: "Points", type: "number" });
+  createRecord(db, src.id, { Title: "First", Points: 1 });
+  createRecord(db, src.id, { Title: "Second", Points: 2 });
+
+  const dup = duplicateDatabase(db, src.id, { name: "Tasks 副本" });
+  expect(dup.id).not.toBe(src.id);
+  expect(dup.name).toBe("Tasks 副本");
+  expect(dup.icon).toBe("✅");
+
+  const props = listProperties(db, dup.id);
+  expect(props.map((p) => [p.name, p.type])).toEqual([
+    ["Title", "text"],
+    ["Points", "number"],
+  ]);
+
+  const recs = listRecords(db, dup.id);
+  expect(recs.map((r) => r.values["Title"])).toEqual(["First", "Second"]);
+  expect(recs.map((r) => r.values["Points"])).toEqual([1, 2]);
+
+  // Independent copy: a new record in the source must not appear in the copy.
+  createRecord(db, src.id, { Title: "Third" });
+  expect(listRecords(db, dup.id).length).toBe(2);
+});
+
+test("duplicateDatabase remaps a self-referential relation to the copy", () => {
+  const db = newDb();
+  const src = createDatabase(db, { name: "People" });
+  addProperty(db, src.id, { name: "Name", type: "text" });
+  addProperty(db, src.id, { name: "Manager", type: "relation", config: { database: src.id } });
+
+  const dup = duplicateDatabase(db, src.id);
+  const rel = listProperties(db, dup.id).find((p) => p.name === "Manager")!;
+  expect(rel.config?.database).toBe(dup.id);
+});
+
+test("duplicateDatabase defaults the name to the source and throws when missing", () => {
+  const db = newDb();
+  const src = createDatabase(db, { name: "Tasks" });
+  expect(duplicateDatabase(db, src.id).name).toBe("Tasks");
+  expect(() => duplicateDatabase(db, "db_missing")).toThrow(/no such database/);
 });
 
 test("updateDatabase throws for a missing database", () => {

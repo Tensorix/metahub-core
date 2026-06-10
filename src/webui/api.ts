@@ -207,6 +207,8 @@ export const api = {
   createDatabase: (b: { name: string; icon?: string }) => req<Db>("POST", "/api/databases", b),
   updateDatabase: (id: string, b: { name?: string; icon?: string | null }) =>
     req<Db>("PATCH", `/api/database?id=${q(id)}`, b),
+  duplicateDatabase: (id: string, b?: { name?: string; icon?: string }) =>
+    req<Db>("POST", `/api/database/duplicate?id=${q(id)}`, b ?? {}),
   deleteDatabase: (id: string) => req<{ ok: boolean }>("DELETE", `/api/database?id=${q(id)}`),
 
   // properties
@@ -251,6 +253,8 @@ export const api = {
   ) => req<Doc>("PATCH", `/api/document?id=${q(id)}`, b),
   moveDocument: (id: string, target: string, where: "before" | "after" | "into") =>
     req<Doc>("PATCH", `/api/document/move?id=${q(id)}`, { target, where }),
+  duplicateDocument: (id: string, b?: { title?: string; parent_id?: string | null }) =>
+    req<Doc>("POST", `/api/document/duplicate?id=${q(id)}`, b ?? {}),
   deleteDocument: (id: string) => req<{ ok: boolean }>("DELETE", `/api/document?id=${q(id)}`),
 
   // history

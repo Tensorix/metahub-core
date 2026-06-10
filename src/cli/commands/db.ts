@@ -4,6 +4,7 @@ import {
   createDatabase,
   listDatabases,
   getDatabase,
+  duplicateDatabase,
   deleteDatabase,
 } from "../../core/databases.ts";
 import { resolveRef } from "../../core/resolve.ts";
@@ -38,6 +39,19 @@ const get = defineCommand({
   }),
 });
 
+const duplicate = defineCommand({
+  meta: { name: "duplicate", description: "Copy a database whole — schema and all records" },
+  args: {
+    id: { type: "positional", required: true, description: "Database ref (id/prefix/name)" },
+    name: { type: "string", description: "Name for the copy (defaults to the source name)" },
+  },
+  run: guard((args) => {
+    const db = openMetahub();
+    const row = duplicateDatabase(db, resolveRef(db, args.id, { kind: "db" }), { name: args.name });
+    print(row, () => `${row.id}\t${row.name}`);
+  }),
+});
+
 const del = defineCommand({
   meta: { name: "delete", description: "Delete a database" },
   args: { id: { type: "positional", required: true, description: "Database ref (id/prefix/name)" } },
@@ -51,5 +65,5 @@ const del = defineCommand({
 
 export default defineCommand({
   meta: { name: "db", description: "Manage databases (notion-like tables)" },
-  subCommands: { create, list, get, delete: del },
+  subCommands: { create, list, get, duplicate, delete: del },
 });

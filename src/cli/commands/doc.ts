@@ -9,6 +9,7 @@ import {
   editDocument,
   appendDocument,
   prependDocument,
+  duplicateDocument,
   deleteDocument,
   documentVersion,
   type DocumentSummary,
@@ -284,6 +285,19 @@ const revert = defineCommand({
   }),
 });
 
+const duplicate = defineCommand({
+  meta: { name: "duplicate", description: "Copy a document (title + all blocks) next to the source" },
+  args: {
+    id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" },
+    title: { type: "string", description: "Title for the copy (defaults to the source title)" },
+  },
+  run: guard((args) => {
+    const db = openMetahub();
+    const row = duplicateDocument(db, docId(db, args.id), { title: args.title });
+    print({ id: row.id, title: row.title }, () => `${row.id}\t${row.title}`);
+  }),
+});
+
 const del = defineCommand({
   meta: { name: "delete", description: "Delete a document" },
   args: { id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" } },
@@ -297,5 +311,5 @@ const del = defineCommand({
 
 export default defineCommand({
   meta: { name: "doc", description: "Manage markdown documents" },
-  subCommands: { create, list, get, read, update, edit, append, prepend, history, revert, delete: del },
+  subCommands: { create, list, get, read, update, edit, append, prepend, history, revert, duplicate, delete: del },
 });

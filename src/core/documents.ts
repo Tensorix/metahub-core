@@ -324,6 +324,42 @@ export const moveDocument = grouped(function moveDocument(
   return getDocument(db, id)!;
 });
 
+/**
+ * Copy a document — title, every block (verbatim, with fresh block ids so the
+ * copy edits independently) and its `database_id`/`parent_id`. The copy lands
+ * right after its source in the same sibling scope. Blocks are cloned at the
+ * block level (not via a markdown round-trip) so empty list items / blank-line
+ * runs survive losslessly. `title`/`parentId` override the defaults; the locale
+ * "copy" suffix is the caller's job. `created_hlc` is the copy's own birth time.
+ */
+export const duplicateDocument = grouped(function duplicateDocument(
+  db: Database,
+  id: string,
+  opts: { title?: string; parentId?: string | null } = {},
+): DocumentRow {
+  const src = getDocument(db, id);
+  if (!src) throw new MhError("not_found", `no such document: ${id}`);
+  ensureBlocks(db, id);
+  const blocks = liveBlocks(db, id);
+  const parentId = opts.parentId !== undefined ? opts.parentId : src.parent_id;
+  const dup = createDocument(db, {
+    title: opts.title ?? src.title,
+    database_id: src.database_id ?? undefined,
+    parent_id: parentId ?? undefined,
+  });
+  if (blocks.length)
+    insertBlocks(
+      db,
+      dup.id,
+      blocks.map((b) => ({ text: b.text, blankAfter: b.blank_after })),
+      null,
+      null,
+    );
+  // Sit the copy right after its source when they share a sibling scope.
+  if (parentId === src.parent_id) moveDocument(db, dup.id, src.id, "after");
+  return getDocument(db, dup.id)!;
+});
+
 export const updateDocument = grouped(function updateDocument(
   db: Database,
   id: string,

@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { MhError } from "../../core/errors.ts";
 import { errorResponse, type Route, type RouteCtx } from "../../core/sync/routes.ts";
-import { listDatabases, createDatabase, updateDatabase, deleteDatabase } from "../../core/databases.ts";
+import {
+  listDatabases,
+  createDatabase,
+  updateDatabase,
+  duplicateDatabase,
+  deleteDatabase,
+} from "../../core/databases.ts";
 import {
   listProperties,
   addProperty,
@@ -26,6 +32,7 @@ import {
   updateDocument,
   documentVersion,
   moveDocument,
+  duplicateDocument,
   deleteDocument,
 } from "../../core/documents.ts";
 import {
@@ -109,6 +116,10 @@ const UpdateDatabaseReq = z.object({
   name: z.string().optional(),
   icon: z.string().nullable().optional(),
 });
+const DuplicateDatabaseReq = z.object({
+  name: z.string().optional().describe("Name for the copy (defaults to the source name)"),
+  icon: z.string().optional(),
+});
 const CreatePropertyReq = z.object({
   db: z.string(),
   name: z.string(),
@@ -139,6 +150,10 @@ const UpdateDocumentReq = z.object({
   // change (CLI, another window, sync) makes the PATCH fail 409 `stale`
   // instead of silently clobbering it.
   if_match: z.string().optional(),
+});
+const DuplicateDocumentReq = z.object({
+  title: z.string().optional().describe("Title for the copy (defaults to the source title)"),
+  parent_id: z.string().nullable().optional(),
 });
 
 const RevisionBase = z.object({
@@ -291,6 +306,17 @@ export const webuiRoutes: Route[] = [
     handler: handle(async (req, { db }) => {
       const body = (await req.json()) as { name?: string; icon?: string | null };
       return updateDatabase(db, need(req, "id"), body);
+    }),
+  },
+  {
+    method: "POST",
+    path: "/api/database/duplicate",
+    summary: "Copy a database whole — schema and all records. Query: ?id=<id>",
+    request: DuplicateDatabaseReq,
+    response: DatabaseSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json().catch(() => ({}))) as { name?: string; icon?: string };
+      return duplicateDatabase(db, need(req, "id"), body);
     }),
   },
   {
@@ -526,6 +552,24 @@ export const webuiRoutes: Route[] = [
       };
       const { if_match, ...fields } = body;
       const doc = updateDocument(db, need(req, "id"), fields, { ifMatch: if_match });
+      return { ...doc, version: documentVersion(db, doc.id) };
+    }),
+  },
+  {
+    method: "POST",
+    path: "/api/document/duplicate",
+    summary: "Copy a document — title and every block — next to the source. Query: ?id=<id>",
+    request: DuplicateDocumentReq,
+    response: DocumentSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json().catch(() => ({}))) as {
+        title?: string;
+        parent_id?: string | null;
+      };
+      const doc = duplicateDocument(db, need(req, "id"), {
+        title: body.title,
+        parentId: body.parent_id,
+      });
       return { ...doc, version: documentVersion(db, doc.id) };
     }),
   },
