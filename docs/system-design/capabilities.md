@@ -39,6 +39,7 @@ mh get <ref>                     # 通用查找:按 id/前缀/名字解析,自�
 mh db create <name> [--icon]
 mh db list
 mh db get <ref>
+mh db duplicate <ref> [--name <名>]    # 整库复制:属性列+全部记录;自引用 relation 重映射到副本(名称默认沿用原名)
 mh db delete <ref>
 
 mh prop add <name> --type <type> [--db <db>] [--options a,b] [--target <db>] [--config JSON] [--position N]
@@ -99,6 +100,7 @@ mh doc create --title <title> [--body @file] [--db <db-ref>] [--parent <doc-ref>
 mh doc list [--db <db-ref>]                 # 按 parent_id 缩进成树
 mh doc get <doc-ref>
 mh doc update <doc-ref> [--title] [--body] [--parent <doc-ref>]
+mh doc duplicate <doc-ref> [--title <题>]   # 复制文档(标题+全部块,块级克隆),副本紧随原文档之后
 mh doc delete <doc-ref>
 ```
 
@@ -313,6 +315,7 @@ GET  /docs  /docs.json       # OpenAPI 文档（Scalar UI / 规范）
 
 GET    /api/databases        POST /api/databases
                              PATCH/DELETE /api/database    # ?id=<id>（重命名/图标、删除）
+POST   /api/database/duplicate                             # ?id=<id>（整库复制：属性列+记录）
 GET    /api/properties       POST /api/properties          # ?db=<id>
                              PATCH/DELETE /api/property     # ?id=<id>（改名/类型/选项/排序、删除）
 GET    /api/records          POST /api/records             # ?db=<id>
@@ -320,6 +323,7 @@ GET    /api/record           PATCH/DELETE /api/record       # ?id=<id>
 GET    /api/documents        POST /api/documents
 GET    /api/document         PATCH/DELETE /api/document      # ?id=<id>
                              PATCH /api/document/move        # ?id=<id>（拖拽：before/after/into，改父级+重排）
+POST   /api/document/duplicate                               # ?id=<id>（复制文档：标题+全部块，副本紧随原文）
 GET    /api/search           # ?q=<text>&limit=<n>
 
 GET    /api/document/history   /api/record/history   /api/property/history   # ?id= 修订列表（新→旧）
@@ -347,6 +351,7 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
     - **有序列表起始号**（v2.3）：按用户输入的首项数字起算（`5.` 从 5 递增），后续自动递增；插入/删除/重排后序号自动重建。
     - 防抖保存复用 `PATCH /api/document` 的按块 reconcile,保存 Markdown 会规范化缩进，并保留同级有序列表的起始号。
   - **版本历史**：文档「…」菜单 → 右侧抽屉（修订列表 + 任意版本只读预览 + 「对比当前」git 式行级 diff，行内改动深浅双层高亮）；记录 peek「…」菜单 → 历史视图（逐修订字段 diff、恢复）。恢复带 `if_match`（409 stale → 提示刷新重试）；repair 修订默认隐藏（「显示修复」开关）；设备名经 `/api/nodes` 解析。
+  - **顶栏菜单**（v3.1）：「分享」收口复制链接与导出（文档=Markdown、数据库=CSV，「…」菜单不再重复导出项）；「…」菜单含**创建副本**（文档=标题+全部块、数据库=属性列+全部记录，服务端 core 级原子复制、单一修订随 sync 收敛，完成后跳转副本；后缀「副本」是 WebUI 文案，core 不写死 locale）、视图切换、版本历史、重命名、删除。
   - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题。
   - **移动端适配**（v3.0，触摸设备 + ≤768px）：首页变整页导航侧栏、点条目下钻到整屏内容、顶栏「←」返回；操作按钮无 hover 常显、≥16px 字号与触点（输入框 16px 防 iOS 放大）；状态栏 `theme-color` 随主题跟随、安全区适配。桌面端不受影响（判据含 `pointer:coarse`，拖窄桌面窗口不会切移动样式）。
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。

@@ -259,6 +259,7 @@ mh --server --port 7777
 - 多块选中：拖拽跨块或在块左侧空白处纵向拖拽框选整块、Shift+点击扩展，选中块加底色；对选中块键盘批量删除、Tab/Shift+Tab 缩进、Cmd/Ctrl+C·X 复制/剪切为 Markdown、Cmd/Ctrl+D 复制、Cmd/Ctrl+A 全选、Shift+↑/↓ 扩展、整组拖拽移动。
 - 撤销/重做：Cmd/Ctrl+Z 撤销、Cmd/Ctrl+Shift+Z 或 Ctrl+Y 重做，覆盖插入/删除/移动/缩进/转换等结构操作与文字输入（连续打字合并为一步）。
 - 编辑防抖保存：前端逻辑块树序列化为规范 Markdown body → `PATCH /api/document`，服务端 `reconcileBody` 按 core block 规则保留 CRDT 身份。保存会规范化缩进、保留同级有序列表起始号，不保证保留原始源码排版。
+- 顶栏（文档与数据库视图同款）：「分享」菜单收口复制链接与导出（文档=Markdown、数据库=CSV）；「…」菜单含**创建副本**（`POST /api/document|database/duplicate`，服务端原子复制——文档=标题+全部块、数据库=属性列+全部记录，完成即跳转副本）、视图切换（仅文档）、版本历史、重命名、删除。
 
 ### 5. 搜索
 
