@@ -30,7 +30,7 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 - 删除 database/property/document 内置写时级联(主路径);`repairHub` 兜底 sync 引入的坏数据,并在 `restore` 后自动跑。
 - `mh doctor` / `mh repair [--dry-run]` 暴露给用户;**绝不 hard-delete 用户内容**(重名只报告)。
 
-仍未做:把弱引用唯一性升级为写时强校验(当前重名只报告)、`/sync` 后增量校验、WebUI 暴露体检入口。
+仍未做:`/sync` 后增量校验、WebUI 暴露体检入口。(属性重名已**定策不做**写时强校验——访问层报 `ambiguous` + CLI warning + WebUI id-keyed,见下文「属性重名」。)
 
 ## 已改善: 修改历史与回滚 + 磁盘回收
 
@@ -45,16 +45,16 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 
 仍未做:sites 历史、自动定时压缩、彻底抹除已删数据(需全 peer 墓碑确认)。
 
+## 属性重名(已定策,不做硬约束)
+
+同库重复属性名是**有意保留的合法状态**——离线多端并发创建同名列经 sync 汇合天然存在,写时硬约束会与收敛冲突。已落地的处理(见 [data-model.md](data-model.md) records 节 / [capabilities.md](capabilities.md) 属性节):
+
+- name-keyed 记录读写/过滤/排序命中多个重名属性 → 报 `ambiguous`(exit 4),要求改用 property id;不静默 last-wins。
+- `prop add` / `prop update --name` 造成重名 → 操作成功 + stderr warning(列出冲突 id)。
+- record 读返回 name-keyed `values`(重名有损)+ id-keyed `cells`(无损);WebUI 全程按 id 读写,重名列互不串扰,新建列默认名自动去重。
+- `mh doctor` 报告 `dup_name`(repair 只报告、不自动改名/删,以免破坏用户内容)。
+
 ## P0: 当前体验硬伤
-
-### 属性名唯一性
-
-当前同一 database 下可以创建重复属性名。引用解析遇到重名时已会**报错列候选**(不再静默误选),`mh doctor` 也会把重名列为 `dup_name`,但仍缺少**写时硬约束**(repair 只报告、不自动改名/删,以免破坏用户内容)。
-
-建议:
-
-- 默认禁止同库重复属性名(写时强校验)。
-- 或者继续依赖解析层的歧义报错 + `doctor` 报告 + 要求使用 property id / 更长前缀。
 
 ### 友好参数错误
 

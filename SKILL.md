@@ -100,10 +100,17 @@ mh prop update Status --options "todo,doing,done,blocked"
 mh prop remove Owner
 ```
 
+Column names are not unique. If an add/rename makes a name collide, the command
+still succeeds but prints a stderr warning with the conflicting property ids —
+switch to ids for that column from then on.
+
 ## Records (rows)
 
 `--data` takes a JSON object of `{column: value}`. Updates are **partial** (only
-the keys you pass change).
+the keys you pass change). Keys may be column names or property ids; when two
+columns share a name, name-keyed access fails with `code:"ambiguous"` (exit 4) —
+use the property ids from `mh prop list`. Reads return `values` (name-keyed)
+plus `cells` (keyed by property id; the lossless source under duplicate names).
 
 ```bash
 mh record create --data '{"Title":"Write spec","Status":"todo"}'   # → prints the new id
