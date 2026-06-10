@@ -32,6 +32,44 @@ type View =
   | { kind: "settings" }
   | { kind: "sites" };
 
+// --- hash routing ------------------------------------------------------------
+// Views are mirrored to "#/" routes so browser history (and a phone's hardware
+// back) navigates the app, deep links survive a refresh, and doc/db URLs are
+// shareable. The desktop Quick Notes window owns the bare "#quick" hash; it
+// never matches a "#/" route and parses to the empty view in a plain browser.
+
+function viewToHash(v: View): string {
+  switch (v.kind) {
+    case "db": return `#/db/${encodeURIComponent(v.id)}`;
+    case "doc": return `#/doc/${encodeURIComponent(v.id)}`;
+    case "search": return `#/search?q=${encodeURIComponent(v.q)}`;
+    case "settings": return "#/settings";
+    case "sites": return "#/sites";
+    case "empty": return "#/";
+  }
+}
+
+/** Inverse of viewToHash; anything unrecognized (or with malformed escapes) is
+ *  the empty view, so a hand-mangled URL degrades to the home screen. */
+function parseHash(h: string): View {
+  if (!h.startsWith("#/")) return { kind: "empty" };
+  const [path = "", query = ""] = h.slice(2).split("?", 2);
+  const [kind, id = ""] = path.split("/", 2);
+  try {
+    if (kind === "db" && id) return { kind: "db", id: decodeURIComponent(id) };
+    if (kind === "doc" && id) return { kind: "doc", id: decodeURIComponent(id) };
+    if (kind === "search") {
+      const q = new URLSearchParams(query).get("q");
+      if (q) return { kind: "search", q };
+    }
+    if (kind === "settings") return { kind: "settings" };
+    if (kind === "sites") return { kind: "sites" };
+  } catch {
+    // malformed percent-escape — treat as unrecognized
+  }
+  return { kind: "empty" };
+}
+
 const MOBILE_MQ = "(max-width: 768px) and (pointer: coarse)";
 
 // Drive the mobile navigation model off device capability, not UA sniffing: a
@@ -55,11 +93,14 @@ function useIsMobile(): boolean {
 function App() {
   const [databases, setDatabases] = useState<Db[]>([]);
   const [docs, setDocs] = useState<DocSummary[]>([]);
-  const [view, setView] = useState<View>({ kind: "empty" });
+  const [view, setView] = useState<View>(() => parseHash(location.hash));
   const [error, setError] = useState("");
   const [sbCollapsed, setSbCollapsed] = useState(false);
   const [sbWidth, setSbWidth] = useState(268);
   const [docMode, setDocMode] = useState<DocMode>("blocks");
+  // Deep links can name a db before the nav lists arrive (or a bogus id);
+  // distinguishes "still loading" from "genuinely not found" below.
+  const [navReady, setNavReady] = useState(false);
   const [updatePending, setUpdatePending] = useState(false);
   const docHandleRef = useRef<DocViewHandle | null>(null);
   const isMobile = useIsMobile();
@@ -73,6 +114,7 @@ function App() {
     const [d, o] = await Promise.all([api.listDatabases(), api.listDocuments()]);
     setDatabases(d);
     setDocs(o);
+    setNavReady(true);
   }, []);
 
   useEffect(() => {
@@ -109,9 +151,28 @@ function App() {
     });
   }, []);
 
-  const navigate = (v: View) => {
+  // Single-writer rule: every view change goes through navigate() (which keeps
+  // the hash in sync), except the hashchange listener below reacting to the
+  // browser's own back/forward. pushState doesn't fire hashchange, so the two
+  // writers never echo each other.
+  const navigate = (v: View, opts?: { replace?: boolean }) => {
+    const h = viewToHash(v);
+    if (location.hash !== h) {
+      history[opts?.replace ? "replaceState" : "pushState"](null, "", h);
+    }
     setView(v);
   };
+
+  useEffect(() => {
+    // Normalize a stray non-route hash (e.g. a browser opening /#quick) so
+    // later pushes don't stack on top of it.
+    if (location.hash && !location.hash.startsWith("#/")) {
+      history.replaceState(null, "", "#/");
+    }
+    const on = () => setView(parseHash(location.hash));
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
 
   const newEmptyDoc = () =>
     api.createDocument({ title: "" })
@@ -177,7 +238,7 @@ function App() {
           <MenuItem icon="trash" label="删除文档" danger onClick={async () => {
             close();
             const ok = await confirmDialog({ title: "删除文档？", message: `「${activeDoc.title || "无标题"}」将被删除。`, confirmLabel: "删除", danger: true });
-            if (ok) { await api.deleteDocument(activeDoc.id); setView({ kind: "empty" }); }
+            if (ok) { await api.deleteDocument(activeDoc.id); navigate({ kind: "empty" }, { replace: true }); }
           }} />
         </>
       ));
@@ -202,7 +263,7 @@ function App() {
           <MenuItem icon="trash" label="删除数据库" danger onClick={async () => {
             close();
             const ok = await confirmDialog({ title: "删除数据库？", message: `「${activeDb.name}」及其所有记录将被永久删除。`, confirmLabel: "删除", danger: true });
-            if (ok) { await api.deleteDatabase(activeDb.id); setView({ kind: "empty" }); }
+            if (ok) { await api.deleteDatabase(activeDb.id); navigate({ kind: "empty" }, { replace: true }); }
           }} />
         </>
       ));
@@ -221,7 +282,11 @@ function App() {
         onResize={setSbWidth}
         onOpenDb={(id) => navigate({ kind: "db", id })}
         onOpenDoc={(id) => navigate({ kind: "doc", id })}
-        onSearch={(q) => navigate({ kind: "search", q })}
+        onSearch={(q) =>
+          // entering search pushes once; retyping within it replaces, so one
+          // back press leaves search instead of replaying every query
+          navigate({ kind: "search", q }, { replace: view.kind === "search" })
+        }
         onCollapse={() => setSbCollapsed(true)}
         onOpenSettings={() => navigate({ kind: "settings" })}
         settingsActive={view.kind === "settings"}
@@ -229,7 +294,10 @@ function App() {
         sitesActive={view.kind === "sites"}
         updatePending={updatePending}
         onError={onError}
-        afterDelete={(_, id) => { if ("id" in view && view.id === id) setView({ kind: "empty" }); }}
+        afterDelete={(_, id) => {
+          // replace, not push: a deleted entity must not stay reachable via forward
+          if ("id" in view && view.id === id) navigate({ kind: "empty" }, { replace: true });
+        }}
       />
       <div class="main">
         <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
@@ -261,6 +329,9 @@ function App() {
           {view.kind === "empty" && <EmptyState onNewDoc={newEmptyDoc} />}
           {view.kind === "db" && activeDb && (
             <DatabaseView key={activeDb.id} db={activeDb} onError={onError} />
+          )}
+          {view.kind === "db" && !activeDb && (
+            <div class="empty">{navReady ? "数据库不存在或已被删除。" : "加载中…"}</div>
           )}
           {view.kind === "doc" && (
             <DocView
