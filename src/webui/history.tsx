@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   api,
   ApiError,
+  type DatabaseActivityEntry,
   type Doc,
   type DocRevision,
   type DocVersionState,
@@ -300,6 +301,114 @@ export function DocHistoryPanel({
 /** HLC version token -> wall-clock millis (first 15 digits). */
 function timeFromVersion(version: string): number {
   return Number(version.slice(0, 15)) || Date.now();
+}
+
+// ---- database activity (read-only feed across all records) -------------------
+
+/** Status word for an activity entry; plain edits let the value diffs speak. */
+function activityStatus(e: DatabaseActivityEntry): string {
+  if (e.deleted) return "已删除";
+  if (e.created) return "创建";
+  if (e.moved && !e.diffs.length) return "调整排序";
+  return "";
+}
+
+const ACTIVITY_DIFF_PREVIEW = 3;
+
+/** "What happened in this table lately" — a read-only drawer with inline
+ *  old→new value diffs. Titles come from the server's per-revision snapshot,
+ *  so deleted records still show their last title. */
+export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () => void }) {
+  const { open, close } = useDrawerTransition(onClose);
+  const [entries, setEntries] = useState<DatabaseActivityEntry[] | null>(null);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
+  const [showAll, setShowAll] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const nodeName = useNodeNames();
+
+  useEffect(() => {
+    Promise.all([api.databaseActivity(dbId), api.listProperties(dbId)])
+      .then(([acts, props]) => {
+        setEntries(acts);
+        setNames(new Map(props.map((p) => [p.id, p.name])));
+      })
+      .catch((e) => toast(String((e as Error).message)));
+  }, [dbId]);
+
+  const visible = (entries ?? []).filter((e) => showAll || e.kind !== "repair");
+
+  return (
+    <>
+      <div class={"scrim" + (open ? " open" : "")} onClick={close} />
+      <div class={"peek" + (open ? " open" : "")}>
+        <div class="peek-head">
+          <button class="iconbtn" onClick={close}>
+            <Icon name="x" />
+          </button>
+          <span class="hist-title">
+            <Icon name="history" cls="ico sm" />
+            最近动态
+          </span>
+          <div style={{ flex: 1 }} />
+          <label class="hist-toggle">
+            <input type="checkbox" checked={showAll} onInput={() => setShowAll(!showAll)} />
+            显示修复
+          </label>
+        </div>
+        <div class="peek-body hist-feed">
+          {entries === null && <div class="muted pad">加载中…</div>}
+          {entries !== null && visible.length === 0 && <div class="muted pad">暂无动态。</div>}
+          {visible.map((e) => {
+            const key = e.record_id + e.version;
+            const all = expanded.has(key);
+            const diffs = all ? e.diffs : e.diffs.slice(0, ACTIVITY_DIFF_PREVIEW);
+            const status = activityStatus(e);
+            return (
+              <div key={key} class="hist-item static">
+                <div class="row1">
+                  <span class="when" title={new Date(e.at).toLocaleString()}>
+                    {timeAgo(e.at)}
+                  </span>
+                  <KindBadge kind={e.kind} />
+                  <span class="hist-recname">{e.record_title || e.record_id}</span>
+                  {status && <span class="hist-status">{status}</span>}
+                </div>
+                <div class="row2">
+                  <span class="who">{nodeName(e.node_id)}</span>
+                </div>
+                {diffs.length > 0 && (
+                  <div class="hist-fields">
+                    {diffs.map((d) => (
+                      <div key={d.prop} class="hist-field">
+                        <span class="fname">{names.get(d.prop) ?? "（已删字段）"}</span>
+                        {!e.created && (
+                          <span class="old" title={fmtVal(d.before)}>
+                            {fmtVal(d.before)}
+                          </span>
+                        )}
+                        {!e.created && <span class="arr">→</span>}
+                        <span class="new" title={fmtVal(d.after)}>
+                          {fmtVal(d.after)}
+                        </span>
+                      </div>
+                    ))}
+                    {e.diffs.length > ACTIVITY_DIFF_PREVIEW && !all && (
+                      <button
+                        class="hist-more"
+                        onClick={() => setExpanded(new Set(expanded).add(key))}
+                      >
+                        …还有 {e.diffs.length - ACTIVITY_DIFF_PREVIEW} 项
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
 }
 
 // ---- record history (rendered inside the record peek) ------------------------

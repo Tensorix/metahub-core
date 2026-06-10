@@ -178,6 +178,7 @@ mh edit <doc-ref> --vscode
 mh doc history <doc-ref>                 # 修订列表:version / 时间 / 设备 / 摘要
 mh record history <rec-ref> --field 金额  # 单字段的值变迁
 mh prop history <prop-ref>               # 列改名/改类型/删除史(含级联清格计数)
+mh db activity <db-ref>                  # 不知道哪条被改?先看全表动态(含删除事件)
 mh doc get <doc-ref> --at <version>      # 先预览再决定
 ```
 

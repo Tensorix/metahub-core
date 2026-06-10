@@ -18,6 +18,7 @@ import {
   recordFieldHistory,
   listPropertyRevisions,
   revertProperty,
+  listDatabaseActivity,
 } from "./history.ts";
 import { repairHub } from "./integrity.ts";
 import { emit } from "./crdt.ts";
@@ -331,6 +332,41 @@ test("revertProperty resurrects a removed column with its cells", () => {
   expect(res.restored_cells).toBe(1);
   expect(getRecord(db, rec.id)!.values["Points"]).toBe(7);
   expect(validateHub(db).issues.filter((i) => i.fixable)).toEqual([]);
+});
+
+test("database activity aggregates all records' revisions, newest first", () => {
+  const db = makeNode("aaaa");
+  const { base, points } = makeTable(db);
+  const r1 = createRecord(db, base.id, { Title: "甲", Points: 1 });
+  advanceClock(db, 10_000);
+  const r2 = createRecord(db, base.id, { Title: "乙", Points: 2 });
+  advanceClock(db, 10_000);
+  updateRecord(db, r1.id, { Points: 9 });
+  advanceClock(db, 10_000);
+  deleteRecord(db, r2.id); // tombstoned records still show in the feed
+
+  const acts = listDatabaseActivity(db, base.id);
+  expect(acts.length).toBe(4);
+  expect(acts.map((a) => a.record_id)).toEqual([r2.id, r1.id, r2.id, r1.id]);
+  // deletion entry: no cell diffs, but the title snapshot survives the tombstone
+  expect(acts[0]!.deleted).toBe(true);
+  expect(acts[0]!.diffs).toEqual([]);
+  expect(acts[0]!.record_title).toBe("乙");
+  // update entry carries old → new values
+  expect(acts[1]!.fields).toEqual([points.id]);
+  expect(acts[1]!.diffs).toEqual([{ prop: points.id, before: 1, after: 9 }]);
+  expect(acts[1]!.record_title).toBe("甲");
+  // creation entry has after values only (no `before` key at all)
+  const created = acts[3]!;
+  expect(created.created).toBe(true);
+  const titleDiff = created.diffs.find((d) => d.prop !== points.id)!;
+  expect("before" in titleDiff).toBe(false);
+  expect(titleDiff.after).toBe("甲");
+  // newest first across records
+  for (let i = 1; i < acts.length; i++) expect(acts[i - 1]!.version > acts[i]!.version).toBe(true);
+
+  expect(listDatabaseActivity(db, base.id, { limit: 2 }).length).toBe(2);
+  expect(() => listDatabaseActivity(db, "db_nope-zzzzzz")).toThrow(/no such database/);
 });
 
 test("record revert converges across two synced nodes", () => {

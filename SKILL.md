@@ -174,6 +174,9 @@ mh record revert <ref> --to <version>      # restore cells; resurrects a deleted
 mh prop history <ref>                      # column definition changes (type/options/rename/remove)
 mh prop revert <ref> --to <version>        # schema rollback: restores the column AND the cells its
                                            #   type-change/removal cleared; user edits made since are kept
+mh db activity [<ref>] [--limit N]         # table activity feed: every record's revisions merged newest
+                                           #   first, each with old→new cell values + record-title snapshot
+                                           #   (deleted records show their last title)
 ```
 
 Notes for agents:

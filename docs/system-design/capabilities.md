@@ -40,6 +40,8 @@ mh db create <name> [--icon]
 mh db list
 mh db get <ref>
 mh db duplicate <ref> [--name <名>]    # 整库复制:属性列+全部记录;自引用 relation 重映射到副本(名称默认沿用原名)
+mh db activity [<ref>] [--limit N]     # 表级活动流:全表记录修订聚合,新→旧,每条带字段级"旧值 → 新值"
+                                       #   与记录标题快照(已删记录显示删除时的标题而非裸 id)
 mh db delete <ref>
 
 mh prop add <name> --type <type> [--db <db>] [--options a,b] [--target <db>] [--config JSON] [--position N]
@@ -197,9 +199,10 @@ mh __complete <kind|any> <prefix> # (内部)补全脚本回调,逐行返回候�
 - **回滚 = 正向写入**:revert 作为新修订落库(不删改历史),随 sync 收敛,自身可再回滚;"任何版本永远可从历史找回"。
 - **复活**:对已墓碑的文档/记录/属性,revert 到存活版本即恢复(CLI 用完整 id 直通已删实体);回滚到"已删除状态"被拒绝(`invalid_input`)。
 - **schema 回滚跳过策略**:`prop revert` 恢复被级联清掉的单元格时,凭共享 txn 识别级联写入,用户后来手填的值一律保留(`skipped_cells` 报告)。
+- **表级活动流**:`mh db activity` / `GET /api/database/activity` 聚合全表所有记录(含已删)的修订为一条时间线,每条带字段级值 diff(`旧值 → 新值`)与记录标题快照(聚合时沿变更流维护运行状态,零额外查询);WebUI 表格「…」菜单 →「最近动态」抽屉内联展示 diff(超 3 条折叠)。
 - 错误契约沿用:版本不存在 → `not_found`(exit 3),`--if-match` 失败 → `stale`(exit 5)。
 
-当前未实现:表级活动流(整表聚合的修订 feed)、sites/site_files 历史、revert 还原 parent_id/order_key 等元数据。
+当前未实现:sites/site_files 历史、revert 还原 parent_id/order_key 等元数据。
 
 ## 快照和恢复
 
@@ -327,6 +330,7 @@ POST   /api/document/duplicate                               # ?id=<id>（复制
 GET    /api/search           # ?q=<text>&limit=<n>
 
 GET    /api/document/history   /api/record/history   /api/property/history   # ?id= 修订列表（新→旧）
+GET    /api/database/activity                        # ?db=&limit= 表级活动流（全表记录修订聚合）
 GET    /api/document/at        /api/record/at        # ?id=&version= 任意历史版本状态
 GET    /api/record/field-history                     # ?id=&prop= 单元格值变迁
 POST   /api/document/revert    /api/record/revert    /api/property/revert    # ?id= body {to[, if_match]}
@@ -350,7 +354,7 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
     - **撤销/重做**（v2.3）：Cmd/Ctrl+Z 撤销、Cmd/Ctrl+Shift+Z 或 Ctrl+Y 重做，覆盖结构性块操作与文字输入（接管原生撤销，连续打字合并为一步）。
     - **有序列表起始号**（v2.3）：按用户输入的首项数字起算（`5.` 从 5 递增），后续自动递增；插入/删除/重排后序号自动重建。
     - 防抖保存复用 `PATCH /api/document` 的按块 reconcile,保存 Markdown 会规范化缩进，并保留同级有序列表的起始号。
-  - **版本历史**：文档「…」菜单 → 右侧抽屉（修订列表 + 任意版本只读预览 + 「对比当前」git 式行级 diff，行内改动深浅双层高亮）；记录 peek「…」菜单 → 历史视图（逐修订字段 diff、恢复）。恢复带 `if_match`（409 stale → 提示刷新重试）；repair 修订默认隐藏（「显示修复」开关）；设备名经 `/api/nodes` 解析。
+  - **版本历史**：文档「…」菜单 → 右侧抽屉（修订列表 + 任意版本只读预览 + 「对比当前」git 式行级 diff，行内改动深浅双层高亮）；记录 peek「…」菜单 → 历史视图（逐修订字段 diff、恢复）；数据库「…」菜单 →「最近动态」（表级活动流只读抽屉）。恢复带 `if_match`（409 stale → 提示刷新重试）；repair 修订默认隐藏（「显示修复」开关）；设备名经 `/api/nodes` 解析。
   - **顶栏菜单**（v3.1）：「分享」收口复制链接与导出（文档=Markdown、数据库=CSV，「…」菜单不再重复导出项）；「…」菜单含**创建副本**（文档=标题+全部块、数据库=属性列+全部记录，服务端 core 级原子复制、单一修订随 sync 收敛，完成后跳转副本；后缀「副本」是 WebUI 文案，core 不写死 locale）、视图切换、版本历史、重命名、删除。
   - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题。
   - **移动端适配**（v3.0，触摸设备 + ≤768px）：首页变整页导航侧栏、点条目下钻到整屏内容、顶栏「←」返回；操作按钮无 hover 常显、≥16px 字号与触点（输入框 16px 防 iOS 放大）；状态栏 `theme-color` 随主题跟随、安全区适配。桌面端不受影响（判据含 `pointer:coarse`，拖窄桌面窗口不会切移动样式）。

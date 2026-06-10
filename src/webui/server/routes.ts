@@ -45,6 +45,7 @@ import {
   revertRecord,
   listPropertyRevisions,
   revertProperty,
+  listDatabaseActivity,
 } from "../../core/history.ts";
 import { search } from "../../core/search.ts";
 import { getNodeId } from "../../core/node.ts";
@@ -175,6 +176,22 @@ const DocRevisionSchema = RevisionBase.extend({
 const RecordRevisionSchema = RevisionBase.extend({
   fields: z.array(z.string()).describe("Property ids of the cells written"),
   moved: z.boolean(),
+});
+const DatabaseActivityEntrySchema = RecordRevisionSchema.extend({
+  record_id: z.string(),
+  record_title: z
+    .string()
+    .nullable()
+    .describe("Title-property value as of this revision (deleted records keep their last title)"),
+  diffs: z
+    .array(
+      z.object({
+        prop: z.string(),
+        before: z.any().optional(),
+        after: z.any().optional(),
+      }),
+    )
+    .describe("Value-level cell changes; a missing side means the cell did not exist"),
 });
 const DocumentVersionStateSchema = z.object({
   id: z.string(),
@@ -325,6 +342,19 @@ export const webuiRoutes: Route[] = [
     summary: "Delete a database (and stop it being the current one). Query: ?id=<id>",
     response: OkSchema,
     handler: handle((req, { db }) => ({ ok: deleteDatabase(db, need(req, "id")) })),
+  },
+  {
+    method: "GET",
+    path: "/api/database/activity",
+    summary:
+      "Recent changes across all records of a database, newest first. Query: ?db=<id>&limit=<n>",
+    response: z.array(DatabaseActivityEntrySchema),
+    handler: handle((req, { db }) => {
+      const limit = opt(req, "limit");
+      return listDatabaseActivity(db, need(req, "db"), {
+        limit: limit ? Number(limit) : undefined,
+      });
+    }),
   },
   {
     method: "GET",

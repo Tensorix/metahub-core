@@ -329,36 +329,126 @@ export interface RecordRevision {
   moved: boolean;
 }
 
+/** Summarize one change group of a record into a revision. */
+function recordRevisionOf(group: RawChange[]): RecordRevision {
+  const fields = new Set<string>();
+  let created = false;
+  let deleted = false;
+  let moved = false;
+  for (const c of group) {
+    if (c.col === "created_hlc") created = true;
+    else if (c.col === "__deleted") deleted = flagSet(c.value);
+    else if (c.col === "order_key") moved = true;
+    else if (!RECORD_META.has(c.col)) fields.add(c.col);
+  }
+  const last = group[group.length - 1]!;
+  return {
+    version: last.hlc,
+    at: hlcIso(last.hlc),
+    node_id: last.node_id,
+    kind: revisionKind(last.txn),
+    changes: group.length,
+    created,
+    deleted,
+    fields: [...fields],
+    moved,
+  };
+}
+
 /** A record's edit history, newest first, clustered into save-sized revisions. */
 export function listRecordRevisions(db: Database, id: string): RecordRevision[] {
   const changes = rowChanges(db, "records", id);
   if (!changes.length) throw new MhError("not_found", `no such record: ${id}`);
-  return clusterRevisions(changes)
-    .map((group) => {
-      const fields = new Set<string>();
-      let created = false;
-      let deleted = false;
-      let moved = false;
-      for (const c of group) {
-        if (c.col === "created_hlc") created = true;
-        else if (c.col === "__deleted") deleted = flagSet(c.value);
-        else if (c.col === "order_key") moved = true;
-        else if (!RECORD_META.has(c.col)) fields.add(c.col);
+  return clusterRevisions(changes).map(recordRevisionOf).reverse();
+}
+
+/** One cell's value change inside a revision. A missing `before`/`after` key
+ *  means the cell did not exist on that side (distinct from an explicit null). */
+export interface FieldChange {
+  prop: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface DatabaseActivityEntry extends RecordRevision {
+  record_id: string;
+  /** Title-property value as of this revision — deleted records keep their last title. */
+  record_title: string | null;
+  /** Value-level changes of the touched cells. */
+  diffs: FieldChange[];
+}
+
+/**
+ * "What happened in this table lately": every record's revisions, merged and
+ * sorted newest first. Includes tombstoned records (so deletions show up) — a
+ * read-only aggregation, same clustering as listRecordRevisions per record.
+ * Walking each record's change stream oldest-first lets us carry a running
+ * cell-state map, so every entry ships its old→new values and a title snapshot
+ * for free (no extra queries). After compaction, `before` at the window edge
+ * may be missing (the superseded write was pruned) — it reads as "was empty".
+ */
+export function listDatabaseActivity(
+  db: Database,
+  databaseId: string,
+  opts: { limit?: number } = {},
+): DatabaseActivityEntry[] {
+  if (!db.query("SELECT 1 AS x FROM databases WHERE id = ?").get(databaseId))
+    throw new MhError("not_found", `no such database: ${databaseId}`);
+  // The first live text property is the de-facto record title (same rule the
+  // reference resolver uses).
+  const titleProp =
+    (
+      db
+        .query(
+          "SELECT id FROM properties WHERE database_id = ? AND type = 'text' AND __deleted = 0 ORDER BY position LIMIT 1",
+        )
+        .get(databaseId) as { id: string } | null
+    )?.id ?? null;
+
+  const changes = db
+    .query(
+      `SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes
+       WHERE dataset = 'records' AND row_id IN (SELECT id FROM records WHERE database_id = ?)
+       ORDER BY row_id, hlc`,
+    )
+    .all(databaseId) as RawChange[];
+
+  const out: DatabaseActivityEntry[] = [];
+  let start = 0;
+  for (let i = 1; i <= changes.length; i++) {
+    if (i !== changes.length && changes[i]!.row_id === changes[start]!.row_id) continue;
+    const rowId = changes[start]!.row_id;
+    // Running cell state, mirroring materialize(): null value = json_remove.
+    const state = new Map<string, unknown>();
+    for (const g of clusterRevisions(changes.slice(start, i))) {
+      const touched = new Set<string>();
+      for (const c of g) if (!RECORD_META.has(c.col)) touched.add(c.col);
+      const before = new Map<string, unknown>();
+      for (const col of touched) if (state.has(col)) before.set(col, state.get(col));
+      for (const c of g) {
+        if (RECORD_META.has(c.col)) continue;
+        if (c.value === null) state.delete(c.col);
+        else state.set(c.col, JSON.parse(c.value));
       }
-      const last = group[group.length - 1]!;
-      return {
-        version: last.hlc,
-        at: hlcIso(last.hlc),
-        node_id: last.node_id,
-        kind: revisionKind(last.txn),
-        changes: group.length,
-        created,
-        deleted,
-        fields: [...fields],
-        moved,
-      };
-    })
-    .reverse();
+      const diffs: FieldChange[] = [];
+      for (const col of touched) {
+        const fc: FieldChange = { prop: col };
+        if (before.has(col)) fc.before = before.get(col);
+        if (state.has(col)) fc.after = state.get(col);
+        diffs.push(fc);
+      }
+      out.push({
+        ...recordRevisionOf(g),
+        record_id: rowId,
+        record_title:
+          titleProp && state.has(titleProp) ? String(state.get(titleProp) ?? "") : null,
+        diffs,
+      });
+    }
+    start = i;
+  }
+  out.sort((a, b) => (a.version < b.version ? 1 : -1));
+  return out.slice(0, opts.limit ?? 100);
 }
 
 export interface RecordVersionState {

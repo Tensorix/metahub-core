@@ -109,6 +109,16 @@ export interface RecordRevision extends RevisionBase {
   fields: string[]; // property ids of the cells written
   moved: boolean;
 }
+export interface FieldChange {
+  prop: string;
+  before?: unknown;
+  after?: unknown; // missing key = the cell did not exist on that side
+}
+export interface DatabaseActivityEntry extends RecordRevision {
+  record_id: string;
+  record_title: string | null;
+  diffs: FieldChange[];
+}
 export interface DocVersionState {
   id: string;
   title: string;
@@ -264,6 +274,11 @@ export const api = {
   revertDocument: (id: string, b: { to: string; if_match?: string }) =>
     req<RevertDocResult>("POST", `/api/document/revert?id=${q(id)}`, b),
   recordHistory: (id: string) => req<RecordRevision[]>("GET", `/api/record/history?id=${q(id)}`),
+  databaseActivity: (dbId: string, limit?: number) =>
+    req<DatabaseActivityEntry[]>(
+      "GET",
+      `/api/database/activity?db=${q(dbId)}${limit != null ? `&limit=${limit}` : ""}`,
+    ),
   recordAt: (id: string, version: string) =>
     req<RecordVersionState>("GET", `/api/record/at?id=${q(id)}&version=${q(version)}`),
   revertRecord: (id: string, to: string) =>

@@ -7,7 +7,10 @@ import {
   duplicateDatabase,
   deleteDatabase,
 } from "../../core/databases.ts";
+import { listDatabaseActivity, type DatabaseActivityEntry } from "../../core/history.ts";
+import { listProperties } from "../../core/properties.ts";
 import { resolveRef } from "../../core/resolve.ts";
+import { resolveDb } from "../refs.ts";
 import { print, table, guard } from "../output.ts";
 
 const create = defineCommand({
@@ -52,6 +55,67 @@ const duplicate = defineCommand({
   }),
 });
 
+/** A cell value for the one-line summary: short, never multiline. */
+function fmtCell(v: unknown): string {
+  const s =
+    v === undefined || v === null || v === ""
+      ? "(empty)"
+      : typeof v === "string"
+        ? v.replaceAll("\n", "⏎")
+        : JSON.stringify(v);
+  return s.length > 40 ? s.slice(0, 39) + "…" : s;
+}
+
+function activitySummary(e: DatabaseActivityEntry, names: Map<string, string>): string {
+  const parts: string[] = [];
+  if (e.kind !== "user") parts.push(`[${e.kind}]`);
+  if (e.deleted) parts.push("deleted");
+  if (e.created) {
+    const vals = e.diffs
+      .filter((d) => "after" in d)
+      .map((d) => `${names.get(d.prop) ?? d.prop}: ${fmtCell(d.after)}`);
+    parts.push("created" + (vals.length ? ` (${vals.join(", ")})` : ""));
+  } else if (e.diffs.length) {
+    parts.push(
+      e.diffs
+        .map((d) => `${names.get(d.prop) ?? d.prop}: ${fmtCell(d.before)} → ${fmtCell(d.after)}`)
+        .join("; "),
+    );
+  }
+  if (e.moved && !parts.length) parts.push("moved");
+  return parts.join("; ") || "metadata";
+}
+
+const activity = defineCommand({
+  meta: {
+    name: "activity",
+    description: "Recent changes across ALL records of a database, newest first",
+  },
+  args: {
+    id: { type: "positional", required: false, description: "Database ref (default: current)" },
+    limit: { type: "string", description: "Max entries (default 100)" },
+  },
+  run: guard((args) => {
+    const db = openMetahub();
+    const databaseId = resolveDb(db, args.id);
+    const rows = listDatabaseActivity(db, databaseId, {
+      limit: args.limit != null ? Number(args.limit) : undefined,
+    });
+    const names = new Map(listProperties(db, databaseId).map((p) => [p.id, p.name]));
+    print(rows, () =>
+      table(
+        rows.map((e) => ({
+          version: e.version,
+          at: e.at,
+          node: e.node_id,
+          record: e.record_title || e.record_id,
+          summary: activitySummary(e, names),
+        })),
+      ),
+    );
+  }),
+});
+
 const del = defineCommand({
   meta: { name: "delete", description: "Delete a database" },
   args: { id: { type: "positional", required: true, description: "Database ref (id/prefix/name)" } },
@@ -65,5 +129,5 @@ const del = defineCommand({
 
 export default defineCommand({
   meta: { name: "db", description: "Manage databases (notion-like tables)" },
-  subCommands: { create, list, get, duplicate, delete: del },
+  subCommands: { create, list, get, duplicate, activity, delete: del },
 });

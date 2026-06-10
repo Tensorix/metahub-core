@@ -103,6 +103,7 @@ mh sync http://a-host:7777
 | `mh doc history <id>` / `mh doc revert <id> --to <version>` | 列出文档修订历史 / 恢复到某版本（回滚是一次新的正向修订；`doc get --at <version>` 预览；revert 可复活已删文档） |
 | `mh record history <id> [--field <名>]` / `mh record revert <id> --to <version>` | 记录修改历史（逐修订字段 diff，或单字段值变迁）/ 恢复历史值（可复活已删记录） |
 | `mh prop history <id>` / `mh prop revert <id> --to <version>` | 列定义历史 / schema 回滚：同时恢复列定义**和**被改类型/删列清掉的单元格，之后的用户编辑保留 |
+| `mh db activity [<id>] [--limit N]` | 表级活动流：全表记录修订按时间倒序聚合，每条带字段级「旧值 → 新值」与记录标题快照（已删记录显示删除时的标题） |
 | `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
 | `mh search <query>` | 全文检索（文档 + 记录） |
 | `mh doctor` | 只读体检：列出逻辑完整性问题（孤儿引用/单元格、重复路径、文档环、重名等）+ oplog/磁盘统计 |

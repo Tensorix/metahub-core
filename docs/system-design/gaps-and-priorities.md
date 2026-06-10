@@ -40,9 +40,10 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 - `txn` 修订分组随 sync 复制,各端历史视图一致;`kind` 区分 user/repair/revert,WebUI 默认过滤修复噪音。
 - schema 回滚(`prop revert`)恢复列定义 + 被级联清掉的单元格,用户后写保留。
 - WebUI 历史面板:文档抽屉(预览 + git 式行级 diff、行内深浅高亮)、记录字段级 diff;CLI/HTTP 全量暴露。
+- 表级活动流:`mh db activity` / `GET /api/database/activity` / WebUI「最近动态」抽屉——全表记录修订聚合时间线(含已删记录)。
 - `mh compact` 保留窗口压缩 + blob GC + VACUUM,纯本地,头部状态不变;`mh doctor` 报告可压缩量。
 
-仍未做:表级活动流、sites 历史、自动定时压缩、彻底抹除已删数据(需全 peer 墓碑确认)。
+仍未做:sites 历史、自动定时压缩、彻底抹除已删数据(需全 peer 墓碑确认)。
 
 ## P0: 当前体验硬伤
 

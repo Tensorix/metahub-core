@@ -12,7 +12,7 @@ import { SitesView } from "./sites.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
-import { DocHistoryPanel } from "./history.tsx";
+import { DocHistoryPanel, DbActivityPanel } from "./history.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
   UiHost,
@@ -61,6 +61,7 @@ function App() {
   const [navReady, setNavReady] = useState(false);
   const [updatePending, setUpdatePending] = useState(false);
   const [docHistory, setDocHistory] = useState(false);
+  const [dbActivity, setDbActivity] = useState(false);
   const docHandleRef = useRef<DocViewHandle | null>(null);
   const isMobile = useIsMobile();
 
@@ -141,11 +142,16 @@ function App() {
   const activeDb = view.kind === "db" ? databases.find((d) => d.id === view.id) : undefined;
   const activeDoc = view.kind === "doc" ? docs.find((d) => d.id === view.id) : undefined;
   const activeDocId = view.kind === "doc" ? view.id : null;
+  const activeDbId = view.kind === "db" ? view.id : null;
 
   useEffect(() => {
     setDocMode("blocks");
     setDocHistory(false);
   }, [activeDocId]);
+
+  useEffect(() => {
+    setDbActivity(false);
+  }, [activeDbId]);
 
   // Reflect the mobile navigation state onto <body> (same body-class pattern as
   // `desktop`/`quicknote`): `mobile` swaps to the full-page sidebar layout, and
@@ -279,6 +285,7 @@ function App() {
               toast("已创建副本");
             } catch (err) { onError(String((err as Error).message)); }
           }} />
+          <MenuItem icon="history" label="最近动态" onClick={() => { close(); setDbActivity(true); }} />
           <MenuSep />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
@@ -367,6 +374,9 @@ function App() {
           onClose={() => setDocHistory(false)}
           onReverted={() => docHandleRef.current?.reload()}
         />
+      )}
+      {dbActivity && view.kind === "db" && (
+        <DbActivityPanel dbId={view.id} onClose={() => setDbActivity(false)} />
       )}
 
       <UiHost />

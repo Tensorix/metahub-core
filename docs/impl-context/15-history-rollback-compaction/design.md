@@ -68,10 +68,13 @@ oplog 是 sync 的真相源(peer 按 rowid 游标增量拉取),**绝不删改历
 mh doc history <ref> | mh doc get <ref> --at <v> | mh doc revert <ref> --to <v> [--if-match]
 mh record history <ref> [--field <名>] | mh record revert <ref> --to <v>
 mh prop history <ref> | mh prop revert <ref> --to <v>
+mh db activity [<ref>] [--limit N]                        # 表级活动流:全表记录修订聚合(含已删)
 mh compact [--keep <days>] [--dry-run] [--no-vacuum]      # 默认 90 天;0 = 只留头部
 ```
 
-HTTP(自动进 /docs):`GET /api/{document,record,property}/history`、`GET /api/{document,record}/at`、`GET /api/record/field-history`、`POST /api/{document,record,property}/revert`、`GET /api/nodes`。
+HTTP(自动进 /docs):`GET /api/{document,record,property}/history`、`GET /api/database/activity`、`GET /api/{document,record}/at`、`GET /api/record/field-history`、`POST /api/{document,record,property}/revert`、`GET /api/nodes`。
+
+表级活动流是只读聚合:`listDatabaseActivity` 取该库所有记录(`row_id IN (SELECT id FROM records WHERE database_id=?)`,含墓碑行使删除事件可见)的 changes,逐记录复用同一套聚簇,按 version 倒序合并 + limit。聚簇时沿变更流(旧→新)维护每记录的运行单元格状态(value null = json_remove,镜像 materialize),从而**零额外查询**地为每条修订产出 `diffs: [{prop, before?, after?}]`(键缺省 = 单元格不存在,区别于显式 null)和 `record_title` 标题快照(取第一个 live text 属性,与引用解析的 title 规则一致;**已删记录显示删除时的标题**)。压缩后窗口边缘的 before 可能因输家被删而缺失,读作"原为空",可接受。WebUI「最近动态」抽屉内联渲染值 diff(超 3 条折叠);CLI 摘要形如 `标题: 甲 → 甲改`(值截断 40 字符)。曾考虑前端逐条懒加载(expand 时取相邻两版 record/at)被否决:每条目两次请求,且 limit 截断后找不到前驱修订。
 
 错误沿用既有契约:版本不存在 → `not_found`(exit 3),if-match 失败 → `stale`(exit 5),回滚到已删状态 → `invalid_input`(exit 2)。输出走 effect-evidence(`changed/restored/version/restored_cells/skipped_cells`)。
 
