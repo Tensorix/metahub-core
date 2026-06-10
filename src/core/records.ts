@@ -23,7 +23,12 @@ function sqlFilterValue(v: string | number | boolean): SqlValue {
 export interface RecordRow {
   id: string;
   database_id: string;
+  /** Cells keyed by property NAME — friendly for CLI / external agents, but
+   * lossy when two properties share a name (one entry wins). */
   values: Record<string, unknown>;
+  /** Cells keyed by property ID — lossless under duplicate names; the WebUI
+   * reads/writes through this. */
+  cells: Record<string, unknown>;
 }
 
 interface OrderedRecordRow {
@@ -97,16 +102,42 @@ function coerce(db: Database, prop: PropertyRow, value: unknown): unknown {
   }
 }
 
-/** Match data keys (property name OR id) to properties. */
+/** Group properties by lowercased name; duplicate names are legal. */
+function propsByName(props: PropertyRow[]): Map<string, PropertyRow[]> {
+  const byName = new Map<string, PropertyRow[]>();
+  for (const p of props) {
+    const k = p.name.toLowerCase();
+    const list = byName.get(k);
+    if (list) list.push(p);
+    else byName.set(k, [p]);
+  }
+  return byName;
+}
+
+/**
+ * Match data keys (property name OR id) to properties. Duplicate property
+ * names are a legal state (offline peers can create them concurrently), so a
+ * name that matches several properties is ambiguous — callers must switch to
+ * the property id.
+ */
 function resolveData(
   props: PropertyRow[],
   data: Record<string, unknown>,
 ): { prop: PropertyRow; value: unknown }[] {
   const byId = new Map(props.map((p) => [p.id, p]));
-  const byName = new Map(props.map((p) => [p.name.toLowerCase(), p]));
+  const byName = propsByName(props);
   const out: { prop: PropertyRow; value: unknown }[] = [];
   for (const [key, value] of Object.entries(data)) {
-    const prop = byId.get(key) ?? byName.get(key.toLowerCase());
+    let prop = byId.get(key);
+    if (!prop) {
+      const matches = byName.get(key.toLowerCase()) ?? [];
+      if (matches.length > 1)
+        throw new MhError(
+          "ambiguous",
+          `property name "${key}" matches ${matches.length} properties; use a property id`,
+        );
+      prop = matches[0];
+    }
     if (!prop) throw new MhError("not_found", `unknown property: ${key}`);
     out.push({ prop, value });
   }
@@ -121,11 +152,14 @@ function rowToRecord(
   const raw = JSON.parse(row.data || "{}") as Record<string, unknown>;
   const byId = new Map(props.map((p) => [p.id, p]));
   const values: Record<string, unknown> = {};
+  const cells: Record<string, unknown> = {};
   for (const [propId, v] of Object.entries(raw)) {
     const p = byId.get(propId);
-    if (p) values[p.name] = v; // skip cells for removed properties
+    if (!p) continue; // skip cells for removed properties
+    values[p.name] = v;
+    cells[p.id] = v;
   }
-  return { id: row.id, database_id: row.database_id, values };
+  return { id: row.id, database_id: row.database_id, values, cells };
 }
 
 function deriveTitle(
@@ -277,9 +311,16 @@ export function listRecords(
       key = key.slice(1);
     }
     if (key !== "created" && key !== "created_hlc") {
-      const p = props.find(
-        (p) => p.name.toLowerCase() === key.toLowerCase() || p.id === key,
-      );
+      let p = props.find((p) => p.id === key);
+      if (!p) {
+        const matches = props.filter((q) => q.name.toLowerCase() === key.toLowerCase());
+        if (matches.length > 1)
+          throw new MhError(
+            "ambiguous",
+            `sort field "${key}" matches ${matches.length} properties; use a property id`,
+          );
+        p = matches[0];
+      }
       if (!p) throw new MhError("not_found", `unknown sort field: ${key}`);
       sortProp = p;
     }
@@ -320,7 +361,7 @@ export function listRecords(
   if (jsFilters.length) {
     rows = rows.filter((r) =>
       jsFilters.every(
-        (f) => JSON.stringify(r.values[f.prop.name] ?? null) === JSON.stringify(f.value),
+        (f) => JSON.stringify(r.cells[f.prop.id] ?? null) === JSON.stringify(f.value),
       ),
     );
     if (opts.limit != null) rows = rows.slice(0, opts.limit);

@@ -230,3 +230,38 @@ test("migrates legacy record_values into data JSON", () => {
     { "p-title": "world" },
   );
 });
+
+test("duplicate property names: cells stay id-keyed and lossless; name-keyed access is ambiguous", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "T" });
+  const a = addProperty(db, d.id, { name: "日期", type: "date" });
+  const rec = createRecord(db, d.id, { 日期: "2026-01-01" });
+
+  // A second property with the same name is legal (offline peers can create
+  // duplicates concurrently) and must not alias the first one's cells.
+  const b = addProperty(db, d.id, { name: "日期", type: "date" });
+  const got = getRecord(db, rec.id)!;
+  expect(got.cells[a.id]).toBe("2026-01-01");
+  expect(got.cells[b.id]).toBeUndefined();
+
+  // id-keyed writes target exactly the addressed property.
+  updateRecord(db, rec.id, { [b.id]: "2027-02-02" });
+  const after = getRecord(db, rec.id)!;
+  expect(after.cells[a.id]).toBe("2026-01-01");
+  expect(after.cells[b.id]).toBe("2027-02-02");
+
+  // name-keyed writes / filters / sorts on the duplicated name must demand an id.
+  try {
+    updateRecord(db, rec.id, { 日期: "2028-03-03" });
+    expect.unreachable("duplicate name write should throw");
+  } catch (e) {
+    expect((e as { code?: string }).code).toBe("ambiguous");
+  }
+  expect(() => listRecords(db, d.id, { filter: { 日期: "2026-01-01" } })).toThrow(/use a property id/);
+  expect(() => listRecords(db, d.id, { sort: "日期" })).toThrow(/use a property id/);
+
+  // other (unique) names keep working name-keyed.
+  addProperty(db, d.id, { name: "备注", type: "text" });
+  updateRecord(db, rec.id, { 备注: "ok" });
+  expect(getRecord(db, rec.id)!.values["备注"]).toBe("ok");
+});

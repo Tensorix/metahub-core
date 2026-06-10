@@ -36,10 +36,11 @@ export const updateDatabase = grouped(function updateDatabase(
 
 /**
  * Copy a database whole — name, icon, every property (type/config/position
- * preserved) and every record (in order, values carried by property name). A
- * relation column pointing back at the *source* database is remapped to the
- * copy so it stays self-referential; relations to other databases keep their
- * target. `name`/`icon` override the defaults; the locale "copy" suffix is the
+ * preserved) and every record (in order, cells carried via an old→new property
+ * id map, so duplicate property names copy losslessly). A relation column
+ * pointing back at the *source* database is remapped to the copy so it stays
+ * self-referential; relations to other databases keep their target.
+ * `name`/`icon` override the defaults; the locale "copy" suffix is the
  * caller's job. All emits share one txn, so the copy syncs as one revision.
  */
 export const duplicateDatabase = grouped(function duplicateDatabase(
@@ -53,12 +54,21 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
     name: opts.name ?? src.name,
     icon: (opts.icon ?? src.icon) ?? undefined,
   });
+  const propIdMap = new Map<string, string>();
   for (const p of listProperties(db, id)) {
     const config: PropertyConfig | undefined =
       p.config?.database === id ? { ...p.config, database: dup.id } : (p.config ?? undefined);
-    addProperty(db, dup.id, { name: p.name, type: p.type, config, position: p.position });
+    const np = addProperty(db, dup.id, { name: p.name, type: p.type, config, position: p.position });
+    propIdMap.set(p.id, np.id);
   }
-  for (const r of listRecords(db, id)) createRecord(db, dup.id, r.values);
+  for (const r of listRecords(db, id)) {
+    const data: Record<string, unknown> = {};
+    for (const [pid, v] of Object.entries(r.cells)) {
+      const nid = propIdMap.get(pid);
+      if (nid) data[nid] = v;
+    }
+    createRecord(db, dup.id, data);
+  }
   return getDatabase(db, dup.id)!;
 });
 

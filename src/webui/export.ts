@@ -24,9 +24,9 @@ export function downloadText(filename: string, text: string, type: string): void
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export function databaseToCsv(props: readonly Pick<Prop, "name">[], records: readonly Rec[]): string {
+export function databaseToCsv(props: readonly Pick<Prop, "id" | "name">[], records: readonly Rec[]): string {
   const header = ["id", ...props.map((p) => p.name)];
-  const rows = records.map((r) => [r.id, ...props.map((p) => cellToString(r.values[p.name]))]);
+  const rows = records.map((r) => [r.id, ...props.map((p) => cellToString(r.cells[p.id]))]);
   return toCsv([header, ...rows]);
 }
 

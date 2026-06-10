@@ -41,7 +41,7 @@ export function CalendarView({
 
   // Map each record with a valid date to its day.
   const events = records
-    .map((rec) => ({ rec, date: parseDate(rec.values[dateProp.name]) }))
+    .map((rec) => ({ rec, date: parseDate(rec.cells[dateProp.id]) }))
     .filter((e): e is { rec: Rec; date: Date } => e.date != null);
   const eventsOn = (day: Date) => events.filter((e) => sameDay(e.date, day));
 
@@ -86,7 +86,7 @@ export function CalendarView({
       if (!d.active) { onOpenRecord(rec.id); return; } // click without drag → open
       const cell = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".cal-day") as HTMLElement | null;
       const iso = cell?.dataset.iso;
-      if (iso && iso !== String(rec.values[dateProp.name] ?? "")) onCommitValue(rec, dateProp, iso);
+      if (iso && iso !== String(rec.cells[dateProp.id] ?? "")) onCommitValue(rec, dateProp, iso);
     };
     addEventListener("pointermove", move, { passive: false });
     addEventListener("pointerup", up);
@@ -134,12 +134,12 @@ export function CalendarView({
                   onClick={(e) => {
                     // Click empty space in the day to add a record dated to it.
                     if ((e.target as HTMLElement).closest(".cal-ev,.cal-add,.cal-more")) return;
-                    onCreate({ [dateProp.name]: iso });
+                    onCreate({ [dateProp.id]: iso });
                   }}
                 >
                   <div class="cal-daynum">
                     <span>{day.getDate()}</span>
-                    <button class="cal-add" title="新建记录" onClick={(e) => { e.stopPropagation(); onCreate({ [dateProp.name]: iso }); }}>
+                    <button class="cal-add" title="新建记录" onClick={(e) => { e.stopPropagation(); onCreate({ [dateProp.id]: iso }); }}>
                       <Icon name="plus" cls="ico sm" />
                     </button>
                   </div>
@@ -189,7 +189,7 @@ export function CalendarView({
 
 function titleText(rec: Rec, titleProp: Prop | undefined): string {
   if (!titleProp) return "";
-  const v = rec.values[titleProp.name];
+  const v = rec.cells[titleProp.id];
   return v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v);
 }
 

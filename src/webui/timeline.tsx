@@ -45,8 +45,8 @@ export function TimelineView({
 
   // Resolve each record's start/end days.
   const rows = records.map((rec) => {
-    const s = parseDate(rec.values[startProp.name]);
-    const e = endProp ? parseDate(rec.values[endProp.name]) : null;
+    const s = parseDate(rec.cells[startProp.id]);
+    const e = endProp ? parseDate(rec.cells[endProp.id]) : null;
     return { rec, s, e: e && s && e < s ? s : e };
   });
 
@@ -263,6 +263,6 @@ export function TimelineView({
 
 function titleText(rec: Rec, titleProp: Prop | undefined): string {
   if (!titleProp) return "";
-  const v = rec.values[titleProp.name];
+  const v = rec.cells[titleProp.id];
   return v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v);
 }

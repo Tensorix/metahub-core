@@ -37,7 +37,10 @@ export interface Prop {
 export interface Rec {
   id: string;
   database_id: string;
+  /** Cells keyed by property name — lossy when two properties share a name. */
   values: Record<string, unknown>;
+  /** Cells keyed by property id — what the UI reads/writes (duplicate-name safe). */
+  cells: Record<string, unknown>;
 }
 export interface DocSummary {
   id: string;

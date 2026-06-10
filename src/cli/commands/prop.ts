@@ -18,8 +18,22 @@ import { resolveRef } from "../../core/resolve.ts";
 import { errorCode } from "../../core/errors.ts";
 import { idKind } from "../../core/ids.ts";
 import { resolveDb } from "../refs.ts";
-import { print, table, guard } from "../output.ts";
+import { print, table, guard, warn } from "../output.ts";
 import type { Database } from "bun:sqlite";
+
+/** Duplicate names are legal (offline peers can converge on them) but make
+ *  name-keyed record access ambiguous — flag it loudly when an add/rename
+ *  creates one, so scripts know to switch to property ids. */
+function warnIfDuplicateName(db: Database, databaseId: string, name: string): void {
+  const dups = listProperties(db, databaseId).filter(
+    (p) => p.name.toLowerCase() === name.toLowerCase(),
+  );
+  if (dups.length > 1)
+    warn(
+      `property name "${name}" now matches ${dups.length} properties in this database; ` +
+        `name-keyed record reads/writes will fail as ambiguous — use property ids (${dups.map((p) => p.id).join(", ")})`,
+    );
+}
 
 /** Resolve a property ref, letting a full id of a tombstoned property pass
  *  through — revert can resurrect a removed column. */
@@ -63,6 +77,7 @@ const add = defineCommand({
       config,
       position: args.position != null ? Number(args.position) : undefined,
     });
+    warnIfDuplicateName(db, databaseId, row.name);
     print(row, () => `${row.id}\t${row.name}\t${row.type}`);
   }),
 });
@@ -99,6 +114,7 @@ const update = defineCommand({
       config,
       position: args.position != null ? Number(args.position) : undefined,
     });
+    if (args.name != null) warnIfDuplicateName(db, row.database_id, row.name);
     print(row);
   }),
 });

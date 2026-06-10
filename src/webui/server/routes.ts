@@ -78,7 +78,12 @@ const RecordSchema = z.object({
   values: z
     .record(z.string(), z.any())
     .describe(
-      'Field values keyed by property name (e.g. {"Amount":35}). Reads nest cells here; writes take a flat {column: value} map.',
+      'Field values keyed by property name (e.g. {"Amount":35}). Reads nest cells here; writes take a flat {column: value} map. Lossy when two properties share a name — prefer `cells` then.',
+    ),
+  cells: z
+    .record(z.string(), z.any())
+    .describe(
+      "Field values keyed by property id — lossless under duplicate property names. Writes accept property ids as keys too.",
     ),
 });
 const MoveRecordReq = z.object({

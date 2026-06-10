@@ -18,6 +18,7 @@ import {
   MenuSep,
   confirmDialog,
   useDrawerTransition,
+  toast,
 } from "./ui.tsx";
 import { Chip, CellDisplay, coerceInput, cellText } from "./cells.tsx";
 import { RecordHistoryView } from "./history.tsx";
@@ -59,7 +60,7 @@ export function DatabaseView({
   const [records, setRecords] = useState<Rec[]>([]);
   const [tab, setTab] = useState(0);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [sort, setSort] = useState<{ name: string; desc: boolean } | null>(null);
+  const [sort, setSort] = useState<{ id: string; desc: boolean } | null>(null);
   const [editing, setEditing] = useState<{ rec: string; prop: string } | null>(null);
   const [peek, setPeek] = useState<string | null>(null);
   const [cellSel, setCellSel] = useState<CellSel | null>(null);
@@ -84,7 +85,7 @@ export function DatabaseView({
 
   const commit = (rec: Rec, prop: Prop, value: unknown) =>
     guard(async () => {
-      const updated = await api.updateRecord(rec.id, { [prop.name]: value });
+      const updated = await api.updateRecord(rec.id, { [prop.id]: value });
       setRecords((rs) => rs.map((r) => (r.id === rec.id ? updated : r)));
       setEditing(null);
     });
@@ -106,7 +107,7 @@ export function DatabaseView({
 
   const duplicateRecord = (rec: Rec) =>
     guard(async () => {
-      const copy = await api.createRecord(db.id, rec.values);
+      const copy = await api.createRecord(db.id, rec.cells);
       setRecords((rs) => {
         const i = rs.findIndex((r) => r.id === rec.id);
         return [...rs.slice(0, i + 1), copy, ...rs.slice(i + 1)];
@@ -207,7 +208,7 @@ export function DatabaseView({
       const rows = sorted.slice(r0, r1 + 1);
       const updates = await Promise.all(rows.map((rec) => {
         const patch: Record<string, unknown> = {};
-        for (const p of cols) patch[p.name] = valueFor(p);
+        for (const p of cols) patch[p.id] = valueFor(p);
         return api.updateRecord(rec.id, patch);
       }));
       setRecords((rs) => rs.map((r) => updates.find((u) => u.id === r.id) ?? r));
@@ -218,22 +219,22 @@ export function DatabaseView({
     const { r0, r1, c0, c1 } = normRect(cellSel);
     const cols = props.slice(c0, c1 + 1);
     const tsv = sorted.slice(r0, r1 + 1)
-      .map((rec) => cols.map((p) => cellText(p, rec.values[p.name])).join("\t"))
+      .map((rec) => cols.map((p) => cellText(p, rec.cells[p.id])).join("\t"))
       .join("\n");
     try { await navigator.clipboard.writeText(tsv); } catch { /* clipboard blocked */ }
   };
 
   // Number columns compare numerically ("9" < "10"); empty/non-numeric cells
   // sort first. Everything else compares as zh-collated text.
-  const sortProp = sort ? props.find((p) => p.name === sort.name) : undefined;
+  const sortProp = sort ? props.find((p) => p.id === sort.id) : undefined;
   const sortNum = (v: unknown) => {
     const n = v == null || v === "" ? NaN : Number(v);
     return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
   };
   const sorted = sort
     ? [...records].sort((a, b) => {
-        const av = a.values[sort.name];
-        const bv = b.values[sort.name];
+        const av = a.cells[sort.id];
+        const bv = b.cells[sort.id];
         const cmp =
           sortProp?.type === "number"
             ? sortNum(av) - sortNum(bv)
@@ -383,7 +384,7 @@ export function DatabaseView({
                     </th>
                   ))}
                   <th class="addcol">
-                    <div class="colhead" title="新建属性" onClick={(e) => openAddCol(e, db.id, reload)}>
+                    <div class="colhead" title="新建属性" onClick={(e) => openAddCol(e, db.id, props, reload)}>
                       <Icon name="plus" cls="ico sm" />
                     </div>
                   </th>
@@ -482,7 +483,7 @@ export function DatabaseView({
         <div class="selbar cellselbar">
           <span class="cnt">{(cr.r1 - cr.r0 + 1) * (cr.c1 - cr.c0 + 1)} 个单元格</span>
           <button onClick={copySelection}><Icon name="copy" cls="ico sm" />复制</button>
-          <button onClick={() => applyToSelection((p) => sorted[cr.r0]!.values[p.name] ?? null)}>
+          <button onClick={() => applyToSelection((p) => sorted[cr.r0]!.cells[p.id] ?? null)}>
             <Icon name="copy" cls="ico sm" />填充
           </button>
           <button class="del" onClick={() => applyToSelection(() => null)}>
@@ -540,7 +541,7 @@ function CellView({
   onEdit: () => void; onCancel: () => void; onCommit: (v: unknown) => void;
   onOpen: () => void; onRowMenu: (e: MouseEvent) => void;
 }) {
-  const val = rec.values[prop.name];
+  const val = rec.cells[prop.id];
 
   if (prop.type === "checkbox") {
     return (
@@ -678,7 +679,7 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
   const [options, setOptions] = useState<string[]>(prop.config?.options ?? []);
 
   const persist = (patch: { name?: string; type?: PropType; config?: PropConfig }) =>
-    api.updateProperty(prop.id, patch).then(reload).catch(() => {});
+    api.updateProperty(prop.id, patch).then(reload).catch((e) => toast(`更新属性失败：${(e as Error).message}`));
 
   const changeType = (t: PropType) => {
     setType(t);
@@ -723,7 +724,12 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
         </>
       )}
       <MenuSep />
-      <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => { close(); api.createProperty({ db: dbId, name: "新属性", type: "text" }).then(reload); }} />
+      <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => {
+        close();
+        api.createProperty({ db: dbId, name: uniquePropName("新属性", allProps), type: "text" })
+          .then(reload)
+          .catch((e) => toast(`新建属性失败：${(e as Error).message}`));
+      }} />
       <MenuSep />
       <MenuItem icon="trash" label="删除属性" danger onClick={async () => {
         close();
@@ -734,7 +740,19 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
   );
 }
 
-function openAddCol(e: MouseEvent, dbId: string, reload: () => Promise<void>) {
+/** Default column names come from fixed labels ("日期", "新属性"…); suffix with
+ *  a counter so a repeat creation never duplicates an existing name — duplicate
+ *  names alias in name-keyed access and are indistinguishable in the UI. */
+function uniquePropName(base: string, existing: Prop[]): string {
+  const names = new Set(existing.map((p) => p.name.toLowerCase()));
+  if (!names.has(base.toLowerCase())) return base;
+  for (let i = 2; ; i++) {
+    const cand = `${base} ${i}`;
+    if (!names.has(cand.toLowerCase())) return cand;
+  }
+}
+
+function openAddCol(e: MouseEvent, dbId: string, allProps: Prop[], reload: () => Promise<void>) {
   e.stopPropagation();
   openMenu(e, (close) => (
     <>
@@ -744,7 +762,9 @@ function openAddCol(e: MouseEvent, dbId: string, reload: () => Promise<void>) {
           <button key={t} class="item" onClick={() => {
             close();
             const cfg = t === "select" || t === "multi_select" ? { options: ["选项 1", "选项 2"] } : undefined;
-            api.createProperty({ db: dbId, name: TYPE_META[t].t, type: t, config: cfg }).then(reload).catch(() => {});
+            api.createProperty({ db: dbId, name: uniquePropName(TYPE_META[t].t, allProps), type: t, config: cfg })
+              .then(reload)
+              .catch((e) => toast(`新建属性失败：${(e as Error).message}`));
           }}>
             <span class="lico"><Icon name={TYPE_ICON[t]!} cls="ico sm" /></span>
             <span class="d">{TYPE_META[t].t}</span>
@@ -755,12 +775,12 @@ function openAddCol(e: MouseEvent, dbId: string, reload: () => Promise<void>) {
   ));
 }
 
-function openSortMenu(e: MouseEvent, props: Prop[], cur: { name: string; desc: boolean } | null, setSort: (s: { name: string; desc: boolean } | null) => void) {
+function openSortMenu(e: MouseEvent, props: Prop[], cur: { id: string; desc: boolean } | null, setSort: (s: { id: string; desc: boolean } | null) => void) {
   openMenu(e, (close) => (
     <>
       <MenuLabel>排序依据</MenuLabel>
       {props.map((p) => (
-        <MenuItem key={p.id} icon={TYPE_ICON[p.type]} label={p.name} onClick={() => { setSort({ name: p.name, desc: cur?.name === p.name ? !cur.desc : false }); close(); }} />
+        <MenuItem key={p.id} icon={TYPE_ICON[p.type]} label={p.name} onClick={() => { setSort({ id: p.id, desc: cur?.id === p.id ? !cur.desc : false }); close(); }} />
       ))}
       {cur && (<><MenuSep /><MenuItem icon="x" label="清除排序" onClick={() => { setSort(null); close(); }} /></>)}
     </>
@@ -824,7 +844,7 @@ function RecordPeek({
           ) : (
             <>
               <h2 contentEditable onBlur={(e) => titleProp && onCommit(titleProp, (e.target as HTMLElement).textContent ?? "")}>
-                {titleProp ? String(rec.values[titleProp.name] ?? "无标题") : "无标题"}
+                {titleProp ? String(rec.cells[titleProp.id] ?? "无标题") : "无标题"}
               </h2>
               {props.map((p) => (
                 <div key={p.id} class="proprow">
@@ -847,7 +867,7 @@ function RecordPeek({
 }
 
 function PeekValue({ prop, rec, editing, onEdit, onCommit }: { prop: Prop; rec: Rec; editing: boolean; onEdit: () => void; onCommit: (v: unknown) => void }) {
-  const val = rec.values[prop.name];
+  const val = rec.cells[prop.id];
   if (prop.type === "checkbox")
     return <div class="v"><input type="checkbox" checked={!!val} style={{ width: 16, height: 16, accentColor: "var(--accent)" }} onChange={() => onCommit(!val)} /></div>;
   if (prop.type === "select" || prop.type === "multi_select")

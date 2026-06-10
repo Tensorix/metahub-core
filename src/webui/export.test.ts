@@ -9,23 +9,25 @@ test("safeFilename normalizes unsafe names and appends extension", () => {
 
 test("databaseToCsv exports id plus property columns with CLI-compatible cell strings", () => {
   const props = [
-    { name: "标题" },
-    { name: "标签" },
-    { name: "完成" },
-    { name: "备注" },
-    { name: "空值" },
+    { id: "p1", name: "标题" },
+    { id: "p2", name: "标签" },
+    { id: "p3", name: "完成" },
+    { id: "p4", name: "备注" },
+    { id: "p5", name: "空值" },
   ];
+  const cells = {
+    p1: "A,B",
+    p2: ["x", "y"],
+    p3: true,
+    p4: 'He said "hi"\nNext',
+    p5: null,
+  };
   const records = [
     {
       id: "rec_1",
       database_id: "db_1",
-      values: {
-        "标题": "A,B",
-        "标签": ["x", "y"],
-        "完成": true,
-        "备注": 'He said "hi"\nNext',
-        "空值": null,
-      },
+      values: {},
+      cells,
     },
   ];
 

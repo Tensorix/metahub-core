@@ -18,6 +18,11 @@ export function print(data: unknown, pretty?: () => string): void {
   }
 }
 
+/** Print a non-fatal warning. Always stderr, so piped/--json stdout stays clean. */
+export function warn(message: string): void {
+  console.error(`warning: ${message}`);
+}
+
 /**
  * Exit code per error code — the CLI's contract with scripts/agents (also
  * documented in SKILL.md). Dispatch on these (or on the JSON `code` field),
