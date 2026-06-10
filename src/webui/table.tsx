@@ -23,6 +23,12 @@ import { Chip, CellDisplay, coerceInput, cellText } from "./cells.tsx";
 import { BoardView } from "./board.tsx";
 import { CalendarView } from "./calendar.tsx";
 import { TimelineView } from "./timeline.tsx";
+import {
+  type DropWhere,
+  startPointerDrag,
+  startGhostDrag,
+  startColumnResize,
+} from "./pointer-drag.ts";
 
 const VIEW_TABS: [string, string][] = [
   ["表格", "list"],
@@ -30,7 +36,6 @@ const VIEW_TABS: [string, string][] = [
   ["日历", "calendar"],
   ["时间轴", "timeline"],
 ];
-type DropWhere = "before" | "after";
 
 // ---- cell range selection ----
 type CellPos = { r: number; c: number }; // r = row index in sorted, c = column index in props
@@ -40,34 +45,6 @@ function normRect(s: CellSel) {
     r0: Math.min(s.a.r, s.b.r), r1: Math.max(s.a.r, s.b.r),
     c0: Math.min(s.a.c, s.b.c), c1: Math.max(s.a.c, s.b.c),
   };
-}
-
-interface RowDragState {
-  id: string;
-  pointerId: number;
-  startX: number;
-  startY: number;
-  offsetX: number;
-  offsetY: number;
-  active: boolean;
-  source: HTMLElement;
-  ghost: HTMLElement | null;
-  targetId: string | null;
-  where: DropWhere;
-}
-
-interface ColDragState {
-  id: string;
-  pointerId: number;
-  startX: number;
-  startY: number;
-  offsetX: number;
-  offsetY: number;
-  active: boolean;
-  source: HTMLElement;
-  ghost: HTMLElement | null;
-  targetId: string | null;
-  where: DropWhere;
 }
 
 export function DatabaseView({
@@ -87,9 +64,6 @@ export function DatabaseView({
   const [cellSel, setCellSel] = useState<CellSel | null>(null);
   // Column width lives in prop.config.width (persisted + replicated); 180 is the default.
   const colWidth = (p: Prop) => p.config?.width ?? 180;
-  const rowDragRef = useRef<RowDragState | null>(null);
-  const cellDragRef = useRef<{ pointerId: number; startX: number; startY: number; active: boolean } | null>(null);
-  const colDragRef = useRef<ColDragState | null>(null);
   const suppressColClick = useRef(false);
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => onError(String(e.message)));
@@ -173,110 +147,36 @@ export function DatabaseView({
     const source = (e.currentTarget as HTMLElement).closest("tr") as HTMLElement | null;
     if (!source) return;
     e.preventDefault();
-    const rect = source.getBoundingClientRect();
-    const state: RowDragState = {
-      id: rec.id,
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      offsetX: e.clientX - rect.left,
-      offsetY: e.clientY - rect.top,
-      active: false,
+    startGhostDrag(e, {
       source,
-      ghost: null,
-      targetId: null,
-      where: "before",
-    };
-    rowDragRef.current = state;
-
-    const move = (ev: PointerEvent) => {
-      const d = rowDragRef.current;
-      if (!d || d.pointerId !== ev.pointerId) return;
-      if (!d.active) {
-        const dx = ev.clientX - d.startX;
-        const dy = ev.clientY - d.startY;
-        if (Math.hypot(dx, dy) < 4) return;
-        d.active = true;
-        d.ghost = createRowGhost(d.source);
-        d.source.classList.add("drag-source");
-        document.body.classList.add("table-dragging");
-      }
-      ev.preventDefault();
-      positionGhost(d.ghost, ev.clientX - d.offsetX, ev.clientY - d.offsetY);
-      updateRowDrop(d, ev.clientX, ev.clientY);
-    };
-    const up = (ev: PointerEvent) => {
-      const d = rowDragRef.current;
-      if (!d || d.pointerId !== ev.pointerId) return;
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      removeEventListener("pointercancel", up);
-      d.ghost?.remove();
-      d.source.classList.remove("drag-source");
-      document.body.classList.remove("table-dragging");
-      clearRowDrop();
-      rowDragRef.current = null;
-      if (d.active && d.targetId) persistRecordMove(d.id, d.targetId, d.where);
-    };
-    addEventListener("pointermove", move, { passive: false });
-    addEventListener("pointerup", up);
-    addEventListener("pointercancel", up);
+      axis: "y",
+      ghostCls: "row-ghost",
+      ghostText: rowGhostText(source),
+      targetSelector: "tr[data-row-id]",
+      isSelf: (el) => el.dataset.rowId === rec.id,
+      onDrop: (el, where) => persistRecordMove(rec.id, el.dataset.rowId!, where),
+    });
   };
 
   const startColDrag = (e: any, prop: Prop) => {
     if (e.button !== 0) return;
     const source = (e.currentTarget as HTMLElement).closest("th") as HTMLElement | null;
     if (!source) return;
-    const rect = source.getBoundingClientRect();
-    const state: ColDragState = {
-      id: prop.id,
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      offsetX: e.clientX - rect.left,
-      offsetY: e.clientY - rect.top,
-      active: false,
+    startGhostDrag(e, {
       source,
-      ghost: null,
-      targetId: null,
-      where: "before",
-    };
-    colDragRef.current = state;
-
-    const move = (ev: PointerEvent) => {
-      const d = colDragRef.current;
-      if (!d || d.pointerId !== ev.pointerId) return;
-      if (!d.active) {
-        const dx = ev.clientX - d.startX;
-        const dy = ev.clientY - d.startY;
-        if (Math.hypot(dx, dy) < 4) return;
-        d.active = true;
-        suppressColClick.current = true;
-        d.ghost = createColGhost(d.source);
-        d.source.classList.add("drag-source");
-        document.body.classList.add("table-dragging");
-      }
-      ev.preventDefault();
-      positionGhost(d.ghost, ev.clientX - d.offsetX, ev.clientY - d.offsetY);
-      updateColDrop(d, ev.clientX, ev.clientY);
-    };
-    const up = (ev: PointerEvent) => {
-      const d = colDragRef.current;
-      if (!d || d.pointerId !== ev.pointerId) return;
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      removeEventListener("pointercancel", up);
-      d.ghost?.remove();
-      d.source.classList.remove("drag-source");
-      document.body.classList.remove("table-dragging");
-      clearColDrop();
-      colDragRef.current = null;
-      if (d.active) setTimeout(() => { suppressColClick.current = false; }, 0);
-      if (d.active && d.targetId) persistColumnMove(d.id, d.targetId, d.where);
-    };
-    addEventListener("pointermove", move, { passive: false });
-    addEventListener("pointerup", up);
-    addEventListener("pointercancel", up);
+      axis: "x",
+      ghostCls: "col-ghost",
+      ghostText: source.textContent?.trim() || "移动属性",
+      targetSelector: "th[data-col-id]",
+      isSelf: (el) => el.dataset.colId === prop.id,
+      // Header click opens the column menu; a real drag must swallow the click
+      // that fires on release (reset on the next tick, after that click).
+      onActivate: () => { suppressColClick.current = true; },
+      onDrop: (el, where) => persistColumnMove(prop.id, el.dataset.colId!, where),
+      onFinish: (active) => {
+        if (active) setTimeout(() => { suppressColClick.current = false; }, 0);
+      },
+    });
   };
 
   const startCellSelect = (e: any, ri: number, ci: number) => {
@@ -285,33 +185,15 @@ export function DatabaseView({
     if ((e.target as HTMLElement).closest("input,button,a")) return;
     const anchor = e.shiftKey && cellSel ? cellSel.a : { r: ri, c: ci };
     setCellSel({ a: anchor, b: { r: ri, c: ci } });
-    cellDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, active: false };
-
-    const move = (ev: PointerEvent) => {
-      const d = cellDragRef.current;
-      if (!d || d.pointerId !== ev.pointerId) return;
-      if (!d.active) {
-        if (Math.hypot(ev.clientX - d.startX, ev.clientY - d.startY) < 4) return;
-        d.active = true;
-        document.body.classList.add("cell-selecting");
-      }
-      ev.preventDefault();
-      const td = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.("td.cell-td") as HTMLElement | null;
-      if (!td || td.dataset.r == null) return;
-      setCellSel({ a: anchor, b: { r: Number(td.dataset.r), c: Number(td.dataset.c) } });
-    };
-    const up = (ev: PointerEvent) => {
-      const d = cellDragRef.current;
-      if (!d || d.pointerId !== ev.pointerId) return;
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      removeEventListener("pointercancel", up);
-      document.body.classList.remove("cell-selecting");
-      cellDragRef.current = null;
-    };
-    addEventListener("pointermove", move, { passive: false });
-    addEventListener("pointerup", up);
-    addEventListener("pointercancel", up);
+    startPointerDrag(e, {
+      onStart: () => document.body.classList.add("cell-selecting"),
+      onMove: (ev) => {
+        const td = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.("td.cell-td") as HTMLElement | null;
+        if (!td || td.dataset.r == null) return;
+        setCellSel({ a: anchor, b: { r: Number(td.dataset.r), c: Number(td.dataset.c) } });
+      },
+      onEnd: () => document.body.classList.remove("cell-selecting"),
+    });
   };
 
   // Apply a value to every cell in the current selection, batching all changed
@@ -340,11 +222,22 @@ export function DatabaseView({
     try { await navigator.clipboard.writeText(tsv); } catch { /* clipboard blocked */ }
   };
 
+  // Number columns compare numerically ("9" < "10"); empty/non-numeric cells
+  // sort first. Everything else compares as zh-collated text.
+  const sortProp = sort ? props.find((p) => p.name === sort.name) : undefined;
+  const sortNum = (v: unknown) => {
+    const n = v == null || v === "" ? NaN : Number(v);
+    return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
+  };
   const sorted = sort
     ? [...records].sort((a, b) => {
-        const av = String(a.values[sort.name] ?? "");
-        const bv = String(b.values[sort.name] ?? "");
-        return (sort.desc ? -1 : 1) * av.localeCompare(bv, "zh");
+        const av = a.values[sort.name];
+        const bv = b.values[sort.name];
+        const cmp =
+          sortProp?.type === "number"
+            ? sortNum(av) - sortNum(bv)
+            : String(av ?? "").localeCompare(String(bv ?? ""), "zh");
+        return (sort.desc ? -1 : 1) * cmp;
       })
     : records;
 
@@ -399,7 +292,6 @@ export function DatabaseView({
             {t}
           </div>
         ))}
-        <div class="view-tab" title="新建视图"><Icon name="plus" cls="ico sm" /></div>
         <div class="spacer" style={{ flex: 1 }} />
         <button class="btn btn-primary" onClick={newRecord}><Icon name="plus" cls="ico sm" />新建</button>
       </div>
@@ -409,7 +301,6 @@ export function DatabaseView({
           <button class="tbtn" onClick={(e) => openSortMenu(e, props, sort, setSort)}>
             <Icon name="sort" cls="ico sm" />排序
           </button>
-          <button class="tbtn"><Icon name="filter" cls="ico sm" />筛选</button>
         </div>
       )}
 
@@ -616,6 +507,30 @@ export function DatabaseView({
 }
 
 // ---- cell ----
+/** Single-field inline editor for text/number/date/url/relation values:
+ *  commits on blur or Enter, cancels on Escape. Shared by the grid cells and
+ *  the record peek panel. */
+function InlineEditInput({
+  prop, val, onCommit, onCancel,
+}: {
+  prop: Prop; val: unknown; onCommit: (v: unknown) => void; onCancel?: () => void;
+}) {
+  const initial = Array.isArray(val) ? (val as string[]).join(", ") : val == null ? "" : String(val);
+  return (
+    <input
+      class="inlineedit"
+      type={prop.type === "number" ? "number" : prop.type === "date" ? "date" : "text"}
+      value={initial}
+      autofocus
+      onBlur={(e) => onCommit(coerceInput(prop.type, (e.target as HTMLInputElement).value))}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") onCancel?.();
+      }}
+    />
+  );
+}
+
 function CellView({
   rec, prop, first, editing, onEdit, onCancel, onCommit, onOpen, onRowMenu,
 }: {
@@ -633,25 +548,12 @@ function CellView({
     );
   }
 
-  if (editing && (prop.type === "select" || prop.type === "multi_select")) {
-    // handled by menu opened on click; fall through to display
-  }
-
+  // select / multi_select never enter the editing state — their menu opens on
+  // click instead (see onActivate below) — so this branch covers the rest.
   if (editing && prop.type !== "select" && prop.type !== "multi_select") {
-    const initial = Array.isArray(val) ? (val as string[]).join(", ") : val == null ? "" : String(val);
     return (
       <div class="cell">
-        <input
-          class="inlineedit"
-          type={prop.type === "number" ? "number" : prop.type === "date" ? "date" : "text"}
-          value={initial}
-          autofocus
-          onBlur={(e) => onCommit(coerceInput(prop.type, (e.target as HTMLInputElement).value))}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            if (e.key === "Escape") onCancel();
-          }}
-        />
+        <InlineEditInput prop={prop} val={val} onCommit={onCommit} onCancel={onCancel} />
       </div>
     );
   }
@@ -692,122 +594,25 @@ function reorderById<T extends { id: string }>(items: T[], srcId: string, target
   return next;
 }
 
-function clearRowDrop() {
-  document.querySelectorAll("table.grid tr.drop-before,table.grid tr.drop-after")
-    .forEach((n) => n.classList.remove("drop-before", "drop-after"));
-}
-
-function markRowDrop(el: HTMLElement, clientY: number): DropWhere {
-  clearRowDrop();
-  const r = el.getBoundingClientRect();
-  const where = clientY < r.top + r.height / 2 ? "before" : "after";
-  el.classList.add(where === "before" ? "drop-before" : "drop-after");
-  return where;
-}
-
-function clearColDrop() {
-  document.querySelectorAll("table.grid th.drop-before,table.grid th.drop-after")
-    .forEach((n) => n.classList.remove("drop-before", "drop-after"));
-}
-
-function markColDrop(el: HTMLElement, clientX: number): DropWhere {
-  clearColDrop();
-  const r = el.getBoundingClientRect();
-  const where = clientX < r.left + r.width / 2 ? "before" : "after";
-  el.classList.add(where === "before" ? "drop-before" : "drop-after");
-  return where;
-}
-
-function updateRowDrop(d: RowDragState, clientX: number, clientY: number) {
-  const el = document.elementFromPoint(clientX, clientY)?.closest?.("tr[data-row-id]") as HTMLElement | null;
-  if (!el || el.dataset.rowId === d.id) {
-    clearRowDrop();
-    d.targetId = null;
-    return;
-  }
-  d.targetId = el.dataset.rowId ?? null;
-  d.where = markRowDrop(el, clientY);
-}
-
-function updateColDrop(d: ColDragState, clientX: number, clientY: number) {
-  const el = document.elementFromPoint(clientX, clientY)?.closest?.("th[data-col-id]") as HTMLElement | null;
-  if (!el || el.dataset.colId === d.id) {
-    clearColDrop();
-    d.targetId = null;
-    return;
-  }
-  d.targetId = el.dataset.colId ?? null;
-  d.where = markColDrop(el, clientX);
-}
-
-function positionGhost(el: HTMLElement | null, left: number, top: number) {
-  if (!el) return;
-  el.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
-}
-
-function createRowGhost(row: HTMLElement): HTMLElement {
-  const rect = row.getBoundingClientRect();
-  const ghost = document.createElement("div");
-  ghost.className = "drag-ghost row-ghost";
-  ghost.style.width = `${rect.width}px`;
-  ghost.style.height = `${rect.height}px`;
+function rowGhostText(row: HTMLElement): string {
   const text = Array.from(row.querySelectorAll("td"))
     .map((td) => (td.textContent ?? "").trim())
     .filter(Boolean)
     .join("    ");
-  ghost.textContent = text || "移动记录";
-  document.body.appendChild(ghost);
-  return ghost;
-}
-
-function createColGhost(th: HTMLElement): HTMLElement {
-  const rect = th.getBoundingClientRect();
-  const ghost = document.createElement("div");
-  ghost.className = "drag-ghost col-ghost";
-  ghost.style.width = `${rect.width}px`;
-  ghost.style.height = `${rect.height}px`;
-  ghost.textContent = th.textContent?.trim() || "移动属性";
-  document.body.appendChild(ghost);
-  return ghost;
+  return text || "移动记录";
 }
 
 // ---- column resizer ----
-// During drag we mutate the matching <col> element's width directly (table-layout
-// is fixed, so this reflows 1:1 with the cursor) and only commit to React state on
-// pointerup — avoids re-rendering the whole table on every pointermove.
 function ColResizer({ colId, startWidth, onCommit }: { colId: string; startWidth: number; onCommit: (w: number) => void }) {
   const start = (e: any) => {
     e.preventDefault();
     e.stopPropagation();
-    const handle = e.currentTarget as HTMLElement;
-    const col = document.querySelector<HTMLElement>(`col[data-col-id="${CSS.escape(colId)}"]`);
-    const x0 = e.clientX;
-    let last = startWidth;
-    let raf = 0;
-    handle.classList.add("dragging");
-    document.body.classList.add("col-resizing");
-
-    const apply = () => {
-      raf = 0;
-      if (col) col.style.width = last + "px";
-    };
-    const move = (ev: PointerEvent) => {
-      last = Math.max(80, startWidth + ev.clientX - x0);
-      if (!raf) raf = requestAnimationFrame(apply);
-    };
-    const up = () => {
-      if (raf) cancelAnimationFrame(raf);
-      if (col) col.style.width = last + "px";
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      removeEventListener("pointercancel", up);
-      handle.classList.remove("dragging");
-      document.body.classList.remove("col-resizing");
-      onCommit(last);
-    };
-    addEventListener("pointermove", move, { passive: false });
-    addEventListener("pointerup", up);
-    addEventListener("pointercancel", up);
+    startColumnResize(e, {
+      col: document.querySelector<HTMLElement>(`col[data-col-id="${CSS.escape(colId)}"]`),
+      startWidth,
+      min: 80,
+      onDone: onCommit,
+    });
   };
   return <div class="col-resizer" onPointerDown={start} />;
 }
@@ -1019,11 +824,6 @@ function RecordPeek({
               />
             </div>
           ))}
-          <div class="peek-divider" />
-          <div class="muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>页面正文</div>
-          <div class="editable" contentEditable data-ph="记录也可拥有自己的块级正文…" style={{ minHeight: 90 }}>
-            每条记录都可作为页面打开，并拥有块级正文。
-          </div>
         </div>
       </div>
     </>
@@ -1037,17 +837,9 @@ function PeekValue({ prop, rec, editing, onEdit, onCommit }: { prop: Prop; rec: 
   if (prop.type === "select" || prop.type === "multi_select")
     return <div class="v" onClick={(e) => openSelectMenu(e as unknown as MouseEvent, prop, val, onCommit)}><CellDisplay prop={prop} val={val} /></div>;
   if (editing) {
-    const initial = Array.isArray(val) ? (val as string[]).join(", ") : val == null ? "" : String(val);
     return (
       <div class="v">
-        <input
-          class="inlineedit"
-          type={prop.type === "number" ? "number" : prop.type === "date" ? "date" : "text"}
-          value={initial}
-          autofocus
-          onBlur={(e) => onCommit(coerceInput(prop.type, (e.target as HTMLInputElement).value))}
-          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        />
+        <InlineEditInput prop={prop} val={val} onCommit={onCommit} />
       </div>
     );
   }

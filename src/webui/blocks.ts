@@ -74,6 +74,46 @@ export function isListType(type: BlockType): boolean {
   return LIST_TYPES.has(type);
 }
 
+// Starter table for slash-insert / block conversion: header row + 1 body row,
+// two empty columns.
+function starterTableRows(): string[][] {
+  return [
+    ["", ""],
+    ["", ""],
+  ];
+}
+
+/** Set a block's type and (re)initialize its per-type fields from `draft`.
+ *  The single source of truth for the type↔field invariants (todo.checked,
+ *  code.lang, numbered.start, table.rows/align): both makeBlock and the
+ *  editor's convert go through here, so the two can't drift. Children are the
+ *  caller's concern (a conversion may keep them, a fresh block sets its own). */
+export function applyBlockDraft(b: Block, type: BlockType, draft: Partial<BlockDraft>): void {
+  b.type = type;
+  b.content = draft.content ?? "";
+  if (type === "todo") b.checked = draft.checked ?? false;
+  else delete b.checked;
+  if (type === "code") b.lang = draft.lang ?? "";
+  else delete b.lang;
+  if (type === "numbered" && draft.start != null && draft.start > 1) b.start = draft.start;
+  else delete b.start;
+  if (type === "table") {
+    b.rows = draft.rows ? draft.rows.map((r) => [...r]) : starterTableRows();
+    b.align = draft.align ? [...draft.align] : new Array(b.rows[0]!.length).fill(null);
+  } else {
+    delete b.rows;
+    delete b.align;
+  }
+}
+
+/** Construct a fresh block of `type` from a draft. */
+export function makeBlock(type: BlockType, draft: Partial<BlockDraft> = {}): Block {
+  const block: Block = { id: genId(), type, content: "" };
+  applyBlockDraft(block, type, draft);
+  if (isListType(type) && draft.children?.length) block.children = draft.children;
+  return block;
+}
+
 /** Parse one Markdown-ish block text into a typed editor block. */
 export function textToBlock(text: string): BlockDraft {
   const firstLine = text.split("\n", 1)[0] ?? "";

@@ -1,0 +1,52 @@
+// The app's top-level navigation state: which pane fills the content area.
+// Owned by app.tsx (single navigate() writer, mirrored to the location hash);
+// lives in its own module so the sidebar can consume `view`/`navigate` without
+// importing app.tsx back (which would be circular).
+
+export type View =
+  | { kind: "empty" }
+  | { kind: "db"; id: string }
+  | { kind: "doc"; id: string }
+  | { kind: "search"; q: string }
+  | { kind: "settings" }
+  | { kind: "sites" };
+
+export type Navigate = (v: View, opts?: { replace?: boolean }) => void;
+
+// --- hash routing ------------------------------------------------------------
+// Views are mirrored to "#/" routes so browser history (and a phone's hardware
+// back) navigates the app, deep links survive a refresh, and doc/db URLs are
+// shareable. The desktop Quick Notes window owns the bare "#quick" hash; it
+// never matches a "#/" route and parses to the empty view in a plain browser.
+
+export function viewToHash(v: View): string {
+  switch (v.kind) {
+    case "db": return `#/db/${encodeURIComponent(v.id)}`;
+    case "doc": return `#/doc/${encodeURIComponent(v.id)}`;
+    case "search": return `#/search?q=${encodeURIComponent(v.q)}`;
+    case "settings": return "#/settings";
+    case "sites": return "#/sites";
+    case "empty": return "#/";
+  }
+}
+
+/** Inverse of viewToHash; anything unrecognized (or with malformed escapes) is
+ *  the empty view, so a hand-mangled URL degrades to the home screen. */
+export function parseHash(h: string): View {
+  if (!h.startsWith("#/")) return { kind: "empty" };
+  const [path = "", query = ""] = h.slice(2).split("?", 2);
+  const [kind, id = ""] = path.split("/", 2);
+  try {
+    if (kind === "db" && id) return { kind: "db", id: decodeURIComponent(id) };
+    if (kind === "doc" && id) return { kind: "doc", id: decodeURIComponent(id) };
+    if (kind === "search") {
+      const q = new URLSearchParams(query).get("q");
+      if (q) return { kind: "search", q };
+    }
+    if (kind === "settings") return { kind: "settings" };
+    if (kind === "sites") return { kind: "sites" };
+  } catch {
+    // malformed percent-escape — treat as unrecognized
+  }
+  return { kind: "empty" };
+}

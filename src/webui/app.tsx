@@ -6,9 +6,11 @@ import { Icon } from "./icons.tsx";
 import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
 import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
-import { SettingsView, cmpVer } from "./settings.tsx";
+import { SettingsView } from "./settings.tsx";
+import { cmpVer } from "./version.ts";
 import { SitesView } from "./sites.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
+import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
@@ -25,52 +27,7 @@ import {
 // Single-page Preact app: browse/edit databases (Notion-like tables) and
 // documents (block WYSIWYG). All writes go through /api/*, which call the same
 // core functions the CLI uses, so changes land in the CRDT oplog and replicate.
-
-type View =
-  | { kind: "empty" }
-  | { kind: "db"; id: string }
-  | { kind: "doc"; id: string }
-  | { kind: "search"; q: string }
-  | { kind: "settings" }
-  | { kind: "sites" };
-
-// --- hash routing ------------------------------------------------------------
-// Views are mirrored to "#/" routes so browser history (and a phone's hardware
-// back) navigates the app, deep links survive a refresh, and doc/db URLs are
-// shareable. The desktop Quick Notes window owns the bare "#quick" hash; it
-// never matches a "#/" route and parses to the empty view in a plain browser.
-
-function viewToHash(v: View): string {
-  switch (v.kind) {
-    case "db": return `#/db/${encodeURIComponent(v.id)}`;
-    case "doc": return `#/doc/${encodeURIComponent(v.id)}`;
-    case "search": return `#/search?q=${encodeURIComponent(v.q)}`;
-    case "settings": return "#/settings";
-    case "sites": return "#/sites";
-    case "empty": return "#/";
-  }
-}
-
-/** Inverse of viewToHash; anything unrecognized (or with malformed escapes) is
- *  the empty view, so a hand-mangled URL degrades to the home screen. */
-function parseHash(h: string): View {
-  if (!h.startsWith("#/")) return { kind: "empty" };
-  const [path = "", query = ""] = h.slice(2).split("?", 2);
-  const [kind, id = ""] = path.split("/", 2);
-  try {
-    if (kind === "db" && id) return { kind: "db", id: decodeURIComponent(id) };
-    if (kind === "doc" && id) return { kind: "doc", id: decodeURIComponent(id) };
-    if (kind === "search") {
-      const q = new URLSearchParams(query).get("q");
-      if (q) return { kind: "search", q };
-    }
-    if (kind === "settings") return { kind: "settings" };
-    if (kind === "sites") return { kind: "sites" };
-  } catch {
-    // malformed percent-escape — treat as unrecognized
-  }
-  return { kind: "empty" };
-}
+// The View type and its hash mapping live in src/webui/view.ts.
 
 // Drive the mobile navigation model off device capability, not UA sniffing: a
 // narrow window only flips to the full-page-sidebar layout on a *touch* device
@@ -311,29 +268,14 @@ function App() {
       <Sidebar
         databases={databases}
         docs={docs}
-        activeKind={view.kind}
-        activeId={"id" in view ? view.id : undefined}
+        view={view}
+        navigate={navigate}
         width={sbWidth}
         collapsed={sbCollapsed}
         onResize={setSbWidth}
-        onOpenDb={(id) => navigate({ kind: "db", id })}
-        onOpenDoc={(id) => navigate({ kind: "doc", id })}
-        onSearch={(q) =>
-          // entering search pushes once; retyping within it replaces, so one
-          // back press leaves search instead of replaying every query
-          navigate({ kind: "search", q }, { replace: view.kind === "search" })
-        }
         onCollapse={() => setSbCollapsed(true)}
-        onOpenSettings={() => navigate({ kind: "settings" })}
-        settingsActive={view.kind === "settings"}
-        onOpenSites={() => navigate({ kind: "sites" })}
-        sitesActive={view.kind === "sites"}
         updatePending={updatePending}
         onError={onError}
-        afterDelete={(_, id) => {
-          // replace, not push: a deleted entity must not stay reachable via forward
-          if ("id" in view && view.id === id) navigate({ kind: "empty" }, { replace: true });
-        }}
       />
       <div class="main">
         <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
@@ -426,6 +368,14 @@ function EmptyState({ onNewDoc }: { onNewDoc: () => void }) {
   );
 }
 
+/** FTS snippets are plain text with `[..]` wrapping each matched term (see
+ *  core/search.ts). Render them as text nodes with <mark> around the wrapped
+ *  spans — never as HTML, so document content can't inject markup. */
+function SnippetText({ text }: { text: string }) {
+  const parts = text.split(/\[([^\[\]]*)\]/g);
+  return <>{parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : p))}</>;
+}
+
 function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: string) => void; onOpenDb: (id: string) => void }) {
   const [hits, setHits] = useState<Hit[] | null>(null);
   useEffect(() => {
@@ -440,12 +390,11 @@ function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: str
       {hits?.map((h) => (
         <div
           key={h.id}
-          class="error-bar"
-          style={{ background: "var(--surface)", color: "var(--fg)", margin: "0 0 8px" }}
+          class="search-hit"
           onClick={() => (h.type === "document" ? onOpenDoc(h.id) : h.database_id && onOpenDb(h.database_id))}
         >
-          <strong>{h.title || h.id}</strong> <span class="muted">{h.type}</span>
-          <div class="muted" dangerouslySetInnerHTML={{ __html: h.snippet }} />
+          <strong>{h.title || h.id}</strong> <span class="muted">{h.type === "document" ? "文档" : "记录"}</span>
+          <div class="muted"><SnippetText text={h.snippet} /></div>
         </div>
       ))}
     </div>

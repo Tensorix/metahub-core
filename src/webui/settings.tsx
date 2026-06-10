@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { api, type Peer, type Grant } from "./api.ts";
+import { cmpVer } from "./version.ts";
 import {
   Modal,
   openModal,
@@ -63,17 +64,6 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
 }
 
 // ---- version footer (+ core update, desktop only) -------------------------
-
-/** Numeric semver-ish compare: >0 if a>b, <0 if a<b, 0 if equal. Tolerates a `v` prefix. */
-export function cmpVer(a: string, b: string): number {
-  const pa = a.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
-}
 
 type UpdateState = "idle" | "checking" | "available" | "downloading" | "staged" | "error";
 

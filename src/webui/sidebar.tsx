@@ -2,6 +2,8 @@
 import { useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type PropType, type PropConfig } from "./api.ts";
 import { Icon } from "./icons.tsx";
+import { clearDropMarks } from "./pointer-drag.ts";
+import type { Navigate, View } from "./view.ts";
 import {
   openMenu,
   MenuItem,
@@ -17,23 +19,16 @@ import {
 interface SidebarProps {
   databases: Db[];
   docs: DocSummary[];
-  activeKind: string;
-  activeId?: string;
+  /** Current view + the app's single navigation entry point (see view.ts). */
+  view: View;
+  navigate: Navigate;
   width: number;
   collapsed: boolean;
   onResize: (w: number) => void;
-  onOpenDb: (id: string) => void;
-  onOpenDoc: (id: string) => void;
-  onSearch: (q: string) => void;
   onCollapse: () => void;
-  onOpenSettings: () => void;
-  settingsActive: boolean;
-  onOpenSites: () => void;
-  sitesActive: boolean;
   /** Show a dot on the settings entry: a core update is staged or available. */
   updatePending?: boolean;
   onError: (msg: string) => void;
-  afterDelete: (kind: "db" | "doc", id: string) => void;
 }
 
 let dragId: string | null = null;
@@ -46,6 +41,7 @@ const IS_MAC = /mac/i.test(
 );
 
 export function Sidebar(props: SidebarProps) {
+  const { view, navigate } = props;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
   const startResize = useResize(props.onResize);
@@ -58,11 +54,17 @@ export function Sidebar(props: SidebarProps) {
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => props.onError(String(e.message)));
 
+  // After deleting the entity currently on screen, replace (not push) to the
+  // home view: a deleted entity must not stay reachable via forward.
+  const leaveIfActive = (id: string) => {
+    if ("id" in view && view.id === id) navigate({ kind: "empty" }, { replace: true });
+  };
+
   const newDoc = (parent: string | null) =>
     guard(async () => {
       const doc = await api.createDocument({ title: "", ...(parent ? { parent_id: parent } : {}) });
       if (parent) expanded.add(parent);
-      props.onOpenDoc(doc.id);
+      navigate({ kind: "doc", id: doc.id });
     });
 
   const onDrop = (srcId: string, tgt: DocSummary, where: "into" | "before" | "after") =>
@@ -88,7 +90,7 @@ export function Sidebar(props: SidebarProps) {
             if (name && name !== db.name)
               guard(async () => {
                 await api.updateDatabase(db.id, { name });
-                        });
+              });
           }}
         />
         <MenuSep />
@@ -107,7 +109,7 @@ export function Sidebar(props: SidebarProps) {
             if (ok)
               guard(async () => {
                 await api.deleteDatabase(db.id);
-                          props.afterDelete("db", db.id);
+                leaveIfActive(db.id);
               });
           }}
         />
@@ -130,7 +132,7 @@ export function Sidebar(props: SidebarProps) {
             if (title)
               guard(async () => {
                 await api.updateDocument(d.id, { title });
-                        });
+              });
           }}
         />
         {d.parent_id && (
@@ -141,7 +143,7 @@ export function Sidebar(props: SidebarProps) {
               close();
               guard(async () => {
                 await api.updateDocument(d.id, { parent_id: null });
-                        });
+              });
             }}
           />
         )}
@@ -163,7 +165,7 @@ export function Sidebar(props: SidebarProps) {
             if (ok)
               guard(async () => {
                 await deleteDocTree(props.docs, d.id);
-                          props.afterDelete("doc", d.id);
+                leaveIfActive(d.id);
               });
           }}
         />
@@ -179,9 +181,9 @@ export function Sidebar(props: SidebarProps) {
       return (
         <div key={d.id} class={depth ? "navchildren" : ""}>
           <div
-            class={"navitem" + (props.activeKind === "doc" && props.activeId === d.id ? " active" : "")}
+            class={"navitem" + (view.kind === "doc" && view.id === d.id ? " active" : "")}
             draggable
-            onClick={() => props.onOpenDoc(d.id)}
+            onClick={() => navigate({ kind: "doc", id: d.id })}
             onDragStart={(e) => { e.stopPropagation(); dragId = d.id; (e.currentTarget as HTMLElement).classList.add("dragging"); }}
             onDragEnd={(e) => { (e.currentTarget as HTMLElement).classList.remove("dragging"); clearDrop(); }}
             onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); markDrop(e.currentTarget as HTMLElement, e); }}
@@ -230,18 +232,18 @@ export function Sidebar(props: SidebarProps) {
             full-page home the sites/settings entries live up here as icon
             buttons instead of the desktop .sb-footer rows, freeing the bottom. */}
         <button
-          class={"sb-act" + (props.sitesActive ? " active" : "")}
+          class={"sb-act" + (view.kind === "sites" ? " active" : "")}
           title="站点"
           aria-label="站点"
-          onClick={props.onOpenSites}
+          onClick={() => navigate({ kind: "sites" })}
         >
           <Icon name="globe" cls="ico" />
         </button>
         <button
-          class={"sb-act" + (props.settingsActive ? " active" : "")}
+          class={"sb-act" + (view.kind === "settings" ? " active" : "")}
           title="设置"
           aria-label="设置"
-          onClick={props.onOpenSettings}
+          onClick={() => navigate({ kind: "settings" })}
         >
           <Icon name="settings" cls="ico" />
           {props.updatePending && <span class="nav-dot" title="有可用更新" />}
@@ -257,7 +259,12 @@ export function Sidebar(props: SidebarProps) {
           placeholder="搜索…"
           value={q}
           onInput={(e) => setQ((e.target as HTMLInputElement).value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && q.trim()) props.onSearch(q.trim()); }}
+          onKeyDown={(e) => {
+            // entering search pushes once; re-searching within it replaces, so
+            // one back press leaves search instead of replaying every query
+            if (e.key === "Enter" && q.trim())
+              navigate({ kind: "search", q: q.trim() }, { replace: view.kind === "search" });
+          }}
         />
         {/* the shortcut itself lives in app.tsx (global keydown) */}
         <kbd>{IS_MAC ? "⌘K" : "Ctrl K"}</kbd>
@@ -267,15 +274,19 @@ export function Sidebar(props: SidebarProps) {
         <div class="sb-section">
           <div class="sb-section-head">
             <span>数据库</span>
-            <button class="add" title="新建数据库" onClick={() => openCreateDb(props.onOpenDb, props.onError)}>
+            <button
+              class="add"
+              title="新建数据库"
+              onClick={() => openCreateDb((id) => navigate({ kind: "db", id }), props.onError)}
+            >
               <Icon name="plus" cls="ico sm" />
             </button>
           </div>
           {props.databases.map((db) => (
             <div
               key={db.id}
-              class={"navitem" + (props.activeKind === "db" && props.activeId === db.id ? " active" : "")}
-              onClick={() => props.onOpenDb(db.id)}
+              class={"navitem" + (view.kind === "db" && view.id === db.id ? " active" : "")}
+              onClick={() => navigate({ kind: "db", id: db.id })}
             >
               <span class="emoji">{db.icon || "🗂️"}</span>
               <span class="label">{db.name}</span>
@@ -303,15 +314,15 @@ export function Sidebar(props: SidebarProps) {
 
       <div class="sb-footer">
         <button
-          class={"navitem" + (props.sitesActive ? " active" : "")}
-          onClick={props.onOpenSites}
+          class={"navitem" + (view.kind === "sites" ? " active" : "")}
+          onClick={() => navigate({ kind: "sites" })}
         >
           <span class="emoji"><Icon name="globe" cls="ico sm" /></span>
           <span class="label">站点</span>
         </button>
         <button
-          class={"navitem" + (props.settingsActive ? " active" : "")}
-          onClick={props.onOpenSettings}
+          class={"navitem" + (view.kind === "settings" ? " active" : "")}
+          onClick={() => navigate({ kind: "settings" })}
         >
           <span class="emoji"><Icon name="settings" cls="ico sm" /></span>
           <span class="label">设置</span>
@@ -325,11 +336,9 @@ export function Sidebar(props: SidebarProps) {
 }
 
 // ---- drag-drop visual helpers ----
-function clearDrop() {
-  document
-    .querySelectorAll(".drop-into,.drop-before,.drop-after")
-    .forEach((n) => n.classList.remove("drop-into", "drop-before", "drop-after"));
-}
+// The sidebar tree has a three-way drop (into/before/after), so it marks
+// targets itself; only the clearing is shared.
+const clearDrop = clearDropMarks;
 function dropWhere(el: HTMLElement, e: DragEvent): "into" | "before" | "after" {
   const r = el.getBoundingClientRect();
   const y = e.clientY - r.top;

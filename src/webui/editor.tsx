@@ -3,7 +3,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, ApiError } from "./api.ts";
 import { Icon } from "./icons.tsx";
-import { openMenu, MenuItem, MenuLabel, MenuSep } from "./ui.tsx";
+import { openMenu, MenuItem, MenuLabel, MenuSep, promptDialog } from "./ui.tsx";
 import hljs from "highlight.js/lib/common";
 import { htmlToMarkdown } from "./html-md.ts";
 import {
@@ -13,14 +13,14 @@ import {
   type ColAlign,
   BLOCK_MENU,
   COMMON_LANGS,
-  blockToText,
+  applyBlockDraft,
   blocksFromBody,
   bodyFromBlocks,
   bulletTodoShortcut,
   computeListNumbers,
-  genId,
   isBlankSpacer,
   isListType,
+  makeBlock,
   shortcutFromInput,
 } from "./blocks.ts";
 import {
@@ -43,6 +43,7 @@ import {
   serializeBlocks,
 } from "./editor-ops.ts";
 import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
+import { startColumnResize, markDropHalf, clearDropMarks } from "./pointer-drag.ts";
 
 export type DocMode = "blocks" | "source";
 
@@ -405,22 +406,9 @@ export function DocView({
     const found = findBlock(blocks, id);
     const b = found?.block;
     if (!b) return;
+    // Converting between list types keeps the children; any other target drops them.
     const children = isListType(type) ? b.children : undefined;
-    b.type = type;
-    b.content = draft.content ?? "";
-    if (type === "todo") b.checked = draft.checked ?? false;
-    else delete b.checked;
-    if (type === "code") b.lang = draft.lang ?? "";
-    else delete b.lang;
-    if (type === "numbered" && draft.start != null && draft.start > 1) b.start = draft.start;
-    else delete b.start;
-    if (type === "table") {
-      b.rows = draft.rows ? draft.rows.map((r) => [...r]) : starterTableRows();
-      b.align = draft.align ? [...draft.align] : new Array(b.rows[0]!.length).fill(null);
-    } else {
-      delete b.rows;
-      delete b.align;
-    }
+    applyBlockDraft(b, type, draft);
     if (children?.length) b.children = children;
     else delete b.children;
     bump();
@@ -538,11 +526,24 @@ export function DocView({
     scheduleSave();
   };
 
-  const applyFormatCommand = (cmd: string) => {
-    const link = cmd === "createLink" ? prompt("链接地址") : null;
-    if (cmd === "createLink" && !link) return;
-    if (cmd === "code") wrapInlineCode();
-    else document.execCommand(cmd, false, link ?? undefined);
+  const applyFormatCommand = async (cmd: string) => {
+    if (cmd === "createLink") {
+      // The link dialog steals focus — and the native selection with it — so
+      // capture the range first and restore it after the dialog closes.
+      const sel = getSelection();
+      const range = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+      if (!range || range.collapsed) return;
+      setBar(null);
+      const url = (await promptDialog({ title: "插入链接", label: "链接地址", placeholder: "https://…" }))?.trim();
+      if (!url) return;
+      const host = range.startContainer.parentElement?.closest?.(".editable") as HTMLElement | null;
+      host?.focus();
+      const s = getSelection();
+      s?.removeAllRanges();
+      s?.addRange(range);
+      document.execCommand("createLink", false, url);
+    } else if (cmd === "code") wrapInlineCode();
+    else document.execCommand(cmd, false, undefined);
     syncFocusedBlock(blocks);
     scheduleSave();
     updateBar(setBar);
@@ -1404,32 +1405,12 @@ function TableBlock({
   const startResize = (e: PointerEvent, c: number) => {
     e.preventDefault();
     e.stopPropagation();
-    const handle = e.currentTarget as HTMLElement;
-    const col = tableRef.current?.querySelector<HTMLElement>(`col[data-tcol="${c}"]`);
-    const x0 = e.clientX;
-    const startW = widths.current[c] ?? 160;
-    let last = startW;
-    let raf = 0;
-    handle.classList.add("dragging");
-    document.body.classList.add("col-resizing");
-    const apply = () => { raf = 0; if (col) col.style.width = last + "px"; };
-    const move = (ev: PointerEvent) => {
-      last = Math.max(60, startW + ev.clientX - x0);
-      if (!raf) raf = requestAnimationFrame(apply);
-    };
-    const up = () => {
-      if (raf) cancelAnimationFrame(raf);
-      if (col) col.style.width = last + "px";
-      widths.current[c] = last;
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      removeEventListener("pointercancel", up);
-      handle.classList.remove("dragging");
-      document.body.classList.remove("col-resizing");
-    };
-    addEventListener("pointermove", move, { passive: false });
-    addEventListener("pointerup", up);
-    addEventListener("pointercancel", up);
+    startColumnResize(e, {
+      col: tableRef.current?.querySelector<HTMLElement>(`col[data-tcol="${c}"]`) ?? null,
+      startWidth: widths.current[c] ?? 160,
+      min: 60,
+      onDone: (w) => { widths.current[c] = w; },
+    });
   };
 
   const colMenu = (e: MouseEvent, c: number) => {
@@ -1632,28 +1613,6 @@ function syncFocusedBlock(blocks: Block[]) {
   if (b && el) b.content = blockEditorText(b, el);
 }
 
-function makeBlock(type: BlockType, draft: Partial<BlockDraft> = {}): Block {
-  const block: Block = { id: genId(), type, content: draft.content ?? "" };
-  if (type === "todo") block.checked = draft.checked ?? false;
-  if (type === "code") block.lang = draft.lang ?? "";
-  if (type === "numbered" && draft.start != null && draft.start > 1) block.start = draft.start;
-  if (isListType(type) && draft.children?.length) block.children = draft.children;
-  if (type === "table") {
-    block.rows = draft.rows ? draft.rows.map((r) => [...r]) : starterTableRows();
-    block.align = draft.align ? [...draft.align] : new Array(block.rows[0]!.length).fill(null);
-  }
-  return block;
-}
-
-// Starter table for slash-insert / block conversion: header row + 1 body row,
-// two empty columns.
-function starterTableRows(): string[][] {
-  return [
-    ["", ""],
-    ["", ""],
-  ];
-}
-
 function blockEditorText(_block: Block, el: HTMLElement): string {
   return htmlToInline(el.innerHTML);
 }
@@ -1779,11 +1738,7 @@ function resizeSourceEditor(ta: HTMLTextAreaElement) {
   ta.style.height = "auto";
   ta.style.height = ta.scrollHeight + "px";
 }
-function clearBlockDrop() {
-  document.querySelectorAll(".block.drop-before,.block.drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after"));
-}
+const clearBlockDrop = clearDropMarks;
 function markBlockDrop(el: HTMLElement, e: DragEvent) {
-  clearBlockDrop();
-  const r = el.getBoundingClientRect();
-  el.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+  markDropHalf(el, e, "y");
 }
