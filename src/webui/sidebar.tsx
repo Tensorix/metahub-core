@@ -226,6 +226,26 @@ export function Sidebar(props: SidebarProps) {
         <div class="brand">
           <span class="mark"><Icon name="cube" /></span>Metahub
         </div>
+        {/* Mobile-only (CSS-gated, like the collapse button below): on the
+            full-page home the sites/settings entries live up here as icon
+            buttons instead of the desktop .sb-footer rows, freeing the bottom. */}
+        <button
+          class={"sb-act" + (props.sitesActive ? " active" : "")}
+          title="站点"
+          aria-label="站点"
+          onClick={props.onOpenSites}
+        >
+          <Icon name="globe" cls="ico" />
+        </button>
+        <button
+          class={"sb-act" + (props.settingsActive ? " active" : "")}
+          title="设置"
+          aria-label="设置"
+          onClick={props.onOpenSettings}
+        >
+          <Icon name="settings" cls="ico" />
+          {props.updatePending && <span class="nav-dot" title="有可用更新" />}
+        </button>
         <button class="iconbtn" title="收起侧栏" onClick={props.onCollapse}>
           <Icon name="panelLeft" />
         </button>

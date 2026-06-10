@@ -33,14 +33,19 @@ export function setTheme(t: ThemeChoice): void {
 // <meta name="theme-color">. Keep it matching the surface actually filling the
 // top of the screen so the notch area blends in: on the mobile home that's the
 // full-page sidebar (--sidebar); content views and desktop use the page bg.
-// Read the resolved color so it tracks the active theme — including a manual
-// light/dark/system toggle, which prefers-color-scheme media alone would miss.
+// Read the resolved *token* (a hex literal in styles.css) rather than an
+// element's computed backgroundColor: some mobile browsers ignore theme-color
+// updates in rgb() form, and the token already tracks the active theme —
+// including a manual light/dark/system toggle, which prefers-color-scheme
+// media alone would miss.
 export function syncThemeColor(): void {
   const meta = document.getElementById("theme-color-meta");
   if (!meta) return;
   const onHome =
     document.body.classList.contains("mobile") &&
     !document.body.classList.contains("mobile-content");
-  const el = (onHome && document.querySelector(".sidebar")) || document.body;
-  meta.setAttribute("content", getComputedStyle(el as HTMLElement).backgroundColor);
+  const color = getComputedStyle(document.documentElement)
+    .getPropertyValue(onHome ? "--sidebar" : "--bg")
+    .trim();
+  if (color) meta.setAttribute("content", color);
 }

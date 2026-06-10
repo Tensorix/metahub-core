@@ -40,8 +40,9 @@ const HTML = `<!doctype html>
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
 <!-- FOUC guard: resolve the stored choice (system → OS preference) to an
      explicit data-resolved before first paint. CSS keys off data-resolved
-     alone, so the dark palette exists exactly once — see styles.css. -->
-<script>try{var t=localStorage.getItem('mh-theme'),d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.resolved=d?'dark':'light'}catch(e){}</script>
+     alone, so the dark palette exists exactly once — see styles.css. Dark also
+     pre-tints the status bar (hex mirrors --bg) so the first frame isn't white. -->
+<script>try{var t=localStorage.getItem('mh-theme'),d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.resolved=d?'dark':'light';if(d)document.getElementById('theme-color-meta').content='#1a1a1c'}catch(e){}</script>
 <link rel="stylesheet" href="/webui.css">
 </head>
 <body>

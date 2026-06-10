@@ -113,6 +113,9 @@
   .dragging { opacity:.35; }
   .sb-footer { flex:none; padding:6px 8px; border-top:1px solid var(--line); }
   .sb-footer .navitem { font-size:var(--fs-ui); }
+  /* Sites/settings as sb-head icon buttons — the mobile home's replacement for
+     the .sb-footer rows (swapped in the mobile media block below). */
+  .sb-act { display:none; }
   .nav-dot { flex:none; width:7px; height:7px; border-radius:50%; background:var(--danger);
     box-shadow:0 0 0 2px var(--surface); margin-right:2px; }
 
@@ -818,13 +821,21 @@
     .sb-resizer { display:none; }
     .topbar .hamburger { display:grid; }         /* serves as the back button */
 
+    /* Sites/settings move from the bottom footer rows up into the home header
+       as icon buttons — no full-width strip eating into the list + safe area. */
+    .sb-footer { display:none; }
+    .sb-act { display:grid; place-items:center; width:40px; height:40px; flex:none;
+      border-radius:var(--radius-sm); color:var(--fg-soft); position:relative; }
+    .sb-act:active, .sb-act.active { background:var(--hover-2); color:var(--fg); }
+    .sb-act .ico { width:20px; height:20px; }
+    .sb-act .nav-dot { position:absolute; top:7px; right:7px; box-shadow:0 0 0 2px var(--sidebar); }
+
     /* Phone typography: bigger text for a small screen held close. Tap-target
        sizing and the 16px iOS anti-zoom inputs live in the width-independent
        (pointer:coarse) block below — tablets need those too. */
     .navitem { padding:9px 8px; font-size:16px; }
     .navitem .emoji { font-size:18px; }
     .navitem .tw { width:26px; height:26px; }
-    .sb-footer .navitem { font-size:16px; }
     .sb-section-head { font-size:12px; }
     .sb-search kbd { display:none; }  /* no hardware keyboard, no shortcut hint */
     .btn { font-size:15px; }
@@ -848,7 +859,8 @@
     /* Safe areas (viewport-fit=cover): keep chrome clear of the notch / home bar. */
     .sb-head { padding-top:calc(14px + env(safe-area-inset-top)); }
     .topbar { padding-top:calc(10px + env(safe-area-inset-top)); }
-    .sb-footer { padding-bottom:calc(6px + env(safe-area-inset-bottom)); }
+    /* no footer on mobile, so the list itself clears the home indicator */
+    .sb-scroll { padding-bottom:calc(24px + env(safe-area-inset-bottom)); }
 
     /* Overlays: dialogs become bottom sheets (centered cards fight the soft
        keyboard), and fixed-bottom chrome stays clear of the home indicator. */
