@@ -52,8 +52,14 @@
   ::-webkit-scrollbar { width:10px; height:10px; }
   ::-webkit-scrollbar-thumb { background:var(--line-strong); border-radius:8px; border:3px solid transparent; background-clip:padding-box; }
   ::-webkit-scrollbar-thumb:hover { background:var(--muted); background-clip:padding-box; border:3px solid transparent; }
+  /* Scroll containers swallow their own overscroll: no rubber-banding the whole
+     page / accidental pull-to-refresh when an inner list hits its end. */
+  .content, .sb-scroll, .peek-body, .modal-body, .pop, .qn-body { overscroll-behavior:contain; }
+  .tablescroll, .tl-scroll, .board { overscroll-behavior-x:contain; }
 
-  #app { display: flex; height: 100vh; }
+  /* dvh tracks the *visible* viewport on mobile (iOS Safari's collapsing
+     address bar); the vh line before it is the fallback older engines keep. */
+  #app { display: flex; height: 100vh; height: 100dvh; }
 
   /* sidebar */
   .sidebar { width:268px; flex:none; background:var(--sidebar); border-right:1px solid var(--line);
@@ -203,14 +209,14 @@
   .doc-conflict { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 14px; margin-bottom:16px; border:1px solid var(--danger); border-radius:var(--radius-sm); background:var(--danger-soft); font-size:13px; }
   .doc-conflict-msg { color:var(--danger); font-weight:600; flex:1; min-width:180px; }
   .doc.source-mode { min-height:100%; }
-  .doc-source { display:block; width:100%; min-height:calc(100vh - 210px); resize:none; border:0;
+  .doc-source { display:block; width:100%; min-height:calc(100vh - 210px); min-height:calc(100dvh - 210px); resize:none; border:0;
     background:transparent; color:var(--fg); outline:none; overflow:hidden; padding:3px 2px 36vh;
     font-family:var(--ui); font-size:15px; line-height:1.7; tab-size:2; }
   /* floating table of contents: a column of indented tick marks in the right
      gutter that expands to a labelled list on hover (Notion / Vercel-docs style).
      Fixed to the viewport so it never disturbs the centred .doc column. */
   .doc-toc { position:fixed; top:72px; right:18px; z-index:40; display:flex; flex-direction:column; gap:2px;
-    width:24px; max-height:calc(100vh - 120px); padding:6px; box-sizing:content-box; overflow:hidden;
+    width:24px; max-height:calc(100vh - 120px); max-height:calc(100dvh - 120px); padding:6px; box-sizing:content-box; overflow:hidden;
     border:1px solid transparent; border-radius:var(--radius); background:transparent;
     transition:width .22s ease, background .22s ease, border-color .22s ease, box-shadow .22s ease; }
   .doc-toc:hover { width:228px; overflow-y:auto; background:var(--surface); border-color:var(--line);
@@ -688,7 +694,7 @@
   .board-wrap { margin-top:4px; }
   .board-bar { display:flex; align-items:center; gap:10px; padding:2px 0 12px; }
   .board { display:flex; align-items:flex-start; gap:12px; overflow-x:auto; padding-bottom:14px; min-height:240px; }
-  .board-col { flex:0 0 272px; width:272px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); display:flex; flex-direction:column; max-height:calc(100vh - 240px); transition:box-shadow .12s,border-color .12s; }
+  .board-col { flex:0 0 272px; width:272px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); display:flex; flex-direction:column; max-height:calc(100vh - 240px); max-height:calc(100dvh - 240px); transition:box-shadow .12s,border-color .12s; }
   .board-col.drop-into { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
   .board-col-head { display:flex; align-items:center; gap:8px; padding:10px 10px 8px; }
   .board-col-head .spacer { flex:1; }
@@ -742,7 +748,7 @@
   /* ---- timeline (gantt) view ---- */
   .tl { margin-top:4px; }
   .tl-toolbar { display:flex; align-items:center; gap:8px; padding:2px 0 12px; }
-  .tl-scroll { overflow:auto; border:1px solid var(--line); border-radius:var(--radius); max-height:calc(100vh - 230px); }
+  .tl-scroll { overflow:auto; border:1px solid var(--line); border-radius:var(--radius); max-height:calc(100vh - 230px); max-height:calc(100dvh - 230px); }
   .tl-canvas { position:relative; }
   .tl-axis { position:sticky; top:0; z-index:4; background:var(--surface); border-bottom:1px solid var(--line); }
   .tl-corner { position:sticky; left:0; z-index:5; height:100%; display:flex; align-items:center; padding:0 12px; font-size:12px; font-weight:600; color:var(--muted);
@@ -775,7 +781,6 @@
     padding:1px 6px; border-radius:5px; white-space:nowrap; box-shadow:var(--shadow-sm); }
 
   /* mobile */
-  .backdrop { display:none; }
   /* Gate on a coarse pointer, not width alone: a narrow *desktop* window keeps
      the desktop layout/sizes (no jarring snap to 16px fonts + 40px buttons when
      it crosses 768px), while phones/tablets (and DevTools device mode, which
@@ -791,34 +796,33 @@
     .main { position:fixed; inset:0; z-index:50; transform:translateX(100%);
       transition:transform .25s cubic-bezier(.4,0,.2,1); }
     body.mobile-content .main { transform:translateX(0); }
-    .backdrop { display:none !important; }      /* drawer model retired */
     .sb-head .iconbtn { display:none; }          /* no collapse on mobile */
     .sb-resizer { display:none; }
     .topbar .hamburger { display:grid; }         /* serves as the back button */
 
-    /* Touch: no hover, so row/section actions are always visible; enlarge tap
-       targets and text. 16px on every input is what stops iOS Safari from
-       auto-zooming the page when a field is focused. */
+    /* Phone typography: bigger text for a small screen held close. Tap-target
+       sizing and the 16px iOS anti-zoom inputs live in the width-independent
+       (pointer:coarse) block below — tablets need those too. */
     .navitem { padding:9px 8px; font-size:16px; }
-    .navitem .acts, .sb-section-head .add { opacity:1; }
-    .navitem .acts button { width:34px; height:34px; }
     .navitem .emoji { font-size:18px; }
     .navitem .tw { width:26px; height:26px; }
     .sb-footer .navitem { font-size:16px; }
     .sb-section-head { font-size:12px; }
-    .iconbtn { width:40px; height:40px; }
-    .btn { padding:9px 14px; font-size:15px; min-height:40px; }
+    .btn { font-size:15px; }
     .crumb { font-size:16px; }
-    .pop .item { padding:11px 10px; font-size:16px; }
+    .pop .item { font-size:16px; }
     .pop .item .t { font-size:16px; }
-    input, textarea { font-size:16px; }
 
     /* Document: bigger body text, tighter side padding for narrow screens. */
     .doc { padding:24px 18px calc(36vh + env(safe-area-inset-bottom)); }
     .doc-title { font-size:30px; }
     .doc .editable { font-size:16px; }
-    .codeblock { --code-fs:14px; }
+    /* 16px (not 14): a focused code textarea below 16px makes iOS auto-zoom. */
+    .codeblock { --code-fs:16px; }
     .block .gutter { display:none; }
+    /* Anchor/TOC jumps: clear the mobile topbar (49px min + notch inset);
+       the desktop 60px estimate leaves blocks half-hidden behind it. */
+    .block { scroll-margin-top:calc(49px + env(safe-area-inset-top) + 8px); }
     .db { padding:16px 14px 90px; }
     .peek { width:100%; }
 
@@ -828,6 +832,44 @@
     .sb-footer { padding-bottom:calc(6px + env(safe-area-inset-bottom)); }
   }
 
+  /* Touch ergonomics, decoupled from width: tablets (iPad portrait is 820px+)
+     keep the desktop layout above but still tap with fingers, so target sizes,
+     drag handles and the iOS anti-zoom input size key off the pointer alone. */
+  @media (pointer: coarse) {
+    /* iOS Safari auto-zooms the page when a focused field is below 16px; the
+       class selectors out-specify the element-level sizes set on these. */
+    input, textarea, .text-input, .doc-source, input.inlineedit { font-size:16px; }
+    .navitem .acts button { width:34px; height:34px; }
+    .iconbtn { width:40px; height:40px; }
+    .btn { padding:9px 14px; min-height:40px; }
+    .pop .item { padding:11px 10px; }
+    /* Column/sidebar resize handles: 7px is a mouse affordance, not a finger's. */
+    .col-resizer, .doc-col-resizer, .sb-resizer { width:16px; right:-8px; }
+  }
+
+  /* No hover available (touch): controls that only materialize on :hover are
+     unreachable, so pin them visible. Width-independent on purpose — this is
+     the tablet's lifeline too. Desktops with a mouse are untouched. */
+  @media (hover: none) {
+    .code-tools { opacity:1; transform:none; pointer-events:auto; }
+    .rowactions { opacity:1; pointer-events:auto; }
+    .doc-th .doc-col-menu, .cal-add, .filerow .facts,
+    .navitem .acts, .sb-section-head .add { opacity:1; }
+    table.doc-table .doc-row-del { opacity:1; }
+    .selcell input { opacity:1; }
+    .rowgrip { color:var(--muted); }
+    .tl-item .tl-h { opacity:1; background:rgba(255,255,255,.35); }
+    /* Neutralize the stickiest tap-residue tints (a tap "hovers" until the
+       next tap elsewhere); transient menus/buttons are left alone. */
+    .navitem:hover { background:none; }
+    .iconbtn:hover { background:none; }
+    tbody tr:hover { background:none; }
+    td.cell-td:hover { background:none; }
+    .filerow:hover { background:none; }
+    .cal-day:hover { background:none; }
+    .cal-day.dim:hover { background:var(--surface); }
+  }
+
   /* Quick Notes window (desktop, loaded at #quick). A transparent body lets the
      macOS vibrancy blur show through; a translucent panel keeps text readable.
      The top bar is the window drag region; its buttons opt back out. */
@@ -835,8 +877,8 @@
   /* The main app lays #app out as a flex row (sidebar + main); the quick-note
      route has a single child, so override to a full-bleed block or the panel
      shrinks to its content width and the window's vibrancy shows through. */
-  body.quicknote #app { display:block; width:100vw; height:100vh; }
-  .qn { display:flex; flex-direction:column; width:100%; height:100vh; overflow:hidden;
+  body.quicknote #app { display:block; width:100vw; height:100vh; height:100dvh; }
+  .qn { display:flex; flex-direction:column; width:100%; height:100vh; height:100dvh; overflow:hidden;
     background:color-mix(in srgb, var(--bg) 20%, transparent); }
   .qn-bar { display:flex; align-items:center; gap:6px; padding:4px 10px 4px 76px;
     user-select:none; -webkit-app-region:drag;
