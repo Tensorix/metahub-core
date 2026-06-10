@@ -223,7 +223,7 @@
   body.desktop-mac .topbar .iconbtn, body.desktop-mac .topbar .btn { -webkit-app-region:no-drag; }
   /* peek drawer header overlaps the topbar drag region → clear its buttons so they stay clickable */
   body.desktop-mac .peek-head { -webkit-app-region:drag; }
-  body.desktop-mac .peek-head .iconbtn, body.desktop-mac .peek-head .btn { -webkit-app-region:no-drag; }
+  body.desktop-mac .peek-head .iconbtn, body.desktop-mac .peek-head .btn, body.desktop-mac .peek-head .hist-toggle { -webkit-app-region:no-drag; }
   /* sidebar collapsed → traffic lights sit over the main header; clear the hamburger */
   body.desktop-mac .sidebar.collapsed ~ .main .topbar { padding-left:80px; }
 
@@ -597,6 +597,47 @@
   .proprow .v:hover { background:var(--hover); }
   .peek-divider { height:1px; background:var(--line); margin:22px 0 18px; }
 
+  /* version history (doc drawer + record peek view) */
+  .hist-peek { width:760px; }
+  .hist-title { display:flex; align-items:center; gap:6px; font-weight:600; font-size:var(--fs-ui); }
+  .hist-toggle { display:flex; align-items:center; gap:5px; font-size:var(--fs-sm); color:var(--muted); cursor:pointer; user-select:none; white-space:nowrap; }
+  .hist-toggle input { accent-color:var(--accent); }
+  .hist-split { display:flex; flex:1; min-height:0; }
+  .hist-list { width:252px; flex:none; overflow:auto; border-right:1px solid var(--line); padding:8px; }
+  .hist-item { padding:8px 10px; border-radius:var(--radius-sm); cursor:pointer; }
+  .hist-item:hover { background:var(--hover); }
+  .hist-item.sel { background:var(--accent-soft); }
+  .hist-item.static { cursor:default; border-bottom:1px solid var(--line); border-radius:0; padding:10px 4px; }
+  .hist-item.static:hover { background:none; }
+  .hist-item .row1 { display:flex; align-items:center; gap:7px; }
+  .hist-item .row1 .when { font-weight:600; font-size:var(--fs-ui); }
+  .hist-item .row2 { display:flex; gap:8px; margin-top:2px; font-size:var(--fs-sm); color:var(--muted); min-width:0; }
+  .hist-item .row2 .what { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hist-kind { font-size:var(--fs-xs); padding:1px 6px; border-radius:99px; background:var(--surface-2); color:var(--muted); }
+  .hist-kind.revert { background:var(--accent-soft); color:var(--accent); }
+  .hist-kind.repair { background:var(--danger-soft); color:var(--danger); }
+  .hist-now { font-size:var(--fs-xs); padding:1px 6px; border-radius:99px; background:var(--accent); color:var(--accent-fg); }
+  .hist-preview { flex:1; overflow:auto; padding:20px 24px; }
+  .hist-doc-title { font-size:21px; font-weight:700; letter-spacing:-.02em; margin-bottom:14px; }
+  .hist-block { white-space:pre-wrap; font-size:var(--fs-body); line-height:1.65; padding:2px 6px; border-radius:4px; margin:0 -6px 12px; }
+  /* line-level diff rows (git-like): pale full-line tint, darker tint on the
+     intra-line changed segment; strikethrough only on the deleted segment. */
+  .hist-line { white-space:pre-wrap; font-size:var(--fs-body); line-height:1.6; padding:1px 6px; margin:0 -6px; border-radius:3px; }
+  .hist-line.add { background:color-mix(in srgb, var(--success) 13%, transparent); }
+  .hist-line.del { background:var(--danger-soft); }
+  .hist-line.add .seg { background:color-mix(in srgb, var(--success) 32%, transparent); border-radius:2px; }
+  .hist-line.del .seg { background:color-mix(in srgb, var(--danger) 28%, transparent); border-radius:2px; text-decoration:line-through; }
+  .hist-foot { display:flex; justify-content:flex-end; padding:12px 16px; border-top:1px solid var(--line); }
+  .pad { padding:12px; }
+  .hist-rec-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .hist-fields { padding:8px 4px 4px; display:flex; flex-direction:column; gap:6px; }
+  .hist-field { display:flex; gap:8px; font-size:var(--fs-sm); align-items:baseline; flex-wrap:wrap; }
+  .hist-field .fname { color:var(--muted); width:120px; flex:none; }
+  .hist-field .old { text-decoration:line-through; color:var(--muted); }
+  .hist-field .arr { color:var(--muted); }
+  .hist-field .new { font-weight:500; }
+  .hist-restore { margin-top:8px; align-self:flex-start; }
+
   /* menu / popover */
   .menu-layer { position:fixed; inset:0; z-index:90; }
   .pop { position:fixed; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-lg);
@@ -904,6 +945,9 @@
     .block { scroll-margin-top:calc(49px + env(safe-area-inset-top) + 8px); }
     .db { padding:16px 14px 90px; }
     .peek { width:100%; }
+    /* history drawer: the side-by-side list/preview doesn't fit a phone — stack. */
+    .hist-split { flex-direction:column; }
+    .hist-list { width:auto; max-height:38%; border-right:0; border-bottom:1px solid var(--line); }
 
     /* Safe areas (viewport-fit=cover): keep chrome clear of the notch / home bar. */
     .sb-head { padding-top:calc(14px + env(safe-area-inset-top)); }

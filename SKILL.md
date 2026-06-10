@@ -157,6 +157,33 @@ clobbered):
 3. `mh doc edit <ref> --old ... --new ... --if-match <version>`.
 4. On exit 5 (`stale`), re-read and retry from step 1.
 
+## History & rollback (docs, records, columns)
+
+Every field write is kept in an append-only oplog, so full edit history is
+queryable and any past state can be restored. **Revert is a forward write** —
+it lands as a new revision (nothing is rewritten), replicates over sync, and is
+itself revertible. `history` rows carry a `version` token: pass it to `--to`
+(revert) or `--at` (point-in-time read).
+
+```bash
+mh doc history <ref>                       # revisions, newest first: {version, at, node_id, kind, ...}
+mh doc get <ref> --at <version>            # title/body as of that version
+mh doc revert <ref> --to <version>         # restore title+body (add --if-match <v> like doc edit)
+mh record history <ref>                    # field-level revisions; --field <name> shows one cell's trail
+mh record revert <ref> --to <version>      # restore cells; resurrects a deleted record
+mh prop history <ref>                      # column definition changes (type/options/rename/remove)
+mh prop revert <ref> --to <version>        # schema rollback: restores the column AND the cells its
+                                           #   type-change/removal cleared; user edits made since are kept
+```
+
+Notes for agents:
+- `kind` distinguishes `user` edits from `repair`/`revert` revisions.
+- Deleted docs/records/columns are reachable by **full id** (history/revert
+  still work; revert resurrects them).
+- Reverting to a deleted state is refused (`invalid_input`) — use `delete`.
+- Errors follow the standard codes: unknown version → `not_found` (exit 3),
+  `--if-match` mismatch → `stale` (exit 5).
+
 ## Search and universal lookup
 
 ```bash
@@ -195,6 +222,10 @@ non-zero exit + `error`). Verify by reading the evidence field, not by assuming.
 mh doctor                # read-only: lists integrity issues (orphan refs, dup paths, doc cycles, name clashes)
 mh repair --dry-run      # preview the deterministic auto-fixes (same as doctor)
 mh repair                # apply them (idempotent; changes replicate over the oplog)
+mh compact --dry-run     # how much oplog history a 90-day retention window would prune
+mh compact --keep 90     # prune it + GC unreferenced blobs + VACUUM. Local-only (never syncs).
+                         #   History older than the window collapses to a baseline: revert
+                         #   beyond it is no longer possible. --keep 0 keeps head state only.
 ```
 
 ## Server, WebUI, REST API, hosted sites

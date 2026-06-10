@@ -33,9 +33,14 @@ import {
   documentAtVersion,
   revertDocument,
   listRecordRevisions,
+  recordAtVersion,
+  recordFieldHistory,
   revertRecord,
+  listPropertyRevisions,
+  revertProperty,
 } from "../../core/history.ts";
 import { search } from "../../core/search.ts";
+import { getNodeId } from "../../core/node.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
 // Read-only viewer + light editing for the browser UI. These routes wrap the
@@ -142,6 +147,7 @@ const RevisionBase = z.object({
   version: z.string(),
   at: z.string().describe("Wall-clock time of the revision (ISO 8601)"),
   node_id: z.string(),
+  kind: z.enum(["user", "repair", "revert"]).describe("Source of the revision"),
   changes: z.number(),
   created: z.boolean(),
   deleted: z.boolean(),
@@ -174,6 +180,7 @@ const RevertDocResultSchema = z.object({
   changed: z.boolean(),
   restored: z.string(),
   version: z.string(),
+  undeleted: z.boolean(),
 });
 const RevertRecordResultSchema = z.object({
   id: z.string(),
@@ -181,6 +188,41 @@ const RevertRecordResultSchema = z.object({
   fields: z.array(z.string()),
   undeleted: z.boolean(),
   restored: z.string(),
+});
+const PropertyRevisionSchema = RevisionBase.extend({
+  fields: z.array(z.string()).describe("Definition columns touched (name/type/config/position)"),
+  cells_cleared: z.number(),
+});
+const RevertPropertyReq = z.object({
+  to: z.string().describe("Version token from /api/property/history"),
+});
+const RevertPropertyResultSchema = z.object({
+  id: z.string(),
+  changed: z.boolean(),
+  fields: z.array(z.string()),
+  restored_cells: z.number(),
+  skipped_cells: z.number(),
+  undeleted: z.boolean(),
+  restored: z.string(),
+});
+const RecordVersionStateSchema = z.object({
+  id: z.string(),
+  database_id: z.string().nullable(),
+  deleted: z.boolean(),
+  data: z.record(z.string(), z.any()).describe("Cells at that version, keyed by property id"),
+  version: z.string(),
+});
+const FieldHistoryEntrySchema = z.object({
+  version: z.string(),
+  at: z.string(),
+  node_id: z.string(),
+  value: z.any().optional(),
+  cleared: z.boolean(),
+});
+const NodeInfoSchema = z.object({
+  node_id: z.string(),
+  label: z.string().nullable().describe("Peer label from pairing; null when unnamed"),
+  self: z.boolean().describe("True for the node serving this request"),
 });
 
 // --- helpers ----------------------------------------------------------------
@@ -317,6 +359,25 @@ export const webuiRoutes: Route[] = [
   },
   {
     method: "GET",
+    path: "/api/property/history",
+    summary: "List a property's definition revisions, newest first. Query: ?id=<id>",
+    response: z.array(PropertyRevisionSchema),
+    handler: handle((req, { db }) => listPropertyRevisions(db, need(req, "id"))),
+  },
+  {
+    method: "POST",
+    path: "/api/property/revert",
+    summary:
+      "Schema rollback: restore a property's definition and the cells its type-change/removal cleared (user edits since are kept). Query: ?id=<id>",
+    request: RevertPropertyReq,
+    response: RevertPropertyResultSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { to: string };
+      return revertProperty(db, need(req, "id"), body.to);
+    }),
+  },
+  {
+    method: "GET",
     path: "/api/records",
     summary: "List records in a database. Query: ?db=<id>&sort=<field>&limit=<n>",
     response: z.array(RecordSchema),
@@ -379,6 +440,20 @@ export const webuiRoutes: Route[] = [
     summary: "List a record's revisions, newest first. Query: ?id=<id>",
     response: z.array(RecordRevisionSchema),
     handler: handle((req, { db }) => listRecordRevisions(db, need(req, "id"))),
+  },
+  {
+    method: "GET",
+    path: "/api/record/at",
+    summary: "A record's cells as of a past version. Query: ?id=<id>&version=<token>",
+    response: RecordVersionStateSchema,
+    handler: handle((req, { db }) => recordAtVersion(db, need(req, "id"), need(req, "version"))),
+  },
+  {
+    method: "GET",
+    path: "/api/record/field-history",
+    summary: "The write trail of one record cell, newest first. Query: ?id=<id>&prop=<propertyId>",
+    response: z.array(FieldHistoryEntrySchema),
+    handler: handle((req, { db }) => recordFieldHistory(db, need(req, "id"), need(req, "prop"))),
   },
   {
     method: "POST",
@@ -497,6 +572,24 @@ export const webuiRoutes: Route[] = [
     summary: "Delete a document. Query: ?id=<id>",
     response: OkSchema,
     handler: handle((req, { db }) => ({ ok: deleteDocument(db, need(req, "id")) })),
+  },
+  {
+    method: "GET",
+    path: "/api/nodes",
+    summary: "Known nodes for display: this device plus paired peers with their labels",
+    response: z.array(NodeInfoSchema),
+    handler: handle((_req, { db }) => {
+      const self = getNodeId(db);
+      const peers = db
+        .query(
+          "SELECT node_id, label FROM peers WHERE node_id IS NOT NULL AND node_id <> '' GROUP BY node_id",
+        )
+        .all() as { node_id: string; label: string | null }[];
+      return [
+        { node_id: self, label: null, self: true },
+        ...peers.filter((p) => p.node_id !== self).map((p) => ({ ...p, self: false })),
+      ];
+    }),
   },
   {
     method: "GET",

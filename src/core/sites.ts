@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
-import { emit } from "./crdt.ts";
+import { emit, grouped, withChangeGroup } from "./crdt.ts";
 import { putBlob, getBlob } from "./cache.ts";
 import { MhError } from "./errors.ts";
 
@@ -127,7 +127,10 @@ function toBytes(data: string | Uint8Array | ArrayBuffer): Uint8Array {
 
 // ---- sites -----------------------------------------------------------------
 
-export function createSite(db: Database, opts: { name: string; title?: string }): SiteRow {
+export const createSite = grouped(function createSite(
+  db: Database,
+  opts: { name: string; title?: string },
+): SiteRow {
   const name = normalizeSiteName(opts.name);
   if (getSiteByName(db, name)) throw new MhError("conflict", `site name already exists: ${name}`);
   const id = newId("site", name);
@@ -135,7 +138,7 @@ export function createSite(db: Database, opts: { name: string; title?: string })
   emit(db, "sites", id, "created_hlc", first.hlc);
   if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
   return getSite(db, id)!;
-}
+});
 
 export function getSite(db: Database, id: string): SiteRow | null {
   return db
@@ -175,7 +178,7 @@ export function resolveSite(db: Database, ref: string): SiteRow {
 }
 
 /** Rename a site and/or change its title. Guards against duplicate names. */
-export function updateSite(
+export const updateSite = grouped(function updateSite(
   db: Database,
   id: string,
   opts: { name?: string; title?: string },
@@ -189,9 +192,9 @@ export function updateSite(
   }
   if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
   return getSite(db, id)!;
-}
+});
 
-export function deleteSite(db: Database, id: string): boolean {
+export const deleteSite = grouped(function deleteSite(db: Database, id: string): boolean {
   if (!getSite(db, id)) return false;
   const files = db
     .query("SELECT id FROM site_files WHERE site_id = ? AND __deleted = 0")
@@ -199,7 +202,7 @@ export function deleteSite(db: Database, id: string): boolean {
   for (const f of files) emit(db, "site_files", f.id, "__deleted", 1);
   emit(db, "sites", id, "__deleted", 1);
   return true;
-}
+});
 
 // ---- files -----------------------------------------------------------------
 
@@ -236,17 +239,21 @@ export async function putFile(
     content = (await putBlob(bytes)).hash;
   }
 
+  // The emit tail is synchronous — group it here rather than wrapping the whole
+  // async function (an outer group would be reset before post-await emits run).
   const existing = fileIdFor(db, siteId, cleanPath);
   const id = existing ?? newId("sf", cleanPath);
-  if (!existing) {
-    const first = emit(db, "site_files", id, "site_id", siteId);
-    emit(db, "site_files", id, "path", cleanPath);
-    emit(db, "site_files", id, "created_hlc", first.hlc);
-  }
-  emit(db, "site_files", id, "content_type", contentType);
-  emit(db, "site_files", id, "encoding", encoding);
-  emit(db, "site_files", id, "content", content);
-  emit(db, "site_files", id, "__deleted", 0); // un-delete on re-upload
+  withChangeGroup(null, () => {
+    if (!existing) {
+      const first = emit(db, "site_files", id, "site_id", siteId);
+      emit(db, "site_files", id, "path", cleanPath);
+      emit(db, "site_files", id, "created_hlc", first.hlc);
+    }
+    emit(db, "site_files", id, "content_type", contentType);
+    emit(db, "site_files", id, "encoding", encoding);
+    emit(db, "site_files", id, "content", content);
+    emit(db, "site_files", id, "__deleted", 0); // un-delete on re-upload
+  });
 
   return db
     .query(
@@ -263,7 +270,11 @@ export function listFiles(db: Database, siteId: string): SiteFileSummary[] {
     .all(siteId) as SiteFileSummary[];
 }
 
-export function deleteFile(db: Database, siteId: string, path: string): boolean {
+export const deleteFile = grouped(function deleteFile(
+  db: Database,
+  siteId: string,
+  path: string,
+): boolean {
   const id = fileIdFor(db, siteId, normalizeSitePath(path));
   if (!id) return false;
   const live = db.query("SELECT __deleted AS d FROM site_files WHERE id = ?").get(id) as {
@@ -272,7 +283,7 @@ export function deleteFile(db: Database, siteId: string, path: string): boolean 
   if (!live || live.d) return false;
   emit(db, "site_files", id, "__deleted", 1);
   return true;
-}
+});
 
 /** Resolve a file to served bytes + content type. "" / trailing "/" → index.html. */
 export async function getFileForServe(

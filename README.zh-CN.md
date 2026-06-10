@@ -100,10 +100,14 @@ mh sync http://a-host:7777
 | `mh doc read <id>` | 读正文 + version token（AI 改前先读） |
 | `mh doc edit <id> --old --new` | 锚定查找替换（`--replace-all` / `--if-match`） |
 | `mh doc append\|prepend <id> --body` | 在文档首/尾追加块 |
+| `mh doc history <id>` / `mh doc revert <id> --to <version>` | 列出文档修订历史 / 恢复到某版本（回滚是一次新的正向修订；`doc get --at <version>` 预览；revert 可复活已删文档） |
+| `mh record history <id> [--field <名>]` / `mh record revert <id> --to <version>` | 记录修改历史（逐修订字段 diff，或单字段值变迁）/ 恢复历史值（可复活已删记录） |
+| `mh prop history <id>` / `mh prop revert <id> --to <version>` | 列定义历史 / schema 回滚：同时恢复列定义**和**被改类型/删列清掉的单元格，之后的用户编辑保留 |
 | `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
 | `mh search <query>` | 全文检索（文档 + 记录） |
-| `mh doctor` | 只读体检：列出逻辑完整性问题（孤儿引用/单元格、重复路径、文档环、重名等） |
+| `mh doctor` | 只读体检：列出逻辑完整性问题（孤儿引用/单元格、重复路径、文档环、重名等）+ oplog/磁盘统计 |
 | `mh repair [--dry-run]` | 确定性、幂等修复可自动修的问题（改动随 oplog 复制）；`--dry-run` 仅预览（等价 doctor） |
+| `mh compact [--keep <天数>] [--dry-run]` | 清理保留窗口（默认 90 天）之外的 oplog 历史 + 回收无引用 blob + VACUUM。纯本地操作；当前数据不变，窗口外历史坍缩为基线（无法再回滚到更早版本） |
 | `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
 | `mh token [show\|refresh]` | 查看 / 轮换持久化的服务器鉴权 token（存于 `~/.metahub`，默认 30 天到期轮换） |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |

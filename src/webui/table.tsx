@@ -20,6 +20,7 @@ import {
   useDrawerTransition,
 } from "./ui.tsx";
 import { Chip, CellDisplay, coerceInput, cellText } from "./cells.tsx";
+import { RecordHistoryView } from "./history.tsx";
 import { BoardView } from "./board.tsx";
 import { CalendarView } from "./calendar.tsx";
 import { TimelineView } from "./timeline.tsx";
@@ -500,6 +501,7 @@ export function DatabaseView({
           onCommit={(p, v) => commit(peekRec, p, v)}
           onDelete={() => deleteRecords([peekRec.id])}
           onDuplicate={() => duplicateRecord(peekRec)}
+          onReverted={() => reload().catch((e) => onError(String(e.message)))}
         />
       )}
     </div>
@@ -783,12 +785,14 @@ function openRowMenu(e: MouseEvent, rec: Rec, onOpen: () => void, onDup: () => v
 
 // ---- record peek panel ----
 function RecordPeek({
-  db, props, rec, onClose, onCommit, onDelete, onDuplicate,
+  db, props, rec, onClose, onCommit, onDelete, onDuplicate, onReverted,
 }: {
   db: Db; props: Prop[]; rec: Rec;
   onClose: () => void; onCommit: (p: Prop, v: unknown) => void; onDelete: () => void; onDuplicate: () => void;
+  onReverted: () => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const [hist, setHist] = useState(false);
   const { open, close } = useDrawerTransition(onClose);
   const titleProp = props[0];
   return (
@@ -797,10 +801,16 @@ function RecordPeek({
       <div class={"peek" + (open ? " open" : "")}>
         <div class="peek-head">
           <button class="iconbtn" onClick={close}><Icon name="x" /></button>
+          {hist && (
+            <button class="iconbtn" title="返回字段" onClick={() => setHist(false)}>
+              <Icon name="arrowLeft" />
+            </button>
+          )}
           <div style={{ flex: 1 }} />
           <button class="iconbtn" title="更多" onClick={(e) =>
             openMenu(e, (close) => (
               <>
+                <MenuItem icon="history" label="版本历史" checked={hist} onClick={() => { close(); setHist(!hist); }} />
                 <MenuItem icon="copy" label="复制记录" onClick={() => { close(); onDuplicate(); }} />
                 <MenuSep />
                 <MenuItem icon="trash" label="删除记录" danger onClick={async () => { close(); const ok = await confirmDialog({ title: "删除记录？", message: "确定删除这条记录？", confirmLabel: "删除", danger: true }); if (ok) onDelete(); }} />
@@ -809,21 +819,27 @@ function RecordPeek({
           }><Icon name="dots" /></button>
         </div>
         <div class="peek-body">
-          <h2 contentEditable onBlur={(e) => titleProp && onCommit(titleProp, (e.target as HTMLElement).textContent ?? "")}>
-            {titleProp ? String(rec.values[titleProp.name] ?? "无标题") : "无标题"}
-          </h2>
-          {props.map((p) => (
-            <div key={p.id} class="proprow">
-              <div class="k"><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span></div>
-              <PeekValue
-                prop={p}
-                rec={rec}
-                editing={editing === p.id}
-                onEdit={() => setEditing(p.id)}
-                onCommit={(v) => { onCommit(p, v); setEditing(null); }}
-              />
-            </div>
-          ))}
+          {hist ? (
+            <RecordHistoryView rec={rec} props={props} onReverted={onReverted} />
+          ) : (
+            <>
+              <h2 contentEditable onBlur={(e) => titleProp && onCommit(titleProp, (e.target as HTMLElement).textContent ?? "")}>
+                {titleProp ? String(rec.values[titleProp.name] ?? "无标题") : "无标题"}
+              </h2>
+              {props.map((p) => (
+                <div key={p.id} class="proprow">
+                  <div class="k"><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span></div>
+                  <PeekValue
+                    prop={p}
+                    rec={rec}
+                    editing={editing === p.id}
+                    onEdit={() => setEditing(p.id)}
+                    onCommit={(v) => { onCommit(p, v); setEditing(null); }}
+                  />
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
     </>

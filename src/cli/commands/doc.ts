@@ -21,11 +21,24 @@ import {
 } from "../../core/history.ts";
 import { resolveValue } from "../input.ts";
 import { resolveRef } from "../../core/resolve.ts";
+import { errorCode } from "../../core/errors.ts";
+import { idKind } from "../../core/ids.ts";
 import { print, table, guard } from "../output.ts";
 
 /** Resolve a document ref (id/prefix/title) to its id. */
 function docId(db: Database, ref: string): string {
   return resolveRef(db, ref, { kind: "doc" });
+}
+
+/** Like docId, but lets a full id of a tombstoned document pass through —
+ *  history and revert must reach deleted documents (revert resurrects them). */
+function docIdMaybeDeleted(db: Database, ref: string): string {
+  try {
+    return docId(db, ref);
+  } catch (e) {
+    if (errorCode(e) === "not_found" && idKind(ref) === "doc") return ref;
+    throw e;
+  }
 }
 
 /** Render documents as an `id  tree` forest by `parent_id`, using box-drawing
@@ -105,13 +118,12 @@ const get = defineCommand({
   },
   run: guard((args) => {
     const db = openMetahub();
-    const id = docId(db, args.id);
     if (args.at !== undefined) {
-      const past = documentAtVersion(db, id, args.at);
+      const past = documentAtVersion(db, docIdMaybeDeleted(db, args.id), args.at);
       print(past, () => past.body);
       return;
     }
-    const row = getDocument(db, id)!;
+    const row = getDocument(db, docId(db, args.id))!;
     print(row, () => row.body ?? "");
   }),
 });
@@ -221,6 +233,7 @@ const prepend = defineCommand({
 /** One-line summary of what a revision touched, for the history table. */
 function docRevisionSummary(r: DocRevision): string {
   const parts: string[] = [];
+  if (r.kind !== "user") parts.push(`[${r.kind}]`);
   if (r.created) parts.push("created");
   if (r.deleted) parts.push("deleted");
   if (r.title_changed) parts.push("title");
@@ -234,7 +247,7 @@ const history = defineCommand({
   args: { id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" } },
   run: guard((args) => {
     const db = openMetahub();
-    const rows = listDocumentRevisions(db, docId(db, args.id));
+    const rows = listDocumentRevisions(db, docIdMaybeDeleted(db, args.id));
     print(rows, () =>
       table(
         rows.map((r) => ({
@@ -260,10 +273,12 @@ const revert = defineCommand({
   },
   run: guard((args) => {
     const db = openMetahub();
-    const r = revertDocument(db, docId(db, args.id), args.to, { ifMatch: args["if-match"] });
+    const r = revertDocument(db, docIdMaybeDeleted(db, args.id), args.to, {
+      ifMatch: args["if-match"],
+    });
     print(r, () =>
       r.changed
-        ? `reverted ${r.id} to ${r.restored}`
+        ? `reverted ${r.id} to ${r.restored}` + (r.undeleted ? " [undeleted]" : "")
         : `no change: ${r.id} already matches ${r.restored}`,
     );
   }),

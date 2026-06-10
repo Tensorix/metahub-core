@@ -12,6 +12,9 @@ export const ChangeSchema = z.object({
   row_id: z.string().describe("Row identifier within the dataset"),
   col: z.string().describe("Column / property identifier"),
   value: z.string().nullable().describe("JSON-encoded field value, or null"),
+  // Change-group id for history rendering; optional so pre-txn peers interop
+  // (their changes simply fall back to time-gap clustering in history views).
+  txn: z.string().nullable().optional().describe("Change-group id (one logical mutation)"),
 });
 
 export const SyncRequestSchema = z.object({

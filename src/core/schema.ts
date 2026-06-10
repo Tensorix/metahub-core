@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 -- CRDT oplog: one row per field assignment. Source of truth for sync.
+-- txn groups the changes of one logical mutation for history rendering
+-- (nullable: legacy rows and changes from pre-txn peers have none).
 CREATE TABLE IF NOT EXISTS crdt_changes (
   hlc     TEXT NOT NULL,
   node_id TEXT NOT NULL,
@@ -12,9 +14,14 @@ CREATE TABLE IF NOT EXISTS crdt_changes (
   row_id  TEXT NOT NULL,
   col     TEXT NOT NULL,
   value   TEXT,
+  txn     TEXT,
   PRIMARY KEY (dataset, row_id, col, hlc)
 );
 CREATE INDEX IF NOT EXISTS idx_changes_hlc ON crdt_changes(hlc);
+-- Serves history's "every block ever attached to this doc" lookup. Partial so
+-- it never indexes the large values other datasets carry (e.g. site file bodies).
+CREATE INDEX IF NOT EXISTS idx_changes_docref ON crdt_changes(value)
+  WHERE dataset = 'doc_blocks' AND col = 'doc_id';
 
 -- Per-peer replication cursors (SQLite rowids: monotonic in insertion order,
 -- so no change is ever skipped regardless of HLC/clock skew). Outbound side of

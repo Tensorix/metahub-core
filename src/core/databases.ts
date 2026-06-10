@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
-import { emit } from "./crdt.ts";
+import { emit, grouped } from "./crdt.ts";
 import { MhError } from "./errors.ts";
 
 export interface DatabaseRow {
@@ -10,7 +10,7 @@ export interface DatabaseRow {
   created_hlc: string;
 }
 
-export function createDatabase(
+export const createDatabase = grouped(function createDatabase(
   db: Database,
   opts: { name: string; icon?: string },
 ): DatabaseRow {
@@ -19,9 +19,9 @@ export function createDatabase(
   emit(db, "databases", id, "created_hlc", first.hlc);
   if (opts.icon !== undefined) emit(db, "databases", id, "icon", opts.icon);
   return getDatabase(db, id)!;
-}
+});
 
-export function updateDatabase(
+export const updateDatabase = grouped(function updateDatabase(
   db: Database,
   id: string,
   fields: { name?: string; icon?: string | null },
@@ -30,7 +30,7 @@ export function updateDatabase(
   if (fields.name !== undefined) emit(db, "databases", id, "name", fields.name);
   if (fields.icon !== undefined) emit(db, "databases", id, "icon", fields.icon);
   return getDatabase(db, id)!;
-}
+});
 
 export function getDatabase(db: Database, id: string): DatabaseRow | null {
   return db
@@ -48,7 +48,7 @@ export function listDatabases(db: Database): DatabaseRow[] {
     .all() as DatabaseRow[];
 }
 
-export function deleteDatabase(db: Database, id: string): boolean {
+export const deleteDatabase = grouped(function deleteDatabase(db: Database, id: string): boolean {
   if (!getDatabase(db, id)) return false;
   emit(db, "databases", id, "__deleted", 1);
 
@@ -69,7 +69,7 @@ export function deleteDatabase(db: Database, id: string): boolean {
   // avoid a context.ts <-> databases.ts import cycle; read-side also self-heals).
   db.query("DELETE FROM meta WHERE key = 'current_db' AND value = ?").run(id);
   return true;
-}
+});
 
 /** Ids of live rows in `table` whose `col` references `parentId`. */
 function liveChildren(db: Database, table: string, col: string, parentId: string): string[] {

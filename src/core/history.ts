@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { emit } from "./crdt.ts";
+import { emit, grouped } from "./crdt.ts";
 import { serializeDocBlocks } from "./blocks.ts";
 import { getDocument, updateDocument, documentVersion } from "./documents.ts";
 import { listProperties } from "./properties.ts";
@@ -33,17 +33,35 @@ interface RawChange {
   row_id: string;
   col: string;
   value: string | null;
+  txn: string | null;
 }
 
-/** Group an HLC-ordered change stream into revisions: a new group starts when
- *  the author changes or the wall-clock gap exceeds REVISION_GAP_MS. Clustering
- *  depends only on oplog content, so every synced node renders the same list. */
+/** Where a revision came from, derived from its change-group label. */
+export type RevisionKind = "user" | "repair" | "revert";
+
+function revisionKind(txn: string | null): RevisionKind {
+  if (txn?.startsWith("repair:")) return "repair";
+  if (txn?.startsWith("revert:")) return "revert";
+  return "user";
+}
+
+/**
+ * Group an HLC-ordered change stream into revisions. Changes sharing a txn are
+ * one revision; between txn-less changes (legacy rows, pre-txn peers) fall back
+ * to author + wall-clock gap. Clustering depends only on oplog content, so
+ * every synced node renders the same list.
+ */
 function clusterRevisions(changes: RawChange[]): RawChange[][] {
   const groups: RawChange[][] = [];
   let cur: RawChange[] = [];
   for (const c of changes) {
     const prev = cur[cur.length - 1];
-    if (prev && (prev.node_id !== c.node_id || hlcMillis(c.hlc) - hlcMillis(prev.hlc) > REVISION_GAP_MS)) {
+    const boundary =
+      prev &&
+      (prev.txn !== null && c.txn !== null
+        ? prev.txn !== c.txn
+        : prev.node_id !== c.node_id || hlcMillis(c.hlc) - hlcMillis(prev.hlc) > REVISION_GAP_MS);
+    if (boundary) {
       groups.push(cur);
       cur = [];
     }
@@ -77,7 +95,7 @@ function registersAt(
 function rowChanges(db: Database, dataset: string, rowId: string): RawChange[] {
   return db
     .query(
-      "SELECT hlc, node_id, dataset, row_id, col, value FROM crdt_changes WHERE dataset = ? AND row_id = ? ORDER BY hlc",
+      "SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE dataset = ? AND row_id = ? ORDER BY hlc",
     )
     .all(dataset, rowId) as RawChange[];
 }
@@ -105,7 +123,7 @@ function docChanges(db: Database, docId: string): RawChange[] {
     : "";
   return db
     .query(
-      `SELECT hlc, node_id, dataset, row_id, col, value FROM crdt_changes
+      `SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes
        WHERE (dataset = 'documents' AND row_id = ?)${blockClause}
        ORDER BY hlc`,
     )
@@ -118,6 +136,8 @@ export interface DocRevision {
   /** Wall-clock time derived from the version HLC (ISO 8601). */
   at: string;
   node_id: string;
+  /** Source of the revision: a user edit, a repairHub fix, or a revert. */
+  kind: RevisionKind;
   changes: number;
   created: boolean;
   deleted: boolean;
@@ -153,6 +173,7 @@ export function listDocumentRevisions(db: Database, id: string): DocRevision[] {
         version: last.hlc,
         at: hlcIso(last.hlc),
         node_id: last.node_id,
+        kind: revisionKind(last.txn),
         changes: group.length,
         created,
         deleted,
@@ -242,24 +263,39 @@ export interface RevertDocResult {
   restored: string;
   /** The document's version after the revert (a new head — revert is a forward write). */
   version: string;
+  /** True when the revert resurrected a tombstoned document. */
+  undeleted: boolean;
 }
 
-/** Restore a document's title/body to a past version, as a new forward edit
- *  (reuses updateDocument's block reconcile, so unchanged blocks keep identity). */
-export function revertDocument(
+/**
+ * Restore a document's title/body to a past version, as a new forward edit
+ * (reuses updateDocument's block reconcile, so unchanged blocks keep identity).
+ * Reverting a tombstoned document resurrects it; children unparented by the
+ * delete stay where they are. One change group, so history shows ONE revision.
+ */
+export const revertDocument = grouped(function revertDocument(
   db: Database,
   id: string,
   to: string,
   opts: { ifMatch?: string } = {},
 ): RevertDocResult {
-  const cur = getDocument(db, id);
-  if (!cur) throw new MhError("not_found", `no such document: ${id}`);
+  let cur = getDocument(db, id);
+  if (!cur && !db.query("SELECT 1 AS x FROM documents WHERE id = ?").get(id))
+    throw new MhError("not_found", `no such document: ${id}`);
   if (opts.ifMatch !== undefined && documentVersion(db, id) !== opts.ifMatch)
     throw new MhError("stale", `stale: document changed since ${opts.ifMatch}; re-read first`);
 
   const past = documentAtVersion(db, id, to);
   if (past.deleted)
     throw new MhError("invalid_input", "target version is a deleted state; use doc delete instead");
+
+  const undeleted = !cur;
+  if (!cur) {
+    // Resurrect the doc row; its blocks stay tombstoned (the body cache is empty),
+    // so the body restore below re-inserts the past blocks via reconcile.
+    emit(db, "documents", id, "__deleted", 0);
+    cur = getDocument(db, id)!;
+  }
 
   const fields: { title?: string; body?: string } = {};
   if (past.title !== cur.title) fields.title = past.title;
@@ -268,11 +304,12 @@ export function revertDocument(
 
   return {
     id,
-    changed: Object.keys(fields).length > 0,
+    changed: Object.keys(fields).length > 0 || undeleted,
     restored: past.version,
     version: documentVersion(db, id),
+    undeleted,
   };
-}
+}, "revert");
 
 // ---- records -------------------------------------------------------------------
 
@@ -283,6 +320,7 @@ export interface RecordRevision {
   version: string;
   at: string;
   node_id: string;
+  kind: RevisionKind;
   changes: number;
   created: boolean;
   deleted: boolean;
@@ -312,6 +350,7 @@ export function listRecordRevisions(db: Database, id: string): RecordRevision[] 
         version: last.hlc,
         at: hlcIso(last.hlc),
         node_id: last.node_id,
+        kind: revisionKind(last.txn),
         changes: group.length,
         created,
         deleted,
@@ -368,7 +407,11 @@ export interface RevertRecordResult {
 /** Restore a record's cells to a past version as a new forward edit. Only cells
  *  of currently-live properties are touched, so no orphan cells are recreated
  *  (the repairHub invariant). Reverting a tombstoned record resurrects it. */
-export function revertRecord(db: Database, id: string, to: string): RevertRecordResult {
+export const revertRecord = grouped(function revertRecord(
+  db: Database,
+  id: string,
+  to: string,
+): RevertRecordResult {
   const cur = db
     .query("SELECT database_id, data, __deleted FROM records WHERE id = ?")
     .get(id) as { database_id: string | null; data: string; __deleted: number } | null;
@@ -398,7 +441,222 @@ export function revertRecord(db: Database, id: string, to: string): RevertRecord
   if (undeleted) emit(db, "records", id, "__deleted", 0);
 
   return { id, changed: fields.length > 0 || undeleted, fields, undeleted, restored: past.version };
+}, "revert");
+
+// ---- properties (schema-level rollback) ------------------------------------------
+
+/** Property register columns that make up the column definition. */
+const PROP_DEF_COLS = ["name", "type", "config", "position"] as const;
+
+export interface PropertyRevision {
+  version: string;
+  at: string;
+  node_id: string;
+  kind: RevisionKind;
+  changes: number;
+  created: boolean;
+  deleted: boolean;
+  /** Definition columns touched in this revision (name/type/config/position). */
+  fields: string[];
+  /** Record cells the same change group cleared (a type change / removal cascade). */
+  cells_cleared: number;
 }
+
+/** A property's definition history, newest first. Cascaded cell clears are
+ *  counted via the shared txn so a type change reads as one revision. */
+export function listPropertyRevisions(db: Database, id: string): PropertyRevision[] {
+  const changes = rowChanges(db, "properties", id);
+  if (!changes.length) throw new MhError("not_found", `no such property: ${id}`);
+  const clearedByTxn = new Map<string, number>(
+    (
+      db
+        .query(
+          "SELECT txn, COUNT(*) AS n FROM crdt_changes WHERE dataset = 'records' AND col = ? AND txn IS NOT NULL GROUP BY txn",
+        )
+        .all(id) as { txn: string; n: number }[]
+    ).map((r) => [r.txn, r.n]),
+  );
+  return clusterRevisions(changes)
+    .map((group) => {
+      const fields = new Set<string>();
+      let created = false;
+      let deleted = false;
+      for (const c of group) {
+        if (c.col === "database_id") created = true; // only emitted at creation
+        else if (c.col === "__deleted") deleted = flagSet(c.value);
+        else if ((PROP_DEF_COLS as readonly string[]).includes(c.col)) fields.add(c.col);
+      }
+      const last = group[group.length - 1]!;
+      return {
+        version: last.hlc,
+        at: hlcIso(last.hlc),
+        node_id: last.node_id,
+        kind: revisionKind(last.txn),
+        changes: group.length,
+        created,
+        deleted,
+        fields: [...fields],
+        cells_cleared: last.txn ? (clearedByTxn.get(last.txn) ?? 0) : 0,
+      };
+    })
+    .reverse();
+}
+
+export interface PropertyVersionState {
+  id: string;
+  database_id: string | null;
+  name: string;
+  type: string;
+  config: unknown;
+  position: number | null;
+  deleted: boolean;
+  version: string;
+}
+
+/** Reconstruct a property definition as of version cutoff `at`. */
+export function propertyAtVersion(db: Database, id: string, at: string): PropertyVersionState {
+  if (!at) throw new MhError("invalid_input", "missing version cutoff");
+  const changes = rowChanges(db, "properties", id).filter((c) => c.hlc <= at);
+  if (!changes.length)
+    throw new MhError("not_found", `no version of property ${id} at or before ${at}`);
+  const regs = registersAt(changes, at);
+  const reg = (col: string): unknown => {
+    const r = regs.get(col);
+    return r?.value == null ? undefined : JSON.parse(r.value);
+  };
+  return {
+    id,
+    database_id: (reg("database_id") as string | undefined) ?? null,
+    name: (reg("name") as string | undefined) ?? "",
+    type: (reg("type") as string | undefined) ?? "text",
+    config: reg("config") ?? null,
+    position: (reg("position") as number | undefined) ?? null,
+    deleted: regs.get("__deleted") ? flagSet(regs.get("__deleted")!.value) : false,
+    version: changes[changes.length - 1]!.hlc,
+  };
+}
+
+export interface RevertPropertyResult {
+  id: string;
+  changed: boolean;
+  /** Definition columns the revert wrote. */
+  fields: string[];
+  /** Record cells restored to their value at the target version. */
+  restored_cells: number;
+  /** Cells left alone because a user wrote them after the target version. */
+  skipped_cells: number;
+  undeleted: boolean;
+  restored: string;
+}
+
+/**
+ * Schema-level rollback: restore a property's definition AND the record cells
+ * its later type-change/removal cascades cleared. Definition registers are
+ * emitted directly (never via updateProperty — its type-change cascade would
+ * re-clear the cells being restored). A cell is only touched when its current
+ * winner IS the cascade (or a repair); it is restored to the last value before
+ * that cascade, so user data — written before or after the target version —
+ * always survives. Cells whose winner is a user write are kept (skipped_cells).
+ * Pre-txn legacy writes can't be attributed, so they count as user writes.
+ */
+export const revertProperty = grouped(function revertProperty(
+  db: Database,
+  id: string,
+  to: string,
+): RevertPropertyResult {
+  const cur = db
+    .query(
+      "SELECT database_id, name, type, config, position, __deleted FROM properties WHERE id = ?",
+    )
+    .get(id) as {
+    database_id: string | null;
+    name: string | null;
+    type: string | null;
+    config: string | null;
+    position: number | null;
+    __deleted: number;
+  } | null;
+  if (!cur) throw new MhError("not_found", `no such property: ${id}`);
+
+  const past = propertyAtVersion(db, id, to);
+  if (past.deleted)
+    throw new MhError("invalid_input", "target version is a deleted state; use prop remove instead");
+
+  // 1) Restore the column definition (diff only — no cascades).
+  const curDef: Record<string, unknown> = {
+    name: cur.name,
+    type: cur.type,
+    config: cur.config ? JSON.parse(cur.config) : null,
+    position: cur.position,
+  };
+  const pastDef: Record<string, unknown> = {
+    name: past.name,
+    type: past.type,
+    config: past.config,
+    position: past.position,
+  };
+  const fields: string[] = [];
+  for (const col of PROP_DEF_COLS) {
+    if (JSON.stringify(pastDef[col] ?? null) !== JSON.stringify(curDef[col] ?? null)) {
+      emit(db, "properties", id, col, pastDef[col]);
+      fields.push(col);
+    }
+  }
+  const undeleted = cur.__deleted !== 0;
+  if (undeleted) emit(db, "properties", id, "__deleted", 0);
+
+  // 2) Restore the cells. Cascade writes are identified by sharing a txn with a
+  //    post-target change to this property's own registers.
+  const schemaTxns = new Set(
+    (
+      db
+        .query(
+          "SELECT DISTINCT txn FROM crdt_changes WHERE dataset = 'properties' AND row_id = ? AND hlc > ? AND txn IS NOT NULL",
+        )
+        .all(id, to) as { txn: string }[]
+    ).map((r) => r.txn),
+  );
+  const cellChanges = db
+    .query(
+      "SELECT row_id, hlc, value, txn FROM crdt_changes WHERE dataset = 'records' AND col = ? ORDER BY row_id, hlc",
+    )
+    .all(id) as { row_id: string; hlc: string; value: string | null; txn: string | null }[];
+
+  const isCascade = (txn: string | null): boolean =>
+    txn !== null && (schemaTxns.has(txn) || txn.startsWith("repair:"));
+
+  let restored = 0;
+  let skipped = 0;
+  let i = 0;
+  while (i < cellChanges.length) {
+    const rowId = cellChanges[i]!.row_id;
+    let winner = cellChanges[i]!;
+    let lastUser: { value: string | null } | null = null; // latest non-cascade write
+    for (; i < cellChanges.length && cellChanges[i]!.row_id === rowId; i++) {
+      winner = cellChanges[i]!;
+      if (!isCascade(winner.txn)) lastUser = winner;
+    }
+    if (winner.hlc <= to) continue; // untouched since the target version
+    if (!isCascade(winner.txn)) {
+      skipped++; // current value is a user write — keep it
+      continue;
+    }
+    const target = lastUser ? lastUser.value : null; // null = cell never had a user value
+    if (target === winner.value) continue; // converged back on its own
+    emit(db, "records", rowId, id, target === null ? undefined : JSON.parse(target));
+    restored++;
+  }
+
+  return {
+    id,
+    changed: fields.length > 0 || undeleted || restored > 0,
+    fields,
+    restored_cells: restored,
+    skipped_cells: skipped,
+    undeleted,
+    restored: past.version,
+  };
+}, "revert");
 
 export interface FieldHistoryEntry {
   version: string;

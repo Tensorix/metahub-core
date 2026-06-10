@@ -111,12 +111,23 @@ export function migrateDocuments(db: Database): void {
   backfillDocumentOrderKeys(db);
 }
 
+/**
+ * Add the `txn` change-group column to a legacy `crdt_changes` table.
+ * Idempotent — guarded by hasColumn; existing rows stay NULL (history falls
+ * back to time-gap clustering for them).
+ */
+export function migrateOplog(db: Database): void {
+  if (!hasColumn(db, "crdt_changes", "txn"))
+    db.exec("ALTER TABLE crdt_changes ADD COLUMN txn TEXT");
+}
+
 /** Open (and migrate) the on-disk metahub database for the resolved home. */
 export function openMetahub(): Database {
   ensureDirs();
   const db = new Database(dbPath(), { create: true });
   db.exec("PRAGMA journal_mode = WAL;");
   runSchema(db);
+  migrateOplog(db);
   migrateRecords(db);
   migratePeers(db);
   migrateDocBlocks(db);

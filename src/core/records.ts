@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { newId, slugify, idKind } from "./ids.ts";
-import { emit } from "./crdt.ts";
+import { emit, grouped } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { listProperties, type PropertyRow } from "./properties.ts";
 import { maybeAutoIndex } from "./indexing.ts";
@@ -185,7 +185,10 @@ function rebalanceRecordOrderKeys(db: Database, databaseId: string): void {
   });
 }
 
-export function backfillRecordOrderKeys(db: Database, databaseId?: string): void {
+export const backfillRecordOrderKeys = grouped(function backfillRecordOrderKeys(
+  db: Database,
+  databaseId?: string,
+): void {
   const emitChange = canEmitOrderKeys(db);
   const dbRows = databaseId
     ? [{ database_id: databaseId }]
@@ -210,9 +213,9 @@ export function backfillRecordOrderKeys(db: Database, databaseId?: string): void
     const keys = keysBetween(start, null, missing.length);
     missing.forEach((row, i) => writeRecordOrderKey(db, row.id, keys[i]!, emitChange));
   }
-}
+});
 
-export function createRecord(
+export const createRecord = grouped(function createRecord(
   db: Database,
   databaseId: string,
   data: Record<string, unknown>,
@@ -230,7 +233,7 @@ export function createRecord(
   for (const { prop, value } of resolved)
     emit(db, "records", id, prop.id, coerce(db, prop, value));
   return getRecord(db, id)!;
-}
+});
 
 export function getRecord(db: Database, id: string): RecordRow | null {
   const row = db
@@ -325,7 +328,7 @@ export function listRecords(
   return rows;
 }
 
-export function moveRecord(
+export const moveRecord = grouped(function moveRecord(
   db: Database,
   id: string,
   targetId: string,
@@ -367,9 +370,9 @@ export function moveRecord(
   }
   emit(db, "records", id, "order_key", keyBetween(left, right));
   return getRecord(db, id)!;
-}
+});
 
-export function updateRecord(
+export const updateRecord = grouped(function updateRecord(
   db: Database,
   id: string,
   data: Record<string, unknown>,
@@ -382,13 +385,13 @@ export function updateRecord(
   for (const { prop, value } of resolved)
     emit(db, "records", id, prop.id, coerce(db, prop, value));
   return getRecord(db, id)!;
-}
+});
 
-export function deleteRecord(db: Database, id: string): boolean {
+export const deleteRecord = grouped(function deleteRecord(db: Database, id: string): boolean {
   const rec = db
     .query("SELECT id FROM records WHERE id = ? AND __deleted = 0")
     .get(id) as { id: string } | null;
   if (!rec) return false;
   emit(db, "records", id, "__deleted", 1);
   return true;
-}
+});

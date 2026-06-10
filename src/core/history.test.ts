@@ -5,7 +5,7 @@ import { ingest, changesSince } from "./crdt.ts";
 import { parseHlc, formatHlc } from "./hlc.ts";
 import { createDocument, getDocument, updateDocument, deleteDocument, documentVersion } from "./documents.ts";
 import { createDatabase } from "./databases.ts";
-import { addProperty, removeProperty } from "./properties.ts";
+import { addProperty, updateProperty, removeProperty, listProperties } from "./properties.ts";
 import { createRecord, getRecord, updateRecord, deleteRecord } from "./records.ts";
 import { validateHub } from "./integrity.ts";
 import {
@@ -16,7 +16,11 @@ import {
   recordAtVersion,
   revertRecord,
   recordFieldHistory,
+  listPropertyRevisions,
+  revertProperty,
 } from "./history.ts";
+import { repairHub } from "./integrity.ts";
+import { emit } from "./crdt.ts";
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -113,8 +117,26 @@ test("revertDocument honors ifMatch (stale) and missing docs (not_found)", () =>
   const doc = createDocument(db, { title: "Spec", body: "a" });
   const revs = listDocumentRevisions(db, doc.id);
   expect(() => revertDocument(db, doc.id, revs[0]!.version, { ifMatch: "bogus" })).toThrow(/stale/);
+  expect(() => revertDocument(db, "doc_nope-zzzzzz", revs[0]!.version)).toThrow(/no such document/);
+});
+
+test("reverting a deleted document resurrects it with its past body", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "Spec", body: "alpha\n\nbeta" });
+  advanceClock(db, 10_000);
   deleteDocument(db, doc.id);
-  expect(() => revertDocument(db, doc.id, revs[0]!.version)).toThrow(/no such document/);
+  expect(getDocument(db, doc.id)).toBeNull();
+  advanceClock(db, 10_000);
+
+  const revs = listDocumentRevisions(db, doc.id);
+  const r = revertDocument(db, doc.id, revs.at(-1)!.version);
+  expect(r.undeleted).toBe(true);
+  const now = getDocument(db, doc.id)!;
+  expect(now.title).toBe("Spec");
+  expect(now.body).toBe("alpha\n\nbeta");
+  // The resurrection itself is a "revert"-kind revision.
+  expect(listDocumentRevisions(db, doc.id)[0]!.kind).toBe("revert");
+  expect(validateHub(db).issues.filter((i) => i.fixable)).toEqual([]);
 });
 
 test("history of a synced document is identical on both nodes; revert converges", () => {
@@ -224,6 +246,90 @@ test("revertRecord skips cells of removed properties (no orphan cells)", () => {
   const r = revertRecord(db, rec.id, revs.at(-1)!.version);
   expect(r.fields).not.toContain(points.id); // dead property untouched
   expect(getRecord(db, rec.id)!.values["Title"]).toBe("T");
+  expect(validateHub(db).issues.filter((i) => i.fixable)).toEqual([]);
+});
+
+// ---- txn grouping & kinds --------------------------------------------------------
+
+test("changes in one mutation cluster as one revision even within the gap window", () => {
+  const db = makeNode("aaaa");
+  const { base } = makeTable(db);
+  // Two same-millisecond saves: without txn these would merge into one cluster.
+  const rec = createRecord(db, base.id, { Title: "T", Points: 1 });
+  updateRecord(db, rec.id, { Points: 2 });
+  updateRecord(db, rec.id, { Title: "T2", Points: 3 });
+  expect(listRecordRevisions(db, rec.id).length).toBe(3);
+});
+
+test("repairHub revisions are kind=repair; reverts are kind=revert", () => {
+  const db = makeNode("aaaa");
+  const { base, points } = makeTable(db);
+  const rec = createRecord(db, base.id, { Title: "T", Points: 1 });
+  advanceClock(db, 10_000);
+  updateRecord(db, rec.id, { Title: "T2" });
+  advanceClock(db, 10_000);
+  // Orphan the Points cell by tombstoning the property outside removeProperty's
+  // cleanup, then let repairHub clear it (an emit with the repair label).
+  emit(db, "properties", points.id, "__deleted", 1);
+  advanceClock(db, 10_000);
+  repairHub(db);
+  const revs = listRecordRevisions(db, rec.id);
+  expect(revs[0]!.kind).toBe("repair");
+
+  advanceClock(db, 10_000);
+  const r = revertRecord(db, rec.id, revs.at(-1)!.version); // restores Title "T"
+  expect(r.changed).toBe(true);
+  expect(listRecordRevisions(db, rec.id)[0]!.kind).toBe("revert");
+});
+
+// ---- properties (schema rollback) ------------------------------------------------
+
+test("revertProperty restores a type change and the cells it cleared", () => {
+  const db = makeNode("aaaa");
+  const { base, points } = makeTable(db);
+  const r1 = createRecord(db, base.id, { Title: "A", Points: 1 });
+  const r2 = createRecord(db, base.id, { Title: "B", Points: 2 });
+  advanceClock(db, 10_000);
+
+  // Type change wipes every Points cell (cleared to JSON null).
+  updateProperty(db, points.id, { type: "select", config: { options: ["x"] } });
+  expect(getRecord(db, r1.id)!.values["Points"]).toBeNull();
+  advanceClock(db, 10_000);
+  // A user fills one cell under the NEW type — the revert must keep it.
+  updateRecord(db, r2.id, { Points: "x" });
+  advanceClock(db, 10_000);
+
+  const revs = listPropertyRevisions(db, points.id);
+  expect(revs[0]!.cells_cleared).toBe(2); // newest first: the type-change revision
+  const res = revertProperty(db, points.id, revs.at(-1)!.version);
+  expect(res.fields.sort()).toEqual(["config", "type"]);
+  expect(res.restored_cells).toBe(1); // r1 restored
+  expect(res.skipped_cells).toBe(1); // r2's user edit kept
+
+  const prop = listProperties(db, base.id).find((p) => p.id === points.id)!;
+  expect(prop.type).toBe("number");
+  expect(getRecord(db, r1.id)!.values["Points"]).toBe(1);
+  expect(getRecord(db, r2.id)!.values["Points"]).toBe("x");
+  expect(validateHub(db).issues.filter((i) => i.fixable)).toEqual([]);
+});
+
+test("revertProperty resurrects a removed column with its cells", () => {
+  const db = makeNode("aaaa");
+  const { base, points } = makeTable(db);
+  const rec = createRecord(db, base.id, { Title: "A", Points: 7 });
+  advanceClock(db, 10_000);
+  removeProperty(db, points.id);
+  expect(getRecord(db, rec.id)!.values["Points"]).toBeUndefined();
+  advanceClock(db, 10_000);
+
+  const revs = listPropertyRevisions(db, points.id);
+  expect(revs[0]!.deleted).toBe(true);
+  expect(() => revertProperty(db, points.id, revs[0]!.version)).toThrow(/deleted state/);
+
+  const res = revertProperty(db, points.id, revs.at(-1)!.version);
+  expect(res.undeleted).toBe(true);
+  expect(res.restored_cells).toBe(1);
+  expect(getRecord(db, rec.id)!.values["Points"]).toBe(7);
   expect(validateHub(db).issues.filter((i) => i.fixable)).toEqual([]);
 });
 

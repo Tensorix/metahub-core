@@ -2,9 +2,12 @@ import type { Database } from "bun:sqlite";
 import { getNodeId } from "./node.ts";
 import { nextHlc, observeHlc } from "./hlc.ts";
 import { serializeDocBlocks } from "./blocks.ts";
+import { randomSuffix } from "./ids.ts";
 
 // A single field assignment — the unit of replication. `value` is JSON-encoded
-// (or null). `dataset`/`row_id`/`col` identify the CRDT register.
+// (or null). `dataset`/`row_id`/`col` identify the CRDT register. `txn` groups
+// the changes of one logical mutation (one save / one API call) so history can
+// render them as a single revision; it replicates but plays no role in LWW.
 export interface Change {
   hlc: string;
   node_id: string;
@@ -12,6 +15,34 @@ export interface Change {
   row_id: string;
   col: string;
   value: string | null;
+  txn?: string | null;
+}
+
+// Current change group. Core mutations are synchronous and single-threaded, so
+// a module-level slot (set around each public mutator via grouped()) is enough.
+let currentTxn: string | null = null;
+
+/**
+ * Run `fn` with all emits stamped with one shared txn id. Nested calls keep the
+ * outermost group (a revert that calls updateDocument is ONE revision). `label`
+ * prefixes the id ("repair:", "revert:") so history can classify the source.
+ */
+export function withChangeGroup<T>(label: string | null, fn: () => T): T {
+  if (currentTxn !== null) return fn();
+  currentTxn = (label ? label + ":" : "") + randomSuffix(8);
+  try {
+    return fn();
+  } finally {
+    currentTxn = null;
+  }
+}
+
+/** Wrap a mutator so its body runs inside one change group. */
+export function grouped<A extends unknown[], R>(
+  fn: (...args: A) => R,
+  label: string | null = null,
+): (...args: A) => R {
+  return (...args) => withChangeGroup(label, () => fn(...args));
 }
 
 // Domain tables addressable by id, with their write-allowed columns. `col` is
@@ -158,8 +189,8 @@ function materialize(
  */
 export function applyChange(db: Database, c: Change): boolean {
   db.query(
-    "INSERT OR IGNORE INTO crdt_changes (hlc, node_id, dataset, row_id, col, value) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(c.hlc, c.node_id, c.dataset, c.row_id, c.col, c.value);
+    "INSERT OR IGNORE INTO crdt_changes (hlc, node_id, dataset, row_id, col, value, txn) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(c.hlc, c.node_id, c.dataset, c.row_id, c.col, c.value, c.txn ?? null);
 
   const cur = db
     .query(
@@ -188,6 +219,7 @@ export function emit(
     row_id: rowId,
     col,
     value: value === undefined ? null : JSON.stringify(value),
+    txn: currentTxn,
   };
   applyChange(db, change);
   return change;
@@ -225,7 +257,7 @@ export function ingest(db: Database, changes: Change[]): number {
 export function changesSince(db: Database, since: string): Change[] {
   return db
     .query(
-      "SELECT hlc, node_id, dataset, row_id, col, value FROM crdt_changes WHERE hlc > ? ORDER BY hlc",
+      "SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE hlc > ? ORDER BY hlc",
     )
     .all(since) as Change[];
 }
@@ -243,7 +275,7 @@ export interface ChangeBatch {
 export function changesAfterSeq(db: Database, seq: number): ChangeBatch {
   const rows = db
     .query(
-      "SELECT rowid AS seq, hlc, node_id, dataset, row_id, col, value FROM crdt_changes WHERE rowid > ? ORDER BY rowid",
+      "SELECT rowid AS seq, hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE rowid > ? ORDER BY rowid",
     )
     .all(seq) as (Change & { seq: number })[];
   const last = rows[rows.length - 1];

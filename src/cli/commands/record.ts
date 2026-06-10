@@ -121,6 +121,7 @@ const update = defineCommand({
 
 function recordRevisionSummary(r: RecordRevision, names: Map<string, string>): string {
   const parts: string[] = [];
+  if (r.kind !== "user") parts.push(`[${r.kind}]`);
   if (r.created) parts.push("created");
   if (r.deleted) parts.push("deleted");
   if (r.fields.length)

@@ -100,10 +100,14 @@ Requests are guarded by a single token (persisted in `~/.metahub`). The server b
 | `mh doc read <id>` | Read body + version token (AI reads before editing) |
 | `mh doc edit <id> --old --new` | Anchored find-and-replace (`--replace-all` / `--if-match`) |
 | `mh doc append\|prepend <id> --body` | Append a block at the document head/tail |
+| `mh doc history <id>` / `mh doc revert <id> --to <version>` | List a document's revisions / restore a past version (a new forward revision; `doc get --at <version>` previews; revert resurrects a deleted doc) |
+| `mh record history <id> [--field <name>]` / `mh record revert <id> --to <version>` | Record edit history (per-revision field diffs, or one cell's value trail) / restore past cells (resurrects a deleted record) |
+| `mh prop history <id>` / `mh prop revert <id> --to <version>` | Column definition history / schema rollback: restores the column **and** the cells its type-change/removal cleared, keeping user edits made since |
 | `mh edit <id>` | Edit a document/record interactively in `$EDITOR` (for humans) |
 | `mh search <query>` | Full-text search (documents + records) |
-| `mh doctor` | Read-only health check: list integrity issues (orphan refs/cells, duplicate paths, doc cycles, name clashes) |
+| `mh doctor` | Read-only health check: list integrity issues (orphan refs/cells, duplicate paths, doc cycles, name clashes) + oplog/disk stats |
 | `mh repair [--dry-run]` | Deterministic, idempotent repair of auto-fixable issues (changes replicate via oplog); `--dry-run` previews (same as doctor) |
+| `mh compact [--keep <days>] [--dry-run]` | Prune oplog history older than the retention window (default 90d) + GC blobs + VACUUM. Local-only; current data untouched, older history collapses to a baseline |
 | `mh site create\|put\|publish\|list\|files\|rm\|delete` | Host static sites (HTML/CSS/JS) an agent generates, served by `--server` at `/sites/<name>/` |
 | `mh token [show\|refresh]` | Show/rotate the persisted server auth token (stored in `~/.metahub`, rotates at 30-day expiry by default) |
 | `mh completion <bash\|zsh\|fish>` | Print a completion script: `eval "$(mh completion zsh)"` |

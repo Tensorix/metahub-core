@@ -12,6 +12,7 @@ import { SitesView } from "./sites.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
+import { DocHistoryPanel } from "./history.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
   UiHost,
@@ -59,6 +60,7 @@ function App() {
   // distinguishes "still loading" from "genuinely not found" below.
   const [navReady, setNavReady] = useState(false);
   const [updatePending, setUpdatePending] = useState(false);
+  const [docHistory, setDocHistory] = useState(false);
   const docHandleRef = useRef<DocViewHandle | null>(null);
   const isMobile = useIsMobile();
 
@@ -142,6 +144,7 @@ function App() {
 
   useEffect(() => {
     setDocMode("blocks");
+    setDocHistory(false);
   }, [activeDocId]);
 
   // Reflect the mobile navigation state onto <body> (same body-class pattern as
@@ -236,6 +239,12 @@ function App() {
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
           }} />
           <MenuItem icon="download" label="导出 Markdown" onClick={() => { close(); exportDocMarkdown(activeDoc); }} />
+          <MenuItem icon="history" label="版本历史" onClick={() => {
+            close();
+            // Flush pending edits first so the history list includes them.
+            docHandleRef.current?.flushSave();
+            setDocHistory(true);
+          }} />
           <MenuSep />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
@@ -335,6 +344,14 @@ function App() {
           {view.kind === "sites" && <SitesView />}
         </div>
       </div>
+
+      {docHistory && view.kind === "doc" && (
+        <DocHistoryPanel
+          docId={view.id}
+          onClose={() => setDocHistory(false)}
+          onReverted={() => docHandleRef.current?.reload()}
+        />
+      )}
 
       <UiHost />
     </>

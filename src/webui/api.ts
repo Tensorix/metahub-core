@@ -88,6 +88,61 @@ export interface Grant {
   node_id: string | null;
   created_at: number | null;
 }
+/** Source of a history revision: a user edit, a repairHub fix, or a revert. */
+export type RevisionKind = "user" | "repair" | "revert";
+interface RevisionBase {
+  /** Version token — pass as `to` on revert / `version` on the at-version reads. */
+  version: string;
+  at: string; // ISO 8601
+  node_id: string;
+  kind: RevisionKind;
+  changes: number;
+  created: boolean;
+  deleted: boolean;
+}
+export interface DocRevision extends RevisionBase {
+  title_changed: boolean;
+  blocks_changed: number;
+  blocks_deleted: number;
+}
+export interface RecordRevision extends RevisionBase {
+  fields: string[]; // property ids of the cells written
+  moved: boolean;
+}
+export interface DocVersionState {
+  id: string;
+  title: string;
+  body: string;
+  deleted: boolean;
+  version: string;
+}
+export interface RecordVersionState {
+  id: string;
+  database_id: string | null;
+  deleted: boolean;
+  data: Record<string, unknown>; // keyed by property id
+  version: string;
+}
+export interface RevertDocResult {
+  id: string;
+  changed: boolean;
+  restored: string;
+  version: string;
+  undeleted: boolean;
+}
+export interface RevertRecordResult {
+  id: string;
+  changed: boolean;
+  fields: string[];
+  undeleted: boolean;
+  restored: string;
+}
+export interface NodeInfo {
+  node_id: string;
+  label: string | null;
+  self: boolean;
+}
+
 export interface Site {
   id: string;
   name: string;
@@ -197,6 +252,19 @@ export const api = {
   moveDocument: (id: string, target: string, where: "before" | "after" | "into") =>
     req<Doc>("PATCH", `/api/document/move?id=${q(id)}`, { target, where }),
   deleteDocument: (id: string) => req<{ ok: boolean }>("DELETE", `/api/document?id=${q(id)}`),
+
+  // history
+  documentHistory: (id: string) => req<DocRevision[]>("GET", `/api/document/history?id=${q(id)}`),
+  documentAt: (id: string, version: string) =>
+    req<DocVersionState>("GET", `/api/document/at?id=${q(id)}&version=${q(version)}`),
+  revertDocument: (id: string, b: { to: string; if_match?: string }) =>
+    req<RevertDocResult>("POST", `/api/document/revert?id=${q(id)}`, b),
+  recordHistory: (id: string) => req<RecordRevision[]>("GET", `/api/record/history?id=${q(id)}`),
+  recordAt: (id: string, version: string) =>
+    req<RecordVersionState>("GET", `/api/record/at?id=${q(id)}&version=${q(version)}`),
+  revertRecord: (id: string, to: string) =>
+    req<RevertRecordResult>("POST", `/api/record/revert?id=${q(id)}`, { to }),
+  nodes: () => req<NodeInfo[]>("GET", "/api/nodes"),
 
   // search
   search: (text: string, limit?: number) => {

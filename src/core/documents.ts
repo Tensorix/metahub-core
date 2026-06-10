@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
-import { emit } from "./crdt.ts";
+import { emit, grouped } from "./crdt.ts";
 import { parseDocBlocks, serializeDocBlocks, reconcile, type DocBlock } from "./blocks.ts";
 import { keyBetween, keysBetween } from "./fracdex.ts";
 import { MhError } from "./errors.ts";
@@ -122,7 +122,7 @@ export function documentVersion(db: Database, id: string): string {
 
 // ---- public API ------------------------------------------------------------
 
-export function createDocument(
+export const createDocument = grouped(function createDocument(
   db: Database,
   opts: { title: string; body?: string; database_id?: string; parent_id?: string },
 ): DocumentRow {
@@ -137,7 +137,7 @@ export function createDocument(
     if (blocks.length) insertBlocks(db, id, blocks, null, null);
   }
   return getDocument(db, id)!;
-}
+});
 
 export function getDocument(db: Database, id: string): DocumentRow | null {
   return db
@@ -247,12 +247,14 @@ function backfillSiblings(db: Database, parentId: string | null): void {
 }
 
 /** Backfill order_key for every parent group that has un-keyed live documents. */
-export function backfillDocumentOrderKeys(db: Database): void {
+export const backfillDocumentOrderKeys = grouped(function backfillDocumentOrderKeys(
+  db: Database,
+): void {
   const parents = db
     .query("SELECT DISTINCT parent_id FROM documents WHERE __deleted = 0 AND order_key IS NULL")
     .all() as { parent_id: string | null }[];
   for (const p of parents) backfillSiblings(db, p.parent_id);
-}
+});
 
 /**
  * Place `id` under `parentId` at the given position — the single point where a
@@ -305,7 +307,7 @@ function placeInSiblings(
  * and its order_key. `into` nests it as the last child of `targetId`;
  * `before`/`after` re-orders (and reparents if needed) among the target's siblings.
  */
-export function moveDocument(
+export const moveDocument = grouped(function moveDocument(
   db: Database,
   id: string,
   targetId: string,
@@ -320,9 +322,9 @@ export function moveDocument(
   if (where === "into") placeInSiblings(db, id, targetId);
   else placeInSiblings(db, id, target.parent_id, { targetId, where });
   return getDocument(db, id)!;
-}
+});
 
-export function updateDocument(
+export const updateDocument = grouped(function updateDocument(
   db: Database,
   id: string,
   fields: { title?: string; body?: string; database_id?: string; parent_id?: string | null },
@@ -348,7 +350,7 @@ export function updateDocument(
     reconcileBody(db, id, fields.body);
   }
   return getDocument(db, id)!;
-}
+});
 
 export interface EditDocResult {
   id: string;
@@ -363,7 +365,7 @@ export interface EditDocResult {
  * cannot author it without current content, and drift surfaces as "not found".
  * `ifMatch` is an optional staleness backstop (a version from documentVersion).
  */
-export function editDocument(
+export const editDocument = grouped(function editDocument(
   db: Database,
   id: string,
   opts: { old: string; new: string; replaceAll?: boolean; ifMatch?: string },
@@ -403,9 +405,13 @@ export function editDocument(
     : body.replace(opts.old, opts.new);
   reconcileBody(db, id, newBody);
   return { id, changed: newBody !== body, replaced: opts.replaceAll ? count : 1, version: documentVersion(db, id) };
-}
+});
 
-export function appendDocument(db: Database, id: string, body: string): EditDocResult {
+export const appendDocument = grouped(function appendDocument(
+  db: Database,
+  id: string,
+  body: string,
+): EditDocResult {
   if (!getDocument(db, id)) throw new MhError("not_found", `no such document: ${id}`);
   ensureBlocks(db, id);
   const next = parseDocBlocks(body);
@@ -415,9 +421,13 @@ export function appendDocument(db: Database, id: string, body: string): EditDocR
     insertBlocks(db, id, next, last, null);
   }
   return { id, changed: next.length > 0, replaced: next.length, version: documentVersion(db, id) };
-}
+});
 
-export function prependDocument(db: Database, id: string, body: string): EditDocResult {
+export const prependDocument = grouped(function prependDocument(
+  db: Database,
+  id: string,
+  body: string,
+): EditDocResult {
   if (!getDocument(db, id)) throw new MhError("not_found", `no such document: ${id}`);
   ensureBlocks(db, id);
   const next = parseDocBlocks(body);
@@ -427,9 +437,9 @@ export function prependDocument(db: Database, id: string, body: string): EditDoc
     insertBlocks(db, id, next, null, first);
   }
   return { id, changed: next.length > 0, replaced: next.length, version: documentVersion(db, id) };
-}
+});
 
-export function deleteDocument(db: Database, id: string): boolean {
+export const deleteDocument = grouped(function deleteDocument(db: Database, id: string): boolean {
   if (!getDocument(db, id)) return false;
   emit(db, "documents", id, "__deleted", 1);
   // Cascade off the tombstone, mirroring repairHub: the doc's blocks are derived
@@ -439,7 +449,7 @@ export function deleteDocument(db: Database, id: string): boolean {
   for (const c of liveChildIds(db, "documents", "parent_id", id))
     emit(db, "documents", c, "parent_id", null);
   return true;
-}
+});
 
 /** Ids of live rows in `table` whose `col` references `parentId`. */
 function liveChildIds(db: Database, table: string, col: string, parentId: string): string[] {

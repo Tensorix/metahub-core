@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
-import { emit } from "./crdt.ts";
+import { emit, grouped } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { ensurePropIndex } from "./indexing.ts";
 import { MhError } from "./errors.ts";
@@ -63,7 +63,7 @@ function nextPosition(db: Database, databaseId: string): number {
   return (row.m ?? 0) + 1;
 }
 
-export function addProperty(
+export const addProperty = grouped(function addProperty(
   db: Database,
   databaseId: string,
   opts: {
@@ -98,7 +98,7 @@ export function addProperty(
   if (opts.type === "relation" || opts.indexed === true)
     ensurePropIndex(db, databaseId, id);
   return getProperty(db, id)!;
-}
+});
 
 export function getProperty(db: Database, id: string): PropertyRow | null {
   const row = db
@@ -122,7 +122,7 @@ export function listProperties(db: Database, databaseId: string): PropertyRow[] 
   }));
 }
 
-export function updateProperty(
+export const updateProperty = grouped(function updateProperty(
   db: Database,
   id: string,
   fields: { name?: string; type?: PropType; config?: PropertyConfig; position?: number },
@@ -156,7 +156,7 @@ export function updateProperty(
     for (const r of rows) emit(db, "records", r.id, id, null);
   }
   return getProperty(db, id)!;
-}
+});
 
 // Persist a column's display width. Merges into the existing config server-side
 // so concurrent callers can't strip sibling fields (e.g. a select's `options`),
@@ -169,7 +169,7 @@ export function setPropertyWidth(db: Database, id: string, width: number): Prope
   return updateProperty(db, id, { config: { ...(cur.config ?? {}), width: w } });
 }
 
-export function removeProperty(db: Database, id: string): boolean {
+export const removeProperty = grouped(function removeProperty(db: Database, id: string): boolean {
   const prop = getProperty(db, id);
   if (!prop) return false;
   emit(db, "properties", id, "__deleted", 1);
@@ -183,4 +183,4 @@ export function removeProperty(db: Database, id: string): boolean {
     .all(prop.database_id, id) as { id: string }[];
   for (const r of rows) emit(db, "records", r.id, id, undefined);
   return true;
-}
+});

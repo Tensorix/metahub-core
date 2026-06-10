@@ -52,6 +52,8 @@ export interface DocViewHandle {
   setMode: (mode: DocMode) => void;
   snapshotMarkdown: () => string;
   flushSave: () => Promise<void>;
+  /** Re-fetch the document from the server (e.g. after a history revert). */
+  reload: () => void;
 }
 
 /** Highlight code to HTML for the overlay layer. Falls back to escaped text. */
@@ -384,6 +386,7 @@ export function DocView({
       setMode: setDisplayMode,
       snapshotMarkdown,
       flushSave,
+      reload: loadDoc,
     });
     return () => onHandle?.(null);
   }, [onHandle, mode]);
