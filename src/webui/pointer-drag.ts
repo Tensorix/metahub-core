@@ -162,6 +162,10 @@ export function startColumnResize(
   let raf = 0;
   handle.classList.add("dragging");
   document.body.classList.add("col-resizing");
+  // Stretch the handle's guide line (CSS --rz-guide-h) from the header down to
+  // the table's bottom edge so the new column boundary is visible across rows.
+  const table = handle.closest("table");
+  if (table) handle.style.setProperty("--rz-guide-h", (table as HTMLElement).offsetHeight + "px");
   startPointerDrag(down, {
     threshold: 0,
     onMove: (ev) => {
@@ -176,6 +180,7 @@ export function startColumnResize(
       if (raf) cancelAnimationFrame(raf);
       if (opts.col) opts.col.style.width = last + "px";
       handle.classList.remove("dragging");
+      handle.style.removeProperty("--rz-guide-h");
       document.body.classList.remove("col-resizing");
       opts.onDone(last);
     },

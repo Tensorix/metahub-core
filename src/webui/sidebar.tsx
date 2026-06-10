@@ -397,8 +397,13 @@ async function deleteDocTree(docs: DocSummary[], id: string) {
 function useResize(onResize: (w: number) => void) {
   return (e: MouseEvent) => {
     e.preventDefault();
+    const handle = e.currentTarget as HTMLElement;
+    handle.classList.add("dragging");
+    document.body.classList.add("col-resizing");
     const move = (ev: MouseEvent) => onResize(Math.max(210, Math.min(460, ev.clientX)));
     const up = () => {
+      handle.classList.remove("dragging");
+      document.body.classList.remove("col-resizing");
       removeEventListener("mousemove", move);
       removeEventListener("mouseup", up);
     };

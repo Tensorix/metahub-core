@@ -109,6 +109,10 @@ export function TimelineView({
     const baseLeft = el.offsetLeft;
     const baseWidth = el.offsetWidth;
     let moved = false;
+    // Pin the edge grip visible for the whole drag: the pointer routinely
+    // leaves the 9px handle mid-drag, which would drop its :hover styling.
+    const grip = mode === "move" ? null : (ev.currentTarget as HTMLElement);
+    grip?.classList.add("dragging");
     dragRef.current = { pointerId: ev.pointerId, startX: ev.clientX };
     const move = (e2: PointerEvent) => {
       const d = dragRef.current;
@@ -140,6 +144,7 @@ export function TimelineView({
       removeEventListener("pointerup", up);
       removeEventListener("pointercancel", up);
       dragRef.current = null;
+      grip?.classList.remove("dragging");
       hideGuide();
       const dxDays = Math.round((e2.clientX - d.startX) / DAY_PX);
       if (!moved) { onOpenRecord(rec.id); return; }

@@ -80,7 +80,26 @@
   /* sidebar */
   .sidebar { width:268px; flex:none; background:var(--sidebar); border-right:1px solid var(--line);
     display:flex; flex-direction:column; position:relative; transition:margin-left .22s cubic-bezier(.4,0,.2,1); }
-  .sb-resizer { position:absolute; top:0; right:-3px; width:6px; height:100%; cursor:col-resize; z-index:5; }
+  /* right:-4px (not -3): the 7px handle then straddles the 1px border line
+     symmetrically (3.5px each side of the border's center), so the centered
+     ::before grip line lands exactly on the border instead of 1px left of it. */
+  .sb-resizer { position:absolute; top:0; right:-4px; width:7px; height:100%; cursor:col-resize; z-index:5; }
+  /* Unified resize-handle visual (sidebar + datasheet/doc-table column resizers):
+     the handle stays an invisible hit area; a centered 3px round-capped line
+     fades/expands in on hover and solidifies with a soft halo while dragging.
+     --rz-guide-h (written by startColumnResize) stretches the dragging line to
+     the full table height so the new column edge is visible across all rows. */
+  .sb-resizer::before, .col-resizer::before, .doc-col-resizer::before {
+    content:""; position:absolute; left:50%; top:0; height:100%; width:3px;
+    transform:translateX(-50%) scaleX(.4); border-radius:999px;
+    background:var(--accent); opacity:0; pointer-events:none;
+    transition:opacity .15s cubic-bezier(.4,0,.2,1), transform .15s cubic-bezier(.4,0,.2,1), box-shadow .15s; }
+  .sb-resizer:hover::before, .col-resizer:hover::before, .doc-col-resizer:hover::before {
+    opacity:.6; transform:translateX(-50%) scaleX(1); }
+  .sb-resizer.dragging::before, .col-resizer.dragging::before, .doc-col-resizer.dragging::before {
+    opacity:1; transform:translateX(-50%) scaleX(1);
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    height:var(--rz-guide-h, 100%); }
   .sb-head { display:flex; align-items:center; gap:8px; padding:14px 14px 10px; }
   .brand { display:flex; align-items:center; gap:8px; flex:1; font-weight:700; font-size:15px; letter-spacing:-.01em; }
   .brand .mark { width:24px; height:24px; border-radius:7px;
@@ -388,8 +407,7 @@
     color:var(--muted); border-radius:4px; opacity:0; transition:opacity .12s,background .12s; }
   .doc-th:hover .doc-col-menu { opacity:1; }
   .doc-col-menu:hover { background:var(--hover-2); color:var(--fg); }
-  .doc-col-resizer { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:3; touch-action:none; }
-  .doc-col-resizer:hover, .doc-col-resizer.dragging { background:var(--accent); opacity:.35; }
+  .doc-col-resizer { position:absolute; top:0; right:-4px; width:7px; height:100%; cursor:col-resize; z-index:3; touch-action:none; }
   /* per-row delete: small handle floating at the first cell on row hover */
   .doc-row-del { position:absolute; top:3px; left:2px; width:18px; height:18px; display:grid; place-items:center;
     color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:5px; box-shadow:var(--shadow-sm);
@@ -434,8 +452,7 @@
   .colhead:hover { background:var(--hover); }
   .colhead .ti { color:var(--muted); } .colhead .ti svg { width:14px; height:14px; }
   .colhead .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .col-resizer { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:2; touch-action:none; }
-  .col-resizer:hover, .col-resizer.dragging { background:var(--accent); opacity:.35; }
+  .col-resizer { position:absolute; top:0; right:-4px; width:7px; height:100%; cursor:col-resize; z-index:2; touch-action:none; }
   .addcol { min-width:46px; } .addcol .colhead { justify-content:flex-start; color:var(--muted); }
   /* trailing filler column: empty canvas to the right of the data, not a real cell */
   table.grid td.filler { border-right:0; border-bottom:0; background:transparent; }
@@ -847,9 +864,16 @@
     display:flex; align-items:center; gap:2px; padding:0 4px; cursor:grab; touch-action:none; box-shadow:var(--shadow-sm); overflow:hidden; }
   .tl-item .tl-label { flex:1; font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
   .tl-row:hover .tl-item { box-shadow:0 0 0 1px var(--accent), var(--shadow-sm); }
-  .tl-item .tl-h { width:8px; align-self:stretch; flex:none; cursor:col-resize; border-radius:6px; opacity:0; transition:opacity .1s; }
-  .tl-item:hover .tl-h { opacity:1; background:rgba(255,255,255,.35); }
-  .tl-item .tl-h:hover { background:rgba(255,255,255,.6); }
+  /* Edge handles: a small centered round-capped grip inside the colored bar.
+     --accent-fg (not white) keeps contrast right in both themes — dark grip on
+     the light-purple dark-mode bar, white grip on the blue light-mode bar. */
+  .tl-item .tl-h { position:relative; width:9px; align-self:stretch; flex:none; cursor:col-resize; opacity:0; transition:opacity .15s; touch-action:none; }
+  .tl-item .tl-h::before { content:""; position:absolute; left:50%; top:50%; width:3px; height:10px;
+    transform:translate(-50%,-50%); border-radius:999px;
+    background:color-mix(in srgb, var(--accent-fg) 70%, transparent);
+    transition:height .15s cubic-bezier(.4,0,.2,1), background .15s; }
+  .tl-item:hover .tl-h, .tl-item .tl-h.dragging { opacity:1; }
+  .tl-item .tl-h:hover::before, .tl-item .tl-h.dragging::before { height:14px; background:var(--accent-fg); }
   .tl-milestone { position:absolute; top:9px; width:18px; height:18px; transform:rotate(45deg); background:var(--accent); border-radius:3px; cursor:grab; touch-action:none; box-shadow:var(--shadow-sm); margin-left:-9px; }
   .tl-milestone:hover { box-shadow:0 0 0 2px var(--accent-soft), var(--shadow-sm); }
   .tl-track-empty { position:absolute; top:0; right:0; height:100%; cursor:copy; }
@@ -997,7 +1021,7 @@
     table.doc-table .doc-row-del { opacity:1; }
     .selcell input { opacity:1; }
     .rowgrip { color:var(--muted); }
-    .tl-item .tl-h { opacity:1; background:rgba(255,255,255,.35); }
+    .tl-item .tl-h { opacity:1; }
     /* Neutralize the stickiest tap-residue tints (a tap "hovers" until the
        next tap elsewhere); transient menus/buttons are left alone. */
     .navitem:hover { background:none; }
