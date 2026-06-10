@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { emit, grouped } from "./crdt.ts";
 import { serializeDocBlocks } from "./blocks.ts";
 import { getDocument, updateDocument, documentVersion } from "./documents.ts";
@@ -92,7 +92,7 @@ function registersAt(
 }
 
 /** All oplog changes for one row of a dataset, in HLC order. */
-function rowChanges(db: Database, dataset: string, rowId: string): RawChange[] {
+function rowChanges(db: DbDriver, dataset: string, rowId: string): RawChange[] {
   return db
     .query(
       "SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE dataset = ? AND row_id = ? ORDER BY hlc",
@@ -104,7 +104,7 @@ function rowChanges(db: Database, dataset: string, rowId: string): RawChange[] {
 
 /** Ids of every block that was ever assigned to this document. Whether a block
  *  counts at a given cutoff is decided later from its registers at that cutoff. */
-function everBlockIds(db: Database, docId: string): string[] {
+function everBlockIds(db: DbDriver, docId: string): string[] {
   return (
     db
       .query(
@@ -115,7 +115,7 @@ function everBlockIds(db: Database, docId: string): string[] {
 }
 
 /** Doc register changes + changes of every block ever attached, in HLC order. */
-function docChanges(db: Database, docId: string): RawChange[] {
+function docChanges(db: DbDriver, docId: string): RawChange[] {
   const blocks = everBlockIds(db, docId);
   const placeholders = blocks.map(() => "?").join(",");
   const blockClause = blocks.length
@@ -147,7 +147,7 @@ export interface DocRevision {
 }
 
 /** A document's edit history, newest first, clustered into save-sized revisions. */
-export function listDocumentRevisions(db: Database, id: string): DocRevision[] {
+export function listDocumentRevisions(db: DbDriver, id: string): DocRevision[] {
   const changes = docChanges(db, id);
   if (!changes.length) throw new MhError("not_found", `no such document: ${id}`);
   return clusterRevisions(changes)
@@ -195,7 +195,7 @@ export interface DocumentVersionState {
 }
 
 /** Reconstruct a document as of version cutoff `at` (state at hlc <= at). */
-export function documentAtVersion(db: Database, id: string, at: string): DocumentVersionState {
+export function documentAtVersion(db: DbDriver, id: string, at: string): DocumentVersionState {
   if (!at) throw new MhError("invalid_input", "missing version cutoff");
   const changes = docChanges(db, id).filter((c) => c.hlc <= at);
   if (!changes.length)
@@ -274,7 +274,7 @@ export interface RevertDocResult {
  * delete stay where they are. One change group, so history shows ONE revision.
  */
 export const revertDocument = grouped(function revertDocument(
-  db: Database,
+  db: DbDriver,
   id: string,
   to: string,
   opts: { ifMatch?: string } = {},
@@ -356,7 +356,7 @@ function recordRevisionOf(group: RawChange[]): RecordRevision {
 }
 
 /** A record's edit history, newest first, clustered into save-sized revisions. */
-export function listRecordRevisions(db: Database, id: string): RecordRevision[] {
+export function listRecordRevisions(db: DbDriver, id: string): RecordRevision[] {
   const changes = rowChanges(db, "records", id);
   if (!changes.length) throw new MhError("not_found", `no such record: ${id}`);
   return clusterRevisions(changes).map(recordRevisionOf).reverse();
@@ -388,7 +388,7 @@ export interface DatabaseActivityEntry extends RecordRevision {
  * may be missing (the superseded write was pruned) — it reads as "was empty".
  */
 export function listDatabaseActivity(
-  db: Database,
+  db: DbDriver,
   databaseId: string,
   opts: { limit?: number } = {},
 ): DatabaseActivityEntry[] {
@@ -461,7 +461,7 @@ export interface RecordVersionState {
 }
 
 /** Reconstruct a record as of version cutoff `at` (state at hlc <= at). */
-export function recordAtVersion(db: Database, id: string, at: string): RecordVersionState {
+export function recordAtVersion(db: DbDriver, id: string, at: string): RecordVersionState {
   if (!at) throw new MhError("invalid_input", "missing version cutoff");
   const changes = rowChanges(db, "records", id).filter((c) => c.hlc <= at);
   if (!changes.length)
@@ -498,7 +498,7 @@ export interface RevertRecordResult {
  *  of currently-live properties are touched, so no orphan cells are recreated
  *  (the repairHub invariant). Reverting a tombstoned record resurrects it. */
 export const revertRecord = grouped(function revertRecord(
-  db: Database,
+  db: DbDriver,
   id: string,
   to: string,
 ): RevertRecordResult {
@@ -554,7 +554,7 @@ export interface PropertyRevision {
 
 /** A property's definition history, newest first. Cascaded cell clears are
  *  counted via the shared txn so a type change reads as one revision. */
-export function listPropertyRevisions(db: Database, id: string): PropertyRevision[] {
+export function listPropertyRevisions(db: DbDriver, id: string): PropertyRevision[] {
   const changes = rowChanges(db, "properties", id);
   if (!changes.length) throw new MhError("not_found", `no such property: ${id}`);
   const clearedByTxn = new Map<string, number>(
@@ -604,7 +604,7 @@ export interface PropertyVersionState {
 }
 
 /** Reconstruct a property definition as of version cutoff `at`. */
-export function propertyAtVersion(db: Database, id: string, at: string): PropertyVersionState {
+export function propertyAtVersion(db: DbDriver, id: string, at: string): PropertyVersionState {
   if (!at) throw new MhError("invalid_input", "missing version cutoff");
   const changes = rowChanges(db, "properties", id).filter((c) => c.hlc <= at);
   if (!changes.length)
@@ -650,7 +650,7 @@ export interface RevertPropertyResult {
  * Pre-txn legacy writes can't be attributed, so they count as user writes.
  */
 export const revertProperty = grouped(function revertProperty(
-  db: Database,
+  db: DbDriver,
   id: string,
   to: string,
 ): RevertPropertyResult {
@@ -758,7 +758,7 @@ export interface FieldHistoryEntry {
 }
 
 /** The full write trail of one record cell (property id), newest first. */
-export function recordFieldHistory(db: Database, id: string, propId: string): FieldHistoryEntry[] {
+export function recordFieldHistory(db: DbDriver, id: string, propId: string): FieldHistoryEntry[] {
   const rows = db
     .query(
       "SELECT hlc, node_id, value FROM crdt_changes WHERE dataset = 'records' AND row_id = ? AND col = ? ORDER BY hlc DESC",

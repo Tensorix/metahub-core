@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { newId } from "./ids.ts";
 import { emit, grouped, withChangeGroup } from "./crdt.ts";
 import { putBlob, getBlob } from "./cache.ts";
@@ -128,7 +128,7 @@ function toBytes(data: string | Uint8Array | ArrayBuffer): Uint8Array {
 // ---- sites -----------------------------------------------------------------
 
 export const createSite = grouped(function createSite(
-  db: Database,
+  db: DbDriver,
   opts: { name: string; title?: string },
 ): SiteRow {
   const name = normalizeSiteName(opts.name);
@@ -140,14 +140,14 @@ export const createSite = grouped(function createSite(
   return getSite(db, id)!;
 });
 
-export function getSite(db: Database, id: string): SiteRow | null {
+export function getSite(db: DbDriver, id: string): SiteRow | null {
   return db
     .query("SELECT id, name, title, created_hlc FROM sites WHERE id = ? AND __deleted = 0")
     .get(id) as SiteRow | null;
 }
 
 /** Most recently created live site with this name (URL routing). */
-export function getSiteByName(db: Database, name: string): SiteRow | null {
+export function getSiteByName(db: DbDriver, name: string): SiteRow | null {
   // Normalize so lookups, dedup, and URL routing all key off the canonical slug
   // (e.g. "Demo" and "demo" collide). An unusable name simply matches nothing.
   let slug: string;
@@ -163,14 +163,14 @@ export function getSiteByName(db: Database, name: string): SiteRow | null {
     .get(slug) as SiteRow | null;
 }
 
-export function listSites(db: Database): SiteRow[] {
+export function listSites(db: DbDriver): SiteRow[] {
   return db
     .query("SELECT id, name, title, created_hlc FROM sites WHERE __deleted = 0 ORDER BY created_hlc")
     .all() as SiteRow[];
 }
 
 /** Resolve a site ref (`site_…` id or name) to its row, or throw. */
-export function resolveSite(db: Database, ref: string): SiteRow {
+export function resolveSite(db: DbDriver, ref: string): SiteRow {
   const byId = ref.startsWith("site_") ? getSite(db, ref) : null;
   const site = byId ?? getSiteByName(db, ref);
   if (!site) throw new MhError("not_found", `no such site: ${ref}`);
@@ -179,7 +179,7 @@ export function resolveSite(db: Database, ref: string): SiteRow {
 
 /** Rename a site and/or change its title. Guards against duplicate names. */
 export const updateSite = grouped(function updateSite(
-  db: Database,
+  db: DbDriver,
   id: string,
   opts: { name?: string; title?: string },
 ): SiteRow {
@@ -194,7 +194,7 @@ export const updateSite = grouped(function updateSite(
   return getSite(db, id)!;
 });
 
-export const deleteSite = grouped(function deleteSite(db: Database, id: string): boolean {
+export const deleteSite = grouped(function deleteSite(db: DbDriver, id: string): boolean {
   if (!getSite(db, id)) return false;
   const files = db
     .query("SELECT id FROM site_files WHERE site_id = ? AND __deleted = 0")
@@ -207,7 +207,7 @@ export const deleteSite = grouped(function deleteSite(db: Database, id: string):
 // ---- files -----------------------------------------------------------------
 
 /** Stable id for a (site, path) pair so re-uploads merge instead of duplicate. */
-function fileIdFor(db: Database, siteId: string, path: string): string | null {
+function fileIdFor(db: DbDriver, siteId: string, path: string): string | null {
   const row = db
     .query("SELECT id FROM site_files WHERE site_id = ? AND path = ? ORDER BY created_hlc LIMIT 1")
     .get(siteId, path) as { id: string } | null;
@@ -216,7 +216,7 @@ function fileIdFor(db: Database, siteId: string, path: string): string | null {
 
 /** Upload or replace one file. Picks utf8 / base64 / blob storage automatically. */
 export async function putFile(
-  db: Database,
+  db: DbDriver,
   siteId: string,
   path: string,
   opts: { data: string | Uint8Array | ArrayBuffer; contentType?: string },
@@ -262,7 +262,7 @@ export async function putFile(
     .get(id) as SiteFileRow;
 }
 
-export function listFiles(db: Database, siteId: string): SiteFileSummary[] {
+export function listFiles(db: DbDriver, siteId: string): SiteFileSummary[] {
   return db
     .query(
       "SELECT id, site_id, path, content_type, encoding FROM site_files WHERE site_id = ? AND __deleted = 0 ORDER BY path",
@@ -271,7 +271,7 @@ export function listFiles(db: Database, siteId: string): SiteFileSummary[] {
 }
 
 export const deleteFile = grouped(function deleteFile(
-  db: Database,
+  db: DbDriver,
   siteId: string,
   path: string,
 ): boolean {
@@ -287,7 +287,7 @@ export const deleteFile = grouped(function deleteFile(
 
 /** Resolve a file to served bytes + content type. "" / trailing "/" → index.html. */
 export async function getFileForServe(
-  db: Database,
+  db: DbDriver,
   siteId: string,
   path: string,
 ): Promise<{ contentType: string; bytes: Uint8Array } | null> {

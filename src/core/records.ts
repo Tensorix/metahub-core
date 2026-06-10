@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { newId, slugify, idKind } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
@@ -44,7 +44,7 @@ interface OrderedRecordRow {
  * not (yet) exist passes through unchanged — a forward reference / explicit id
  * escape valve. Names/prefixes that match nothing, or match many, throw.
  */
-function resolveRelation(db: Database, prop: PropertyRow, value: string): string {
+function resolveRelation(db: DbDriver, prop: PropertyRow, value: string): string {
   const target = prop.config?.database;
   if (!target) return value; // misconfigured relation — leave the value as-is
   const cands = resolveCandidates(db, value, { kind: "rec", databaseId: target });
@@ -59,7 +59,7 @@ function resolveRelation(db: Database, prop: PropertyRow, value: string): string
 }
 
 /** Validate + normalize a value for a property's type. Throws on mismatch. */
-function coerce(db: Database, prop: PropertyRow, value: unknown): unknown {
+function coerce(db: DbDriver, prop: PropertyRow, value: unknown): unknown {
   switch (prop.type) {
     case "text":
     case "url":
@@ -173,7 +173,7 @@ function deriveTitle(
   return newId("rec", text ? String(text.value) : "", fallbackBase);
 }
 
-function tableExists(db: Database, table: string): boolean {
+function tableExists(db: DbDriver, table: string): boolean {
   return (
     db
       .query("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -181,16 +181,16 @@ function tableExists(db: Database, table: string): boolean {
   );
 }
 
-function canEmitOrderKeys(db: Database): boolean {
+function canEmitOrderKeys(db: DbDriver): boolean {
   return tableExists(db, "meta") && tableExists(db, "crdt_changes");
 }
 
-function writeRecordOrderKey(db: Database, recordId: string, orderKey: string, emitChange: boolean): void {
+function writeRecordOrderKey(db: DbDriver, recordId: string, orderKey: string, emitChange: boolean): void {
   if (emitChange) emit(db, "records", recordId, "order_key", orderKey);
   else db.query("UPDATE records SET order_key = ? WHERE id = ?").run(orderKey, recordId);
 }
 
-function lastRecordOrderKey(db: Database, databaseId: string): string | null {
+function lastRecordOrderKey(db: DbDriver, databaseId: string): string | null {
   const row = db
     .query(
       `SELECT order_key FROM records
@@ -201,7 +201,7 @@ function lastRecordOrderKey(db: Database, databaseId: string): string | null {
   return row?.order_key ?? null;
 }
 
-function orderedRecordRows(db: Database, databaseId: string): OrderedRecordRow[] {
+function orderedRecordRows(db: DbDriver, databaseId: string): OrderedRecordRow[] {
   return db
     .query(
       `SELECT id, database_id, created_hlc, order_key FROM records
@@ -211,7 +211,7 @@ function orderedRecordRows(db: Database, databaseId: string): OrderedRecordRow[]
     .all(databaseId) as OrderedRecordRow[];
 }
 
-function rebalanceRecordOrderKeys(db: Database, databaseId: string): void {
+function rebalanceRecordOrderKeys(db: DbDriver, databaseId: string): void {
   const rows = orderedRecordRows(db, databaseId);
   const keys = keysBetween(null, null, rows.length);
   rows.forEach((row, i) => {
@@ -220,7 +220,7 @@ function rebalanceRecordOrderKeys(db: Database, databaseId: string): void {
 }
 
 export const backfillRecordOrderKeys = grouped(function backfillRecordOrderKeys(
-  db: Database,
+  db: DbDriver,
   databaseId?: string,
 ): void {
   const emitChange = canEmitOrderKeys(db);
@@ -250,7 +250,7 @@ export const backfillRecordOrderKeys = grouped(function backfillRecordOrderKeys(
 });
 
 export const createRecord = grouped(function createRecord(
-  db: Database,
+  db: DbDriver,
   databaseId: string,
   data: Record<string, unknown>,
 ): RecordRow {
@@ -269,7 +269,7 @@ export const createRecord = grouped(function createRecord(
   return getRecord(db, id)!;
 });
 
-export function getRecord(db: Database, id: string): RecordRow | null {
+export function getRecord(db: DbDriver, id: string): RecordRow | null {
   const row = db
     .query("SELECT id, database_id, data FROM records WHERE id = ? AND __deleted = 0")
     .get(id) as { id: string; database_id: string; data: string } | null;
@@ -283,7 +283,7 @@ function jsonKeyLit(propId: string): string {
 }
 
 export function listRecords(
-  db: Database,
+  db: DbDriver,
   databaseId: string,
   opts: { filter?: Record<string, unknown>; sort?: string; limit?: number } = {},
 ): RecordRow[] {
@@ -370,7 +370,7 @@ export function listRecords(
 }
 
 export const moveRecord = grouped(function moveRecord(
-  db: Database,
+  db: DbDriver,
   id: string,
   targetId: string,
   where: "before" | "after",
@@ -414,7 +414,7 @@ export const moveRecord = grouped(function moveRecord(
 });
 
 export const updateRecord = grouped(function updateRecord(
-  db: Database,
+  db: DbDriver,
   id: string,
   data: Record<string, unknown>,
 ): RecordRow {
@@ -428,7 +428,7 @@ export const updateRecord = grouped(function updateRecord(
   return getRecord(db, id)!;
 });
 
-export const deleteRecord = grouped(function deleteRecord(db: Database, id: string): boolean {
+export const deleteRecord = grouped(function deleteRecord(db: DbDriver, id: string): boolean {
   const rec = db
     .query("SELECT id FROM records WHERE id = ? AND __deleted = 0")
     .get(id) as { id: string } | null;

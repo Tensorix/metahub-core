@@ -33,6 +33,8 @@ export interface RunningServer {
   exp: number | null;
   /** How the token was sourced: rotating (managed), fixed (static), or off (disabled). */
   authMode: "managed" | "static" | "disabled";
+  /** Whether the server terminates TLS itself (URLs are https://). */
+  tls: boolean;
   /** Whether the auto-sync timer is running. */
   autoSync: boolean;
   /** Auto-sync poll interval in ms (meaningful only when autoSync). */
@@ -72,6 +74,11 @@ export interface ServerOptions {
    *  sidecar) inject the WebUI's asset handler + data API routes here.
    *  Omitted = a headless sync/sites server. */
   ui?: UiHandler;
+  /** Optional TLS (PEM file paths). When set the server terminates TLS itself
+   *  and serves https — service workers/PWA need a secure context off
+   *  localhost. A reverse proxy (Caddy, Tailscale Serve) in front is the
+   *  recommended alternative; this is for setups without one. */
+  tls?: { certPath: string; keyPath: string };
 }
 
 /** What a pluggable browser UI provides (see src/webui/server/). */
@@ -125,6 +132,9 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     server = Bun.serve({
     port,
     hostname: host,
+    tls: opts.tls
+      ? { cert: Bun.file(opts.tls.certPath), key: Bun.file(opts.tls.keyPath) }
+      : undefined,
     async fetch(req) {
       const url = new URL(req.url);
 
@@ -232,6 +242,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     token: active?.token ?? null,
     exp: active?.exp ?? null,
     authMode,
+    tls: Boolean(opts.tls),
     autoSync: Boolean(autoSync && syncIntervalMs > 0),
     syncIntervalMs,
     stop() {

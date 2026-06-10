@@ -43,6 +43,8 @@ const main = defineCommand({
     token: { type: "string", description: "Server auth token; generated if omitted (with --server)" },
     "sync-interval": { type: "string", description: "Auto-sync interval, e.g. 30s/5m (with --server)" },
     "no-auto-sync": { type: "boolean", description: "Disable the auto-sync timer (with --server)" },
+    "tls-cert": { type: "string", description: "TLS certificate PEM path — serve https directly (with --server)" },
+    "tls-key": { type: "string", description: "TLS private key PEM path (with --server)" },
   },
   subCommands: {
     init,
@@ -83,6 +85,11 @@ if (argv.includes("--server")) {
   // (mh config) then built-in defaults, so explicit flags keep top priority.
   const portFlag = flagValue(argv, "port");
   const intervalFlag = flagValue(argv, "sync-interval");
+  const tlsCert = flagValue(argv, "tls-cert");
+  const tlsKey = flagValue(argv, "tls-key");
+  if ((tlsCert == null) !== (tlsKey == null)) {
+    fail("--tls-cert and --tls-key must be provided together", 2);
+  }
   let s: ReturnType<typeof startServer>;
   try {
     s = startServer({
@@ -92,6 +99,7 @@ if (argv.includes("--server")) {
       token: flagValue(argv, "token") ?? process.env.METAHUB_TOKEN,
       syncIntervalMs: intervalFlag != null ? parseDuration(intervalFlag, 30_000) : undefined,
       autoSync: argv.includes("--no-auto-sync") ? false : undefined,
+      tls: tlsCert != null && tlsKey != null ? { certPath: tlsCert, keyPath: tlsKey } : undefined,
       // Core ships no UI; the CLI server is what plugs the browser WebUI in.
       ui: { serveAssets: serveWebui, routes: webuiRoutes },
     });
@@ -102,7 +110,7 @@ if (argv.includes("--server")) {
   }
   // Reachable base URLs (synchronous: enumerates real NIC addresses only, no
   // network probe). Loopback bind → just localhost; wildcard/explicit → + LAN/public.
-  const endpoints = resolveEndpoints(s.host, s.port);
+  const endpoints = resolveEndpoints(s.host, s.port, undefined, s.tls ? "https" : "http");
   const webui = endpoints[0]!.url; // localhost is always first
   const docs = `${webui}/docs`;
   print(

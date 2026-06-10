@@ -1,8 +1,8 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { randomSuffix } from "./ids.ts";
 
 /** Stable per-machine node id, persisted in the meta table. */
-export function getNodeId(db: Database): string {
+export function getNodeId(db: DbDriver): string {
   const row = db
     .query("SELECT value FROM meta WHERE key = 'node_id'")
     .get() as { value: string } | null;

@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { getNodeId } from "./node.ts";
 import { nextHlc, observeHlc } from "./hlc.ts";
 import { serializeDocBlocks } from "./blocks.ts";
@@ -97,12 +97,12 @@ function encodeScalar(val: unknown): SqlValue {
   return JSON.stringify(val);
 }
 
-function ensureRow(db: Database, table: string, id: string): void {
+function ensureRow(db: DbDriver, table: string, id: string): void {
   db.query(`INSERT OR IGNORE INTO ${table} (id) VALUES (?)`).run(id);
 }
 
 /** A doc is "block-managed" once it has any block row; blocks then own its body. */
-function isBlockManaged(db: Database, docId: string): boolean {
+function isBlockManaged(db: DbDriver, docId: string): boolean {
   return (
     db.query("SELECT 1 AS x FROM doc_blocks WHERE doc_id = ? LIMIT 1").get(docId) !=
     null
@@ -110,7 +110,7 @@ function isBlockManaged(db: Database, docId: string): boolean {
 }
 
 /** Rebuild a document's materialized body from its live blocks (ordered). */
-function recomputeDocBody(db: Database, docId: string): void {
+function recomputeDocBody(db: DbDriver, docId: string): void {
   const rows = db
     .query(
       "SELECT text, blank_after FROM doc_blocks WHERE doc_id = ? AND __deleted = 0 ORDER BY order_key, id",
@@ -124,7 +124,7 @@ function recomputeDocBody(db: Database, docId: string): void {
 }
 
 function materialize(
-  db: Database,
+  db: DbDriver,
   dataset: string,
   rowId: string,
   col: string,
@@ -187,7 +187,7 @@ function materialize(
  * of the order changes are applied, because the winner is recomputed as the max
  * HLC over the full oplog for that register.
  */
-export function applyChange(db: Database, c: Change): boolean {
+export function applyChange(db: DbDriver, c: Change): boolean {
   db.query(
     "INSERT OR IGNORE INTO crdt_changes (hlc, node_id, dataset, row_id, col, value, txn) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(c.hlc, c.node_id, c.dataset, c.row_id, c.col, c.value, c.txn ?? null);
@@ -205,7 +205,7 @@ export function applyChange(db: Database, c: Change): boolean {
 
 /** Apply a local write: assign a fresh HLC, append to oplog, materialize. */
 export function emit(
-  db: Database,
+  db: DbDriver,
   dataset: string,
   rowId: string,
   col: string,
@@ -227,7 +227,7 @@ export function emit(
 
 /** Apply multiple local field writes to the same row. */
 export function emitFields(
-  db: Database,
+  db: DbDriver,
   dataset: string,
   rowId: string,
   fields: Record<string, unknown>,
@@ -240,7 +240,7 @@ export function emitFields(
 }
 
 /** Apply remote changes from a sync peer (advances clock, then merges). */
-export function ingest(db: Database, changes: Change[]): number {
+export function ingest(db: DbDriver, changes: Change[]): number {
   const node = getNodeId(db);
   let applied = 0;
   const tx = db.transaction((cs: Change[]) => {
@@ -254,7 +254,7 @@ export function ingest(db: Database, changes: Change[]): number {
 }
 
 /** All oplog changes with HLC strictly greater than `since` (test/debug helper). */
-export function changesSince(db: Database, since: string): Change[] {
+export function changesSince(db: DbDriver, since: string): Change[] {
   return db
     .query(
       "SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE hlc > ? ORDER BY hlc",
@@ -272,7 +272,7 @@ export interface ChangeBatch {
  * new high-water cursor. Used for replication: insertion order never skips a
  * change even when clocks are skewed.
  */
-export function changesAfterSeq(db: Database, seq: number): ChangeBatch {
+export function changesAfterSeq(db: DbDriver, seq: number): ChangeBatch {
   const rows = db
     .query(
       "SELECT rowid AS seq, hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE rowid > ? ORDER BY rowid",

@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { newId } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
@@ -54,7 +54,7 @@ function validateConfig(type: PropType, config: PropertyConfig | undefined): voi
   }
 }
 
-function nextPosition(db: Database, databaseId: string): number {
+function nextPosition(db: DbDriver, databaseId: string): number {
   const row = db
     .query(
       "SELECT MAX(position) AS m FROM properties WHERE database_id = ? AND __deleted = 0",
@@ -64,7 +64,7 @@ function nextPosition(db: Database, databaseId: string): number {
 }
 
 export const addProperty = grouped(function addProperty(
-  db: Database,
+  db: DbDriver,
   databaseId: string,
   opts: {
     name: string;
@@ -100,7 +100,7 @@ export const addProperty = grouped(function addProperty(
   return getProperty(db, id)!;
 });
 
-export function getProperty(db: Database, id: string): PropertyRow | null {
+export function getProperty(db: DbDriver, id: string): PropertyRow | null {
   const row = db
     .query(
       "SELECT id, database_id, name, type, config, position FROM properties WHERE id = ? AND __deleted = 0",
@@ -110,7 +110,7 @@ export function getProperty(db: Database, id: string): PropertyRow | null {
   return { ...row, config: row.config ? (JSON.parse(row.config) as PropertyConfig) : null };
 }
 
-export function listProperties(db: Database, databaseId: string): PropertyRow[] {
+export function listProperties(db: DbDriver, databaseId: string): PropertyRow[] {
   const rows = db
     .query(
       "SELECT id, database_id, name, type, config, position FROM properties WHERE database_id = ? AND __deleted = 0 ORDER BY position",
@@ -123,7 +123,7 @@ export function listProperties(db: Database, databaseId: string): PropertyRow[] 
 }
 
 export const updateProperty = grouped(function updateProperty(
-  db: Database,
+  db: DbDriver,
   id: string,
   fields: { name?: string; type?: PropType; config?: PropertyConfig; position?: number },
 ): PropertyRow {
@@ -161,7 +161,7 @@ export const updateProperty = grouped(function updateProperty(
 // Persist a column's display width. Merges into the existing config server-side
 // so concurrent callers can't strip sibling fields (e.g. a select's `options`),
 // and clamps to a sane range. The width replicates with `config` via the oplog.
-export function setPropertyWidth(db: Database, id: string, width: number): PropertyRow {
+export function setPropertyWidth(db: DbDriver, id: string, width: number): PropertyRow {
   const cur = getProperty(db, id);
   if (!cur) throw new MhError("not_found", `no such property: ${id}`);
   if (!Number.isFinite(width)) throw new MhError("invalid_input", "width must be a finite number");
@@ -169,7 +169,7 @@ export function setPropertyWidth(db: Database, id: string, width: number): Prope
   return updateProperty(db, id, { config: { ...(cur.config ?? {}), width: w } });
 }
 
-export const removeProperty = grouped(function removeProperty(db: Database, id: string): boolean {
+export const removeProperty = grouped(function removeProperty(db: DbDriver, id: string): boolean {
   const prop = getProperty(db, id);
   if (!prop) return false;
   emit(db, "properties", id, "__deleted", 1);

@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { changesAfterSeq, ingest, type Change } from "./crdt.ts";
-import { ftsAvailable } from "./db.ts";
+import { ftsAvailable } from "./schema-init.ts";
 import { ensurePropIndex } from "./indexing.ts";
 import { repairHub } from "./integrity.ts";
 import { cacheDir, metahubHome } from "./paths.ts";

@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 
 // Hybrid Logical Clock. String form `<millis:15>-<counter:hex4>-<node>` so that
 // lexicographic order == causal/total order (ASCII, fixed-width numeric parts).
@@ -25,21 +25,21 @@ export function parseHlc(s: string): Hlc {
   };
 }
 
-function readLast(db: Database, node: string): Hlc {
+function readLast(db: DbDriver, node: string): Hlc {
   const row = db.query("SELECT value FROM meta WHERE key = 'hlc'").get() as
     | { value: string }
     | null;
   return row ? parseHlc(row.value) : { millis: 0, counter: 0, node };
 }
 
-function writeLast(db: Database, h: Hlc): void {
+function writeLast(db: DbDriver, h: Hlc): void {
   db.query(
     "INSERT INTO meta (key, value) VALUES ('hlc', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   ).run(formatHlc(h));
 }
 
 /** Issue a new timestamp for a local event, advancing the persisted clock. */
-export function nextHlc(db: Database, node: string, now = Date.now()): string {
+export function nextHlc(db: DbDriver, node: string, now = Date.now()): string {
   const last = readLast(db, node);
   const millis = Math.max(last.millis, now);
   const counter = millis === last.millis ? last.counter + 1 : 0;
@@ -50,7 +50,7 @@ export function nextHlc(db: Database, node: string, now = Date.now()): string {
 
 /** Advance the local clock to account for an observed remote timestamp. */
 export function observeHlc(
-  db: Database,
+  db: DbDriver,
   node: string,
   remote: string,
   now = Date.now(),

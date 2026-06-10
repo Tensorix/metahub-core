@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import type { PropertyRow } from "./properties.ts";
 
 // Records of all databases share one `records` table; indexes are partial on
@@ -21,7 +21,7 @@ function indexName(databaseId: string, propId: string): string {
   return `idx_rec_${sanitize(databaseId)}_${sanitize(propId)}`;
 }
 
-export function hasIndex(db: Database, databaseId: string, propId: string): boolean {
+export function hasIndex(db: DbDriver, databaseId: string, propId: string): boolean {
   const row = db
     .query("SELECT 1 AS ok FROM sqlite_master WHERE type = 'index' AND name = ?")
     .get(indexName(databaseId, propId)) as { ok: number } | null;
@@ -33,7 +33,7 @@ export function hasIndex(db: Database, databaseId: string, propId: string): bool
  * sort tail), partial on this database. Idempotent. The expression matches
  * exactly what listRecords emits, so the optimizer uses it.
  */
-export function ensurePropIndex(db: Database, databaseId: string, propId: string): void {
+export function ensurePropIndex(db: DbDriver, databaseId: string, propId: string): void {
   const name = indexName(databaseId, propId);
   db.exec(
     `CREATE INDEX IF NOT EXISTS "${name}" ON records (data ->> '${lit(propId)}', created_hlc) ` +
@@ -46,7 +46,7 @@ export function ensurePropIndex(db: Database, databaseId: string, propId: string
  * will pay off. relation fields are almost always query keys (cheap, index
  * eagerly); other fields wait until the collection crosses the row threshold.
  */
-export function maybeAutoIndex(db: Database, databaseId: string, prop: PropertyRow): void {
+export function maybeAutoIndex(db: DbDriver, databaseId: string, prop: PropertyRow): void {
   if (hasIndex(db, databaseId, prop.id)) return;
   if (prop.type !== "relation") {
     const row = db

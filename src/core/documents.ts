@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { newId } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
 import { parseDocBlocks, serializeDocBlocks, reconcile, type DocBlock } from "./blocks.ts";
@@ -26,7 +26,7 @@ interface BlockRow {
 
 // ---- block helpers ---------------------------------------------------------
 
-function liveBlocks(db: Database, docId: string): BlockRow[] {
+function liveBlocks(db: DbDriver, docId: string): BlockRow[] {
   return db
     .query(
       "SELECT id, text, order_key, blank_after FROM doc_blocks WHERE doc_id = ? AND __deleted = 0 ORDER BY order_key, id",
@@ -41,7 +41,7 @@ function makeBlockId(text: string): string {
 /** Emit a new block's fields; text last so the final body recompute is complete.
  *  blank_after is only emitted when non-zero (0 is the column default). */
 function emitBlock(
-  db: Database,
+  db: DbDriver,
   docId: string,
   fields: { text: string; order_key: string; blankAfter: number },
 ): void {
@@ -53,7 +53,7 @@ function emitBlock(
 }
 
 function insertBlocks(
-  db: Database,
+  db: DbDriver,
   docId: string,
   blocks: readonly DocBlock[],
   after: string | null,
@@ -66,7 +66,7 @@ function insertBlocks(
 }
 
 /** Lazily migrate a legacy body-only document into blocks (idempotent). */
-function ensureBlocks(db: Database, docId: string): void {
+function ensureBlocks(db: DbDriver, docId: string): void {
   if (db.query("SELECT 1 AS x FROM doc_blocks WHERE doc_id = ? LIMIT 1").get(docId))
     return;
   const row = db.query("SELECT body FROM documents WHERE id = ?").get(docId) as
@@ -77,7 +77,7 @@ function ensureBlocks(db: Database, docId: string): void {
 }
 
 /** Diff a full new body against current blocks; keep unchanged, delete/insert the rest. */
-function reconcileBody(db: Database, docId: string, body: string): void {
+function reconcileBody(db: DbDriver, docId: string, body: string): void {
   const old = liveBlocks(db, docId);
   const next = parseDocBlocks(body);
   const plan = reconcile(
@@ -109,7 +109,7 @@ function reconcileBody(db: Database, docId: string, body: string): void {
 }
 
 /** Max HLC over a document's own register and all its blocks — a read/edit token. */
-export function documentVersion(db: Database, id: string): string {
+export function documentVersion(db: DbDriver, id: string): string {
   const row = db
     .query(
       `SELECT MAX(hlc) AS h FROM crdt_changes
@@ -123,7 +123,7 @@ export function documentVersion(db: Database, id: string): string {
 // ---- public API ------------------------------------------------------------
 
 export const createDocument = grouped(function createDocument(
-  db: Database,
+  db: DbDriver,
   opts: { title: string; body?: string; database_id?: string; parent_id?: string },
 ): DocumentRow {
   const id = newId("doc", opts.title);
@@ -139,7 +139,7 @@ export const createDocument = grouped(function createDocument(
   return getDocument(db, id)!;
 });
 
-export function getDocument(db: Database, id: string): DocumentRow | null {
+export function getDocument(db: DbDriver, id: string): DocumentRow | null {
   return db
     .query(
       "SELECT id, title, body, database_id, parent_id, created_hlc, order_key FROM documents WHERE id = ? AND __deleted = 0",
@@ -152,7 +152,7 @@ export function getDocument(db: Database, id: string): DocumentRow | null {
 const ORDER_BY = "ORDER BY order_key IS NULL, order_key, created_hlc, id";
 
 export function listDocuments(
-  db: Database,
+  db: DbDriver,
   opts: { database_id?: string; parent_id?: string } = {},
 ): DocumentSummary[] {
   const cols =
@@ -182,11 +182,11 @@ function siblingWhere(parentId: string | null): { clause: string; args: string[]
     : { clause: "parent_id = ?", args: [parentId] };
 }
 
-function canEmitOrderKeys(db: Database): boolean {
+function canEmitOrderKeys(db: DbDriver): boolean {
   return tableExists(db, "meta") && tableExists(db, "crdt_changes");
 }
 
-function tableExists(db: Database, table: string): boolean {
+function tableExists(db: DbDriver, table: string): boolean {
   return (
     db
       .query("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -196,7 +196,7 @@ function tableExists(db: Database, table: string): boolean {
 
 /** Greatest order_key among siblings (optionally ignoring one row being placed). */
 function lastSiblingOrderKey(
-  db: Database,
+  db: DbDriver,
   parentId: string | null,
   excludeId?: string,
 ): string | null {
@@ -212,7 +212,7 @@ function lastSiblingOrderKey(
   return row?.order_key ?? null;
 }
 
-function orderedSiblings(db: Database, parentId: string | null): SiblingRow[] {
+function orderedSiblings(db: DbDriver, parentId: string | null): SiblingRow[] {
   const w = siblingWhere(parentId);
   return db
     .query(`SELECT id, order_key FROM documents WHERE ${w.clause} AND __deleted = 0 ${ORDER_BY}`)
@@ -220,7 +220,7 @@ function orderedSiblings(db: Database, parentId: string | null): SiblingRow[] {
 }
 
 /** Re-space every sibling's key evenly — escape hatch when fractional keys collide. */
-function rebalanceSiblings(db: Database, parentId: string | null): void {
+function rebalanceSiblings(db: DbDriver, parentId: string | null): void {
   const rows = orderedSiblings(db, parentId);
   const keys = keysBetween(null, null, rows.length);
   rows.forEach((row, i) => {
@@ -229,7 +229,7 @@ function rebalanceSiblings(db: Database, parentId: string | null): void {
 }
 
 /** Assign keys to siblings that still lack one, appending in creation order. */
-function backfillSiblings(db: Database, parentId: string | null): void {
+function backfillSiblings(db: DbDriver, parentId: string | null): void {
   const emitChange = canEmitOrderKeys(db);
   const w = siblingWhere(parentId);
   const missing = db
@@ -248,7 +248,7 @@ function backfillSiblings(db: Database, parentId: string | null): void {
 
 /** Backfill order_key for every parent group that has un-keyed live documents. */
 export const backfillDocumentOrderKeys = grouped(function backfillDocumentOrderKeys(
-  db: Database,
+  db: DbDriver,
 ): void {
   const parents = db
     .query("SELECT DISTINCT parent_id FROM documents WHERE __deleted = 0 AND order_key IS NULL")
@@ -262,7 +262,7 @@ export const backfillDocumentOrderKeys = grouped(function backfillDocumentOrderK
  * implies a new sibling scope). No `anchor` appends to the end of the group.
  */
 function placeInSiblings(
-  db: Database,
+  db: DbDriver,
   id: string,
   parentId: string | null,
   anchor?: { targetId: string; where: "before" | "after" },
@@ -308,7 +308,7 @@ function placeInSiblings(
  * `before`/`after` re-orders (and reparents if needed) among the target's siblings.
  */
 export const moveDocument = grouped(function moveDocument(
-  db: Database,
+  db: DbDriver,
   id: string,
   targetId: string,
   where: "before" | "after" | "into",
@@ -333,7 +333,7 @@ export const moveDocument = grouped(function moveDocument(
  * "copy" suffix is the caller's job. `created_hlc` is the copy's own birth time.
  */
 export const duplicateDocument = grouped(function duplicateDocument(
-  db: Database,
+  db: DbDriver,
   id: string,
   opts: { title?: string; parentId?: string | null } = {},
 ): DocumentRow {
@@ -361,7 +361,7 @@ export const duplicateDocument = grouped(function duplicateDocument(
 });
 
 export const updateDocument = grouped(function updateDocument(
-  db: Database,
+  db: DbDriver,
   id: string,
   fields: { title?: string; body?: string; database_id?: string; parent_id?: string | null },
   opts: { ifMatch?: string } = {},
@@ -402,7 +402,7 @@ export interface EditDocResult {
  * `ifMatch` is an optional staleness backstop (a version from documentVersion).
  */
 export const editDocument = grouped(function editDocument(
-  db: Database,
+  db: DbDriver,
   id: string,
   opts: { old: string; new: string; replaceAll?: boolean; ifMatch?: string },
 ): EditDocResult {
@@ -444,7 +444,7 @@ export const editDocument = grouped(function editDocument(
 });
 
 export const appendDocument = grouped(function appendDocument(
-  db: Database,
+  db: DbDriver,
   id: string,
   body: string,
 ): EditDocResult {
@@ -460,7 +460,7 @@ export const appendDocument = grouped(function appendDocument(
 });
 
 export const prependDocument = grouped(function prependDocument(
-  db: Database,
+  db: DbDriver,
   id: string,
   body: string,
 ): EditDocResult {
@@ -475,7 +475,7 @@ export const prependDocument = grouped(function prependDocument(
   return { id, changed: next.length > 0, replaced: next.length, version: documentVersion(db, id) };
 });
 
-export const deleteDocument = grouped(function deleteDocument(db: Database, id: string): boolean {
+export const deleteDocument = grouped(function deleteDocument(db: DbDriver, id: string): boolean {
   if (!getDocument(db, id)) return false;
   emit(db, "documents", id, "__deleted", 1);
   // Cascade off the tombstone, mirroring repairHub: the doc's blocks are derived
@@ -488,7 +488,7 @@ export const deleteDocument = grouped(function deleteDocument(db: Database, id: 
 });
 
 /** Ids of live rows in `table` whose `col` references `parentId`. */
-function liveChildIds(db: Database, table: string, col: string, parentId: string): string[] {
+function liveChildIds(db: DbDriver, table: string, col: string, parentId: string): string[] {
   return (
     db
       .query(`SELECT id FROM ${table} WHERE ${col} = ? AND __deleted = 0`)

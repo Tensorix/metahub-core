@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { idKind, type Kind } from "./ids.ts";
 import { MhError } from "./errors.ts";
 
@@ -39,7 +39,7 @@ type SqlValue = string;
 const HI = "{";
 
 /** The first text property's id for a database — a record's de-facto title. */
-function titlePropId(db: Database, databaseId: string): string | null {
+function titlePropId(db: DbDriver, databaseId: string): string | null {
   const row = db
     .query(
       "SELECT id FROM properties WHERE database_id = ? AND type = 'text' AND __deleted = 0 ORDER BY position LIMIT 1",
@@ -50,7 +50,7 @@ function titlePropId(db: Database, databaseId: string): string | null {
 
 /** All live rows of one kind matching `ref` by id-prefix or name. */
 function queryKind(
-  db: Database,
+  db: DbDriver,
   kind: PublicKind,
   ref: string,
   databaseId?: string,
@@ -97,7 +97,7 @@ function queryKind(
  * rec/doc/prop to one collection.
  */
 export function resolveCandidates(
-  db: Database,
+  db: DbDriver,
   ref: string,
   opts: { kind?: PublicKind; databaseId?: string } = {},
 ): Candidate[] {
@@ -131,7 +131,7 @@ function fmt(cands: Candidate[]): string {
  * "no such …"; multiple throws a git-style ambiguity list.
  */
 export function resolveEntity(
-  db: Database,
+  db: DbDriver,
   ref: string,
   opts: { kind?: PublicKind; databaseId?: string } = {},
 ): Candidate {
@@ -153,7 +153,7 @@ export function resolveEntity(
 
 /** Resolve `ref` to one concrete row id. See {@link resolveEntity}. */
 export function resolveRef(
-  db: Database,
+  db: DbDriver,
   ref: string,
   opts: { kind?: PublicKind; databaseId?: string } = {},
 ): string {

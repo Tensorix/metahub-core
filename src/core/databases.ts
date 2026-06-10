@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { newId } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
 import { MhError } from "./errors.ts";
@@ -13,7 +13,7 @@ export interface DatabaseRow {
 }
 
 export const createDatabase = grouped(function createDatabase(
-  db: Database,
+  db: DbDriver,
   opts: { name: string; icon?: string },
 ): DatabaseRow {
   const id = newId("db", opts.name);
@@ -24,7 +24,7 @@ export const createDatabase = grouped(function createDatabase(
 });
 
 export const updateDatabase = grouped(function updateDatabase(
-  db: Database,
+  db: DbDriver,
   id: string,
   fields: { name?: string; icon?: string | null },
 ): DatabaseRow {
@@ -44,7 +44,7 @@ export const updateDatabase = grouped(function updateDatabase(
  * caller's job. All emits share one txn, so the copy syncs as one revision.
  */
 export const duplicateDatabase = grouped(function duplicateDatabase(
-  db: Database,
+  db: DbDriver,
   id: string,
   opts: { name?: string; icon?: string } = {},
 ): DatabaseRow {
@@ -72,7 +72,7 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
   return getDatabase(db, dup.id)!;
 });
 
-export function getDatabase(db: Database, id: string): DatabaseRow | null {
+export function getDatabase(db: DbDriver, id: string): DatabaseRow | null {
   return db
     .query(
       "SELECT id, name, icon, created_hlc FROM databases WHERE id = ? AND __deleted = 0",
@@ -80,7 +80,7 @@ export function getDatabase(db: Database, id: string): DatabaseRow | null {
     .get(id) as DatabaseRow | null;
 }
 
-export function listDatabases(db: Database): DatabaseRow[] {
+export function listDatabases(db: DbDriver): DatabaseRow[] {
   return db
     .query(
       "SELECT id, name, icon, created_hlc FROM databases WHERE __deleted = 0 ORDER BY created_hlc",
@@ -88,7 +88,7 @@ export function listDatabases(db: Database): DatabaseRow[] {
     .all() as DatabaseRow[];
 }
 
-export const deleteDatabase = grouped(function deleteDatabase(db: Database, id: string): boolean {
+export const deleteDatabase = grouped(function deleteDatabase(db: DbDriver, id: string): boolean {
   if (!getDatabase(db, id)) return false;
   emit(db, "databases", id, "__deleted", 1);
 
@@ -112,7 +112,7 @@ export const deleteDatabase = grouped(function deleteDatabase(db: Database, id: 
 });
 
 /** Ids of live rows in `table` whose `col` references `parentId`. */
-function liveChildren(db: Database, table: string, col: string, parentId: string): string[] {
+function liveChildren(db: DbDriver, table: string, col: string, parentId: string): string[] {
   return (
     db
       .query(`SELECT id FROM ${table} WHERE ${col} = ? AND __deleted = 0`)

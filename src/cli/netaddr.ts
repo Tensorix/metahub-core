@@ -8,6 +8,7 @@ import os from "node:os";
 
 export type Scope = "loopback" | "lan" | "public";
 export type Family = "IPv4" | "IPv6";
+export type Scheme = "http" | "https";
 
 export interface Addr {
   ip: string;
@@ -54,12 +55,12 @@ function normFamily(family: string | number): Family {
 }
 
 /** Build a browser-ready base URL; IPv6 literals get bracketed, %scope stripped. */
-export function formatUrl(ip: string, family: Family, port: number): string {
+export function formatUrl(ip: string, family: Family, port: number, scheme: Scheme = "http"): string {
   if (family === "IPv6") {
     const bare = ip.replace(/%.*$/, ""); // drop zone id, e.g. fe80::1%en0
-    return `http://[${bare}]:${port}`;
+    return `${scheme}://[${bare}]:${port}`;
   }
-  return `http://${ip}:${port}`;
+  return `${scheme}://${ip}:${port}`;
 }
 
 /** Enumerate non-internal interface addresses, tagged with family + scope. */
@@ -88,11 +89,12 @@ export function resolveEndpoints(
   host: string,
   port: number,
   ifaces = os.networkInterfaces(),
+  scheme: Scheme = "http",
 ): Endpoint[] {
   const localhost: Endpoint = {
     scope: "loopback",
     family: "IPv4",
-    url: `http://localhost:${port}`,
+    url: `${scheme}://localhost:${port}`,
   };
   if (isLoopback(host)) return [localhost];
 
@@ -106,7 +108,7 @@ export function resolveEndpoints(
     const key = `${a.scope}:${a.family}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    reps.push({ scope: a.scope, family: a.family, url: formatUrl(a.ip, a.family, port) });
+    reps.push({ scope: a.scope, family: a.family, url: formatUrl(a.ip, a.family, port, scheme) });
   }
   reps.sort((x, y) =>
     SCOPE_ORDER[x.scope] - SCOPE_ORDER[y.scope] || x.family.localeCompare(y.family),

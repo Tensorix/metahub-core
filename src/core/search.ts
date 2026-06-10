@@ -1,5 +1,5 @@
-import type { Database } from "bun:sqlite";
-import { ftsAvailable } from "./db.ts";
+import type { DbDriver } from "./driver.ts";
+import { ftsAvailable } from "./schema-init.ts";
 import { changesAfterSeq } from "./crdt.ts";
 
 export interface SearchHit {
@@ -16,14 +16,14 @@ const TEXT_TYPES = "('text','url','select','multi_select','date')";
 // so existing hubs discard `search_seq` and rebuild from scratch on next search.
 const SEARCH_INDEX_VERSION = "1";
 
-function readMeta(db: Database, key: string): string | null {
+function readMeta(db: DbDriver, key: string): string | null {
   return (
     (db.query("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | null)
       ?.value ?? null
   );
 }
 
-function writeMeta(db: Database, key: string, value: string): void {
+function writeMeta(db: DbDriver, key: string, value: string): void {
   db.query(
     "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   ).run(key, value);
@@ -41,7 +41,7 @@ interface DocRow {
   database_id: string | null;
 }
 
-function reindexDocument(db: Database, id: string): void {
+function reindexDocument(db: DbDriver, id: string): void {
   db.query("DELETE FROM search_fts WHERE kind = 'document' AND id = ?").run(id);
   const d = db
     .query("SELECT id, title, body, database_id FROM documents WHERE id = ? AND __deleted = 0")
@@ -60,7 +60,7 @@ interface RecBodyRow {
 
 // A record's body is the concatenation of its TEXT-typed cell values. `where`
 // scopes which records to (re)derive; it is a fixed literal, never user input.
-function recordBodyRows(db: Database, where: string, ...args: (string | number)[]): RecBodyRow[] {
+function recordBodyRows(db: DbDriver, where: string, ...args: (string | number)[]): RecBodyRow[] {
   return db
     .query(
       `SELECT r.id AS id, r.database_id AS database_id, group_concat(je.value, ' ') AS body
@@ -72,13 +72,13 @@ function recordBodyRows(db: Database, where: string, ...args: (string | number)[
     .all(...args) as RecBodyRow[];
 }
 
-function insertRecordRow(db: Database, r: RecBodyRow): void {
+function insertRecordRow(db: DbDriver, r: RecBodyRow): void {
   db.query(
     "INSERT INTO search_fts (kind, id, database_id, title, body) VALUES ('record', ?, ?, ?, ?)",
   ).run(r.id, r.database_id, r.id, r.body ?? "");
 }
 
-function reindexRecord(db: Database, id: string): void {
+function reindexRecord(db: DbDriver, id: string): void {
   db.query("DELETE FROM search_fts WHERE kind = 'record' AND id = ?").run(id);
   const r = recordBodyRows(db, "r.id = ?", id)[0];
   if (r) insertRecordRow(db, r);
@@ -86,7 +86,7 @@ function reindexRecord(db: Database, id: string): void {
 
 // Used for property-level changes (type/deletion/scope) that affect a whole
 // database's records at once.
-function reindexDatabaseRecords(db: Database, databaseId: string): void {
+function reindexDatabaseRecords(db: DbDriver, databaseId: string): void {
   db.query("DELETE FROM search_fts WHERE kind = 'record' AND database_id = ?").run(databaseId);
   for (const r of recordBodyRows(db, "r.database_id = ?", databaseId)) insertRecordRow(db, r);
 }
@@ -96,7 +96,7 @@ function reindexDatabaseRecords(db: Database, databaseId: string): void {
 // Full rebuild: the fallback path (first build, version bump, snapshot reset,
 // manual repair). Clears the index and re-derives every object, then pins the
 // cursor to the current oplog head so incremental updates pick up from there.
-function fullRebuild(db: Database): void {
+function fullRebuild(db: DbDriver): void {
   db.query("DELETE FROM search_fts").run();
   for (const d of db
     .query("SELECT id, title, body, database_id FROM documents WHERE __deleted = 0")
@@ -113,7 +113,7 @@ function fullRebuild(db: Database): void {
 // Incremental: scan oplog changes since the cursor, derive the set of affected
 // objects, and re-derive only those. Insertion-order (rowid) means no change is
 // ever skipped, even when a remote write carries an older HLC than the local max.
-function incrementalUpdate(db: Database): void {
+function incrementalUpdate(db: DbDriver): void {
   const cursor = Number(readMeta(db, "search_seq") ?? "0");
   const { changes, cursor: next } = changesAfterSeq(db, cursor);
   if (changes.length === 0) return;
@@ -165,7 +165,7 @@ function incrementalUpdate(db: Database): void {
 // Bring the FTS index up to date before searching. Returns false when FTS5 is
 // unavailable (caller falls back to LIKE). All work is one transaction so the
 // cursor never advances past the index state it describes.
-function ensureIndex(db: Database): boolean {
+function ensureIndex(db: DbDriver): boolean {
   if (!ftsAvailable(db)) return false;
   const version = readMeta(db, "search_index_version");
   const seq = readMeta(db, "search_seq");
@@ -177,13 +177,13 @@ function ensureIndex(db: Database): boolean {
 }
 
 /** Force a full rebuild of the search index (maintenance / repair). */
-export function rebuildSearchIndex(db: Database): boolean {
+export function rebuildSearchIndex(db: DbDriver): boolean {
   if (!ftsAvailable(db)) return false;
   db.transaction(() => fullRebuild(db))();
   return true;
 }
 
-function ftsSearch(db: Database, query: string, limit: number): SearchHit[] {
+function ftsSearch(db: DbDriver, query: string, limit: number): SearchHit[] {
   const match = query
     .split(/\s+/)
     .filter(Boolean)
@@ -218,7 +218,7 @@ function makeSnippet(text: string, q: string): string {
 }
 
 // Substring match — robust for CJK and exact phrases where FTS tokenization misses.
-function likeSearch(db: Database, query: string, limit: number): SearchHit[] {
+function likeSearch(db: DbDriver, query: string, limit: number): SearchHit[] {
   const like = `%${query.replace(/[%_\\]/g, "\\$&")}%`;
   const out: SearchHit[] = [];
   const docs = db
@@ -266,7 +266,7 @@ function likeSearch(db: Database, query: string, limit: number): SearchHit[] {
 }
 
 export function search(
-  db: Database,
+  db: DbDriver,
   query: string,
   opts: { limit?: number } = {},
 ): SearchHit[] {

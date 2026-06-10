@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
 import { ingest, changesAfterSeq } from "../crdt.ts";
 import { type SyncResponse, SYNC_PATH } from "./protocol.ts";
@@ -10,14 +10,14 @@ interface PeerCursors {
   token: string | null;
 }
 
-function getPeer(db: Database, url: string): PeerCursors {
+function getPeer(db: DbDriver, url: string): PeerCursors {
   const row = db
     .query("SELECT pull_cursor, push_cursor, token FROM peers WHERE url = ?")
     .get(url) as PeerCursors | null;
   return row ?? { pull_cursor: 0, push_cursor: 0, token: null };
 }
 
-function setPeer(db: Database, url: string, c: { pull_cursor: number; push_cursor: number }): void {
+function setPeer(db: DbDriver, url: string, c: { pull_cursor: number; push_cursor: number }): void {
   db.query(
     "INSERT INTO peers (url, pull_cursor, push_cursor) VALUES (?, ?, ?) ON CONFLICT(url) DO UPDATE SET pull_cursor = excluded.pull_cursor, push_cursor = excluded.push_cursor",
   ).run(url, c.pull_cursor, c.push_cursor);
@@ -35,7 +35,7 @@ export interface SyncResult {
  * token-gated /sync accepts the request.
  */
 export async function syncWithPeer(
-  db: Database,
+  db: DbDriver,
   url: string,
   token?: string,
 ): Promise<SyncResult> {

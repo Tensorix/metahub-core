@@ -3,7 +3,7 @@
 // the CRDT oplog and never sync to peers. `mh --server` reads them as defaults
 // (CLI flags still win); `mh config` and the WebUI settings page edit them.
 
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "./driver.ts";
 import { parseDuration } from "./sync/token.ts";
 
 const K_HOST = "cfg_host";
@@ -26,21 +26,21 @@ export const DEFAULT_CONFIG: ServerConfig = {
   autoSync: true,
 };
 
-function getMeta(db: Database, key: string): string | null {
+function getMeta(db: DbDriver, key: string): string | null {
   const row = db.query("SELECT value FROM meta WHERE key = ?").get(key) as
     | { value: string }
     | null;
   return row ? row.value : null;
 }
 
-function setMeta(db: Database, key: string, value: string): void {
+function setMeta(db: DbDriver, key: string, value: string): void {
   db.query(
     "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   ).run(key, value);
 }
 
 /** Persisted server config, falling back to DEFAULT_CONFIG per field. */
-export function getServerConfig(db: Database): ServerConfig {
+export function getServerConfig(db: DbDriver): ServerConfig {
   const host = getMeta(db, K_HOST);
   const port = getMeta(db, K_PORT);
   const interval = getMeta(db, K_SYNC_INTERVAL);
@@ -54,7 +54,7 @@ export function getServerConfig(db: Database): ServerConfig {
 }
 
 /** Persist a partial config update. Only provided fields are written. */
-export function setServerConfig(db: Database, partial: Partial<ServerConfig>): ServerConfig {
+export function setServerConfig(db: DbDriver, partial: Partial<ServerConfig>): ServerConfig {
   if (partial.host != null) setMeta(db, K_HOST, partial.host);
   if (partial.port != null) setMeta(db, K_PORT, String(partial.port));
   if (partial.syncIntervalMs != null)
