@@ -13,9 +13,15 @@ import {
   documentVersion,
   type DocumentSummary,
 } from "../../core/documents.ts";
+import {
+  listDocumentRevisions,
+  documentAtVersion,
+  revertDocument,
+  type DocRevision,
+} from "../../core/history.ts";
 import { resolveValue } from "../input.ts";
 import { resolveRef } from "../../core/resolve.ts";
-import { print, guard } from "../output.ts";
+import { print, table, guard } from "../output.ts";
 
 /** Resolve a document ref (id/prefix/title) to its id. */
 function docId(db: Database, ref: string): string {
@@ -93,10 +99,19 @@ const list = defineCommand({
 
 const get = defineCommand({
   meta: { name: "get", description: "Show one document" },
-  args: { id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" } },
+  args: {
+    id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" },
+    at: { type: "string", description: "Show the document as of this version token (from `doc history`)" },
+  },
   run: guard((args) => {
     const db = openMetahub();
-    const row = getDocument(db, docId(db, args.id))!;
+    const id = docId(db, args.id);
+    if (args.at !== undefined) {
+      const past = documentAtVersion(db, id, args.at);
+      print(past, () => past.body);
+      return;
+    }
+    const row = getDocument(db, id)!;
     print(row, () => row.body ?? "");
   }),
 });
@@ -203,6 +218,57 @@ const prepend = defineCommand({
   }),
 });
 
+/** One-line summary of what a revision touched, for the history table. */
+function docRevisionSummary(r: DocRevision): string {
+  const parts: string[] = [];
+  if (r.created) parts.push("created");
+  if (r.deleted) parts.push("deleted");
+  if (r.title_changed) parts.push("title");
+  if (r.blocks_changed) parts.push(`~${r.blocks_changed} block(s)`);
+  if (r.blocks_deleted) parts.push(`-${r.blocks_deleted} block(s)`);
+  return parts.join(", ") || "metadata";
+}
+
+const history = defineCommand({
+  meta: { name: "history", description: "List a document's revisions (newest first)" },
+  args: { id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" } },
+  run: guard((args) => {
+    const db = openMetahub();
+    const rows = listDocumentRevisions(db, docId(db, args.id));
+    print(rows, () =>
+      table(
+        rows.map((r) => ({
+          version: r.version,
+          at: r.at,
+          node: r.node_id,
+          summary: docRevisionSummary(r),
+        })),
+      ),
+    );
+  }),
+});
+
+const revert = defineCommand({
+  meta: {
+    name: "revert",
+    description: "Restore title/body to a past version (recorded as a new revision)",
+  },
+  args: {
+    id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" },
+    to: { type: "string", required: true, description: "Version token from `doc history`" },
+    "if-match": { type: "string", description: "Version from `doc read`; reject if changed" },
+  },
+  run: guard((args) => {
+    const db = openMetahub();
+    const r = revertDocument(db, docId(db, args.id), args.to, { ifMatch: args["if-match"] });
+    print(r, () =>
+      r.changed
+        ? `reverted ${r.id} to ${r.restored}`
+        : `no change: ${r.id} already matches ${r.restored}`,
+    );
+  }),
+});
+
 const del = defineCommand({
   meta: { name: "delete", description: "Delete a document" },
   args: { id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" } },
@@ -216,5 +282,5 @@ const del = defineCommand({
 
 export default defineCommand({
   meta: { name: "doc", description: "Manage markdown documents" },
-  subCommands: { create, list, get, read, update, edit, append, prepend, delete: del },
+  subCommands: { create, list, get, read, update, edit, append, prepend, history, revert, delete: del },
 });

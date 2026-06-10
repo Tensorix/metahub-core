@@ -28,6 +28,13 @@ import {
   moveDocument,
   deleteDocument,
 } from "../../core/documents.ts";
+import {
+  listDocumentRevisions,
+  documentAtVersion,
+  revertDocument,
+  listRecordRevisions,
+  revertRecord,
+} from "../../core/history.ts";
 import { search } from "../../core/search.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
@@ -127,6 +134,53 @@ const UpdateDocumentReq = z.object({
   // change (CLI, another window, sync) makes the PATCH fail 409 `stale`
   // instead of silently clobbering it.
   if_match: z.string().optional(),
+});
+
+const RevisionBase = z.object({
+  // Version token (max HLC of the revision); pass as `to` on revert or
+  // `version` on GET /api/document/at.
+  version: z.string(),
+  at: z.string().describe("Wall-clock time of the revision (ISO 8601)"),
+  node_id: z.string(),
+  changes: z.number(),
+  created: z.boolean(),
+  deleted: z.boolean(),
+});
+const DocRevisionSchema = RevisionBase.extend({
+  title_changed: z.boolean(),
+  blocks_changed: z.number(),
+  blocks_deleted: z.number(),
+});
+const RecordRevisionSchema = RevisionBase.extend({
+  fields: z.array(z.string()).describe("Property ids of the cells written"),
+  moved: z.boolean(),
+});
+const DocumentVersionStateSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  body: z.string(),
+  deleted: z.boolean(),
+  version: z.string(),
+});
+const RevertDocumentReq = z.object({
+  to: z.string().describe("Version token from /api/document/history"),
+  if_match: z.string().optional(),
+});
+const RevertRecordReq = z.object({
+  to: z.string().describe("Version token from /api/record/history"),
+});
+const RevertDocResultSchema = z.object({
+  id: z.string(),
+  changed: z.boolean(),
+  restored: z.string(),
+  version: z.string(),
+});
+const RevertRecordResultSchema = z.object({
+  id: z.string(),
+  changed: z.boolean(),
+  fields: z.array(z.string()),
+  undeleted: z.boolean(),
+  restored: z.string(),
 });
 
 // --- helpers ----------------------------------------------------------------
@@ -320,6 +374,25 @@ export const webuiRoutes: Route[] = [
     }),
   },
   {
+    method: "GET",
+    path: "/api/record/history",
+    summary: "List a record's revisions, newest first. Query: ?id=<id>",
+    response: z.array(RecordRevisionSchema),
+    handler: handle((req, { db }) => listRecordRevisions(db, need(req, "id"))),
+  },
+  {
+    method: "POST",
+    path: "/api/record/revert",
+    summary:
+      "Restore a record's cells to a past version, recorded as a new revision. Query: ?id=<id>",
+    request: RevertRecordReq,
+    response: RevertRecordResultSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { to: string };
+      return revertRecord(db, need(req, "id"), body.to);
+    }),
+  },
+  {
     method: "DELETE",
     path: "/api/record",
     summary: "Delete a record. Query: ?id=<id>",
@@ -390,6 +463,32 @@ export const webuiRoutes: Route[] = [
     handler: handle(async (req, { db }) => {
       const body = (await req.json()) as { target: string; where: "before" | "after" | "into" };
       return moveDocument(db, need(req, "id"), body.target, body.where);
+    }),
+  },
+  {
+    method: "GET",
+    path: "/api/document/history",
+    summary: "List a document's revisions, newest first. Query: ?id=<id>",
+    response: z.array(DocRevisionSchema),
+    handler: handle((req, { db }) => listDocumentRevisions(db, need(req, "id"))),
+  },
+  {
+    method: "GET",
+    path: "/api/document/at",
+    summary: "A document's title/body as of a past version. Query: ?id=<id>&version=<token>",
+    response: DocumentVersionStateSchema,
+    handler: handle((req, { db }) => documentAtVersion(db, need(req, "id"), need(req, "version"))),
+  },
+  {
+    method: "POST",
+    path: "/api/document/revert",
+    summary:
+      "Restore a document's title/body to a past version, recorded as a new revision. Query: ?id=<id>",
+    request: RevertDocumentReq,
+    response: RevertDocResultSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { to: string; if_match?: string };
+      return revertDocument(db, need(req, "id"), body.to, { ifMatch: body.if_match });
     }),
   },
   {
