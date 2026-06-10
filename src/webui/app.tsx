@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 import { render } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { api, type Db, type DocSummary, type Hit } from "./api.ts";
+import { api, type Db, type DocSummary, type Hit, NAV_INVALIDATE } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
@@ -38,7 +38,7 @@ const MOBILE_MQ = "(max-width: 768px) and (pointer: coarse)";
 // narrow window only flips to the full-page-sidebar layout on a *touch* device
 // (coarse pointer) — so resizing a desktop window never snaps it into mobile,
 // which was the source of the size jitter. Rotation/resize still update live.
-// Same query the mobile CSS in core/sync/webui.ts keys off, so JS+CSS lockstep.
+// Same query the mobile CSS in src/webui/styles.css keys off, so JS+CSS lockstep.
 function useIsMobile(): boolean {
   const [m, setM] = useState(
     () => typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches,
@@ -80,6 +80,22 @@ function App() {
     reloadNav().catch((e) => onError(String(e.message)));
   }, [reloadNav]);
 
+  // Any successful database/document mutation (api.ts dispatches NAV_INVALIDATE)
+  // refreshes the nav here — the single subscription replaces the manual
+  // reloadNav() calls that used to be scattered across every mutation site.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const on = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => reloadNav().catch((e) => onError(String(e.message))), 80);
+    };
+    document.addEventListener(NAV_INVALIDATE, on);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener(NAV_INVALIDATE, on);
+    };
+  }, [reloadNav, onError]);
+
   // Desktop only, no network: light the "设置" sidebar dot if a newer core is
   // already staged on disk (installed > running) — typically downloaded by the
   // app's silent startup auto-updater — and only waiting for a restart.
@@ -101,7 +117,7 @@ function App() {
 
   const newEmptyDoc = () =>
     api.createDocument({ title: "" })
-      .then((d) => { reloadNav(); navigate({ kind: "doc", id: d.id }); })
+      .then((d) => navigate({ kind: "doc", id: d.id }))
       .catch((e) => onError(String(e.message)));
 
   const activeDb = view.kind === "db" ? databases.find((d) => d.id === view.id) : undefined;
@@ -153,13 +169,13 @@ function App() {
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
             const title = await promptDialog({ title: "重命名文档", value: activeDoc.title });
-            if (title) { await api.updateDocument(activeDoc.id, { title }); reloadNav(); }
+            if (title) await api.updateDocument(activeDoc.id, { title });
           }} />
           <MenuSep />
           <MenuItem icon="trash" label="删除文档" danger onClick={async () => {
             close();
             const ok = await confirmDialog({ title: "删除文档？", message: `「${activeDoc.title || "无标题"}」将被删除。`, confirmLabel: "删除", danger: true });
-            if (ok) { await api.deleteDocument(activeDoc.id); setView({ kind: "empty" }); reloadNav(); }
+            if (ok) { await api.deleteDocument(activeDoc.id); setView({ kind: "empty" }); }
           }} />
         </>
       ));
@@ -178,13 +194,13 @@ function App() {
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
             const name = await promptDialog({ title: "重命名数据库", value: activeDb.name });
-            if (name && name !== activeDb.name) { await api.updateDatabase(activeDb.id, { name }); reloadNav(); }
+            if (name && name !== activeDb.name) await api.updateDatabase(activeDb.id, { name });
           }} />
           <MenuSep />
           <MenuItem icon="trash" label="删除数据库" danger onClick={async () => {
             close();
             const ok = await confirmDialog({ title: "删除数据库？", message: `「${activeDb.name}」及其所有记录将被永久删除。`, confirmLabel: "删除", danger: true });
-            if (ok) { await api.deleteDatabase(activeDb.id); setView({ kind: "empty" }); reloadNav(); }
+            if (ok) { await api.deleteDatabase(activeDb.id); setView({ kind: "empty" }); }
           }} />
         </>
       ));
@@ -210,7 +226,6 @@ function App() {
         onOpenSites={() => navigate({ kind: "sites" })}
         sitesActive={view.kind === "sites"}
         updatePending={updatePending}
-        reloadNav={reloadNav}
         onError={onError}
         afterDelete={(_, id) => { if ("id" in view && view.id === id) setView({ kind: "empty" }); }}
       />
@@ -252,13 +267,12 @@ function App() {
         <div class="content">
           {view.kind === "empty" && <EmptyState onNewDoc={newEmptyDoc} />}
           {view.kind === "db" && activeDb && (
-            <DatabaseView key={activeDb.id} db={activeDb} reloadNav={reloadNav} onError={onError} />
+            <DatabaseView key={activeDb.id} db={activeDb} onError={onError} />
           )}
           {view.kind === "doc" && (
             <DocView
               key={view.id}
               docId={view.id}
-              onTitleChange={reloadNav}
               onError={onError}
               onModeChange={setDocMode}
               onHandle={registerDocHandle}
@@ -280,7 +294,7 @@ function App() {
 
 /** Right-pane placeholder shown when nothing is selected: a "knowledge growth"
  *  illustration (a sprout growing from a document card) that animates in, then
- *  gently sways. Pure CSS/SVG — styles live inline in src/core/sync/webui.ts. */
+ *  gently sways. Pure CSS/SVG — styles live in src/webui/styles.css. */
 function EmptyState({ onNewDoc }: { onNewDoc: () => void }) {
   return (
     <div class="empty">

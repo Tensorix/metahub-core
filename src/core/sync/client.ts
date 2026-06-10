@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { getNodeId } from "../node.ts";
 import { ingest, changesAfterSeq } from "../crdt.ts";
 import { type SyncResponse, SYNC_PATH } from "./protocol.ts";
+import { MhError } from "../errors.ts";
 
 interface PeerCursors {
   pull_cursor: number;
@@ -50,7 +51,11 @@ export async function syncWithPeer(
     headers,
     body: JSON.stringify({ node_id: node, since: peer.pull_cursor, changes: toPush.changes }),
   });
-  if (!res.ok) throw new Error(`sync failed: ${res.status} ${await res.text()}`);
+  if (!res.ok)
+    throw new MhError(
+      res.status === 401 || res.status === 403 ? "auth" : "network",
+      `sync failed: ${res.status} ${await res.text()}`,
+    );
 
   const data = (await res.json()) as SyncResponse;
   const pulled = data.changes?.length ?? 0;

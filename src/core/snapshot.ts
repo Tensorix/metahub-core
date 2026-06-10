@@ -7,6 +7,7 @@ import { ensurePropIndex } from "./indexing.ts";
 import { repairHub } from "./integrity.ts";
 import { cacheDir, metahubHome } from "./paths.ts";
 import { blobPath } from "./cache.ts";
+import { MhError } from "./errors.ts";
 
 export const SNAPSHOT_FORMAT = "metahub-snapshot";
 export const SNAPSHOT_VERSION = 1;
@@ -89,7 +90,7 @@ export async function writeSnapshot(
 /** Read and validate a package file written by writeSnapshot. */
 export async function readSnapshot(path: string): Promise<SnapshotPackage> {
   const file = Bun.file(path);
-  if (!(await file.exists())) throw new Error(`no such package: ${path}`);
+  if (!(await file.exists())) throw new MhError("not_found", `no such package: ${path}`);
   const json = new TextDecoder().decode(
     Bun.gunzipSync(new Uint8Array(await file.arrayBuffer())),
   );
@@ -97,12 +98,12 @@ export async function readSnapshot(path: string): Promise<SnapshotPackage> {
   try {
     pkg = JSON.parse(json) as SnapshotPackage;
   } catch {
-    throw new Error(`not a valid metahub package: ${path}`);
+    throw new MhError("invalid_input", `not a valid metahub package: ${path}`);
   }
   if (pkg.format !== SNAPSHOT_FORMAT)
-    throw new Error(`not a metahub snapshot package: ${path}`);
+    throw new MhError("invalid_input", `not a metahub snapshot package: ${path}`);
   if (pkg.version !== SNAPSHOT_VERSION)
-    throw new Error(`unsupported snapshot version: ${pkg.version}`);
+    throw new MhError("invalid_input", `unsupported snapshot version: ${pkg.version}`);
   return pkg;
 }
 
@@ -173,7 +174,8 @@ export async function restoreSnapshot(
   }
 
   if (!opts.force)
-    throw new Error(
+    throw new MhError(
+      "invalid_input",
       "refusing to replace local data without --force (a safety snapshot is saved first)",
     );
 

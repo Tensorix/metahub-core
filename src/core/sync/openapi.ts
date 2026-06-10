@@ -1,12 +1,14 @@
 import { z } from "zod";
-import { routes } from "./routes.ts";
+import { routes as coreRoutes, type Route } from "./routes.ts";
 
 /**
- * Build an OpenAPI 3.1 document by walking the route registry. Each route's
+ * Build an OpenAPI 3.1 document by walking a route registry. Each route's
  * Zod schemas are converted to JSON Schema (draft 2020-12, which 3.1 accepts).
  * Adding a route to ./routes.ts is enough — this picks it up with no codegen.
+ * The server passes its full registry (core + injected UI routes) so /docs
+ * always matches what is actually served.
  */
-export function buildOpenApi(version: string) {
+export function buildOpenApi(version: string, routes: readonly Route[] = coreRoutes) {
   const paths: Record<string, Record<string, unknown>> = {};
 
   for (const route of routes) {

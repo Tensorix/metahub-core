@@ -3,11 +3,8 @@ import { openMetahub } from "../../core/db.ts";
 import { syncWithPeer, type SyncResult } from "../../core/sync/client.ts";
 import { addPeer } from "../../core/sync/peers.ts";
 import { syncFiles } from "../../core/sync/files.ts";
+import { errorCode, MhError } from "../../core/errors.ts";
 import { print, guard } from "../output.ts";
-
-function isAuthError(e: unknown): boolean {
-  return e instanceof Error && /\b401\b|unauthorized/i.test(e.message);
-}
 
 const isTTY = () => Boolean(process.stdout.isTTY && process.stdin.isTTY);
 
@@ -27,14 +24,15 @@ async function peerSync(
     if (token) addPeer(db, { url, token }); // remember an explicitly-passed token
     return result;
   } catch (e) {
-    if (token || !isAuthError(e)) throw e;
+    if (token || errorCode(e) !== "auth") throw e;
     if (!isTTY()) {
-      throw new Error(
+      throw new MhError(
+        "auth",
         `${(e as Error).message}\nthis server requires a token — pass --token <token> or run in an interactive terminal`,
       );
     }
-    const entered = (globalThis.prompt("该服务器需要令牌，请输入 token:") ?? "").trim();
-    if (!entered) throw new Error("no token provided");
+    const entered = (globalThis.prompt("this server requires a token — enter it:") ?? "").trim();
+    if (!entered) throw new MhError("auth", "no token provided");
     const result = await syncWithPeer(db, url, entered);
     addPeer(db, { url, token: entered }); // save so future syncs are direct
     return result;

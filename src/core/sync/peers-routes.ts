@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { Route, RouteCtx } from "./routes.ts";
+import { MhError } from "../errors.ts";
+import { errorResponse, type Route, type RouteCtx } from "./routes.ts";
 import {
   PairRequestSchema,
   PairResponseSchema,
@@ -72,7 +73,7 @@ const OkSchema = z.object({ ok: z.boolean() });
 
 function need(req: Request, key: string): string {
   const v = new URL(req.url).searchParams.get(key);
-  if (!v) throw new Error(`missing query param: ${key}`);
+  if (!v) throw new MhError("invalid_input", `missing query param: ${key}`);
   return v;
 }
 
@@ -85,7 +86,7 @@ function handle(
       if (out instanceof Response) return out;
       return Response.json(out ?? null);
     } catch (e) {
-      return Response.json({ error: (e as Error).message }, { status: 400 });
+      return errorResponse(e);
     }
   };
 }

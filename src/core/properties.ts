@@ -3,6 +3,7 @@ import { newId } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { ensurePropIndex } from "./indexing.ts";
+import { MhError } from "./errors.ts";
 
 export type PropType =
   | "text"
@@ -45,11 +46,11 @@ function validateConfig(type: PropType, config: PropertyConfig | undefined): voi
   if (type === "select" || type === "multi_select") {
     const opts = config?.options;
     if (!Array.isArray(opts) || opts.length === 0 || !opts.every((o) => typeof o === "string"))
-      throw new Error(`${type} requires config.options: string[]`);
+      throw new MhError("invalid_input", `${type} requires config.options: string[]`);
   }
   if (type === "relation") {
     if (typeof config?.database !== "string")
-      throw new Error("relation requires config.database (target database id)");
+      throw new MhError("invalid_input", "relation requires config.database (target database id)");
   }
 }
 
@@ -76,8 +77,8 @@ export function addProperty(
     indexed?: boolean;
   },
 ): PropertyRow {
-  if (!getDatabase(db, databaseId)) throw new Error(`no such database: ${databaseId}`);
-  if (!PROP_TYPES.has(opts.type)) throw new Error(`unknown property type: ${opts.type}`);
+  if (!getDatabase(db, databaseId)) throw new MhError("not_found", `no such database: ${databaseId}`);
+  if (!PROP_TYPES.has(opts.type)) throw new MhError("invalid_input", `unknown property type: ${opts.type}`);
   validateConfig(opts.type, opts.config);
 
   // Persist the indexed hint in config so it replicates to peers and survives
@@ -127,11 +128,11 @@ export function updateProperty(
   fields: { name?: string; type?: PropType; config?: PropertyConfig; position?: number },
 ): PropertyRow {
   const cur = getProperty(db, id);
-  if (!cur) throw new Error(`no such property: ${id}`);
+  if (!cur) throw new MhError("not_found", `no such property: ${id}`);
 
   const typeChanged = fields.type !== undefined && fields.type !== cur.type;
   if (fields.type !== undefined && !PROP_TYPES.has(fields.type))
-    throw new Error(`unknown property type: ${fields.type}`);
+    throw new MhError("invalid_input", `unknown property type: ${fields.type}`);
 
   // Validate config against whichever type will be in effect.
   const effectiveType = fields.type ?? cur.type;
@@ -162,8 +163,8 @@ export function updateProperty(
 // and clamps to a sane range. The width replicates with `config` via the oplog.
 export function setPropertyWidth(db: Database, id: string, width: number): PropertyRow {
   const cur = getProperty(db, id);
-  if (!cur) throw new Error(`no such property: ${id}`);
-  if (!Number.isFinite(width)) throw new Error("width must be a finite number");
+  if (!cur) throw new MhError("not_found", `no such property: ${id}`);
+  if (!Number.isFinite(width)) throw new MhError("invalid_input", "width must be a finite number");
   const w = Math.max(80, Math.min(2000, Math.round(width)));
   return updateProperty(db, id, { config: { ...(cur.config ?? {}), width: w } });
 }

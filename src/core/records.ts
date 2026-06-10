@@ -6,6 +6,7 @@ import { listProperties, type PropertyRow } from "./properties.ts";
 import { maybeAutoIndex } from "./indexing.ts";
 import { resolveCandidates } from "./resolve.ts";
 import { keyBetween, keysBetween } from "./fracdex.ts";
+import { MhError } from "./errors.ts";
 
 type SqlValue = string | number | null;
 
@@ -47,9 +48,9 @@ function resolveRelation(db: Database, prop: PropertyRow, value: string): string
   if (cands.length === 1) return cands[0]!.id;
   if (cands.length === 0) {
     if (idKind(value) === "rec") return value; // forward reference to a full id
-    throw new Error(`${prop.name}: no such record in target database: ${value}`);
+    throw new MhError("not_found", `${prop.name}: no such record in target database: ${value}`);
   }
-  throw new Error(`${prop.name}: ambiguous relation "${value}" (${cands.length} matches); use a full id`);
+  throw new MhError("ambiguous", `${prop.name}: ambiguous relation "${value}" (${cands.length} matches); use a full id`);
 }
 
 /** Validate + normalize a value for a property's type. Throws on mismatch. */
@@ -59,26 +60,26 @@ function coerce(db: Database, prop: PropertyRow, value: unknown): unknown {
     case "url":
     case "date": {
       if (value === null) return null;
-      if (typeof value !== "string") throw new Error(`${prop.name} expects a string`);
+      if (typeof value !== "string") throw new MhError("invalid_input", `${prop.name} expects a string`);
       return value;
     }
     case "number": {
       if (value === null) return null;
       const n = typeof value === "number" ? value : Number(value);
-      if (!Number.isFinite(n)) throw new Error(`${prop.name} expects a number`);
+      if (!Number.isFinite(n)) throw new MhError("invalid_input", `${prop.name} expects a number`);
       return n;
     }
     case "checkbox": {
       if (typeof value === "boolean") return value;
       if (value === "true" || value === 1) return true;
       if (value === "false" || value === 0 || value === null) return false;
-      throw new Error(`${prop.name} expects a boolean`);
+      throw new MhError("invalid_input", `${prop.name} expects a boolean`);
     }
     case "select": {
       if (value === null) return null;
       const v = String(value);
       if (!prop.config?.options?.includes(v))
-        throw new Error(`${prop.name}: '${v}' is not an allowed option`);
+        throw new MhError("invalid_input", `${prop.name}: '${v}' is not an allowed option`);
       return v;
     }
     case "multi_select": {
@@ -86,7 +87,7 @@ function coerce(db: Database, prop: PropertyRow, value: unknown): unknown {
       const opts = prop.config?.options ?? [];
       for (const item of arr)
         if (!opts.includes(String(item)))
-          throw new Error(`${prop.name}: '${item}' is not an allowed option`);
+          throw new MhError("invalid_input", `${prop.name}: '${item}' is not an allowed option`);
       return arr.map(String);
     }
     case "relation": {
@@ -106,7 +107,7 @@ function resolveData(
   const out: { prop: PropertyRow; value: unknown }[] = [];
   for (const [key, value] of Object.entries(data)) {
     const prop = byId.get(key) ?? byName.get(key.toLowerCase());
-    if (!prop) throw new Error(`unknown property: ${key}`);
+    if (!prop) throw new MhError("not_found", `unknown property: ${key}`);
     out.push({ prop, value });
   }
   return out;
@@ -217,7 +218,7 @@ export function createRecord(
   data: Record<string, unknown>,
 ): RecordRow {
   const dbRow = getDatabase(db, databaseId);
-  if (!dbRow) throw new Error(`no such database: ${databaseId}`);
+  if (!dbRow) throw new MhError("not_found", `no such database: ${databaseId}`);
   const props = listProperties(db, databaseId);
   const resolved = resolveData(props, data);
   const id = deriveTitle(props, resolved, slugify(dbRow.name, "rec"));
@@ -276,7 +277,7 @@ export function listRecords(
       const p = props.find(
         (p) => p.name.toLowerCase() === key.toLowerCase() || p.id === key,
       );
-      if (!p) throw new Error(`unknown sort field: ${key}`);
+      if (!p) throw new MhError("not_found", `unknown sort field: ${key}`);
       sortProp = p;
     }
   }
@@ -331,29 +332,29 @@ export function moveRecord(
   where: "before" | "after",
 ): RecordRow {
   if (where !== "before" && where !== "after")
-    throw new Error(`unknown move position: ${where}`);
+    throw new MhError("invalid_input", `unknown move position: ${where}`);
 
   const src = db
     .query(
       "SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0",
     )
     .get(id) as { id: string; database_id: string } | null;
-  if (!src) throw new Error(`no such record: ${id}`);
+  if (!src) throw new MhError("not_found", `no such record: ${id}`);
   const target = db
     .query(
       "SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0",
     )
     .get(targetId) as { id: string; database_id: string } | null;
-  if (!target) throw new Error(`no such record: ${targetId}`);
+  if (!target) throw new MhError("not_found", `no such record: ${targetId}`);
   if (src.database_id !== target.database_id)
-    throw new Error("cannot move a record across databases");
+    throw new MhError("invalid_input", "cannot move a record across databases");
   if (id === targetId) return getRecord(db, id)!;
 
   backfillRecordOrderKeys(db, src.database_id);
 
   let rows = orderedRecordRows(db, src.database_id).filter((r) => r.id !== id);
   let to = rows.findIndex((r) => r.id === targetId);
-  if (to < 0) throw new Error(`no such target record: ${targetId}`);
+  if (to < 0) throw new MhError("not_found", `no such target record: ${targetId}`);
 
   let left = where === "before" ? (rows[to - 1]?.order_key ?? null) : rows[to]!.order_key;
   let right = where === "before" ? rows[to]!.order_key : (rows[to + 1]?.order_key ?? null);
@@ -376,7 +377,7 @@ export function updateRecord(
   const rec = db
     .query("SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0")
     .get(id) as { id: string; database_id: string } | null;
-  if (!rec) throw new Error(`no such record: ${id}`);
+  if (!rec) throw new MhError("not_found", `no such record: ${id}`);
   const resolved = resolveData(listProperties(db, rec.database_id), data);
   for (const { prop, value } of resolved)
     emit(db, "records", id, prop.id, coerce(db, prop, value));

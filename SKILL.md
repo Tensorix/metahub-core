@@ -42,8 +42,24 @@ without any flag — but be explicit when in doubt:
 - `--json` — force JSON (machine output).
 - `--pretty` — force human output (tables / rendered Markdown).
 
-Errors print `{"error": "..."}` to stdout and exit **non-zero**. Always check the
-exit code; a non-zero exit with an `error` field is a real failure, not a no-op.
+Errors print `{"error": "...", "code": "..."}` to stdout and exit **non-zero**.
+Dispatch on the `code` field or the exit code — never on the message text (it
+may be reworded). Always check the exit code; a non-zero exit with an `error`
+field is a real failure, not a no-op.
+
+| `code` | exit | meaning | what to do |
+|---|---|---|---|
+| `invalid_input` | 2 | bad arguments / refused as stated | fix the command, don't retry as-is |
+| `not_found` | 3 | referenced entity doesn't exist | check the ref; don't retry |
+| `ambiguous` | 4 | ref matched several entities (candidates listed) | narrow the ref and retry |
+| `stale` / `conflict` | 5 | doc changed since your `--if-match` read / name taken | re-read, then retry |
+| `auth` | 6 | missing or invalid token | supply `--token`, then retry |
+| `network` | 7 | peer unreachable or replied non-OK | retryable with backoff |
+| — | 1 | uncategorized failure | read the message |
+| — | 98 | server port already in use | pick another `--port` |
+
+The same `code` values appear in REST error bodies (`/api/*`), mapped to HTTP
+status (404/409/401/...), so HTTP and CLI clients dispatch on one taxonomy.
 
 ### 2. Refer to anything by id, unique prefix, or name
 
@@ -93,6 +109,8 @@ the keys you pass change).
 mh record create --data '{"Title":"Write spec","Status":"todo"}'   # → prints the new id
 mh record list                                   # current db; JSON has {database,count,records}
 mh record list tasks --filter '{"Status":"todo"}' --sort created --desc --limit 20
+#   --sort <field> orders ascending; add --desc for descending. (Internally the
+#   pair is encoded as "-<field>"; you never need to write that form yourself.)
 mh record get <ref>
 mh record update <ref> --data '{"Status":"doing"}'
 mh record delete <ref>
@@ -131,11 +149,13 @@ mh doc update <ref> --parent ""        # "" moves to top level
 mh doc delete <ref>
 ```
 
-Recommended agent loop for revising a document:
+Required agent loop for revising a document (treat `--if-match` as mandatory —
+without it a concurrent edit from another session/the WebUI is silently
+clobbered):
 1. `mh doc read <ref>` → capture `body` and `version`.
 2. Compute a minimal `--old`/`--new` pair (unique anchor text).
 3. `mh doc edit <ref> --old ... --new ... --if-match <version>`.
-4. On a version conflict, re-read and retry.
+4. On exit 5 (`stale`), re-read and retry from step 1.
 
 ## Search and universal lookup
 
@@ -192,6 +212,8 @@ token travels as plaintext Bearer — only do that on a trusted network/TLS.
 - `mh site create|put|publish|list|files|rm|delete` — host static HTML/CSS/JS an
   agent generates; served at `/sites/<name>/`, and those pages call `/api/*`
   same-origin to read your data (a local mini-backend for agent-built UIs).
+  `publish` requires the site to exist (a typo'd name fails `not_found`); pass
+  `--create` to create it on first publish.
 
 ## Sync across machines / files
 
@@ -211,14 +233,26 @@ mh config peer add <code>                       # device B: pair using it
 mh config                                       # interactive wizard for host/port/sync-interval/auto-sync
 ```
 
+## Running non-interactively (agents, CI, pipes)
+
+When stdin/stdout are not a TTY, the CLI never blocks waiting for input: a
+missing required value fails fast with `{"error":"missing --<flag>", "code":
+"invalid_input"}`. But **on a TTY (including PTY-based harnesses) two commands
+will prompt interactively** — always pass their flags explicitly:
+
+- `mh config ...` — run with full flags (e.g. `mh config peer add --url ... --code ...`);
+  bare `mh config` on a TTY opens an arrow-key wizard.
+- `mh sync <url>` — pass `--token <tok>`; without it a 401 on a TTY prompts for
+  the token.
+
 ## Gotchas for agents
 
-- **Read before edit.** `doc edit --old` fails if the anchor isn't found or isn't
-  unique — read first, pick a unique anchor, and prefer `--if-match` to avoid
-  clobbering concurrent changes.
+- **Read before edit, and always send `--if-match`.** `doc edit --old` fails if
+  the anchor isn't found (`invalid_input`) or isn't unique (`ambiguous`); without
+  `--if-match` a concurrent change is silently clobbered.
 - **Don't assume a no-op succeeded.** Check the exit code and the effect field
   (`id`, `replaced`, `deleted`, `version`).
 - **`use` is stateful.** `record`/`prop`/`doc create` target the current db when
   you omit the db arg. Pass the db explicitly in scripts to avoid surprises.
-- **Ambiguous refs fail loudly** with candidates — narrow the prefix/name.
+- **Ambiguous refs fail loudly** with candidates (exit 4) — narrow the prefix/name.
 - **JSON by default** when piped; add `--pretty` only when a human will read it.

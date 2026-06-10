@@ -4,6 +4,7 @@ import { getDocument, updateDocument } from "../documents.ts";
 import { listProperties } from "../properties.ts";
 import { listRecords, getRecord, createRecord, updateRecord } from "../records.ts";
 import { toCsv, parseCsv } from "../csv.ts";
+import { MhError } from "../errors.ts";
 
 export interface FileSyncResult {
   direction: "export" | "import";
@@ -106,9 +107,9 @@ export async function syncFiles(db: Database, src: string, dst: string): Promise
   const srcEntity = tryResolve(db, src);
   const entity = srcEntity ?? tryResolve(db, dst);
   if (!entity)
-    throw new Error(`neither "${src}" nor "${dst}" is a metahub document or data table`);
+    throw new MhError("invalid_input", `neither "${src}" nor "${dst}" is a metahub document or data table`);
   if (entity.kind !== "doc" && entity.kind !== "db")
-    throw new Error(`file sync supports only documents and data tables, not ${entity.kind}`);
+    throw new MhError("invalid_input", `file sync supports only documents and data tables, not ${entity.kind}`);
 
   if (srcEntity) {
     const out = dst;

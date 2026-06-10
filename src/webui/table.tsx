@@ -72,11 +72,9 @@ interface ColDragState {
 
 export function DatabaseView({
   db,
-  reloadNav,
   onError,
 }: {
   db: Db;
-  reloadNav: () => Promise<void>;
   onError: (m: string) => void;
 }) {
   const [props, setProps] = useState<Prop[]>([]);
@@ -386,7 +384,7 @@ export function DatabaseView({
             contentEditable
             onBlur={(e) => {
               const name = (e.target as HTMLElement).textContent?.trim() || db.name;
-              if (name !== db.name) guard(async () => { await api.updateDatabase(db.id, { name }); await reloadNav(); });
+              if (name !== db.name) guard(async () => { await api.updateDatabase(db.id, { name }); });
             }}
           >
             {db.name}

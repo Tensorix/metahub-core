@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { Route, RouteCtx } from "./routes.ts";
+import { MhError } from "../errors.ts";
+import { errorResponse, type Route, type RouteCtx } from "./routes.ts";
 import {
   listSites,
   listFiles,
@@ -38,7 +39,7 @@ const UpdateSiteBody = z.object({ name: z.string().optional(), title: z.string()
 
 function need(req: Request, key: string): string {
   const v = new URL(req.url).searchParams.get(key);
-  if (!v) throw new Error(`missing query param: ${key}`);
+  if (!v) throw new MhError("invalid_input", `missing query param: ${key}`);
   return v;
 }
 
@@ -47,7 +48,7 @@ function handle(fn: (req: Request, ctx: RouteCtx) => unknown): Route["handler"] 
     try {
       return Response.json((await fn(req, ctx)) ?? null);
     } catch (e) {
-      return Response.json({ error: (e as Error).message }, { status: 400 });
+      return errorResponse(e);
     }
   };
 }

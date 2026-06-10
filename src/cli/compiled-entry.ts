@@ -14,7 +14,7 @@
  * Requires dist/webui.js (root `bun run build`) at compile time.
  */
 import webuiBundle from "../../dist/webui.js" with { type: "text" };
-import { setWebuiBundle } from "../core/sync/webui.ts";
+import { setWebuiBundle } from "../webui/server/assets.ts";
 
 setWebuiBundle(webuiBundle);
 await import("./index.ts");

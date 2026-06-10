@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { Route, RouteCtx } from "./routes.ts";
-import { listDatabases, createDatabase, updateDatabase, deleteDatabase } from "../databases.ts";
+import { errorResponse, type Route, type RouteCtx } from "../../core/sync/routes.ts";
+import { listDatabases, createDatabase, updateDatabase, deleteDatabase } from "../../core/databases.ts";
 import {
   listProperties,
   addProperty,
@@ -9,7 +9,7 @@ import {
   removeProperty,
   type PropType,
   type PropertyConfig,
-} from "../properties.ts";
+} from "../../core/properties.ts";
 import {
   listRecords,
   getRecord,
@@ -17,16 +17,17 @@ import {
   updateRecord,
   moveRecord,
   deleteRecord,
-} from "../records.ts";
+} from "../../core/records.ts";
 import {
   listDocuments,
   getDocument,
   createDocument,
   updateDocument,
+  documentVersion,
   moveDocument,
   deleteDocument,
-} from "../documents.ts";
-import { search } from "../search.ts";
+} from "../../core/documents.ts";
+import { search } from "../../core/search.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
 // Read-only viewer + light editing for the browser UI. These routes wrap the
@@ -75,7 +76,12 @@ const MoveDocumentReq = z.object({
   target: z.string(),
   where: z.enum(["before", "after", "into"]),
 });
-const DocumentSchema = DocumentSummarySchema.extend({ body: z.string().nullable() });
+const DocumentSchema = DocumentSummarySchema.extend({
+  body: z.string().nullable(),
+  // Read/edit token (max HLC over the doc + its blocks); echo it back as
+  // `if_match` on PATCH to detect concurrent changes.
+  version: z.string().optional(),
+});
 const SearchHitSchema = z.object({
   type: z.string(),
   id: z.string(),
@@ -116,6 +122,10 @@ const UpdateDocumentReq = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
   parent_id: z.string().nullable().optional(),
+  // Optimistic concurrency: a `version` from GET /api/document. A concurrent
+  // change (CLI, another window, sync) makes the PATCH fail 409 `stale`
+  // instead of silently clobbering it.
+  if_match: z.string().optional(),
 });
 
 // --- helpers ----------------------------------------------------------------
@@ -140,7 +150,7 @@ function handle(
       if (out instanceof Response) return out;
       return Response.json(out ?? null);
     } catch (e) {
-      return Response.json({ error: (e as Error).message }, { status: 400 });
+      return errorResponse(e);
     }
   };
 }
@@ -345,7 +355,8 @@ export const webuiRoutes: Route[] = [
     response: DocumentSchema,
     handler: handle((req, { db }) => {
       const doc = getDocument(db, need(req, "id"));
-      return doc ?? new Response("not found", { status: 404 });
+      if (!doc) return new Response("not found", { status: 404 });
+      return { ...doc, version: documentVersion(db, doc.id) };
     }),
   },
   {
@@ -355,8 +366,15 @@ export const webuiRoutes: Route[] = [
     request: UpdateDocumentReq,
     response: DocumentSchema,
     handler: handle(async (req, { db }) => {
-      const body = (await req.json()) as { title?: string; body?: string; parent_id?: string | null };
-      return updateDocument(db, need(req, "id"), body);
+      const body = (await req.json()) as {
+        title?: string;
+        body?: string;
+        parent_id?: string | null;
+        if_match?: string;
+      };
+      const { if_match, ...fields } = body;
+      const doc = updateDocument(db, need(req, "id"), fields, { ifMatch: if_match });
+      return { ...doc, version: documentVersion(db, doc.id) };
     }),
   },
   {

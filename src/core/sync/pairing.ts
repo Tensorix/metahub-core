@@ -15,6 +15,7 @@ import { randomSuffix } from "../ids.ts";
 import { parseDuration } from "./token.ts";
 import { addPeer } from "./peers.ts";
 import { PAIR_PATH, type PairRequest, type PairResponse } from "./protocol.ts";
+import { MhError } from "../errors.ts";
 
 /** Default one-time pairing-code lifetime (override with METAHUB_PAIR_TTL). */
 export const DEFAULT_PAIR_TTL_MS = parseDuration(process.env.METAHUB_PAIR_TTL, 10 * 60_000);
@@ -95,7 +96,7 @@ export function revokeGrant(db: Database, tokenOrPrefix: string): number {
  */
 export function handlePairRequest(db: Database, node: string, body: PairRequest): PairResponse {
   if (!redeemPairingCode(db, body.code)) {
-    throw new Error("invalid or expired pairing code");
+    throw new MhError("auth", "invalid or expired pairing code");
   }
   // The caller's grant lets us sync OUT to it; store it as our peer token.
   if (body.self_url) {
@@ -132,7 +133,11 @@ export async function performPairing(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(reqBody),
   });
-  if (!res.ok) throw new Error(`pairing failed: ${res.status} ${await res.text()}`);
+  if (!res.ok)
+    throw new MhError(
+      res.status === 401 || res.status === 403 ? "auth" : "network",
+      `pairing failed: ${res.status} ${await res.text()}`,
+    );
 
   const data = (await res.json()) as PairResponse;
   // The remote's grant lets us sync OUT to it; store it as our peer token.

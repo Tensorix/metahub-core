@@ -13,6 +13,7 @@ import {
   deleteFile,
 } from "../../core/sites.ts";
 import { resolveValue } from "../input.ts";
+import { errorCode, MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
 
 const create = defineCommand({
@@ -59,15 +60,16 @@ const put = defineCommand({
 const publish = defineCommand({
   meta: {
     name: "publish",
-    description: "Upload every file in a directory to a site (creates it if missing)",
+    description: "Upload every file in a directory to a site (--create to create a missing site)",
   },
   args: {
     site: { type: "positional", required: true, description: "Site ref (id/name)" },
     dir: { type: "positional", required: true, description: "Local directory to publish" },
+    create: { type: "boolean", description: "Create the site if it doesn't exist" },
   },
   run: guard(async (args) => {
     const db = openMetahub();
-    const site = resolveSite0OrCreate(db, args.site);
+    const site = resolveSiteForPublish(db, args.site, Boolean(args.create));
     const rels = [...new Bun.Glob("**/*").scanSync({ cwd: args.dir, onlyFiles: true })].sort();
     if (rels.length === 0) throw new Error(`no files found in ${args.dir}`);
     const uploaded: string[] = [];
@@ -83,10 +85,18 @@ const publish = defineCommand({
   }),
 });
 
-/** publish auto-creates the site when the ref names a non-existent site. */
-function resolveSite0OrCreate(db: Database, ref: string) {
-  if (!ref.startsWith("site_") && !getSiteByName(db, ref)) return createSite(db, { name: ref });
-  return resolveSite(db, ref);
+/** Site creation on publish is opt-in (--create): a typo'd site name must fail
+ *  loudly, not silently mint a new site and publish into it. */
+function resolveSiteForPublish(db: Database, ref: string, create: boolean) {
+  if (create && !ref.startsWith("site_") && !getSiteByName(db, ref))
+    return createSite(db, { name: ref });
+  try {
+    return resolveSite(db, ref);
+  } catch (e) {
+    if (!create && errorCode(e) === "not_found")
+      throw new MhError("not_found", `${(e as Error).message} — pass --create to create it`);
+    throw e;
+  }
 }
 
 const list = defineCommand({

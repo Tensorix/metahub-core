@@ -1,4 +1,4 @@
-// Typed client for the /api/* routes (see src/core/sync/webui-routes.ts). Every
+// Typed client for the /api/* routes (see src/webui/server/routes.ts). Every
 // write goes through the same core functions the CLI uses, so changes land in
 // the CRDT oplog and replicate over /sync. Ids are carried as query params to
 // match the server's exact-path route matcher.
@@ -47,7 +47,11 @@ export interface DocSummary {
   created_hlc?: string;
   order_key?: string | null;
 }
-export type Doc = DocSummary & { body: string | null };
+export type Doc = DocSummary & {
+  body: string | null;
+  /** Read/edit token; echo back as `if_match` on update to detect conflicts. */
+  version?: string;
+};
 export interface Hit {
   type: string;
   id: string;
@@ -99,6 +103,29 @@ export interface SiteFile {
   encoding: string; // "utf8" | "base64" | "blob"
 }
 
+/** Thrown by req(): carries the server's error `code` (see core/errors.ts) so
+ *  callers dispatch on it (`"stale"` → conflict UI) instead of message text. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | undefined,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** Fired on document/window after any successful mutation that can change the
+ *  sidebar nav (databases, documents). The App subscribes once and reloads the
+ *  nav — call sites don't (and must not) reload it by hand, so a forgotten
+ *  manual refresh can't go stale. */
+export const NAV_INVALIDATE = "mh-nav-invalidate";
+
+function touchesNav(method: string, path: string): boolean {
+  return method !== "GET" && (path.startsWith("/api/database") || path.startsWith("/api/document"));
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -107,8 +134,13 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   });
   const data = await res.json().catch(() => null);
   if (!res.ok || (data && (data as any).error)) {
-    throw new Error((data && (data as any).error) || `${res.status} ${res.statusText}`);
+    throw new ApiError(
+      (data && (data as any).error) || `${res.status} ${res.statusText}`,
+      (data as any)?.code,
+      res.status,
+    );
   }
+  if (touchesNav(method, path)) document.dispatchEvent(new CustomEvent(NAV_INVALIDATE));
   return data as T;
 }
 
@@ -158,8 +190,10 @@ export const api = {
   createDocument: (b: { title: string; body?: string; database_id?: string; parent_id?: string }) =>
     req<Doc>("POST", "/api/documents", b),
   getDocument: (id: string) => req<Doc>("GET", `/api/document?id=${q(id)}`),
-  updateDocument: (id: string, b: { title?: string; body?: string; parent_id?: string | null }) =>
-    req<Doc>("PATCH", `/api/document?id=${q(id)}`, b),
+  updateDocument: (
+    id: string,
+    b: { title?: string; body?: string; parent_id?: string | null; if_match?: string },
+  ) => req<Doc>("PATCH", `/api/document?id=${q(id)}`, b),
   moveDocument: (id: string, target: string, where: "before" | "after" | "into") =>
     req<Doc>("PATCH", `/api/document/move?id=${q(id)}`, { target, where }),
   deleteDocument: (id: string) => req<{ ok: boolean }>("DELETE", `/api/document?id=${q(id)}`),

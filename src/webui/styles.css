@@ -1,34 +1,3 @@
-import { fileURLToPath } from "node:url";
-
-// Serves the browser WebUI at `/`. This module is imported lazily from
-// server.ts (only when a browser actually hits `/` or `/webui.js`), so neither
-// it nor the Preact bundle ever enters the CLI's startup import graph — zero
-// cost to `mh <command>`.
-
-/** The HTML shell. The Preact app is delivered separately as /webui.js. CSS is
- *  inlined here to avoid a third asset route and keep it out of the JS bundle. */
-const HTML = `<!doctype html>
-<html lang="zh">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<!-- Mobile browser chrome (status/address bar) tints to theme-color; app.tsx
-     keeps #theme-color-meta in sync with the active theme + visible surface. -->
-<meta name="theme-color" id="theme-color-meta" content="#ffffff" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="default" />
-<title>Metahub</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- Load web fonts without blocking first paint: media="print" keeps the
-     stylesheet non-render-blocking, then onload flips it to "all". The page
-     paints instantly with the system-font fallbacks baked into --ui/--mono and
-     swaps to the web fonts when they arrive (or stays on system fonts offline).
-     This is what kept the desktop cold-start white for seconds on slow networks. -->
-<link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('mh-theme')||'system'}catch(e){}</script>
-<style>
   :root {
     --bg:#ffffff; --surface:#fbfbfa; --surface-2:#f1f1ef; --sidebar:#f7f7f5;
     --fg:#2c2c30; --fg-soft:#5b5b62; --muted:#8a8a93; --line:#ebebe8; --line-strong:#dededb;
@@ -229,6 +198,10 @@ const HTML = `<!doctype html>
   .doc-title:empty::before { content:"无标题"; color:var(--muted); }
   .doc-meta { display:flex; gap:14px; color:var(--muted); font-size:12.5px; margin-bottom:22px; }
   .doc-meta span { display:inline-flex; align-items:center; gap:5px; }
+  /* Save-conflict banner: the doc changed elsewhere; auto-save is paused until
+     the user picks a side, so it must read as blocking, not as a toast. */
+  .doc-conflict { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 14px; margin-bottom:16px; border:1px solid var(--danger); border-radius:var(--radius-sm); background:var(--danger-soft); font-size:13px; }
+  .doc-conflict-msg { color:var(--danger); font-weight:600; flex:1; min-width:180px; }
   .doc.source-mode { min-height:100%; }
   .doc-source { display:block; width:100%; min-height:calc(100vh - 210px); resize:none; border:0;
     background:transparent; color:var(--fg); outline:none; overflow:hidden; padding:3px 2px 36vh;
@@ -908,77 +881,3 @@ const HTML = `<!doctype html>
   .qn-set-desc { color:var(--muted); font-size:13px; margin-top:2px; }
   .qn-shortcut { min-width:140px; justify-content:center; font-family:var(--mono); }
   .qn-shortcut.capturing { outline:2px solid var(--accent); color:var(--accent); }
-</style>
-</head>
-<body>
-<div id="app"></div>
-<script type="module" src="/webui.js"></script>
-</body>
-</html>`;
-
-let cachedJs: string | null = null;
-
-/** Inject a prebuilt WebUI bundle. Used by `bun build --compile` binaries
- *  (e.g. the desktop sidecar), where neither a sibling dist/webui.js nor the
- *  source tree exists at runtime — the bundle is embedded at build time and
- *  handed in here so getJs() can serve it without touching the filesystem. */
-export function setWebuiBundle(js: string): void {
-  cachedJs = js;
-}
-
-/** Resolve the app bundle: prefer a prebuilt dist/webui.js next to the running
- *  file; in dev (running from source) build it on first request and cache. */
-async function getJs(): Promise<string> {
-  if (cachedJs != null) return cachedJs;
-
-  const prebuilt = Bun.file(fileURLToPath(new URL("./webui.js", import.meta.url)));
-  if (await prebuilt.exists()) {
-    cachedJs = await prebuilt.text();
-    return cachedJs;
-  }
-
-  const entry = fileURLToPath(new URL("../../webui/app.tsx", import.meta.url));
-  const res = await Bun.build({ entrypoints: [entry], target: "browser", minify: true });
-  if (!res.success) throw new AggregateError(res.logs, "webui build failed");
-  cachedJs = await res.outputs[0]!.text();
-  return cachedJs;
-}
-
-/** Pre-build & cache the JS bundle ahead of the first request. In dev the first
- *  `/webui.js` hit otherwise pays for a `Bun.build` (1–3s) that blocks the
- *  WebUI's first paint; warming it right after the server starts listening
- *  moves that cost off the cold-start critical path. In packaged builds the
- *  bundle is already embedded via setWebuiBundle(), so this is a no-op. */
-export async function warmWebui(): Promise<void> {
-  try {
-    await getJs();
-  } catch {
-    // best-effort: a failed warm just falls back to building on first request
-  }
-}
-
-/** Handle WebUI asset requests. Returns null for anything else so the caller
- *  can fall through to the API routes. */
-export async function serveWebui(req: Request): Promise<Response | null> {
-  if (req.method !== "GET") return null;
-  const { pathname } = new URL(req.url);
-
-  if (pathname === "/") {
-    return new Response(HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
-  }
-  if (pathname === "/webui.js") {
-    try {
-      return new Response(await getJs(), {
-        headers: { "content-type": "text/javascript; charset=utf-8" },
-      });
-    } catch (e) {
-      // This catch is the only thing between the error and oblivion: Bun only
-      // auto-logs *uncaught* handler errors, and we catch this one. Log the full
-      // error object (not `${e}`) so getJs's AggregateError sub-logs surface —
-      // otherwise the 500 lives solely in the response body, never the logs.
-      console.error("[webui] failed to serve /webui.js —", e);
-      return new Response(`webui build failed: ${e}`, { status: 500 });
-    }
-  }
-  return null;
-}

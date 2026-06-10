@@ -18,13 +18,16 @@ import {
   syncAllPeers,
   type PeerRow,
 } from "../../core/sync/peers.ts";
+import { MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
 import * as p from "@clack/prompts";
 
-// Single command, positional dispatch (no citty subCommands — a parent `run`
-// would double-execute alongside a matched subcommand; see token.ts). Supports
-// both an interactive wizard (`mh config`, no args, on a TTY) and direct flags
-// (`mh config --port 7777`, `mh config peer add --url ... --code ...`).
+// Single command, positional dispatch. citty subCommands are unusable here for
+// two reasons: a parent `run` double-executes alongside a matched subcommand
+// (see token.ts), and citty treats the first non-dash token — including flag
+// *values* like the 7777 in `config --port 7777` — as the subcommand name.
+// Supports both an interactive wizard (`mh config`, no args, on a TTY) and
+// direct flags (`mh config --port 7777`, `mh config peer add --url ... --code ...`).
 
 const iso = (ms: number | null | undefined) => (ms ? new Date(ms).toISOString() : "");
 const isTTY = () => process.stdout.isTTY && process.stdin.isTTY;
@@ -37,14 +40,16 @@ function ask(label: string, def?: string): string {
   return val === "" && def != null ? def : val;
 }
 
-/** A flag value, or an interactive prompt fallback on a TTY, else an error. */
-function flagOrAsk(flag: unknown, label: string): string {
+/** A flag value, or an interactive prompt fallback on a TTY, else an
+ *  `invalid_input` error carrying the full usage line so non-interactive
+ *  callers (agents, scripts) see what to pass without consulting docs. */
+function flagOrAsk(flag: unknown, label: string, usage?: string): string {
   if (typeof flag === "string" && flag !== "") return flag;
   if (isTTY()) {
     const v = ask(label);
     if (v) return v;
   }
-  throw new Error(`missing --${label}`);
+  throw new MhError("invalid_input", `missing --${label}` + (usage ? `\nusage: ${usage}` : ""));
 }
 
 function showConfig(db: ReturnType<typeof openMetahub>): void {
@@ -100,8 +105,9 @@ async function peerDispatch(
   const node = getNodeId(db);
   switch (action) {
     case "add": {
-      const url = flagOrAsk(args.url, "url");
-      const code = flagOrAsk(args.code, "code");
+      const usage = "mh config peer add --url <url> --code <code> [--self-url <url>]";
+      const url = flagOrAsk(args.url, "url", usage);
+      const code = flagOrAsk(args.code, "code", usage);
       const selfUrl = typeof args["self-url"] === "string" ? args["self-url"] : undefined;
       const r = await performPairing(db, node, url, code, selfUrl);
       const sync = await syncPeer(db, url);
@@ -120,13 +126,13 @@ async function peerDispatch(
       }));
       return;
     case "rm": {
-      const url = flagOrAsk(args.url, "url");
+      const url = flagOrAsk(args.url, "url", "mh config peer rm --url <url>");
       print({ ok: removePeer(db, url) }, () => `removed ${url}`);
       return;
     }
     case "enable":
     case "disable": {
-      const url = flagOrAsk(args.url, "url");
+      const url = flagOrAsk(args.url, "url", `mh config peer ${action} --url <url>`);
       setPeerEnabled(db, url, action === "enable");
       print({ ok: true }, () => `${action}d ${url}`);
       return;
@@ -142,7 +148,7 @@ async function peerDispatch(
       return;
     }
     default:
-      throw new Error(`unknown peer action '${action}' (add|code|list|rm|enable|disable|sync)`);
+      throw new MhError("invalid_input", `unknown peer action '${action}' (add|code|list|rm|enable|disable|sync)`);
   }
 }
 
@@ -173,13 +179,13 @@ function grantDispatch(
       return;
     }
     case "revoke": {
-      const token = flagOrAsk(args.token, "token");
+      const token = flagOrAsk(args.token, "token", "mh config grant revoke --token <token>");
       const n = revokeGrant(db, token);
       print({ revoked: n }, () => (n > 0 ? `revoked ${n} credential(s)` : "no matching credential"));
       return;
     }
     default:
-      throw new Error(`unknown grant action '${action}' (list|revoke)`);
+      throw new MhError("invalid_input", `unknown grant action '${action}' (list|revoke)`);
   }
 }
 
@@ -420,6 +426,6 @@ export default defineCommand({
     if (section === "set") return applySet(db, args);
     if (section === "peer") return peerDispatch(db, (args.action as string) ?? "list", args);
     if (section === "grant") return grantDispatch(db, (args.action as string) ?? "list", args);
-    throw new Error(`unknown config section '${section}' (show | set | peer | grant)`);
+    throw new MhError("invalid_input", `unknown config section '${section}' (show | set | peer | grant)`);
   }),
 });

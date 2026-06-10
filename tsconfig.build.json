@@ -11,6 +11,6 @@
     "rewriteRelativeImportExtensions": true,
     "resolveJsonModule": true
   },
-  "include": ["src/index.ts", "src/core/**/*"],
+  "include": ["src/index.ts", "src/core/**/*", "src/webui/server/**/*"],
   "exclude": ["**/*.test.ts", "src/cli/**"]
 }

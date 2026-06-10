@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { idKind, type Kind } from "./ids.ts";
+import { MhError } from "./errors.ts";
 
 /** Kinds reachable through the public reference resolver. `blk` is internal. */
 export type PublicKind = "db" | "prop" | "rec" | "doc";
@@ -141,10 +142,11 @@ export function resolveEntity(
 
   if (cands.length === 0) {
     const noun = opts.kind ? SPECS[opts.kind].noun : "item";
-    throw new Error(`no such ${noun}: ${ref}`);
+    throw new MhError("not_found", `no such ${noun}: ${ref}`);
   }
   const shown = exact.length > 1 ? exact : cands;
-  throw new Error(
+  throw new MhError(
+    "ambiguous",
     `ambiguous "${ref}" — ${shown.length} matches:\n${fmt(shown)}\n  add more characters.`,
   );
 }

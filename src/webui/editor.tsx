@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { api } from "./api.ts";
+import { api, ApiError } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "./ui.tsx";
 import hljs from "highlight.js/lib/common";
@@ -153,13 +153,11 @@ function DocToc({ blocks }: { blocks: Block[] }) {
 
 export function DocView({
   docId,
-  onTitleChange,
   onError,
   onModeChange,
   onHandle,
 }: {
   docId: string;
-  onTitleChange: () => void;
   onError: (m: string) => void;
   onModeChange?: (mode: DocMode) => void;
   onHandle?: (handle: DocViewHandle | null) => void;
@@ -180,6 +178,14 @@ export function DocView({
   // them. null = no block selection (normal single-block editing).
   const [sel, setSel] = useState<{ anchorId: string; focusId: string } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  // ---- save pipeline state ----
+  // version: the if_match token from the last read/save; dirty: unsaved local
+  // edits exist; conflict: a save was rejected as stale (banner shown).
+  const docVersionRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
+  const retryDelayRef = useRef(0);
+  const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const [conflict, setConflict] = useState(false);
 
   // ---- undo/redo history ----
   // Structural block ops mutate blocksRef directly and aren't on the browser's
@@ -249,9 +255,10 @@ export function DocView({
   // Every structural mutation funnels through bump(); record a history step here.
   const bump = () => { recordHistory(null); setVersion((v) => v + 1); };
 
-  useEffect(() => {
+  const loadDoc = () => {
     setLoading(true);
     setSlash(null);
+    setConflict(false);
     history.current = { past: [], future: [], present: null, lastKey: null, lastTime: 0 };
     api
       .getDocument(docId)
@@ -259,14 +266,33 @@ export function DocView({
         titleRef.current = d.title ?? "";
         sourceRef.current = d.body ?? "";
         blocksRef.current = blocksFromBody(d.body);
+        docVersionRef.current = d.version ?? null;
+        dirtyRef.current = false;
         setLoading(false);
         bump();
       })
       .catch((e) => onError(String(e.message)));
+  };
+
+  useEffect(() => {
+    loadDoc();
     return () => clearTimeout(saveTimer.current);
   }, [docId]);
 
+  // Unsaved work (debounce window, failed save being retried) shouldn't be
+  // lost to a casual tab close — ask the browser to confirm.
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = ""; // Chrome requires returnValue for the prompt to show
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
+
   const scheduleSave = () => {
+    dirtyRef.current = true;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(save, 700);
   };
@@ -278,11 +304,40 @@ export function DocView({
     syncRenderedBlocks(blocksRef.current);
     return bodyFromBlocks(blocksRef.current);
   };
-  const save = () =>
+  // Saves are serialized through a chain so a debounced save never races a
+  // flush: the later save reads the version the earlier one returned, keeping
+  // if_match conflicts to *real* concurrent edits (CLI, sync, other windows).
+  const doSave = (opts: { force?: boolean } = {}) =>
     api
-      .updateDocument(docId, { title: titleRef.current, body: snapshotMarkdown() })
-      .then(() => onTitleChange())
-      .catch((e) => onError(String(e.message)));
+      .updateDocument(docId, {
+        title: titleRef.current,
+        body: snapshotMarkdown(),
+        ...(opts.force || docVersionRef.current == null
+          ? {}
+          : { if_match: docVersionRef.current }),
+      })
+      .then((d) => {
+        docVersionRef.current = d.version ?? null;
+        dirtyRef.current = false;
+        retryDelayRef.current = 0;
+        setConflict(false);
+      })
+      .catch((e) => {
+        if (e instanceof ApiError && e.code === "stale") {
+          // Someone else changed this doc since we read it. Stop auto-saving
+          // and let the user pick a side (banner below) instead of clobbering.
+          setConflict(true);
+          return;
+        }
+        // Transient failure (server restart, network blip): keep the work
+        // dirty, surface the error, and retry with backoff until a save lands.
+        onError(String((e as Error).message));
+        retryDelayRef.current = Math.min(Math.max(retryDelayRef.current * 2, 1_000), 30_000);
+        clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(save, retryDelayRef.current);
+      });
+  const save = (opts: { force?: boolean } = {}) =>
+    (saveChainRef.current = saveChainRef.current.then(() => doSave(opts)));
   const flushSave = async () => {
     clearTimeout(saveTimer.current);
     await save();
@@ -947,11 +1002,21 @@ export function DocView({
       onMouseUp={() => updateBar(setBar)}
       onKeyUp={(e) => { if (e.shiftKey || e.key.startsWith("Arrow")) updateBar(setBar); }}
     >
+      {conflict && (
+        <div class="doc-conflict" role="alert">
+          <span class="doc-conflict-msg">文档已被其他端修改，自动保存已暂停。</span>
+          <button class="btn btn-secondary" onClick={() => loadDoc()}>
+            载入最新（弃本地改动）
+          </button>
+          <button class="btn btn-danger" onClick={() => void save({ force: true })}>
+            用本地版本覆盖
+          </button>
+        </div>
+      )}
       <div
         class="doc-title"
         contentEditable
         onInput={(e) => { titleRef.current = (e.target as HTMLElement).textContent ?? ""; recordHistory("title"); scheduleSave(); }}
-        onBlur={() => { onTitleChange(); }}
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (!blocks.length) insertAfter(null); else focusBlock(blocks[0]!.id); } }}
         dangerouslySetInnerHTML={{ __html: titleRef.current }}
       />

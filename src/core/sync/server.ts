@@ -1,8 +1,9 @@
 import { openMetahub } from "../db.ts";
+import { MhError } from "../errors.ts";
 import { getNodeId } from "../node.ts";
 import { getServerConfig } from "../config.ts";
 import pkg from "../../../package.json" with { type: "json" };
-import { routes, type RouteCtx } from "./routes.ts";
+import { routes, type Route, type RouteCtx } from "./routes.ts";
 import { SYNC_PATH, HEALTH_PATH, RENEW_PATH, PAIR_PATH } from "./protocol.ts";
 import { DEFAULT_TTL_MS, DEFAULT_GRACE_MS } from "./token.ts";
 import { syncAllPeers } from "./peers.ts";
@@ -41,12 +42,13 @@ export interface RunningServer {
 }
 
 /** Thrown when the requested port is already taken, so callers can react. */
-export class PortInUseError extends Error {
+export class PortInUseError extends MhError {
   constructor(
     readonly port: number,
     readonly host: string,
   ) {
     super(
+      "port_in_use",
       `port ${port} is already in use — another mh server may be running. ` +
         `Stop it, or start on a free port with --port <n>.`,
     );
@@ -66,6 +68,18 @@ export interface ServerOptions {
   syncIntervalMs?: number;
   /** Master switch for the auto-sync timer. Falls back to stored config. */
   autoSync?: boolean;
+  /** Browser UI plug-in point. Core ships no UI; callers (CLI, desktop
+   *  sidecar) inject the WebUI's asset handler + data API routes here.
+   *  Omitted = a headless sync/sites server. */
+  ui?: UiHandler;
+}
+
+/** What a pluggable browser UI provides (see src/webui/server/). */
+export interface UiHandler {
+  /** Serve UI assets (GET / , /webui.js, /webui.css); null = not a UI asset. */
+  serveAssets(req: Request): Promise<Response | null>;
+  /** The UI's data API routes, merged into the route registry (and /docs). */
+  routes: Route[];
 }
 
 /** Scalar API reference UI, loaded from CDN — no bundling or npm dependency. */
@@ -83,6 +97,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   const db = openMetahub();
   const node = getNodeId(db);
   const ctx: RouteCtx = { db, node };
+  const allRoutes = opts.ui ? [...routes, ...opts.ui.routes] : routes;
 
   // Resolve runtime settings: explicit opts (CLI flags) override stored config.
   const cfg = getServerConfig(db);
@@ -145,17 +160,15 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
 
       // Auto-generated API docs.
       if (req.method === "GET" && url.pathname === "/docs.json") {
-        return Response.json(buildOpenApi(pkg.version));
+        return Response.json(buildOpenApi(pkg.version, allRoutes));
       }
       if (req.method === "GET" && url.pathname === "/docs") {
         return withShim(new Response(scalarHtml("/docs.json"), { headers: HTML_HEADERS }), auth);
       }
 
-      // Browser WebUI at `/`. Imported lazily so neither it nor the Preact
-      // bundle ever loads on the CLI startup path — only when a browser asks.
-      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/webui.js")) {
-        const { serveWebui } = await import("./webui.ts");
-        const res = await serveWebui(req);
+      // Injected browser UI assets (core itself ships no UI).
+      if (req.method === "GET" && opts.ui) {
+        const res = await opts.ui.serveAssets(req);
         if (res) return withShim(res, auth);
       }
 
@@ -168,7 +181,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       }
 
       // Registered API routes.
-      const route = routes.find((r) => r.method === req.method && r.path === url.pathname);
+      const route = allRoutes.find((r) => r.method === req.method && r.path === url.pathname);
       if (route) return route.handler(req, ctx);
 
       return new Response("not found", { status: 404 });
@@ -183,7 +196,8 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       throw new PortInUseError(port, host);
     }
     if (code === "EACCES") {
-      throw new Error(
+      throw new MhError(
+        "invalid_input",
         `permission denied binding ${host}:${port} — ports below 1024 need elevated privileges; pick a higher port with --port`,
       );
     }

@@ -32,7 +32,6 @@ interface SidebarProps {
   sitesActive: boolean;
   /** Show a dot on the settings entry: a core update is staged or available. */
   updatePending?: boolean;
-  reloadNav: () => Promise<void>;
   onError: (msg: string) => void;
   afterDelete: (kind: "db" | "doc", id: string) => void;
 }
@@ -56,7 +55,6 @@ export function Sidebar(props: SidebarProps) {
     guard(async () => {
       const doc = await api.createDocument({ title: "", ...(parent ? { parent_id: parent } : {}) });
       if (parent) expanded.add(parent);
-      await props.reloadNav();
       props.onOpenDoc(doc.id);
     });
 
@@ -68,7 +66,6 @@ export function Sidebar(props: SidebarProps) {
       // parent_id and order_key consistent for every drop position.
       await api.moveDocument(srcId, tgt.id, where);
       if (where === "into") expanded.add(tgt.id);
-      await props.reloadNav();
     });
 
   const dbMenu = (e: MouseEvent, db: Db) => {
@@ -84,8 +81,7 @@ export function Sidebar(props: SidebarProps) {
             if (name && name !== db.name)
               guard(async () => {
                 await api.updateDatabase(db.id, { name });
-                await props.reloadNav();
-              });
+                        });
           }}
         />
         <MenuSep />
@@ -104,8 +100,7 @@ export function Sidebar(props: SidebarProps) {
             if (ok)
               guard(async () => {
                 await api.deleteDatabase(db.id);
-                await props.reloadNav();
-                props.afterDelete("db", db.id);
+                          props.afterDelete("db", db.id);
               });
           }}
         />
@@ -128,8 +123,7 @@ export function Sidebar(props: SidebarProps) {
             if (title)
               guard(async () => {
                 await api.updateDocument(d.id, { title });
-                await props.reloadNav();
-              });
+                        });
           }}
         />
         {d.parent_id && (
@@ -140,8 +134,7 @@ export function Sidebar(props: SidebarProps) {
               close();
               guard(async () => {
                 await api.updateDocument(d.id, { parent_id: null });
-                await props.reloadNav();
-              });
+                        });
             }}
           />
         )}
@@ -163,8 +156,7 @@ export function Sidebar(props: SidebarProps) {
             if (ok)
               guard(async () => {
                 await deleteDocTree(props.docs, d.id);
-                await props.reloadNav();
-                props.afterDelete("doc", d.id);
+                          props.afterDelete("doc", d.id);
               });
           }}
         />
@@ -246,7 +238,7 @@ export function Sidebar(props: SidebarProps) {
         <div class="sb-section">
           <div class="sb-section-head">
             <span>数据库</span>
-            <button class="add" title="新建数据库" onClick={() => openCreateDb(props.onOpenDb, props.reloadNav, props.onError)}>
+            <button class="add" title="新建数据库" onClick={() => openCreateDb(props.onOpenDb, props.onError)}>
               <Icon name="plus" cls="ico sm" />
             </button>
           </div>
@@ -366,15 +358,13 @@ const TEMPLATES: Record<string, { name: string; type: PropType; config?: PropCon
 
 function openCreateDb(
   onOpenDb: (id: string) => void,
-  reloadNav: () => Promise<void>,
   onError: (m: string) => void,
 ) {
-  openModal(<CreateDbForm onOpenDb={onOpenDb} reloadNav={reloadNav} onError={onError} />);
+  openModal(<CreateDbForm onOpenDb={onOpenDb} onError={onError} />);
 }
 
 function CreateDbForm(props: {
   onOpenDb: (id: string) => void;
-  reloadNav: () => Promise<void>;
   onError: (m: string) => void;
 }) {
   const ICONS = ["🗂️", "🎯", "🤝", "📦", "📚", "💡", "🧩", "📊", "🗓️", "✅"];
@@ -396,7 +386,6 @@ function CreateDbForm(props: {
       for (const spec of TEMPLATES[tmpl] ?? TEMPLATES.blank!)
         await api.createProperty({ db: db.id, name: spec.name, type: spec.type, config: spec.config });
       closeModal();
-      await props.reloadNav();
       props.onOpenDb(db.id);
       toast(`已创建数据库「${db.name}」`);
     } catch (e) {

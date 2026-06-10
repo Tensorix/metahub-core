@@ -12,12 +12,16 @@
  *  - server-bundle.ts — prod: compiled to a standalone binary (WebUI embedded)
  */
 import { startServer } from "../../../src/core/sync/server.ts";
+import { serveWebui, warmWebui } from "../../../src/webui/server/assets.ts";
+import { webuiRoutes } from "../../../src/webui/server/routes.ts";
 
 export function runSidecar(): void {
   const s = startServer({
     debug: true, // no token auth: the window is the only client, bound to loopback
     host: "127.0.0.1", // never exposed off the machine
     port: 0, // let the OS pick a free port, so we never clash with `mh --server`
+    // Core ships no UI — the sidecar injects the WebUI it exists to serve.
+    ui: { serveAssets: serveWebui, routes: webuiRoutes },
   });
 
   // Contract with main.ts: this exact prefix is matched to extract the port.
@@ -26,9 +30,8 @@ export function runSidecar(): void {
   // Pre-build the WebUI bundle in the background so the window's first
   // `/webui.js` request doesn't pay for a cold `Bun.build` (dev only; the
   // packaged bundle is embedded). Fire-and-forget — must not delay the port
-  // line above, and webui.ts stays out of the CLI's startup import graph since
-  // only this sidecar entry pulls it in.
-  void import("../../../src/core/sync/webui.ts").then((m) => m.warmWebui()).catch(() => {});
+  // line above.
+  void warmWebui();
 
   const shutdown = (): void => {
     try {

@@ -3,6 +3,7 @@ import { newId } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { parseDocBlocks, serializeDocBlocks, reconcile, type DocBlock } from "./blocks.ts";
 import { keyBetween, keysBetween } from "./fracdex.ts";
+import { MhError } from "./errors.ts";
 
 export interface DocumentRow {
   id: string;
@@ -268,7 +269,7 @@ function placeInSiblings(
   // make the tree unrenderable. Guarded here so every caller is protected.
   let cur: string | null | undefined = parentId;
   while (cur) {
-    if (cur === id) throw new Error(`cannot set parent_id: would create a cycle (${id})`);
+    if (cur === id) throw new MhError("invalid_input", `cannot set parent_id: would create a cycle (${id})`);
     cur = getDocument(db, cur)?.parent_id ?? null;
   }
 
@@ -284,7 +285,7 @@ function placeInSiblings(
     const neighbors = (): [string | null, string | null] => {
       const rows = orderedSiblings(db, parentId).filter((r) => r.id !== id);
       const to = rows.findIndex((r) => r.id === anchor.targetId);
-      if (to < 0) throw new Error(`no such target document: ${anchor.targetId}`);
+      if (to < 0) throw new MhError("not_found", `no such target document: ${anchor.targetId}`);
       return anchor.where === "before"
         ? [rows[to - 1]?.order_key ?? null, rows[to]!.order_key]
         : [rows[to]!.order_key, rows[to + 1]?.order_key ?? null];
@@ -311,10 +312,10 @@ export function moveDocument(
   where: "before" | "after" | "into",
 ): DocumentRow {
   const src = getDocument(db, id);
-  if (!src) throw new Error(`no such document: ${id}`);
+  if (!src) throw new MhError("not_found", `no such document: ${id}`);
   if (id === targetId) return src;
   const target = getDocument(db, targetId);
-  if (!target) throw new Error(`no such target document: ${targetId}`);
+  if (!target) throw new MhError("not_found", `no such target document: ${targetId}`);
 
   if (where === "into") placeInSiblings(db, id, targetId);
   else placeInSiblings(db, id, target.parent_id, { targetId, where });
@@ -325,8 +326,13 @@ export function updateDocument(
   db: Database,
   id: string,
   fields: { title?: string; body?: string; database_id?: string; parent_id?: string | null },
+  opts: { ifMatch?: string } = {},
 ): DocumentRow {
-  if (!getDocument(db, id)) throw new Error(`no such document: ${id}`);
+  if (!getDocument(db, id)) throw new MhError("not_found", `no such document: ${id}`);
+  // Same staleness backstop as editDocument: a version from documentVersion()
+  // rejects the write if the doc changed since the caller read it.
+  if (opts.ifMatch !== undefined && documentVersion(db, id) !== opts.ifMatch)
+    throw new MhError("stale", `stale: document changed since ${opts.ifMatch}; re-read first`);
   if (fields.title !== undefined) emit(db, "documents", id, "title", fields.title);
   if (fields.database_id !== undefined) emit(db, "documents", id, "database_id", fields.database_id);
   if (fields.parent_id !== undefined) {
@@ -362,18 +368,19 @@ export function editDocument(
   id: string,
   opts: { old: string; new: string; replaceAll?: boolean; ifMatch?: string },
 ): EditDocResult {
-  if (!getDocument(db, id)) throw new Error(`no such document: ${id}`);
+  if (!getDocument(db, id)) throw new MhError("not_found", `no such document: ${id}`);
   if (opts.ifMatch !== undefined && documentVersion(db, id) !== opts.ifMatch)
-    throw new Error(`stale: document changed since ${opts.ifMatch}; re-read first`);
-  if (opts.old === "") throw new Error("--old must not be empty");
+    throw new MhError("stale", `stale: document changed since ${opts.ifMatch}; re-read first`);
+  if (opts.old === "") throw new MhError("invalid_input", "--old must not be empty");
 
   ensureBlocks(db, id);
   const blocks = liveBlocks(db, id);
   const body = serializeDocBlocks(blocks.map((b) => ({ text: b.text, blankAfter: b.blank_after })));
   const count = countOccurrences(body, opts.old);
-  if (count === 0) throw new Error(`anchor not found: no match for --old`);
+  if (count === 0) throw new MhError("invalid_input", `anchor not found: no match for --old`);
   if (count > 1 && !opts.replaceAll)
-    throw new Error(
+    throw new MhError(
+      "ambiguous",
       `${count} matches for --old; add surrounding context or use --replace-all`,
     );
 
@@ -399,7 +406,7 @@ export function editDocument(
 }
 
 export function appendDocument(db: Database, id: string, body: string): EditDocResult {
-  if (!getDocument(db, id)) throw new Error(`no such document: ${id}`);
+  if (!getDocument(db, id)) throw new MhError("not_found", `no such document: ${id}`);
   ensureBlocks(db, id);
   const next = parseDocBlocks(body);
   if (next.length) {
@@ -411,7 +418,7 @@ export function appendDocument(db: Database, id: string, body: string): EditDocR
 }
 
 export function prependDocument(db: Database, id: string, body: string): EditDocResult {
-  if (!getDocument(db, id)) throw new Error(`no such document: ${id}`);
+  if (!getDocument(db, id)) throw new MhError("not_found", `no such document: ${id}`);
   ensureBlocks(db, id);
   const next = parseDocBlocks(body);
   if (next.length) {

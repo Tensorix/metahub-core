@@ -9,14 +9,38 @@ import {
   HEALTH_PATH,
   type SyncRequest,
 } from "./protocol.ts";
-import { webuiRoutes } from "./webui-routes.ts";
 import { sitesRoutes } from "./sites-routes.ts";
 import { peersRoutes } from "./peers-routes.ts";
+import { errorCode, type MhErrorCode } from "../errors.ts";
 
 /** Injected at server startup; handlers reuse the open DB connection. */
 export interface RouteCtx {
   db: Database;
   node: string;
+}
+
+/** HTTP status per error code (see core/errors.ts). Uncategorized errors stay
+ *  400, matching the historical catch-all behavior. */
+const HTTP_STATUS: Record<MhErrorCode, number> = {
+  invalid_input: 400,
+  not_found: 404,
+  ambiguous: 400,
+  stale: 409,
+  conflict: 409,
+  auth: 401,
+  network: 502,
+  port_in_use: 500,
+};
+
+/** Turn a thrown handler error into a JSON response: `{error, code?}` with a
+ *  semantic status, so HTTP clients can dispatch on `code` like CLI users
+ *  dispatch on exit codes. */
+export function errorResponse(e: unknown): Response {
+  const message = e instanceof Error ? e.message : String(e);
+  const code = errorCode(e);
+  return Response.json(code ? { error: message, code } : { error: message }, {
+    status: code ? HTTP_STATUS[code] : 400,
+  });
 }
 
 /**
@@ -58,7 +82,7 @@ const syncRoutes: Route[] = [
   },
 ];
 
-// CRDT sync protocol routes + the read/write data API the WebUI consumes +
-// read-only site endpoints (sites are authored via the `mh site` CLI) + peer
-// pairing/management endpoints.
-export const routes: Route[] = [...syncRoutes, ...webuiRoutes, ...sitesRoutes, ...peersRoutes];
+// CRDT sync protocol routes + read-only site endpoints (sites are authored via
+// the `mh site` CLI) + peer pairing/management endpoints. The WebUI's data API
+// is not part of core: it is injected via startServer's `ui` option.
+export const routes: Route[] = [...syncRoutes, ...sitesRoutes, ...peersRoutes];

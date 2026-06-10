@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { api, type DocSummary } from "../api.ts";
+import { api, NAV_INVALIDATE, type DocSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { DocView, type DocViewHandle } from "../editor.tsx";
 import {
@@ -67,6 +67,22 @@ export function QuickNote() {
     setNotes(list);
     return list;
   }, []);
+
+  // Saves inside DocView (title edits included) dispatch NAV_INVALIDATE from
+  // api.ts — refresh the note list from the same signal the main app uses.
+  useEffect(() => {
+    if (!parentId) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const on = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void reload(parentId), 80);
+    };
+    document.addEventListener(NAV_INVALIDATE, on);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener(NAV_INVALIDATE, on);
+    };
+  }, [parentId, reload]);
 
   const createNote = useCallback(
     async (pid: string): Promise<string> => {
@@ -232,7 +248,6 @@ export function QuickNote() {
           <DocView
             key={activeId}
             docId={activeId}
-            onTitleChange={() => parentId && void reload(parentId)}
             onError={setError}
             onHandle={(h) => (docHandleRef.current = h)}
           />

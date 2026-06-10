@@ -19,7 +19,10 @@ import doctor from "./commands/doctor.ts";
 import repair from "./commands/repair.ts";
 import config from "./commands/config.ts";
 import { parseDuration } from "../core/sync/token.ts";
-import { startServer, PortInUseError } from "../core/sync/server.ts";
+import { startServer } from "../core/sync/server.ts";
+import { errorCode } from "../core/errors.ts";
+import { serveWebui, warmWebui } from "../webui/server/assets.ts";
+import { webuiRoutes } from "../webui/server/routes.ts";
 import { print, fail } from "./output.ts";
 import { renderStartupBanner } from "./banner.ts";
 import { resolveEndpoints } from "./netaddr.ts";
@@ -87,10 +90,13 @@ if (argv.includes("--server")) {
       token: flagValue(argv, "token") ?? process.env.METAHUB_TOKEN,
       syncIntervalMs: intervalFlag != null ? parseDuration(intervalFlag, 30_000) : undefined,
       autoSync: argv.includes("--no-auto-sync") ? false : undefined,
+      // Core ships no UI; the CLI server is what plugs the browser WebUI in.
+      ui: { serveAssets: serveWebui, routes: webuiRoutes },
     });
+    void warmWebui(); // move the first dev Bun.build off the first paint
   } catch (e) {
     // A clean one-line message + exit 1 instead of Bun's bind stack trace.
-    fail(e instanceof Error ? e.message : String(e), e instanceof PortInUseError ? 98 : 1);
+    fail(e instanceof Error ? e.message : String(e), errorCode(e) ?? 1);
   }
   // Reachable base URLs (synchronous: enumerates real NIC addresses only, no
   // network probe). Loopback bind → just localhost; wildcard/explicit → + LAN/public.

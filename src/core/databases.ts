@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
 import { emit } from "./crdt.ts";
+import { MhError } from "./errors.ts";
 
 export interface DatabaseRow {
   id: string;
@@ -25,7 +26,7 @@ export function updateDatabase(
   id: string,
   fields: { name?: string; icon?: string | null },
 ): DatabaseRow {
-  if (!getDatabase(db, id)) throw new Error(`no such database: ${id}`);
+  if (!getDatabase(db, id)) throw new MhError("not_found", `no such database: ${id}`);
   if (fields.name !== undefined) emit(db, "databases", id, "name", fields.name);
   if (fields.icon !== undefined) emit(db, "databases", id, "icon", fields.icon);
   return getDatabase(db, id)!;

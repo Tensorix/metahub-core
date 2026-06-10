@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { newId } from "./ids.ts";
 import { emit } from "./crdt.ts";
 import { putBlob, getBlob } from "./cache.ts";
+import { MhError } from "./errors.ts";
 
 // A "site" is a named bucket of files (Supabase-Storage-style) served at
 // /sites/<name>/. Everything is written through emit() so sites replicate over
@@ -84,7 +85,7 @@ export function normalizeSiteName(raw: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  if (!slug) throw new Error(`invalid site name: ${JSON.stringify(raw)}`);
+  if (!slug) throw new MhError("invalid_input", `invalid site name: ${JSON.stringify(raw)}`);
   return slug;
 }
 
@@ -128,7 +129,7 @@ function toBytes(data: string | Uint8Array | ArrayBuffer): Uint8Array {
 
 export function createSite(db: Database, opts: { name: string; title?: string }): SiteRow {
   const name = normalizeSiteName(opts.name);
-  if (getSiteByName(db, name)) throw new Error(`site name already exists: ${name}`);
+  if (getSiteByName(db, name)) throw new MhError("conflict", `site name already exists: ${name}`);
   const id = newId("site", name);
   const first = emit(db, "sites", id, "name", name);
   emit(db, "sites", id, "created_hlc", first.hlc);
@@ -169,7 +170,7 @@ export function listSites(db: Database): SiteRow[] {
 export function resolveSite(db: Database, ref: string): SiteRow {
   const byId = ref.startsWith("site_") ? getSite(db, ref) : null;
   const site = byId ?? getSiteByName(db, ref);
-  if (!site) throw new Error(`no such site: ${ref}`);
+  if (!site) throw new MhError("not_found", `no such site: ${ref}`);
   return site;
 }
 
@@ -179,11 +180,11 @@ export function updateSite(
   id: string,
   opts: { name?: string; title?: string },
 ): SiteRow {
-  if (!getSite(db, id)) throw new Error(`no such site: ${id}`);
+  if (!getSite(db, id)) throw new MhError("not_found", `no such site: ${id}`);
   if (opts.name !== undefined) {
     const name = normalizeSiteName(opts.name);
     const dup = getSiteByName(db, name);
-    if (dup && dup.id !== id) throw new Error(`site name already exists: ${name}`);
+    if (dup && dup.id !== id) throw new MhError("conflict", `site name already exists: ${name}`);
     emit(db, "sites", id, "name", name);
   }
   if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
@@ -218,7 +219,7 @@ export async function putFile(
   opts: { data: string | Uint8Array | ArrayBuffer; contentType?: string },
 ): Promise<SiteFileRow> {
   const cleanPath = normalizeSitePath(path);
-  if (!cleanPath) throw new Error(`invalid file path: ${JSON.stringify(path)}`);
+  if (!cleanPath) throw new MhError("invalid_input", `invalid file path: ${JSON.stringify(path)}`);
   const contentType = opts.contentType ?? inferContentType(cleanPath);
   const bytes = toBytes(opts.data);
 
