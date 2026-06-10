@@ -1,8 +1,10 @@
-// Appearance theme: light / dark / system-follow. The choice is mirrored onto
-// <html data-theme="..."> and re-themes the whole UI instantly via the CSS
-// variable overrides in src/webui/styles.css — no React re-render needed. An
-// inline script in the HTML shell applies the stored value before first paint
-// (FOUC guard); this module keeps it in sync on change.
+// Appearance theme: light / dark / system-follow. The choice is *resolved*
+// (system → the OS preference) onto <html data-resolved="light|dark"> and
+// re-themes the whole UI instantly via the CSS variable overrides in
+// src/webui/styles.css — which therefore carries a single dark palette block,
+// no prefers-color-scheme duplicate. An inline script in the HTML shell does
+// the same resolution before first paint (FOUC guard); this module keeps it in
+// sync on change, and app.tsx re-runs it when the OS flips while on "system".
 
 export type ThemeChoice = "light" | "dark" | "system";
 
@@ -13,9 +15,17 @@ export function getTheme(): ThemeChoice {
   return v === "light" || v === "dark" || v === "system" ? v : "system";
 }
 
+/** Re-resolve choice + OS preference into <html data-resolved>. */
+export function syncResolvedTheme(): void {
+  const t = getTheme();
+  const dark =
+    t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.resolved = dark ? "dark" : "light";
+}
+
 export function setTheme(t: ThemeChoice): void {
   localStorage.setItem(KEY, t);
-  document.documentElement.dataset.theme = t;
+  syncResolvedTheme();
   syncThemeColor();
 }
 

@@ -38,7 +38,10 @@ const HTML = `<!doctype html>
      This is what kept the desktop cold-start white for seconds on slow networks. -->
 <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('mh-theme')||'system'}catch(e){}</script>
+<!-- FOUC guard: resolve the stored choice (system → OS preference) to an
+     explicit data-resolved before first paint. CSS keys off data-resolved
+     alone, so the dark palette exists exactly once — see styles.css. -->
+<script>try{var t=localStorage.getItem('mh-theme'),d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.resolved=d?'dark':'light'}catch(e){}</script>
 <link rel="stylesheet" href="/webui.css">
 </head>
 <body>

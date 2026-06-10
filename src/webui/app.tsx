@@ -8,7 +8,7 @@ import { DatabaseView } from "./table.tsx";
 import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView, cmpVer } from "./settings.tsx";
 import { SitesView } from "./sites.tsx";
-import { syncThemeColor } from "./theme.ts";
+import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
@@ -137,11 +137,15 @@ function App() {
     syncThemeColor();
   }, [isMobile, contentActive]);
 
-  // When following the system theme, the OS flipping dark/light changes the CSS
-  // vars but fires no app event — retint the status bar on the media change too.
+  // When following the system theme, the OS flipping dark/light must re-resolve
+  // <html data-resolved> (CSS keys off it alone — see theme.ts) and then retint
+  // the status bar to the surface that just changed under it.
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const on = () => syncThemeColor();
+    const on = () => {
+      syncResolvedTheme();
+      syncThemeColor();
+    };
     mq.addEventListener("change", on);
     return () => mq.removeEventListener("change", on);
   }, []);
