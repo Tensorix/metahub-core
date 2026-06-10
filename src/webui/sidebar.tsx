@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type PropType, type PropConfig } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
@@ -44,7 +44,12 @@ export function Sidebar(props: SidebarProps) {
   const { view, navigate } = props;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
+  const [version, setVersion] = useState<string | null>(null);
   const startResize = useResize(props.onResize);
+
+  useEffect(() => {
+    api.version().then((v) => setVersion(v.version)).catch(() => setVersion(null));
+  }, []);
 
   const toggle = (id: string) => {
     const next = new Set(expanded);
@@ -312,22 +317,27 @@ export function Sidebar(props: SidebarProps) {
         </div>
       </div>
 
+      {/* Desktop-only slim status row (mobile hides it and uses the .sb-head
+          icons): sites/settings as icon buttons, core version at the right. */}
       <div class="sb-footer">
         <button
-          class={"navitem" + (view.kind === "sites" ? " active" : "")}
-          onClick={() => navigate({ kind: "sites" })}
-        >
-          <span class="emoji"><Icon name="globe" cls="ico sm" /></span>
-          <span class="label">站点</span>
-        </button>
-        <button
-          class={"navitem" + (view.kind === "settings" ? " active" : "")}
+          class={"sb-act" + (view.kind === "settings" ? " active" : "")}
+          title="设置"
+          aria-label="设置"
           onClick={() => navigate({ kind: "settings" })}
         >
-          <span class="emoji"><Icon name="settings" cls="ico sm" /></span>
-          <span class="label">设置</span>
+          <Icon name="settings" cls="ico sm" />
           {props.updatePending && <span class="nav-dot" title="有可用更新" />}
         </button>
+        <button
+          class={"sb-act" + (view.kind === "sites" ? " active" : "")}
+          title="站点"
+          aria-label="站点"
+          onClick={() => navigate({ kind: "sites" })}
+        >
+          <Icon name="globe" cls="ico sm" />
+        </button>
+        {version && <span class="sbf-ver" title={`Metahub Core v${version}`}>v{version}</span>}
       </div>
 
       <div class="sb-resizer" onMouseDown={startResize} />

@@ -119,10 +119,17 @@
   .navitem.drop-before { box-shadow:inset 0 2px 0 0 var(--accent); }
   .navitem.drop-after { box-shadow:inset 0 -2px 0 0 var(--accent); }
   .dragging { opacity:.35; }
-  .sb-footer { flex:none; padding:6px 8px; border-top:1px solid var(--line); }
-  .sb-footer .navitem { font-size:var(--fs-ui); }
+  /* Slim status row: sites/settings icon buttons left, version right. */
+  .sb-footer { flex:none; display:flex; align-items:center; gap:2px; padding:5px 10px; border-top:1px solid var(--line); }
+  .sb-footer .sb-act { display:grid; place-items:center; width:28px; height:28px; flex:none;
+    border-radius:var(--radius-sm); color:var(--muted); position:relative; }
+  .sb-footer .sb-act:hover { background:var(--hover-2); color:var(--fg); }
+  .sb-footer .sb-act.active { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
+  .sb-footer .sb-act .nav-dot { position:absolute; top:4px; right:4px; box-shadow:0 0 0 2px var(--sidebar); }
+  .sbf-ver { margin-left:auto; font-family:var(--mono); font-size:var(--fs-micro); color:var(--muted);
+    letter-spacing:-.01em; user-select:text; }
   /* Sites/settings as sb-head icon buttons — the mobile home's replacement for
-     the .sb-footer rows (swapped in the mobile media block below). */
+     the .sb-footer row (swapped in the mobile media block below). */
   .sb-act { display:none; }
   .nav-dot { flex:none; width:7px; height:7px; border-radius:50%; background:var(--danger);
     box-shadow:0 0 0 2px var(--surface); margin-right:2px; }
