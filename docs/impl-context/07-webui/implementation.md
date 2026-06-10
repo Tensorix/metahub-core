@@ -525,3 +525,25 @@ Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace
 盒装布局(fixed 全屏面板 + 内部滚动)在 iOS 26 Safari 上结构性拿不到玻璃透视与实时变色:玻璃栏只合成**文档画布**滚到其下方的像素。移动端因此改为文档流滚动:活动视图入流(`min-height:100dvh`),document 自己滚,非活动视图 `display:none`(导航即真实渲染树进出 → 顶部实色扩展每次导航重采样);`.topbar` 吸顶且背景必须在自身;html/body 背景随 `body.mobile`/`.mobile-content` 跟随当前表面;页面切换动画改单视图 `page-in`;app.tsx 负责两个视图间的 document 滚动位置交接;DocToc 兼容 window 滚动。
 
 机制、5 轮踩坑过程与今后改动检查清单详见 **[ios26-safari-chrome.md](./ios26-safari-chrome.md)**。涉及文件:`src/webui/styles.css`(移动端 MQ 块)、`src/webui/app.tsx`(导航 effect)、`src/webui/theme.ts`(移除重采样 hack)、`src/webui/editor.tsx`(DocToc)。
+
+## 21. v3.3 表格单元格编辑重做：覆盖式编辑器 + 电子表格键盘（2026-06-11）
+
+用户反馈两个问题：编辑时出现"框中框"且整行被撑大；不按 Enter 直接点别处会丢失修改。涉及文件：`src/webui/table.tsx`（`InlineEditInput`/`CellView`/`DatabaseView`/`PeekValue`）、`src/webui/styles.css`（`.celledit`）。
+
+### 21.1 根因
+
+- **撑大行高**：旧编辑态把 `.cell` 的显示内容**替换**为自带 `outline:2px + padding:7px 9px` 的 input，嵌在 `.cell` 的 `padding:8px 11px` 里——双层框、总高超过 37px min-height。
+- **丢改**（真 bug，不是"缺少 blur 提交"）：旧 input 是受控 `value={initial}`。点击另一单元格时，目标 td 的 `pointerdown → setCellSel` 触发的重渲染发生在 blur **之前**，Preact 把 DOM value 重置回旧值 → 随后 blur 提交的是旧值。只有 Enter（在任何状态更新前先 blur）能可靠保存。
+- 次要问题：值没变也发 PATCH（每次都写一条记录历史）；提交 await API 返回才退出编辑态；中文 IME 按 Enter 确认候选词被当作提交。
+
+### 21.2 设计
+
+- **覆盖式编辑器**：`td.cell-td` 加 `position:relative`；编辑器渲染为 display 内容的 **sibling** `<div class="celledit">`（绝对定位铺满 td、`z-index:10`、accent 双层 box-shadow 环 + 投影、不透明背景），显示内容留在流内 → 行高永不变化。内层 input padding 与 `.cell` 一致（8px 11px），进入编辑文字零位移。`input.inlineedit` 全局规则保留给 peek 面板，覆盖层用 `.celledit input.inlineedit` 提高特异性归零边框。
+- **非受控 + EditEnd 协议**：`InlineEditInput` 改为 ref 挂载时赋值一次（`seed ?? initial`、focus、光标置末尾），重渲染不再碰 DOM 值——丢改根治。结束统一走 `finish(reason)` → `onDone(EditEnd)`，`reason ∈ cancel|blur|enter|tab|shifttab`，携带 `changed`（raw 字符串 vs initial）与 `coerceInput` 后的值；`done` ref 标志吞掉 Enter/Esc/Tab 卸载后的尾随 blur，杜绝双重提交。IME 防护：`e.isComposing || e.keyCode === 229` 直接放行。
+- **乐观提交**：`commit` 同步 `setEditing(null)` + 本地写 `cells`/`values` 双 map，后台 `PATCH /api/record`（id-keyed）reconcile，失败 toast + `reload()` 回滚（仿 `persistRecordMove`）。`changed === false` 时调用方直接跳过 commit——不发请求、不写历史。
+- **电子表格键盘**（建立在已有 cellSel 框选态上，全局 keydown，editing/输入框聚焦时旁路）：方向键移动单格选区（Shift 扩展，复用 shift+click 的 anchor 语义）、`scrollIntoView(nearest)` 跟随；Enter/F2 进入编辑；**可打印字符直接进入编辑并以该字符替换原值**（`editing.seed` 经 CellView 传入编辑器；date 列不支持、number 列限 `[0-9.+-]`、IME 首键 229 进不来——标准取舍）；Delete/Backspace 清空（原先仅多格框选可用，现单格也行）；编辑中 Tab/Shift+Tab 提交并移到左右邻格继续编辑（到行边缘/不可编辑列则仅选中）、Enter 提交并下移一行（Airtable 式；排序激活时按提交前索引，行序跳变可接受）。checkbox/select/multi_select 键盘仅选中，交互保持点击驱动。
+- **peek 面板**：`PeekValue` 接新协议（新增 `onCloseEdit` 关闭路径），不传 `captureTab`（Tab 走原生焦点序、blur 提交），外观不变，顺带获得 Esc 取消与值不变不请求。
+
+### 21.3 验证
+
+`bun test` 273 全绿、webui tsc 干净。手动回归重点：输入后点击别处保存成功（核心回归项）；编辑态行高不变（与多行邻格同行验证）；IME Enter 选词不提交；值不变 blur 无网络请求；Tab 串行编辑；切库后无残留编辑态（`[db.id]` effect 补了 `setEditing(null)`）。

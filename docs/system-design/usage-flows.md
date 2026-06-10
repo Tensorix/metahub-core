@@ -247,7 +247,8 @@ mh --server --port 7777
 
 ### 3. 表格（Notion-like）
 
-- 点选数据库 → 按属性渲染网格。单元格按类型行内编辑：checkbox 即时切、select/multi_select 弹彩色 chip 菜单、relation 逗号分隔、其余文本/数字/日期框；提交 `PATCH /api/record`。
+- 点选数据库 → 按属性渲染网格。单元格编辑：checkbox 即时切、select/multi_select 弹彩色 chip 菜单；其余类型（text/number/date/url/relation，relation 逗号分隔）双击或选中后直接打字进入**覆盖式编辑器**——悬浮于单元格上方、行高不变；点击别处/Enter/Tab 均提交、Esc 放弃、值不变不发请求；乐观更新本地即时生效，后台 `PATCH /api/record`，失败 toast+回滚。中文输入法 Enter 选词不会误提交。
+- **键盘**：方向键移动选中格（Shift 扩展为框选）、Enter/F2 进入编辑、编辑中 Tab/Shift+Tab 提交并移到左右邻格、Enter 提交并下移一行、Delete/Backspace 清空；框选支持 Cmd/Ctrl+C 复制 TSV，底部操作条复制/填充/清空。
 - **列头菜单**：改名、**改类型**（`PATCH /api/property`，改类型会清空该列单元格）、select 选项增删、排序、在右侧插入列、删除列。末列「+」按类型新建属性。
 - 行 ⋯ 菜单（打开/复制/删除）、勾选多行后底部操作条（复制/删除）、首列「打开」进**记录侧栏 peek**（属性逐项编辑）。
 
