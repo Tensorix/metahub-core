@@ -66,7 +66,7 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
       </div>
 
       {typeof window !== "undefined" && window.metahubDesktop?.quicknote && <QuickNotesSettings />}
-      {replicaSupported() && <OfflineReplica />}
+      <OfflineReplica />
       <SyncDevices />
       <IssuedGrants />
       <VersionFooter onUpdatePending={onUpdatePending} />
@@ -76,12 +76,21 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
 
 // ---- offline replica (browser as a sync node) ------------------------------
 
-function replicaSupported(): boolean {
-  return (
-    typeof Worker !== "undefined" &&
-    typeof navigator !== "undefined" &&
-    !!navigator.storage?.getDirectory
-  );
+/** Why the replica can't run here, or null when it can. Shown in the section
+ *  instead of hiding it — a silently missing switch is undebuggable (the
+ *  common case: opening the server over plain http from a phone, which is not
+ *  a secure context, so OPFS and service workers don't exist at all). */
+function replicaUnsupportedReason(): string | null {
+  if (typeof Worker === "undefined" || typeof navigator === "undefined") {
+    return "此浏览器不支持 Web Worker。";
+  }
+  if (!window.isSecureContext) {
+    return "需要 HTTPS（安全上下文）。当前是 http:// 访问，浏览器不开放离线所需的 OPFS 与 Service Worker——给服务器配置 TLS（--tls-cert/--tls-key，或 Caddy / Tailscale Serve 反代；iPhone 需要受信任的证书），或在本机用 localhost 访问。";
+  }
+  if (!navigator.storage?.getDirectory) {
+    return "此浏览器不支持 OPFS 本地存储（需要 Safari 17+ / Chrome / Firefox 较新版本）。";
+  }
+  return null;
 }
 
 /**
@@ -93,6 +102,7 @@ function replicaSupported(): boolean {
  * revoked server-side at any time.
  */
 function OfflineReplica() {
+  const unsupported = replicaUnsupportedReason();
   const [enabled, setEnabled] = useState(replicaEnabled());
   const [st, setSt] = useState<ReplicaStatus>(replicaStatus());
   const [busy, setBusy] = useState(false);
@@ -181,6 +191,18 @@ function OfflineReplica() {
     }
     return "等待首次同步…";
   };
+
+  if (unsupported) {
+    return (
+      <div class="set-section">
+        <div class="set-section-head">离线副本</div>
+        <div class="set-section-desc">
+          让此浏览器持有完整的本地数据副本：弱网/离线也能查看和编辑全部内容，恢复连接后自动同步。
+        </div>
+        <div class="peer-sub">⚠ 当前环境不可用：{unsupported}</div>
+      </div>
+    );
+  }
 
   return (
     <div class="set-section">
