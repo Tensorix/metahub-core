@@ -534,6 +534,9 @@ function killSidecar(): void {
 // ---- lifecycle -------------------------------------------------------------
 
 app.whenReady().then(async () => {
+  // Windows/Linux: drop the default File/Edit/View… menu bar on every window.
+  // macOS keeps its application menu (Cmd shortcuts live there).
+  if (process.platform !== "darwin") Menu.setApplicationMenu(null);
   loadSettings();
   // Branded feedback up front, before any slow startup work begins.
   createSplash();

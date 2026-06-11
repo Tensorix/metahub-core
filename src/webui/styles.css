@@ -231,11 +231,12 @@
   .btn-primary:hover { filter:brightness(1.07); }
   .btn-danger { background:var(--danger); color:#fff; } .btn-danger:hover { filter:brightness(1.05); }
 
-  /* desktop app (frameless): drop the sidebar logo; on macOS reserve a draggable
-     strip for the inset traffic lights so they never overlap our controls */
-  body.desktop .brand { display:none; }
+  /* macOS desktop (hiddenInset frameless): drop the sidebar logo and reserve a
+     draggable strip so the inset traffic lights never overlap our controls.
+     Windows/Linux keep the native frame, so the logo stays. */
+  body.desktop-mac .brand { display:none; }
   /* logo gone → keep the collapse button on the right (where .brand's flex used to push it) */
-  body.desktop .sb-head .iconbtn { margin-left:auto; }
+  body.desktop-mac .sb-head .iconbtn { margin-left:auto; }
   body.desktop-mac .sb-head { -webkit-app-region:drag; }
   body.desktop-mac .sb-head .iconbtn { -webkit-app-region:no-drag; }
   body.desktop-mac .topbar { -webkit-app-region:drag; }
@@ -1102,9 +1103,11 @@
   body.quicknote #app { display:block; width:100vw; height:100vh; height:100dvh; }
   .qn { display:flex; flex-direction:column; width:100%; height:100vh; height:100dvh; overflow:hidden;
     background:color-mix(in srgb, var(--bg) 20%, transparent); }
-  .qn-bar { display:flex; align-items:center; gap:6px; padding:4px 10px 4px 76px;
+  .qn-bar { display:flex; align-items:center; gap:6px; padding:4px 10px;
     user-select:none; -webkit-app-region:drag;
     background:color-mix(in srgb, var(--surface) 30%, transparent); }
+  /* macOS only: clear the inset traffic lights; Win/Linux frameless has none */
+  body.desktop-mac .qn-bar { padding-left:76px; }
   .qn-brand { flex:1; min-width:0; font-size:12px; font-weight:600; color:var(--fg-soft);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .qn-actions { display:flex; gap:2px; -webkit-app-region:no-drag; }
