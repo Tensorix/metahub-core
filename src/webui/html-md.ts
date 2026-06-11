@@ -25,6 +25,18 @@ function makeService(): TurndownService {
   });
   td.use(gfm);
 
+  // Cocoa's text/html clipboard flavor (TextEdit, native macOS text fields)
+  // ships a <head><style>p.p1 {…}</style> block; Turndown keeps the text of
+  // unknown elements by default, which would paste the CSS rules as prose.
+  td.remove(["style", "script", "title"]);
+
+  // Don't backslash-escape Markdown punctuation (` * _ 1. …). The editor's
+  // parser/renderer has no concept of backslash escapes, so escaped output
+  // surfaces as literal "\`" in the document. Leaving the characters bare makes
+  // the HTML flavor behave exactly like the text/plain paste path: whatever
+  // looks like Markdown is interpreted by blocksFromBody, the rest stays text.
+  td.escape = (text: string) => text;
+
   // Robust fenced-code rule: take the text from the inner <code>, not the whole
   // <pre>. ChatGPT wraps code blocks in a <pre> that also holds a header div
   // ("javascript" label + "Copy code" button); the default rule keys off

@@ -356,7 +356,10 @@ function parseListItem(lines: string[], start: number, minIndent: number): Parse
 function parseLeafBlock(lines: string[], start: number, minIndent: number): Parsed {
   const first = stripIndent(lines[start]!, minIndent);
   const fence = first.match(RE.fenceOpen);
-  if (fence) return parseCodeBlock(lines, start, minIndent, fence);
+  if (fence) {
+    const code = parseCodeBlock(lines, start, minIndent, fence);
+    if (code) return code;
+  }
 
   if (RE.divider.test(first.trim())) {
     return { block: { id: genId(), type: "divider", content: "" }, next: start + 1 };
@@ -383,19 +386,26 @@ function parseCodeBlock(
   start: number,
   minIndent: number,
   open: RegExpMatchArray,
-): Parsed {
+): Parsed | null {
   const fence = open[1]!;
   const content: string[] = [];
   let i = start + 1;
+  let closed = false;
   for (; i < lines.length; i++) {
     const raw = lines[i]!;
     const stripped = stripIndent(raw, minIndent);
     if (isFenceClose(stripped, fence[0]!, fence.length)) {
+      closed = true;
       i++;
       break;
     }
     content.push(stripped);
   }
+  // An unclosed fence is prose that happens to start with ``` (pasted text, a
+  // stray line) — opening a code block on it would swallow everything below.
+  // Bail out and let the caller fall through to the paragraph parser. Explicit
+  // creation paths (typing shortcut, textToBlock conversion) stay lenient.
+  if (!closed) return null;
   return {
     block: { id: genId(), type: "code", content: content.join("\n"), lang: cleanLang(open[2] ?? "") },
     next: i,
@@ -517,6 +527,21 @@ function renderTable(block: Block, indent: number): string[] {
   return [renderRow(header), delim, ...rows.slice(1).map(renderRow)];
 }
 
+// A paragraph line that looks like a fence opener would re-open a code fence on
+// the next load and swallow the rest of the document — so the serializer hides
+// it behind a leading backslash and the paragraph parser strips exactly one.
+// Lines already carrying backslashes before the fence get one more, so literal
+// "\```" text round-trips too (escape-the-escape).
+const RE_FENCE_LIKE = /^\\*(?:`{3,}|~{3,})/;
+
+function escapeFenceLine(line: string): string {
+  return RE_FENCE_LIKE.test(line) ? `\\${line}` : line;
+}
+
+function unescapeFenceLine(line: string): string {
+  return line.startsWith("\\") && RE_FENCE_LIKE.test(line.slice(1)) ? line.slice(1) : line;
+}
+
 function parseParagraph(lines: string[], start: number, minIndent: number): Parsed {
   const content: string[] = [];
   let i = start;
@@ -524,7 +549,7 @@ function parseParagraph(lines: string[], start: number, minIndent: number): Pars
     const raw = lines[i]!;
     if (raw.trim() === "" || leadingIndent(raw) < minIndent) break;
     if (content.length && (startsLeafBlock(raw, minIndent) || looksLikeTableAt(lines, i, minIndent))) break;
-    content.push(stripIndent(raw, minIndent));
+    content.push(unescapeFenceLine(stripIndent(raw, minIndent)));
   }
   return { block: { id: genId(), type: "p", content: content.join("\n") }, next: i };
 }
@@ -587,7 +612,7 @@ function renderBlock(block: Block, indent: number, number: number): string[] {
     case "divider":
       return [`${pad}---`];
     default:
-      return block.content.split("\n").map((line) => `${pad}${line}`);
+      return block.content.split("\n").map((line) => `${pad}${escapeFenceLine(line)}`);
   }
 }
 

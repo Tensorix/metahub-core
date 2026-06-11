@@ -52,6 +52,25 @@ test("inline strong/em/code/link survive as markdown", () => {
   expect(md).toContain("[link](https://e.com)");
 });
 
+test("literal markdown punctuation is not backslash-escaped", () => {
+  // The editor's parser has no concept of backslash escapes, so escaping would
+  // surface as literal "\`" in the document. The HTML flavor must behave like
+  // the text/plain paste path: leave the characters bare.
+  expect(htmlToMarkdown("<div>``` 代码块 连续两次回车</div>")).toBe("``` 代码块 连续两次回车");
+  expect(htmlToMarkdown("<p>1. foo *bar* _baz_</p>")).toBe("1. foo *bar* _baz_");
+  // …and the bare ``` line pastes as prose (unclosed fence), not a code block.
+  expect(blocksFromBody(htmlToMarkdown("<div>```p111</div>"))).toMatchObject([{ type: "p", content: "```p111" }]);
+});
+
+test("Cocoa clipboard <style> header is dropped, not pasted as prose", () => {
+  // macOS native text fields put a styled HTML flavor on the clipboard.
+  const html =
+    '<html><head><meta charset="utf-8"><style type="text/css">' +
+    "p.p1 {margin: 0.0px 0.0px 0.0px 0.0px; font: 26.0px '.SF NS'; color: #000000}" +
+    '</style></head><body><p class="p1">```p111</p></body></html>';
+  expect(htmlToMarkdown(html)).toBe("```p111");
+});
+
 test("mixed ChatGPT-style answer round-trips into structured blocks", () => {
   const html =
     "<p>可以，但分两档：</p>" +

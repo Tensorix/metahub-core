@@ -356,3 +356,40 @@ test("a bullet promotes to a todo when its '[ ]'/'[x]' prefix completes", () => 
   expect(bulletTodoShortcut("abc")).toBeNull();
   expect(bulletTodoShortcut("")).toBeNull();
 });
+
+test("an unclosed fence is prose, not a code block that swallows the rest", () => {
+  // Pasted sentence that happens to start with ``` — with and without a space.
+  expect(blocksFromBody("``` 代码块 连续两次回车，脱出 代码编辑区域")).toMatchObject([
+    { type: "p", content: "``` 代码块 连续两次回车，脱出 代码编辑区域" },
+  ]);
+  expect(blocksFromBody("```代码块直接跟内容")).toMatchObject([{ type: "p", content: "```代码块直接跟内容" }]);
+  expect(blocksFromBody("```foo```")).toMatchObject([{ type: "p", content: "```foo```" }]);
+  // Following lines keep their own block types instead of being swallowed.
+  expect(blocksFromBody("``` 首行\n普通段落\n- [ ] 列表项").map((b) => b.type)).toEqual(["p", "todo"]);
+});
+
+test("a closed fence still parses as a code block", () => {
+  expect(blocksFromBody("```ts\nconst x = 1\n```")).toMatchObject([
+    { type: "code", content: "const x = 1", lang: "ts" },
+  ]);
+});
+
+test("a paragraph containing a fence-like line round-trips without eating the document", () => {
+  const blocks: ReturnType<typeof blocksFromBody> = [
+    { id: "1", type: "p", content: "``` 看起来像围栏的段落" },
+    { id: "2", type: "p", content: "后面的段落" },
+    { id: "3", type: "code", content: "real()", lang: "js" },
+  ];
+  const body = bodyFromBlocks(blocks);
+  expect(body).toContain("\\``` 看起来像围栏的段落"); // serialized behind a backslash
+  expect(blocksFromBody(body).map((b) => [b.type, b.content])).toEqual(
+    blocks.map((b) => [b.type, b.content]),
+  );
+});
+
+test("literal backslash-fence text escapes the escape and round-trips", () => {
+  const blocks: ReturnType<typeof blocksFromBody> = [{ id: "1", type: "p", content: "\\``` 字面反斜杠" }];
+  const body = bodyFromBlocks(blocks);
+  expect(body).toBe("\\\\``` 字面反斜杠");
+  expect(blocksFromBody(body)).toMatchObject([{ type: "p", content: "\\``` 字面反斜杠" }]);
+});

@@ -930,8 +930,9 @@ export function DocView({
   };
 
   // Code blocks use a real <textarea>, so they get their own key handler instead
-  // of the contentEditable one. This is also where "escape the code block"
-  // lives: Enter on a trailing blank line, or ↓ on the last line, exits below.
+  // of the contentEditable one. Enter always inserts a newline — blank lines are
+  // ordinary code content — so "escape the code block" lives on ↓ from the last
+  // line (below) and Backspace in an empty block.
   const onCodeKeyDown = (e: KeyboardEvent, b: Block, ta: HTMLTextAreaElement) => {
     const { value, selectionStart: start, selectionEnd: end } = ta;
     if (e.key === "Tab") {
@@ -946,18 +947,6 @@ export function DocView({
         return;
       }
       document.execCommand("insertText", false, "  "); // keeps native undo + fires input
-      return;
-    }
-    if (e.key === "Enter" && !e.shiftKey && start === end) {
-      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
-      const nlAfter = value.indexOf("\n", start);
-      const lastLine = nlAfter === -1;
-      const lineEmpty = value.slice(lineStart, lastLine ? undefined : nlAfter).trim() === "";
-      if (lastLine && lineEmpty) {
-        e.preventDefault();
-        b.content = value.replace(/\n[ \t]*$/, "");
-        insertAfter(b.id, "p");
-      }
       return;
     }
     if (e.key === "ArrowDown" && start === end && value.indexOf("\n", start) === -1) {
