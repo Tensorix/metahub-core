@@ -45,6 +45,7 @@ import {
 } from "./editor-ops.ts";
 import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
 import { startColumnResize, markDropHalf, clearDropMarks } from "./pointer-drag.ts";
+import { type FindOpts, collectMatches, findInText, applyHighlights, clearHighlights } from "./find.ts";
 
 export type DocMode = "blocks" | "source";
 
@@ -194,6 +195,18 @@ export function DocView({
   const retryDelayRef = useRef(0);
   const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const [conflict, setConflict] = useState(false);
+
+  // ---- find in document (Ctrl-F / Cmd-F) ----
+  // `find` null = bar closed. Term + options are the inputs; matches live in
+  // refs (block mode → Ranges painted via CSS highlights; source mode → text
+  // offset spans selected in the textarea). idx/total drive the "n / m" readout.
+  const docRootRef = useRef<HTMLDivElement>(null);
+  const [find, setFind] = useState<{ term: string } & FindOpts | null>(null);
+  const [findIdx, setFindIdx] = useState(0);
+  const [findTotal, setFindTotal] = useState(0);
+  const findIdxRef = useRef(0);
+  const findRangesRef = useRef<Range[]>([]);
+  const findSpansRef = useRef<Array<[number, number]>>([]);
 
   // ---- undo/redo history ----
   // Structural block ops mutate blocksRef directly and aren't on the browser's
@@ -994,6 +1007,121 @@ export function DocView({
   // drag reorder
   const dragRef = useRef<string | null>(null);
 
+  // Find the nearest scrollable ancestor (desktop scrolls `.content`, mobile
+  // scrolls the window) so source-mode scroll-to-match works in both layouts.
+  const scrollParent = (el: Element): Element | null => {
+    let p = el.parentElement;
+    while (p) {
+      const oy = getComputedStyle(p).overflowY;
+      if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight) return p;
+      p = p.parentElement;
+    }
+    return null;
+  };
+
+  // Paint + scroll the match at `idx`. Block mode → CSS highlight overlays +
+  // scrollIntoView on the match's element. Source mode → native textarea
+  // selection (set without focusing, so the find input keeps focus for Enter)
+  // plus a scroll of the real scroller to the match's line.
+  const paintFind = (idx: number) => {
+    if (mode === "source") {
+      const ta = sourceTaRef.current;
+      const span = findSpansRef.current[idx];
+      if (!ta || !span) return;
+      ta.setSelectionRange(span[0], span[1]);
+      const line = ta.value.slice(0, span[0]).split("\n").length - 1;
+      const cs = getComputedStyle(ta);
+      const lh = parseFloat(cs.lineHeight) || 20;
+      const lineY = (parseFloat(cs.paddingTop) || 0) + line * lh;
+      const sc = scrollParent(ta);
+      if (sc) {
+        const top = ta.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop;
+        sc.scrollTo({ top: Math.max(0, top + lineY - sc.clientHeight / 2), behavior: "smooth" });
+      } else {
+        const top = ta.getBoundingClientRect().top + window.scrollY;
+        window.scrollTo({ top: Math.max(0, top + lineY - innerHeight / 2), behavior: "smooth" });
+      }
+    } else {
+      const ranges = findRangesRef.current;
+      const cur = ranges[idx] ?? null;
+      applyHighlights(ranges, cur);
+      if (cur) {
+        const sc = cur.startContainer;
+        const el = sc.nodeType === 3 ? sc.parentElement : (sc as Element);
+        el?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      }
+    }
+  };
+
+  // Recompute matches when the term/options change, the doc structurally
+  // re-renders (version), or the mode flips. Clamps the active index so it
+  // survives edits, then paints it.
+  useEffect(() => {
+    if (!find) {
+      clearHighlights();
+      findRangesRef.current = [];
+      findSpansRef.current = [];
+      setFindTotal(0);
+      return;
+    }
+    // Debounce so collectMatches (a full text-node walk) doesn't run on every
+    // keystroke in a large doc; navigation goes through findStep, not this.
+    const opts: FindOpts = { caseSensitive: find.caseSensitive, wholeWord: find.wholeWord };
+    const t = setTimeout(() => {
+      let total: number;
+      if (mode === "source") {
+        const text = sourceTaRef.current?.value ?? sourceRef.current;
+        findSpansRef.current = findInText(text, find.term, opts);
+        findRangesRef.current = [];
+        clearHighlights();
+        total = findSpansRef.current.length;
+      } else {
+        const root = docRootRef.current;
+        findRangesRef.current = root ? collectMatches(root, find.term, opts) : [];
+        findSpansRef.current = [];
+        total = findRangesRef.current.length;
+      }
+      const idx = total ? Math.min(findIdxRef.current, total - 1) : 0;
+      findIdxRef.current = idx;
+      setFindIdx(idx);
+      setFindTotal(total);
+      paintFind(idx);
+    }, 110);
+    return () => clearTimeout(t);
+  }, [find, version, mode]);
+
+  // Clear highlights when the editor unmounts (doc switch remounts via key).
+  useEffect(() => () => clearHighlights(), []);
+
+  // Cmd/Ctrl+F opens the find bar (and re-focuses + selects it if already open).
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFind((f) => f ?? { term: "", caseSensitive: false, wholeWord: false });
+        requestAnimationFrame(() => {
+          const inp = docRootRef.current?.parentElement?.querySelector<HTMLInputElement>(".find-bar input")
+            ?? document.querySelector<HTMLInputElement>(".find-bar input");
+          inp?.focus();
+          inp?.select();
+        });
+      }
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
+
+  const findStep = (dir: 1 | -1) => {
+    const total = mode === "source" ? findSpansRef.current.length : findRangesRef.current.length;
+    if (!total) return;
+    const next = (findIdxRef.current + dir + total) % total;
+    findIdxRef.current = next;
+    setFindIdx(next);
+    paintFind(next);
+  };
+
+  const closeFind = () => setFind(null);
+
   if (loading) return <div class="empty">加载中…</div>;
 
   const selectedSet = new Set(selectedIds);
@@ -1043,7 +1171,22 @@ export function DocView({
   return (
     <>
     {mode === "blocks" && <DocToc key={version} blocks={blocks} />}
+    {find && (
+      <FindBar
+        term={find.term}
+        caseSensitive={find.caseSensitive}
+        wholeWord={find.wholeWord}
+        idx={findIdx}
+        total={findTotal}
+        onTerm={(term) => { findIdxRef.current = 0; setFind((f) => (f ? { ...f, term } : f)); }}
+        onToggleCase={() => setFind((f) => (f ? { ...f, caseSensitive: !f.caseSensitive } : f))}
+        onToggleWord={() => setFind((f) => (f ? { ...f, wholeWord: !f.wholeWord } : f))}
+        onStep={findStep}
+        onClose={closeFind}
+      />
+    )}
     <div
+      ref={docRootRef}
       class={"doc" + (mode === "source" ? " source-mode" : "")}
       onMouseDown={(e) => onDocMouseDown(e as MouseEvent)}
       onMouseUp={() => updateBar(setBar)}
@@ -1565,6 +1708,55 @@ function TableCell({
       onInput={(e) => onInput(htmlToInline((e.currentTarget as HTMLElement).innerHTML))}
       onKeyDown={(e) => onKeyDown(e as KeyboardEvent)}
     />
+  );
+}
+
+// ---- find-in-document bar ----
+// A floating Ctrl-F bar pinned to the top-right of the viewport. Option/nav
+// buttons preventDefault on mousedown so focus stays in the input (Enter keeps
+// stepping). Enter → next, Shift+Enter → prev, Esc → close.
+function FindBar({
+  term, caseSensitive, wholeWord, idx, total, onTerm, onToggleCase, onToggleWord, onStep, onClose,
+}: {
+  term: string;
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  idx: number;
+  total: number;
+  onTerm: (term: string) => void;
+  onToggleCase: () => void;
+  onToggleWord: () => void;
+  onStep: (dir: 1 | -1) => void;
+  onClose: () => void;
+}) {
+  const keep = (e: MouseEvent) => e.preventDefault();
+  return (
+    <div class="find-bar" role="search">
+      <Icon name="search" cls="ico sm find-ico" />
+      <input
+        type="text"
+        placeholder="在文档中查找"
+        value={term}
+        autoFocus
+        onInput={(e) => onTerm((e.currentTarget as HTMLInputElement).value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); onStep(e.shiftKey ? -1 : 1); }
+          else if (e.key === "Escape") { e.preventDefault(); onClose(); }
+        }}
+      />
+      <span class="find-count">{total ? `${idx + 1} / ${total}` : (term ? "无结果" : "")}</span>
+      <button class={"find-opt" + (caseSensitive ? " on" : "")} title="区分大小写" onMouseDown={keep} onClick={onToggleCase}>Aa</button>
+      <button class={"find-opt" + (wholeWord ? " on" : "")} title="全词匹配" onMouseDown={keep} onClick={onToggleWord}>全词</button>
+      <button class="find-nav" title="上一个 (Shift+Enter)" disabled={!total} onMouseDown={keep} onClick={() => onStep(-1)}>
+        <Icon name="chevronDown" cls="ico sm find-prev" />
+      </button>
+      <button class="find-nav" title="下一个 (Enter)" disabled={!total} onMouseDown={keep} onClick={() => onStep(1)}>
+        <Icon name="chevronDown" cls="ico sm" />
+      </button>
+      <button class="find-nav find-close" title="关闭 (Esc)" onClick={onClose}>
+        <Icon name="x" cls="ico sm" />
+      </button>
+    </div>
   );
 }
 
