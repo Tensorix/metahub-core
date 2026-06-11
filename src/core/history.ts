@@ -1,5 +1,5 @@
 import type { DbDriver } from "./driver.ts";
-import { emit, grouped } from "./crdt.ts";
+import { emit, grouped, CHANGE_SELECT } from "./crdt.ts";
 import { serializeDocBlocks } from "./blocks.ts";
 import { getDocument, updateDocument, documentVersion } from "./documents.ts";
 import { listProperties } from "./properties.ts";
@@ -26,6 +26,9 @@ function hlcIso(hlc: string): string {
   return new Date(hlcMillis(hlc)).toISOString();
 }
 
+// A fully-read oplog row: Change with txn always present (CHANGE_SELECT
+// includes it; NULL for legacy rows). The reused select list keeps these
+// queries locked to the Change interface.
 interface RawChange {
   hlc: string;
   node_id: string;
@@ -95,7 +98,7 @@ function registersAt(
 function rowChanges(db: DbDriver, dataset: string, rowId: string): RawChange[] {
   return db
     .query(
-      "SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE dataset = ? AND row_id = ? ORDER BY hlc",
+      `SELECT ${CHANGE_SELECT} FROM crdt_changes WHERE dataset = ? AND row_id = ? ORDER BY hlc`,
     )
     .all(dataset, rowId) as RawChange[];
 }
@@ -123,7 +126,7 @@ function docChanges(db: DbDriver, docId: string): RawChange[] {
     : "";
   return db
     .query(
-      `SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes
+      `SELECT ${CHANGE_SELECT} FROM crdt_changes
        WHERE (dataset = 'documents' AND row_id = ?)${blockClause}
        ORDER BY hlc`,
     )
@@ -407,7 +410,7 @@ export function listDatabaseActivity(
 
   const changes = db
     .query(
-      `SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes
+      `SELECT ${CHANGE_SELECT} FROM crdt_changes
        WHERE dataset = 'records' AND row_id IN (SELECT id FROM records WHERE database_id = ?)
        ORDER BY row_id, hlc`,
     )

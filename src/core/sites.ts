@@ -7,6 +7,7 @@ import {
   type SiteRow,
   type FileEncoding,
   type SiteFileRow,
+  SITE_FILE_SELECT,
   inferContentType,
   normalizeSiteName,
   normalizeSitePath,
@@ -144,7 +145,7 @@ export async function putFile(
 
   return db
     .query(
-      "SELECT id, site_id, path, content_type, encoding, content FROM site_files WHERE id = ?",
+      `SELECT ${SITE_FILE_SELECT} FROM site_files WHERE id = ?`,
     )
     .get(id) as SiteFileRow;
 }

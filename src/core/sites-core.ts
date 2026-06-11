@@ -6,6 +6,7 @@
 
 import type { DbDriver } from "./driver.ts";
 import { MhError } from "./errors.ts";
+import type { ColumnsOf } from "./sqlcols.ts";
 
 export interface SiteRow {
   id: string;
@@ -13,6 +14,10 @@ export interface SiteRow {
   title: string | null;
   created_hlc: string;
 }
+
+export const SITE_COLS = ["id", "name", "title", "created_hlc"] as const;
+const _siteCols: ColumnsOf<SiteRow, typeof SITE_COLS> = SITE_COLS;
+const SITE_SELECT = SITE_COLS.join(", ");
 
 export type FileEncoding = "utf8" | "base64" | "blob";
 
@@ -28,6 +33,12 @@ export interface SiteFileRow {
 
 /** Manifest entry — file metadata without the (potentially large) content. */
 export type SiteFileSummary = Omit<SiteFileRow, "content">;
+
+export const SITE_FILE_COLS = [
+  "id", "site_id", "path", "content_type", "encoding", "content",
+] as const;
+const _siteFileCols: ColumnsOf<SiteFileRow, typeof SITE_FILE_COLS> = SITE_FILE_COLS;
+export const SITE_FILE_SELECT = SITE_FILE_COLS.join(", ");
 
 // ---- mime / encoding helpers -----------------------------------------------
 
@@ -104,7 +115,7 @@ export function normalizeSitePath(raw: string): string {
 
 export function getSite(db: DbDriver, id: string): SiteRow | null {
   return db
-    .query("SELECT id, name, title, created_hlc FROM sites WHERE id = ? AND __deleted = 0")
+    .query(`SELECT ${SITE_SELECT} FROM sites WHERE id = ? AND __deleted = 0`)
     .get(id) as SiteRow | null;
 }
 
@@ -120,14 +131,14 @@ export function getSiteByName(db: DbDriver, name: string): SiteRow | null {
   }
   return db
     .query(
-      "SELECT id, name, title, created_hlc FROM sites WHERE name = ? AND __deleted = 0 ORDER BY created_hlc DESC LIMIT 1",
+      `SELECT ${SITE_SELECT} FROM sites WHERE name = ? AND __deleted = 0 ORDER BY created_hlc DESC LIMIT 1`,
     )
     .get(slug) as SiteRow | null;
 }
 
 export function listSites(db: DbDriver): SiteRow[] {
   return db
-    .query("SELECT id, name, title, created_hlc FROM sites WHERE __deleted = 0 ORDER BY created_hlc")
+    .query(`SELECT ${SITE_SELECT} FROM sites WHERE __deleted = 0 ORDER BY created_hlc`)
     .all() as SiteRow[];
 }
 

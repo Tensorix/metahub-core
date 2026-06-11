@@ -9,53 +9,20 @@
 
 import { localApi, replicaActive } from "./data/local-api.ts";
 
-export type PropType =
-  | "text"
-  | "number"
-  | "checkbox"
-  | "select"
-  | "multi_select"
-  | "date"
-  | "relation"
-  | "url";
+// API row types come straight from core via type-only imports — erased at
+// build time, so nothing of core leaks into the browser bundle. Adding a field
+// in core now reaches the frontend without a hand-maintained mirror. Types
+// that stay local below are genuinely server-shaped DTOs, not core rows.
+import type {
+  PropType,
+  PropertyConfig as PropConfig,
+  PropertyRow as Prop,
+} from "../core/properties.ts";
+import type { DatabaseRow as Db } from "../core/databases.ts";
+import type { RecordRow as Rec } from "../core/records.ts";
+import type { DocumentSummary as DocSummary } from "../core/documents.ts";
+export type { PropType, PropConfig, Prop, Db, Rec, DocSummary };
 
-export interface PropConfig {
-  options?: string[];
-  database?: string;
-  indexed?: boolean;
-  width?: number; // table column width in px
-}
-
-export interface Db {
-  id: string;
-  name: string;
-  icon: string | null;
-  created_hlc?: string;
-}
-export interface Prop {
-  id: string;
-  database_id: string;
-  name: string;
-  type: PropType;
-  config: PropConfig | null;
-  position: number;
-}
-export interface Rec {
-  id: string;
-  database_id: string;
-  /** Cells keyed by property name — lossy when two properties share a name. */
-  values: Record<string, unknown>;
-  /** Cells keyed by property id — what the UI reads/writes (duplicate-name safe). */
-  cells: Record<string, unknown>;
-}
-export interface DocSummary {
-  id: string;
-  title: string;
-  database_id: string | null;
-  parent_id: string | null;
-  created_hlc?: string;
-  order_key?: string | null;
-}
 export type Doc = DocSummary & {
   body: string | null;
   /** Read/edit token; echo back as `if_match` on update to detect conflicts. */
@@ -97,71 +64,39 @@ export interface Grant {
   node_id: string | null;
   created_at: number | null;
 }
-/** Source of a history revision: a user edit, a repairHub fix, or a revert. */
-export type RevisionKind = "user" | "repair" | "revert";
-interface RevisionBase {
-  /** Version token — pass as `to` on revert / `version` on the at-version reads. */
-  version: string;
-  at: string; // ISO 8601
-  node_id: string;
-  kind: RevisionKind;
-  changes: number;
-  created: boolean;
-  deleted: boolean;
-}
-export interface DocRevision extends RevisionBase {
-  title_changed: boolean;
-  blocks_changed: number;
-  blocks_deleted: number;
-}
-export interface RecordRevision extends RevisionBase {
-  fields: string[]; // property ids of the cells written
-  moved: boolean;
-}
-export interface FieldChange {
-  prop: string;
-  before?: unknown;
-  after?: unknown; // missing key = the cell did not exist on that side
-}
-export interface DatabaseActivityEntry extends RecordRevision {
-  record_id: string;
-  record_title: string | null;
-  diffs: FieldChange[];
-}
-export interface DocVersionState {
-  id: string;
-  title: string;
-  body: string;
-  deleted: boolean;
-  version: string;
-}
-export interface RecordVersionState {
-  id: string;
-  database_id: string | null;
-  deleted: boolean;
-  data: Record<string, unknown>; // keyed by property id
-  version: string;
-}
-export interface RevertDocResult {
-  id: string;
-  changed: boolean;
-  restored: string;
-  version: string;
-  undeleted: boolean;
-}
-export interface RevertRecordResult {
-  id: string;
-  changed: boolean;
-  fields: string[];
-  undeleted: boolean;
-  restored: string;
-}
+// History types are produced verbatim by core (src/core/history.ts) and pass
+// through the HTTP layer unchanged — re-export, don't mirror.
+import type {
+  RevisionKind,
+  DocRevision,
+  RecordRevision,
+  FieldChange,
+  DatabaseActivityEntry,
+  DocumentVersionState as DocVersionState,
+  RecordVersionState,
+  RevertDocResult,
+  RevertRecordResult,
+} from "../core/history.ts";
+export type {
+  RevisionKind,
+  DocRevision,
+  RecordRevision,
+  FieldChange,
+  DatabaseActivityEntry,
+  DocVersionState,
+  RecordVersionState,
+  RevertDocResult,
+  RevertRecordResult,
+};
+
+// Server-shaped: assembled in routes.ts (no core row behind it).
 export interface NodeInfo {
   node_id: string;
   label: string | null;
   self: boolean;
 }
 
+// Not core SiteRow: the sites route adds the computed file_count.
 export interface Site {
   id: string;
   name: string;
@@ -169,6 +104,7 @@ export interface Site {
   created_hlc: string;
   file_count: number;
 }
+// Not core SiteFileRow: content is deliberately not sent to the browser.
 export interface SiteFile {
   id: string;
   site_id: string;

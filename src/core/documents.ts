@@ -4,6 +4,7 @@ import { emit, grouped } from "./crdt.ts";
 import { parseDocBlocks, serializeDocBlocks, reconcile, type DocBlock } from "./blocks.ts";
 import { keyBetween, keysBetween } from "./fracdex.ts";
 import { MhError } from "./errors.ts";
+import type { ColumnsOf } from "./sqlcols.ts";
 
 export interface DocumentRow {
   id: string;
@@ -16,6 +17,18 @@ export interface DocumentRow {
 }
 
 export type DocumentSummary = Omit<DocumentRow, "body">;
+
+export const DOCUMENT_COLS = [
+  "id", "title", "body", "database_id", "parent_id", "created_hlc", "order_key",
+] as const;
+const _documentCols: ColumnsOf<DocumentRow, typeof DOCUMENT_COLS> = DOCUMENT_COLS;
+const DOCUMENT_SELECT = DOCUMENT_COLS.join(", ");
+
+const DOC_SUMMARY_COLS = [
+  "id", "title", "database_id", "parent_id", "created_hlc", "order_key",
+] as const;
+const _docSummaryCols: ColumnsOf<DocumentSummary, typeof DOC_SUMMARY_COLS> = DOC_SUMMARY_COLS;
+const DOC_SUMMARY_SELECT = DOC_SUMMARY_COLS.join(", ");
 
 interface BlockRow {
   id: string;
@@ -141,9 +154,7 @@ export const createDocument = grouped(function createDocument(
 
 export function getDocument(db: DbDriver, id: string): DocumentRow | null {
   return db
-    .query(
-      "SELECT id, title, body, database_id, parent_id, created_hlc, order_key FROM documents WHERE id = ? AND __deleted = 0",
-    )
+    .query(`SELECT ${DOCUMENT_SELECT} FROM documents WHERE id = ? AND __deleted = 0`)
     .get(id) as DocumentRow | null;
 }
 
@@ -155,8 +166,7 @@ export function listDocuments(
   db: DbDriver,
   opts: { database_id?: string; parent_id?: string } = {},
 ): DocumentSummary[] {
-  const cols =
-    "SELECT id, title, database_id, parent_id, created_hlc, order_key FROM documents WHERE __deleted = 0";
+  const cols = `SELECT ${DOC_SUMMARY_SELECT} FROM documents WHERE __deleted = 0`;
   if (opts.parent_id !== undefined)
     return db
       .query(`${cols} AND parent_id = ? ${ORDER_BY}`)

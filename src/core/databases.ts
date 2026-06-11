@@ -4,6 +4,7 @@ import { emit, grouped } from "./crdt.ts";
 import { MhError } from "./errors.ts";
 import { addProperty, listProperties, type PropertyConfig } from "./properties.ts";
 import { createRecord, listRecords } from "./records.ts";
+import type { ColumnsOf } from "./sqlcols.ts";
 
 export interface DatabaseRow {
   id: string;
@@ -11,6 +12,10 @@ export interface DatabaseRow {
   icon: string | null;
   created_hlc: string;
 }
+
+export const DATABASE_COLS = ["id", "name", "icon", "created_hlc"] as const;
+const _databaseCols: ColumnsOf<DatabaseRow, typeof DATABASE_COLS> = DATABASE_COLS;
+const DATABASE_SELECT = DATABASE_COLS.join(", ");
 
 export const createDatabase = grouped(function createDatabase(
   db: DbDriver,
@@ -74,17 +79,13 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
 
 export function getDatabase(db: DbDriver, id: string): DatabaseRow | null {
   return db
-    .query(
-      "SELECT id, name, icon, created_hlc FROM databases WHERE id = ? AND __deleted = 0",
-    )
+    .query(`SELECT ${DATABASE_SELECT} FROM databases WHERE id = ? AND __deleted = 0`)
     .get(id) as DatabaseRow | null;
 }
 
 export function listDatabases(db: DbDriver): DatabaseRow[] {
   return db
-    .query(
-      "SELECT id, name, icon, created_hlc FROM databases WHERE __deleted = 0 ORDER BY created_hlc",
-    )
+    .query(`SELECT ${DATABASE_SELECT} FROM databases WHERE __deleted = 0 ORDER BY created_hlc`)
     .all() as DatabaseRow[];
 }
 

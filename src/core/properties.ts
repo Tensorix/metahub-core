@@ -4,6 +4,7 @@ import { emit, grouped } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { ensurePropIndex } from "./indexing.ts";
 import { MhError } from "./errors.ts";
+import type { ColumnsOf } from "./sqlcols.ts";
 
 export type PropType =
   | "text"
@@ -41,6 +42,11 @@ export interface PropertyRow {
   config: PropertyConfig | null;
   position: number;
 }
+
+// SQL returns config as a JSON string; rows are parsed into PropertyRow after.
+export const PROPERTY_COLS = ["id", "database_id", "name", "type", "config", "position"] as const;
+const _propertyCols: ColumnsOf<PropertyRow, typeof PROPERTY_COLS> = PROPERTY_COLS;
+const PROPERTY_SELECT = PROPERTY_COLS.join(", ");
 
 function validateConfig(type: PropType, config: PropertyConfig | undefined): void {
   if (type === "select" || type === "multi_select") {
@@ -102,9 +108,7 @@ export const addProperty = grouped(function addProperty(
 
 export function getProperty(db: DbDriver, id: string): PropertyRow | null {
   const row = db
-    .query(
-      "SELECT id, database_id, name, type, config, position FROM properties WHERE id = ? AND __deleted = 0",
-    )
+    .query(`SELECT ${PROPERTY_SELECT} FROM properties WHERE id = ? AND __deleted = 0`)
     .get(id) as (Omit<PropertyRow, "config"> & { config: string | null }) | null;
   if (!row) return null;
   return { ...row, config: row.config ? (JSON.parse(row.config) as PropertyConfig) : null };
@@ -113,7 +117,7 @@ export function getProperty(db: DbDriver, id: string): PropertyRow | null {
 export function listProperties(db: DbDriver, databaseId: string): PropertyRow[] {
   const rows = db
     .query(
-      "SELECT id, database_id, name, type, config, position FROM properties WHERE database_id = ? AND __deleted = 0 ORDER BY position",
+      `SELECT ${PROPERTY_SELECT} FROM properties WHERE database_id = ? AND __deleted = 0 ORDER BY position`,
     )
     .all(databaseId) as (Omit<PropertyRow, "config"> & { config: string | null })[];
   return rows.map((r) => ({

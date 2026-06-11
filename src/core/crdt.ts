@@ -3,6 +3,7 @@ import { getNodeId } from "./node.ts";
 import { nextHlc, observeHlc } from "./hlc.ts";
 import { serializeDocBlocks } from "./blocks.ts";
 import { randomSuffix } from "./ids.ts";
+import type { ColumnsOf } from "./sqlcols.ts";
 
 // A single field assignment — the unit of replication. `value` is JSON-encoded
 // (or null). `dataset`/`row_id`/`col` identify the CRDT register. `txn` groups
@@ -17,6 +18,11 @@ export interface Change {
   value: string | null;
   txn?: string | null;
 }
+
+/** Oplog SELECT list, locked to the Change interface (also reused by history). */
+export const CHANGE_COLS = ["hlc", "node_id", "dataset", "row_id", "col", "value", "txn"] as const;
+const _changeCols: ColumnsOf<Change, typeof CHANGE_COLS> = CHANGE_COLS;
+export const CHANGE_SELECT = CHANGE_COLS.join(", ");
 
 // Current change group. Core mutations are synchronous and single-threaded, so
 // a module-level slot (set around each public mutator via grouped()) is enough.
@@ -256,9 +262,7 @@ export function ingest(db: DbDriver, changes: Change[]): number {
 /** All oplog changes with HLC strictly greater than `since` (test/debug helper). */
 export function changesSince(db: DbDriver, since: string): Change[] {
   return db
-    .query(
-      "SELECT hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE hlc > ? ORDER BY hlc",
-    )
+    .query(`SELECT ${CHANGE_SELECT} FROM crdt_changes WHERE hlc > ? ORDER BY hlc`)
     .all(since) as Change[];
 }
 
@@ -296,7 +300,7 @@ export function changesAfterSeq(
   const limitSql = opts.limit != null && opts.limit > 0 ? ` LIMIT ${Math.floor(opts.limit)}` : "";
   const rows = db
     .query(
-      `SELECT rowid AS seq, hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE ${where} ORDER BY rowid${limitSql}`,
+      `SELECT rowid AS seq, ${CHANGE_SELECT} FROM crdt_changes WHERE ${where} ORDER BY rowid${limitSql}`,
     )
     .all(seq, ...exclude) as (Change & { seq: number })[];
 
