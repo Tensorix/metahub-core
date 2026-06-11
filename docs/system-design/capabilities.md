@@ -272,6 +272,8 @@ mh sync http://host:7777
 - 基于 rowid cursor 防止 HLC 漂移漏同步。
 - 通过 CRDT oplog 最终一致。
 - **多设备配对 + 自动同步**:一次性配对码引导、交换长期 per-peer 凭据,server 内置定时器周期性双向同步已配对 peer(默认 30s);`/sync` 鉴权(主 token 或配对凭据)。统一入口 `mh config`(方向键交互向导 `@clack/prompts` + `--flag`)/ WebUI 设置页。撤销:`peer rm`(连带吊销)/ `grant revoke`。见 [11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md)。
+- **浏览器离线副本(PWA)**:WebUI 设置页一键启用——自助配对(页面持主 token 自己铸码兑换凭据,在「已授权设备」可单独吊销)、按 `limit` 分页水合全量 oplog 至 OPFS、之后读写走本地 + 后台 `syncWithPeer()`,离线可查看编辑全部内容(含托管站点页的读写),回网块级合并。需 HTTPS(secure context)+ OPFS(Safari 17+);不满足时设置页显示原因并自动回落纯在线模式。见 [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
+- **同步分页**:`/sync` 请求可带 `limit`(分页拉取)与 `exclude_datasets`(部分副本;协议就绪,设置 UI 未开),游标保证永不回退。
 
 ```bash
 mh config peer code                                          # 生成一次性配对码
@@ -281,10 +283,10 @@ mh config peer list|sync|enable|disable|rm   |   mh config grant list|revoke
 
 当前未实现:
 
-- 大批量分页同步。
 - 冲突解释或用户可见 diff。
-- blob 按需同步协议。
-- 配对凭据过期(目前靠撤销管理)、`/api/pair` 限频、传输层 TLS(明文 Bearer,需可信网络/前置反代)。
+- blob 按需同步协议(站点 blob 文件离线 404)。
+- 配对凭据过期(目前靠撤销管理)、`/api/pair` 限频。
+- TLS 已可由 `--tls-cert/--tls-key` 直出或反代承担;裸 HTTP 下凭据仍是明文 Bearer,需可信网络。
 
 ### 文件导出/导入
 
@@ -315,8 +317,14 @@ mh sync rows.csv  <db-ref>     # 导入 CSV → 数据表（有 id 列则按 id 
 已实现(随 `mh --server` 一起提供):
 
 ```text
-GET  /                       # 浏览器 WebUI（Preact 单页应用）
+GET  /                       # 浏览器 WebUI（Preact 单页应用，可安装 PWA）
 GET  /webui.js               # WebUI 应用 bundle（懒加载）
+GET  /sw.js                  # Service Worker（离线壳 + 离线网关；版本=js+css 哈希内插）
+GET  /db-worker.js           # 浏览器副本宿主（sqlite-wasm + OPFS，跑同一份 core）
+GET  /sqlite3.wasm           # SQLite WASM（SW 独立 cache-first）
+GET  /mh-runtime.js          # 注入式页面运行时（token shim + SW 注册 + 离线 RPC 桥）
+GET  /metahub-sdk.js         # 站点数据 SDK（可选语法糖，裸 fetch 等价）
+GET  /manifest.webmanifest  /icons/*   # PWA 安装元数据（豁免 token 门禁）
 GET  /docs  /docs.json       # OpenAPI 文档（Scalar UI / 规范）
 
 GET    /api/databases        POST /api/databases
@@ -369,12 +377,13 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
 - **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化；文档表格、数学、脚注、callout、TOC。
 - **静态站点托管**:AI agent 用 `mh site create|put|publish|list|files|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联,大二进制走 `cache/` blob、字节暂本机)。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
   - **WebUI「站点管理」页**(v2.9,2026-06-09):侧栏页脚入口 → 卡片列表 + 右侧 peek 文件抽屉(上传/预览/删除)+ 应用内 iframe 预览(直指已 serve 的 `/sites/<name>/`);配套补了 `POST/PATCH/DELETE /api/site*` HTTP 写接口(建站/改名·改标题/删站/传文件/删文件),仍是同一套 `emit()`。见 [08-agent-sites §6](../impl-context/08-agent-sites/design.md)。
-- **鉴权**:`--debug` 全开;否则单 token 守护每个请求,经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带;浏览器走解锁页(存 `localStorage`+cookie)+ 注入 fetch 套壳。**token 默认持久化在 `~/.metahub`**(重启复用),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token [show|refresh]` 的 refresh 时轮换;轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 无感换新(解锁页静默续期 + 套壳 401 自动重试)。`--token`/`METAHUB_TOKEN` 则为固定、不持久化、不过期的静态覆盖。默认绑 `127.0.0.1`,`--host` 可改。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)。
+  - **站点读写数据正式化 + 离线**(v3,2026-06-11):站点页同源调用 `/api/*` 的写路径纳入契约;可选 SDK `/metahub-sdk.js`(类型化方法 + code 化错误 + token 续期,裸 fetch 永远等价)。启用离线副本的浏览器里站点页**离线可打开**(含从未访问过的——站点文件随 oplog 在副本里,SW 网关从副本 serve,冷启动走自举壳页)、**离线可读写数据**,回网自动同步。信任模型显式化:站点同源=持有完整 hub 读写权限,只发布自产站点。见 [08-agent-sites v3](../impl-context/08-agent-sites/design.md) / [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
+- **PWA 离线副本**:设置页「离线副本」开关(环境不满足时显示具体原因:HTTP 非安全上下文 / 无 OPFS);启用=自助配对+全量水合,之后本地优先(Proxy 门面,HTTP 回落永久保留)、离线编辑块级合并、离线 FTS 搜索、`synced` 事件驱动编辑器/表格原位合并刷新;「立即同步/停用/重置本地副本」与占用显示(`storage.estimate()`),水合后申请 `storage.persist()`。多标签 Web Locks 选主 + BroadcastChannel 代理。见 [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
+- **鉴权**:`--debug` 全开;否则单 token 守护每个请求,经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带;浏览器走解锁页(存 `localStorage`+cookie)+ 注入 `/mh-runtime.js` 页面运行时(token 套壳 + SW 注册 + 离线桥;PWA 安装元数据豁免门禁)。**token 默认持久化在 `~/.metahub`**(重启复用),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token [show|refresh]` 的 refresh 时轮换;轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 无感换新(解锁页静默续期 + 套壳 401 自动重试)。`--token`/`METAHUB_TOKEN` 则为固定、不持久化、不过期的静态覆盖。默认绑 `127.0.0.1`,`--host` 可改。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)。
 
 当前未实现/限制:
 
-- `/sync`(CRDT 复制端点)本身仍无鉴权;token 门禁覆盖其余请求面。
-- blob 字节不随 oplog 复制(大二进制站点资源跨机需另传)。
+- blob 字节不随 oplog 复制(大二进制站点资源跨机需另传,浏览器副本离线对其 404)。
 - 表格无分页、无范围/contains 过滤(沿用 `listRecords` 现状)。
 - 快速加属性仅支持 text/number/checkbox/date/url;select/relation 等需带配置的类型仍走 CLI。
 - 无并发编辑冲突的用户可见提示(底层 CRDT 仍按字段 LWW 收敛)。

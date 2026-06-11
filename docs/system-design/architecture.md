@@ -5,15 +5,15 @@
 ```text
 AI Agent / Human
         |
-        +----------------------------+
-        v                            v
-CLI (src/cli)              桌面端 (apps/desktop)
-  - citty command tree       - Electron 外壳
-  - JSON / human-readable      + Bun 边车跑 startServer()
-  - editor integration         - 窗口加载内嵌 WebUI
-        |                            |
-        v                            v
-Core API (src/core)
+        +----------------------------+----------------------------+
+        v                            v                            v
+CLI (src/cli)              桌面端 (apps/desktop)        浏览器 PWA(离线副本)
+  - citty command tree       - Electron 外壳              - WebUI / 托管站点页
+  - JSON / human-readable      + Bun 边车跑 startServer()   - Service Worker 网关
+  - editor integration         - 窗口加载内嵌 WebUI         - db-worker: sqlite-wasm+OPFS
+        |                            |                       跑同一份 core(经 DbDriver)
+        v                            v                            | POST /sync(配对凭据)
+Core API (src/core)  <───────────────────────────────────────────┘
   - databases / properties / records
   - documents / blocks
   - resolve (引用解析) / context (当前库)
@@ -23,21 +23,21 @@ Core API (src/core)
   - sync client/server
         |
         v
-SQLite + cache
+SQLite + cache                       浏览器侧: OPFS metahub.db(全量副本)
   ~/.metahub/metahub.db
   ~/.metahub/cache/
 ```
 
-当前实现把 CLI 和库能力共享在 `src/core` 中。CLI 只负责参数解析、输入解析、输出渲染和命令接线;业务写入都通过 core 完成。
+当前实现把 CLI 和库能力共享在 `src/core` 中。CLI 只负责参数解析、输入解析、输出渲染和命令接线;业务写入都通过 core 完成。core 的可移植子集(领域逻辑、CRDT、搜索、sync client)类型挂在 `DbDriver` 最小驱动接口(`src/core/driver.ts`)上——Bun 侧由 `bun:sqlite` 结构性满足,浏览器侧由 sqlite-wasm 适配器实现,**同一份领域代码在服务器与浏览器副本中执行**(见 [impl-context/16-pwa-offline](../impl-context/16-pwa-offline/design.md))。
 
 ## 运行时和分发
 
 已实现:
 
 - 运行时基于 Bun。
-- SQLite 使用 `bun:sqlite`。
-- HTTP 同步服务使用 `Bun.serve()`。
-- 构建脚本输出库入口 `dist/index.js` 和 CLI `dist/cli.js`。
+- SQLite 使用 `bun:sqlite`;可移植 core 模块类型挂 `DbDriver` 接口(`src/core/driver.ts`),浏览器副本用 sqlite-wasm(OPFS)实现同一接口。
+- HTTP 同步服务使用 `Bun.serve()`;`--tls-cert/--tls-key` 可直出 HTTPS(PWA 的 secure context 要求;推荐 Caddy/Tailscale Serve 反代)。
+- 构建脚本输出库入口 `dist/index.js`、CLI `dist/cli.js`,以及六件浏览器资产(webui.js / sw.js / db-worker.js / mh-runtime.js / metahub-sdk.js / sqlite3.wasm),统一三态解析(编译内嵌 > dev 按 mtime 重建 > dist 兄弟产物)。
 - `package.json` 暴露 `metahub` 和 `mh` 两个 bin。
 - 支持通过 `bun build --compile` 生成独立二进制。
 - 桌面端 `apps/desktop`(Electron + Bun 边车):外壳是 Electron(自带 Node 运行时),core/server 跑在 spawn 出的 Bun 边车里(因 core 依赖 `bun:sqlite` 等 Bun 专有 API,无法在 Electron 主进程直接运行),窗口加载边车在回环临时端口提供的内嵌 WebUI。还含「快速笔记」小窗(全局快捷键/托盘唤起、mac 半透明、可置顶):复用同一份 WebUI 的 `#quick` 路由 + 块编辑器,笔记是挂在通用 `parent_id` 下的普通文档,**core 不含 quicknote 概念**。详见 [impl-context/12-desktop-app](../impl-context/12-desktop-app/design.md)。
@@ -132,8 +132,10 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 - `POST /sync` 接收客户端 changes,服务端 ingest 后返回服务端游标之后的 changes。
 - 客户端用 `peers` 表记录 `pull_cursor` 和 `push_cursor`。
 - 游标基于 SQLite `rowid`,避免 HLC 时钟漂移导致漏同步。
+- 请求可带可选 `limit`(分页拉取——浏览器副本首次水合按 2000/轮循环)与 `exclude_datasets`(部分副本,协议就绪、UI 未开)。游标语义:分页未尽停在末行;扫尽跳到高水位(免重扫排除尾);**永不回退**(防 compact 后回拉旧数据)。
+- **浏览器也是一等节点**:启用「离线副本」的浏览器经自助配对持有可单独吊销的凭据,在 db-worker 里原样跑 `syncWithPeer()` 与服务器互同步(见下「PWA 离线架构」)。
 
-当前同步是最终一致的基础实现,还没有面向大量 oplog 的分页、压缩或差异优化。
+当前同步对大 oplog 已有分页,仍没有压缩传输或差异优化。
 
 ## HTTP 路由与 WebUI
 
@@ -143,7 +145,19 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 - **浏览器 WebUI**(`src/webui/`,Preact):根路径 `/` 返回内联 HTML 外壳,`/webui.js` 返回应用 bundle。服务模块 `src/core/sync/webui.ts` 经 `server.ts` 的 `await import("./webui.ts")` **懒加载**,优先读打包产物 `dist/webui.js`,开发态(从源码运行、无 dist)即时 `Bun.build` 兜底并缓存。v2 为 Notion-like 模块化应用(`app.tsx` 为唯一构建入口,拆 `api/icons/ui/blocks/markdown/sidebar/table/editor`):块级所见即所得文档编辑(前端逻辑块树支持嵌套列表、列表内段落/引用/代码块、代码语言名与 Markdown 快捷转换；保存为 body 走 `reconcileBody`,无需 block 级 API)、Notion-like 表格、文档树侧栏(拖拽改嵌套)、移动端适配。见 [07-webui](../impl-context/07-webui/implementation.md)。
 - **CLI 性能隔离**:WebUI 与 Preact 单独打包为 `dist/webui.js`,**不进入 `cli.js` 的启动 import 图**;懒加载使其仅在浏览器首次访问 `/` 时载入,普通 `mh <命令>` 启动不受影响。
 - **静态站点托管**(`src/core/sync/sites-serve.ts`,经 `server.ts` 懒加载):`GET /sites/<name>/<path...>` 按名字 resolve 站点、查 `site_files`(默认 `index.html`),返回字节 + MIME;站点经 `mh site` CLI 发布,文件经 `emit()` 进 CRDT(见 [08-agent-sites](../impl-context/08-agent-sites/design.md))。
-- **鉴权**(`src/core/sync/auth.ts`、`src/core/sync/token.ts`):fetch handler 顶部一处 token 门禁,`--debug` 跳过。`/sync` **不再豁免**——经 `acceptsSyncToken` 单独门禁,接受**主 token 或任一配对凭据**(旧的开放信任对等模型已移除,凭据由配对分发,见 `src/core/sync/pairing.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。仅 `/health`、`/auth/token`、`/api/pair` 豁免该 token 门禁(分别为:peer 健康检查;让持过期 token 者仍能换新;配对握手在 handler 内用一次性配对码自证)。其余请求需经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带 token。**token 默认持久化在 `~/.metahub` 的 `meta` 表**(非 `--token`/`METAHUB_TOKEN` 静态覆盖时),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token refresh` 时**惰性轮换**(以 DB 为单一来源、每请求读,故另一进程刷新立即生效);轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 换到新 token,实现浏览器**无感续期**。浏览器导航无 token 返回解锁页(存 `localStorage`+cookie,并先尝试 `/auth/token` 静默续期),其后 HTML 响应经 `withShim` 注入 fetch 套壳自动带 `Bearer`、并在 401 时自动换取并重试一次。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)。
+- **鉴权**(`src/core/sync/auth.ts`、`src/core/sync/token.ts`):fetch handler 顶部一处 token 门禁,`--debug` 跳过。`/sync` **不再豁免**——经 `acceptsSyncToken` 单独门禁,接受**主 token 或任一配对凭据**(旧的开放信任对等模型已移除,凭据由配对分发,见 `src/core/sync/pairing.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。仅 `/health`、`/auth/token`、`/api/pair` 豁免该 token 门禁(分别为:peer 健康检查;让持过期 token 者仍能换新;配对握手在 handler 内用一次性配对码自证)。其余请求需经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带 token。**token 默认持久化在 `~/.metahub` 的 `meta` 表**(非 `--token`/`METAHUB_TOKEN` 静态覆盖时),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token refresh` 时**惰性轮换**(以 DB 为单一来源、每请求读,故另一进程刷新立即生效);轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 换到新 token,实现浏览器**无感续期**。浏览器导航无 token 返回解锁页(存 `localStorage`+cookie,并先尝试 `/auth/token` 静默续期;响应带 `x-mh-unlock` 头供 Service Worker 识别拒缓存),其后 HTML 响应经 `withShim` 注入 `<script src="/mh-runtime.js">` 页面运行时——承接旧内联 fetch 套壳的 token 职责(自动带 `Bearer`、401 换取重试一次),并叠加 SW 注册与离线 RPC 桥(`--debug` 也注入,离线桥与 token 无关)。PWA 安装元数据(`/manifest.webmanifest`、`/icons/*`、`/sw.js`)豁免 token 门禁(浏览器抓取不带凭证,内容非敏感)。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)、[16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
+
+## PWA 离线架构
+
+浏览器(尤其手机加主屏的 PWA)可启用「离线副本」成为一等 CRDT 同步节点——弱网/离线下查看与编辑**全部**内容(含从未打开过的文档/数据表/托管站点),回网自动合并。完整设计与关键决策见 [impl-context/16-pwa-offline](../impl-context/16-pwa-offline/design.md);要点:
+
+- **立场:全量副本,不是请求缓存。** 否决了 REST 变更队列(块级合并退化整文档 LWW、客户端复刻冲突逻辑)与手写 IndexedDB 物化器(fork `crdt.ts` 语义必漂移);浏览器在 OPFS 跑 sqlite-wasm + **同一份 core**,离线编辑/冲突合并/历史/FTS 搜索都是既有代码换运行时。
+- **分层**:`/mh-runtime.js` 注入运行时(token shim + SW 注册 + RPC 桥)→ Service Worker(壳缓存 + 离线网关)→ `ReplicaBus`(Web Locks 选主 + BroadcastChannel 跨标签代理,sahpool 单连接故一浏览器一 worker)→ db-worker(`WasmDriver implements DbDriver`,SAVEPOINT 嵌套事务)。
+- **本地优先门面**:`api.ts` 导出的 `api` 是 Proxy——副本启用**且完成首次全量水合**后数据方法走本地,否则逐调用回落 HTTP(永久保留;管理面恒走 HTTP)。水合前绝不展示半空库。
+- **编辑语义**:本地路径不带 `if_match`(单写者不自我竞争;stale 是 HTTP 模式概念);远端变更经 `synced` 事件触发编辑器/表格的原位合并刷新(先 flush 未保存键入,块级 CRDT 兜底)。
+- **SW 网关**:`/api/*`、`/sites/*` 网络失败→映射为副本 op→经 MessageChannel 问页面 client 执行;**非 GET 永不超时竞速**(防双写);离线直开从未访问的站点走「自举壳页」——壳页自己从副本拉真实 HTML 并 `document.write` 原位替换。解锁页带 `x-mh-unlock` 头,SW 拒缓存(否则离线启动被砖)。
+- **约束**:需要 secure context(HTTPS 或 localhost;`--tls-cert/--tls-key` 直出或 Caddy/Tailscale Serve 反代,iPhone 需受信证书)+ OPFS(Safari 17+);iOS 非主屏访问有 ~7 天存储回收,主屏豁免。站点 blob 编码文件字节不进 oplog,离线 404。
+- **踩坑规约**:SW 源文件顶层变量禁用与 WorkerGlobalScope 属性同名的标识符(打包降级 `var` 会把原型 getter 遮蔽成 `undefined`,worker 评估期即死且页面无报错);SW 注册失败必须 `console.warn`。
 
 ## 历史与回滚架构
 

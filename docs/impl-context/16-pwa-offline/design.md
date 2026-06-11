@@ -20,7 +20,7 @@
 
 ## 2. 副本生命周期
 
-- **启用(设置页「离线副本」,每设备开关)**:自助配对——页面已持主 token,自己 `POST /api/pair/new` 铸一次性码,worker 兑换成**可单独吊销的 grant**(不发 `self_url`,服务器不会注册不可达的反向 peer),存本地 `peers` 表。grant 在服务端「已授权设备」列表可见/可吊销。
+- **启用(设置页「离线副本」,每设备开关)**:自助配对——页面已持主 token,自己 `POST /api/pair/new` 铸一次性码,worker 兑换成**可单独吊销的 grant**(不发 `self_url`,服务器不会注册不可达的反向 peer),存本地 `peers` 表。grant 在服务端「已授权设备」列表可见/可吊销。环境不满足时区块**不隐藏而是显示具体原因**(纯 http 非安全上下文→无 OPFS/SW,提示配 TLS;或浏览器无 OPFS)——默默消失的开关无法排查(实测手机经局域网 http 访问即踩中)。
 - **水合**:`SyncRequest` 新增可选 `limit`(分页,默认 2000/轮)与 `exclude_datasets`(部分副本,协议留好、UI 未开);`changesAfterSeq` 的 cursor 语义:分页未尽停在末行、扫尽跳到高水位(免重扫排除尾)、**永不回退**(防 compact 后回拉)。水合完成前 `replicaActive()` 为 false——**门面继续走 HTTP,绝不让用户看到半空的库**;完成后 `navigator.storage.persist()`。
 - **本地优先**:`api.ts` 导出的 `api` 是 Proxy 选择器——`replicaActive()` 且方法有本地实现(`data/local-api.ts`,worker RPC,错误翻成 `ApiError` 同码同状态)→ 本地;否则逐调用回落 HTTP(未启用/水合中/worker 故障/老浏览器,**永久保留**)。管理面(peers/grants/站点上传/version/配对)恒走 HTTP。
 - **同步循环**(worker 内):启动 / online / visibilitychange / 变更后防抖 800ms / 可见时 15s 轮询;每轮 pull 后从本地 oplog 高水位差分出 `synced` 事件(零 core 改动)。编辑器收到命中 documents/doc_blocks 的 `synced` → flush 未保存键入 → 本地重读 → version 没变即跳过,变了原位合并刷新(本地路径**不带 if_match**——单写者不自我竞争,stale 是 HTTP 模式概念);表格视图同理(单元格编辑中跳过)。
