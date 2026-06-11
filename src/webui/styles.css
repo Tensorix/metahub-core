@@ -1093,6 +1093,9 @@
      macOS vibrancy blur show through; a translucent panel keeps text readable.
      The top bar is the window drag region; its buttons opt back out. */
   body.quicknote { background:transparent; }
+  /* html carries an opaque bg for the iOS 26 Safari toolbar tint; the vibrancy
+     window needs the root transparent again or the blur is walled off. */
+  html:has(body.quicknote) { background:transparent; }
   /* The main app lays #app out as a flex row (sidebar + main); the quick-note
      route has a single child, so override to a full-bleed block or the panel
      shrinks to its content width and the window's vibrancy shows through. */
@@ -1111,6 +1114,10 @@
   .qn-body .doc { max-width:none; margin:0; padding:14px 22px 30vh; }
   .qn-body .doc-title { font-size:24px; margin-bottom:2px; }
   .qn-body .doc-meta { display:none; }
+  /* The narrow-width gutter hide is now gated on (pointer:coarse), which this
+     desktop window never matches — re-hide explicitly: quick notes offer no
+     block insert/drag handles (Enter / slash commands cover insertion). */
+  body.quicknote .block .gutter { display:none; }
   /* A native checkbox paints an opaque white box when unchecked, which breaks
      the window's vibrancy blur. Draw a custom box so the unchecked background
      stays transparent; checked falls back to the accent fill + checkmark. */
