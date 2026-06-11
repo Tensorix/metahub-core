@@ -291,8 +291,15 @@ function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => 
     setErrMsg("");
     try {
       const { latest: l } = await cu!.check();
+      if (!l) {
+        // null means the GitHub API call failed (offline / rate-limited), not
+        // "no update" — saying 已是最新 here would mask the failure.
+        setErrMsg("无法获取最新版本（网络不可用或 GitHub API 受限）");
+        setState("error");
+        return;
+      }
       const f = floor();
-      if (l && (!f || cmpVer(l, f) > 0)) {
+      if (!f || cmpVer(l, f) > 0) {
         setLatest(l);
         setState("available");
         onUpdatePending?.(true);

@@ -468,6 +468,8 @@ function registerIpc(): void {
   // launch will run; compared against the running core (/api/version) it tells
   // the UI whether an already-downloaded update is waiting for a restart.
   ipcMain.handle("core:installed-version", () => getInstalledCoreVersion());
+  // `latest: null` means the GitHub lookup failed (offline/rate-limited) — the
+  // WebUI renders that as 检查失败, never as 已是最新.
   ipcMain.handle("core:check", async () => {
     const release = await fetchLatestCoreRelease();
     return { latest: release ? tagToVersion(release.tag_name) : null };

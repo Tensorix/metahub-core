@@ -16,7 +16,8 @@ export interface MetahubDesktop {
   /**
    * Core sidecar auto-update bridge. `installedVersion` is the version staged on
    * disk (runs next launch); `check` hits GitHub for the latest release without
-   * downloading; `download` downloads+verifies+stages it (returns the staged
+   * downloading — `latest: null` means the lookup FAILED (offline/rate-limited),
+   * not "no update"; `download` downloads+verifies+stages it (returns the staged
    * version, or null if nothing newer); `restart` relaunches to apply a staged
    * core. Present only in the desktop app.
    */
