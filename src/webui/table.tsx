@@ -20,6 +20,7 @@ import {
   useDrawerTransition,
   toast,
 } from "./ui.tsx";
+import { SYNCED_EVENT } from "./data/replica.ts";
 import { Chip, CellDisplay, coerceInput, cellText } from "./cells.tsx";
 import { RecordHistoryView } from "./history.tsx";
 import { BoardView } from "./board.tsx";
@@ -63,6 +64,9 @@ export function DatabaseView({
   const [sort, setSort] = useState<{ id: string; desc: boolean } | null>(null);
   // seed: type-to-edit's first character — the editor opens with it, replacing the old value.
   const [editing, setEditing] = useState<{ rec: string; prop: string; seed?: string } | null>(null);
+  // Mirror for the SYNCED_EVENT handler below (its closure outlives renders).
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
   const [peek, setPeek] = useState<string | null>(null);
   const [cellSel, setCellSel] = useState<CellSel | null>(null);
   // Column width lives in prop.config.width (persisted + replicated); 180 is the default.
@@ -83,6 +87,20 @@ export function DatabaseView({
     setCellSel(null);
     setEditing(null);
     reload().catch((e) => onError(String(e.message)));
+  }, [db.id]);
+
+  // Local-replica mode: a background sync that touched records/properties may
+  // concern this table — re-read from the local store (cheap). Skipped while a
+  // cell editor is open so a refresh never eats an in-progress edit.
+  useEffect(() => {
+    const onSynced = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { datasets?: string[] } | undefined;
+      if (!detail?.datasets?.some((d) => d === "records" || d === "properties")) return;
+      if (editingRef.current) return;
+      reload().catch(() => {});
+    };
+    document.addEventListener(SYNCED_EVENT, onSynced);
+    return () => document.removeEventListener(SYNCED_EVENT, onSynced);
   }, [db.id]);
 
   // Optimistic: apply locally and exit edit mode synchronously, reconcile with

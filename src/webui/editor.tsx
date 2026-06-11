@@ -2,8 +2,9 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, ApiError } from "./api.ts";
+import { replicaActive, SYNCED_EVENT } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
-import { openMenu, MenuItem, MenuLabel, MenuSep, promptDialog } from "./ui.tsx";
+import { openMenu, MenuItem, MenuLabel, MenuSep, promptDialog, toast } from "./ui.tsx";
 import hljs from "highlight.js/lib/common";
 import { htmlToMarkdown } from "./html-md.ts";
 import {
@@ -298,6 +299,39 @@ export function DocView({
     return () => window.removeEventListener("beforeunload", warn);
   }, []);
 
+  // Remote-merge refresh (local-replica mode): a background sync that touched
+  // documents/doc_blocks may have merged edits into the open doc. Flush any
+  // pending keystrokes first (block-level CRDT merges them), then re-read; a
+  // version match means this doc wasn't affected. Replaces the HTTP-mode
+  // stale banner — there is no "conflict" to resolve, merge already happened.
+  useEffect(() => {
+    const onSynced = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { datasets?: string[] } | undefined;
+      if (!detail?.datasets?.some((d) => d === "documents" || d === "doc_blocks")) return;
+      void (async () => {
+        try {
+          if (dirtyRef.current) await flushSave();
+          const d = await api.getDocument(docId);
+          if (d.version != null && d.version === docVersionRef.current) return;
+          const focusId = focusedBlockId();
+          titleRef.current = d.title ?? "";
+          sourceRef.current = d.body ?? "";
+          blocksRef.current = blocksFromBody(d.body);
+          docVersionRef.current = d.version ?? null;
+          dirtyRef.current = false;
+          setConflict(false);
+          setVersion((v) => v + 1);
+          if (focusId) requestAnimationFrame(() => focusBlock(focusId, true));
+          toast("已合并其他设备的修改");
+        } catch {
+          // Doc deleted remotely or replica hiccup — the nav refresh handles it.
+        }
+      })();
+    };
+    document.addEventListener(SYNCED_EVENT, onSynced);
+    return () => document.removeEventListener(SYNCED_EVENT, onSynced);
+  }, [docId]);
+
   const scheduleSave = () => {
     dirtyRef.current = true;
     clearTimeout(saveTimer.current);
@@ -314,12 +348,17 @@ export function DocView({
   // Saves are serialized through a chain so a debounced save never races a
   // flush: the later save reads the version the earlier one returned, keeping
   // if_match conflicts to *real* concurrent edits (CLI, sync, other windows).
+  //
+  // Local-replica path: no if_match. A single local writer can't race itself,
+  // and remote edits arrive through /sync where the CRDT merges at block
+  // level — the stale/conflict machinery is an HTTP-mode concept. Remote
+  // changes to the open doc surface via the SYNCED_EVENT refresh below.
   const doSave = (opts: { force?: boolean } = {}) =>
     api
       .updateDocument(docId, {
         title: titleRef.current,
         body: snapshotMarkdown(),
-        ...(opts.force || docVersionRef.current == null
+        ...(opts.force || docVersionRef.current == null || replicaActive()
           ? {}
           : { if_match: docVersionRef.current }),
       })
