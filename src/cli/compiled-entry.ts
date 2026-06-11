@@ -17,6 +17,8 @@
 import webuiBundle from "../../dist/webui.js" with { type: "text" };
 import swBundle from "../../dist/sw.js" with { type: "text" };
 import dbWorkerBundle from "../../dist/db-worker.js" with { type: "text" };
+import runtimeBundle from "../../dist/mh-runtime.js" with { type: "text" };
+import sdkBundle from "../../dist/metahub-sdk.js" with { type: "text" };
 // `file` loader: the wasm is embedded in the compiled binary and the import
 // resolves to a readable virtual path at runtime.
 import wasmPath from "../../dist/sqlite3.wasm" with { type: "file" };
@@ -26,6 +28,8 @@ setWebuiBundle({
   js: webuiBundle,
   sw: swBundle,
   dbWorker: dbWorkerBundle,
+  runtime: runtimeBundle,
+  sdk: sdkBundle,
   wasm: new Uint8Array(await Bun.file(wasmPath).arrayBuffer()),
 });
 await import("./index.ts");

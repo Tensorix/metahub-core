@@ -57,20 +57,28 @@ const HTML = `<!doctype html>
 /** Bundles injected by `bun build --compile` binaries (e.g. the desktop
  *  sidecar), where neither a sibling dist/ nor the source tree exists at
  *  runtime — embedded at build time and handed in here. */
-let injectedJs: string | null = null;
-let injectedSw: string | null = null;
-let injectedDbWorker: string | null = null;
+const injected: Record<string, string | null> = {
+  js: null,
+  sw: null,
+  dbWorker: null,
+  runtime: null,
+  sdk: null,
+};
 let injectedWasm: ArrayBuffer | null = null;
 
 export function setWebuiBundle(bundle: {
   js: string;
   sw: string;
   dbWorker: string;
+  runtime: string;
+  sdk: string;
   wasm: Uint8Array;
 }): void {
-  injectedJs = bundle.js;
-  injectedSw = bundle.sw;
-  injectedDbWorker = bundle.dbWorker;
+  injected.js = bundle.js;
+  injected.sw = bundle.sw;
+  injected.dbWorker = bundle.dbWorker;
+  injected.runtime = bundle.runtime;
+  injected.sdk = bundle.sdk;
   // Normalize to a whole ArrayBuffer (what Response accepts under every lib).
   const w = bundle.wasm;
   injectedWasm =
@@ -78,14 +86,6 @@ export function setWebuiBundle(bundle: {
       ? (w.buffer as ArrayBuffer)
       : (w.slice().buffer as ArrayBuffer);
 }
-
-let cachedJs: string | null = null;
-/** Dev only: newest src/webui mtime baked into cachedJs (cache key). */
-let cachedJsMtime = 0;
-let cachedSw: string | null = null;
-let cachedSwMtime = 0;
-let cachedDbWorker: string | null = null;
-let cachedDbWorkerMtime = 0;
 
 /** Newest mtime across the browser-bundle sources (src/webui/**.ts[x]).
  *  ./server is skipped — server-side code never enters the browser bundle. */
@@ -100,37 +100,59 @@ function newestSourceMtime(dir: string): number {
   return newest;
 }
 
-/** Resolve the app bundle: embedded (compiled binary) > rebuild-on-change from
- *  source (dev) > prebuilt sibling dist/webui.js (packaged), process-cached. */
-async function getJs(): Promise<string> {
-  if (injectedJs != null) return injectedJs;
+/**
+ * One resolver per browser bundle, all with the same three-way strategy:
+ * embedded (compiled binary) > rebuild-on-change from source (dev: any newer
+ * source file triggers a rebuild, so a refresh is enough) > prebuilt dist
+ * sibling (packaged builds), process-cached.
+ */
+function bundleGetter(opts: {
+  key: keyof typeof injected;
+  /** Dev entrypoint, relative to this file. */
+  entry: string;
+  /** Prebuilt artifact name in dist/ (sibling of the compiled assets.js). */
+  dist: string;
+  /** Extra source dirs (relative to repo src/) the dev mtime scan must cover. */
+  extraDirs?: string[];
+}): () => Promise<string> {
+  let cached: string | null = null;
+  let cachedMtime = 0;
+  return async () => {
+    const fromBinary = injected[opts.key];
+    if (fromBinary != null) return fromBinary;
 
-  if (RUNNING_FROM_SOURCE) {
-    // Dev: rebuild whenever any source file is newer than the cached bundle,
-    // so a plain browser refresh picks up edits — no rebuild step, no restart.
-    const srcDir = fileURLToPath(new URL("..", import.meta.url));
-    const newest = newestSourceMtime(srcDir);
-    if (cachedJs == null || newest > cachedJsMtime) {
-      const entry = fileURLToPath(new URL("../app.tsx", import.meta.url));
-      const res = await Bun.build({ entrypoints: [entry], target: "browser" });
-      if (!res.success) throw new AggregateError(res.logs, "webui build failed");
-      cachedJs = await res.outputs[0]!.text();
-      cachedJsMtime = newest;
+    if (RUNNING_FROM_SOURCE) {
+      const srcDir = fileURLToPath(new URL("..", import.meta.url));
+      let newest = newestSourceMtime(srcDir);
+      for (const extra of opts.extraDirs ?? []) {
+        newest = Math.max(newest, newestSourceMtime(fileURLToPath(new URL(extra, import.meta.url))));
+      }
+      if (cached == null || newest > cachedMtime) {
+        const entry = fileURLToPath(new URL(opts.entry, import.meta.url));
+        const res = await Bun.build({ entrypoints: [entry], target: "browser" });
+        if (!res.success) throw new AggregateError(res.logs, `${opts.dist} build failed`);
+        cached = await res.outputs[0]!.text();
+        cachedMtime = newest;
+      }
+      return cached;
     }
-    return cachedJs;
-  }
 
-  if (cachedJs == null) {
-    const prebuilt = Bun.file(fileURLToPath(new URL("./webui.js", import.meta.url)));
-    if (!(await prebuilt.exists())) {
-      throw new Error(
-        "webui bundle missing: dist/webui.js was not built — run `bun run build`",
-      );
+    if (cached == null) {
+      const prebuilt = Bun.file(fileURLToPath(new URL(`./${opts.dist}`, import.meta.url)));
+      if (!(await prebuilt.exists())) {
+        throw new Error(`${opts.dist} missing: run \`bun run build\``);
+      }
+      cached = await prebuilt.text();
     }
-    cachedJs = await prebuilt.text();
-  }
-  return cachedJs;
+    return cached;
+  };
 }
+
+const getJs = bundleGetter({ key: "js", entry: "../app.tsx", dist: "webui.js" });
+const getSwRaw = bundleGetter({ key: "sw", entry: "../sw.ts", dist: "sw.js" });
+const getDbWorker = bundleGetter({ key: "dbWorker", entry: "../data/db-worker.ts", dist: "db-worker.js" });
+const getRuntime = bundleGetter({ key: "runtime", entry: "../runtime.ts", dist: "mh-runtime.js" });
+const getSdk = bundleGetter({ key: "sdk", entry: "../../sdk/client.ts", dist: "metahub-sdk.js", extraDirs: ["../../sdk"] });
 
 /** The stylesheet: read from disk per request in dev (so CSS edits land on the
  *  next refresh), the build-time inlined copy otherwise. */
@@ -141,34 +163,6 @@ async function getCss(): Promise<string> {
   return APP_CSS;
 }
 
-/** The service worker source, resolved like getJs(): embedded > dev rebuild >
- *  prebuilt dist/sw.js. Version interpolation happens in getSw() below. */
-async function getSwRaw(): Promise<string> {
-  if (injectedSw != null) return injectedSw;
-
-  if (RUNNING_FROM_SOURCE) {
-    const srcDir = fileURLToPath(new URL("..", import.meta.url));
-    const newest = newestSourceMtime(srcDir);
-    if (cachedSw == null || newest > cachedSwMtime) {
-      const entry = fileURLToPath(new URL("../sw.ts", import.meta.url));
-      const res = await Bun.build({ entrypoints: [entry], target: "browser" });
-      if (!res.success) throw new AggregateError(res.logs, "sw build failed");
-      cachedSw = await res.outputs[0]!.text();
-      cachedSwMtime = newest;
-    }
-    return cachedSw;
-  }
-
-  if (cachedSw == null) {
-    const prebuilt = Bun.file(fileURLToPath(new URL("./sw.js", import.meta.url)));
-    if (!(await prebuilt.exists())) {
-      throw new Error("sw bundle missing: dist/sw.js was not built — run `bun run build`");
-    }
-    cachedSw = await prebuilt.text();
-  }
-  return cachedSw;
-}
-
 /** /sw.js with its cache version stamped in: a hash of the current js+css, so
  *  any bundle change byte-diffs the worker (the browser's update trigger) and
  *  stale shell caches are dropped on activation. */
@@ -176,33 +170,6 @@ async function getSw(): Promise<string> {
   const [raw, js, css] = await Promise.all([getSwRaw(), getJs(), getCss()]);
   const version = new Bun.CryptoHasher("sha256").update(js).update(css).digest("hex").slice(0, 16);
   return raw.replaceAll("__MH_SW_VERSION__", version);
-}
-
-/** The DB worker (browser replica host), resolved like getJs(). */
-async function getDbWorker(): Promise<string> {
-  if (injectedDbWorker != null) return injectedDbWorker;
-
-  if (RUNNING_FROM_SOURCE) {
-    const srcDir = fileURLToPath(new URL("..", import.meta.url));
-    const newest = newestSourceMtime(srcDir);
-    if (cachedDbWorker == null || newest > cachedDbWorkerMtime) {
-      const entry = fileURLToPath(new URL("../data/db-worker.ts", import.meta.url));
-      const res = await Bun.build({ entrypoints: [entry], target: "browser" });
-      if (!res.success) throw new AggregateError(res.logs, "db-worker build failed");
-      cachedDbWorker = await res.outputs[0]!.text();
-      cachedDbWorkerMtime = newest;
-    }
-    return cachedDbWorker;
-  }
-
-  if (cachedDbWorker == null) {
-    const prebuilt = Bun.file(fileURLToPath(new URL("./db-worker.js", import.meta.url)));
-    if (!(await prebuilt.exists())) {
-      throw new Error("db-worker bundle missing: dist/db-worker.js was not built — run `bun run build`");
-    }
-    cachedDbWorker = await prebuilt.text();
-  }
-  return cachedDbWorker;
 }
 
 /** sqlite3.wasm bytes: embedded (compiled binary) > node_modules (dev) >
@@ -292,15 +259,17 @@ export async function serveWebui(req: Request): Promise<Response | null> {
       return new Response(`sqlite3.wasm unavailable: ${e}`, { status: 500 });
     }
   }
-  if (pathname === "/webui.js" || pathname === "/sw.js" || pathname === "/db-worker.js") {
+  const script: Record<string, () => Promise<string>> = {
+    "/webui.js": getJs,
+    "/sw.js": getSw,
+    "/db-worker.js": getDbWorker,
+    "/mh-runtime.js": getRuntime,
+    "/metahub-sdk.js": getSdk,
+  };
+  const getter = script[pathname];
+  if (getter) {
     try {
-      const body =
-        pathname === "/sw.js"
-          ? await getSw()
-          : pathname === "/db-worker.js"
-            ? await getDbWorker()
-            : await getJs();
-      return asset(body, "text/javascript; charset=utf-8");
+      return asset(await getter(), "text/javascript; charset=utf-8");
     } catch (e) {
       // This catch is the only thing between the error and oblivion: Bun only
       // auto-logs *uncaught* handler errors, and we catch this one. Log the full

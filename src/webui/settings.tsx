@@ -10,6 +10,7 @@ import {
   onReplicaStatus,
   enableReplica,
   disableReplica,
+  resetReplica,
   requestSync,
 } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
@@ -95,8 +96,46 @@ function OfflineReplica() {
   const [enabled, setEnabled] = useState(replicaEnabled());
   const [st, setSt] = useState<ReplicaStatus>(replicaStatus());
   const [busy, setBusy] = useState(false);
+  const [usage, setUsage] = useState<string | null>(null);
 
   useEffect(() => onReplicaStatus((s) => setSt({ ...s })), []);
+
+  // Origin storage footprint (OPFS replica + SW caches), refreshed per sync.
+  useEffect(() => {
+    if (!enabled || !navigator.storage?.estimate) return;
+    let live = true;
+    const refresh = () =>
+      navigator.storage.estimate().then((e) => {
+        if (live && e.usage != null) setUsage((e.usage / 1024 / 1024).toFixed(1));
+      });
+    void refresh();
+    const off = onReplicaStatus(() => void refresh());
+    return () => {
+      live = false;
+      off();
+    };
+  }, [enabled]);
+
+  const reset = async () => {
+    const ok = await confirmDialog({
+      title: "重置本地副本",
+      message:
+        "将删除此浏览器里的全部本地数据（服务器数据不受影响），并停用离线副本。未同步的本地修改会丢失——建议先「立即同步」。",
+      confirmLabel: "删除并重置",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await resetReplica();
+      setEnabled(false);
+      toast("本地副本已重置");
+    } catch (e) {
+      toast(`重置失败：${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const enable = async () => {
     setBusy(true);
@@ -159,6 +198,9 @@ function OfflineReplica() {
             <button class="btn btn-ghost" disabled={busy} onClick={disable}>
               停用
             </button>
+            <button class="btn btn-ghost" disabled={busy} onClick={reset}>
+              重置本地副本
+            </button>
           </>
         ) : (
           <button class="btn btn-primary" disabled={busy} onClick={enable}>
@@ -169,6 +211,7 @@ function OfflineReplica() {
       <div class="peer-sub" style="margin-top:8px">
         {statusLine()}
         {enabled && st.node ? ` · 节点 ${st.node}` : ""}
+        {enabled && usage ? ` · 本地占用 ${usage} MB` : ""}
       </div>
     </div>
   );

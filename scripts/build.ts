@@ -52,19 +52,26 @@ if (!swResult.success) {
   throw new Error("Service worker build failed");
 }
 
-// Browser-replica DB worker (sqlite-wasm host) + the wasm binary it loads.
-const workerResult = await Bun.build({
-  entrypoints: ["src/webui/data/db-worker.ts"],
-  outdir,
-  target: "browser",
-  format: "esm",
-  minify: true,
-  naming: "db-worker.js",
-});
-
-if (!workerResult.success) {
-  console.error(workerResult.logs);
-  throw new Error("DB worker build failed");
+// Browser-replica DB worker (sqlite-wasm host) + the wasm binary it loads,
+// the injected page runtime, and the sites data SDK.
+const browserBundles: [entry: string, name: string][] = [
+  ["src/webui/data/db-worker.ts", "db-worker.js"],
+  ["src/webui/runtime.ts", "mh-runtime.js"],
+  ["src/sdk/client.ts", "metahub-sdk.js"],
+];
+for (const [entry, name] of browserBundles) {
+  const r = await Bun.build({
+    entrypoints: [entry],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: name,
+  });
+  if (!r.success) {
+    console.error(r.logs);
+    throw new Error(`${name} build failed`);
+  }
 }
 
 const wasmSrc = join(

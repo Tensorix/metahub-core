@@ -113,8 +113,10 @@ function App() {
     if (!window.isSecureContext) return;
     const hadController = navigator.serviceWorker.controller != null;
     let notified = false;
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      /* registration is progressive enhancement; never block the app */
+    navigator.serviceWorker.register("/sw.js").catch((e) => {
+      // Progressive enhancement — never block the app — but warn: a silent
+      // failure here silently costs offline support.
+      console.warn("[webui] service worker registration failed —", e);
     });
     const onChange = () => {
       if (!hadController || notified) return;

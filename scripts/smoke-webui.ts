@@ -44,6 +44,15 @@ export async function smokeWebui(binaryPath: string): Promise<void> {
     const mf = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`);
     if (mf.status !== 200) throw new Error(`/manifest.webmanifest → ${mf.status} (expected 200)`);
 
+    // Offline-replica surface: the DB worker, its wasm, the injected page
+    // runtime, and the sites SDK must all serve from the embedded bundles.
+    for (const p of ["/db-worker.js", "/sqlite3.wasm", "/mh-runtime.js", "/metahub-sdk.js"]) {
+      const r = await fetch(`http://127.0.0.1:${port}${p}`);
+      if (r.status !== 200) throw new Error(`${p} → ${r.status} (expected 200): ${await r.text()}`);
+      const len = (await r.arrayBuffer()).byteLength;
+      if (len === 0) throw new Error(`${p} body is empty`);
+    }
+
     console.log(`✅ webui smoke ok (${(body.length / 1024).toFixed(0)}KB app, ${(swBody.length / 1024).toFixed(1)}KB sw) — ${binaryPath}`);
   } finally {
     proc.kill("SIGKILL");

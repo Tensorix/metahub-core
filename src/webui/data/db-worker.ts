@@ -68,6 +68,7 @@ import {
   listDatabaseActivity,
 } from "../../core/history.ts";
 import { search } from "../../core/search.ts";
+import { resolveSite, getFileRow, type FileEncoding } from "../../core/sites-core.ts";
 
 // ---- protocol ----------------------------------------------------------------
 
@@ -114,13 +115,18 @@ function setStatus(patch: Partial<ReplicaStatus>): void {
 
 // ---- boot ----------------------------------------------------------------------
 
+let poolUtil: { wipeFiles(): Promise<unknown> } | null = null;
+let oo1Db: { close(): void } | null = null;
+
 const ready: Promise<void> = (async () => {
   // No init options: the emscripten glue resolves sqlite3.wasm relative to
   // import.meta.url, which for the bundled worker (/db-worker.js) is exactly
   // the /sqlite3.wasm the server provides.
   const sqlite3 = await sqlite3InitModule();
-  const poolUtil = await sqlite3.installOpfsSAHPoolVfs({ name: "metahub-replica" });
-  const oo1 = new poolUtil.OpfsSAHPoolDb("/metahub.db") as unknown as Oo1Db;
+  const pool = await sqlite3.installOpfsSAHPoolVfs({ name: "metahub-replica" });
+  poolUtil = pool as unknown as { wipeFiles(): Promise<unknown> };
+  const oo1 = new pool.OpfsSAHPoolDb("/metahub.db") as unknown as Oo1Db & { close(): void };
+  oo1Db = oo1;
   const driver = new WasmDriver(oo1);
   initSchema(driver);
   db = driver;
@@ -325,6 +331,38 @@ const ops: Record<string, Op> = {
   revertDocument: (id: string, to: string, ifMatch?: string) =>
     revertDocument(db!, id, to, { ifMatch }),
   deleteDocument: (id: string) => ({ ok: deleteDocument(db!, id) }),
+
+  // sites (offline serving: the SW asks for raw rows; blob-encoded content
+  // can't replicate — its bytes live in the server's on-disk store — so it
+  // resolves null and 404s offline)
+  siteFile: (
+    name: string,
+    path: string,
+  ): { content_type: string; encoding: FileEncoding; content: string | null } | null => {
+    const d = db!;
+    let siteId: string;
+    try {
+      siteId = resolveSite(d, name).id;
+    } catch {
+      return null;
+    }
+    const row = getFileRow(d, siteId, path);
+    if (!row || row.encoding === "blob") return null;
+    return row;
+  },
+
+  // wipe the local replica (settings → 重置本地副本): close the pool and
+  // delete its OPFS files; the page terminates this worker afterwards.
+  reset: async () => {
+    try {
+      oo1Db?.close();
+    } catch {
+      /* already closed */
+    }
+    db = null;
+    await poolUtil?.wipeFiles();
+    return { ok: true };
+  },
 
   // nodes + search
   nodes: () => {

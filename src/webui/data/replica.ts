@@ -1,15 +1,13 @@
-// Main-thread client for the browser replica (db-worker.ts): worker lifecycle,
-// RPC plumbing, status tracking, and the enable/disable (pair/unpair) flows.
-// The decision of WHEN to route reads/writes here lives in local-api.ts; this
-// module only manages the channel.
-//
-// Single-instance by design: opfs-sahpool allows one open connection per
-// origin, so a second tab's worker fails to boot, lands in state "error", and
-// that tab keeps using the HTTP api. (Web Locks leader election is the
-// planned upgrade — see docs/system-design.)
+// Main-thread client for the browser replica: app-facing status store, the
+// enable/disable (pair/unpair) flows, DOM event fan-out, and the service
+// worker bridge. Transport — who owns the DB worker, cross-tab proxying — is
+// ReplicaBus (replica-bus.ts): this tab is either the leader (direct worker)
+// or a follower (BroadcastChannel to the leader), decided by a Web Lock.
+// The decision of WHEN to route reads/writes locally lives in local-api.ts.
 
 import { authFetch, NAV_INVALIDATE } from "../api.ts";
-import type { RpcResponse, ReplicaStatus, WorkerEvent } from "./db-worker.ts";
+import { getReplicaBus, BusError } from "./replica-bus.ts";
+import type { ReplicaStatus, WorkerEvent } from "./db-worker.ts";
 
 /** Fired on `document` after a sync pulled remote changes; detail carries
  *  `{ datasets, rowIds }` so open views can refresh what they show. */
@@ -17,13 +15,6 @@ export const SYNCED_EVENT = "mh-synced";
 
 const ENABLED_KEY = "mh_replica";
 const HYDRATED_KEY = "mh_replica_hydrated";
-
-let worker: Worker | null = null;
-let nextId = 0;
-const pending = new Map<
-  number,
-  { resolve: (v: unknown) => void; reject: (e: Error) => void }
->();
 
 export class ReplicaError extends Error {
   constructor(
@@ -35,6 +26,7 @@ export class ReplicaError extends Error {
   }
 }
 
+let started = false;
 let status: ReplicaStatus = { state: "booting", paired: false, node: null };
 const statusListeners = new Set<(s: ReplicaStatus) => void>();
 
@@ -65,26 +57,23 @@ export function replicaEnabled(): boolean {
   return flag(ENABLED_KEY);
 }
 
-/** Route reads/writes locally only when the worker is alive AND the replica
- *  has completed at least one full sync — before that the local DB would show
- *  an empty (or stale-partial) hub, which is worse than staying online. */
+/** Route reads/writes locally only when the replica is running AND has
+ *  completed at least one full sync — before that the local DB would show an
+ *  empty (or stale-partial) hub, which is worse than staying online. */
 export function replicaActive(): boolean {
-  return replicaEnabled() && flag(HYDRATED_KEY) && worker != null && status.state !== "error";
+  return replicaEnabled() && flag(HYDRATED_KEY) && started && status.state !== "error";
 }
 
-function handleMessage(e: MessageEvent): void {
-  const d = e.data as RpcResponse | WorkerEvent;
-  if ("id" in d) {
-    const p = pending.get(d.id);
-    if (!p) return;
-    pending.delete(d.id);
-    if (d.ok) p.resolve(d.result);
-    else p.reject(new ReplicaError(d.error.message, d.error.code));
-    return;
-  }
+function handleEvent(d: WorkerEvent): void {
   if (d.event === "status") {
     status = d.status;
-    if (d.status.lastSync?.ok) setFlag(HYDRATED_KEY, true);
+    if (status.lastSync?.ok && !flag(HYDRATED_KEY)) {
+      setFlag(HYDRATED_KEY, true);
+      // Ask the browser not to evict the freshly hydrated replica under
+      // storage pressure (Chrome/Firefox honor this; Safari ties persistence
+      // to home-screen installs).
+      void navigator.storage?.persist?.().catch(() => {});
+    }
     for (const fn of statusListeners) fn(status);
     return;
   }
@@ -96,17 +85,21 @@ function handleMessage(e: MessageEvent): void {
   }
 }
 
-/** Spawn the worker (idempotent). Boot failures surface via status. */
+/** Join the replica bus (idempotent): leadership election happens inside the
+ *  bus; this wires events, sync triggers, and the SW bridge for this tab. */
 export function startReplica(): void {
-  if (worker || typeof Worker === "undefined") return;
-  status = { state: "booting", paired: false, node: null };
-  worker = new Worker("/db-worker.js", { type: "module" });
-  worker.onmessage = handleMessage;
-  worker.onerror = () => {
-    status = { ...status, state: "error", error: "worker crashed" };
-    for (const fn of statusListeners) fn(status);
-  };
-  // Nudge a sync whenever connectivity or visibility return.
+  if (started || typeof Worker === "undefined") return;
+  started = true;
+  const bus = getReplicaBus();
+  bus.onEvent(handleEvent);
+  bus.start();
+  // Late joiner (follower tab): pull the current status once instead of
+  // waiting for the next transition broadcast.
+  void bus
+    .call<ReplicaStatus>("status")
+    .then((s) => handleEvent({ event: "status", status: s }))
+    .catch(() => {});
+  installSwBridge();
   window.addEventListener("online", requestSync);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") requestSync();
@@ -114,16 +107,16 @@ export function startReplica(): void {
 }
 
 export function call<T>(op: string, ...args: unknown[]): Promise<T> {
-  if (!worker) return Promise.reject(new ReplicaError("replica not running", undefined));
-  const id = ++nextId;
-  return new Promise<T>((resolve, reject) => {
-    pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-    worker!.postMessage({ id, op, args });
-  });
+  if (!started) return Promise.reject(new ReplicaError("replica not running", undefined));
+  return getReplicaBus()
+    .call<T>(op, ...args)
+    .catch((e) => {
+      throw e instanceof BusError ? new ReplicaError(e.message, e.code) : e;
+    });
 }
 
 export function requestSync(): void {
-  if (worker && status.paired) void call("sync").catch(() => {});
+  if (started && status.paired) void call("sync").catch(() => {});
 }
 
 function waitReady(timeoutMs = 30_000): Promise<void> {
@@ -147,10 +140,10 @@ function waitReady(timeoutMs = 30_000): Promise<void> {
   });
 }
 
-/** Enable offline replica for this browser: boot the worker, self-pair (the
- *  page already holds the master token, so it mints the one-time code itself),
- *  then kick off hydration. Resolves once pairing succeeds — hydration
- *  progress streams via status events. */
+/** Enable offline replica for this browser: join the bus, self-pair (the page
+ *  already holds the master token, so it mints the one-time code itself), then
+ *  kick off hydration. Resolves once pairing succeeds — hydration progress
+ *  streams via status events. */
 export async function enableReplica(): Promise<void> {
   startReplica();
   await waitReady();
@@ -170,15 +163,25 @@ export async function disableReplica(): Promise<void> {
   setFlag(ENABLED_KEY, false);
   setFlag(HYDRATED_KEY, false);
   try {
-    if (worker) await call("unpair");
+    if (started) await call("unpair");
   } catch {
     /* worker may be dead; flags above already make this browser HTTP-only */
   }
-  worker?.terminate();
-  worker = null;
-  pending.forEach((p) => p.reject(new ReplicaError("replica stopped", undefined)));
-  pending.clear();
-  status = { state: "booting", paired: false, node: null };
+}
+
+/** Wipe the local replica entirely (settings → 重置本地副本): close + delete
+ *  the OPFS database. Re-enabling afterwards re-pairs and re-hydrates. */
+export async function resetReplica(): Promise<void> {
+  setFlag(ENABLED_KEY, false);
+  setFlag(HYDRATED_KEY, false);
+  try {
+    if (started) {
+      await call("unpair").catch(() => {});
+      await call("reset");
+    }
+  } finally {
+    getReplicaBus().stopWorker();
+  }
 }
 
 /** Boot path for app startup: resume the replica if this browser enabled it. */
@@ -189,4 +192,34 @@ export function resumeReplicaIfEnabled(): void {
       .then(() => requestSync())
       .catch(() => {});
   }
+}
+
+// ---- service worker bridge ----------------------------------------------------
+
+/**
+ * Answer the SW's offline gateway: it forwards /api/* (and /sites/*) requests
+ * it couldn't reach the server with as `{ kind: "mh-rpc", op, args }` messages
+ * carrying a MessagePort. Any page on the origin can answer (the bus routes to
+ * the leader); a tab without an active replica replies "unavailable" so the SW
+ * can try another client. Shared-flag-guarded: the injected /mh-runtime.js
+ * installs the same bridge on hosted site pages, and a page must answer once.
+ */
+function installSwBridge(): void {
+  const g = globalThis as { __mhSwBridge?: boolean };
+  if (g.__mhSwBridge || !("serviceWorker" in navigator)) return;
+  g.__mhSwBridge = true;
+  navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
+    const d = e.data as { kind?: string; op?: string; args?: unknown[] } | null;
+    const port = e.ports?.[0];
+    if (!d || d.kind !== "mh-rpc" || !port || !d.op) return;
+    if (!replicaActive()) {
+      port.postMessage({ ok: false, error: { message: "replica unavailable", code: "unavailable" } });
+      return;
+    }
+    call(d.op, ...(d.args ?? [])).then(
+      (result) => port.postMessage({ ok: true, result }),
+      (err: ReplicaError) =>
+        port.postMessage({ ok: false, error: { message: err.message, code: err.code } }),
+    );
+  });
 }

@@ -16,6 +16,14 @@ declare module "*/dist/db-worker.js" {
   const text: string;
   export default text;
 }
+declare module "*/dist/mh-runtime.js" {
+  const text: string;
+  export default text;
+}
+declare module "*/dist/metahub-sdk.js" {
+  const text: string;
+  export default text;
+}
 declare module "*/dist/sqlite3.wasm" {
   const path: string;
   export default path;

@@ -5,6 +5,8 @@
 **关键定位(v1):发布是 CLI 路径,不是 HTTP 写接口。** 外部「agent」指的是用 `mh` 命令行的 AI(如 Claude Code),所以建站/上传/删除走 `mh site` 子命令;`--server` 的 HTTP 角色只是**serve 站点 + 只读数据 API + 鉴权**。**底层 core / oplog / sync 协议不改**——站点与文件经 `emit()` 进 CRDT,与 records/documents 一样自然可同步。
 
 > **v2(2026-06-09)更新:** WebUI 加「站点管理」页后,GUI 需要建站/上传/删除,故补了一套 `/api/site*` HTTP 写接口 + `updateSite`(见 §6)。CLI 仍是 agent 的主路径,写仍是同一套 `emit()`,存储/同步不变。
+>
+> **v3(2026-06-11)更新:站点读写数据正式化 + 离线。** 站点页同源调用 `/api/*` 的**写**路径正式纳入契约(此前机制上已可行);新增可选 SDK `/metahub-sdk.js`(类型化方法 + code 化错误 + token 续期,裸 fetch 永远等价有效)。旧内联 fetch shim 升级为注入式 `/mh-runtime.js`:token + Service Worker 注册 + 离线 RPC 桥——启用「离线副本」的浏览器里,站点页**离线可打开(含从未访问过的,站点文件随 oplog 复制)、可读写数据,回网自动同步**;读路径拆至 `sites-core.ts` 供浏览器副本复用(blob 编码文件字节不复制,离线 404)。**信任模型显式化:站点与 WebUI 同源,任何已发布站点等于持有完整 hub 读写权限——只发布 agent/用户自产站点;按站点限权需源隔离,列为未来工作。** 详见 [16-pwa-offline/design.md](../16-pwa-offline/design.md)。
 
 ## 1. 背景与目标
 

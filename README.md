@@ -77,11 +77,19 @@ Pair two devices once and they sync both ways on a timer — no need to run `mh 
 
 `mh --server` serves a browser **WebUI** at `/` (browse and inline-edit tables, block-level WYSIWYG document editing, full-text search, manage agent sites). The same server also exposes:
 
-- `/api/*` — REST endpoints over your tables and documents.
+- `/api/*` — REST endpoints over your tables and documents (read **and** write; hosted site pages call them same-origin).
 - `/docs` — auto-generated OpenAPI documentation.
-- `/sites/<name>/` — `mh site publish` hosts the HTML/CSS/JS an agent generates; pages call `/api/*` same-origin to read your data (a local mini-Supabase).
+- `/sites/<name>/` — `mh site publish` hosts the HTML/CSS/JS an agent generates; pages call `/api/*` same-origin, or import the optional typed client at `/metahub-sdk.js` (a local mini-Supabase). Note the trust model: hosted pages are same-origin, so any published site effectively holds full hub access — publish only sites you or your agent authored.
 
-Requests are guarded by a single token (persisted in `~/.metahub`). The server binds `127.0.0.1` by default; only `--host 0.0.0.0` exposes it, and credentials travel as plaintext Bearer — put it behind a trusted network or TLS. Details in the [system-design docs](./docs/system-design/).
+Requests are guarded by a single token (persisted in `~/.metahub`). The server binds `127.0.0.1` by default; only `--host 0.0.0.0` exposes it, and credentials travel as plaintext Bearer — put it behind a trusted network or TLS (a reverse proxy like Caddy / Tailscale Serve, or `--tls-cert`/`--tls-key` to terminate TLS directly). Details in the [system-design docs](./docs/system-design/).
+
+## Offline (PWA): the browser as a sync node
+
+The WebUI is an installable PWA. Open **Settings → 离线副本** and this browser pairs with the server (an individually revocable credential), hydrates a **full local replica** (SQLite-in-OPFS running the same core), and from then on reads/writes go local with background `/sync` — on a weak network or fully offline you can still view **and edit everything**, including documents, tables, and hosted sites you never opened; changes merge block-level when connectivity returns. Notes:
+
+- Needs HTTPS (service workers require a secure context) and a browser with OPFS (Safari 17+, Chrome, Firefox); unsupported browsers transparently stay plain online clients.
+- On iPhone, add the app to the home screen — Safari evicts storage for regular tabs after ~7 days of disuse; home-screen apps are exempt.
+- The first hydration must happen online; afterwards any tab (one leader per browser, others proxy to it) serves the data, and hosted site pages work offline too — reads and writes included.
 
 ## Command reference
 
@@ -117,7 +125,7 @@ Requests are guarded by a single token (persisted in `~/.metahub`). The server b
 | `mh config` | Configure the server and sync devices: no args opens an interactive wizard, `--flag` sets directly (`--host/--port/--sync-interval/--auto-sync`) |
 | `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | Multi-device pairing and management: generate a one-time code / pair / list / sync now / enable-disable / remove (also revokes the credential issued to the peer) |
 | `mh config grant list\|revoke` | List/revoke inbound sync credentials this machine issued (`revoke --token` accepts an exact value or prefix) |
-| `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync]` | Start the server: `/sync` (master token or pairing credential) + WebUI at `/` + `/api/*` REST + `/docs` (OpenAPI) + static sites `/sites/<name>/` + token exchange `/auth/token` + pairing `/api/pair`; a built-in timer auto-syncs paired peers |
+| `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync] [--tls-cert --tls-key]` | Start the server: `/sync` (master token or pairing credential) + WebUI/PWA at `/` + `/api/*` REST + `/docs` (OpenAPI) + static sites `/sites/<name>/` + token exchange `/auth/token` + pairing `/api/pair`; a built-in timer auto-syncs paired peers; `--tls-*` serves https directly (PEM paths) |
 
 </details>
 

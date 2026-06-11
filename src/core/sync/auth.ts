@@ -162,56 +162,26 @@ export function unlockPage(): string {
 }
 
 /**
- * Wrap window.fetch so same-origin requests carry the stored token as a Bearer
- * header, and so a 401 transparently swaps an old token for the current one
- * (via ${RENEW_PATH}) and retries once — seamless renewal after a rotation.
+ * The injected page runtime (built from src/webui/runtime.ts, served at
+ * /mh-runtime.js). Carries what the old inline fetch shim did — same-origin
+ * Bearer attach + transparent 401 renewal — plus the offline machinery:
+ * service-worker registration and the local-replica RPC bridge that lets
+ * hosted site pages read/write hub data with no network. Loaded synchronously
+ * (classic script, head-first) so fetch is wrapped before page code runs.
  */
-const SHIM = `<script>(function(){
-  var KEY = "mh_token";
-  function save(t){
-    try { localStorage.setItem(KEY, t); } catch (e) {}
-    document.cookie = KEY + "=" + encodeURIComponent(t) + "; path=/; SameSite=Strict; Max-Age=31536000";
-  }
-  var orig = window.fetch.bind(window);
-  window.fetch = function(input, init){
-    init = init || {};
-    var t = null; try { t = localStorage.getItem(KEY); } catch (e) {}
-    var url;
-    try { url = new URL((typeof input === "string" ? input : input.url), location.href); } catch (e) { url = null; }
-    var same = url && url.origin === location.origin;
-    if (same && t) {
-      var h = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
-      if (!h.has("authorization")) h.set("authorization", "Bearer " + t);
-      init.headers = h;
-    }
-    return orig(input, init).then(function(res){
-      if (res.status !== 401 || !same || !t || init.__mhRetried) return res;
-      return orig("${RENEW_PATH}", { headers: { authorization: "Bearer " + t } }).then(function(r){
-        if (!r.ok) return res;
-        return r.json().then(function(d){
-          if (!d || !d.token) return res;
-          save(d.token);
-          var h2 = new Headers(init.headers || {});
-          h2.set("authorization", "Bearer " + d.token);
-          init.headers = h2;
-          init.__mhRetried = true;
-          return orig(input, init);
-        });
-      }).catch(function(){ return res; });
-    });
-  };
-})();</script>`;
+const RUNTIME_TAG = `<script src="/mh-runtime.js"></script>`;
 
-/** Insert the fetch shim into an HTML document (right after <head>, else prepend). */
+/** Insert the runtime into an HTML document (right after <head>, else prepend). */
 export function injectShim(html: string): string {
   const i = html.toLowerCase().indexOf("<head>");
-  if (i >= 0) return html.slice(0, i + 6) + SHIM + html.slice(i + 6);
-  return SHIM + html;
+  if (i >= 0) return html.slice(0, i + 6) + RUNTIME_TAG + html.slice(i + 6);
+  return RUNTIME_TAG + html;
 }
 
-/** For HTML responses when auth is active, inject the shim; otherwise pass through. */
-export async function withShim(res: Response, cfg: AuthConfig): Promise<Response> {
-  if (!authActive(cfg)) return res;
+/** Inject the page runtime into HTML responses. Unconditional (unlike the old
+ *  token-only shim): the offline bridge matters even in --debug mode where
+ *  auth is off — the token half simply no-ops without a stored token. */
+export async function withShim(res: Response, _cfg: AuthConfig): Promise<Response> {
   const ct = res.headers.get("content-type") ?? "";
   if (!ct.includes("text/html")) return res;
   const html = injectShim(await res.text());
