@@ -43,6 +43,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^20.10.2",
     "@types/bun": "latest",
     "@types/turndown": "^5.0.6",
     "typescript": "^5"

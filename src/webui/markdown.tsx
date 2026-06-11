@@ -31,6 +31,10 @@ export function inlineToHtml(src: string): string {
   });
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  // Newlines inside a block (multi-line quotes, soft breaks) render as <br> —
+  // the editable has no white-space:pre-wrap, so a raw "\n" would display
+  // collapsed. walk() maps <br> back to "\n", keeping the round-trip symmetric.
+  s = s.replace(/\n/g, "<br>");
   s = s.replace(RESTORE, (_m, i) => `<code>${escapeHtml(codes[+i] ?? "")}</code>`);
   return s;
 }
@@ -39,14 +43,18 @@ export function inlineToHtml(src: string): string {
 export function htmlToInline(html: string): string {
   const div = document.createElement("div");
   div.innerHTML = html;
-  return walk(div).replace(/\n{3,}/g, "\n\n");
+  // A trailing newline is the browser's placeholder <br> (an emptied line keeps
+  // one), not content — strip it so clearing a line yields "" instead of "\n".
+  return walk(div).replace(/\n{3,}/g, "\n\n").replace(/\n$/, "");
 }
 
 function walk(node: Node): string {
   let out = "";
   node.childNodes.forEach((n) => {
     if (n.nodeType === Node.TEXT_NODE) {
-      out += n.textContent ?? "";
+      // Browsers use NBSP for trailing/consecutive spaces in contentEditable;
+      // normalize so invisible U+00A0 never reaches the saved Markdown.
+      out += (n.textContent ?? "").replace(/\u00a0/g, " ");
       return;
     }
     if (!(n instanceof HTMLElement)) return;

@@ -326,7 +326,14 @@ export function DocView({
           if (dirtyRef.current) await flushSave();
           const d = await api.getDocument(docId);
           if (d.version != null && d.version === docVersionRef.current) return;
+          // blocksFromBody regenerates every block id, so the focused block's id
+          // is useless after the rebuild — remember its *position* in the
+          // flattened tree plus the caret offset inside it, and restore by index.
           const focusId = focusedBlockId();
+          const focusIdx = focusId
+            ? flattenBlocks(blocksRef.current).findIndex((b) => b.id === focusId)
+            : -1;
+          const offset = focusId ? captureBlockCaret(focusId) : null;
           titleRef.current = d.title ?? "";
           sourceRef.current = d.body ?? "";
           blocksRef.current = blocksFromBody(d.body);
@@ -334,7 +341,12 @@ export function DocView({
           dirtyRef.current = false;
           setConflict(false);
           setVersion((v) => v + 1);
-          if (focusId) requestAnimationFrame(() => focusBlock(focusId, true));
+          if (focusIdx >= 0)
+            requestAnimationFrame(() => {
+              const flat = flattenBlocks(blocksRef.current);
+              const target = flat[Math.min(focusIdx, flat.length - 1)];
+              if (target) restoreBlockCaret(target.id, offset ?? 0);
+            });
           toast("已合并其他设备的修改");
         } catch {
           // Doc deleted remotely or replica hiccup — the nav refresh handles it.
@@ -465,13 +477,19 @@ export function DocView({
     const found = findBlock(blocks, id);
     const b = found?.block;
     if (!b) return;
+    // A conversion that replaces the text (shortcuts, marker strips) starts the
+    // caret at the top; one that keeps the text (block menu) keeps the caret
+    // where it was, too.
+    const offset =
+      draft.content === undefined || draft.content === b.content ? captureBlockCaret(id) : null;
     // Converting between list types keeps the children; any other target drops them.
     const children = isListType(type) ? b.children : undefined;
     applyBlockDraft(b, type, draft);
     if (children?.length) b.children = children;
     else delete b.children;
     bump();
-    if (type !== "divider" && type !== "table") requestAnimationFrame(() => focusBlock(id));
+    if (type !== "divider" && type !== "table")
+      requestAnimationFrame(() => (offset != null ? restoreBlockCaret(id, offset) : focusBlock(id)));
     scheduleSave();
   };
 
@@ -571,17 +589,19 @@ export function DocView({
 
   const indent = (id: string) => {
     syncRenderedBlocks(blocks);
+    const offset = captureBlockCaret(id); // keep the caret where it was, not at the block start
     if (!indentBlock(blocks, id)) return;
     bump();
-    requestAnimationFrame(() => focusBlock(id));
+    requestAnimationFrame(() => (offset != null ? restoreBlockCaret(id, offset) : focusBlock(id)));
     scheduleSave();
   };
 
   const outdent = (id: string) => {
     syncRenderedBlocks(blocks);
+    const offset = captureBlockCaret(id);
     if (!outdentBlock(blocks, id)) return;
     bump();
-    requestAnimationFrame(() => focusBlock(id));
+    requestAnimationFrame(() => (offset != null ? restoreBlockCaret(id, offset) : focusBlock(id)));
     scheduleSave();
   };
 
@@ -811,6 +831,7 @@ export function DocView({
   }, [!!slash]);
 
   const onKeyDown = (e: KeyboardEvent, b: Block, el: HTMLElement) => {
+    if (e.isComposing || e.keyCode === 229) return; // IME: Enter/Space confirm the candidate, not edit blocks
     if (slash && slash.blockId === b.id) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSlash({ ...slash, idx: Math.min(slash.idx + 1, slashMatches.length - 1) }); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); setSlash({ ...slash, idx: Math.max(slash.idx - 1, 0) }); return; }
@@ -934,16 +955,12 @@ export function DocView({
   // ordinary code content — so "escape the code block" lives on ↓ from the last
   // line (below) and Backspace in an empty block.
   const onCodeKeyDown = (e: KeyboardEvent, b: Block, ta: HTMLTextAreaElement) => {
+    if (e.isComposing || e.keyCode === 229) return; // IME: keys edit the composition, not the block
     const { value, selectionStart: start, selectionEnd: end } = ta;
     if (e.key === "Tab") {
       e.preventDefault();
       if (e.shiftKey) {
-        syncRenderedBlocks(blocks);
-        if (outdentBlock(blocks, b.id)) {
-          bump();
-          requestAnimationFrame(() => focusBlock(b.id));
-          scheduleSave();
-        }
+        outdent(b.id); // shared path: keeps the caret at its offset
         return;
       }
       document.execCommand("insertText", false, "  "); // keeps native undo + fires input
@@ -984,7 +1001,10 @@ export function DocView({
       <>
         <MenuLabel>转换为</MenuLabel>
         {BLOCK_MENU.filter((m) => m.type !== "divider").map((m) => (
-          <MenuItem key={m.type} icon={m.ic} label={m.t} checked={b.type === m.type} onClick={() => { convert(b.id, m.type); close(); }} />
+          // Pass the current content explicitly: convert() resets content to the
+          // draft's (the slash menu relies on that to clear its "/query" text),
+          // so a bare convert() here would wipe the block's text.
+          <MenuItem key={m.type} icon={m.ic} label={m.t} checked={b.type === m.type} onClick={() => { convert(b.id, m.type, { content: b.content }); close(); }} />
         ))}
         <MenuSep />
         <MenuItem icon="copy" label="复制块" onClick={() => { const found = findBlock(blocks, b.id); if (found) found.parent.splice(found.index + 1, 0, cloneBlock(b)); bump(); scheduleSave(); close(); }} />
@@ -1196,7 +1216,7 @@ export function DocView({
         class="doc-title"
         contentEditable
         onInput={(e) => { titleRef.current = (e.target as HTMLElement).textContent ?? ""; recordHistory("title"); scheduleSave(); }}
-        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (!blocks.length) insertAfter(null); else focusBlock(blocks[0]!.id); } }}
+        onKeyDown={(e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === "Enter") { e.preventDefault(); if (!blocks.length) insertAfter(null); else focusBlock(blocks[0]!.id); } }}
         dangerouslySetInnerHTML={{ __html: titleRef.current }}
       />
       <div class="doc-meta">
@@ -1286,13 +1306,19 @@ function BlockRow({
   // doc to show the slash menu — never resets the caret. Code blocks render via
   // <CodeBlock> (textarea), so they don't use edRef.
   // renderKey is a global version counter, so every structural mutation re-runs
-  // this for *all* blocks. Only rewrite when the HTML actually differs, otherwise
-  // an unrelated edit (e.g. deleting another block) would clobber a caret we just
-  // placed here — landing it at the block's start instead of where it was set.
+  // this for *all* blocks. Only rewrite when the content actually diverged from
+  // what the DOM means, otherwise an unrelated edit (e.g. deleting another
+  // block) would clobber a caret we just placed here — landing it at the
+  // block's start instead of where it was set. String equality alone is not
+  // enough: the live DOM legitimately differs from inlineToHtml's output while
+  // still meaning the same markdown (trailing space serialized as &nbsp;,
+  // execCommand's <b> vs our <strong>, literal "*x*" typed but not yet
+  // rendered), so a second, semantic check guards those.
   useEffect(() => {
-    if (edRef.current && block.type !== "code") {
+    const el = edRef.current;
+    if (el && block.type !== "code") {
       const html = inlineToHtml(block.content);
-      if (edRef.current.innerHTML !== html) edRef.current.innerHTML = html;
+      if (el.innerHTML !== html && htmlToInline(el.innerHTML) !== block.content) el.innerHTML = html;
     }
   }, [renderKey, block.type]);
   const compactCodeHost =
@@ -1559,6 +1585,7 @@ function TableBlock({
   };
 
   const onCellKeyDown = (e: KeyboardEvent, r: number, c: number) => {
+    if (e.isComposing || e.keyCode === 229) return; // IME: Enter/Tab confirm the candidate, not the cell
     if (e.key === "Tab") {
       e.preventDefault();
       if (e.shiftKey) {
@@ -1679,10 +1706,13 @@ function TableCell({
   const ref = useRef<HTMLDivElement>(null);
   // Uncontrolled: rewrite innerHTML only on a structural re-render (renderKey),
   // never on every keystroke — mirrors the .editable host so the caret survives.
+  // Same semantic guard as the .editable effect: the live DOM may differ from
+  // inlineToHtml's output yet mean the same markdown (&nbsp;, <b> vs <strong>).
   useEffect(() => {
-    if (ref.current) {
+    const el = ref.current;
+    if (el) {
       const html = inlineToHtml(value);
-      if (ref.current.innerHTML !== html) ref.current.innerHTML = html;
+      if (el.innerHTML !== html && htmlToInline(el.innerHTML) !== value) el.innerHTML = html;
     }
   }, [renderKey]);
   return (
@@ -1770,8 +1800,9 @@ function FormatBar({ x, y, onCommand }: { x: number; y: number; onCommand: (cmd:
 function wrapInlineCode() {
   const sel = getSelection();
   if (!sel || sel.isCollapsed) return;
-  const text = sel.toString();
-  document.execCommand("insertHTML", false, `<code>${text.replace(/</g, "&lt;")}</code>`);
+  // Full escaping: insertHTML parses the payload, so a literal "&lt;" in the
+  // selected text would otherwise come back as a real "<".
+  document.execCommand("insertHTML", false, `<code>${escapeHtml(sel.toString())}</code>`);
 }
 
 function syncRenderedBlocks(blocks: Block[]) {
@@ -1847,6 +1878,43 @@ function blockEditorText(_block: Block, el: HTMLElement): string {
 function hasExpandedSelection(): boolean {
   const sel = getSelection();
   return !!sel && !sel.isCollapsed;
+}
+// Rendered-text offset of the collapsed caret inside `el` (prefix-range
+// technique, same as caretAtBlockStart); 0 when the selection is elsewhere.
+function caretTextOffset(el: HTMLElement): number {
+  const sel = getSelection();
+  if (!sel || !sel.rangeCount) return 0;
+  const range = sel.getRangeAt(0);
+  if (!el.contains(range.startContainer)) return 0;
+  const pre = document.createRange();
+  pre.selectNodeContents(el);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length;
+}
+// Caret position inside block `id` — rendered-text offset for editables,
+// selection index for code textareas; null when the caret is elsewhere.
+// Pair with restoreBlockCaret after a structural re-render, so operations that
+// keep a block's text (indent, type conversion, remote merge) keep the caret
+// where the user left it instead of throwing it to the block start.
+function captureBlockCaret(id: string): number | null {
+  const host = document.querySelector(`.block[data-bid="${id}"]`);
+  const active = document.activeElement;
+  if (!host || !active || !host.contains(active)) return null;
+  if (active instanceof HTMLTextAreaElement) return active.selectionStart;
+  const el = host.querySelector(".editable") as HTMLElement | null;
+  return el ? caretTextOffset(el) : null;
+}
+function restoreBlockCaret(id: string, offset: number) {
+  const el = document.querySelector(
+    `.block[data-bid="${id}"] .code-input`,
+  ) as HTMLTextAreaElement | null;
+  if (el) {
+    el.focus();
+    const pos = Math.min(offset, el.value.length);
+    el.setSelectionRange(pos, pos);
+    return;
+  }
+  focusBlockAtOffset(id, offset);
 }
 // Is the collapsed caret at the very start of `el` (nothing rendered before it)?
 function caretAtBlockStart(el: HTMLElement): boolean {
