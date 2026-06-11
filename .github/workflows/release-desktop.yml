@@ -96,6 +96,11 @@ jobs:
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ github.token }} # electron-builder 期望存在；--publish never 不会真的发
+          # Bun 在 Windows 上把交叉编译目标从 cwd 所在盘（D:）rename 进默认 cache（C:）会
+          # 跨盘失败，报 "Failed to extract executable ... download may be incomplete"
+          # （oven-sh/bun#28327，修复 PR #28339 未合并）。把 cache 指到 workspace 同盘规避；
+          # 上游修复发版后可删。
+          BUN_INSTALL_CACHE_DIR: ${{ github.workspace }}/.bun-install-cache
         run: bun run ${{ matrix.script }}
 
       - name: Upload to release
