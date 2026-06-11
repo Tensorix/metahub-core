@@ -23,7 +23,9 @@ test("sidecarAssetName matches the build-sidecars.ts output for this platform", 
     "metahub-sidecar-mac-arm64",
     "metahub-sidecar-mac-x64",
     "metahub-sidecar-win-x64.exe",
+    "metahub-sidecar-win-arm64.exe",
     "metahub-sidecar-linux-x64",
+    "metahub-sidecar-linux-arm64",
   ]).toContain(name);
 });
 

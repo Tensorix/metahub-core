@@ -42,7 +42,10 @@ const allTargets = [
   { bun: "bun-darwin-arm64", out: "metahub-sidecar-mac-arm64", os: "darwin" },
   { bun: "bun-darwin-x64", out: "metahub-sidecar-mac-x64", os: "darwin" },
   { bun: "bun-windows-x64", out: "metahub-sidecar-win-x64.exe", os: "win32" },
+  // bun-windows-arm64 needs Bun >= 1.3.10 (first release to ship windows-aarch64).
+  { bun: "bun-windows-arm64", out: "metahub-sidecar-win-arm64.exe", os: "win32" },
   { bun: "bun-linux-x64", out: "metahub-sidecar-linux-x64", os: "linux" },
+  { bun: "bun-linux-arm64", out: "metahub-sidecar-linux-arm64", os: "linux" },
 ] as const;
 
 const buildAll = process.env.SIDECAR_ALL === "1";

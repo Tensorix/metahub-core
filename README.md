@@ -57,7 +57,7 @@ Output adapts to the audience: a terminal (human) gets tables / Markdown, a pipe
 import { openMetahub, createDatabase, createRecord, search } from "@tensorix/metahub";
 ```
 
-Platforms: `darwin-arm64` / `darwin-x64` / `linux-x64` / `linux-arm64` / `windows-x64`. Library API: see [CONTRIBUTING.md](./CONTRIBUTING.md).
+Platforms: `darwin-arm64` / `darwin-x64` / `linux-x64` / `linux-arm64` / `windows-x64` / `windows-arm64`. Library API: see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Sync across machines
 

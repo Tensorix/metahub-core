@@ -11,8 +11,10 @@ export function sidecarAssetName(): string {
     if (arch === "arm64") return "metahub-sidecar-mac-arm64";
     if (arch === "x64") return "metahub-sidecar-mac-x64";
   } else if (platform === "win32") {
+    if (arch === "arm64") return "metahub-sidecar-win-arm64.exe";
     if (arch === "x64") return "metahub-sidecar-win-x64.exe";
   } else if (platform === "linux") {
+    if (arch === "arm64") return "metahub-sidecar-linux-arm64";
     if (arch === "x64") return "metahub-sidecar-linux-x64";
   }
   throw new Error(`unsupported platform for core auto-update: ${platform}/${arch}`);

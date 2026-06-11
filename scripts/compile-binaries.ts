@@ -12,6 +12,8 @@ const targets = [
   "bun-linux-x64",
   "bun-linux-arm64",
   "bun-windows-x64",
+  // needs Bun >= 1.3.10 (first release to ship windows-aarch64)
+  "bun-windows-arm64",
 ] as const;
 
 const outdir = "binaries";

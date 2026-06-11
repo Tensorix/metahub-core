@@ -57,7 +57,7 @@ mh doc append <ref> --body "追加段落"             # 也有 prepend
 import { openMetahub, createDatabase, createRecord, search } from "@tensorix/metahub";
 ```
 
-支持平台：`darwin-arm64` / `darwin-x64` / `linux-x64` / `linux-arm64` / `windows-x64`。库 API 详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+支持平台：`darwin-arm64` / `darwin-x64` / `linux-x64` / `linux-arm64` / `windows-x64` / `windows-arm64`。库 API 详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## 多机同步
 

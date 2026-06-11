@@ -103,7 +103,7 @@ jobs:
       - run: bun install --frozen-lockfile
 
       # 纯 Bun，不需要 electron；缺 dist/webui.js 时脚本会自动跑根 build。
-      # SIDECAR_ALL=1 → 单机交叉编译全部 4 个平台（桌面端自动更新的下载源）。
+      # SIDECAR_ALL=1 → 单机交叉编译全部平台/架构（桌面端自动更新的下载源）。
       - name: Build sidecar binaries
         env:
           SIDECAR_ALL: "1"

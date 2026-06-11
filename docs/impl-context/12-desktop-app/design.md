@@ -150,7 +150,7 @@ function appFile(...p: string[]) { return join(app.getAppPath(), ...p); }
 
 ## 8. 生产打包
 
-**目标**:产出免装 Bun、免源码、双击即用的可分发安装包,覆盖 macOS(arm64+x64)、Windows(x64)、Linux(x64)。开发态 `bun run dev` 行为不变。
+**目标**:产出免装 Bun、免源码、双击即用的可分发安装包,覆盖 macOS(arm64+x64)、Windows(x64+arm64)、Linux(x64+arm64)。开发态 `bun run dev` 行为不变。
 
 **根因**:原 `main.ts` 运行时 `bun run src/server-entry.ts` 依赖两个前提——①用户机器装有 Bun;②磁盘存在整个 monorepo 源码(边车会再 `import ".../core/sync/server.ts"`)。打成 `.app`/`.exe`/AppImage 后两者皆不成立。
 
@@ -170,14 +170,16 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 
 ### 8.2 边车交叉编译(`scripts/build-sidecars.ts`)
 
-从仓库根 `bun build --compile` 四个 target(单机即可全产出),输出名对齐 electron-builder 的 `${arch}` 宏:
+从仓库根 `bun build --compile` 全部 target(单机即可全产出),输出名对齐 electron-builder 的 `${arch}` 宏:
 
 | bun target | 输出文件名 |
 |---|---|
 | `bun-darwin-arm64` | `metahub-sidecar-mac-arm64` |
 | `bun-darwin-x64`   | `metahub-sidecar-mac-x64` |
 | `bun-windows-x64`  | `metahub-sidecar-win-x64.exe` |
+| `bun-windows-arm64`| `metahub-sidecar-win-arm64.exe`(需 Bun ≥ 1.3.10) |
 | `bun-linux-x64`    | `metahub-sidecar-linux-x64` |
+| `bun-linux-arm64`  | `metahub-sidecar-linux-arm64` |
 
 入口为 `apps/desktop/src/server-bundle.ts`,故需先有 `dist/webui.js`(脚本检测缺失则先跑根 `bun run build`)。复用既有 `bun build --compile` 模式(`scripts/compile-binaries.ts`)。
 
@@ -199,7 +201,7 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 ### 8.6 验证结论
 
 - 独立边车二进制:打印 `METAHUB_PORT`、`/health` 返回 `{ok:true}`、`/webui.js` 返回与 `dist/webui.js` **逐字节一致**(内嵌 WebUI 生效)。
-- 四平台边车全部交叉编译成功;`bun run dist:mac` 产出 arm64/x64 的 dmg+zip,各 `.app` 内 `metahub-sidecar` 架构正确(`${arch}` 路由)、`icon.icns` 已派生、asar + extraResource 落点正确。
+- 全平台边车全部交叉编译成功;`bun run dist:mac` 产出 arm64/x64 的 dmg+zip,各 `.app` 内 `metahub-sidecar` 架构正确(`${arch}` 路由)、`icon.icns` 已派生、asar + extraResource 落点正确。
 
 ### 8.7 暂不在范围
 

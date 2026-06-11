@@ -11,6 +11,7 @@
     "url": "https://github.com/Tensorix/metahub-core.git"
   },
   "main": "dist/main.js",
+  "desktopName": "metahub-desktop.desktop",
   "scripts": {
     "build:main": "bun run scripts/gen-core-version.ts && bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist",
     "build:icon": "bun run scripts/gen-icon.ts",
@@ -26,6 +27,6 @@
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^26.0.0"
   }
 }
