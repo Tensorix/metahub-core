@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 // Inlined as a string at build time (Bun text loader), so packaged builds and
 // compiled binaries carry the stylesheet with no extra asset file. In dev the
 // file is re-read from disk per request instead — see getCss().
@@ -59,10 +59,19 @@ const HTML = `<!doctype html>
  *  runtime — embedded at build time and handed in here. */
 let injectedJs: string | null = null;
 let injectedSw: string | null = null;
+let injectedDbWorker: string | null = null;
+let injectedWasm: Uint8Array | null = null;
 
-export function setWebuiBundle(bundle: { js: string; sw: string }): void {
+export function setWebuiBundle(bundle: {
+  js: string;
+  sw: string;
+  dbWorker: string;
+  wasm: Uint8Array;
+}): void {
   injectedJs = bundle.js;
   injectedSw = bundle.sw;
+  injectedDbWorker = bundle.dbWorker;
+  injectedWasm = bundle.wasm;
 }
 
 let cachedJs: string | null = null;
@@ -70,6 +79,8 @@ let cachedJs: string | null = null;
 let cachedJsMtime = 0;
 let cachedSw: string | null = null;
 let cachedSwMtime = 0;
+let cachedDbWorker: string | null = null;
+let cachedDbWorkerMtime = 0;
 
 /** Newest mtime across the browser-bundle sources (src/webui/**.ts[x]).
  *  ./server is skipped — server-side code never enters the browser bundle. */
@@ -162,6 +173,50 @@ async function getSw(): Promise<string> {
   return raw.replaceAll("__MH_SW_VERSION__", version);
 }
 
+/** The DB worker (browser replica host), resolved like getJs(). */
+async function getDbWorker(): Promise<string> {
+  if (injectedDbWorker != null) return injectedDbWorker;
+
+  if (RUNNING_FROM_SOURCE) {
+    const srcDir = fileURLToPath(new URL("..", import.meta.url));
+    const newest = newestSourceMtime(srcDir);
+    if (cachedDbWorker == null || newest > cachedDbWorkerMtime) {
+      const entry = fileURLToPath(new URL("../data/db-worker.ts", import.meta.url));
+      const res = await Bun.build({ entrypoints: [entry], target: "browser" });
+      if (!res.success) throw new AggregateError(res.logs, "db-worker build failed");
+      cachedDbWorker = await res.outputs[0]!.text();
+      cachedDbWorkerMtime = newest;
+    }
+    return cachedDbWorker;
+  }
+
+  if (cachedDbWorker == null) {
+    const prebuilt = Bun.file(fileURLToPath(new URL("./db-worker.js", import.meta.url)));
+    if (!(await prebuilt.exists())) {
+      throw new Error("db-worker bundle missing: dist/db-worker.js was not built — run `bun run build`");
+    }
+    cachedDbWorker = await prebuilt.text();
+  }
+  return cachedDbWorker;
+}
+
+/** sqlite3.wasm bytes: embedded (compiled binary) > node_modules (dev) >
+ *  sibling dist copy (packaged; build.ts copies it next to the bundles). */
+async function getWasm(): Promise<Uint8Array> {
+  if (injectedWasm != null) return injectedWasm;
+  const path = RUNNING_FROM_SOURCE
+    ? join(
+        dirname(Bun.resolveSync("@sqlite.org/sqlite-wasm", fileURLToPath(new URL(".", import.meta.url)))),
+        "sqlite3.wasm",
+      )
+    : fileURLToPath(new URL("./sqlite3.wasm", import.meta.url));
+  const f = Bun.file(path);
+  if (!(await f.exists())) {
+    throw new Error(`sqlite3.wasm missing at ${path} — run \`bun install\` / \`bun run build\``);
+  }
+  return new Uint8Array(await f.arrayBuffer());
+}
+
 /** Web app manifest: installability metadata for add-to-home-screen/PWA. */
 const MANIFEST = JSON.stringify({
   name: "Metahub",
@@ -220,9 +275,28 @@ export async function serveWebui(req: Request): Promise<Response | null> {
       headers: { "content-type": "image/png", "cache-control": "public, max-age=86400" },
     });
   }
-  if (pathname === "/webui.js" || pathname === "/sw.js") {
+  if (pathname === "/sqlite3.wasm") {
     try {
-      const body = pathname === "/sw.js" ? await getSw() : await getJs();
+      // Cast: the ESNext lib types Uint8Array<ArrayBufferLike>, which current
+      // lib.dom's BodyInit doesn't admit; at runtime Response accepts it fine.
+      return new Response((await getWasm()) as unknown as BodyInit, {
+        // ~1MB and changes only on dependency upgrades; the service worker
+        // additionally keeps it cache-first for offline starts.
+        headers: { "content-type": "application/wasm", "cache-control": "public, max-age=86400" },
+      });
+    } catch (e) {
+      console.error("[webui] failed to serve /sqlite3.wasm —", e);
+      return new Response(`sqlite3.wasm unavailable: ${e}`, { status: 500 });
+    }
+  }
+  if (pathname === "/webui.js" || pathname === "/sw.js" || pathname === "/db-worker.js") {
+    try {
+      const body =
+        pathname === "/sw.js"
+          ? await getSw()
+          : pathname === "/db-worker.js"
+            ? await getDbWorker()
+            : await getJs();
       return asset(body, "text/javascript; charset=utf-8");
     } catch (e) {
       // This catch is the only thing between the error and oblivion: Bun only

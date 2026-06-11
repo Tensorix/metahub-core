@@ -267,18 +267,48 @@ export interface ChangeBatch {
   cursor: number;
 }
 
+export interface ChangesAfterOpts {
+  /** Max rows to return — pagination for large pulls (initial hydration). */
+  limit?: number;
+  /** Datasets to omit (partial replicas, e.g. a phone skipping site_files). */
+  excludeDatasets?: string[];
+}
+
 /**
  * Changes inserted after `seq` (a local rowid), in insertion order, plus the
  * new high-water cursor. Used for replication: insertion order never skips a
  * change even when clocks are skewed.
+ *
+ * With `limit`, the cursor stops at the last returned row so the next pull
+ * resumes there; when the scan is exhausted (fewer rows than the limit, or no
+ * limit) the cursor jumps to the table's high-water rowid so excluded-dataset
+ * tails aren't rescanned every round.
  */
-export function changesAfterSeq(db: DbDriver, seq: number): ChangeBatch {
+export function changesAfterSeq(
+  db: DbDriver,
+  seq: number,
+  opts: ChangesAfterOpts = {},
+): ChangeBatch {
+  const exclude = opts.excludeDatasets ?? [];
+  const where = exclude.length
+    ? `rowid > ? AND dataset NOT IN (${exclude.map(() => "?").join(", ")})`
+    : "rowid > ?";
+  const limitSql = opts.limit != null && opts.limit > 0 ? ` LIMIT ${Math.floor(opts.limit)}` : "";
   const rows = db
     .query(
-      "SELECT rowid AS seq, hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE rowid > ? ORDER BY rowid",
+      `SELECT rowid AS seq, hlc, node_id, dataset, row_id, col, value, txn FROM crdt_changes WHERE ${where} ORDER BY rowid${limitSql}`,
     )
-    .all(seq) as (Change & { seq: number })[];
-  const last = rows[rows.length - 1];
-  const cursor = last ? last.seq : seq;
+    .all(seq, ...exclude) as (Change & { seq: number })[];
+
+  const exhausted = opts.limit == null || opts.limit <= 0 || rows.length < opts.limit;
+  let cursor: number;
+  if (exhausted) {
+    // Never move backwards: compaction can leave MAX(rowid) below a cursor a
+    // client already holds, and regressing it would re-pull old rows.
+    const top = db.query("SELECT MAX(rowid) AS m FROM crdt_changes").get() as { m: number | null };
+    cursor = Math.max(seq, top.m ?? seq);
+  } else {
+    cursor = rows[rows.length - 1]!.seq;
+  }
   return { changes: rows.map(({ seq: _seq, ...c }) => c), cursor };
 }

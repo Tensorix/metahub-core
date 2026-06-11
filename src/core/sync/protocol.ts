@@ -21,6 +21,15 @@ export const SyncRequestSchema = z.object({
   node_id: z.string().describe("Calling client's node id"),
   since: z.number().describe("Server cursor the client last pulled"),
   changes: z.array(ChangeSchema).describe("Client's changes to push"),
+  // Both optional and absent in classic peer rounds (full pull). Browser
+  // replicas use them: `limit` chunks the initial hydration into bounded
+  // pulls, `exclude_datasets` lets a device opt out of heavy datasets it
+  // never edits (e.g. site_files on a small phone).
+  limit: z.number().optional().describe("Max changes to return (pagination for hydration)"),
+  exclude_datasets: z
+    .array(z.string())
+    .optional()
+    .describe("Datasets to omit from the pull (partial replica)"),
 });
 
 export const SyncResponseSchema = z.object({

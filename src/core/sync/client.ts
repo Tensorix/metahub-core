@@ -28,20 +28,31 @@ export interface SyncResult {
   pulled: number;
 }
 
+export interface SyncOpts {
+  /** Bearer credential; defaults to the one stored for this peer (pairing). */
+  token?: string;
+  /** Max changes to pull this round — chunked initial hydration. */
+  pullLimit?: number;
+  /** Datasets this replica opts out of (partial replica, e.g. site_files). */
+  excludeDatasets?: string[];
+}
+
 /**
  * Run one push/pull round against a peer server. A single round is bidirectional
- * (pushes local changes, pulls remote ones). `token` defaults to the credential
+ * (pushes local changes, pulls remote ones). The token defaults to the credential
  * stored for this peer (set during pairing) and is sent as a Bearer header so a
  * token-gated /sync accepts the request.
  */
 export async function syncWithPeer(
   db: DbDriver,
   url: string,
-  token?: string,
+  opts: SyncOpts | string = {},
 ): Promise<SyncResult> {
+  // Back-compat: the third parameter used to be the bare token string.
+  const o: SyncOpts = typeof opts === "string" ? { token: opts } : opts;
   const node = getNodeId(db);
   const peer = getPeer(db, url);
-  const bearer = token ?? peer.token ?? undefined;
+  const bearer = o.token ?? peer.token ?? undefined;
   const toPush = changesAfterSeq(db, peer.push_cursor);
 
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -49,7 +60,13 @@ export async function syncWithPeer(
   const res = await fetch(new URL(SYNC_PATH, url), {
     method: "POST",
     headers,
-    body: JSON.stringify({ node_id: node, since: peer.pull_cursor, changes: toPush.changes }),
+    body: JSON.stringify({
+      node_id: node,
+      since: peer.pull_cursor,
+      changes: toPush.changes,
+      ...(o.pullLimit != null ? { limit: o.pullLimit } : {}),
+      ...(o.excludeDatasets?.length ? { exclude_datasets: o.excludeDatasets } : {}),
+    }),
   });
   if (!res.ok)
     throw new MhError(

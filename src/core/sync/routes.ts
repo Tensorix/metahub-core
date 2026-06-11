@@ -67,7 +67,10 @@ const syncRoutes: Route[] = [
     async handler(req, { db, node }) {
       const body = (await req.json()) as SyncRequest;
       ingest(db, body.changes ?? []);
-      const batch = changesAfterSeq(db, body.since ?? 0);
+      const batch = changesAfterSeq(db, body.since ?? 0, {
+        limit: body.limit,
+        excludeDatasets: body.exclude_datasets,
+      });
       return Response.json({ node_id: node, changes: batch.changes, cursor: batch.cursor });
     },
   },

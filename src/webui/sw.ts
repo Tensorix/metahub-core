@@ -52,8 +52,11 @@ const caches = sw.caches;
 const VERSION = "__MH_SW_VERSION__";
 const SHELL_CACHE = `mh-shell-${VERSION}`;
 const API_CACHE = "mh-api-v1"; // survives shell updates; entries overwritten per-URL
+// Big and immutable within a dependency version: cache-first in its own cache
+// so app updates don't re-download ~1MB of wasm.
+const WASM_CACHE = "mh-wasm-v1";
 
-const SHELL_PATHS = ["/", "/webui.js", "/webui.css", "/manifest.webmanifest"];
+const SHELL_PATHS = ["/", "/webui.js", "/webui.css", "/manifest.webmanifest", "/db-worker.js"];
 const NETWORK_TIMEOUT_MS = 3500;
 
 /** The unlock page is a 200 text/html — caching it as the shell would brick
@@ -147,6 +150,20 @@ sw.addEventListener("fetch", (event) => {
 
   if (SHELL_PATHS.includes(url.pathname) || url.pathname.startsWith("/icons/")) {
     event.respondWith(networkFirst(req, SHELL_CACHE, NETWORK_TIMEOUT_MS));
+    return;
+  }
+
+  if (url.pathname === "/sqlite3.wasm") {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(WASM_CACHE);
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        const res = await fetch(req);
+        if (cacheable(res)) await cache.put(req, res.clone());
+        return res;
+      })(),
+    );
     return;
   }
 
