@@ -60,7 +60,7 @@ const HTML = `<!doctype html>
 let injectedJs: string | null = null;
 let injectedSw: string | null = null;
 let injectedDbWorker: string | null = null;
-let injectedWasm: Uint8Array | null = null;
+let injectedWasm: ArrayBuffer | null = null;
 
 export function setWebuiBundle(bundle: {
   js: string;
@@ -71,7 +71,12 @@ export function setWebuiBundle(bundle: {
   injectedJs = bundle.js;
   injectedSw = bundle.sw;
   injectedDbWorker = bundle.dbWorker;
-  injectedWasm = bundle.wasm;
+  // Normalize to a whole ArrayBuffer (what Response accepts under every lib).
+  const w = bundle.wasm;
+  injectedWasm =
+    w.byteOffset === 0 && w.byteLength === w.buffer.byteLength
+      ? (w.buffer as ArrayBuffer)
+      : (w.slice().buffer as ArrayBuffer);
 }
 
 let cachedJs: string | null = null;
@@ -202,7 +207,7 @@ async function getDbWorker(): Promise<string> {
 
 /** sqlite3.wasm bytes: embedded (compiled binary) > node_modules (dev) >
  *  sibling dist copy (packaged; build.ts copies it next to the bundles). */
-async function getWasm(): Promise<Uint8Array> {
+async function getWasm(): Promise<ArrayBuffer> {
   if (injectedWasm != null) return injectedWasm;
   const path = RUNNING_FROM_SOURCE
     ? join(
@@ -214,7 +219,7 @@ async function getWasm(): Promise<Uint8Array> {
   if (!(await f.exists())) {
     throw new Error(`sqlite3.wasm missing at ${path} — run \`bun install\` / \`bun run build\``);
   }
-  return new Uint8Array(await f.arrayBuffer());
+  return f.arrayBuffer();
 }
 
 /** Web app manifest: installability metadata for add-to-home-screen/PWA. */
@@ -277,9 +282,7 @@ export async function serveWebui(req: Request): Promise<Response | null> {
   }
   if (pathname === "/sqlite3.wasm") {
     try {
-      // Cast: the ESNext lib types Uint8Array<ArrayBufferLike>, which current
-      // lib.dom's BodyInit doesn't admit; at runtime Response accepts it fine.
-      return new Response((await getWasm()) as unknown as BodyInit, {
+      return new Response(await getWasm(), {
         // ~1MB and changes only on dependency upgrades; the service worker
         // additionally keeps it cache-first for offline starts.
         headers: { "content-type": "application/wasm", "cache-control": "public, max-age=86400" },

@@ -2,6 +2,12 @@
 // write goes through the same core functions the CLI uses, so changes land in
 // the CRDT oplog and replicate over /sync. Ids are carried as query params to
 // match the server's exact-path route matcher.
+//
+// Exported `api` is a selector: HTTP by default, the local OPFS replica
+// (data/local-api.ts) when this browser enabled offline mode — see the Proxy
+// at the bottom of this file.
+
+import { localApi, replicaActive } from "./data/local-api.ts";
 
 export type PropType =
   | "text"
@@ -263,7 +269,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 const q = (s: string) => encodeURIComponent(s);
 
-export const api = {
+const httpApi = {
   // databases
   listDatabases: () => req<Db[]>("GET", "/api/databases"),
   createDatabase: (b: { name: string; icon?: string }) => req<Db>("POST", "/api/databases", b),
@@ -382,6 +388,26 @@ export const api = {
   // version of the running core (sidecar)
   version: () => req<{ version: string }>("GET", "/api/version"),
 };
+
+export type Api = typeof httpApi;
+
+/**
+ * The api object the app consumes. Per-call routing: when this browser's
+ * offline replica is enabled AND hydrated (see replicaActive in
+ * data/replica.ts), data methods execute against the local OPFS database via
+ * the worker; everything else — and every call before hydration or after a
+ * worker failure — falls through to HTTP. Admin/server methods (peers, sites
+ * upload, version, pairing management) have no local counterpart and always
+ * go over HTTP.
+ */
+export const api: Api = new Proxy(httpApi, {
+  get(target, prop, receiver) {
+    if (replicaActive() && prop in localApi) {
+      return (localApi as Record<PropertyKey, unknown>)[prop];
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+}) as Api;
 
 export const TYPE_META: Record<PropType, { ic: string; t: string }> = {
   text: { ic: "text", t: "文本" },

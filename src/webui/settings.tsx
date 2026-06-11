@@ -4,6 +4,15 @@ import { useEffect, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { api, type Peer, type Grant } from "./api.ts";
+import {
+  replicaEnabled,
+  replicaStatus,
+  onReplicaStatus,
+  enableReplica,
+  disableReplica,
+  requestSync,
+} from "./data/replica.ts";
+import type { ReplicaStatus } from "./data/db-worker.ts";
 import { cmpVer } from "./version.ts";
 import {
   Modal,
@@ -56,9 +65,111 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
       </div>
 
       {typeof window !== "undefined" && window.metahubDesktop?.quicknote && <QuickNotesSettings />}
+      {replicaSupported() && <OfflineReplica />}
       <SyncDevices />
       <IssuedGrants />
       <VersionFooter onUpdatePending={onUpdatePending} />
+    </div>
+  );
+}
+
+// ---- offline replica (browser as a sync node) ------------------------------
+
+function replicaSupported(): boolean {
+  return (
+    typeof Worker !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    !!navigator.storage?.getDirectory
+  );
+}
+
+/**
+ * The settings switch that turns THIS browser into a CRDT sync node: pairs it
+ * with the server (self-service — the page already holds the master token),
+ * hydrates a full local OPFS replica, and from then on reads/writes go local
+ * with background /sync. Per-device choice; unpaired browsers stay plain
+ * online clients. The issued grant shows up under 已授权设备 and can be
+ * revoked server-side at any time.
+ */
+function OfflineReplica() {
+  const [enabled, setEnabled] = useState(replicaEnabled());
+  const [st, setSt] = useState<ReplicaStatus>(replicaStatus());
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => onReplicaStatus((s) => setSt({ ...s })), []);
+
+  const enable = async () => {
+    setBusy(true);
+    try {
+      await enableReplica();
+      setEnabled(true);
+      toast("离线副本已启用，正在下载数据…");
+    } catch (e) {
+      toast(`启用失败：${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disable = async () => {
+    const ok = await confirmDialog({
+      title: "停用离线副本",
+      message:
+        "此浏览器将恢复纯在线模式。已下载的本地数据保留在浏览器里，重新启用后从断点续传。",
+      confirmLabel: "停用",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await disableReplica();
+      setEnabled(false);
+      toast("已停用离线副本");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusLine = () => {
+    if (!enabled) return "未启用 — 此浏览器为纯在线客户端，断网不可用。";
+    if (st.state === "error") return `副本异常（已自动回退在线模式）：${st.error ?? "未知错误"}`;
+    if (st.state === "hydrating") return `正在下载数据… 已接收 ${st.hydrated ?? 0} 条变更`;
+    if (st.lastSync) {
+      const t = fmtTime(st.lastSync.at);
+      return st.lastSync.ok
+        ? `本地优先已生效 · 上次同步 ${t}（推送 ${st.lastSync.pushed} / 拉取 ${st.lastSync.pulled}）`
+        : `上次同步失败（${t}）：${st.lastSync.error ?? ""} — 本地读写不受影响，恢复网络后自动重试`;
+    }
+    return "等待首次同步…";
+  };
+
+  return (
+    <div class="set-section">
+      <div class="set-section-head">离线副本</div>
+      <div class="set-section-desc">
+        让此浏览器持有完整的本地数据副本：弱网/离线也能查看和编辑全部内容，恢复连接后自动同步。
+        启用即与服务器配对，凭据可在「已授权设备」中单独吊销。
+      </div>
+      <div class="peer-actions">
+        {enabled ? (
+          <>
+            <button class="btn btn-secondary" disabled={busy} onClick={() => requestSync()}>
+              <Icon name="share" cls="ico sm" /> 立即同步
+            </button>
+            <button class="btn btn-ghost" disabled={busy} onClick={disable}>
+              停用
+            </button>
+          </>
+        ) : (
+          <button class="btn btn-primary" disabled={busy} onClick={enable}>
+            <Icon name="check" cls="ico sm" /> {busy ? "启用中…" : "启用离线副本"}
+          </button>
+        )}
+      </div>
+      <div class="peer-sub" style="margin-top:8px">
+        {statusLine()}
+        {enabled && st.node ? ` · 节点 ${st.node}` : ""}
+      </div>
     </div>
   );
 }

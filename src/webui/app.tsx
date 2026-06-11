@@ -2,6 +2,7 @@
 import { render } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type Hit, NAV_INVALIDATE } from "./api.ts";
+import { resumeReplicaIfEnabled, replicaActive } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
 import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
@@ -96,6 +97,12 @@ function App() {
       document.removeEventListener(NAV_INVALIDATE, on);
     };
   }, [reloadNav, onError]);
+
+  // Offline replica: if this browser enabled it (settings → 离线副本), boot
+  // the DB worker and nudge a sync; api.ts routes data calls to it once ready.
+  useEffect(() => {
+    resumeReplicaIfEnabled();
+  }, []);
 
   // PWA: register the service worker (offline shell + stale read mirror).
   // Secure-context only — plain-HTTP LAN setups keep today's behavior. On an
@@ -376,7 +383,13 @@ function App() {
           )}
         </div>
 
-        {offline && <div class="offline-bar">⚡ 离线 — 可浏览已缓存的内容,修改会失败;恢复网络后自动恢复</div>}
+        {offline && (
+          <div class="offline-bar">
+            {replicaActive()
+              ? "⚡ 离线 — 本地副本模式:可正常查看和编辑全部内容,恢复连接后自动同步"
+              : "⚡ 离线 — 可浏览已缓存的内容,修改会失败;恢复网络后自动恢复"}
+          </div>
+        )}
         {error && <div class="error-bar" onClick={() => setError("")}>⚠ {error}（点击关闭）</div>}
 
         <div class="content">
