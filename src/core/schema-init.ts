@@ -81,6 +81,10 @@ export function migratePeers(db: DbDriver): void {
     ["last_sync_at", "INTEGER"],
     ["last_status", "TEXT"],
     ["last_error", "TEXT"],
+    // Storage-sync (sync/storage.ts): kind selects the transport, config holds
+    // an 's3' peer's bucket settings. Legacy rows default to 'http', unchanged.
+    ["kind", "TEXT NOT NULL DEFAULT 'http'"],
+    ["config", "TEXT"],
   ];
   for (const [col, decl] of add) {
     if (!hasColumn(db, "peers", col)) db.exec(`ALTER TABLE peers ADD COLUMN ${col} ${decl}`);

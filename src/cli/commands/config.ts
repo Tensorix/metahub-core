@@ -16,8 +16,10 @@ import {
   setPeerEnabled,
   syncPeer,
   syncAllPeers,
+  addStoragePeer,
   type PeerRow,
 } from "../../core/sync/peers.ts";
+import { provisionMasterKey, storageClientFor, type S3Config } from "../../core/sync/storage.ts";
 import { MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
 import * as p from "@clack/prompts";
@@ -73,6 +75,7 @@ function showConfig(db: ReturnType<typeof openMetahub>): void {
 function peerView(p: PeerRow) {
   return {
     url: p.url,
+    kind: p.kind,
     label: p.label ?? "",
     enabled: p.enabled ? "yes" : "no",
     status: p.last_status ?? "",
@@ -105,6 +108,7 @@ async function peerDispatch(
   const node = getNodeId(db);
   switch (action) {
     case "add": {
+      if (args.s3) return storagePeerAdd(db, args);
       const usage = "mh config peer add --url <url> --code <code> [--self-url <url>]";
       const url = flagOrAsk(args.url, "url", usage);
       const code = flagOrAsk(args.code, "code", usage);
@@ -154,6 +158,52 @@ async function peerDispatch(
 
 function syncLine(o: { url: string; ok: boolean; pushed?: number; pulled?: number; error?: string }) {
   return o.ok ? `${o.url}: pushed ${o.pushed}, pulled ${o.pulled}` : `${o.url}: error — ${o.error}`;
+}
+
+/** Synthetic peer key for a storage peer (one per bucket+prefix). */
+const storageUrl = (bucket: string, prefix: string) => `s3://${bucket}/${prefix}`;
+
+/**
+ * Add an S3-compatible storage peer (R2/MinIO/S3) as dumb store-and-forward.
+ * Provisioning fetches-or-creates the bucket's wrapped master key (needs the
+ * passphrase unless --no-encrypt), stores the resolved config, then runs one
+ * sync round so a bad endpoint / credentials / missing CORS fail fast here.
+ */
+async function storagePeerAdd(
+  db: ReturnType<typeof openMetahub>,
+  args: Record<string, any>,
+): Promise<void> {
+  const usage =
+    "mh config peer add --s3 --endpoint <url> --bucket <name> --access-key <id> --secret-key <key> [--prefix <p>] [--region <r>] [--passphrase <pw>] [--no-encrypt]";
+  const endpoint = flagOrAsk(args.endpoint, "endpoint", usage);
+  const bucket = flagOrAsk(args.bucket, "bucket", usage);
+  const accessKeyId = flagOrAsk(args["access-key"], "access-key", usage);
+  const secretAccessKey = flagOrAsk(args["secret-key"], "secret-key", usage);
+  const prefix = typeof args.prefix === "string" && args.prefix ? args.prefix : "metahub";
+  const region = typeof args.region === "string" && args.region ? args.region : "auto";
+  const encrypt = args.encrypt !== false; // --no-encrypt sets this false (citty negation)
+
+  const config: S3Config = {
+    endpoint,
+    region,
+    bucket,
+    prefix,
+    accessKeyId,
+    secretAccessKey,
+    encrypt,
+  };
+  if (encrypt) {
+    const passphrase = flagOrAsk(args.passphrase, "passphrase", usage);
+    config.masterKey = (await provisionMasterKey(storageClientFor(config), config, passphrase)) ?? undefined;
+  }
+  const url = storageUrl(bucket, prefix);
+  addStoragePeer(db, { url, config, label: bucket });
+  const sync = await syncPeer(db, url);
+  print(
+    { added: url, encrypted: encrypt, sync },
+    () =>
+      `added storage peer ${url} (${encrypt ? "encrypted" : "PLAINTEXT — trusted storage only"}); ${syncLine(sync)}`,
+  );
 }
 
 const maskToken = (t: string) => (t.length > 10 ? `${t.slice(0, 8)}…` : t);
@@ -283,6 +333,7 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
       message: "同步设备",
       options: [
         { value: "add", label: "添加设备", hint: "对方地址 + 配对码" },
+        { value: "add-s3", label: "添加同步存储 (S3/R2)", hint: "用对象存储中转,免公网 IP" },
         { value: "code", label: "生成本机配对码" },
         { value: "list", label: "列出设备" },
         { value: "rm", label: "移除设备" },
@@ -306,6 +357,59 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
           const r = await performPairing(db, node, url, code, selfUrl || undefined);
           const sync = await syncPeer(db, r.url);
           s.stop(`✓ 已配对 ${r.url} (node ${r.node_id})`);
+          p.note(syncLine(sync), "同步结果");
+        } catch (e) {
+          s.stop(`✗ ${(e as Error).message}`);
+        }
+      } else if (action === "add-s3") {
+        const endpoint = await p.text({
+          message: "S3 endpoint",
+          placeholder: "https://<account>.r2.cloudflarestorage.com",
+          validate: required,
+        });
+        if (cancelled(endpoint)) continue;
+        const bucket = await p.text({ message: "Bucket 名称", validate: required });
+        if (cancelled(bucket)) continue;
+        const region = await p.text({ message: "Region", initialValue: "auto" });
+        if (cancelled(region)) continue;
+        const accessKeyId = await p.text({ message: "Access Key ID", validate: required });
+        if (cancelled(accessKeyId)) continue;
+        const secretAccessKey = await p.password({ message: "Secret Access Key", validate: required });
+        if (cancelled(secretAccessKey)) continue;
+        const prefix = await p.text({ message: "路径前缀", initialValue: "metahub" });
+        if (cancelled(prefix)) continue;
+        const encrypt = await p.confirm({ message: "启用端到端加密? (强烈建议)", initialValue: true });
+        if (cancelled(encrypt)) continue;
+        let passphrase = "";
+        if (encrypt) {
+          const pw = await p.password({
+            message: "加密口令 (新桶将以此创建,已有桶需输入相同口令)",
+            validate: required,
+          });
+          if (cancelled(pw)) continue;
+          passphrase = pw;
+        } else {
+          p.note("⚠️ 明文模式:段文件不加密,仅限你完全信任的存储 (如自建内网 MinIO)。", "警告");
+        }
+        const s = p.spinner();
+        s.start("连接存储并配置…");
+        try {
+          const config: S3Config = {
+            endpoint,
+            region: region || "auto",
+            bucket,
+            prefix: prefix || "metahub",
+            accessKeyId,
+            secretAccessKey,
+            encrypt,
+          };
+          if (encrypt)
+            config.masterKey =
+              (await provisionMasterKey(storageClientFor(config), config, passphrase)) ?? undefined;
+          const url = storageUrl(bucket, prefix || "metahub");
+          addStoragePeer(db, { url, config, label: bucket });
+          const sync = await syncPeer(db, url);
+          s.stop(`✓ 已添加存储 ${url}`);
           p.note(syncLine(sync), "同步结果");
         } catch (e) {
           s.stop(`✗ ${(e as Error).message}`);
@@ -407,6 +511,22 @@ export default defineCommand({
     code: { type: "string", description: "One-time pairing code (peer add)" },
     "self-url": { type: "string", description: "This device's reachable URL (peer add, optional)" },
     token: { type: "string", description: "Issued credential token or prefix (grant revoke)" },
+    // Storage peer (peer add --s3): an S3-compatible bucket as store-and-forward.
+    s3: { type: "boolean", description: "Add an S3 storage peer (R2/MinIO/S3) instead of pairing" },
+    endpoint: { type: "string", description: "S3 endpoint URL (peer add --s3)" },
+    bucket: { type: "string", description: "S3 bucket name (peer add --s3)" },
+    "access-key": { type: "string", description: "S3 access key id (peer add --s3)" },
+    "secret-key": { type: "string", description: "S3 secret access key (peer add --s3)" },
+    prefix: { type: "string", description: "Path prefix within the bucket (peer add --s3; default metahub)" },
+    region: { type: "string", description: "S3 region (peer add --s3; default auto for R2)" },
+    passphrase: { type: "string", description: "E2EE passphrase (peer add --s3)" },
+    // citty negates a boolean with --no-<name>, so `--no-encrypt` flips this to
+    // false; default true means encryption is on unless explicitly disabled.
+    encrypt: {
+      type: "boolean",
+      default: true,
+      description: "E2EE on by default; pass --no-encrypt for plaintext (trusted storage only)",
+    },
   },
   run: guard(async (args) => {
     const db = openMetahub();

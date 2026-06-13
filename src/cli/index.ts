@@ -1,5 +1,6 @@
 import { defineCommand, runMain } from "citty";
 import pkg from "../../package.json" with { type: "json" };
+import "../core/sync/storage-s3-bun.ts"; // side effect: register the Bun S3 storage-sync client
 import init from "./commands/init.ts";
 import db from "./commands/db.ts";
 import use from "./commands/use.ts";

@@ -19,7 +19,16 @@ import { getNodeId } from "../../core/node.ts";
 import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
 import { syncWithPeer } from "../../core/sync/client.ts";
-import { addPeer, getPeer, removePeer } from "../../core/sync/peers.ts";
+import {
+  addPeer,
+  getPeer,
+  removePeer,
+  listPeers,
+  addStoragePeer,
+  syncPeer,
+} from "../../core/sync/peers.ts";
+import { provisionMasterKey, storageClientFor, type S3Config } from "../../core/sync/storage.ts";
+import "./storage-s3-browser.ts"; // side effect: register the browser SigV4 S3 client
 import { PAIR_PATH, type PairRequest, type PairResponse } from "../../core/sync/protocol.ts";
 import {
   listDatabases,
@@ -146,48 +155,77 @@ let syncing: Promise<void> | null = null;
  *  PULL_LIMIT changes for us (initial hydration), then settles. Broadcasts a
  *  `synced` event listing what the pulls touched, derived from the local oplog
  *  (everything ingested lands above the pre-sync high-water rowid). */
+/** True when there's anything to sync to: the paired origin server, or any
+ *  enabled storage (s3) peer. Storage peers let the browser sync even when the
+ *  origin server is offline/unreachable. */
+function hasSyncTarget(d: DbDriver): boolean {
+  if (getPeer(d, origin)?.token != null) return true;
+  return listPeers(d).some((p) => p.enabled === 1 && p.kind === "s3");
+}
+
 async function runSync(): Promise<void> {
-  if (!db || !status.paired) return;
+  if (!db) return;
+  const d = db;
+  if (!hasSyncTarget(d)) return;
   if (syncing) return syncing;
   syncing = (async () => {
-    const d = db!;
     const before = (
       d.query("SELECT MAX(rowid) AS m FROM crdt_changes").get() as { m: number | null }
     ).m ?? 0;
 
     let pushed = 0;
     let pulled = 0;
-    try {
-      for (;;) {
-        const r = await syncWithPeer(d, origin, { pullLimit: PULL_LIMIT });
-        pushed += r.pushed;
-        pulled += r.pulled;
-        if (r.pulled < PULL_LIMIT) break;
-        setStatus({ state: "hydrating", hydrated: pulled });
+    const errors: string[] = [];
+
+    // Origin server (http), chunked initial hydration — only if paired. Its
+    // failure (server offline) must not stop storage-peer sync below.
+    if (getPeer(d, origin)?.token != null) {
+      try {
+        for (;;) {
+          const r = await syncWithPeer(d, origin, { pullLimit: PULL_LIMIT });
+          pushed += r.pushed;
+          pulled += r.pulled;
+          if (r.pulled < PULL_LIMIT) break;
+          setStatus({ state: "hydrating", hydrated: pulled });
+        }
+      } catch (e) {
+        errors.push(`server: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const touched = d
-        .query("SELECT DISTINCT dataset, row_id FROM crdt_changes WHERE rowid > ?")
-        .all(before) as { dataset: string; row_id: string }[];
-      setStatus({
-        state: "ready",
-        hydrated: undefined,
-        lastSync: { at: Date.now(), ok: true, pushed, pulled },
-      });
-      if (touched.length || pushed) {
-        post({
-          event: "synced",
-          datasets: [...new Set(touched.map((t) => t.dataset))],
-          rowIds: touched.map((t) => t.row_id),
-          pushed,
-          pulled,
-        });
+    }
+
+    // Storage (s3) peers — each captures its own error into last_status.
+    for (const peer of listPeers(d)) {
+      if (peer.enabled !== 1 || peer.kind !== "s3") continue;
+      const out = await syncPeer(d, peer.url);
+      if (out.ok) {
+        pushed += out.pushed ?? 0;
+        pulled += out.pulled ?? 0;
+      } else {
+        errors.push(`${peer.label ?? peer.url}: ${out.error}`);
       }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setStatus({
-        state: "ready",
-        hydrated: undefined,
-        lastSync: { at: Date.now(), ok: false, pushed, pulled, error: message },
+    }
+
+    const touched = d
+      .query("SELECT DISTINCT dataset, row_id FROM crdt_changes WHERE rowid > ?")
+      .all(before) as { dataset: string; row_id: string }[];
+    setStatus({
+      state: "ready",
+      hydrated: undefined,
+      lastSync: {
+        at: Date.now(),
+        ok: errors.length === 0,
+        pushed,
+        pulled,
+        error: errors.join("; ") || undefined,
+      },
+    });
+    if (touched.length || pushed) {
+      post({
+        event: "synced",
+        datasets: [...new Set(touched.map((t) => t.dataset))],
+        rowIds: touched.map((t) => t.row_id),
+        pushed,
+        pulled,
       });
     }
   })().finally(() => {
@@ -254,6 +292,33 @@ const ops: Record<string, Op> = {
   pair: (code: string) => pair(code),
   unpair: () => unpair(),
   sync: () => runSync().then(() => status.lastSync),
+
+  // storage-sync (S3/R2): add a bucket peer for store-and-forward sync. The
+  // settings page passes the bucket config + passphrase; we provision (fetch or
+  // create the wrapped master key in the bucket), persist the resolved peer,
+  // then run a round so bad credentials / missing CORS surface immediately.
+  addStorageReplica: async (config: S3Config, passphrase: string) => {
+    const d = db!;
+    const cfg: S3Config = { ...config };
+    if (cfg.encrypt)
+      cfg.masterKey = (await provisionMasterKey(storageClientFor(cfg), cfg, passphrase)) ?? undefined;
+    const url = `s3://${cfg.bucket}/${cfg.prefix}`;
+    addStoragePeer(d, { url, config: cfg, label: cfg.bucket });
+    await runSync();
+    return { url, lastSync: status.lastSync };
+  },
+  removeStorageReplica: (url: string) => ({ ok: removePeer(db!, url) }),
+  listStoragePeers: () =>
+    listPeers(db!)
+      .filter((p) => p.kind === "s3")
+      .map((p) => ({
+        url: p.url,
+        label: p.label,
+        enabled: p.enabled === 1,
+        status: p.last_status,
+        error: p.last_error,
+        lastSyncAt: p.last_sync_at,
+      })),
 
   // databases
   listDatabases: () => listDatabases(db!),

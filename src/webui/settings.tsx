@@ -12,6 +12,7 @@ import {
   disableReplica,
   resetReplica,
   requestSync,
+  call as replicaCall,
 } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
 import { cmpVer } from "./version.ts";
@@ -67,6 +68,7 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
 
       {typeof window !== "undefined" && window.metahubDesktop?.quicknote && <QuickNotesSettings />}
       <OfflineReplica />
+      <SyncStorage />
       <SyncDevices />
       <IssuedGrants />
       <VersionFooter onUpdatePending={onUpdatePending} />
@@ -236,6 +238,256 @@ function OfflineReplica() {
         {enabled && usage ? ` · 本地占用 ${usage} MB` : ""}
       </div>
     </div>
+  );
+}
+
+// ---- sync storage (this browser ⇄ an S3/R2 bucket) ------------------------
+
+interface StoragePeerView {
+  url: string;
+  label: string | null;
+  enabled: boolean;
+  status: string | null;
+  error: string | null;
+  lastSyncAt: number | null;
+}
+
+/**
+ * Point THIS browser's local replica at an S3-compatible bucket (R2/MinIO/S3)
+ * used as dumb store-and-forward — so it syncs with your other devices without
+ * any of them running a public server, and even when they're offline. The
+ * bucket peer lives in this browser's replica DB and is driven by the worker's
+ * sync loop, so it requires the offline replica to be enabled first.
+ */
+function SyncStorage() {
+  const [enabled, setEnabled] = useState(replicaEnabled());
+  const [peers, setPeers] = useState<StoragePeerView[] | null>(null);
+
+  useEffect(() => onReplicaStatus(() => setEnabled(replicaEnabled())), []);
+
+  const reload = () => {
+    if (!replicaEnabled()) {
+      setPeers(null);
+      return;
+    }
+    replicaCall<StoragePeerView[]>("listStoragePeers")
+      .then(setPeers)
+      .catch((e) => toast(`加载失败：${(e as Error).message}`));
+  };
+
+  useEffect(() => {
+    reload();
+  }, [enabled]);
+
+  const add = () =>
+    openModal(
+      <AddStorageModal
+        onDone={() => {
+          closeModal();
+          reload();
+        }}
+      />,
+    );
+
+  const syncNow = async () => {
+    try {
+      await replicaCall("sync");
+      toast("已触发同步");
+      reload();
+    } catch (e) {
+      toast(`同步失败：${(e as Error).message}`);
+    }
+  };
+
+  const remove = async (p: StoragePeerView) => {
+    const ok = await confirmDialog({
+      title: "移除同步存储",
+      message: `确定移除 ${p.label || p.url}？本浏览器将停止与该存储桶同步（桶内数据不受影响）。`,
+      confirmLabel: "移除",
+      danger: true,
+    });
+    if (!ok) return;
+    await replicaCall("removeStorageReplica", p.url).catch((e) => toast((e as Error).message));
+    reload();
+  };
+
+  return (
+    <div class="set-section">
+      <div class="set-section-head">同步存储 (S3/R2)</div>
+      <div class="set-section-desc">
+        用对象存储桶做中转，在多设备间同步——无需任何一台设备拥有公网 IP，对方离线也能同步。
+        数据在上传前端到端加密。需先启用上方的「离线副本」。
+      </div>
+
+      {!enabled ? (
+        <div class="peer-sub">⚠ 请先在上方启用「离线副本」，再添加同步存储。</div>
+      ) : (
+        <>
+          <div class="peer-actions">
+            <button class="btn btn-primary" onClick={add}>
+              <Icon name="plus" cls="ico sm" /> 添加同步存储
+            </button>
+            {peers && peers.length > 0 && (
+              <button class="btn btn-secondary" onClick={syncNow}>
+                <Icon name="share" cls="ico sm" /> 立即同步
+              </button>
+            )}
+          </div>
+
+          <div class="peer-list">
+            {peers == null ? (
+              <div class="muted">加载中…</div>
+            ) : peers.length === 0 ? (
+              <div class="muted">还没有配置同步存储。</div>
+            ) : (
+              peers.map((p) => (
+                <div key={p.url} class="peer-row">
+                  <span class={"peer-dot" + (p.enabled ? (p.status === "error" ? " err" : " on") : " off")} />
+                  <div class="peer-main">
+                    <div class="peer-url">{p.label || p.url}</div>
+                    <div class="peer-sub">
+                      最近同步 {fmtTime(p.lastSyncAt)}
+                      {p.status === "error" && p.error ? ` · 错误：${p.error}` : ""}
+                    </div>
+                  </div>
+                  <button class="btn btn-ghost peer-menu" title="移除" onClick={() => remove(p)}>
+                    <Icon name="trash" cls="ico sm" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Heuristic: a fetch that failed at the CORS/network layer (opaque TypeError)
+ *  rather than an HTTP error from S3. The bucket almost certainly lacks a CORS
+ *  rule for this origin — the one setup step a phone needs. */
+function looksLikeCors(message: string): boolean {
+  return /failed to fetch|load failed|networkerror|cors/i.test(message);
+}
+
+function AddStorageModal({ onDone }: { onDone: () => void }) {
+  const [endpoint, setEndpoint] = useState("");
+  const [bucket, setBucket] = useState("");
+  const [region, setRegion] = useState("auto");
+  const [accessKey, setAccessKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const [prefix, setPrefix] = useState("metahub");
+  const [encrypt, setEncrypt] = useState(true);
+  const [passphrase, setPassphrase] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!endpoint.trim() || !bucket.trim() || !accessKey.trim() || !secretKey.trim()) {
+      toast("endpoint、bucket、access key、secret key 必填");
+      return;
+    }
+    if (encrypt && !passphrase) {
+      toast("加密口令必填（或关闭加密）");
+      return;
+    }
+    setBusy(true);
+    try {
+      const config = {
+        endpoint: endpoint.trim(),
+        region: region.trim() || "auto",
+        bucket: bucket.trim(),
+        prefix: prefix.trim() || "metahub",
+        accessKeyId: accessKey.trim(),
+        secretAccessKey: secretKey.trim(),
+        encrypt,
+      };
+      const r = await replicaCall<{ url: string }>("addStorageReplica", config, passphrase);
+      toast(`已添加同步存储 ${r.url}`);
+      onDone();
+    } catch (e) {
+      const msg = (e as Error).message;
+      toast(
+        looksLikeCors(msg)
+          ? "连接被浏览器拦截：请给存储桶配置 CORS，允许此源的 GET/PUT/HEAD/DELETE（R2 控制台一条规则即可）。"
+          : `添加失败：${msg}`,
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="添加同步存储"
+      sub="填入 S3 兼容存储桶的连接信息（推荐 Cloudflare R2，免费 10GB）。新桶会自动初始化；已有桶请使用相同的加密口令。"
+      footer={
+        <>
+          <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>取消</button>
+          <button class="btn btn-primary" onClick={submit} disabled={busy}>
+            {busy ? "连接中…" : "添加"}
+          </button>
+        </>
+      }
+    >
+      <div class="field-label">Endpoint</div>
+      <input
+        class="text-input"
+        autofocus
+        placeholder="https://<account>.r2.cloudflarestorage.com"
+        value={endpoint}
+        onInput={(e) => setEndpoint((e.target as HTMLInputElement).value)}
+      />
+      <div class="field-label">Bucket</div>
+      <input
+        class="text-input"
+        placeholder="my-metahub"
+        value={bucket}
+        onInput={(e) => setBucket((e.target as HTMLInputElement).value)}
+      />
+      <div class="field-label">Region</div>
+      <input
+        class="text-input"
+        placeholder="auto"
+        value={region}
+        onInput={(e) => setRegion((e.target as HTMLInputElement).value)}
+      />
+      <div class="field-label">Access Key ID</div>
+      <input
+        class="text-input"
+        value={accessKey}
+        onInput={(e) => setAccessKey((e.target as HTMLInputElement).value)}
+      />
+      <div class="field-label">Secret Access Key</div>
+      <input
+        class="text-input"
+        type="password"
+        value={secretKey}
+        onInput={(e) => setSecretKey((e.target as HTMLInputElement).value)}
+      />
+      <div class="field-label">路径前缀</div>
+      <input
+        class="text-input"
+        placeholder="metahub"
+        value={prefix}
+        onInput={(e) => setPrefix((e.target as HTMLInputElement).value)}
+      />
+      <label class="set-check-row" style={{ marginTop: 12 }}>
+        <input type="checkbox" checked={encrypt} onChange={(e) => setEncrypt((e.target as HTMLInputElement).checked)} />
+        <span>端到端加密（强烈建议；关闭后段文件为明文，仅限完全信任的存储）</span>
+      </label>
+      {encrypt && (
+        <>
+          <div class="field-label">加密口令</div>
+          <input
+            class="text-input"
+            type="password"
+            placeholder="新桶将以此创建；已有桶需输入相同口令"
+            value={passphrase}
+            onInput={(e) => setPassphrase((e.target as HTMLInputElement).value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </>
+      )}
+    </Modal>
   );
 }
 

@@ -716,6 +716,9 @@
   .field-label:first-child { margin-top:0; }
   .text-input { width:100%; border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:9px 11px; outline:none; background:var(--surface); font-size:var(--fs-body); }
   .text-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  /* Checkbox + label row (e.g. the E2EE toggle in "添加同步存储"). */
+  .set-check-row { display:flex; align-items:flex-start; gap:8px; font-size:var(--fs-body); color:var(--fg-soft); cursor:pointer; }
+  .set-check-row input { margin-top:2px; flex:none; }
   .icon-pick { display:flex; gap:6px; flex-wrap:wrap; }
   .icon-pick button { width:38px; height:38px; border-radius:9px; border:1px solid var(--line); font-size:19px; display:grid; place-items:center; }
   .icon-pick button:hover { background:var(--hover-2); }

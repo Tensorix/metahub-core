@@ -1,3 +1,4 @@
+import "./storage-s3-bun.ts"; // side effect: register the Bun S3 storage-sync client (auto-sync timer)
 import { openMetahub } from "../db.ts";
 import { MhError } from "../errors.ts";
 import { getNodeId } from "../node.ts";

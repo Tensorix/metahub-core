@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runSchema } from "./db.ts";
-import { emit, emitFields, ingest, changesSince } from "./crdt.ts";
+import { emit, emitFields, ingest, changesSince, changesAfterSeq } from "./crdt.ts";
 import { nextHlc } from "./hlc.ts";
 
 function makeNode(id: string): Database {
@@ -81,4 +81,52 @@ test("apply order does not affect the materialized result", () => {
 
   expect(snapshot(fwd).databases).toEqual(snapshot(rev).databases);
   expect(snapshot(fwd).databases).toEqual(snapshot(a).databases);
+});
+
+// changesAfterSeq onlyNode — storage-sync uploads only this node's own ops to
+// its bucket prefix (no re-uploading ingested peer ops). See sync/storage.ts.
+
+test("changesAfterSeq onlyNode returns just this node's own ops", () => {
+  const a = makeNode("nodeA");
+  const b = makeNode("nodeB");
+  emit(a, "databases", "db1", "name", "A1");
+  emit(a, "databases", "db1", "icon", "📦");
+  ingest(a, [emit(b, "databases", "db2", "name", "B1")]);
+
+  expect(changesAfterSeq(a, 0).changes.length).toBe(3); // all three, unfiltered
+
+  const mine = changesAfterSeq(a, 0, { onlyNode: "nodeA" }).changes;
+  expect(mine.length).toBe(2);
+  expect(mine.every((c) => c.node_id === "nodeA")).toBe(true);
+});
+
+test("onlyNode cursor advances past ingested foreign ops so they aren't rescanned", () => {
+  const a = makeNode("nodeA");
+  const b = makeNode("nodeB");
+  emit(a, "databases", "db1", "name", "A1");
+  ingest(a, [emit(b, "databases", "db2", "name", "B1")]);
+
+  const batch = changesAfterSeq(a, 0, { onlyNode: "nodeA" });
+  expect(batch.changes.length).toBe(1);
+  // exhausted scan jumps the cursor to the global high-water rowid, past the
+  // ingested foreign row — the next round sees nothing to re-upload.
+  expect(changesAfterSeq(a, batch.cursor, { onlyNode: "nodeA" }).changes.length).toBe(0);
+
+  // a fresh self op lands above the cursor and is picked up.
+  emit(a, "databases", "db1", "icon", "x");
+  const after = changesAfterSeq(a, batch.cursor, { onlyNode: "nodeA" });
+  expect(after.changes.length).toBe(1);
+  expect(after.changes[0]!.col).toBe("icon");
+});
+
+test("onlyNode honors limit and resumes from the last returned row", () => {
+  const a = makeNode("nodeA");
+  emit(a, "databases", "db1", "name", "1");
+  emit(a, "databases", "db1", "icon", "2");
+  emit(a, "databases", "db1", "created_hlc", "3");
+
+  const first = changesAfterSeq(a, 0, { onlyNode: "nodeA", limit: 2 });
+  expect(first.changes.length).toBe(2);
+  const second = changesAfterSeq(a, first.cursor, { onlyNode: "nodeA", limit: 2 });
+  expect(second.changes.length).toBe(1);
 });

@@ -276,6 +276,14 @@ export interface ChangesAfterOpts {
   limit?: number;
   /** Datasets to omit (partial replicas, e.g. a phone skipping site_files). */
   excludeDatasets?: string[];
+  /**
+   * Return only changes this node produced itself. Storage-sync (see
+   * sync/storage.ts) publishes each node's own ops under its own bucket prefix,
+   * so it must not re-upload ops it merely ingested from peers. The cursor still
+   * advances over the filtered-out rows (high-water on exhaustion), so ingested
+   * ops are skipped once, not rescanned every round.
+   */
+  onlyNode?: string;
 }
 
 /**
@@ -294,15 +302,23 @@ export function changesAfterSeq(
   opts: ChangesAfterOpts = {},
 ): ChangeBatch {
   const exclude = opts.excludeDatasets ?? [];
-  const where = exclude.length
-    ? `rowid > ? AND dataset NOT IN (${exclude.map(() => "?").join(", ")})`
-    : "rowid > ?";
+  const clauses = ["rowid > ?"];
+  const params: (string | number)[] = [seq];
+  if (exclude.length) {
+    clauses.push(`dataset NOT IN (${exclude.map(() => "?").join(", ")})`);
+    params.push(...exclude);
+  }
+  if (opts.onlyNode != null) {
+    clauses.push("node_id = ?");
+    params.push(opts.onlyNode);
+  }
+  const where = clauses.join(" AND ");
   const limitSql = opts.limit != null && opts.limit > 0 ? ` LIMIT ${Math.floor(opts.limit)}` : "";
   const rows = db
     .query(
       `SELECT rowid AS seq, ${CHANGE_SELECT} FROM crdt_changes WHERE ${where} ORDER BY rowid${limitSql}`,
     )
-    .all(seq, ...exclude) as (Change & { seq: number })[];
+    .all(...params) as (Change & { seq: number })[];
 
   const exhausted = opts.limit == null || opts.limit <= 0 || rows.length < opts.limit;
   let cursor: number;

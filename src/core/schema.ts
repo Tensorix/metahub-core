@@ -28,6 +28,12 @@ CREATE INDEX IF NOT EXISTS idx_changes_docref ON crdt_changes(value)
 -- a pairing: "token" is the credential the *remote* issued to us (sent as a
 -- Bearer header when we sync to them). See migratePeers in db.ts for the columns
 -- added to legacy databases.
+--
+-- kind selects the transport: 'http' (POST /sync to a peer server, the classic
+-- path) or 's3' (an S3-compatible bucket used as dumb store-and-forward — see
+-- sync/storage.ts). For 's3' peers url is a synthetic key (s3://<bucket>/<prefix>)
+-- and config holds the bucket settings + credentials + master key as JSON.
+-- Like the rest of peers, config is local-only and never enters the CRDT oplog.
 CREATE TABLE IF NOT EXISTS peers (
   url          TEXT PRIMARY KEY,
   pull_cursor  INTEGER NOT NULL DEFAULT 0,
@@ -38,7 +44,22 @@ CREATE TABLE IF NOT EXISTS peers (
   enabled      INTEGER NOT NULL DEFAULT 1,
   last_sync_at INTEGER,
   last_status  TEXT,
-  last_error   TEXT
+  last_error   TEXT,
+  kind         TEXT NOT NULL DEFAULT 'http',
+  config       TEXT
+);
+
+-- Per-(storage-peer, remote-node) pull progress: the key of the last oplog
+-- segment we consumed from that node's bucket prefix. HTTP peers use the single
+-- pull_cursor above; storage peers need one cursor per remote node because each
+-- node publishes its own segment stream under its own prefix. last_key is a
+-- bucket object key (lexicographically ordered = chronological), so LIST
+-- start-after resumes exactly where we left off.
+CREATE TABLE IF NOT EXISTS storage_cursors (
+  peer_url TEXT NOT NULL,
+  node_id  TEXT NOT NULL,
+  last_key TEXT,
+  PRIMARY KEY (peer_url, node_id)
 );
 
 -- Inbound side of a pairing: credentials *we* issued to remote devices. A peer
