@@ -35,6 +35,7 @@
   "dependencies": {
     "@clack/prompts": "^1.5.0",
     "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
+    "aws4fetch": "^1.0.20",
     "citty": "^0.1.6",
     "highlight.js": "^11.11.1",
     "preact": "^10.29.2",
