@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { initSchema, migrateOplog } from "./schema-init.ts";
+import { initSchema, migrateOplog, migrateCrdtChangesSeq } from "./schema-init.ts";
 import { runSchema } from "./db.ts";
 import { emit, changesAfterSeq, CHANGE_COLS } from "./crdt.ts";
 import { DATABASE_COLS } from "./databases.ts";
@@ -55,9 +55,9 @@ test("domain tables keep their tombstone column", () => {
   }
 });
 
-// The CREATE in schema.ts and the guarded ALTERs in schema-init.ts are two
+// The CREATE in schema.ts and the guarded migrations in schema-init.ts are two
 // sources of truth for the same end state; this pins them together for the
-// table that has both (crdt_changes gained `txn` by migration).
+// table that has both (crdt_changes gained `txn` by ALTER and `seq` by rebuild).
 test("fresh CREATE and legacy-table migration agree on crdt_changes columns", () => {
   const fresh = new Database(":memory:");
   runSchema(fresh);
@@ -74,7 +74,8 @@ test("fresh CREATE and legacy-table migration agree on crdt_changes columns", ()
       PRIMARY KEY (dataset, row_id, col, hlc)
     );
   `);
-  migrateOplog(legacy);
+  migrateOplog(legacy); // adds txn
+  migrateCrdtChangesSeq(legacy); // rebuilds with the AUTOINCREMENT seq
 
   expect([...tableColumns(legacy, "crdt_changes")].sort()).toEqual(
     [...tableColumns(fresh, "crdt_changes")].sort(),

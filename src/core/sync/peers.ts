@@ -5,7 +5,12 @@
 
 import type { DbDriver } from "../driver.ts";
 import { syncWithPeer, type SyncResult } from "./client.ts";
-import { syncWithStorage, storageClientFor, type S3Config } from "./storage.ts";
+import {
+  syncWithStorage,
+  storageClientFor,
+  type S3Config,
+  type StorageSyncOpts,
+} from "./storage.ts";
 
 const PEER_COLS =
   "url, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_status, last_error, kind, config";
@@ -126,14 +131,18 @@ export interface PeerSyncOutcome {
 /** Sync once with a single peer, recording status. Errors are captured, not
  *  thrown. Dispatches on transport: 's3' peers go through the bucket
  *  store-and-forward client, everything else POSTs /sync. */
-export async function syncPeer(db: DbDriver, url: string): Promise<PeerSyncOutcome> {
+export async function syncPeer(
+  db: DbDriver,
+  url: string,
+  opts?: { storage?: StorageSyncOpts },
+): Promise<PeerSyncOutcome> {
   try {
     const peer = getPeer(db, url);
     let result: SyncResult;
     if (peer?.kind === "s3") {
       if (!peer.config) throw new Error(`storage peer ${url} has no config`);
       const config = JSON.parse(peer.config) as S3Config;
-      result = await syncWithStorage(db, url, storageClientFor(config), config);
+      result = await syncWithStorage(db, url, storageClientFor(config), config, opts?.storage);
     } else {
       result = await syncWithPeer(db, url);
     }

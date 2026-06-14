@@ -13,10 +13,12 @@
 // the settings page surfaces a clear message when it's missing.
 
 import { AwsClient } from "aws4fetch";
+import { MhError } from "../../core/errors.ts";
 import {
   setStorageClientFactory,
   type StorageClient,
   type StorageObject,
+  type StoragePutOpts,
   type S3Config,
 } from "../../core/sync/storage.ts";
 
@@ -48,7 +50,7 @@ function makeClient(config: S3Config): StorageClient {
   }
 
   return {
-    async list(prefix: string, startAfter?: string): Promise<StorageObject[]> {
+    async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
       const out: StorageObject[] = [];
       let continuationToken: string | undefined;
       do {
@@ -57,6 +59,7 @@ function makeClient(config: S3Config): StorageClient {
         u.searchParams.set("prefix", prefix);
         u.searchParams.set("max-keys", "1000");
         if (startAfter) u.searchParams.set("start-after", startAfter);
+        if (delimiter) u.searchParams.set("delimiter", delimiter);
         if (continuationToken) u.searchParams.set("continuation-token", continuationToken);
         const res = await aws.fetch(u.toString(), { method: "GET" });
         if (!res.ok) await fail(res, "list");
@@ -68,6 +71,14 @@ function makeClient(config: S3Config): StorageClient {
           const key = /<Key>([^<]+)<\/Key>/.exec(block)?.[1];
           if (!key) continue;
           out.push({ key: decodeXmlEntities(key), etag: /<ETag>([^<]*)<\/ETag>/.exec(block)?.[1] });
+        }
+        // With a delimiter, child "folders" come back here, not in <Contents>.
+        if (delimiter) {
+          const reCp = /<CommonPrefixes>([\s\S]*?)<\/CommonPrefixes>/g;
+          while ((m = reCp.exec(xml))) {
+            const p = /<Prefix>([^<]+)<\/Prefix>/.exec(m[1]!)?.[1];
+            if (p) out.push({ key: decodeXmlEntities(p) });
+          }
         }
         continuationToken = /<IsTruncated>true<\/IsTruncated>/.test(xml)
           ? /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(xml)?.[1]
@@ -83,12 +94,19 @@ function makeClient(config: S3Config): StorageClient {
       return new Uint8Array(await res.arrayBuffer());
     },
 
-    async put(key: string, body: Uint8Array, contentType?: string): Promise<void> {
+    async put(key: string, body: Uint8Array, opts?: StoragePutOpts): Promise<void> {
+      const headers: Record<string, string> = {};
+      if (opts?.contentType) headers["content-type"] = opts.contentType;
+      // Conditional create: S3/R2 reject with 412 if the object already exists.
+      if (opts?.ifNoneMatch) headers["if-none-match"] = "*";
       const res = await aws.fetch(objectUrl(key), {
         method: "PUT",
         body: body as unknown as BodyInit,
-        headers: contentType ? { "content-type": contentType } : undefined,
+        headers: Object.keys(headers).length ? headers : undefined,
       });
+      if (opts?.ifNoneMatch && res.status === 412) {
+        throw new MhError("conflict", `S3 object already exists: ${key}`);
+      }
       if (!res.ok) await fail(res, "put");
     },
 

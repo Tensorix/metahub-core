@@ -6,10 +6,12 @@
 // imports this Bun-only module, keeping `bun` out of the browser bundle.
 
 import { S3Client } from "bun";
+import { MhError } from "../errors.ts";
 import {
   setStorageClientFactory,
   type StorageClient,
   type StorageObject,
+  type StoragePutOpts,
   type S3Config,
 } from "./storage.ts";
 
@@ -23,12 +25,15 @@ function makeClient(config: S3Config): StorageClient {
   });
 
   return {
-    async list(prefix: string, startAfter?: string): Promise<StorageObject[]> {
+    async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
       const out: StorageObject[] = [];
       let continuationToken: string | undefined;
       do {
-        const res = await s3.list({ prefix, startAfter, maxKeys: 1000, continuationToken });
+        const res = await s3.list({ prefix, startAfter, maxKeys: 1000, continuationToken, delimiter });
         for (const c of res.contents ?? []) out.push({ key: c.key, etag: c.eTag });
+        // With delimiter, child "folders" come back as common prefixes (their
+        // keys end in the delimiter); nodesFromKeys treats them like full keys.
+        for (const p of res.commonPrefixes ?? []) out.push({ key: p.prefix });
         continuationToken = res.isTruncated ? res.nextContinuationToken : undefined;
       } while (continuationToken);
       return out;
@@ -46,8 +51,17 @@ function makeClient(config: S3Config): StorageClient {
       }
     },
 
-    async put(key: string, body: Uint8Array, contentType?: string): Promise<void> {
-      await s3.file(key).write(body, contentType ? { type: contentType } : undefined);
+    async put(key: string, body: Uint8Array, opts?: StoragePutOpts): Promise<void> {
+      // Bun.S3Client.write has no native If-None-Match. Approximate the conditional
+      // create with an existence pre-check: this catches the realistic ordering
+      // (one device's create already visible — S3/R2 are read-after-write
+      // consistent for new objects) and lets provisionMasterKey adopt the winner.
+      // A truly simultaneous Bun-vs-Bun first-init on an empty bucket can still
+      // race (no atomic CAS here); the browser client uses real If-None-Match.
+      if (opts?.ifNoneMatch && (await s3.file(key).exists())) {
+        throw new MhError("conflict", `S3 object already exists: ${key}`);
+      }
+      await s3.file(key).write(body, opts?.contentType ? { type: opts.contentType } : undefined);
     },
 
     async del(key: string): Promise<void> {

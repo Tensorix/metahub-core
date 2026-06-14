@@ -163,7 +163,14 @@ function hasSyncTarget(d: DbDriver): boolean {
   return listPeers(d).some((p) => p.enabled === 1 && p.kind === "s3");
 }
 
-async function runSync(): Promise<void> {
+/** Push-batching for storage peers: coalesce edits into ~one segment per
+ *  STORAGE_PUSH_AGE_MS (or per STORAGE_PUSH_MIN_CHANGES) instead of a tiny
+ *  object per debounce, which costs a billed request + a GET for every puller.
+ *  `force` (explicit "sync now") bypasses the thresholds so edits never strand. */
+const STORAGE_PUSH_MIN_CHANGES = 25;
+const STORAGE_PUSH_AGE_MS = 10_000;
+
+async function runSync(force = false): Promise<void> {
   if (!db) return;
   const d = db;
   if (!hasSyncTarget(d)) return;
@@ -196,7 +203,13 @@ async function runSync(): Promise<void> {
     // Storage (s3) peers — each captures its own error into last_status.
     for (const peer of listPeers(d)) {
       if (peer.enabled !== 1 || peer.kind !== "s3") continue;
-      const out = await syncPeer(d, peer.url);
+      const out = await syncPeer(d, peer.url, {
+        storage: {
+          minPushChanges: STORAGE_PUSH_MIN_CHANGES,
+          maxPushAgeMs: STORAGE_PUSH_AGE_MS,
+          forcePush: force,
+        },
+      });
       if (out.ok) {
         pushed += out.pushed ?? 0;
         pulled += out.pulled ?? 0;
@@ -291,7 +304,10 @@ const ops: Record<string, Op> = {
   status: () => status,
   pair: (code: string) => pair(code),
   unpair: () => unpair(),
-  sync: () => runSync().then(() => status.lastSync),
+  // Explicit "sync now" (settings button, online/visibility triggers): force a
+  // push so pending edits flush immediately. The edit-debounce + 15s poll use
+  // the unforced path so a burst of edits batches into one segment.
+  sync: () => runSync(true).then(() => status.lastSync),
 
   // storage-sync (S3/R2): add a bucket peer for store-and-forward sync. The
   // settings page passes the bucket config + passphrase; we provision (fetch or

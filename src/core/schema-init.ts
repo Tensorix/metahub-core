@@ -123,10 +123,59 @@ export function migrateOplog(db: DbDriver): void {
     db.exec("ALTER TABLE crdt_changes ADD COLUMN txn TEXT");
 }
 
+/**
+ * Rebuild a legacy `crdt_changes` (composite PRIMARY KEY, implicit rowid) into
+ * the current shape with an explicit `seq INTEGER PRIMARY KEY AUTOINCREMENT`.
+ *
+ * Why: replication push/pull cursors are crdt_changes rowids. The legacy table
+ * has no declared INTEGER PRIMARY KEY, so a `VACUUM` (run by `mh` compaction)
+ * renumbers its rowids 1..N; a peer's stored cursor then sits above the new
+ * MAX(rowid) and `changesAfterSeq`'s "never regress" floor pins it there,
+ * silently never pushing/pulling the writes below it. The declared `seq` is
+ * stable across VACUUM and never reused, closing the hole.
+ *
+ * Idempotent — guarded by the `seq` column. Old rowids are copied verbatim into
+ * seq so any *uncorrupted* cursor stays meaningful; then push/pull cursors are
+ * reset to 0 because we cannot tell which were already stranded by a past
+ * VACUUM, and a from-scratch re-sync is safe (INSERT OR IGNORE / ingest dedup)
+ * — a one-time catch-up on first sync after upgrade. storage_cursors are
+ * object-key based, never rowids, so they are left intact.
+ */
+export function migrateCrdtChangesSeq(db: DbDriver): void {
+  if (hasColumn(db, "crdt_changes", "seq")) return;
+  const tx = db.transaction(() => {
+    db.exec(`
+      DROP TABLE IF EXISTS crdt_changes_new;
+      CREATE TABLE crdt_changes_new (
+        seq     INTEGER PRIMARY KEY AUTOINCREMENT,
+        hlc     TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        dataset TEXT NOT NULL,
+        row_id  TEXT NOT NULL,
+        col     TEXT NOT NULL,
+        value   TEXT,
+        txn     TEXT,
+        UNIQUE (dataset, row_id, col, hlc)
+      );
+      INSERT INTO crdt_changes_new (seq, hlc, node_id, dataset, row_id, col, value, txn)
+        SELECT rowid, hlc, node_id, dataset, row_id, col, value, txn
+        FROM crdt_changes ORDER BY rowid;
+      DROP TABLE crdt_changes;
+      ALTER TABLE crdt_changes_new RENAME TO crdt_changes;
+      CREATE INDEX IF NOT EXISTS idx_changes_hlc ON crdt_changes(hlc);
+      CREATE INDEX IF NOT EXISTS idx_changes_docref ON crdt_changes(value)
+        WHERE dataset = 'doc_blocks' AND col = 'doc_id';
+    `);
+    if (tableExists(db, "peers")) db.exec("UPDATE peers SET push_cursor = 0, pull_cursor = 0");
+  });
+  tx();
+}
+
 /** Bring a freshly opened (or legacy) database to the current schema. */
 export function initSchema(db: DbDriver): void {
   runSchema(db);
   migrateOplog(db);
+  migrateCrdtChangesSeq(db);
   migrateRecords(db);
   migratePeers(db);
   migrateDocBlocks(db);

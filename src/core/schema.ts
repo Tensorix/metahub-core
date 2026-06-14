@@ -7,7 +7,17 @@ CREATE TABLE IF NOT EXISTS meta (
 -- CRDT oplog: one row per field assignment. Source of truth for sync.
 -- txn groups the changes of one logical mutation for history rendering
 -- (nullable: legacy rows and changes from pre-txn peers have none).
+--
+-- seq is an explicit AUTOINCREMENT id used as the replication cursor. It must
+-- be a declared INTEGER PRIMARY KEY (not the implicit rowid): VACUUM renumbers
+-- the rowids of tables that lack one, which would shift them below a peer's
+-- stored push/pull cursor and silently strand every write in the gap.
+-- AUTOINCREMENT additionally guarantees ids are never reused. The
+-- (dataset,row_id,col,hlc) tuple stays UNIQUE so applyChange's INSERT OR IGNORE
+-- dedup is unchanged. Legacy databases are rebuilt into this shape by
+-- migrateCrdtChangesSeq (schema-init.ts).
 CREATE TABLE IF NOT EXISTS crdt_changes (
+  seq     INTEGER PRIMARY KEY AUTOINCREMENT,
   hlc     TEXT NOT NULL,
   node_id TEXT NOT NULL,
   dataset TEXT NOT NULL,
@@ -15,7 +25,7 @@ CREATE TABLE IF NOT EXISTS crdt_changes (
   col     TEXT NOT NULL,
   value   TEXT,
   txn     TEXT,
-  PRIMARY KEY (dataset, row_id, col, hlc)
+  UNIQUE (dataset, row_id, col, hlc)
 );
 CREATE INDEX IF NOT EXISTS idx_changes_hlc ON crdt_changes(hlc);
 -- Serves history's "every block ever attached to this doc" lookup. Partial so
@@ -23,8 +33,9 @@ CREATE INDEX IF NOT EXISTS idx_changes_hlc ON crdt_changes(hlc);
 CREATE INDEX IF NOT EXISTS idx_changes_docref ON crdt_changes(value)
   WHERE dataset = 'doc_blocks' AND col = 'doc_id';
 
--- Per-peer replication cursors (SQLite rowids: monotonic in insertion order,
--- so no change is ever skipped regardless of HLC/clock skew). Outbound side of
+-- Per-peer replication cursors (crdt_changes.seq: AUTOINCREMENT, monotonic in
+-- insertion order and stable across VACUUM, so no change is ever skipped
+-- regardless of HLC/clock skew). Outbound side of
 -- a pairing: "token" is the credential the *remote* issued to us (sent as a
 -- Bearer header when we sync to them). See migratePeers in db.ts for the columns
 -- added to legacy databases.

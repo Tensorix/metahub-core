@@ -14,9 +14,12 @@ import { MhError } from "./errors.ts";
 //      surviving row of the same register with hlc <= cutoff, so LWW converges
 //      to the same state on any peer that has (or later receives) the survivors.
 //   2. Tombstone winners survive, so deleted rows can never resurrect on a peer.
-//   3. The global MAX(rowid) row is never deleted: SQLite assigns new rowids as
-//      max+1, so deleting the top row would let rowids be reused and make peers'
-//      pull cursors silently skip the reused range. Do not remove this guard.
+//   3. The global MAX(rowid) row is never deleted. crdt_changes.seq is now an
+//      AUTOINCREMENT PK, so ids are never reused or renumbered (even by the
+//      VACUUM below) — this guard is defensive, kept because the WHERE clause is
+//      cheap and documents intent. (Before the seq migration the implicit rowid
+//      WAS reusable/renumberable, which silently stranded peers' cursors — see
+//      migrateCrdtChangesSeq in schema-init.ts.)
 //   4. Compaction is local-only (no emit, nothing replicates): every node prunes
 //      its own disk on its own schedule.
 

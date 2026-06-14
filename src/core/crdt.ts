@@ -323,8 +323,11 @@ export function changesAfterSeq(
   const exhausted = opts.limit == null || opts.limit <= 0 || rows.length < opts.limit;
   let cursor: number;
   if (exhausted) {
-    // Never move backwards: compaction can leave MAX(rowid) below a cursor a
-    // client already holds, and regressing it would re-pull old rows.
+    // High-water on exhaustion. crdt_changes.seq is an AUTOINCREMENT PK (rowid
+    // alias), stable across VACUUM and never reused, so MAX(rowid) no longer
+    // drops below a cursor a client already holds — the Math.max is now just a
+    // defensive floor (was load-bearing before the seq migration, see
+    // migrateCrdtChangesSeq).
     const top = db.query("SELECT MAX(rowid) AS m FROM crdt_changes").get() as { m: number | null };
     cursor = Math.max(seq, top.m ?? seq);
   } else {

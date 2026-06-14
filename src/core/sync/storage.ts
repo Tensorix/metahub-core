@@ -11,7 +11,7 @@
 //
 // Bucket layout (prefix = user-configured path within the bucket):
 //   <prefix>/spaces/default/keys/main.json          E2EE: master key wrapped by passphrase
-//   <prefix>/spaces/default/snapshot/<hlc>.snap      winners-only baseline (any node publishes)
+//   <prefix>/spaces/default/snapshot/<hlc>~<hash>.snap  winners-only baseline (any node publishes)
 //   <prefix>/spaces/default/oplog/<node>/HEAD        latest segment key (cheap "anything new?" poll)
 //   <prefix>/spaces/default/oplog/<node>/<seq>.seg   that node's ops, JSONL→gzip→AES-GCM
 // The spaces/default/ level is reserved now so future per-space sharing needs
@@ -20,7 +20,7 @@
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
 import { changesAfterSeq, ingest, CHANGE_SELECT, type Change } from "../crdt.ts";
-import { MhError } from "../errors.ts";
+import { MhError, errorCode } from "../errors.ts";
 import type { SyncResult } from "./client.ts";
 import {
   encryptBytes,
@@ -54,14 +54,28 @@ export interface StorageObject {
   etag?: string;
 }
 
+/** Options for a conditional/typed put. */
+export interface StoragePutOpts {
+  contentType?: string;
+  /** Conditional create (S3 `If-None-Match: *`): fail with an MhError("conflict")
+   *  if the object already exists. Used to make first-time key provisioning a
+   *  compare-and-set so two devices initializing the same empty bucket can't
+   *  clobber each other's master key. */
+  ifNoneMatch?: boolean;
+}
+
 /** The minimal object-store surface storage-sync needs. Implemented per runtime:
- *  Bun.S3Client on the CLI/desktop (storage-s3-bun.ts), WebCrypto SigV4 + fetch
+ *  Bun.S3Client on the CLI/desktop (storage-s3-bun.ts), aws4fetch SigV4 + fetch
  *  in the browser worker (webui/data/storage-s3-browser.ts). */
 export interface StorageClient {
-  /** Keys under `prefix`, ascending, optionally only those strictly after `startAfter`. */
-  list(prefix: string, startAfter?: string): Promise<StorageObject[]>;
+  /** Keys under `prefix`, ascending, optionally only those strictly after
+   *  `startAfter`. With `delimiter` ("/"), collapse one level into common
+   *  prefixes (their keys end in the delimiter) to discover child "folders"
+   *  cheaply — callers must tolerate a backend that ignores it and returns full
+   *  keys instead. */
+  list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]>;
   get(key: string): Promise<Uint8Array | null>;
-  put(key: string, body: Uint8Array, contentType?: string): Promise<void>;
+  put(key: string, body: Uint8Array, opts?: StoragePutOpts): Promise<void>;
   del(key: string): Promise<void>;
 }
 
@@ -81,10 +95,14 @@ export function storageClientFor(config: S3Config): StorageClient {
 
 // ---- bucket key layout ----------------------------------------------------------
 
-/** Reserved cursor key for "which snapshot have we already ingested". Real node
+/** Reserved cursor key for "which snapshots have we already ingested". Real node
  *  ids are 8-char random suffixes, so this sentinel can't collide with one. */
 const SNAPSHOT_CURSOR = "__snapshot__";
 const SEG_PAD = 16;
+/** Separator between the snapshot's max-HLC and its content hash in the object
+ *  key. Must not appear in an HLC (which is digits + '-'); '~' sorts above every
+ *  HLC char so keys still order by max-HLC then hash. */
+const SNAP_SEP = "~";
 
 function basePrefix(prefix: string): string {
   const p = (prefix || "").replace(/^\/+|\/+$/g, "");
@@ -113,9 +131,13 @@ async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+/** Serialize changes to the canonical JSONL the segment/snapshot codec stores. */
+function toJsonl(changes: Change[]): string {
+  return changes.map((c) => JSON.stringify(c)).join("\n");
+}
+
 async function encodeSegment(changes: Change[], key: Uint8Array | null): Promise<Uint8Array> {
-  const jsonl = changes.map((c) => JSON.stringify(c)).join("\n");
-  const gz = await gzip(new TextEncoder().encode(jsonl));
+  const gz = await gzip(new TextEncoder().encode(toJsonl(changes)));
   return key ? encryptBytes(key, gz) : gz;
 }
 
@@ -131,6 +153,15 @@ async function decodeSegment(bytes: Uint8Array, key: Uint8Array | null): Promise
 
 function masterKeyOf(config: S3Config): Uint8Array | null {
   return config.encrypt && config.masterKey ? fromB64(config.masterKey) : null;
+}
+
+/** Short content hash (hex) for snapshot keying — runtime-agnostic (WebCrypto). */
+async function contentHash(s: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(s) as unknown as BufferSource,
+  );
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
 }
 
 // ---- cursors --------------------------------------------------------------------
@@ -157,6 +188,18 @@ function setStorageCursor(db: DbDriver, url: string, node: string, key: string):
   ).run(url, node, key);
 }
 
+/** Snapshot keys we've already ingested for this peer (newline-joined set in the
+ *  SNAPSHOT_CURSOR sentinel row). A set, not a single "latest" key: two nodes
+ *  can publish different-content snapshots at the same max-HLC, and a single
+ *  lexicographic cursor would skip one of them. */
+function getSnapshotConsumed(db: DbDriver, url: string): Set<string> {
+  const raw = getStorageCursor(db, url, SNAPSHOT_CURSOR);
+  return new Set(raw ? raw.split("\n").filter(Boolean) : []);
+}
+function setSnapshotConsumed(db: DbDriver, url: string, keys: Iterable<string>): void {
+  setStorageCursor(db, url, SNAPSHOT_CURSOR, [...keys].join("\n"));
+}
+
 // ---- winners snapshot -----------------------------------------------------------
 
 /** The current winner (max-HLC row) of every register — the head state as oplog
@@ -176,16 +219,23 @@ function winnersSnapshot(db: DbDriver): Change[] {
 
 // ---- node-prefix discovery ------------------------------------------------------
 
-async function listRemoteNodes(client: StorageClient, base: string): Promise<string[]> {
-  const objs = await client.list(oplogRoot(base));
-  const root = oplogRoot(base);
+function nodesFromKeys(objs: StorageObject[], root: string): string[] {
   const nodes = new Set<string>();
   for (const o of objs) {
-    const rest = o.key.slice(root.length); // "<node>/<file>"
+    const rest = o.key.slice(root.length); // "<node>/" (delimiter) or "<node>/<file>"
     const slash = rest.indexOf("/");
     if (slash > 0) nodes.add(rest.slice(0, slash));
   }
   return [...nodes];
+}
+
+/** Discover the node prefixes under oplog/. Asks for a delimited (one-level)
+ *  listing so a backend that honors it returns just the "<node>/" folders
+ *  instead of every segment; nodesFromKeys derives the same node set whether the
+ *  backend collapsed them or returned full keys. */
+async function listRemoteNodes(client: StorageClient, base: string): Promise<string[]> {
+  const root = oplogRoot(base);
+  return nodesFromKeys(await client.list(root, undefined, "/"), root);
 }
 
 // ---- master-key provisioning (peer-add time) ------------------------------------
@@ -193,8 +243,9 @@ async function listRemoteNodes(client: StorageClient, base: string): Promise<str
 /**
  * Resolve the master key for a bucket at setup: read keys/main.json and unwrap
  * with the passphrase, or — when absent — generate a key, wrap it, and upload
- * it. Returns base64(K) to store in peers.config, or null when encryption is
- * off. Wrong passphrase throws `auth` (from unwrapMasterKey).
+ * it with `If-None-Match` so a concurrent first-time init can't clobber it.
+ * Returns base64(K) to store in peers.config, or null when encryption is off.
+ * Wrong passphrase throws `auth` (from unwrapMasterKey).
  */
 export async function provisionMasterKey(
   client: StorageClient,
@@ -203,19 +254,30 @@ export async function provisionMasterKey(
 ): Promise<string | null> {
   if (!config.encrypt) return null;
   const base = basePrefix(config.prefix);
-  const existing = await client.get(mainKeyPath(base));
-  if (existing) {
-    const env = JSON.parse(new TextDecoder().decode(existing)) as KeyEnvelope;
-    return toB64(await unwrapMasterKey(env, passphrase));
-  }
+  const path = mainKeyPath(base);
+  const unwrap = async (bytes: Uint8Array) =>
+    toB64(await unwrapMasterKey(JSON.parse(new TextDecoder().decode(bytes)) as KeyEnvelope, passphrase));
+
+  const existing = await client.get(path);
+  if (existing) return unwrap(existing);
+
   const K = generateMasterKey();
   const env = await wrapMasterKey(K, passphrase);
-  await client.put(
-    mainKeyPath(base),
-    new TextEncoder().encode(JSON.stringify(env)),
-    "application/json",
-  );
-  return toB64(K);
+  try {
+    await client.put(path, new TextEncoder().encode(JSON.stringify(env)), {
+      contentType: "application/json",
+      ifNoneMatch: true,
+    });
+    return toB64(K);
+  } catch (e) {
+    // Lost a first-init race: another device created the key between our GET and
+    // PUT. Adopt theirs (unwraps with the same passphrase, or fails `auth`).
+    if (errorCode(e) === "conflict") {
+      const winner = await client.get(path);
+      if (winner) return unwrap(winner);
+    }
+    throw e;
+  }
 }
 
 // ---- snapshot publish + truncation ----------------------------------------------
@@ -226,6 +288,13 @@ export async function provisionMasterKey(
  * as-of the current max HLC) supersedes all of them — they're safe to delete
  * (compact.ts invariant #1). Ops produced afterwards go into fresh, higher-keyed
  * segments; consumers reach our pre-snapshot state via the snapshot itself.
+ *
+ * The key is `<maxHlc>~<hash>.snap`: the hash (over the canonical winner set)
+ * makes converged nodes collide on one key (deduped) while two nodes that are
+ * NOT converged — same max HLC but different extra winners — get distinct keys,
+ * so neither overwrites the other. Then old snapshots (strictly lower max-HLC)
+ * are GC'd so the bucket stays bounded.
+ *
  * Returns the snapshot key + change count, or null when the oplog is empty.
  */
 export async function publishSnapshot(
@@ -233,15 +302,29 @@ export async function publishSnapshot(
   client: StorageClient,
   config: S3Config,
 ): Promise<{ key: string; changes: number } | null> {
-  const node = getNodeId(db);
   const key = masterKeyOf(config);
   const base = basePrefix(config.prefix);
   const winners = winnersSnapshot(db);
   if (winners.length === 0) return null;
   const maxHlc = winners.reduce((m, c) => (c.hlc > m ? c.hlc : m), "");
-  const snapKey = `${snapshotRoot(base)}${maxHlc}.snap`;
-  await client.put(snapKey, await encodeSegment(winners, key), "application/octet-stream");
+  // Hash a deterministic (sorted) view so row order can't change the key.
+  const hash = await contentHash(winners.map((c) => JSON.stringify(c)).sort().join("\n"));
+  const snapKey = `${snapshotRoot(base)}${maxHlc}${SNAP_SEP}${hash}.snap`;
+  await client.put(snapKey, await encodeSegment(winners, key), {
+    contentType: "application/octet-stream",
+  });
 
+  // GC: drop snapshots from a strictly older frontier (keep this max-HLC and any
+  // concurrent sibling/newer one). maxHlc is fixed width, so a basename compare
+  // before SNAP_SEP is the max-HLC compare.
+  for (const o of await client.list(snapshotRoot(base))) {
+    if (!o.key.endsWith(".snap")) continue;
+    const mh = o.key.slice(snapshotRoot(base).length).split(SNAP_SEP)[0]!;
+    if (mh < maxHlc) await client.del(o.key);
+  }
+
+  // Truncate our own now-superseded segments.
+  const node = getNodeId(db);
   const ownSegs = (await client.list(nodePrefix(base, node))).filter((o) => o.key.endsWith(".seg"));
   for (const s of ownSegs) await client.del(s.key);
   return { key: snapKey, changes: winners.length };
@@ -254,12 +337,29 @@ export interface StorageSyncOpts {
    *  this. Default 200 — high enough that typical use rarely hits it, low enough
    *  to keep the bucket bounded under heavy use. */
   snapshotEverySegments?: number;
+  /** Push-batching: defer uploading our pending own ops until there are at least
+   *  this many (default 1 → push every round). Coalesces a burst of edits into
+   *  one segment instead of many tiny ones (each is a billed request + a GET for
+   *  every puller). */
+  minPushChanges?: number;
+  /** …or until the oldest pending op is at least this old (ms; default 0 → no
+   *  age bound). Bounds how long a small trailing edit waits. */
+  maxPushAgeMs?: number;
+  /** Push regardless of the batching thresholds — use on explicit "sync now" and
+   *  when the app is backgrounding, so edits are never stranded unsynced. */
+  forcePush?: boolean;
+}
+
+/** Wall-clock age (ms) of a change from its HLC (first 15 chars = epoch millis,
+ *  see hlc.ts formatHlc). */
+function changeAgeMs(c: Change): number {
+  return Date.now() - parseInt(c.hlc.slice(0, 15), 10);
 }
 
 /**
  * One push/pull round against a storage peer. Push uploads this node's pending
- * own ops as a new segment; pull hydrates from the latest snapshot (if newer
- * than what we've ingested) then drains each other node's new segments. Returns
+ * own ops as a new segment (subject to batching); pull hydrates from snapshots
+ * (any not yet ingested) then drains each other node's new segments. Returns
  * { pushed, pulled } like syncWithPeer so peers.ts status writeback is shared.
  */
 export async function syncWithStorage(
@@ -277,24 +377,44 @@ export async function syncWithStorage(
   const pushCursor = getPushCursor(db, peerUrl);
   const batch = changesAfterSeq(db, pushCursor, { onlyNode: node });
   let pushed = 0;
-  if (batch.changes.length > 0) {
-    const k = segKey(base, node, batch.cursor);
-    await client.put(k, await encodeSegment(batch.changes, key), "application/octet-stream");
-    await client.put(headKey(base, node), new TextEncoder().encode(k), "text/plain");
-    pushed = batch.changes.length;
+  if (batch.changes.length === 0) {
+    // No own ops pending: still advance past any ingested foreign rows so they
+    // aren't rescanned every round (changesAfterSeq's high-water on exhaustion).
+    setPushCursor(db, peerUrl, batch.cursor);
+  } else {
+    const minChanges = opts.minPushChanges ?? 1;
+    const maxAge = opts.maxPushAgeMs ?? 0;
+    const ready =
+      opts.forcePush || batch.changes.length >= minChanges || changeAgeMs(batch.changes[0]!) >= maxAge;
+    if (ready) {
+      // Write HEAD *before* the segment: a crash between the two then leaves HEAD
+      // pointing at a not-yet-present key, which only makes a puller LIST once
+      // more (safe) — the reverse order could leave HEAD behind a written
+      // segment and make the cheap-skip below silently miss it.
+      const k = segKey(base, node, batch.cursor);
+      await client.put(headKey(base, node), new TextEncoder().encode(k), {
+        contentType: "text/plain",
+      });
+      await client.put(k, await encodeSegment(batch.changes, key), {
+        contentType: "application/octet-stream",
+      });
+      setPushCursor(db, peerUrl, batch.cursor);
+      pushed = batch.changes.length;
+    }
+    // else: pending but below threshold → leave the cursor, retry next round.
   }
-  setPushCursor(db, peerUrl, batch.cursor);
 
-  // PULL: snapshot first (cheap idempotent re-skip via the snapshot cursor)…
+  // PULL: snapshots first (every one we haven't ingested)…
   let pulled = 0;
-  pulled += await pullSnapshot(db, peerUrl, client, base, key);
+  pulled += await pullSnapshots(db, peerUrl, client, base, key);
 
   // …then each other node's new segments.
   for (const remote of await listRemoteNodes(client, base)) {
     if (remote === node) continue; // never pull our own prefix back in
     const cursor = getStorageCursor(db, peerUrl, remote);
     // Cheap skip: HEAD names the latest segment key; if we're already at/after
-    // it, there's nothing new — avoids a LIST when the peer is idle.
+    // it there's nothing new. HEAD is written before its segment, so it's never
+    // behind the real latest — this can't skip a present-but-newer segment.
     const head = await client.get(headKey(base, remote));
     if (head) {
       const latest = new TextDecoder().decode(head);
@@ -314,35 +434,45 @@ export async function syncWithStorage(
   }
 
   // Keep the bucket bounded: snapshot + truncate once our prefix grows large.
-  const threshold = opts.snapshotEverySegments ?? 200;
-  const ownCount = (await client.list(nodePrefix(base, node))).filter((o) =>
-    o.key.endsWith(".seg"),
-  ).length;
-  if (ownCount >= threshold) await publishSnapshot(db, client, config);
+  // Only checked right after a push (when our segment count actually changed),
+  // so idle rounds don't pay a LIST.
+  if (pushed > 0) {
+    const threshold = opts.snapshotEverySegments ?? 200;
+    const ownCount = (await client.list(nodePrefix(base, node))).filter((o) =>
+      o.key.endsWith(".seg"),
+    ).length;
+    if (ownCount >= threshold) await publishSnapshot(db, client, config);
+  }
 
   return { pushed, pulled };
 }
 
-/** Ingest the latest snapshot if it's newer than the one we last ingested. */
-async function pullSnapshot(
+/** Ingest every snapshot we haven't ingested yet (idempotent), then prune the
+ *  consumed set to keys still present so it stays bounded as old snapshots GC. */
+async function pullSnapshots(
   db: DbDriver,
   peerUrl: string,
   client: StorageClient,
   base: string,
   key: Uint8Array | null,
 ): Promise<number> {
-  const snaps = (await client.list(snapshotRoot(base)))
+  const present = (await client.list(snapshotRoot(base)))
     .map((o) => o.key)
-    .filter((k) => k.endsWith(".snap"))
-    .sort();
-  const latest = snaps.at(-1);
-  if (!latest) return 0;
-  const consumed = getStorageCursor(db, peerUrl, SNAPSHOT_CURSOR);
-  if (consumed && consumed >= latest) return 0;
-  const bytes = await client.get(latest);
-  if (!bytes) return 0;
-  const changes = await decodeSegment(bytes, key);
-  ingest(db, changes);
-  setStorageCursor(db, peerUrl, SNAPSHOT_CURSOR, latest);
-  return changes.length;
+    .filter((k) => k.endsWith(".snap"));
+  if (present.length === 0) return 0;
+  const consumed = getSnapshotConsumed(db, peerUrl);
+  let pulled = 0;
+  for (const k of present.sort()) {
+    if (consumed.has(k)) continue;
+    const bytes = await client.get(k);
+    if (!bytes) continue;
+    const changes = await decodeSegment(bytes, key);
+    ingest(db, changes);
+    pulled += changes.length;
+    consumed.add(k);
+  }
+  // Forget keys no longer in the bucket (GC'd) so the set can't grow unbounded.
+  const presentSet = new Set(present);
+  setSnapshotConsumed(db, peerUrl, [...consumed].filter((k) => presentSet.has(k)));
+  return pulled;
 }
