@@ -6,6 +6,8 @@
 
 import type { DbDriver } from "./driver.ts";
 import { MhError } from "./errors.ts";
+import { emit, grouped, withChangeGroup } from "./crdt.ts";
+import { newId } from "./ids.ts";
 import type { ColumnsOf } from "./sqlcols.ts";
 
 export interface SiteRow {
@@ -180,4 +182,167 @@ export function listFiles(db: DbDriver, siteId: string): SiteFileSummary[] {
       "SELECT id, site_id, path, content_type, encoding FROM site_files WHERE site_id = ? AND __deleted = 0 ORDER BY path",
     )
     .all(siteId) as SiteFileSummary[];
+}
+
+// ---- portable mutations -----------------------------------------------------
+// All write through emit() so sites replicate over the oplog. These are
+// driver-only (no node:fs / blob store), so the browser replica can author
+// sites offline too — large-binary blob storage is the one server-only piece
+// (see putFile in sites.ts).
+
+/** Binaries at or below this size store inline (base64); larger need a blob. */
+export const INLINE_LIMIT = 256 * 1024;
+
+/** Text-ish types store as readable utf8; everything else is binary. */
+export function isTextType(contentType: string): boolean {
+  const ct = contentType.toLowerCase();
+  return (
+    ct.startsWith("text/") ||
+    ct.startsWith("application/json") ||
+    ct.startsWith("application/manifest+json") ||
+    ct.startsWith("application/xml") ||
+    ct.startsWith("application/javascript") ||
+    ct.startsWith("image/svg+xml")
+  );
+}
+
+export function toBytes(data: string | Uint8Array | ArrayBuffer): Uint8Array {
+  if (typeof data === "string") return new TextEncoder().encode(data);
+  return data instanceof Uint8Array ? data : new Uint8Array(data);
+}
+
+/** Portable base64 (no Buffer): for inline small-binary file content. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]!);
+  return btoa(s);
+}
+
+export const createSite = grouped(function createSite(
+  db: DbDriver,
+  opts: { name: string; title?: string },
+): SiteRow {
+  const name = normalizeSiteName(opts.name);
+  if (getSiteByName(db, name)) throw new MhError("conflict", `site name already exists: ${name}`);
+  const id = newId("site", name);
+  const first = emit(db, "sites", id, "name", name);
+  emit(db, "sites", id, "created_hlc", first.hlc);
+  if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
+  return getSite(db, id)!;
+});
+
+/** Rename a site and/or change its title. Guards against duplicate names. */
+export const updateSite = grouped(function updateSite(
+  db: DbDriver,
+  id: string,
+  opts: { name?: string; title?: string },
+): SiteRow {
+  if (!getSite(db, id)) throw new MhError("not_found", `no such site: ${id}`);
+  if (opts.name !== undefined) {
+    const name = normalizeSiteName(opts.name);
+    const dup = getSiteByName(db, name);
+    if (dup && dup.id !== id) throw new MhError("conflict", `site name already exists: ${name}`);
+    emit(db, "sites", id, "name", name);
+  }
+  if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
+  return getSite(db, id)!;
+});
+
+export const deleteSite = grouped(function deleteSite(db: DbDriver, id: string): boolean {
+  if (!getSite(db, id)) return false;
+  const files = db
+    .query("SELECT id FROM site_files WHERE site_id = ? AND __deleted = 0")
+    .all(id) as { id: string }[];
+  for (const f of files) emit(db, "site_files", f.id, "__deleted", 1);
+  emit(db, "sites", id, "__deleted", 1);
+  return true;
+});
+
+/** Stable id for a (site, path) pair so re-uploads merge instead of duplicate. */
+export function fileIdFor(db: DbDriver, siteId: string, path: string): string | null {
+  const row = db
+    .query("SELECT id FROM site_files WHERE site_id = ? AND path = ? ORDER BY created_hlc LIMIT 1")
+    .get(siteId, path) as { id: string } | null;
+  return row?.id ?? null;
+}
+
+/** Emit the register writes for one file (shared by inline + blob put paths). */
+export function writeFileRow(
+  db: DbDriver,
+  siteId: string,
+  cleanPath: string,
+  contentType: string,
+  encoding: FileEncoding,
+  content: string,
+): SiteFileRow {
+  const existing = fileIdFor(db, siteId, cleanPath);
+  const id = existing ?? newId("sf", cleanPath);
+  withChangeGroup(null, () => {
+    if (!existing) {
+      const first = emit(db, "site_files", id, "site_id", siteId);
+      emit(db, "site_files", id, "path", cleanPath);
+      emit(db, "site_files", id, "created_hlc", first.hlc);
+    }
+    emit(db, "site_files", id, "content_type", contentType);
+    emit(db, "site_files", id, "encoding", encoding);
+    emit(db, "site_files", id, "content", content);
+    emit(db, "site_files", id, "__deleted", 0); // un-delete on re-upload
+  });
+  return db.query(`SELECT ${SITE_FILE_SELECT} FROM site_files WHERE id = ?`).get(id) as SiteFileRow;
+}
+
+/**
+ * Upload/replace one file inline (utf8 text or small base64 binary) — portable,
+ * so the browser replica authors sites offline. Binaries over INLINE_LIMIT need
+ * the server-only blob store; here they throw (sites.ts putFile handles them).
+ */
+export function putFileInline(
+  db: DbDriver,
+  siteId: string,
+  path: string,
+  opts: { data: string | Uint8Array | ArrayBuffer; contentType?: string },
+): SiteFileRow {
+  const cleanPath = normalizeSitePath(path);
+  if (!cleanPath) throw new MhError("invalid_input", `invalid file path: ${JSON.stringify(path)}`);
+  const contentType = opts.contentType ?? inferContentType(cleanPath);
+  let encoding: FileEncoding;
+  let content: string;
+  if (isTextType(contentType)) {
+    encoding = "utf8";
+    content = typeof opts.data === "string" ? opts.data : new TextDecoder().decode(toBytes(opts.data));
+  } else {
+    const bytes = toBytes(opts.data);
+    if (bytes.byteLength > INLINE_LIMIT)
+      throw new MhError(
+        "invalid_input",
+        "binary too large for inline storage (needs a server-backed blob)",
+      );
+    encoding = "base64";
+    content = bytesToBase64(bytes);
+  }
+  return writeFileRow(db, siteId, cleanPath, contentType, encoding, content);
+}
+
+export const deleteFile = grouped(function deleteFile(
+  db: DbDriver,
+  siteId: string,
+  path: string,
+): boolean {
+  const id = fileIdFor(db, siteId, normalizeSitePath(path));
+  if (!id) return false;
+  const live = db.query("SELECT __deleted AS d FROM site_files WHERE id = ?").get(id) as {
+    d: number;
+  } | null;
+  if (!live || live.d) return false;
+  emit(db, "site_files", id, "__deleted", 1);
+  return true;
+});
+
+/** Count of live files per site (for the management list's file_count). */
+export function fileCount(db: DbDriver, siteId: string): number {
+  return (
+    db
+      .query("SELECT COUNT(*) AS n FROM site_files WHERE site_id = ? AND __deleted = 0")
+      .get(siteId) as { n: number }
+  ).n;
 }

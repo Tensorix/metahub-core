@@ -77,7 +77,19 @@ import {
   listDatabaseActivity,
 } from "../../core/history.ts";
 import { search } from "../../core/search.ts";
-import { resolveSite, getFileRow, type FileEncoding } from "../../core/sites-core.ts";
+import {
+  resolveSite,
+  getFileRow,
+  listSites,
+  listFiles,
+  createSite,
+  updateSite,
+  deleteSite,
+  deleteFile,
+  putFileInline,
+  fileCount,
+  type FileEncoding,
+} from "../../core/sites-core.ts";
 
 // ---- protocol ----------------------------------------------------------------
 
@@ -439,6 +451,23 @@ const ops: Record<string, Op> = {
     return row;
   },
 
+  // sites management (offline / no-origin): portable read+write paths so the
+  // browser replica lists, creates, edits and deletes sites with no server.
+  // Large-binary blob uploads are server-only (putFileInline throws on them).
+  listSites: () => listSites(db!).map((s) => ({ ...s, file_count: fileCount(db!, s.id) })),
+  listSiteFiles: (siteId: string) => listFiles(db!, siteId),
+  createSite: (b: { name: string; title?: string }) => ({ ...createSite(db!, b), file_count: 0 }),
+  updateSite: (id: string, b: { name?: string; title?: string }) => ({
+    ...updateSite(db!, id, b),
+    file_count: fileCount(db!, id),
+  }),
+  deleteSite: (id: string) => ({ ok: deleteSite(db!, id) }),
+  putSiteFile: (siteId: string, path: string, data: ArrayBuffer | string, contentType?: string) => {
+    const { content: _content, ...row } = putFileInline(db!, siteId, path, { data, contentType });
+    return row; // SiteFile shape (content withheld from the UI, like the HTTP route)
+  },
+  deleteSiteFile: (siteId: string, path: string) => ({ ok: deleteFile(db!, siteId, path) }),
+
   // wipe the local replica (settings → 重置本地副本): close the pool and
   // delete its OPFS files; the page terminates this worker afterwards.
   reset: async () => {
@@ -470,7 +499,7 @@ const ops: Record<string, Op> = {
 };
 
 /** Ops that change data: a successful call schedules a push to the server. */
-const MUTATING = /^(create|update|delete|move|duplicate|revert|add|remove|set)/;
+const MUTATING = /^(create|update|delete|move|duplicate|revert|add|remove|set|put)/;
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 function schedulePush(): void {

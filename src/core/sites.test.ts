@@ -11,6 +11,8 @@ import {
   deleteSite,
   resolveSite,
   putFile,
+  putFileInline,
+  fileCount,
   listFiles,
   deleteFile,
   getFileForServe,
@@ -195,4 +197,20 @@ test("a site and its inline files replicate to another node via the oplog", asyn
   expect(getSiteByName(b, "demo")?.id).toBe(s.id);
   const served = await getFileForServe(b, s.id, "");
   expect(dec(served!.bytes)).toBe("<h1>synced</h1>");
+});
+
+test("putFileInline stores utf8 text + small base64, throws on oversized binary", () => {
+  const db = makeNode("nodeIN01");
+  const site = createSite(db, { name: "inline" });
+  // utf8 text rides the oplog as readable content.
+  const html = putFileInline(db, site.id, "index.html", { data: "<h1>hi</h1>" });
+  expect(html.encoding).toBe("utf8");
+  expect(html.content).toBe("<h1>hi</h1>");
+  // small binary → base64 inline.
+  const png = putFileInline(db, site.id, "a.png", { data: new Uint8Array([1, 2, 3]) });
+  expect(png.encoding).toBe("base64");
+  expect(fileCount(db, site.id)).toBe(2);
+  // oversized binary needs the server blob store — portable path refuses it.
+  const big = new Uint8Array(256 * 1024 + 1);
+  expect(() => putFileInline(db, site.id, "big.bin", { data: big })).toThrow();
 });

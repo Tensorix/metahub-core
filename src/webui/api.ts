@@ -7,7 +7,7 @@
 // (data/local-api.ts) when this browser enabled offline mode — see the Proxy
 // at the bottom of this file.
 
-import { localApi, replicaActive } from "./data/local-api.ts";
+import { localApi, localSites, replicaActive, isNoOrigin } from "./data/local-api.ts";
 
 // API row types come straight from core via type-only imports — erased at
 // build time, so nothing of core leaks into the browser bundle. Adding a field
@@ -338,8 +338,13 @@ export type Api = typeof httpApi;
  */
 export const api: Api = new Proxy(httpApi, {
   get(target, prop, receiver) {
-    if (replicaActive() && prop in localApi) {
-      return (localApi as Record<PropertyKey, unknown>)[prop];
+    if (replicaActive()) {
+      if (prop in localApi) return (localApi as Record<PropertyKey, unknown>)[prop];
+      // Sites management routes local only in no-origin mode; in origin mode it
+      // stays HTTP so the server keeps handling large-binary blob uploads.
+      if (isNoOrigin() && prop in localSites) {
+        return (localSites as Record<PropertyKey, unknown>)[prop];
+      }
     }
     return Reflect.get(target, prop, receiver);
   },

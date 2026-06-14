@@ -6,11 +6,11 @@
 // /api/version) intentionally have no local counterpart — they describe the
 // server, not the data, and stay online-only.
 
-import { call, replicaActive } from "./replica.ts";
+import { call, replicaActive, isNoOrigin } from "./replica.ts";
 import { ApiError, NAV_INVALIDATE } from "../api.ts";
 import { ReplicaError } from "./replica.ts";
 
-export { replicaActive };
+export { replicaActive, isNoOrigin };
 
 /** Same status mapping the HTTP layer uses, so ApiError consumers (e.g. the
  *  editor's stale-conflict handling) behave identically on the local path. */
@@ -101,4 +101,21 @@ export const localApi = {
   // nodes + search
   nodes: () => rpc("nodes"),
   search: (text: string, limit?: number) => rpc("search", text, limit),
+};
+
+/**
+ * Sites management against the local replica. Kept separate from localApi: it's
+ * routed locally ONLY in no-origin mode (see api.ts). In origin mode sites stay
+ * on HTTP so the server still handles large-binary blob uploads — putFileInline
+ * can't store blobs, so local routing there would regress big-file uploads.
+ */
+export const localSites = {
+  listSites: () => rpc("listSites"),
+  listSiteFiles: (site: string) => rpc("listSiteFiles", site),
+  createSite: (b: { name: string; title?: string }) => rpc("createSite", b),
+  updateSite: (id: string, b: { name?: string; title?: string }) => rpc("updateSite", id, b),
+  deleteSite: (id: string) => rpc("deleteSite", id),
+  deleteSiteFile: (site: string, path: string) => rpc("deleteSiteFile", site, path),
+  uploadSiteFile: async (site: string, path: string, file: Blob) =>
+    rpc("putSiteFile", site, path, await file.arrayBuffer(), file.type || undefined),
 };
