@@ -12,6 +12,7 @@ import {
 } from "../../core/sync/pairing.ts";
 import {
   listPeers,
+  getPeer,
   removePeer,
   setPeerEnabled,
   syncPeer,
@@ -20,6 +21,7 @@ import {
   type PeerRow,
 } from "../../core/sync/peers.ts";
 import { provisionMasterKey, storageClientFor, type S3Config } from "../../core/sync/storage.ts";
+import { putBucketCors } from "../../core/sync/storage-s3-bun.ts";
 import { MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
 import * as p from "@clack/prompts";
@@ -151,8 +153,30 @@ async function peerDispatch(
       }
       return;
     }
+    case "cors": {
+      // Open the bucket's CORS to a browser shell origin so a phone can talk to
+      // it directly (the desktop does it — a browser can't bootstrap its own CORS).
+      const usage =
+        "mh config peer cors --url s3://<bucket>/<prefix> --allow <origin>[,<origin2>...]";
+      const url = flagOrAsk(args.url, "url", usage);
+      const peer = getPeer(db, url);
+      if (!peer || peer.kind !== "s3" || !peer.config) {
+        throw new MhError("not_found", `no S3 storage peer at '${url}' (see: mh config peer list)`);
+      }
+      const config = JSON.parse(peer.config) as S3Config;
+      const origins = String(flagOrAsk(args.allow, "allow", usage))
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await putBucketCors(config, origins);
+      print({ url, corsOrigins: origins }, () => `CORS set on ${url} for: ${origins.join(", ")}`);
+      return;
+    }
     default:
-      throw new MhError("invalid_input", `unknown peer action '${action}' (add|code|list|rm|enable|disable|sync)`);
+      throw new MhError(
+        "invalid_input",
+        `unknown peer action '${action}' (add|code|list|rm|enable|disable|sync|cors)`,
+      );
   }
 }
 
@@ -199,10 +223,29 @@ async function storagePeerAdd(
   const url = storageUrl(bucket, prefix);
   addStoragePeer(db, { url, config, label: bucket });
   const sync = await syncPeer(db, url);
+
+  // Optional one-shot: open CORS for a browser shell so a phone can connect
+  // straight after scanning. Best-effort — the peer is already added; a failure
+  // (e.g. credentials lack PutBucketCors) is reported, not fatal.
+  let cors: { origins: string[]; ok: boolean; error?: string } | undefined;
+  if (typeof args["cors-origin"] === "string" && args["cors-origin"]) {
+    const origins = args["cors-origin"].split(",").map((s: string) => s.trim()).filter(Boolean);
+    try {
+      await putBucketCors(config, origins);
+      cors = { origins, ok: true };
+    } catch (e) {
+      cors = { origins, ok: false, error: (e as Error).message };
+    }
+  }
+
   print(
-    { added: url, encrypted: encrypt, sync },
-    () =>
-      `added storage peer ${url} (${encrypt ? "encrypted" : "PLAINTEXT — trusted storage only"}); ${syncLine(sync)}`,
+    { added: url, encrypted: encrypt, sync, ...(cors ? { cors } : {}) },
+    () => {
+      let line = `added storage peer ${url} (${encrypt ? "encrypted" : "PLAINTEXT — trusted storage only"}); ${syncLine(sync)}`;
+      if (cors?.ok) line += `\nCORS opened for: ${cors.origins.join(", ")}`;
+      else if (cors) line += `\n⚠️  CORS not set (retry: mh config peer cors --url ${url} --allow ${cors.origins.join(",")}): ${cors.error}`;
+      return line;
+    },
   );
 }
 
@@ -520,6 +563,8 @@ export default defineCommand({
     prefix: { type: "string", description: "Path prefix within the bucket (peer add --s3; default metahub)" },
     region: { type: "string", description: "S3 region (peer add --s3; default auto for R2)" },
     passphrase: { type: "string", description: "E2EE passphrase (peer add --s3)" },
+    allow: { type: "string", description: "Comma-separated shell origins to allow (peer cors)" },
+    "cors-origin": { type: "string", description: "Comma-separated shell origins; open bucket CORS after add (peer add --s3, optional)" },
     // citty negates a boolean with --no-<name>, so `--no-encrypt` flips this to
     // false; default true means encryption is on unless explicitly disabled.
     encrypt: {

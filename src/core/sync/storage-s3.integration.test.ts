@@ -23,6 +23,7 @@ import { createDatabase } from "../databases.ts";
 import { generateMasterKey, toB64 } from "./e2ee.ts";
 import { syncWithStorage, storageClientFor, provisionMasterKey, type S3Config } from "./storage.ts";
 import "./storage-s3-bun.ts"; // registers the Bun.S3Client factory (side effect)
+import { putBucketCors, getBucketCors } from "./storage-s3-bun.ts";
 
 const E = process.env;
 const HAVE_BUCKET =
@@ -86,6 +87,32 @@ it("round-trips and converges across two nodes through a real bucket", async () 
   } finally {
     for (const o of await cleanup.list(`${cfg.prefix}/`)) await cleanup.del(o.key);
   }
+});
+
+it("putBucketCors sets/merges/reads the managed CORS rule (Content-MD5 + XML)", async () => {
+  // Bucket-level state (not prefix-scoped): this rewrites the bucket's CORS. We
+  // leave it open ("*") at the end so the browser e2e flow keeps working.
+  const cfg = baseCfg(runPrefix()) as S3Config;
+  const O1 = "https://shell-test-1.example";
+  const O2 = "https://shell-test-2.example";
+
+  await putBucketCors(cfg, [O1]);
+  let xml = await getBucketCors(cfg);
+  expect(xml).not.toBeNull();
+  expect(xml!).toContain("<ID>metahub-pwa</ID>");
+  expect(xml!).toContain(O1);
+  // The methods a browser shell needs.
+  for (const m of ["GET", "PUT", "HEAD", "DELETE"]) expect(xml!).toContain(`<AllowedMethod>${m}</AllowedMethod>`);
+
+  // Re-run with a different origin → managed rule is replaced, not duplicated.
+  await putBucketCors(cfg, [O2]);
+  xml = await getBucketCors(cfg);
+  expect(xml!).toContain(O2);
+  expect(xml!).not.toContain(O1);
+  expect((xml!.match(/<ID>metahub-pwa<\/ID>/g) ?? []).length).toBe(1);
+
+  // Restore open CORS for the rest of the manual/browser testing.
+  await putBucketCors(cfg, ["*"]);
 });
 
 it("provisionMasterKey creates then adopts the bucket's wrapped key", async () => {

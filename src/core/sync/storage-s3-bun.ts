@@ -6,6 +6,7 @@
 // imports this Bun-only module, keeping `bun` out of the browser bundle.
 
 import { S3Client } from "bun";
+import { AwsClient } from "aws4fetch";
 import { MhError } from "../errors.ts";
 import {
   setStorageClientFactory,
@@ -76,3 +77,93 @@ function makeClient(config: S3Config): StorageClient {
 }
 
 setStorageClientFactory(makeClient);
+
+// ── Bucket CORS bootstrap (Bun-only) ────────────────────────────────────────
+// A browser shell can't open its own CORS: the PutBucketCors request would itself
+// be a cross-origin call the bucket hasn't whitelisted yet (chicken-and-egg). So
+// the desktop (which holds the bucket credentials) sets it on the phone's behalf.
+// Bun.S3Client has no PutBucketCors API, so we sign a raw `?cors` request with
+// aws4fetch — same signer the browser client already uses (no hand-rolled SigV4).
+
+const MANAGED_CORS_RULE_ID = "metahub-pwa";
+
+function corsEndpoint(config: S3Config): { aws: AwsClient; url: string } {
+  const aws = new AwsClient({
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    region: config.region || "auto",
+    service: "s3",
+  });
+  const origin = new URL(config.endpoint).origin;
+  // Bucket-level subresource: virtual-hosted has the bucket in the host already
+  // (COS), path-style puts it in the path (R2/MinIO/S3).
+  const base = isVirtualHostedStyle(config) ? origin : `${origin}/${config.bucket}`;
+  return { aws, url: `${base}/?cors` };
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function managedCorsRule(origins: string[]): string {
+  const o = origins.map((x) => `<AllowedOrigin>${escapeXml(x)}</AllowedOrigin>`).join("");
+  return (
+    `<CORSRule><ID>${MANAGED_CORS_RULE_ID}</ID>${o}` +
+    `<AllowedMethod>GET</AllowedMethod><AllowedMethod>PUT</AllowedMethod>` +
+    `<AllowedMethod>HEAD</AllowedMethod><AllowedMethod>DELETE</AllowedMethod>` +
+    `<AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader>` +
+    `<MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule>`
+  );
+}
+
+/** Read the bucket's current CORS config (raw XML), or null if none is set. */
+export async function getBucketCors(config: S3Config): Promise<string | null> {
+  const { aws, url } = corsEndpoint(config);
+  const res = await aws.fetch(url, { method: "GET" });
+  if (res.status === 404) return null; // NoSuchCORSConfiguration
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`S3 get-cors failed: ${res.status} ${detail.slice(0, 200)}`);
+  }
+  return await res.text();
+}
+
+/**
+ * Allow a browser shell served from `origins` to talk to the bucket directly
+ * (GET/PUT/HEAD/DELETE). GET-merge-PUT: PutBucketCors replaces the whole config,
+ * so we read what's there, keep every rule that isn't ours, and re-PUT with our
+ * managed rule (id=metahub-pwa) refreshed — re-runs don't pile up, user rules
+ * survive. Content-MD5 is required by the CORS API (S3 and COS both).
+ */
+export async function putBucketCors(config: S3Config, origins: string[]): Promise<void> {
+  const clean = origins.map((o) => o.trim()).filter(Boolean);
+  if (clean.length === 0) throw new MhError("invalid_input", "putBucketCors: no origins given");
+  const { aws, url } = corsEndpoint(config);
+
+  const existing = await getBucketCors(config).catch(() => null);
+  const kept: string[] = [];
+  if (existing) {
+    for (const rule of existing.match(/<CORSRule>[\s\S]*?<\/CORSRule>/g) ?? []) {
+      if (!rule.includes(`<ID>${MANAGED_CORS_RULE_ID}</ID>`)) kept.push(rule);
+    }
+  }
+  const xml =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<CORSConfiguration>${kept.join("")}${managedCorsRule(clean)}</CORSConfiguration>`;
+  const body = new TextEncoder().encode(xml);
+  const contentMd5 = new Bun.CryptoHasher("md5").update(body).digest("base64");
+
+  const res = await aws.fetch(url, {
+    method: "PUT",
+    body: body as unknown as BodyInit,
+    headers: { "content-type": "application/xml", "content-md5": contentMd5 },
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`S3 put-cors failed: ${res.status} ${detail.slice(0, 200)}`);
+  }
+}
