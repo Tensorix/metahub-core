@@ -1,0 +1,56 @@
+name: Deploy Shell
+
+# 把 PWA 静态壳（无 origin、数据盲）发布到 Cloudflare Pages。
+#
+# 壳 = 同一份 webui bundle 的「无服务器」部署形态：零硬编码域名，跑在自己的
+# self.location.origin 上，运行时探测 no-origin（CDN 无 /health）→ 只跟用户自己
+# 的 S3 桶对话。详见 docs/impl-context/18-no-origin-shell。
+#
+# 触发：
+#   - 推送 shell-v* tag（正式发布，对齐 v*/desktop-v* 的 tag 驱动约定）
+#   - workflow_dispatch（Actions 页面手动点按，便于首次/临时发布）
+#
+# 需要的仓库 secrets（缺失则该步失败——部署目标本身不可省略）：
+#   - CLOUDFLARE_API_TOKEN  权限 = Account › Cloudflare Pages › Edit
+#   - CLOUDFLARE_ACCOUNT_ID  Cloudflare 仪表盘右下角的 Account ID
+#
+# 前置：Pages 项目须已存在（仪表盘建一次，或 `wrangler pages project create
+# metahub-shell --production-branch=main`）。项目名见下方 --project-name。
+on:
+  push:
+    tags:
+      - "shell-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-shell
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & deploy shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      # 源码树存在时 build:shell 会按需 Bun.build 各 bundle，无需先跑根 build。
+      - name: Build static shell
+        run: bun run build:shell --out dist/shell
+
+      # wrangler pages deploy：--branch=main 指向项目的生产分支 → 正式部署
+      # （不传时会用 tag 名当分支 → 落成 preview 部署，拿不到生产域名）。
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist/shell --project-name=metahub-shell --branch=main

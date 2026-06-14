@@ -49,9 +49,32 @@ localhost 静态壳(no-origin)+ CORS=`*`:
 - 无 origin 下建站「demo」+ 传 `index.html` → `/sites/demo/` 经 SW 副本 serve 出该 HTML → **全新 Bun 节点从 COS 拉到 demo + index.html 内容一致**。
 - 单测:`putFileInline`(utf8 / 小 base64 / 超大二进制抛错)。`bun test` 325 全过、tsc 维持基线 12、`app/sw/db-worker` 浏览器包 + `build:shell` 均 OK。
 
-## 9. 已知限制 / 未做
+## 9. 官方壳发布(CF Pages + GitHub Actions)
 
-- **桌面自动配 CORS**(`PutBucketCors`)未做:`Bun.S3Client` 无此 API(需 raw SigV4),且浏览器侧鸡生蛋——现需手动给桶配 CORS(允许 PWA origin 的 GET/PUT/HEAD/DELETE;测试期可 `*`)。
+`.github/workflows/deploy-shell.yml`:推 `shell-v*` tag 或 `workflow_dispatch` → `bun install` → `bun run build:shell` → `cloudflare/wrangler-action` `pages deploy dist/shell --branch=main`(`--branch=main` 指向生产分支,否则落 preview)。需仓库 secrets `CLOUDFLARE_API_TOKEN`(Pages:Edit)+ `CLOUDFLARE_ACCOUNT_ID`;Pages 项目须预先建好(`metahub-shell`)。**自定义域名**是关键——PWA 身份 = origin,绑自有域后换托管商不丢用户 OPFS 数据(别让用户装 `*.pages.dev`)。`build:shell` 在 CI 全新 checkout 自给自足(源码树在 → 按需 `Bun.build`,无需先跑根 build)。
+
+用户自建壳:同一条 `bun run build:shell` 产物丢任意静态站即可(无服务器);有常开盒子的用户更推荐走 §11 而非自建壳。
+
+## 10. 自动 CORS(`PutBucketCors`,桌面侧)
+
+浏览器没法给自己开 CORS(那个 PUT 本身就是未被放行的跨域请求,鸡生蛋),故由**持有桶凭据的桌面**代配。`storage-s3-bun.ts` 加 `putBucketCors(config, origins)` / `getBucketCors(config)`:`Bun.S3Client` 无此 API → 复用项目已依赖的 **aws4fetch** 签 raw `?cors` 请求(不手写 SigV4),**GET-merge-PUT**(按 `<ID>metahub-pwa</ID>` 只替换我们这条规则、保留用户已有规则,重跑不堆积),带 `Content-MD5`(S3/COS 的 CORS API 必需)。
+
+CLI:`mh config peer cors --url s3://<bucket>/<prefix> --allow <origin>[,<origin2>...]`;`peer add --s3` 可带 `--cors-origin <origin>...` 一次性开(best-effort,失败只提示不致命)。**已对真实腾讯云 COS 验证**(集成测试 `putBucketCors sets/merges/reads…`:set/merge/read 往返 + Content-MD5 被接受)。
+
+## 11. homelab / 自有 server:origin + 桶兜底(有盒子的最佳形态)
+
+有常开盒子的用户**不必自建壳**:盒子跑 `mh --server` 本身就 serve 壳(**origin 模式**,16/11 行为不变)且是完整同步节点。配法:手机从盒子装 PWA(origin=盒子)+ 启用离线副本;**盒子与手机都把同一个桶加成 s3 peer**。运行时 `runSync` 每轮先试 origin(盒子)再跑 s3 peer:
+
+- **在家**:直连盒子(快、近实时、无桶请求费);
+- **在外**(盒子不可达):origin 同步失败被吞 → 桶同步接管,本地读写照常;
+- **回家**:origin 恢复 → 下一轮自动收敛。全自动。
+
+要点:① 手机浏览器→桶是跨域 → 桶要给**盒子 origin** 配 CORS(§10 在此同样适用);② 在外要收到盒子的改动 → **盒子必须也往桶里推**(给盒子加桶 peer;每节点只推自产 ops);③ 盒子若挂 Tailscale,手机在外也能直连盒子,桶退化成"盒子关机时"的纯保险。
+
+**有意不做的优化**:在家时手机其实两条都推(盒子 + 桶),桶推冗余。但**不能简单"origin 可达就跳过桶推"**——每节点只推自产 ops,手机在家的改动只有手机自己推桶才会进桶;跳过会让"只看桶的第三台在外设备"短暂看不到手机在家的改动,直到手机下次在外推桶。正确性优先,保留冗余。
+
+## 12. 已知限制 / 未做
+
 - **浏览器 QR 视觉 + 真手机扫码**待用户实测(深链接收端已 e2e)。
 - **站点 authoring 浏览器侧只 utf8/base64**(blob 大二进制服务端 only,延续既有限制)。
 - **信任代价(诚实记录)**:CDN 壳 = **壳发布者进入机密性信任链**(理论上能发一版偷口令的 JS;origin 模式壳来自用户自己的 server 则无此问题)。缓解:开源 + 可复现构建 + SRI / 版本固定(未做)。
