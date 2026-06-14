@@ -93,6 +93,25 @@ function cacheable(res: Response): boolean {
   return res.ok && res.headers.get("x-mh-unlock") == null;
 }
 
+// Is this origin a metahub server, or a data-blind static shell host? When
+// there's no server (CDN shell), /api and /sites have no backend — a network
+// attempt would 404 (a *response*, not a failure) and mask the local replica,
+// so we serve those replica-first instead. /health returns {ok:true}; a CDN
+// 404s or (SPA fallback) returns index.html, so we check the parsed body.
+let swOriginMode: "server" | "none" | null = null;
+async function swNoOrigin(): Promise<boolean> {
+  if (swOriginMode == null) {
+    try {
+      const res = await fetch("/health", { cache: "no-store" });
+      const d = res.ok ? ((await res.json().catch(() => null)) as { ok?: boolean } | null) : null;
+      swOriginMode = d?.ok === true ? "server" : "none";
+    } catch {
+      swOriginMode = "server"; // inconclusive (offline) → assume server
+    }
+  }
+  return swOriginMode === "none";
+}
+
 sw.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
@@ -263,6 +282,20 @@ async function handleApi(event: FetchEventLike): Promise<Response> {
     body = (await req.clone().json().catch(() => null)) as Record<string, unknown> | null;
   }
 
+  // No server behind this origin (data-blind CDN shell): the replica is the only
+  // data source — go straight to it instead of letting a CDN 404 mask it.
+  if (await swNoOrigin()) {
+    const mapped = mapApiRequest(req.method, url.pathname, url.searchParams, body);
+    if (mapped) {
+      const reply = await localRpc(event, mapped.op, mapped.args);
+      if (reply) return replyToResponse(reply);
+    }
+    return new Response(
+      JSON.stringify({ error: "no metahub server (bucket-only mode)", code: "network" }),
+      { status: 502, headers: { "content-type": "application/json", "x-mh-source": "replica" } },
+    );
+  }
+
   try {
     // GET races a timeout (weak network → replica). Mutations never time out:
     // abandoning an in-flight POST the server may still apply, then applying
@@ -329,32 +362,44 @@ function bootstrapShell(site: string, path: string): Response {
   );
 }
 
+/** Serve a /sites/* request from the local replica. Returns null when no client
+ *  could answer and it isn't a navigation (caller decides: rethrow or 404). */
+async function serveSiteFromReplica(event: FetchEventLike, url: URL): Promise<Response | null> {
+  const rest = url.pathname.slice("/sites/".length);
+  if (rest === "") return null;
+  const slash = rest.indexOf("/");
+  if (slash === -1) {
+    // /sites/<name> → canonical /sites/<name>/ (same redirect the server does)
+    return Response.redirect(`${url.origin}/sites/${rest}/`, 301);
+  }
+  const name = decodeURIComponent(rest.slice(0, slash));
+  const path = decodeURIComponent(rest.slice(slash + 1));
+
+  const reply = await localRpc(event, "siteFile", [name, path]);
+  if (reply?.ok && reply.result) {
+    return siteFileResponse(reply.result as { content_type: string; encoding: string; content: string | null });
+  }
+  if (reply?.ok && reply.result == null) {
+    return new Response("not found (offline replica)", { status: 404 });
+  }
+  // No client could answer. For a navigation we can still bootstrap: the shell
+  // page itself becomes the answering client.
+  if (event.request.mode === "navigate") return bootstrapShell(name, path);
+  return null;
+}
+
 async function handleSite(event: FetchEventLike): Promise<Response> {
   const req = event.request;
   const url = new URL(req.url);
+  // No server behind this origin → the CDN has no /sites; serve replica-first.
+  if (await swNoOrigin()) {
+    return (await serveSiteFromReplica(event, url)) ?? new Response("not found", { status: 404 });
+  }
   try {
     return await fetchWithTimeout(req, NETWORK_TIMEOUT_MS);
   } catch (err) {
-    const rest = url.pathname.slice("/sites/".length);
-    if (rest === "") throw err;
-    const slash = rest.indexOf("/");
-    if (slash === -1) {
-      // /sites/<name> → canonical /sites/<name>/ (same redirect the server does)
-      return Response.redirect(`${url.origin}/sites/${rest}/`, 301);
-    }
-    const name = decodeURIComponent(rest.slice(0, slash));
-    const path = decodeURIComponent(rest.slice(slash + 1));
-
-    const reply = await localRpc(event, "siteFile", [name, path]);
-    if (reply?.ok && reply.result) {
-      return siteFileResponse(reply.result as { content_type: string; encoding: string; content: string | null });
-    }
-    if (reply?.ok && reply.result == null) {
-      return new Response("not found (offline replica)", { status: 404 });
-    }
-    // No client could answer. For a navigation we can still bootstrap: the
-    // shell page itself becomes the answering client.
-    if (req.mode === "navigate") return bootstrapShell(name, path);
+    const r = await serveSiteFromReplica(event, url);
+    if (r) return r;
     throw err;
   }
 }

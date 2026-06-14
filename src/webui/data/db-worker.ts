@@ -324,6 +324,13 @@ const ops: Record<string, Op> = {
     return { url, lastSync: status.lastSync };
   },
   removeStorageReplica: (url: string) => ({ ok: removePeer(db!, url) }),
+  // The bucket config (with credentials) for one storage peer — used by the
+  // settings page to build a "open on your phone" enroll QR. Local-only data,
+  // same origin as the page that asks; the passphrase is never stored here.
+  storagePeerConfig: (url: string): S3Config | null => {
+    const p = getPeer(db!, url);
+    return p?.config ? (JSON.parse(p.config) as S3Config) : null;
+  },
   listStoragePeers: () =>
     listPeers(db!)
       .filter((p) => p.kind === "s3")

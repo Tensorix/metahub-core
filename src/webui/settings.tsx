@@ -1,6 +1,8 @@
 /** @jsxImportSource preact */
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import qrcode from "qrcode-generator";
+import type { S3Config } from "../core/sync/storage.ts";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { api, type Peer, type Grant } from "./api.ts";
@@ -311,6 +313,19 @@ function SyncStorage() {
     reload();
   };
 
+  // Show a QR a phone scans to enroll the same bucket (no manual typing): the
+  // link carries the bucket credentials but never the passphrase — the phone
+  // types that. The shell base URL is configurable, never hardcoded.
+  const openPhone = async (p: StoragePeerView) => {
+    try {
+      const config = await replicaCall<S3Config | null>("storagePeerConfig", p.url);
+      if (!config) return toast("找不到该存储的配置");
+      openModal(<QrModal config={config} />);
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
+
   return (
     <div class="set-section">
       <div class="set-section-head">同步存储 (S3/R2)</div>
@@ -350,6 +365,9 @@ function SyncStorage() {
                       {p.status === "error" && p.error ? ` · 错误：${p.error}` : ""}
                     </div>
                   </div>
+                  <button class="btn btn-ghost peer-menu" title="在手机上打开" onClick={() => openPhone(p)}>
+                    <Icon name="share" cls="ico sm" />
+                  </button>
                   <button class="btn btn-ghost peer-menu" title="移除" onClick={() => remove(p)}>
                     <Icon name="trash" cls="ico sm" />
                   </button>
@@ -360,6 +378,85 @@ function SyncStorage() {
         </>
       )}
     </div>
+  );
+}
+
+// ---- "open on your phone" enroll QR ----------------------------------------
+
+const SHELL_BASE_KEY = "mh_shell_base";
+
+/** Build the deep link a phone opens to enroll this bucket. Carries the bucket
+ *  credentials (so the phone can connect) but NOT the passphrase or master key —
+ *  the phone types the passphrase. `shellBase` is the static-shell domain
+ *  (configurable; defaults to the current origin for LAN/Tailscale setups). */
+function enrollUrl(shellBase: string, c: S3Config): string {
+  const slim = {
+    endpoint: c.endpoint,
+    region: c.region,
+    bucket: c.bucket,
+    prefix: c.prefix,
+    accessKeyId: c.accessKeyId,
+    secretAccessKey: c.secretAccessKey,
+    encrypt: c.encrypt,
+    virtualHostedStyle: c.virtualHostedStyle,
+  };
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(slim))))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  const base = (shellBase || location.origin).replace(/\/+$/, "");
+  return `${base}/#enroll=${b64}`;
+}
+
+function QrModal({ config }: { config: S3Config }) {
+  const [shellBase, setShellBase] = useState(() => {
+    try {
+      return localStorage.getItem(SHELL_BASE_KEY) || location.origin;
+    } catch {
+      return location.origin;
+    }
+  });
+  const url = enrollUrl(shellBase, config);
+  const qr = qrcode(0, "M");
+  qr.addData(url);
+  qr.make();
+  const svg = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+
+  const onBase = (v: string) => {
+    setShellBase(v);
+    try {
+      v ? localStorage.setItem(SHELL_BASE_KEY, v) : localStorage.removeItem(SHELL_BASE_KEY);
+    } catch {
+      /* private mode */
+    }
+  };
+
+  return (
+    <Modal
+      title="在手机上打开"
+      sub="手机相机扫码打开 PWA,输入加密口令即可同步。二维码只含桶访问凭据,不含口令。"
+      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
+    >
+      <div class="qr-box" dangerouslySetInnerHTML={{ __html: svg }} />
+      <div class="field-label">壳地址（手机访问的静态站点域名；留空用当前地址）</div>
+      <input
+        class="text-input"
+        placeholder={location.origin}
+        value={shellBase}
+        onInput={(e) => onBase((e.target as HTMLInputElement).value)}
+      />
+      <button
+        class="btn btn-secondary"
+        style={{ width: "100%", marginTop: 12 }}
+        onClick={() => {
+          navigator.clipboard?.writeText(url);
+          toast("已复制链接");
+        }}
+      >
+        <Icon name="copy" cls="ico sm" /> 复制链接
+      </button>
+      <div class="peer-sub" style="margin-top:8px">⚠ 二维码含桶访问密钥,请勿公开分享。</div>
+    </Modal>
   );
 }
 

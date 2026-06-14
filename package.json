@@ -27,6 +27,7 @@
   "scripts": {
     "dev": "bun --hot src/cli/index.ts",
     "build": "bun run scripts/build.ts",
+    "build:shell": "bun run scripts/build-shell.ts",
     "build:binaries": "bun run scripts/compile-binaries.ts",
     "prepublishOnly": "bun run build",
     "test": "bun test",
@@ -39,6 +40,7 @@
     "citty": "^0.1.6",
     "highlight.js": "^11.11.1",
     "preact": "^10.29.2",
+    "qrcode-generator": "^2.0.4",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
     "zod": "^4.4.3"

@@ -2,7 +2,16 @@
 import { render } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type Hit, NAV_INVALIDATE } from "./api.ts";
-import { resumeReplicaIfEnabled, replicaActive } from "./data/replica.ts";
+import {
+  resumeReplicaIfEnabled,
+  replicaActive,
+  replicaEnabled,
+  detectOriginMode,
+  enableReplicaFromBucket,
+  startReplica,
+  onReplicaStatus,
+} from "./data/replica.ts";
+import type { S3Config } from "../core/sync/storage.ts";
 import { Icon } from "./icons.tsx";
 import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
@@ -503,6 +512,156 @@ function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: str
   );
 }
 
+// ---- no-origin bootstrap (data-blind static shell) -------------------------
+// When the shell is served by a metahub server (origin mode) Root renders <App>
+// unchanged. When it's served from a data-blind static host (no-origin), there's
+// no HTTP backend to fall back on, so Root gates: enroll a bucket first, hydrate
+// the local replica, then render the app (all data routes to the replica). The
+// shell never hardcodes a domain — it works off its own self.location.origin.
+
+function Splash({ text }: { text: string }) {
+  return (
+    <div class="enroll-splash">
+      <div class="enroll-spinner" />
+      <div class="muted">{text}</div>
+    </div>
+  );
+}
+
+/** Bucket config carried in a `#enroll=<base64url(JSON)>` deep link (the QR a
+ *  desktop shows). The passphrase is never in the link — it's typed here. */
+function readEnrollConfig(): Partial<S3Config> | null {
+  const m = /[#&]enroll=([^&]+)/.exec(location.hash);
+  if (!m) return null;
+  try {
+    const b64 = m[1]!.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(decodeURIComponent(escape(atob(b64)))) as Partial<S3Config>;
+  } catch {
+    return null;
+  }
+}
+
+function Enroll({ onDone }: { onDone: () => void }) {
+  const pre = readEnrollConfig();
+  const [endpoint, setEndpoint] = useState(pre?.endpoint ?? "");
+  const [bucket, setBucket] = useState(pre?.bucket ?? "");
+  const [region, setRegion] = useState(pre?.region ?? "auto");
+  const [accessKey, setAccessKey] = useState(pre?.accessKeyId ?? "");
+  const [secretKey, setSecretKey] = useState(pre?.secretAccessKey ?? "");
+  const [prefix, setPrefix] = useState(pre?.prefix ?? "metahub");
+  const [encrypt, setEncrypt] = useState(pre?.encrypt ?? true);
+  const [passphrase, setPassphrase] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const scanned = pre != null; // came from a QR link → creds prefilled
+
+  const submit = async () => {
+    if (!endpoint.trim() || !bucket.trim() || !accessKey.trim() || !secretKey.trim()) {
+      setErr("endpoint、bucket、access key、secret key 必填");
+      return;
+    }
+    if (encrypt && !passphrase) {
+      setErr("加密口令必填");
+      return;
+    }
+    setBusy(true);
+    setErr("");
+    try {
+      await enableReplicaFromBucket(
+        {
+          endpoint: endpoint.trim(),
+          region: region.trim() || "auto",
+          bucket: bucket.trim(),
+          prefix: prefix.trim() || "metahub",
+          accessKeyId: accessKey.trim(),
+          secretAccessKey: secretKey.trim(),
+          encrypt,
+          virtualHostedStyle: pre?.virtualHostedStyle,
+        },
+        passphrase,
+      );
+      onDone();
+    } catch (e) {
+      const msg = (e as Error).message;
+      setErr(
+        /failed to fetch|load failed|networkerror|cors/i.test(msg)
+          ? "连接被浏览器拦截:请给存储桶配置 CORS,允许此源的 GET/PUT/HEAD/DELETE。"
+          : `连接失败:${msg}`,
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div class="enroll">
+      <div class="enroll-card">
+        <div class="enroll-title">连接你的存储桶</div>
+        <div class="enroll-sub">
+          {scanned
+            ? "已从二维码读取桶信息,输入加密口令即可同步你的数据。"
+            : "填入 S3 兼容存储桶(R2/COS/MinIO/S3)的连接信息;数据上传前端到端加密。"}
+        </div>
+        {!scanned && (
+          <>
+            <div class="field-label">Endpoint</div>
+            <input class="text-input" placeholder="https://<bucket>.cos.<region>.myqcloud.com" value={endpoint} onInput={(e) => setEndpoint((e.target as HTMLInputElement).value)} />
+            <div class="field-label">Bucket</div>
+            <input class="text-input" value={bucket} onInput={(e) => setBucket((e.target as HTMLInputElement).value)} />
+            <div class="field-label">Region</div>
+            <input class="text-input" placeholder="auto" value={region} onInput={(e) => setRegion((e.target as HTMLInputElement).value)} />
+            <div class="field-label">Access Key ID</div>
+            <input class="text-input" value={accessKey} onInput={(e) => setAccessKey((e.target as HTMLInputElement).value)} />
+            <div class="field-label">Secret Access Key</div>
+            <input class="text-input" type="password" value={secretKey} onInput={(e) => setSecretKey((e.target as HTMLInputElement).value)} />
+            <div class="field-label">路径前缀</div>
+            <input class="text-input" value={prefix} onInput={(e) => setPrefix((e.target as HTMLInputElement).value)} />
+          </>
+        )}
+        {scanned && <div class="enroll-bucket muted">桶:{bucket}</div>}
+        {encrypt && (
+          <>
+            <div class="field-label">加密口令</div>
+            <input class="text-input" type="password" autofocus={scanned} placeholder="与其他设备相同的口令" value={passphrase} onInput={(e) => setPassphrase((e.target as HTMLInputElement).value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          </>
+        )}
+        {err && <div class="enroll-err">{err}</div>}
+        <button class="btn btn-primary enroll-go" disabled={busy} onClick={submit}>
+          {busy ? "连接中…" : "连接并同步"}
+        </button>
+        <div class="enroll-hint muted">提示:iPhone 请用 Safari 的「分享 → 添加到主屏」装成 App,离线与持久存储才生效。</div>
+      </div>
+    </div>
+  );
+}
+
+function Root() {
+  const [mode, setMode] = useState<"detecting" | "app" | "enroll" | "hydrating">("detecting");
+
+  useEffect(() => {
+    void detectOriginMode().then((m) => {
+      if (m === "server") return setMode("app"); // origin mode: unchanged behavior
+      if (!replicaEnabled()) return setMode("enroll"); // no-origin, not yet connected
+      startReplica(); // no-origin + already connected: boot replica, gate on hydration
+      setMode(replicaActive() ? "app" : "hydrating");
+    });
+  }, []);
+
+  // Flip to the app once the bucket hydration completes.
+  useEffect(() => {
+    if (mode !== "hydrating") return;
+    if (replicaActive()) return setMode("app");
+    return onReplicaStatus(() => {
+      if (replicaActive()) setMode("app");
+    });
+  }, [mode]);
+
+  if (mode === "detecting") return <Splash text="加载中…" />;
+  if (mode === "enroll")
+    return <Enroll onDone={() => setMode(replicaActive() ? "app" : "hydrating")} />;
+  if (mode === "hydrating") return <Splash text="正在从云端水合本地副本…" />;
+  return <App />;
+}
+
 // Inside the desktop shell, tag <body> so the WebUI can adapt its chrome: the
 // frameless macOS window drops the sidebar logo and reserves a draggable strip
 // for the inset traffic lights. A browser leaves these classes off entirely.
@@ -518,5 +677,5 @@ if (location.hash === "#quick" && typeof window !== "undefined" && window.metahu
   document.body.classList.add("quicknote");
   render(<QuickNote />, document.getElementById("app")!);
 } else {
-  render(<App />, document.getElementById("app")!);
+  render(<Root />, document.getElementById("app")!);
 }

@@ -1155,3 +1155,21 @@
   .qn-set-desc { color:var(--muted); font-size:13px; margin-top:2px; }
   .qn-shortcut { min-width:140px; justify-content:center; font-family:var(--mono); }
   .qn-shortcut.capturing { outline:2px solid var(--accent); color:var(--accent); }
+
+  /* No-origin bootstrap: enroll screen + hydration splash (data-blind shell). */
+  .enroll-splash { min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; }
+  .enroll-spinner { width:26px; height:26px; border-radius:50%; border:2.5px solid var(--line-strong); border-top-color:var(--accent); animation:enroll-spin .8s linear infinite; }
+  @keyframes enroll-spin { to { transform:rotate(360deg); } }
+  .enroll { min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px; background:var(--bg); }
+  .enroll-card { width:100%; max-width:420px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md,14px); padding:24px 22px; box-shadow:0 8px 30px rgba(0,0,0,.06); }
+  .enroll-title { font-size:19px; font-weight:600; color:var(--fg); }
+  .enroll-sub { color:var(--muted); font-size:13px; margin:6px 0 16px; line-height:1.5; }
+  .enroll-bucket { margin:4px 0 12px; font-family:var(--mono); font-size:13px; }
+  .enroll-err { color:var(--danger); font-size:13px; margin-top:12px; }
+  .enroll-go { width:100%; justify-content:center; margin-top:18px; }
+  .enroll-hint { font-size:12px; margin-top:14px; line-height:1.5; }
+
+  /* Enroll QR (settings → 同步存储 → 在手机上打开). White bg so the black
+     modules scan in any theme. */
+  .qr-box { display:flex; justify-content:center; padding:14px; background:#fff; border-radius:10px; }
+  .qr-box svg { width:208px; height:208px; display:block; }

@@ -8,6 +8,7 @@
 import { authFetch, NAV_INVALIDATE } from "../api.ts";
 import { getReplicaBus, BusError } from "./replica-bus.ts";
 import type { ReplicaStatus, WorkerEvent } from "./db-worker.ts";
+import type { S3Config } from "../../core/sync/storage.ts";
 
 /** Fired on `document` after a sync pulled remote changes; detail carries
  *  `{ datasets, rowIds }` so open views can refresh what they show. */
@@ -15,6 +16,7 @@ export const SYNCED_EVENT = "mh-synced";
 
 const ENABLED_KEY = "mh_replica";
 const HYDRATED_KEY = "mh_replica_hydrated";
+const ORIGIN_MODE_KEY = "mh_origin_mode"; // "server" | "none"
 
 export class ReplicaError extends Error {
   constructor(
@@ -64,6 +66,55 @@ export function replicaActive(): boolean {
   return replicaEnabled() && flag(HYDRATED_KEY) && started && status.state !== "error";
 }
 
+// ---- origin mode: server-backed vs data-blind static shell host -------------
+// The same bundle runs two ways: served by a metahub server (origin mode — pair
+// + HTTP fallback, today's behavior) or from a data-blind static CDN (no-origin
+// mode — bucket is the only data source). We auto-detect so nothing hardcodes a
+// domain; the shell always works off its own self.location.origin.
+
+type OriginMode = "server" | "none";
+let originModeMemo: OriginMode | null = (() => {
+  try {
+    const v = localStorage.getItem(ORIGIN_MODE_KEY);
+    return v === "server" || v === "none" ? v : null;
+  } catch {
+    return null;
+  }
+})();
+
+/** Cached origin mode, or null until detectOriginMode() has run once. */
+export function originMode(): OriginMode | null {
+  return originModeMemo;
+}
+/** True when this shell has no metahub server behind it (bucket-only). */
+export function isNoOrigin(): boolean {
+  return originModeMemo === "none";
+}
+
+/**
+ * Detect whether this origin is a metahub server. /health returns {ok:true};
+ * a static CDN returns 404 or — with SPA fallback — index.html, so we check the
+ * parsed body, not the status. Cached so an offline reload keeps the mode
+ * instead of misdetecting; a network error stays inconclusive (defaults server,
+ * so an offline origin user never gets the enroll screen).
+ */
+export async function detectOriginMode(): Promise<OriginMode> {
+  if (originModeMemo) return originModeMemo;
+  try {
+    const res = await fetch("/health", { cache: "no-store" });
+    const d = res.ok ? ((await res.json().catch(() => null)) as { ok?: boolean } | null) : null;
+    originModeMemo = d?.ok === true ? "server" : "none";
+  } catch {
+    return "server"; // inconclusive (offline) — don't cache, assume server
+  }
+  try {
+    localStorage.setItem(ORIGIN_MODE_KEY, originModeMemo);
+  } catch {
+    /* private mode */
+  }
+  return originModeMemo;
+}
+
 function handleEvent(d: WorkerEvent): void {
   if (d.event === "status") {
     status = d.status;
@@ -101,9 +152,9 @@ export function startReplica(): void {
     .catch(() => {});
   installSwBridge();
   window.addEventListener("online", requestSync);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") requestSync();
-  });
+  // Fire on both transitions: visible → pull fresh; hidden → force-flush pending
+  // pushes before a possible suspension (storage batching defers small bursts).
+  document.addEventListener("visibilitychange", requestSync);
 }
 
 export function call<T>(op: string, ...args: unknown[]): Promise<T> {
@@ -116,7 +167,10 @@ export function call<T>(op: string, ...args: unknown[]): Promise<T> {
 }
 
 export function requestSync(): void {
-  if (started && status.paired) void call("sync").catch(() => {});
+  // Fire whenever the replica is running; the worker no-ops if there's no sync
+  // target. (Previously gated on origin pairing, which excluded bucket-only
+  // no-origin setups.) The worker's `sync` op force-flushes pending pushes.
+  if (started) void call("sync").catch(() => {});
 }
 
 function waitReady(timeoutMs = 30_000): Promise<void> {
@@ -155,6 +209,25 @@ export async function enableReplica(): Promise<void> {
   }
   setFlag(ENABLED_KEY, true);
   requestSync();
+}
+
+/**
+ * No-origin onboarding: enroll a storage bucket as the data source when there's
+ * no metahub server to pair with. Boots the replica, adds the bucket peer (which
+ * fetches/creates the wrapped key and runs a first sync = hydration), and marks
+ * the replica enabled so it resumes on the next load. Hydration progress streams
+ * via status events; HYDRATED_KEY flips on the first successful sync.
+ */
+export async function enableReplicaFromBucket(
+  config: S3Config,
+  passphrase: string,
+): Promise<{ url: string }> {
+  startReplica();
+  await waitReady();
+  const r = await call<{ url: string }>("addStorageReplica", config, passphrase);
+  setFlag(ENABLED_KEY, true);
+  requestSync();
+  return r;
 }
 
 /** Disable: unpair (best-effort) and stop routing locally. The OPFS database
