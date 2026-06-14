@@ -5,7 +5,7 @@
 
 ## 一句话现状
 
-"免公网 IP 的多设备同步"v1 **已实现、312 测试全过**:用 S3 兼容桶(R2/MinIO/S3)作哑 store-and-forward 中转,手机/电脑无需公网 IP、无需同时在线即可经桶双向同步。**唯一关键缺口:尚未对真实桶做端到端验证。**
+"免公网 IP 的多设备同步" **v1 + Phase A 硬化 + Phase B 移动端成形 均已实现并验证**:用 S3 兼容桶(R2/MinIO/S3/**COS**)作哑 store-and-forward 中转,手机/电脑无需公网 IP、无需同时在线即可经桶双向同步。**已对真实腾讯云 COS 端到端验证(集成测试 + 真浏览器全流程)。** Phase A(正确性/成本硬化)见 [design.md §13](./design.md);Phase B(无 origin 静态壳 + 扫码接入 + 离线站点)见 [18-no-origin-shell](../18-no-origin-shell/design.md)。
 
 ## 分支与提交状态
 
@@ -26,10 +26,12 @@
 5. **浏览器**:`storage-s3-browser.ts`(aws4fetch 签名);`db-worker.ts` `runSync` 多 peer 分发 + `addStorageReplica`/`removeStorageReplica`/`listStoragePeers` ops。
 6. **WebUI**:`settings.tsx`「同步存储」区块(需先启用离线副本;CORS 失败提示)。
 
-## 验证状态
+## 验证状态(更新 2026-06-14:含 Phase A/B)
 
-- ✅ `bun test` 312/312;新文件 tsc 干净(仓库总错误维持基线 12,全是历史遗留);`bun build --target browser`(app.tsx / db-worker.ts)成功、aws4fetch 进 bundle 无 Node-only 泄漏。
-- ❌ **真实桶端到端未验证**——只跑过内存版 FakeBucket。下一步首选:对真实 R2 / 本地 MinIO 跑 `mh config peer add --s3 ...` + 手机 PWA 直连(配好 CORS),验 list/get/put/del 往返 + 跨设备收敛。
+- ✅ `bun test` **325/325**(+2 skip 的真桶集成测试);tsc 维持基线 12;`bun build --target browser`(app/sw/db-worker)成功无 Node-only 泄漏;`bun run build:shell` 产出 2.7MB 静态壳。
+- ✅ **真实腾讯云 COS 端到端验证**:集成测试 `storage-s3.integration.test.ts` 2/2(往返 + 两节点收敛 + provision);**真浏览器(Playwright,no-origin 静态壳)**:扫码深链 enroll → 从 COS 水合 → 写回桶(双向)→ 离线建站/传文件 → `/sites/<name>/` 经 SW 副本 serve → 他端 Bun 节点拉到内容一致。
+- 验证中**抓到并修了真实兼容性问题**:COS 禁 path-style → 加 virtual-hosted(见 design.md §13);COS 桶名须含 APPID(短名会静默退化 path-style → 404 NoSuchKey)。
+- 仍未单独跑:R2 / MinIO 真桶(同一代码路径,COS 已覆盖签名/XML/分页/条件写)。
 
 ## 关键决策速查(及理由)
 

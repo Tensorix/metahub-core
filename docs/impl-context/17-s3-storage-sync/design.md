@@ -71,13 +71,13 @@
 
 **安全**:桶凭据守**可用性**(拿到也只看密文/删文件),加密口令守**机密性**(PBKDF2 包裹);均经 HTTPS。桶被攻破 = 同步瘫痪 + 密文泄露,与"网盘被黑"同级。弱口令可离线爆破(桶里同时有包裹的 K 与密文)——文档明示、口令强度检查。静态壳托管下"壳发布者进入信任链",列为未来工作的前提。
 
-**v1 未实现 / 已知限制**(详见路线图 `~/.claude/plans/rosy-forging-wren.md`):
-- **首次安装仍需服务器**:PWA 壳 + 配对来自 origin(一次性 TLS 可达)。v1 只免了"持续同步"的常驻服务器,没免"安装一次"——真正零服务器要等静态壳托管。
-- **手机接入需手敲凭据**:讨论的二维码配置传递(电脑显示、手机扫 + 输口令)未做。
-- **旧快照不回收**:`publishSnapshot` 删自己旧 segment 但不删旧快照文件,随触发累积(待补 GC,只留最新)。
-- **推送无攒批阈值**:靠 db-worker 800ms 防抖兜底,稳态下碎对象偏多(待补"≥N 条/≥T 秒")。
-- **E2EE 无换钥/改口令**;`exclude_datasets` 部分副本对存储 peer 未接;blob 站点文件不进 oplog,经桶也不同步;无真实 S3/MinIO 集成测试(仅 FakeBucket)。
-- **未来阶段**:只读分享 → 整库协作正式化(node→显示名)→ spaces 细粒度共享 → 静态壳托管 → 实时在场感。
+**已知限制(更新于 2026-06-14;Phase A 修复见 §13,移动端无 origin 见 [18-no-origin-shell](../18-no-origin-shell/design.md))**:
+- ~~首次安装仍需服务器~~ → **已解决**:静态壳托管(免服务器安装),见 doc 18。
+- ~~手机接入需手敲凭据~~ → **已解决**:扫码深链 `#enroll`(电脑显示 QR、手机扫 + 输口令),见 doc 18。
+- ~~旧快照不回收 / 推送无攒批阈值~~ → **已修**(§13:快照 GC + 攒批 ≥N 条/≥T 秒)。
+- ~~无真实桶集成测试~~ → **已对真实腾讯云 COS 端到端验证**(§13);R2/MinIO 走同一代码路径,未单独跑。
+- **仍开放**:E2EE 无换钥/改口令;`exclude_datasets` 部分副本对存储 peer 未接;blob 站点文件(>256KB 二进制)不进 oplog、经桶不同步(浏览器侧 authoring 也只支持 utf8/base64);**存储传输信任模型弱于 HTTP**——对称信任、无逐节点真实性、表达不了只读分享,GCM 仅保 per-object 完整性(挡不住存储侧删段/扣段/重放)。
+- **未来阶段**:只读分享 → 整库协作正式化(node→显示名)→ spaces 细粒度共享 → 实时在场感。
 
 ## 11. 涉及文件
 
@@ -89,4 +89,26 @@
 
 - **单测**(`bun test`,312 全过):e2ee 包裹/解包(错口令拒绝)+ 段加解密 + 防篡改;`changesAfterSeq onlyNode` 只返自产 + 游标单调;迁移幂等;`storage.test.ts` 用内存版 FakeStorageClient 覆盖——两节点**不同时在线**经桶收敛、幂等重同步、明文模式、快照+截断后新设备仅凭"快照+尾段"水合到字节一致、阈值触发自动快照。
 - **类型/打包**:新文件 tsc 干净(仓库总错误维持既有基线);`bun build --target browser` 对 app.tsx 与 db-worker.ts 成功,aws4fetch 进 bundle、无 Node-only 依赖泄漏。
-- **待办(关键)**:对真实 Cloudflare R2 / 本地 MinIO 桶 `mh config peer add --s3 ...` + 手机 PWA「同步存储」直连(配好 CORS),验证 list/get/put/del 往返、跨设备经桶收敛——签名已交给 aws4fetch,这步主要验 CORS / 凭据 / 桶可达。
+- **已完成(2026-06-14)**:对真实**腾讯云 COS** 桶端到端验证通过(集成测试 2/2 + 真浏览器全流程),并据此修了若干正确性/兼容性问题,见 §13。
+
+## 13. Phase A 硬化 + virtual-hosted + 真桶验证(2026-06-14,feat/syncv2)
+
+第二轮 review + 真桶验证驱动,修了 v1 几处**会静默丢数据/抬成本**的隐患,并新增 COS 兼容。测试 325 全过、tsc 维持基线 12、浏览器 bundle 干净。
+
+**正确性(逐条对照代码核实)**:
+- **A0-1 push 游标 VACUUM 免疫(最高危)**:`crdt_changes` 加 `seq INTEGER PRIMARY KEY AUTOINCREMENT` + `UNIQUE(dataset,row_id,col,hlc)`;`migrateCrdtChangesSeq` 建表迁移(`rowid→seq` 保留 + 重置 peers 游标做一次性重同步)。根因:compaction 的默认 `VACUUM` 会重排无 INTEGER PK 表的 rowid,而 push 游标是 rowid + `changesAfterSeq` 的「绝不回退」→ 新写 rowid 落到旧游标之下 → **永久不推**。HTTP 同步同享此修。
+- **A0-2 主密钥首配竞态**:`provisionMasterKey` 改条件写(浏览器真 `If-None-Match`;Bun `exists()` 预检兜底,`Bun.S3Client` 无原子 CAS),防两台新设备并发初始化互相覆盖主密钥。
+- **A0-3 HEAD 崩溃窗口**:push **先写 HEAD 再写 seg**(崩在中间只让消费者多 LIST 一次、不漏段;原顺序会让 HEAD 滞后于已写段而被廉价跳过误跳)。
+- **A0-4 快照键唯一性**:`<maxHlc>~<hash>.snap`(内容寻址)+ 消费改**集合游标**,防同 maxHlc 不同内容的并发快照互相覆盖/被跳过。
+
+**成本/带宽**:
+- **A1 推送攒批**:`StorageSyncOpts` 加 `minPushChanges`/`maxPushAgeMs`/`forcePush`;db-worker ≥25 条 或 ≥10s 才产段,显式 sync / 切后台 `force` 兜底——消除碎对象(R2/COS 按**请求数**计费)。
+- **A2 快照 GC**:`publishSnapshot` 删严格更旧的快照(保住 max-HLC 前沿),桶有界。
+- **A2.5 LIST 成本**:`StorageClient.list` 加 `delimiter` 取 CommonPrefixes 拿节点名;段计数 LIST 只在 push 后跑。
+
+**virtual-hosted 寻址(真桶验证逼出来的)**:`S3Config.virtualHostedStyle`(显式)+ `isVirtualHostedStyle`(自动:endpoint 主机名以 `<bucket>.` 开头即启用)。**腾讯云 COS 禁止 path-style**(`PathStyleDomainForbidden`),必须 virtual-hosted(`<bucket>.cos.<region>.myqcloud.com/<key>`);R2/MinIO/S3 仍走 path-style。
+- ⚠️ **COS 配置坑**:bucket 字段必须填**完整桶 id `<名>-<APPID>`**(如 `metahub-1252110546`)。填短名会让自动探测落回 path-style → COS 把 `<bucket-host>/<bucket>` 当对象 → `404 NoSuchKey`(看着像"桶里没数据")。
+
+**A3 真桶验证**:`core/sync/storage-s3.integration.test.ts`(env `METAHUB_TEST_S3_*` 守卫,默认 skip)对真实 COS 跑 list/get/put/del 往返 + 两节点收敛 + provision 创建/复用/错口令拒绝;真浏览器(no-origin)全流程见 [18-no-origin-shell](../18-no-origin-shell/design.md)。
+
+**涉及文件(Phase A 增量)**:`core/schema.ts`+`schema-init.ts`(seq 迁移)、`core/crdt.ts`/`compact.ts`(注释)、`core/sync/storage.ts`(攒批/GC/快照键/provision/`delimiter`/`isVirtualHostedStyle`)、`storage-s3-bun.ts`/`storage-s3-browser.ts`(条件写 + delimiter + vhost)、新增 `storage-s3.integration.test.ts`。
