@@ -47,6 +47,26 @@ export interface S3Config {
   encrypt: boolean;
   /** base64 raw 32-byte master key; present iff encrypt. Resolved at peer-add. */
   masterKey?: string;
+  /**
+   * Address objects as `<bucket>.<host>/<key>` (virtual-hosted) instead of
+   * `<host>/<bucket>/<key>` (path-style). Some providers (Tencent COS) reject
+   * path-style outright. When undefined, the clients auto-detect: virtual-hosted
+   * iff the endpoint host already starts with `<bucket>.` (see
+   * isVirtualHostedStyle). R2/MinIO keep using path-style.
+   */
+  virtualHostedStyle?: boolean;
+}
+
+/** Whether to use virtual-hosted addressing for this bucket: the explicit flag,
+ *  or — when unset — auto-detected from an endpoint whose host already carries
+ *  the bucket (e.g. COS's `<bucket>.cos.<region>.myqcloud.com`). */
+export function isVirtualHostedStyle(config: S3Config): boolean {
+  if (config.virtualHostedStyle != null) return config.virtualHostedStyle;
+  try {
+    return new URL(config.endpoint).hostname.startsWith(`${config.bucket}.`);
+  } catch {
+    return false;
+  }
 }
 
 export interface StorageObject {

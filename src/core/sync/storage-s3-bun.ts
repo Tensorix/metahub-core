@@ -9,6 +9,7 @@ import { S3Client } from "bun";
 import { MhError } from "../errors.ts";
 import {
   setStorageClientFactory,
+  isVirtualHostedStyle,
   type StorageClient,
   type StorageObject,
   type StoragePutOpts,
@@ -16,12 +17,16 @@ import {
 } from "./storage.ts";
 
 function makeClient(config: S3Config): StorageClient {
+  // Virtual-hosted (e.g. Tencent COS, which rejects path-style): the endpoint
+  // host already carries the bucket, so Bun ignores the `bucket` option.
+  const vhost = isVirtualHostedStyle(config);
   const s3 = new S3Client({
     accessKeyId: config.accessKeyId,
     secretAccessKey: config.secretAccessKey,
     region: config.region || "auto", // R2 uses "auto"
     endpoint: config.endpoint,
     bucket: config.bucket,
+    ...(vhost ? { virtualHostedStyle: true } : {}),
   });
 
   return {
