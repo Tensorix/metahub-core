@@ -134,23 +134,44 @@ function setStatus(patch: Partial<ReplicaStatus>): void {
   post({ event: "status", status });
 }
 
+/** The live driver, or a clean retryable error if the db isn't open yet — e.g.
+ *  an op arriving during the brief window inside `reset` (wipe → re-open) or
+ *  before boot finished. Beats a raw `db!` null-deref. */
+function requireDb(): DbDriver {
+  if (!db) throw new MhError("network", "本地副本未就绪");
+  return db;
+}
+
 // ---- boot ----------------------------------------------------------------------
 
-let poolUtil: { wipeFiles(): Promise<unknown> } | null = null;
+type SahPool = {
+  OpfsSAHPoolDb: new (path: string) => unknown;
+  wipeFiles(): Promise<unknown>;
+};
+let pool: SahPool | null = null;
 let oo1Db: { close(): void } | null = null;
+
+/** (Re)open the OPFS database and (re)install the schema, pointing `db` at a
+ *  fresh driver. `pool` must already be installed. Used at boot and again after
+ *  a `reset` wipes the files, so the worker is never left with a null `db`
+ *  (a paired op landing on a still-alive, just-reset worker would otherwise
+ *  deref null — "Cannot read properties of null (reading 'query')"). */
+function openDb(): void {
+  const oo1 = new pool!.OpfsSAHPoolDb("/metahub.db") as unknown as Oo1Db & { close(): void };
+  oo1Db = oo1;
+  const driver = new WasmDriver(oo1);
+  initSchema(driver);
+  db = driver;
+}
 
 const ready: Promise<void> = (async () => {
   // No init options: the emscripten glue resolves sqlite3.wasm relative to
   // import.meta.url, which for the bundled worker (/db-worker.js) is exactly
   // the /sqlite3.wasm the server provides.
   const sqlite3 = await sqlite3InitModule();
-  const pool = await sqlite3.installOpfsSAHPoolVfs({ name: "metahub-replica" });
-  poolUtil = pool as unknown as { wipeFiles(): Promise<unknown> };
-  const oo1 = new pool.OpfsSAHPoolDb("/metahub.db") as unknown as Oo1Db & { close(): void };
-  oo1Db = oo1;
-  const driver = new WasmDriver(oo1);
-  initSchema(driver);
-  db = driver;
+  pool = (await sqlite3.installOpfsSAHPoolVfs({ name: "metahub-replica" })) as unknown as SahPool;
+  openDb();
+  const driver = db!;
   const node = getNodeId(driver);
   const paired = getPeer(driver, origin)?.token != null;
   setStatus({ state: "ready", node, paired });
@@ -272,7 +293,7 @@ setInterval(() => {
  *  outbound peer. (pairing.ts's performPairing isn't reused — it reads
  *  process.env at module load, which a browser bundle can't.) */
 async function pair(code: string): Promise<{ node_id: string }> {
-  const d = db!;
+  const d = requireDb();
   const body: PairRequest = {
     code,
     node_id: getNodeId(d),
@@ -299,7 +320,7 @@ async function pair(code: string): Promise<{ node_id: string }> {
 }
 
 function unpair(): { ok: boolean } {
-  const ok = removePeer(db!, origin);
+  const ok = removePeer(requireDb(), origin);
   setStatus({ paired: false });
   return { ok };
 }
@@ -326,7 +347,7 @@ const ops: Record<string, Op> = {
   // create the wrapped master key in the bucket), persist the resolved peer,
   // then run a round so bad credentials / missing CORS surface immediately.
   addStorageReplica: async (config: S3Config, passphrase: string) => {
-    const d = db!;
+    const d = requireDb();
     // A browser replica holds the full hydrated hub, so it can publish whole-hub
     // snapshots. Default to publisher so a bucket attached here never stays empty
     // (the original footgun); callers pass publish:false for an origin replica
@@ -340,7 +361,7 @@ const ops: Record<string, Op> = {
     await runSync();
     return { url, lastSync: status.lastSync };
   },
-  removeStorageReplica: (url: string) => ({ ok: removePeer(db!, url) }),
+  removeStorageReplica: (url: string) => ({ ok: removePeer(requireDb(), url) }),
   // The bucket config (with credentials) for one storage peer — used by the
   // settings page to build a "open on your phone" enroll QR. Local-only data,
   // same origin as the page that asks; the passphrase is never stored here.
@@ -473,8 +494,11 @@ const ops: Record<string, Op> = {
   },
   deleteSiteFile: (siteId: string, path: string) => ({ ok: deleteFile(db!, siteId, path) }),
 
-  // wipe the local replica (settings → 重置本地副本): close the pool and
-  // delete its OPFS files; the page terminates this worker afterwards.
+  // wipe the local replica (settings → 重置本地副本): close the db, delete its
+  // OPFS files, then re-open a fresh empty db. A single-tab page terminates this
+  // worker right after; but a worker shared across tabs survives, so we must NOT
+  // leave `db` null — re-enabling ("信任此设备" → pair) would land on this same
+  // worker and deref null. Re-opening leaves it immediately usable + empty.
   reset: async () => {
     try {
       oo1Db?.close();
@@ -482,7 +506,15 @@ const ops: Record<string, Op> = {
       /* already closed */
     }
     db = null;
-    await poolUtil?.wipeFiles();
+    await pool?.wipeFiles();
+    openDb();
+    setStatus({
+      state: "ready",
+      paired: false,
+      node: getNodeId(requireDb()),
+      hydrated: undefined,
+      lastSync: undefined,
+    });
     return { ok: true };
   },
 

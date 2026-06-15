@@ -278,6 +278,15 @@ export async function resetReplica(): Promise<void> {
     }
   } finally {
     getReplicaBus().stopWorker();
+    // Drop the stale "ready" status and the started flag so a later
+    // enableReplica() re-runs the full join (startReplica → fresh worker) and
+    // waitReady() actually waits for that worker, instead of resolving on this
+    // run's leftover "ready". startReplica is re-entrant: its side effects
+    // (bus.onEvent's Set, the same-ref window/document listeners, the globally
+    // guarded SW bridge) all dedupe. Settings UI repaints off the status event.
+    started = false;
+    status = { state: "booting", paired: false, node: null };
+    for (const fn of statusListeners) fn(status);
   }
 }
 
