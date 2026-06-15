@@ -244,6 +244,16 @@ function DeviceSetup() {
     const W = 248, GAP = 28;
     // No room to the right of the content column → don't show it at all.
     if (window.innerWidth - pr.right < W + GAP) return setPreview(null);
+    // Re-read bucket wiring so the diagram reflects buckets added/removed since
+    // mount (that happens over in 在所有设备间同步, which doesn't notify this block).
+    void (async () => {
+      const direct = replicaEnabled()
+        ? (await replicaCall<unknown[]>("listStoragePeers").catch(() => [])).length > 0
+        : false;
+      const serverHas = noOrigin ? false : (await api.listServerS3Peers().catch(() => [])).length > 0;
+      setDeviceDirect(direct);
+      setHasServerBucket(serverHas);
+    })();
     setPreview({ kind, left: pr.right + GAP, top: cards.getBoundingClientRect().top });
   };
   const hideAside = () => setPreview(null);
@@ -368,7 +378,7 @@ function DeviceSetup() {
           onBlur={hideAside}
         >
           <span class="tc-check"><Icon name="check" /></span>
-          <span class="tc-ico"><Icon name="eye" /></span>
+          <span class="tc-ico"><Icon name="globe" /></span>
           <span class="mode-text">
             <span class="tc-name">轻量模式</span>
             <span class="tc-desc">仅在线使用</span>
@@ -385,7 +395,7 @@ function DeviceSetup() {
           onBlur={hideAside}
         >
           <span class="tc-check"><Icon name="check" /></span>
-          <span class="tc-ico"><Icon name="database" /></span>
+          <span class="tc-ico"><Icon name="lock" /></span>
           <span class="mode-text">
             <span class="tc-name">信任此设备</span>
             <span class="tc-desc">{busy && !enabled ? "启用中…" : "本机保存,支持同步"}</span>
