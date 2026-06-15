@@ -109,7 +109,12 @@ function App() {
 
   // Offline replica: if this browser enabled it (settings → 离线副本), boot
   // the DB worker and nudge a sync; api.ts routes data calls to it once ready.
+  // Skip inside the desktop shell: there the local sidecar is the data home, so
+  // the renderer stays a pure window onto it — a renderer-side OPFS replica would
+  // be redundant and (via api.ts's replicaActive() routing) shadow the sidecar's
+  // on-disk DB. A leftover mh_replica flag from a prior version is ignored here.
   useEffect(() => {
+    if (typeof window !== "undefined" && window.metahubDesktop) return;
     resumeReplicaIfEnabled();
   }, []);
 

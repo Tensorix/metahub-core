@@ -8,6 +8,7 @@
 // at the bottom of this file.
 
 import { localApi, localSites, replicaActive, isNoOrigin } from "./data/local-api.ts";
+import type { S3Config } from "../core/sync/storage.ts";
 
 // API row types come straight from core via type-only imports — erased at
 // build time, so nothing of core leaks into the browser bundle. Adding a field
@@ -339,6 +340,9 @@ const httpApi = {
   // (replica.ts), not these.
   listServerS3Peers: () => req<S3Peer[]>("GET", "/api/peers/s3"),
   addServerS3Peer: (b: S3PeerInput) => req<S3Peer>("POST", "/api/peer/s3", b),
+  // Full config (incl. secret) for one server bucket — desktop-only, to build a
+  // phone-enroll QR (the desktop renderer has no replica to read it from).
+  serverS3Config: (url: string) => req<S3Config>("GET", `/api/peer/s3/config?url=${q(url)}`),
   listGrants: () => req<Grant[]>("GET", "/api/grants"),
   revokeGrant: (token: string) => req<{ revoked: number }>("DELETE", `/api/grant?token=${q(token)}`),
 

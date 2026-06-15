@@ -30,6 +30,13 @@ import {
   confirmDialog,
 } from "./ui.tsx";
 
+/** Inside the desktop shell (Electron + local sidecar) the sidecar IS the data
+ *  home — it stores everything on disk directly, so the "browser client" model
+ *  (window vs replica, an OPFS replica, re-entering a bucket secret to direct-
+ *  connect) doesn't apply. The 同步 section collapses to "connect a bucket so
+ *  every device stays in sync"; device-to-device HTTP pairing (设备与授权) stays. */
+const isDesktop = () => typeof window !== "undefined" && !!window.metahubDesktop;
+
 const THEMES: { value: ThemeChoice; icon: string; name: string; desc: string }[] = [
   { value: "light", icon: "sun", name: "浅色", desc: "始终使用明亮界面" },
   { value: "dark", icon: "moon", name: "深色", desc: "始终使用暗色界面" },
@@ -93,7 +100,7 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
           in sync. The bucket lives on the server (origin) or this device
           (no-origin); shown in either mode so its ownership is never hidden. */}
       <SetGroup label="同步">
-        <DeviceSetup />
+        {!isDesktop() && <DeviceSetup />}
         <SyncStorage />
       </SetGroup>
 
@@ -475,6 +482,11 @@ function SyncStorage() {
   //    buckets into its own local replica and publishes them. No server, no
   //    "re-enter the secret", no ownership to disambiguate — one subject.
   const noOrigin = isNoOrigin();
+  // Desktop: the sidecar holds the data and connects buckets directly — render a
+  // plain bucket list (server peers, no per-device direct-connect tags). The
+  // shared add()/syncNow()/removeBucket() already behave right here because the
+  // renderer never runs a replica (enabled stays false) and isn't no-origin.
+  const desktop = isDesktop();
   const [enabled, setEnabled] = useState(replicaEnabled());
   // origin: the server's buckets (source of truth). no-origin: unused.
   const [serverPeers, setServerPeers] = useState<S3Peer[] | null>(null);
@@ -519,11 +531,17 @@ function SyncStorage() {
   // origin: set of server bucket urls this device already syncs directly.
   const localUrls = new Set((localPeers ?? []).map((p) => p.url));
 
+  // Desktop never runs the renderer replica (app.tsx skips resume there), so the
+  // bucket peer lives only on the sidecar — ignore any stale mh_replica flag a
+  // prior version may have left, which would otherwise make these handlers hit a
+  // worker that isn't running.
+  const replicaOn = !desktop && enabled;
+
   const add = () =>
     openModal(
       <AddStorageModal
         toServer={!noOrigin}
-        alsoReplica={!noOrigin && enabled}
+        alsoReplica={!noOrigin && replicaOn}
         onDone={() => {
           closeModal();
           reload();
@@ -550,7 +568,7 @@ function SyncStorage() {
       else {
         await Promise.all((serverPeers ?? []).map((p) => api.syncPeer(p.url)));
         // A replica that also peers buckets directly — flush it too.
-        if (enabled) await replicaCall("sync").catch(() => {});
+        if (replicaOn) await replicaCall("sync").catch(() => {});
       }
       toast("已触发同步");
       reload();
@@ -573,7 +591,7 @@ function SyncStorage() {
     } else {
       await api.removePeer(url).catch((e) => toast((e as Error).message));
       // Drop the replica's own copy of the bucket peer too, if it attached one.
-      if (enabled) await replicaCall("removeStorageReplica", url).catch(() => {});
+      if (replicaOn) await replicaCall("removeStorageReplica", url).catch(() => {});
     }
     reload();
   };
@@ -597,7 +615,11 @@ function SyncStorage() {
   // types that. The shell base URL is configurable, never hardcoded.
   const openPhone = async (url: string) => {
     try {
-      const config = await replicaCall<S3Config | null>("storagePeerConfig", url);
+      // Desktop has no replica to read the config from; the sidecar serves the
+      // full (incl. secret) bucket config on its master-token-gated /api surface.
+      const config = desktop
+        ? await api.serverS3Config(url)
+        : await replicaCall<S3Config | null>("storagePeerConfig", url);
       if (!config) return toast("找不到该存储的配置");
       openModal(<QrModal config={config} />);
     } catch (e) {
@@ -641,10 +663,12 @@ function SyncStorage() {
 
       <div class="set-meta">
         <span class="set-meta-item">
-          <Icon name={noOrigin ? "cube" : "globe"} cls="ico sm" />
-          {noOrigin
-            ? "这台设备就是工作区的家,其他设备扫码加入即可一起同步。"
-            : "存储桶连在服务器上,所有设备自动共享;信任本设备后,它离线、在外时也能直接同步。"}
+          <Icon name={desktop || !noOrigin ? "globe" : "cube"} cls="ico sm" />
+          {desktop
+            ? "连一个云端存储桶,这台设备就和你的手机、其他电脑自动保持同步。"
+            : noOrigin
+              ? "这台设备就是工作区的家,其他设备扫码加入即可一起同步。"
+              : "存储桶连在服务器上,所有设备自动共享;信任本设备后,它离线、在外时也能直接同步。"}
         </span>
       </div>
 
@@ -652,9 +676,11 @@ function SyncStorage() {
         <summary>它是怎么工作的</summary>
         <div class="set-disclosure-body">
           存储桶只当"哑"中转:每台设备把自己的变更加密上传、再拉取别人的——谁都不必同时在线,也不需要公网 IP。
-          {noOrigin
-            ? "这台设备把整个工作区发布到桶,新设备扫码加入后从桶秒恢复。"
-            : "密钥只存在服务器,不会同步到浏览器;信任的设备重输一次密钥即可直接同步,离线、在外也不中断。添加时会自动为本站点开通桶的访问权限(CORS)。"}
+          {desktop
+            ? "这台设备把自己的变更发布到桶,其他设备从桶拉取;新设备扫码加入即可一起同步。"
+            : noOrigin
+              ? "这台设备把整个工作区发布到桶,新设备扫码加入后从桶秒恢复。"
+              : "密钥只存在服务器,不会同步到浏览器;信任的设备重输一次密钥即可直接同步,离线、在外也不中断。添加时会自动为本站点开通桶的访问权限(CORS)。"}
         </div>
       </details>
 
@@ -674,7 +700,33 @@ function SyncStorage() {
           </div>
 
           <div class="peer-list flush">
-            {noOrigin
+            {desktop
+              ? serverPeers == null
+                ? <div class="muted">加载中…</div>
+                : serverPeers.length === 0
+                  ? <div class="muted">还没连接存储桶——连一个,所有设备就能保持同步。</div>
+                  : serverPeers.map((p) => {
+                      const name = p.label || p.bucket || p.url;
+                      return (
+                        <div key={p.url} class="peer-row">
+                          <span class={"peer-dot" + (p.enabled ? (p.status === "error" ? " err" : " on") : " off")} />
+                          <div class="peer-main">
+                            <div class="peer-url">{name}</div>
+                            <div class="peer-sub">
+                              {p.endpoint ? hostOf(p.endpoint) + " · " : ""}最近同步 {fmtTime(p.lastSyncAt)}
+                              {p.status === "error" && p.error ? ` · 错误:${p.error}` : ""}
+                            </div>
+                          </div>
+                          <button class="btn btn-ghost peer-menu" title="在手机上打开" onClick={() => openPhone(p.url)}>
+                            <Icon name="share" cls="ico sm" />
+                          </button>
+                          <button class="btn btn-ghost peer-menu" title="移除" onClick={() => removeBucket(p.url, name)}>
+                            <Icon name="trash" cls="ico sm" />
+                          </button>
+                        </div>
+                      );
+                    })
+              : noOrigin
               ? localPeers == null
                 ? <div class="muted">加载中…</div>
                 : localPeers.length === 0

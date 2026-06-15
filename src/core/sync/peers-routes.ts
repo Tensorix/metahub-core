@@ -144,6 +144,16 @@ function s3PeerViews(db: RouteCtx["db"]): z.infer<typeof S3PeerSchema>[] {
     });
 }
 
+/** Full stored config (incl. secretAccessKey) for one 's3' peer. Unlike
+ *  s3PeerViews this does NOT redact — it's served only on the master-token-gated
+ *  /api/* surface to the local desktop owner so it can build a phone-enroll QR
+ *  (which carries the bucket creds) for a bucket the sidecar holds. */
+function s3PeerConfig(db: RouteCtx["db"], url: string): S3Config {
+  const p = listPeers(db).find((x) => x.url === url && x.kind === "s3" && x.config);
+  if (!p) throw new MhError("not_found", `s3 storage peer ${url} not found`);
+  return JSON.parse(p.config!) as S3Config;
+}
+
 function handle(
   fn: (req: Request, ctx: RouteCtx) => unknown | Promise<unknown>,
 ): Route["handler"] {
@@ -261,6 +271,17 @@ export const peersRoutes: Route[] = [
     summary: "List S3 storage buckets attached to this server (no secrets)",
     response: z.array(S3PeerSchema),
     handler: handle((_req, { db }) => s3PeerViews(db)),
+  },
+  {
+    // Full config (incl. secretAccessKey) for one bucket. Master-token gated like
+    // the rest of /api/*; the local desktop owner uses it to build a phone-enroll
+    // QR for a bucket the sidecar holds (the desktop renderer has no replica to
+    // read the config from, and the redacted /api/peers/s3 view omits the secret).
+    method: "GET",
+    path: "/api/peer/s3/config",
+    summary: "Full stored config (incl. secret) for one S3 bucket. Query: ?url=<url>",
+    response: z.record(z.string(), z.unknown()),
+    handler: handle((req, { db }) => s3PeerConfig(db, need(req, "url"))),
   },
   {
     method: "GET",
