@@ -160,6 +160,40 @@
   .set-section { margin-top:34px; }
   .set-section-head { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px; }
   .set-section-desc { color:var(--fg-soft); margin-bottom:16px; }
+
+  /* Grouped gray panels — one panel per concern, hairline-divided sub-blocks.
+     The page is white; each panel is a subtle gray surface so the white widget
+     cards inside (theme / window-replica / topology nodes) read as raised insets
+     (macOS System Settings / Notion grouped-list feel). */
+  .set-group { margin-top:30px; }
+  .set-group:first-of-type { margin-top:24px; }
+  .set-group-label { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--muted); margin:0 0 9px 2px; }
+  .set-panel { background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-sm); overflow:hidden; }
+  .set-block { padding:18px 20px; }
+  .set-block + .set-block { border-top:1px solid var(--line); }
+  .set-block-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:4px; }
+  .set-block-title { font-size:14px; font-weight:650; color:var(--fg); letter-spacing:-.005em; }
+  .set-block-desc { color:var(--fg-soft); font-size:var(--fs-sm); line-height:1.55; margin-bottom:14px; max-width:56ch; }
+  .set-block-desc:last-child { margin-bottom:0; }
+  .set-block-spacer { flex:1 1 auto; }
+  /* secondary header inside a block (e.g. 存储桶后端 under 工作区后端) */
+  .set-subhead { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:4px 0 7px; }
+  .set-subhead-title { font-size:13px; font-weight:600; color:var(--fg); }
+  .set-subhead-title .sh-dim { color:var(--muted); font-weight:500; }
+  /* read-only "this is where the data lives" fact line (origin: the server) */
+  .set-fact { display:flex; align-items:center; gap:9px; font-size:var(--fs-sm); color:var(--fg-soft);
+    padding:10px 12px; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius); margin-bottom:14px; }
+  .set-fact svg { width:16px; height:16px; color:var(--accent); }
+  .set-fact b { color:var(--fg); font-weight:600; }
+  .set-fact .sf-role { margin-left:auto; font-size:var(--fs-xs); color:var(--muted); white-space:nowrap; }
+  /* "挂载到 ▸ 服务器/本设备" — kills the bucket-attach ambiguity at a glance */
+  .mount-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:999px;
+    font-size:var(--fs-xs); font-weight:600; white-space:nowrap; background:var(--accent-soft); color:var(--accent);
+    border:1px solid transparent; }
+  .mount-badge .mb-k { color:var(--muted); font-weight:550; }
+  @media (max-width:560px) { .set-block { padding:16px 15px; } }
   .set-footer { margin-top:40px; padding-top:20px; border-top:1px solid var(--line); display:flex;
     flex-wrap:wrap; justify-content:center; align-items:center; gap:7px; color:var(--muted); font-size:12px; }
   .set-footer-sep { opacity:.45; }
@@ -193,42 +227,62 @@
   .theme-card.sel .tc-check { opacity:1; transform:scale(1); }
   @media (max-width:560px) { .theme-grid { grid-template-columns:1fr; } }
 
-  /* sync: window/replica two-card grid + topology map (doc 19 client-topology) */
+  /* sync: window/replica two-card grid (doc 19 client-topology) */
   .sync-holds { grid-template-columns:repeat(2,1fr); }
   .theme-card:disabled { opacity:.55; cursor:not-allowed; }
   .theme-card:disabled:hover { transform:none; border-color:var(--line-strong); }
 
-  .sync-topo { display:flex; align-items:center; flex-wrap:wrap; margin:2px 0 6px;
-    padding:15px 18px; border:1px solid var(--line); border-radius:var(--radius-lg); background:var(--surface); }
-  .sync-chip { display:inline-flex; align-items:center; gap:7px; padding:7px 12px; border-radius:999px;
-    border:1px solid var(--line-strong); background:var(--bg); color:var(--fg); font-size:var(--fs-sm);
-    font-weight:550; white-space:nowrap; box-shadow:var(--shadow-sm); animation:sync-pop .32s ease both; }
-  .sync-chip svg { color:var(--accent); }
-  .sync-chip:nth-child(3) { animation-delay:.07s; }
-  .sync-chip:nth-child(5) { animation-delay:.14s; }
-  .sync-pub { margin-left:6px; padding:2px 7px; border-radius:999px; font-size:var(--fs-xs); font-weight:600;
-    background:var(--accent-soft); color:var(--accent); }
-  .sync-link { position:relative; flex:1 1 36px; min-width:36px; height:2px; margin:0 3px; align-self:center;
+  /* topology as node cards joined by flowing/idle links — answers "how is THIS
+     device wired?" at a glance, and shows which node the bucket hangs off. */
+  .sync-topo { display:flex; align-items:stretch; flex-wrap:wrap; gap:0; }
+  .sync-node { display:flex; flex-direction:column; justify-content:center; gap:5px; min-width:104px;
+    padding:11px 14px; border:1px solid var(--line-strong); border-radius:var(--radius); background:var(--bg);
+    box-shadow:var(--shadow-sm); animation:sync-pop .34s ease both; }
+  .sync-node-top { display:inline-flex; align-items:center; gap:7px; font-size:var(--fs-sm); font-weight:600;
+    color:var(--fg); white-space:nowrap; }
+  .sync-node-top svg { width:15px; height:15px; color:var(--accent); }
+  .sync-node-role { font-size:var(--fs-xs); color:var(--muted); white-space:nowrap; }
+  .sync-node.self { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset, var(--shadow-sm); }
+  .sync-node:nth-child(3) { animation-delay:.07s; }
+  .sync-node:nth-child(5) { animation-delay:.14s; }
+  .sync-link { position:relative; flex:1 1 34px; min-width:30px; height:2px; margin:0 4px; align-self:center;
     background:var(--line-strong); border-radius:2px; }
-  .sync-link.active { background:var(--accent); }
+  .sync-link.active { background:transparent;
+    background-image:linear-gradient(90deg, var(--accent) 0 58%, transparent 58% 100%);
+    background-size:11px 2px; background-repeat:repeat-x; background-position:0 50%;
+    animation:sync-flow .9s linear infinite; }
   .sync-link.idle { background:none; height:0; border-top:2px dashed var(--line-strong); }
   .sync-link::after { content:attr(data-label); position:absolute; top:-9px; left:50%; transform:translateX(-50%);
-    font-size:var(--fs-micro); color:var(--muted); background:var(--surface); padding:0 5px; letter-spacing:.04em; }
+    font-size:var(--fs-micro); color:var(--muted); background:var(--surface-2); padding:0 5px; letter-spacing:.04em; }
   @keyframes sync-pop { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
-  @media (max-width:560px) { .sync-link { flex-basis:24px; } }
+  @keyframes sync-flow { to { background-position:11px 50%; } }
+  @media (max-width:560px) {
+    .sync-link { flex-basis:20px; min-width:16px; }
+    .sync-node { min-width:0; flex:1 1 38%; }
+  }
 
-  /* sync devices */
+  /* sync devices / bucket rows */
   .peer-actions { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
   .peer-actions .btn { display:inline-flex; align-items:center; gap:6px; }
   .peer-list { display:flex; flex-direction:column; gap:8px; }
   .peer-row { display:flex; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--line);
     border-radius:var(--radius); background:var(--surface); }
+  /* flush variant: borderless, hairline-divided rows that live inside a panel */
+  .peer-list.flush { gap:0; }
+  .peer-list.flush .peer-row { border:0; border-radius:0; background:transparent; padding:11px 2px; }
+  .peer-list.flush .peer-row:first-child { padding-top:2px; }
+  .peer-list.flush .peer-row + .peer-row { border-top:1px solid var(--line); }
   .peer-dot { width:9px; height:9px; border-radius:50%; flex:none; background:var(--muted); }
   .peer-dot.on { background:var(--success); } .peer-dot.err { background:var(--danger); } .peer-dot.off { background:var(--muted); }
   .peer-main { flex:1; min-width:0; }
   .peer-url { font-weight:600; font-size:var(--fs-body); color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .peer-sub { font-size:12px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .peer-menu { flex:none; padding:6px; }
+  /* per-row pill: where a bucket is mounted / who publishes to it */
+  .peer-tag { flex:none; padding:2px 9px; border-radius:999px; font-size:var(--fs-xs); font-weight:600;
+    white-space:nowrap; background:var(--bg); border:1px solid var(--line-strong); color:var(--fg-soft); }
+  .peer-tag.pub { background:var(--accent-soft); border-color:transparent; color:var(--accent); }
+  .peer-tag.fallback { color:var(--muted); }
   .pair-code { font-family:var(--mono); font-size:26px; font-weight:700; letter-spacing:.12em;
     text-align:center; padding:16px; border:1px dashed var(--line); border-radius:var(--radius); background:var(--surface); color:var(--fg); }
 

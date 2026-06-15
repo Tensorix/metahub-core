@@ -37,6 +37,19 @@ const THEMES: { value: ThemeChoice; icon: string; name: string; desc: string }[]
   { value: "system", icon: "monitor", name: "跟随系统", desc: "随操作系统外观自动切换" },
 ];
 
+/** A titled gray panel that groups related settings blocks. The page is white;
+ *  the panel is a subtle gray surface so the white widget cards inside read as
+ *  raised insets (macOS System Settings / Notion grouped-list feel). Children
+ *  are `.set-block`s, hairline-divided by CSS. */
+function SetGroup({ label, children }: { label: string; children: ComponentChildren }) {
+  return (
+    <div class="set-group">
+      <div class="set-group-label">{label}</div>
+      <div class="set-panel">{children}</div>
+    </div>
+  );
+}
+
 export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void } = {}) {
   const [theme, setThemeState] = useState<ThemeChoice>(getTheme());
 
@@ -50,33 +63,48 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
       <div class="set-title">设置</div>
       <div class="set-sub">个性化你的 Metahub 工作区。</div>
 
-      <div class="set-section">
-        <div class="set-section-head">外观</div>
-        <div class="set-section-desc">选择界面的颜色主题。</div>
-        <div class="theme-grid">
-          {THEMES.map((t) => (
-            <button
-              key={t.value}
-              class={"theme-card" + (theme === t.value ? " sel" : "")}
-              aria-pressed={theme === t.value}
-              onClick={() => pick(t.value)}
-            >
-              <span class="tc-check"><Icon name="check" /></span>
-              <span class="tc-ico"><Icon name={t.icon} /></span>
-              <span class="tc-name">{t.name}</span>
-              <span class="tc-desc">{t.desc}</span>
-            </button>
-          ))}
+      <SetGroup label="外观">
+        <div class="set-block">
+          <div class="set-block-head"><span class="set-block-title">颜色主题</span></div>
+          <div class="set-block-desc">选择界面的明暗外观。</div>
+          <div class="theme-grid">
+            {THEMES.map((t) => (
+              <button
+                key={t.value}
+                class={"theme-card" + (theme === t.value ? " sel" : "")}
+                aria-pressed={theme === t.value}
+                onClick={() => pick(t.value)}
+              >
+                <span class="tc-check"><Icon name="check" /></span>
+                <span class="tc-ico"><Icon name={t.icon} /></span>
+                <span class="tc-name">{t.name}</span>
+                <span class="tc-desc">{t.desc}</span>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      </SetGroup>
 
-      {typeof window !== "undefined" && window.metahubDesktop?.quicknote && <QuickNotesSettings />}
-      <SyncTopology />
-      <OfflineReplica />
-      <SyncStorage />
+      {typeof window !== "undefined" && window.metahubDesktop?.quicknote && (
+        <SetGroup label="快速笔记"><QuickNotesSettings /></SetGroup>
+      )}
+
+      {/* One model, two axes (doc 19): how THIS device holds data (window/replica)
+          and where the WHOLE workspace syncs (server + bucket backend). */}
+      <SetGroup label="同步">
+        <SyncTopology />
+        <OfflineReplica />
+        <SyncStorage />
+      </SetGroup>
+
       {/* HTTP pairing + issued grants only make sense against a server (origin). */}
-      {!isNoOrigin() && <SyncDevices />}
-      {!isNoOrigin() && <IssuedGrants />}
+      {!isNoOrigin() && (
+        <SetGroup label="设备与授权">
+          <SyncDevices />
+          <IssuedGrants />
+        </SetGroup>
+      )}
+
       <VersionFooter onUpdatePending={onUpdatePending} />
     </div>
   );
@@ -137,32 +165,40 @@ function SyncTopology() {
   const replica = mode.hold === "replica";
 
   return (
-    <div class="set-section">
-      <div class="set-section-head">同步</div>
-      <div class="set-section-desc">
-        这台设备如何拿数据（窗口 / 副本），以及整个工作区如何在设备间同步（服务器 + 存储桶）。
+    <div class="set-block">
+      <div class="set-block-head"><span class="set-block-title">概览</span></div>
+      <div class="set-block-desc">
+        这台设备怎么拿数据(窗口 / 副本),以及整个工作区在设备间怎么同步(服务器 + 存储桶后端)。
       </div>
       <div class="sync-topo">
-        <span class="sync-chip">
-          <Icon name={replica ? "database" : "eye"} cls="ico sm" />
-          本设备 · {replica ? "副本" : "窗口"}
+        <span class="sync-node self">
+          <span class="sync-node-top">
+            <Icon name={replica ? "database" : "eye"} cls="ico sm" />
+            本设备
+          </span>
+          <span class="sync-node-role">{replica ? "副本 · 可离线" : "窗口 · 在线"}</span>
         </span>
         {!noOrigin && (
           <>
             <span class="sync-link active" data-label="HTTP" />
-            <span class="sync-chip">
-              <Icon name="globe" cls="ico sm" />
-              {isElectron ? "内置服务" : "服务器"}
+            <span class="sync-node">
+              <span class="sync-node-top">
+                <Icon name="globe" cls="ico sm" />
+                {isElectron ? "内置服务" : "服务器"}
+              </span>
+              <span class="sync-node-role">{hasBucket ? "数据家 · 发布者" : "数据家"}</span>
             </span>
           </>
         )}
         {hasBucket && (
           <>
             <span class={"sync-link " + (noOrigin ? "active" : "idle")} data-label="桶" />
-            <span class="sync-chip">
-              <Icon name="cube" cls="ico sm" />
-              存储桶
-              <span class="sync-pub">发布:{noOrigin ? "本机" : "服务器"}</span>
+            <span class="sync-node">
+              <span class="sync-node-top">
+                <Icon name="cube" cls="ico sm" />
+                存储桶
+              </span>
+              <span class="sync-node-role">发布:{noOrigin ? "本机" : "服务器"}</span>
             </span>
           </>
         )}
@@ -272,20 +308,19 @@ function OfflineReplica() {
 
   if (unsupported) {
     return (
-      <div class="set-section">
-        <div class="set-section-head">这台设备</div>
-        <div class="set-section-desc">这台设备当前为窗口模式（在线读写，不在本机存储）。</div>
-        <div class="peer-sub">⚠ 无法保留离线副本：{unsupported}</div>
+      <div class="set-block">
+        <div class="set-block-head"><span class="set-block-title">这台设备</span></div>
+        <div class="set-block-desc">当前为窗口模式:在线读写,不在本机存储。</div>
+        <div class="peer-sub">⚠ 无法保留离线副本:{unsupported}</div>
       </div>
     );
   }
 
   return (
-    <div class="set-section">
-      <div class="set-section-head">这台设备</div>
-      <div class="set-section-desc">
-        选择这台设备怎么拿数据。窗口：在线读、不在本机存、秒开；副本：存一份完整数据，弱网/离线也能读写，恢复后自动同步。
-        启用副本即与服务器配对，凭据可在「已授权设备」中单独吊销。
+    <div class="set-block">
+      <div class="set-block-head"><span class="set-block-title">这台设备</span></div>
+      <div class="set-block-desc">
+        选择这台设备怎么拿数据。启用副本即与服务器配对,凭据可在「设备与授权 · 已授权设备」中单独吊销。
       </div>
       <div class="theme-grid sync-holds">
         <button
@@ -296,8 +331,8 @@ function OfflineReplica() {
         >
           <span class="tc-check"><Icon name="check" /></span>
           <span class="tc-ico"><Icon name="eye" /></span>
-          <span class="tc-name">窗口（只看）</span>
-          <span class="tc-desc">在线读，不在本机存，秒开</span>
+          <span class="tc-name">窗口</span>
+          <span class="tc-desc">在线读 · 不在本机存 · 秒开</span>
         </button>
         <button
           class={"theme-card" + (enabled ? " sel" : "")}
@@ -307,8 +342,8 @@ function OfflineReplica() {
         >
           <span class="tc-check"><Icon name="check" /></span>
           <span class="tc-ico"><Icon name="database" /></span>
-          <span class="tc-name">留离线副本</span>
-          <span class="tc-desc">{busy && !enabled ? "启用中…" : "存一份，可离线，首次需下载"}</span>
+          <span class="tc-name">副本</span>
+          <span class="tc-desc">{busy && !enabled ? "启用中…" : "存一份完整数据 · 弱网/离线可读写"}</span>
         </button>
       </div>
       {enabled && (
@@ -420,7 +455,7 @@ function SyncStorage() {
 
   const remove = async (p: StoragePeerView) => {
     const ok = await confirmDialog({
-      title: "移除云端副本",
+      title: "移除存储桶后端",
       message: `确定移除 ${p.label || p.url}？将停止与该存储桶同步（桶内数据不受影响）。`,
       confirmLabel: "移除",
       danger: true,
@@ -449,25 +484,40 @@ function SyncStorage() {
     }
   };
 
+  // Where the bucket attaches — the one fact that used to be buried in morphing
+  // prose. origin → the server (data home + publisher); no-origin → this device.
+  const mountTarget = noOrigin ? "本设备" : "服务器";
+  const rowTag = noOrigin ? "本机发布" : "服务器发布";
+
   return (
-    <div class="set-section">
-      <div class="set-section-head">云端副本（桶）</div>
-      <div class="set-section-desc">
-        用 S3 兼容存储桶做云端副本 + 多设备中转——无需公网 IP、对方离线也能同步，上传前端到端加密。
-        {noOrigin
-          ? "本设备作为发布者，把整库镜像进桶。"
-          : enabled
-            ? "配置在服务器（数据家）上由它作为发布者镜像整库；本机离线副本也会接入同一个桶，在外/服务器离线时经桶兜底同步。"
-            : "配置在服务器（数据家）上，由服务器作为发布者把整库镜像进桶。"}
+    <div class="set-block">
+      <div class="set-block-head"><span class="set-block-title">工作区后端</span></div>
+      <div class="set-block-desc">整个工作区在哪些后端落盘、在设备间怎么同步。</div>
+
+      {!noOrigin && (
+        <div class="set-fact">
+          <Icon name="globe" cls="ico sm" />
+          <span>数据落在<b>服务器</b>(数据家);它作为发布者把整库镜像进存储桶。</span>
+        </div>
+      )}
+
+      <div class="set-subhead">
+        <span class="set-subhead-title">存储桶后端 <span class="sh-dim">· 云端中转</span></span>
+        <span class="set-block-spacer" />
+        <span class="mount-badge"><span class="mb-k">挂载到</span> ▸ {mountTarget}</span>
+      </div>
+      <div class="set-block-desc">
+        S3 兼容存储桶做多设备中转——无需公网 IP、对方离线也能同步,上传前端到端加密。
+        {!noOrigin && enabled ? "本机副本也接入同一个桶,服务器离线/在外时经桶兜底。" : ""}
       </div>
 
       {noOrigin && !enabled ? (
-        <div class="peer-sub">⚠ 请先在上方把「这台设备」设为「留离线副本」，再添加云端副本。</div>
+        <div class="peer-sub">⚠ 请先在上方把「这台设备」设为「副本」,再添加存储桶。</div>
       ) : (
         <>
           <div class="peer-actions">
             <button class="btn btn-primary" onClick={add}>
-              <Icon name="plus" cls="ico sm" /> 添加同步存储
+              <Icon name="plus" cls="ico sm" /> 添加存储桶
             </button>
             {peers && peers.length > 0 && (
               <button class="btn btn-secondary" onClick={syncNow}>
@@ -476,11 +526,11 @@ function SyncStorage() {
             )}
           </div>
 
-          <div class="peer-list">
+          <div class="peer-list flush">
             {peers == null ? (
               <div class="muted">加载中…</div>
             ) : peers.length === 0 ? (
-              <div class="muted">还没有配置同步存储。</div>
+              <div class="muted">还没接入存储桶——加一个,多设备就能免公网 IP 互通。</div>
             ) : (
               peers.map((p) => (
                 <div key={p.url} class="peer-row">
@@ -489,9 +539,10 @@ function SyncStorage() {
                     <div class="peer-url">{p.label || p.url}</div>
                     <div class="peer-sub">
                       最近同步 {fmtTime(p.lastSyncAt)}
-                      {p.status === "error" && p.error ? ` · 错误：${p.error}` : ""}
+                      {p.status === "error" && p.error ? ` · 错误:${p.error}` : ""}
                     </div>
                   </div>
+                  <span class="peer-tag pub">{rowTag}</span>
                   {noOrigin && (
                     <button class="btn btn-ghost peer-menu" title="在手机上打开" onClick={() => openPhone(p)}>
                       <Icon name="share" cls="ico sm" />
@@ -718,7 +769,7 @@ function AddStorageModal({
       } else {
         ({ url } = await replicaCall<{ url: string }>("addStorageReplica", config, passphrase));
       }
-      toast(`已添加云端副本 ${url}`);
+      toast(`已接入存储桶 ${url}`);
       onDone();
     } catch (e) {
       const msg = (e as Error).message;
@@ -1035,9 +1086,8 @@ function QuickNotesSettings() {
   };
 
   return (
-    <div class="set-section">
-      <div class="set-section-head">快速笔记</div>
-      <div class="set-section-desc">
+    <div class="set-block">
+      <div class="set-block-desc">
         用全局快捷键随时唤起小窗记录想法。小窗也可从菜单栏图标打开。
       </div>
 
@@ -1159,10 +1209,10 @@ function SyncDevices() {
     ));
 
   return (
-    <div class="set-section">
-      <div class="set-section-head">同步设备</div>
-      <div class="set-section-desc">
-        与其他设备配对，自动双向同步数据。在对方设备生成配对码，然后在此添加。
+    <div class="set-block">
+      <div class="set-block-head"><span class="set-block-title">同步设备</span></div>
+      <div class="set-block-desc">
+        与其他设备配对,自动双向同步数据。在对方设备生成配对码,然后在此添加。
       </div>
 
       <div class="peer-actions">
@@ -1177,7 +1227,7 @@ function SyncDevices() {
         </button>
       </div>
 
-      <div class="peer-list">
+      <div class="peer-list flush">
         {peers == null ? (
           <div class="muted">加载中…</div>
         ) : peers.length === 0 ? (
@@ -1230,12 +1280,12 @@ function IssuedGrants() {
   };
 
   return (
-    <div class="set-section">
-      <div class="set-section-head">已授权设备</div>
-      <div class="set-section-desc">
+    <div class="set-block">
+      <div class="set-block-head"><span class="set-block-title">已授权设备</span></div>
+      <div class="set-block-desc">
         本机签发、允许其他设备同步进来的凭据。吊销即断开对方的入站访问。
       </div>
-      <div class="peer-list">
+      <div class="peer-list flush">
         {grants == null ? (
           <div class="muted">加载中…</div>
         ) : grants.length === 0 ? (
