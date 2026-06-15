@@ -482,16 +482,24 @@ function SyncStorage() {
   // in origin it's the subset a replica has re-activated locally (by url).
   const [localPeers, setLocalPeers] = useState<StoragePeerView[] | null>(null);
 
-  useEffect(() => onReplicaStatus(() => setEnabled(replicaEnabled())), []);
-
-  const reload = () => {
+  // Pull just this device's direct-connect list. Called on mount AND on every
+  // replica status change so a page refresh that lands here recovers: the very
+  // first reload races ahead of resumeReplicaIfEnabled() (child effects run
+  // before the app-root one), so replicaCall rejects with "replica not running"
+  // before `started` flips — retrying once the replica reaches "ready" fills it
+  // in. Keep the previous list on failure (don't null it) and never toast here.
+  const reloadLocal = () => {
     if (replicaEnabled()) {
       replicaCall<StoragePeerView[]>("listStoragePeers")
         .then(setLocalPeers)
-        .catch(() => setLocalPeers(null));
+        .catch(() => {});
     } else {
       setLocalPeers(null);
     }
+  };
+
+  const reload = () => {
+    reloadLocal();
     if (!noOrigin) {
       api
         .listServerS3Peers()
@@ -502,7 +510,11 @@ function SyncStorage() {
 
   useEffect(() => {
     reload();
-  }, [enabled]);
+    return onReplicaStatus(() => {
+      setEnabled(replicaEnabled());
+      reloadLocal();
+    });
+  }, []);
 
   // origin: set of server bucket urls this device already syncs directly.
   const localUrls = new Set((localPeers ?? []).map((p) => p.url));
