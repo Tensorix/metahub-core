@@ -157,31 +157,26 @@
 - **副本要 https**(OPFS/SW/WebCrypto);窗口纯在线**裸 HTTP 也行**(见 18:secure context 要求)。
 - 故"手机只想轻量看大数据"需要一台能连的 server;纯桶给不了。这也是 server 除"快"之外的独立价值。
 
-## 8. 现状对照(已实现 vs 目标)
+## 8. 实现状态(2026-06,A–G 已落地)
 
-**已实现**:
-- origin / no-origin 自动探测(doc 18);no-origin Enroll(扫码 + 口令);`?token=` 鉴权(auth.ts,已接受,但还没"显示二维码"按钮)。
-- 桶同步、`onlyNode` 自产前缀、`publishSnapshot`(内容寻址 + GC)、双传输 `runSync`(doc 17)。
-- WebUI「同步存储」可加桶——但**永远加到当前浏览器副本节点**(这正是空桶坑的来源)。
+整套 A–G 已实现(`bun test` 全绿、tsc 维持基线、浏览器包 + `build:shell` 干净)。仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
 
-**与目标的差距**:
-- 没有"窗口 vs 副本"的显式语义/开关(现在 origin 默认是"窗口式"瘦客户端,开离线副本=副本,但没这样命名/呈现)。
-- 配桶不分"数据家"——origin 下配到副本而非 server。
-- 没有发布者角色:快照仅靠"自产段数阈值"触发,host 光吸收不写时不触发 → 桶不完整。
-- 没有租约值班 / 多发布者协调。
-- 没有 origin 的 `?token=` 二维码、没有自适应同步页。
+## 9. 清单(已完成)
 
-## 9. 待实现清单
+- [x] **A. 发布者快照**:`storage.ts` `StorageSyncOpts.publish`/`snapshotMinIntervalMs`;`syncWithStorage` 在 publish 时按"桶无快照 / 数据超最新快照 frontier 且超最小间隔 / forcePush"发整库 `publishSnapshot`,与自产段数解耦。**空桶坑回归单测**(发布者无自产 ops 也发整库快照)。
+- [x] **B. 配桶定位数据家**:`peers.ts` 抽 `addAndSyncStoragePeer`(CLI + HTTP 共用),`S3Config` 加 `publish`/`priority`,`syncPeer` 透传;新增 `POST /api/peer/s3` + `GET /api/peers/s3`(`peers-routes.ts`,无密钥外泄);`api.ts` `addServerS3Peer`/`listServerS3Peers`。**安全网**:浏览器副本 `addStorageReplica` 默认 `publish:true`(priority 10),即便配错地方也不空桶。
+- [x] **C. 统一「同步」页**:`settings.tsx` `SyncTopology`(拓扑小图)+ 这台设备(窗口/副本卡片,= D)+ 云端副本(桶,按模式定位 server/本机)+ origin 的「在手机上打开」(= E);origin-only 显示 HTTP 配对 + 已授权设备;`styles.css` 加 `.sync-topo/.sync-chip/.sync-link/.sync-pub/.sync-holds`。
+- [x] **D. 窗口 vs 副本显式开关**:`.theme-card` 两卡;no-origin/裸 HTTP 走禁用+解释;Electron 隐藏。
+- [x] **E. origin `?token=` 二维码**:`originEnrollUrl` + `OriginQrModal`(`currentToken()` from api.ts,服务器地址可配 `mh_server_base`)。
+- [x] **F. 发布者协调**:`publisher-lease.ts` —— **改用"心跳选举"而非 CAS/`If-Match`**(每候选写自己的 `publisher/<node>.lease` 心跳 + TTL,读全体取确定性赢家=最高优先级、tie 比 node id;过期即故障转移)。正确性靠内容寻址快照幂等兜底,故无需条件写,**比原计划的 ifMatch 更简单**。优先级:server/CLI=100、浏览器=10。多 server 即 HA。**选举单测**(高优先级胜出 + 过期故障转移)。
+- [x] **G. `clientMode()` 收敛**:`replica.ts` 加 `clientMode(){dataHome,hold}`,新同步页统一读它(保留窗口模式);api/sw/app 的底层 primitives 不变,可后续增量迁移。
 
-按"低风险高回报 → 大改"排:
+**与原计划的偏差**:F 用心跳选举替代 `If-Match` 条件写(更简单、零新 client 表面;正确性已被快照幂等保证)。
 
-- [ ] **A. 发布者快照(最高回报,低风险)**:数据家节点**接桶时即发一份整库快照 + 周期发**,与自产段数解耦。直接消除空桶坑;复用 `publishSnapshot`。
-- [ ] **B. 配桶定位到"数据家"**:origin 模式下「配置桶」通过 server 端点(新增 `POST /api/peer/s3`)配到 **server 节点**(server 当发布者);no-origin 配本机。去掉"给只读副本配桶"的错路(或降级为高级"本设备离线也走桶")。
-- [ ] **C. 自适应「同步」页**:按 §6.2 重做——数据家 / 窗口·副本开关 / 桶+发布者只读状态 / 加设备。
-- [ ] **D. 窗口 vs 副本显式开关**:origin 默认窗口;"在这台保留离线副本"为显式动作;no-origin 锁副本。
-- [ ] **E. origin 的「在手机上打开」二维码**:编码 `server/?token=<当前有效token>`,扫码即进(对称于 no-origin 的 `#enroll`)。
-- [ ] **F. 租约值班(纯 PWA / 多发布者)**:`publisher/lease` 条件写 + 优先级错峰退避 + TTL 续租 + 故障转移。多 server 即 HA。
-- [ ] **G. (北极星,可选)**:不强推"处处副本"——保留窗口;但新功能按"节点=storage+传输"设计,逐步淡化 origin/no-origin 双模分叉。
+## 10. 与 16/17/18 的关系 / 开放问题
+
+- 16=浏览器节点与离线副本;17=桶同步内核与快照;18=无 origin 壳与 Enroll。本文是**把它们统一到一个心智**并补"发布者"与"前端形态"两块。
+- 开放:① 真浏览器 e2e + 真桶(R2/MinIO/多 server)实测;② 纯 PWA 全离线时的"无人值班"窗口可接受度;③ 过期 lease 心跳的 GC(目前忽略不删,数量极少);④ 窗口模式下站点(sites)/大 blob 仍走 server(无回归);⑤ G 把 api/sw/app 也迁到 `clientMode()`。
 
 ## 10. 与 16/17/18 的关系 / 开放问题
 

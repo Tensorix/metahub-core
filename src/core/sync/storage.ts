@@ -20,6 +20,7 @@
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
 import { changesAfterSeq, ingest, CHANGE_SELECT, type Change } from "../crdt.ts";
+import { isElectedPublisher } from "./publisher-lease.ts";
 import { MhError, errorCode } from "../errors.ts";
 import type { SyncResult } from "./client.ts";
 import {
@@ -55,6 +56,17 @@ export interface S3Config {
    * isVirtualHostedStyle). R2/MinIO keep using path-style.
    */
   virtualHostedStyle?: boolean;
+  /**
+   * Node-role hints for this bucket (not bucket settings — safe to omit from
+   * shared enroll links). `publish` marks this node as the bucket's publisher
+   * (writes whole-hub snapshots; see StorageSyncOpts.publish): true for the data
+   * home (a server, or a no-origin PWA which IS the home), false for a replica
+   * that only attaches the bucket for its own away-sync. `priority` ranks
+   * publisher candidates when several are eligible (higher wins; see
+   * publisher-lease.ts) — server > desktop > laptop > phone.
+   */
+  publish?: boolean;
+  priority?: number;
 }
 
 /** Whether to use virtual-hosted addressing for this bucket: the explicit flag,
@@ -368,12 +380,47 @@ export interface StorageSyncOpts {
   /** Push regardless of the batching thresholds — use on explicit "sync now" and
    *  when the app is backgrounding, so edits are never stranded unsynced. */
   forcePush?: boolean;
+  /**
+   * This node is the bucket's *publisher*: keep the bucket a complete, fresh
+   * whole-hub mirror by writing a winners-only snapshot (publishSnapshot) when
+   * the bucket has none yet, or when the hub has advanced past the newest
+   * snapshot. The snapshot spans the WHOLE db, so it captures data authored by
+   * nodes that never push to this bucket themselves (e.g. a server holding the
+   * canonical hub while browsers only window onto it) — fixing the "attached a
+   * bucket but it stays empty" footgun. Any node holding the full hub can be the
+   * publisher; who is one is decided above storage.ts (server by default, else a
+   * lease — see publisher-lease.ts). Correctness never depends on a single
+   * publisher: concurrent snapshots are content-addressed and idempotent. */
+  publish?: boolean;
+  /** Min wall-clock gap between publisher snapshots (ms; default 60_000) so a
+   *  steady edit stream doesn't snapshot every round. An empty bucket is
+   *  snapshotted immediately regardless of this. */
+  snapshotMinIntervalMs?: number;
+  /** This node's publisher priority when contending for the lease (higher wins;
+   *  see publisher-lease.ts). Only consulted when `publish` is set. */
+  priority?: number;
 }
 
-/** Wall-clock age (ms) of a change from its HLC (first 15 chars = epoch millis,
- *  see hlc.ts formatHlc). */
+/** Epoch millis encoded in an HLC's first 15 chars (hlc.ts formatHlc). */
+function hlcMs(hlc: string): number {
+  return parseInt(hlc.slice(0, 15), 10);
+}
+
+/** Wall-clock age (ms) of a change from its HLC. */
 function changeAgeMs(c: Change): number {
-  return Date.now() - parseInt(c.hlc.slice(0, 15), 10);
+  return Date.now() - hlcMs(c.hlc);
+}
+
+/** The max-HLC of the newest snapshot present in the bucket, or null when none.
+ *  Parsed from the `<maxHlc>~<hash>.snap` key, so it needs no GET. */
+function newestSnapshotHlc(snapKeys: string[], base: string): string | null {
+  const root = snapshotRoot(base);
+  let max: string | null = null;
+  for (const k of snapKeys) {
+    const mh = k.slice(root.length).split(SNAP_SEP)[0]!;
+    if (max === null || mh > max) max = mh;
+  }
+  return max;
 }
 
 /**
@@ -425,8 +472,11 @@ export async function syncWithStorage(
   }
 
   // PULL: snapshots first (every one we haven't ingested)…
+  const snapKeys = (await client.list(snapshotRoot(base)))
+    .map((o) => o.key)
+    .filter((k) => k.endsWith(".snap"));
   let pulled = 0;
-  pulled += await pullSnapshots(db, peerUrl, client, base, key);
+  pulled += await pullSnapshots(db, peerUrl, snapKeys, client, key);
 
   // …then each other node's new segments.
   for (const remote of await listRemoteNodes(client, base)) {
@@ -453,10 +503,38 @@ export async function syncWithStorage(
     }
   }
 
-  // Keep the bucket bounded: snapshot + truncate once our prefix grows large.
-  // Only checked right after a push (when our segment count actually changed),
-  // so idle rounds don't pay a LIST.
-  if (pushed > 0) {
+  // PUBLISHER: keep the bucket a complete, fresh whole-hub mirror. The snapshot
+  // spans the whole db, so it carries data authored by nodes that never push
+  // here — and an empty bucket gets its first snapshot immediately (the
+  // "attached but empty" fix). Rate-limited so a steady edit stream doesn't
+  // snapshot every round; `snapKeys` was already listed above, so no extra LIST.
+  let didSnapshot = false;
+  if (opts.publish) {
+    const localMaxHlc =
+      (db.query("SELECT MAX(hlc) AS m FROM crdt_changes").get() as { m: string | null } | null)?.m ??
+      null;
+    if (localMaxHlc) {
+      const newest = newestSnapshotHlc(snapKeys, base);
+      const minInterval = opts.snapshotMinIntervalMs ?? 60_000;
+      const due =
+        opts.forcePush ||
+        newest === null || // empty bucket → publish now
+        (localMaxHlc > newest && Date.now() - hlcMs(newest) >= minInterval); // advanced + throttled
+      // Only publish when we're the elected publisher among live candidates, so
+      // multiple publishers don't all upload the same snapshot. Election is
+      // best-effort (idempotent snapshots make a double-elect harmless).
+      if (due && (await isElectedPublisher(client, base, node, opts.priority ?? 0))) {
+        await publishSnapshot(db, client, config);
+        didSnapshot = true;
+      }
+    }
+  }
+
+  // Keep the bucket bounded: snapshot + truncate once our own prefix grows large.
+  // Only right after a push (when our segment count actually changed) and only if
+  // the publisher path didn't already snapshot this round, so idle rounds don't
+  // pay a LIST and we never snapshot twice.
+  if (!didSnapshot && pushed > 0) {
     const threshold = opts.snapshotEverySegments ?? 200;
     const ownCount = (await client.list(nodePrefix(base, node))).filter((o) =>
       o.key.endsWith(".seg"),
@@ -472,17 +550,14 @@ export async function syncWithStorage(
 async function pullSnapshots(
   db: DbDriver,
   peerUrl: string,
+  present: string[],
   client: StorageClient,
-  base: string,
   key: Uint8Array | null,
 ): Promise<number> {
-  const present = (await client.list(snapshotRoot(base)))
-    .map((o) => o.key)
-    .filter((k) => k.endsWith(".snap"));
   if (present.length === 0) return 0;
   const consumed = getSnapshotConsumed(db, peerUrl);
   let pulled = 0;
-  for (const k of present.sort()) {
+  for (const k of [...present].sort()) {
     if (consumed.has(k)) continue;
     const bytes = await client.get(k);
     if (!bytes) continue;

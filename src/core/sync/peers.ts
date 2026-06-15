@@ -4,10 +4,12 @@
 // server's auto-sync timer calls each tick.
 
 import type { DbDriver } from "../driver.ts";
+import { MhError } from "../errors.ts";
 import { syncWithPeer, type SyncResult } from "./client.ts";
 import {
   syncWithStorage,
   storageClientFor,
+  provisionMasterKey,
   type S3Config,
   type StorageSyncOpts,
 } from "./storage.ts";
@@ -82,6 +84,61 @@ export function addStoragePeer(db: DbDriver, input: AddStoragePeerInput): void {
   ).run(input.url, JSON.stringify(input.config), input.label ?? null);
 }
 
+/** Synthetic peer key for a storage peer: one per bucket+prefix. */
+export const storageUrl = (bucket: string, prefix: string) => `s3://${bucket}/${prefix}`;
+
+export interface StoragePeerSpec {
+  endpoint: string;
+  region?: string;
+  bucket: string;
+  prefix?: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** Default true; pass false for `--no-encrypt` plaintext buckets. */
+  encrypt?: boolean;
+  /** Required when encrypt — provisions/adopts the bucket's wrapped master key. */
+  passphrase?: string;
+  /** Mark this node the bucket's publisher (writes whole-hub snapshots). */
+  publish?: boolean;
+  priority?: number;
+  label?: string | null;
+}
+
+/**
+ * Resolve + persist an S3 storage peer and run one sync so a bad endpoint /
+ * credentials / missing CORS fail fast at the call site. Shared by the CLI
+ * (`mh config peer add --s3`) and the WebUI server endpoint (`POST /api/peer/s3`)
+ * so both go through the exact same provisioning + first-sync path. Returns the
+ * resolved config (incl. the wrapped master key) and the first sync outcome.
+ */
+export async function addAndSyncStoragePeer(
+  db: DbDriver,
+  spec: StoragePeerSpec,
+): Promise<{ url: string; config: S3Config; sync: PeerSyncOutcome }> {
+  const prefix = spec.prefix?.trim() || "metahub";
+  const encrypt = spec.encrypt !== false;
+  const config: S3Config = {
+    endpoint: spec.endpoint.trim(),
+    region: spec.region?.trim() || "auto",
+    bucket: spec.bucket.trim(),
+    prefix,
+    accessKeyId: spec.accessKeyId.trim(),
+    secretAccessKey: spec.secretAccessKey.trim(),
+    encrypt,
+    publish: spec.publish,
+    priority: spec.priority,
+  };
+  if (encrypt) {
+    if (!spec.passphrase) throw new MhError("invalid_input", "passphrase required for an encrypted bucket");
+    config.masterKey =
+      (await provisionMasterKey(storageClientFor(config), config, spec.passphrase)) ?? undefined;
+  }
+  const url = storageUrl(config.bucket, prefix);
+  addStoragePeer(db, { url, config, label: spec.label ?? config.bucket });
+  const sync = await syncPeer(db, url);
+  return { url, config, sync };
+}
+
 /**
  * Remove a peer AND revoke the credential we issued to it during pairing, so
  * disconnecting is mutual: we stop syncing out to it (peers row) and it can no
@@ -142,7 +199,14 @@ export async function syncPeer(
     if (peer?.kind === "s3") {
       if (!peer.config) throw new Error(`storage peer ${url} has no config`);
       const config = JSON.parse(peer.config) as S3Config;
-      result = await syncWithStorage(db, url, storageClientFor(config), config, opts?.storage);
+      // The persisted per-node role (publish/priority) drives snapshot publishing;
+      // the caller's opts (forcePush, batching) layer on top.
+      const storageOpts: StorageSyncOpts = {
+        ...opts?.storage,
+        publish: opts?.storage?.publish ?? config.publish,
+        priority: opts?.storage?.priority ?? config.priority,
+      };
+      result = await syncWithStorage(db, url, storageClientFor(config), config, storageOpts);
     } else {
       result = await syncWithPeer(db, url);
     }

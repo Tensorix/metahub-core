@@ -47,6 +47,29 @@ export interface Peer {
   last_status: string | null;
   last_error: string | null;
 }
+/** An S3 bucket attached to the server (data home), as the WebUI sees it — no
+ *  secrets. `publish` = this server is the bucket's publisher. */
+export interface S3Peer {
+  url: string;
+  label: string | null;
+  enabled: number;
+  status: string | null;
+  error: string | null;
+  lastSyncAt: number | null;
+  publish: boolean;
+  endpoint: string | null;
+  bucket: string | null;
+}
+export interface S3PeerInput {
+  endpoint: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  region?: string;
+  prefix?: string;
+  encrypt?: boolean;
+  passphrase?: string;
+}
 export interface PairingCode {
   code: string;
   exp: number;
@@ -163,6 +186,12 @@ function saveToken(t: string): void {
     /* private mode */
   }
   document.cookie = `${TOKEN_KEY}=${encodeURIComponent(t)}; path=/; SameSite=Strict; Max-Age=31536000`;
+}
+
+/** The current server access token, for building an origin "open on your phone"
+ *  QR (`<server>/?token=…`) the device scans to get in without typing it. */
+export function currentToken(): string | null {
+  return storedToken();
 }
 
 /** fetch with the stored Bearer token; on 401, swap an in-grace token for the
@@ -295,6 +324,11 @@ const httpApi = {
     req<{ ok: boolean }>("PATCH", `/api/peer?url=${q(url)}`, b),
   removePeer: (url: string) => req<{ ok: boolean }>("DELETE", `/api/peer?url=${q(url)}`),
   syncPeer: (url: string) => req<PeerSyncOutcome>("POST", `/api/peer/sync?url=${q(url)}`),
+  // S3 buckets attached to the server (origin mode: the server is the data home
+  // + publisher). The browser-replica's own bucket peers go through the worker
+  // (replica.ts), not these.
+  listServerS3Peers: () => req<S3Peer[]>("GET", "/api/peers/s3"),
+  addServerS3Peer: (b: S3PeerInput) => req<S3Peer>("POST", "/api/peer/s3", b),
   listGrants: () => req<Grant[]>("GET", "/api/grants"),
   revokeGrant: (token: string) => req<{ revoked: number }>("DELETE", `/api/grant?token=${q(token)}`),
 

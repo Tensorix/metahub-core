@@ -20,7 +20,9 @@ import {
   setPeerEnabled,
   setPeerLabel,
   syncPeer,
+  addAndSyncStoragePeer,
 } from "./peers.ts";
+import type { S3Config } from "./storage.ts";
 
 // Peer pairing + management API. Mirrors the `mh config peer` CLI; the WebUI
 // settings page calls these. POST /api/pair is the cross-device handshake
@@ -60,6 +62,28 @@ const PeerSyncRes = z.object({
   pulled: z.number().optional(),
   error: z.string().optional(),
 });
+const AddS3PeerReq = z.object({
+  endpoint: z.string(),
+  bucket: z.string(),
+  accessKeyId: z.string(),
+  secretAccessKey: z.string(),
+  region: z.string().optional(),
+  prefix: z.string().optional(),
+  encrypt: z.boolean().optional(),
+  passphrase: z.string().optional(),
+});
+/** S3 peer view for the WebUI — no secrets (creds/master key stay server-side). */
+const S3PeerSchema = z.object({
+  url: z.string(),
+  label: z.string().nullable(),
+  enabled: z.number(),
+  status: z.string().nullable(),
+  error: z.string().nullable(),
+  lastSyncAt: z.number().nullable(),
+  publish: z.boolean(),
+  endpoint: z.string().nullable(),
+  bucket: z.string().nullable(),
+});
 const GrantSchema = z.object({
   token: z.string(),
   peer_url: z.string().nullable(),
@@ -75,6 +99,34 @@ function need(req: Request, key: string): string {
   const v = new URL(req.url).searchParams.get(key);
   if (!v) throw new MhError("invalid_input", `missing query param: ${key}`);
   return v;
+}
+
+/** Sanitized views of this server's 's3' peers for the WebUI: status + the few
+ *  non-secret config bits (endpoint host, bucket, publisher role). Credentials
+ *  and the master key never leave the server. */
+function s3PeerViews(db: RouteCtx["db"]): z.infer<typeof S3PeerSchema>[] {
+  return listPeers(db)
+    .filter((p) => p.kind === "s3" && p.config)
+    .map((p) => {
+      const c = JSON.parse(p.config!) as S3Config;
+      let host: string | null = null;
+      try {
+        host = new URL(c.endpoint).host;
+      } catch {
+        host = c.endpoint || null;
+      }
+      return {
+        url: p.url,
+        label: p.label,
+        enabled: p.enabled,
+        status: p.last_status,
+        error: p.last_error,
+        lastSyncAt: p.last_sync_at,
+        publish: c.publish === true,
+        endpoint: host,
+        bucket: c.bucket ?? null,
+      };
+    });
 }
 
 function handle(
@@ -157,6 +209,32 @@ export const peersRoutes: Route[] = [
     summary: "Manually sync once with a peer. Query: ?url=<url>",
     response: PeerSyncRes,
     handler: handle((req, { db }) => syncPeer(db, need(req, "url"))),
+  },
+  {
+    // Attach an S3 bucket to THIS server (the data home), making the server the
+    // bucket's publisher. The WebUI calls this in origin mode so "add a cloud
+    // backup" targets the node that actually holds the hub — not the browser
+    // replica (which would push nothing). Creds travel over the server's TLS and
+    // are stored server-side, same as the CLI path.
+    method: "POST",
+    path: "/api/peer/s3",
+    summary: "Attach an S3 storage bucket to this server (server becomes publisher)",
+    request: AddS3PeerReq,
+    response: S3PeerSchema,
+    handler: handle(async (req, { db }) => {
+      const b = (await req.json()) as z.infer<typeof AddS3PeerReq>;
+      const { url } = await addAndSyncStoragePeer(db, { ...b, publish: true, priority: 100 });
+      const view = s3PeerViews(db).find((v) => v.url === url);
+      if (!view) throw new MhError("not_found", `storage peer ${url} missing after add`);
+      return view;
+    }),
+  },
+  {
+    method: "GET",
+    path: "/api/peers/s3",
+    summary: "List S3 storage buckets attached to this server (no secrets)",
+    response: z.array(S3PeerSchema),
+    handler: handle((_req, { db }) => s3PeerViews(db)),
   },
   {
     method: "GET",

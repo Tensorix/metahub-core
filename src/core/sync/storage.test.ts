@@ -16,6 +16,7 @@ import {
   type StorageObject,
   type StoragePutOpts,
 } from "./storage.ts";
+import { isElectedPublisher } from "./publisher-lease.ts";
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -231,6 +232,37 @@ test("snapshotEverySegments threshold triggers auto snapshot + truncation", asyn
   expect(segs.length).toBe(0); // collapsed into the snapshot
 });
 
+test("publisher writes a whole-hub snapshot even with no own ops (empty-bucket fix)", async () => {
+  // Regression for the "attached a bucket but it stays empty" footgun: a node
+  // that holds the full hub via *ingest* (a hydrated replica / a server absorbing
+  // window writes) has nothing of its OWN to push (onlyNode → 0), but as the
+  // designated publisher it must still mirror the whole hub so other devices and
+  // fresh nodes get a complete bucket.
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA"); // authoring node
+  const p = makeNode("nodePPPP"); // publisher that only mirrors (authors nothing)
+  const bucket = new FakeBucket();
+
+  // A authors + pushes its own segments — no snapshot yet.
+  const dbId = createDatabase(a, { name: "Tasks" }).id;
+  emitFields(a, "records", "rec-1", { database_id: dbId, title: "hi" });
+  await syncWithStorage(a, PEER, bucket, cfg(K));
+  let snaps = (await bucket.list("mh/spaces/default/snapshot/")).filter((o) => o.key.endsWith(".snap"));
+  expect(snaps.length).toBe(0);
+
+  // P pulls A's data (now holds the full hub) and, as publisher, snapshots it
+  // this same round — despite authoring nothing of its own.
+  const r = await syncWithStorage(p, PEER, bucket, cfg(K), { publish: true });
+  expect(r.pushed).toBe(0); // P authored nothing
+  snaps = (await bucket.list("mh/spaces/default/snapshot/")).filter((o) => o.key.endsWith(".snap"));
+  expect(snaps.length).toBe(1); // …but the whole-hub snapshot was published
+
+  // A brand-new node hydrates the COMPLETE hub from the bucket.
+  const c = makeNode("nodeCCCC");
+  await syncWithStorage(c, PEER, bucket, cfg(K));
+  expect(headState(c)).toEqual(headState(a));
+});
+
 // ---- A0-2: master-key first-init race -------------------------------------
 
 const ENC: S3Config = {
@@ -383,6 +415,23 @@ test("publishSnapshot is content-addressed and GCs strictly-older snapshots", as
   );
   expect(snaps.length).toBe(1); // the older snapshot was reclaimed
   expect(snaps[0]!.key).toBe(s2!.key);
+});
+
+// ---- F: publisher election (best-effort lease) ----------------------------
+
+test("publisher election: highest priority wins, then fails over when it expires", async () => {
+  const bucket = new FakeBucket();
+  // Unique base so the module-level heartbeat throttle map can't collide across tests.
+  const base = `mh-${Math.random().toString(36).slice(2)}/spaces/default`;
+  const t0 = 1_700_000_000_000;
+
+  // A (priority 100) and B (priority 10) both heartbeat at t0.
+  expect(await isElectedPublisher(bucket, base, "nodeAAAA", 100, t0)).toBe(true); // A alone so far
+  expect(await isElectedPublisher(bucket, base, "nodeBBBB", 10, t0)).toBe(false); // sees A(100) → stands by
+
+  // A goes silent; past the TTL its lease expires → duty fails over to B.
+  const later = t0 + 6 * 60_000;
+  expect(await isElectedPublisher(bucket, base, "nodeBBBB", 10, later)).toBe(true);
 });
 
 // ---- A1: push batching ----------------------------------------------------

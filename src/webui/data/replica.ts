@@ -91,6 +91,30 @@ export function isNoOrigin(): boolean {
   return originModeMemo === "none";
 }
 
+// ---- unified client mode (doc 19) ------------------------------------------
+// The two orthogonal axes that used to be read as scattered isNoOrigin() /
+// replicaActive() checks, collapsed into one object: where this client's
+// canonical hub lives, and how this client holds data. New code (and, over time,
+// the api/sw/app routing) should read this instead of re-deriving the axes.
+
+export interface ClientMode {
+  /** Where the hub this client talks to lives: a server (origin) vs this
+   *  device's own local replica (no-origin, bucket-backed). */
+  dataHome: "server" | "local";
+  /** How this client holds data: a thin online "window" onto a server, or a
+   *  full local "replica". A no-origin client is always a replica (a bucket
+   *  can't be windowed); a server client is a window until offline-replica is on. */
+  hold: "window" | "replica";
+}
+
+export function clientMode(): ClientMode {
+  const noOrigin = isNoOrigin();
+  return {
+    dataHome: noOrigin ? "local" : "server",
+    hold: noOrigin || replicaEnabled() ? "replica" : "window",
+  };
+}
+
 /**
  * Detect whether this origin is a metahub server. /health returns {ok:true};
  * a static CDN returns 404 or — with SPA fallback — index.html, so we check the

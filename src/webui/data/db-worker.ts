@@ -327,7 +327,12 @@ const ops: Record<string, Op> = {
   // then run a round so bad credentials / missing CORS surface immediately.
   addStorageReplica: async (config: S3Config, passphrase: string) => {
     const d = db!;
-    const cfg: S3Config = { ...config };
+    // A browser replica holds the full hydrated hub, so it can publish whole-hub
+    // snapshots. Default to publisher so a bucket attached here never stays empty
+    // (the original footgun); callers pass publish:false for an origin replica
+    // that only wants the bucket for its own away-sync. A lease + priority
+    // (publisher-lease.ts) makes a server, when present, win publishing duty.
+    const cfg: S3Config = { publish: true, priority: 10, ...config };
     if (cfg.encrypt)
       cfg.masterKey = (await provisionMasterKey(storageClientFor(cfg), cfg, passphrase)) ?? undefined;
     const url = `s3://${cfg.bucket}/${cfg.prefix}`;

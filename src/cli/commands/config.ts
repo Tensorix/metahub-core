@@ -17,10 +17,10 @@ import {
   setPeerEnabled,
   syncPeer,
   syncAllPeers,
-  addStoragePeer,
+  addAndSyncStoragePeer,
   type PeerRow,
 } from "../../core/sync/peers.ts";
-import { provisionMasterKey, storageClientFor, type S3Config } from "../../core/sync/storage.ts";
+import { type S3Config } from "../../core/sync/storage.ts";
 import { putBucketCors } from "../../core/sync/storage-s3-bun.ts";
 import { MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
@@ -184,14 +184,11 @@ function syncLine(o: { url: string; ok: boolean; pushed?: number; pulled?: numbe
   return o.ok ? `${o.url}: pushed ${o.pushed}, pulled ${o.pulled}` : `${o.url}: error — ${o.error}`;
 }
 
-/** Synthetic peer key for a storage peer (one per bucket+prefix). */
-const storageUrl = (bucket: string, prefix: string) => `s3://${bucket}/${prefix}`;
-
 /**
  * Add an S3-compatible storage peer (R2/MinIO/S3) as dumb store-and-forward.
- * Provisioning fetches-or-creates the bucket's wrapped master key (needs the
- * passphrase unless --no-encrypt), stores the resolved config, then runs one
- * sync round so a bad endpoint / credentials / missing CORS fail fast here.
+ * Delegates to the shared `addAndSyncStoragePeer` (provision → persist → first
+ * sync) so the CLI and the WebUI server endpoint stay identical. The CLI runs on
+ * the data home (this machine's hub), so it marks this node the bucket publisher.
  */
 async function storagePeerAdd(
   db: ReturnType<typeof openMetahub>,
@@ -206,23 +203,12 @@ async function storagePeerAdd(
   const prefix = typeof args.prefix === "string" && args.prefix ? args.prefix : "metahub";
   const region = typeof args.region === "string" && args.region ? args.region : "auto";
   const encrypt = args.encrypt !== false; // --no-encrypt sets this false (citty negation)
+  const passphrase = encrypt ? flagOrAsk(args.passphrase, "passphrase", usage) : undefined;
 
-  const config: S3Config = {
-    endpoint,
-    region,
-    bucket,
-    prefix,
-    accessKeyId,
-    secretAccessKey,
-    encrypt,
-  };
-  if (encrypt) {
-    const passphrase = flagOrAsk(args.passphrase, "passphrase", usage);
-    config.masterKey = (await provisionMasterKey(storageClientFor(config), config, passphrase)) ?? undefined;
-  }
-  const url = storageUrl(bucket, prefix);
-  addStoragePeer(db, { url, config, label: bucket });
-  const sync = await syncPeer(db, url);
+  const { url, config, sync } = await addAndSyncStoragePeer(db, {
+    endpoint, region, bucket, prefix, accessKeyId, secretAccessKey, encrypt, passphrase,
+    publish: true, priority: 100, label: bucket,
+  });
 
   // Optional one-shot: open CORS for a browser shell so a phone can connect
   // straight after scanning. Best-effort — the peer is already added; a failure
@@ -437,21 +423,11 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
         const s = p.spinner();
         s.start("连接存储并配置…");
         try {
-          const config: S3Config = {
-            endpoint,
-            region: region || "auto",
-            bucket,
-            prefix: prefix || "metahub",
-            accessKeyId,
-            secretAccessKey,
-            encrypt,
-          };
-          if (encrypt)
-            config.masterKey =
-              (await provisionMasterKey(storageClientFor(config), config, passphrase)) ?? undefined;
-          const url = storageUrl(bucket, prefix || "metahub");
-          addStoragePeer(db, { url, config, label: bucket });
-          const sync = await syncPeer(db, url);
+          // CLI runs on the data home → this node is the bucket publisher.
+          const { url, sync } = await addAndSyncStoragePeer(db, {
+            endpoint, region: region || "auto", bucket, prefix: prefix || "metahub",
+            accessKeyId, secretAccessKey, encrypt, passphrase, publish: true, priority: 100, label: bucket,
+          });
           s.stop(`✓ 已添加存储 ${url}`);
           p.note(syncLine(sync), "同步结果");
         } catch (e) {

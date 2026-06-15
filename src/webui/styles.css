@@ -193,6 +193,30 @@
   .theme-card.sel .tc-check { opacity:1; transform:scale(1); }
   @media (max-width:560px) { .theme-grid { grid-template-columns:1fr; } }
 
+  /* sync: window/replica two-card grid + topology map (doc 19 client-topology) */
+  .sync-holds { grid-template-columns:repeat(2,1fr); }
+  .theme-card:disabled { opacity:.55; cursor:not-allowed; }
+  .theme-card:disabled:hover { transform:none; border-color:var(--line-strong); }
+
+  .sync-topo { display:flex; align-items:center; flex-wrap:wrap; margin:2px 0 6px;
+    padding:15px 18px; border:1px solid var(--line); border-radius:var(--radius-lg); background:var(--surface); }
+  .sync-chip { display:inline-flex; align-items:center; gap:7px; padding:7px 12px; border-radius:999px;
+    border:1px solid var(--line-strong); background:var(--bg); color:var(--fg); font-size:var(--fs-sm);
+    font-weight:550; white-space:nowrap; box-shadow:var(--shadow-sm); animation:sync-pop .32s ease both; }
+  .sync-chip svg { color:var(--accent); }
+  .sync-chip:nth-child(3) { animation-delay:.07s; }
+  .sync-chip:nth-child(5) { animation-delay:.14s; }
+  .sync-pub { margin-left:6px; padding:2px 7px; border-radius:999px; font-size:var(--fs-xs); font-weight:600;
+    background:var(--accent-soft); color:var(--accent); }
+  .sync-link { position:relative; flex:1 1 36px; min-width:36px; height:2px; margin:0 3px; align-self:center;
+    background:var(--line-strong); border-radius:2px; }
+  .sync-link.active { background:var(--accent); }
+  .sync-link.idle { background:none; height:0; border-top:2px dashed var(--line-strong); }
+  .sync-link::after { content:attr(data-label); position:absolute; top:-9px; left:50%; transform:translateX(-50%);
+    font-size:var(--fs-micro); color:var(--muted); background:var(--surface); padding:0 5px; letter-spacing:.04em; }
+  @keyframes sync-pop { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  @media (max-width:560px) { .sync-link { flex-basis:24px; } }
+
   /* sync devices */
   .peer-actions { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
   .peer-actions .btn { display:inline-flex; align-items:center; gap:6px; }

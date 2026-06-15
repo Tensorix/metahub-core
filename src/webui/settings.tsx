@@ -5,7 +5,7 @@ import qrcode from "qrcode-generator";
 import type { S3Config } from "../core/sync/storage.ts";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
-import { api, type Peer, type Grant } from "./api.ts";
+import { api, currentToken, type Peer, type Grant } from "./api.ts";
 import {
   replicaEnabled,
   replicaStatus,
@@ -14,6 +14,8 @@ import {
   disableReplica,
   resetReplica,
   requestSync,
+  isNoOrigin,
+  clientMode,
   call as replicaCall,
 } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
@@ -69,10 +71,12 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
       </div>
 
       {typeof window !== "undefined" && window.metahubDesktop?.quicknote && <QuickNotesSettings />}
+      <SyncTopology />
       <OfflineReplica />
       <SyncStorage />
-      <SyncDevices />
-      <IssuedGrants />
+      {/* HTTP pairing + issued grants only make sense against a server (origin). */}
+      {!isNoOrigin() && <SyncDevices />}
+      {!isNoOrigin() && <IssuedGrants />}
       <VersionFooter onUpdatePending={onUpdatePending} />
     </div>
   );
@@ -95,6 +99,76 @@ function replicaUnsupportedReason(): string | null {
     return "此浏览器不支持 OPFS 本地存储（需要 Safari 17+ / Chrome / Firefox 较新版本）。";
   }
   return null;
+}
+
+// ---- sync overview: a small topology map -----------------------------------
+// "How is THIS device wired?" answered at a glance instead of in prose. Chips
+// for this device, the server (origin mode), and the cloud bucket, joined by
+// HTTP / 桶 links (the live one solid, the idle one dashed). The publisher — who
+// mirrors the whole hub into the bucket — is named on the bucket chip. See
+// docs/impl-context/19-client-topology.
+
+function SyncTopology() {
+  const isElectron = typeof window !== "undefined" && !!window.metahubDesktop;
+  const [, bump] = useState(0);
+  // Re-render on replica state changes; the two axes come from clientMode().
+  useEffect(() => onReplicaStatus(() => bump((n) => n + 1)), []);
+  const mode = clientMode();
+  const noOrigin = mode.dataHome === "local";
+  const [hasBucket, setHasBucket] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const load = () => {
+      const p: Promise<unknown[]> = noOrigin
+        ? replicaEnabled()
+          ? replicaCall<unknown[]>("listStoragePeers")
+          : Promise.resolve([])
+        : api.listServerS3Peers().catch(() => []);
+      p.then((rows) => live && setHasBucket(rows.length > 0)).catch(() => {});
+    };
+    load();
+    const off = onReplicaStatus(load);
+    return () => {
+      live = false;
+      off();
+    };
+  }, [noOrigin]);
+
+  const replica = mode.hold === "replica";
+
+  return (
+    <div class="set-section">
+      <div class="set-section-head">同步</div>
+      <div class="set-section-desc">
+        这台设备如何拿数据（窗口 / 副本），以及整个工作区如何在设备间同步（服务器 + 存储桶）。
+      </div>
+      <div class="sync-topo">
+        <span class="sync-chip">
+          <Icon name={replica ? "database" : "eye"} cls="ico sm" />
+          本设备 · {replica ? "副本" : "窗口"}
+        </span>
+        {!noOrigin && (
+          <>
+            <span class="sync-link active" data-label="HTTP" />
+            <span class="sync-chip">
+              <Icon name="globe" cls="ico sm" />
+              {isElectron ? "内置服务" : "服务器"}
+            </span>
+          </>
+        )}
+        {hasBucket && (
+          <>
+            <span class={"sync-link " + (noOrigin ? "active" : "idle")} data-label="桶" />
+            <span class="sync-chip">
+              <Icon name="cube" cls="ico sm" />
+              存储桶
+              <span class="sync-pub">发布:{noOrigin ? "本机" : "服务器"}</span>
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -199,41 +273,54 @@ function OfflineReplica() {
   if (unsupported) {
     return (
       <div class="set-section">
-        <div class="set-section-head">离线副本</div>
-        <div class="set-section-desc">
-          让此浏览器持有完整的本地数据副本：弱网/离线也能查看和编辑全部内容，恢复连接后自动同步。
-        </div>
-        <div class="peer-sub">⚠ 当前环境不可用：{unsupported}</div>
+        <div class="set-section-head">这台设备</div>
+        <div class="set-section-desc">这台设备当前为窗口模式（在线读写，不在本机存储）。</div>
+        <div class="peer-sub">⚠ 无法保留离线副本：{unsupported}</div>
       </div>
     );
   }
 
   return (
     <div class="set-section">
-      <div class="set-section-head">离线副本</div>
+      <div class="set-section-head">这台设备</div>
       <div class="set-section-desc">
-        让此浏览器持有完整的本地数据副本：弱网/离线也能查看和编辑全部内容，恢复连接后自动同步。
-        启用即与服务器配对，凭据可在「已授权设备」中单独吊销。
+        选择这台设备怎么拿数据。窗口：在线读、不在本机存、秒开；副本：存一份完整数据，弱网/离线也能读写，恢复后自动同步。
+        启用副本即与服务器配对，凭据可在「已授权设备」中单独吊销。
       </div>
-      <div class="peer-actions">
-        {enabled ? (
-          <>
-            <button class="btn btn-secondary" disabled={busy} onClick={() => requestSync()}>
-              <Icon name="share" cls="ico sm" /> 立即同步
-            </button>
-            <button class="btn btn-ghost" disabled={busy} onClick={disable}>
-              停用
-            </button>
-            <button class="btn btn-ghost" disabled={busy} onClick={reset}>
-              重置本地副本
-            </button>
-          </>
-        ) : (
-          <button class="btn btn-primary" disabled={busy} onClick={enable}>
-            <Icon name="check" cls="ico sm" /> {busy ? "启用中…" : "启用离线副本"}
+      <div class="theme-grid sync-holds">
+        <button
+          class={"theme-card" + (!enabled ? " sel" : "")}
+          aria-pressed={!enabled}
+          disabled={busy}
+          onClick={() => enabled && disable()}
+        >
+          <span class="tc-check"><Icon name="check" /></span>
+          <span class="tc-ico"><Icon name="eye" /></span>
+          <span class="tc-name">窗口（只看）</span>
+          <span class="tc-desc">在线读，不在本机存，秒开</span>
+        </button>
+        <button
+          class={"theme-card" + (enabled ? " sel" : "")}
+          aria-pressed={enabled}
+          disabled={busy}
+          onClick={() => !enabled && enable()}
+        >
+          <span class="tc-check"><Icon name="check" /></span>
+          <span class="tc-ico"><Icon name="database" /></span>
+          <span class="tc-name">留离线副本</span>
+          <span class="tc-desc">{busy && !enabled ? "启用中…" : "存一份，可离线，首次需下载"}</span>
+        </button>
+      </div>
+      {enabled && (
+        <div class="peer-actions" style={{ marginTop: 12 }}>
+          <button class="btn btn-secondary" disabled={busy} onClick={() => requestSync()}>
+            <Icon name="share" cls="ico sm" /> 立即同步
           </button>
-        )}
-      </div>
+          <button class="btn btn-ghost" disabled={busy} onClick={reset}>
+            重置本地副本
+          </button>
+        </div>
+      )}
       <div class="peer-sub" style="margin-top:8px">
         {statusLine()}
         {enabled && st.node ? ` · 节点 ${st.node}` : ""}
@@ -262,19 +349,42 @@ interface StoragePeerView {
  * sync loop, so it requires the offline replica to be enabled first.
  */
 function SyncStorage() {
+  // Two modes (doc 19): with a server (origin) the bucket is configured ON the
+  // server — the data home + publisher — via /api/peer/s3; without one
+  // (no-origin) it lives in this browser's local replica, which is itself the
+  // home. So "add a bucket" targets the node that actually holds the hub.
+  const noOrigin = isNoOrigin();
   const [enabled, setEnabled] = useState(replicaEnabled());
   const [peers, setPeers] = useState<StoragePeerView[] | null>(null);
 
   useEffect(() => onReplicaStatus(() => setEnabled(replicaEnabled())), []);
 
   const reload = () => {
-    if (!replicaEnabled()) {
-      setPeers(null);
-      return;
+    if (noOrigin) {
+      if (!replicaEnabled()) {
+        setPeers(null);
+        return;
+      }
+      replicaCall<StoragePeerView[]>("listStoragePeers")
+        .then(setPeers)
+        .catch((e) => toast(`加载失败：${(e as Error).message}`));
+    } else {
+      api
+        .listServerS3Peers()
+        .then((rows) =>
+          setPeers(
+            rows.map((r) => ({
+              url: r.url,
+              label: r.label,
+              enabled: r.enabled === 1,
+              status: r.status,
+              error: r.error,
+              lastSyncAt: r.lastSyncAt,
+            })),
+          ),
+        )
+        .catch((e) => toast(`加载失败：${(e as Error).message}`));
     }
-    replicaCall<StoragePeerView[]>("listStoragePeers")
-      .then(setPeers)
-      .catch((e) => toast(`加载失败：${(e as Error).message}`));
   };
 
   useEffect(() => {
@@ -284,6 +394,7 @@ function SyncStorage() {
   const add = () =>
     openModal(
       <AddStorageModal
+        toServer={!noOrigin}
         onDone={() => {
           closeModal();
           reload();
@@ -293,7 +404,8 @@ function SyncStorage() {
 
   const syncNow = async () => {
     try {
-      await replicaCall("sync");
+      if (noOrigin) await replicaCall("sync");
+      else await Promise.all((peers ?? []).map((p) => api.syncPeer(p.url)));
       toast("已触发同步");
       reload();
     } catch (e) {
@@ -303,13 +415,14 @@ function SyncStorage() {
 
   const remove = async (p: StoragePeerView) => {
     const ok = await confirmDialog({
-      title: "移除同步存储",
-      message: `确定移除 ${p.label || p.url}？本浏览器将停止与该存储桶同步（桶内数据不受影响）。`,
+      title: "移除云端副本",
+      message: `确定移除 ${p.label || p.url}？将停止与该存储桶同步（桶内数据不受影响）。`,
       confirmLabel: "移除",
       danger: true,
     });
     if (!ok) return;
-    await replicaCall("removeStorageReplica", p.url).catch((e) => toast((e as Error).message));
+    if (noOrigin) await replicaCall("removeStorageReplica", p.url).catch((e) => toast((e as Error).message));
+    else await api.removePeer(p.url).catch((e) => toast((e as Error).message));
     reload();
   };
 
@@ -328,14 +441,16 @@ function SyncStorage() {
 
   return (
     <div class="set-section">
-      <div class="set-section-head">同步存储 (S3/R2)</div>
+      <div class="set-section-head">云端副本（桶）</div>
       <div class="set-section-desc">
-        用对象存储桶做中转，在多设备间同步——无需任何一台设备拥有公网 IP，对方离线也能同步。
-        数据在上传前端到端加密。需先启用上方的「离线副本」。
+        用 S3 兼容存储桶做云端副本 + 多设备中转——无需公网 IP、对方离线也能同步，上传前端到端加密。
+        {noOrigin
+          ? "本设备作为发布者，把整库镜像进桶。"
+          : "配置在服务器（数据家）上，由服务器作为发布者把整库镜像进桶。"}
       </div>
 
-      {!enabled ? (
-        <div class="peer-sub">⚠ 请先在上方启用「离线副本」，再添加同步存储。</div>
+      {noOrigin && !enabled ? (
+        <div class="peer-sub">⚠ 请先在上方把「这台设备」设为「留离线副本」，再添加云端副本。</div>
       ) : (
         <>
           <div class="peer-actions">
@@ -365,9 +480,11 @@ function SyncStorage() {
                       {p.status === "error" && p.error ? ` · 错误：${p.error}` : ""}
                     </div>
                   </div>
-                  <button class="btn btn-ghost peer-menu" title="在手机上打开" onClick={() => openPhone(p)}>
-                    <Icon name="share" cls="ico sm" />
-                  </button>
+                  {noOrigin && (
+                    <button class="btn btn-ghost peer-menu" title="在手机上打开" onClick={() => openPhone(p)}>
+                      <Icon name="share" cls="ico sm" />
+                    </button>
+                  )}
                   <button class="btn btn-ghost peer-menu" title="移除" onClick={() => remove(p)}>
                     <Icon name="trash" cls="ico sm" />
                   </button>
@@ -467,7 +584,71 @@ function looksLikeCors(message: string): boolean {
   return /failed to fetch|load failed|networkerror|cors/i.test(message);
 }
 
-function AddStorageModal({ onDone }: { onDone: () => void }) {
+// ---- origin "open on your phone": a `<server>/?token=…` QR -----------------
+// The mirror of the no-origin enroll QR, for the server (origin) case: the phone
+// scans it to open AND log into the server in one step (auth.ts accepts ?token),
+// no typing. The token is a bearer secret, so the QR is treated as sensitive.
+
+const SERVER_BASE_KEY = "mh_server_base";
+
+function originEnrollUrl(base: string, token: string | null): string {
+  const b = (base || location.origin).replace(/\/+$/, "");
+  return token ? `${b}/?token=${encodeURIComponent(token)}` : b;
+}
+
+function OriginQrModal() {
+  const [base, setBase] = useState(() => {
+    try {
+      return localStorage.getItem(SERVER_BASE_KEY) || location.origin;
+    } catch {
+      return location.origin;
+    }
+  });
+  const url = originEnrollUrl(base, currentToken());
+  const qr = qrcode(0, "M");
+  qr.addData(url);
+  qr.make();
+  const svg = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+
+  const onBase = (v: string) => {
+    setBase(v);
+    try {
+      v ? localStorage.setItem(SERVER_BASE_KEY, v) : localStorage.removeItem(SERVER_BASE_KEY);
+    } catch {
+      /* private mode */
+    }
+  };
+
+  return (
+    <Modal
+      title="在手机上打开"
+      sub="手机相机扫码即可打开并登录本服务器（无需手输访问令牌）。"
+      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
+    >
+      <div class="qr-box" dangerouslySetInnerHTML={{ __html: svg }} />
+      <div class="field-label">服务器地址（手机访问的域名；留空用当前地址）</div>
+      <input
+        class="text-input"
+        placeholder={location.origin}
+        value={base}
+        onInput={(e) => onBase((e.target as HTMLInputElement).value)}
+      />
+      <button
+        class="btn btn-secondary"
+        style={{ width: "100%", marginTop: 12 }}
+        onClick={() => {
+          navigator.clipboard?.writeText(url);
+          toast("已复制链接");
+        }}
+      >
+        <Icon name="copy" cls="ico sm" /> 复制链接
+      </button>
+      <div class="peer-sub" style="margin-top:8px">⚠ 二维码含访问令牌，请勿公开分享。</div>
+    </Modal>
+  );
+}
+
+function AddStorageModal({ onDone, toServer }: { onDone: () => void; toServer?: boolean }) {
   const [endpoint, setEndpoint] = useState("");
   const [bucket, setBucket] = useState("");
   const [region, setRegion] = useState("auto");
@@ -498,8 +679,12 @@ function AddStorageModal({ onDone }: { onDone: () => void }) {
         secretAccessKey: secretKey.trim(),
         encrypt,
       };
-      const r = await replicaCall<{ url: string }>("addStorageReplica", config, passphrase);
-      toast(`已添加同步存储 ${r.url}`);
+      // origin → attach to the server (data home + publisher); no-origin → this
+      // browser's local replica (which is the home).
+      const r = toServer
+        ? await api.addServerS3Peer({ ...config, passphrase })
+        : await replicaCall<{ url: string }>("addStorageReplica", config, passphrase);
+      toast(`已添加云端副本 ${r.url}`);
       onDone();
     } catch (e) {
       const msg = (e as Error).message;
@@ -950,8 +1135,11 @@ function SyncDevices() {
         <button class="btn btn-primary" onClick={addPeer}>
           <Icon name="plus" cls="ico sm" /> 添加设备
         </button>
-        <button class="btn btn-secondary" onClick={showCode}>
-          <Icon name="link" cls="ico sm" /> 生成本机配对码
+        <button class="btn btn-secondary" onClick={() => openModal(<OriginQrModal />)}>
+          <Icon name="share" cls="ico sm" /> 在手机上打开
+        </button>
+        <button class="btn btn-ghost" onClick={showCode}>
+          <Icon name="link" cls="ico sm" /> 生成配对码
         </button>
       </div>
 
