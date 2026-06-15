@@ -226,3 +226,39 @@ export async function syncAllPeers(db: DbDriver): Promise<PeerSyncOutcome[]> {
   for (const p of peers) out.push(await syncPeer(db, p.url));
   return out;
 }
+
+/** Reads within this of the last sync skip the network entirely. */
+const DEFAULT_FRESH_MAX_AGE_MS = 3 * 60_000;
+/** Bound on the blocking pre-read sync so a read never hangs on a slow bucket. */
+const FRESH_SYNC_TIMEOUT_MS = 8_000;
+
+/**
+ * Freshness gate for *non-reactive* consumers — CLI reads and the PWA's served
+ * site pages (②b). Their local DB is only as fresh as the last sync, and unlike
+ * the reactive WebUI they have no background poll and no `synced` revalidate. So
+ * if the newest peer sync is older than `maxAgeMs`, block on one bounded sync
+ * round before the caller reads; otherwise return immediately (read local).
+ *
+ * No enabled peers → no-op. A running daemon keeps `last_sync_at` recent, so this
+ * is a near-instant no-op there and only does real work on a daemon-less node that
+ * hasn't synced in a while — exactly "very stale → re-pull". Env overrides:
+ * MH_OFFLINE=1 skips; MH_FRESH=1 forces; MH_SYNC_MAX_AGE=<ms> tunes the threshold.
+ */
+export async function ensureFresh(
+  db: DbDriver,
+  opts: { maxAgeMs?: number; force?: boolean; offline?: boolean } = {},
+): Promise<void> {
+  if (opts.offline ?? process.env.MH_OFFLINE === "1") return;
+  const peers = listPeers(db).filter((p) => p.enabled);
+  if (peers.length === 0) return;
+  if (!(opts.force ?? process.env.MH_FRESH === "1")) {
+    const maxAge = opts.maxAgeMs ?? (Number(process.env.MH_SYNC_MAX_AGE) || DEFAULT_FRESH_MAX_AGE_MS);
+    const last = Math.max(0, ...peers.map((p) => p.last_sync_at ?? 0));
+    if (last && Date.now() - last < maxAge) return; // fresh enough → read local
+  }
+  // Stale (or forced): one bounded sync; on timeout/error fall back to local data.
+  await Promise.race([
+    syncAllPeers(db).then(() => undefined),
+    new Promise<undefined>((r) => setTimeout(r, FRESH_SYNC_TIMEOUT_MS)),
+  ]).catch(() => undefined);
+}

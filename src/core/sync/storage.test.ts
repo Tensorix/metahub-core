@@ -152,8 +152,9 @@ test("a fresh node hydrates from snapshot + tail after truncation", async () => 
   updateDocument(a, doc.id, { body: "v2" });
   await syncWithStorage(a, PEER, bucket, cfg(K));
 
-  // Publish a snapshot and truncate A's segments.
-  const snap = await publishSnapshot(a, bucket, cfg(K));
+  // Publish a snapshot and fully truncate A's segments (retainSegments:0 = the
+  // legacy collapse; ⑤c retention is covered separately).
+  const snap = await publishSnapshot(a, bucket, cfg(K), 0);
   expect(snap).not.toBeNull();
   const segsAfter = (await bucket.list("mh/spaces/default/oplog/nodeAAAA/")).filter((o) =>
     o.key.endsWith(".seg"),
@@ -217,10 +218,12 @@ test("snapshotEverySegments threshold triggers auto snapshot + truncation", asyn
   const config = cfg(K);
 
   // Each sync round with new ops writes one segment; threshold 2 collapses them.
+  // retainSegments:0 forces a full collapse so we can assert truncation here.
+  const opts = { snapshotEverySegments: 2, snapshotRetainSegments: 0 };
   createDatabase(a, { name: "1" });
-  await syncWithStorage(a, PEER, bucket, config, { snapshotEverySegments: 2 });
+  await syncWithStorage(a, PEER, bucket, config, opts);
   createDatabase(a, { name: "2" });
-  await syncWithStorage(a, PEER, bucket, config, { snapshotEverySegments: 2 });
+  await syncWithStorage(a, PEER, bucket, config, opts);
 
   const snaps = (await bucket.list("mh/spaces/default/snapshot/")).filter((o) =>
     o.key.endsWith(".snap"),
@@ -459,4 +462,149 @@ test("push batching defers small bursts and force flushes them", async () => {
   const b = makeNode("nodeBBBB");
   await syncWithStorage(b, PEER, bucket, cfg(K));
   expect(headState(b)).toEqual(headState(a));
+});
+
+// ---- request-shape regressions (①, ⑤) -------------------------------------------
+
+/** FakeBucket that records get/list calls so tests can assert request shape. */
+class CountingBucket extends FakeBucket {
+  gets: string[] = [];
+  lists: string[] = [];
+  async get(key: string): Promise<Uint8Array | null> {
+    this.gets.push(key);
+    return super.get(key);
+  }
+  async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
+    this.lists.push(prefix);
+    return super.list(prefix, startAfter, delimiter);
+  }
+  snapBodyGets(): number {
+    return this.gets.filter((k) => k.endsWith(".snap")).length;
+  }
+}
+
+test("① push-only round (pull:false) skips the PULL LISTs but still pushes a segment", async () => {
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA");
+  const bucket = new CountingBucket();
+  createDatabase(a, { name: "X" });
+  bucket.lists.length = 0;
+  await syncWithStorage(a, PEER, bucket, cfg(K), { pull: false });
+  // No snapshot/ or oplog/-root (node discovery) LIST — those are the PULL cost.
+  expect(bucket.lists.some((p) => p.endsWith("/snapshot/"))).toBe(false);
+  expect(bucket.lists.some((p) => p.endsWith("/oplog/"))).toBe(false);
+  // The own segment was still pushed (Path B durability).
+  const segs = (await bucket.list("mh/spaces/default/oplog/nodeAAAA/")).filter((o) =>
+    o.key.endsWith(".seg"),
+  );
+  expect(segs.length).toBe(1);
+});
+
+test("Path B: an edit reaches a fresh node via the author's own segment, no snapshot", async () => {
+  const K = generateMasterKey();
+  const b = makeNode("nodeBBBB");
+  const c = makeNode("nodeCCCC");
+  const bucket = new FakeBucket();
+  createDatabase(b, { name: "OnlyInSegment" });
+  await syncWithStorage(b, PEER, bucket, cfg(K)); // segment only (no publish)
+  expect((await bucket.list("mh/spaces/default/snapshot/")).length).toBe(0); // no snapshot
+  await syncWithStorage(c, PEER, bucket, cfg(K)); // hydrate purely from B's segment
+  expect(headState(c)).toEqual(headState(b));
+});
+
+test("⑤b: a caught-up consumer skips the whole-hub snapshot body (reads only .vc)", async () => {
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA");
+  const b = makeNode("nodeBBBB");
+  const bucket = new CountingBucket();
+
+  // A pushes its state as a SEGMENT; B catches up incrementally (no snapshot yet).
+  createDatabase(a, { name: "Notes" });
+  await syncWithStorage(a, PEER, bucket, cfg(K));
+  await syncWithStorage(b, PEER, bucket, cfg(K));
+  expect(headState(b)).toEqual(headState(a));
+
+  // A (publisher) now publishes a whole-hub snapshot of the state B already holds.
+  await publishSnapshot(a, bucket, cfg(K));
+
+  bucket.gets.length = 0;
+  await syncWithStorage(b, PEER, bucket, cfg(K));
+  expect(bucket.snapBodyGets()).toBe(0); // dominated → skipped the whole-hub body
+  expect(bucket.gets.some((k) => k.endsWith(".vc"))).toBe(true); // but read the frontier
+  expect(headState(b)).toEqual(headState(a)); // still converged
+});
+
+test("⑤b: a behind consumer still downloads the snapshot (no data loss)", async () => {
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA");
+  const c = makeNode("nodeCCCC");
+  const bucket = new CountingBucket();
+  createDatabase(a, { name: "Notes" });
+  await syncWithStorage(a, PEER, bucket, cfg(K));
+  await publishSnapshot(a, bucket, cfg(K), 0); // snapshot + full truncate (segments gone)
+  bucket.gets.length = 0;
+  await syncWithStorage(c, PEER, bucket, cfg(K)); // empty → can't dominate → downloads body
+  expect(bucket.snapBodyGets()).toBeGreaterThanOrEqual(1);
+  expect(headState(c)).toEqual(headState(a));
+});
+
+test("⑤ incremental: a connected consumer stays on segments across publisher snapshots", async () => {
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA");
+  const b = makeNode("nodeBBBB");
+  const bucket = new CountingBucket();
+
+  // Realistic timing: A pushes a segment, B pulls it, THEN A publishes a snapshot —
+  // so B already dominates each snapshot by the time it appears.
+  for (let i = 0; i < 5; i++) {
+    createDatabase(a, { name: `db${i}` });
+    await syncWithStorage(a, PEER, bucket, cfg(K)); // push seg_i
+    await syncWithStorage(b, PEER, bucket, cfg(K)); // B pulls seg_i (incremental)
+    await publishSnapshot(a, bucket, cfg(K)); // publish snap_i (B already has it)
+  }
+
+  bucket.gets.length = 0;
+  await syncWithStorage(b, PEER, bucket, cfg(K));
+  expect(bucket.snapBodyGets()).toBe(0); // never re-downloads a whole-hub snapshot
+  expect(headState(b)).toEqual(headState(a));
+});
+
+test("⑤c: publishSnapshot retains recent own segments (default window), bucket bounded", async () => {
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA");
+  const bucket = new FakeBucket();
+  // Three separate push rounds → three own segments.
+  for (let i = 0; i < 3; i++) {
+    createDatabase(a, { name: `db${i}` });
+    await syncWithStorage(a, PEER, bucket, cfg(K));
+  }
+  const before = (await bucket.list("mh/spaces/default/oplog/nodeAAAA/")).filter((o) =>
+    o.key.endsWith(".seg"),
+  ).length;
+  await publishSnapshot(a, bucket, cfg(K)); // default retain ≫ 3 → keep them all
+  const after = (await bucket.list("mh/spaces/default/oplog/nodeAAAA/")).filter((o) =>
+    o.key.endsWith(".seg"),
+  ).length;
+  expect(after).toBe(before); // recent segments retained, not collapsed to 0
+  // …and a snapshot exists alongside them with its frontier sidecar.
+  const snaps = await bucket.list("mh/spaces/default/snapshot/");
+  expect(snaps.some((o) => o.key.endsWith(".snap"))).toBe(true);
+  expect(snaps.some((o) => o.key.endsWith(".vc"))).toBe(true);
+});
+
+test("④: the elected publisher reaps leases expired past the grace window", async () => {
+  const bucket = new FakeBucket();
+  const base = "mh/spaces/default";
+  const enc = (o: object) => new TextEncoder().encode(JSON.stringify(o));
+  const TTL = 5 * 60_000;
+  // A long-dead candidate (expired by > a full TTL) lingers in the bucket.
+  await bucket.put(
+    `${base}/publisher/deadXXXX.lease`,
+    enc({ node: "deadXXXX", priority: 100, expiresAt: Date.now() - 2 * TTL }),
+  );
+  const elected = await isElectedPublisher(bucket, base, "nodeAAAA", 10);
+  expect(elected).toBe(true); // only live candidate → we win
+  const leases = (await bucket.list(`${base}/publisher/`)).filter((o) => o.key.endsWith(".lease"));
+  expect(leases.some((o) => o.key.includes("deadXXXX"))).toBe(false); // reaped
+  expect(leases.some((o) => o.key.includes("nodeAAAA"))).toBe(true); // our fresh heartbeat
 });

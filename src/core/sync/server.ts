@@ -7,7 +7,7 @@ import pkg from "../../../package.json" with { type: "json" };
 import { routes, type Route, type RouteCtx } from "./routes.ts";
 import { SYNC_PATH, HEALTH_PATH, RENEW_PATH, PAIR_PATH } from "./protocol.ts";
 import { DEFAULT_TTL_MS, DEFAULT_GRACE_MS } from "./token.ts";
-import { syncAllPeers } from "./peers.ts";
+import { syncPeer, listPeers } from "./peers.ts";
 import { buildOpenApi } from "./openapi.ts";
 import {
   type AuthConfig,
@@ -227,12 +227,41 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   // separate process) are picked up on the next tick without a restart.
   let timer: ReturnType<typeof setInterval> | null = null;
   if (autoSync && syncIntervalMs > 0) {
+    // Per-peer idle backoff for storage (s3) peers — the bucket poll is the metered
+    // cost. When the hub hasn't advanced (no local edit, nothing pulled) and a
+    // peer's rounds keep coming up empty, slow it down, capped at TTL/2 so the
+    // publisher lease / failover stay timely. Any hub advance (a local edit OR a
+    // pulled remote edit) reclaims the base cadence so propagation stays prompt.
+    // http peers sync every tick.
+    const S3_POLL_MAX_MS = 150_000; // 2.5min ≈ publisher-lease TTL/2
+    const s3Next = new Map<string, { delay: number; due: number }>();
+    let lastMaxSeq = -1;
+    const tick = async (): Promise<void> => {
+      const maxSeq =
+        (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number | null }).s ?? 0;
+      const advanced = lastMaxSeq >= 0 && maxSeq > lastMaxSeq;
+      lastMaxSeq = maxSeq;
+      const now = Date.now();
+      for (const p of listPeers(db)) {
+        if (!p.enabled) continue;
+        if (p.kind !== "s3") {
+          await syncPeer(db, p.url);
+          continue;
+        }
+        const st = s3Next.get(p.url);
+        if (!advanced && st && now < st.due) continue; // idle & backed off → not due
+        const out = await syncPeer(db, p.url);
+        const busy = advanced || (out.pushed ?? 0) > 0 || (out.pulled ?? 0) > 0;
+        const delay = busy
+          ? syncIntervalMs
+          : Math.min((st?.delay ?? syncIntervalMs) * 2, S3_POLL_MAX_MS);
+        s3Next.set(p.url, { delay, due: Date.now() + delay });
+      }
+    };
     timer = setInterval(() => {
-      // Per-peer errors are already recorded in the DB (last_error) by syncPeer
-      // and surfaced via CLI/WebUI, so we don't re-log those every tick. This
-      // catch only covers an *unexpected* tick crash, which would otherwise be
-      // wholly silent.
-      void syncAllPeers(db).catch((e) => console.error("[sync] auto-sync tick failed —", e));
+      // Per-peer errors are already recorded in the DB (last_error) by syncPeer and
+      // surfaced via CLI/WebUI; this catch only covers an *unexpected* tick crash.
+      void tick().catch((e) => console.error("[sync] auto-sync tick failed —", e));
     }, syncIntervalMs);
     timer.unref?.();
   }

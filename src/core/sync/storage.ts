@@ -136,6 +136,21 @@ const SEG_PAD = 16;
  *  HLC char so keys still order by max-HLC then hash. */
 const SNAP_SEP = "~";
 
+// ---- snapshot/truncation policy defaults (log-structured; see ⑤) ----------------
+/** Keep this many of our most recent own segments alive past a snapshot so a
+ *  consumer behind by < a window catches up incrementally instead of re-pulling
+ *  the whole-hub snapshot. Older segments are truncated → bucket stays bounded. */
+const DEFAULT_RETAIN_SEGMENTS = 40;
+/** Publish a new snapshot once the whole-hub delta since the newest snapshot
+ *  reaches max(MIN_DELTA ops, hub_size × DELTA_RATIO) — a checkpoint that "pays
+ *  for itself", instead of a short wall-clock timer that re-checkpoints every 60s
+ *  and strands consumers on full downloads. */
+const DEFAULT_SNAPSHOT_MIN_DELTA = 200;
+const DEFAULT_SNAPSHOT_DELTA_RATIO = 0.5;
+/** Safety cap: publish anyway if the hub advanced and this long passed since the
+ *  newest snapshot, so a slow trickle of edits still gets a fresh baseline. */
+const DEFAULT_SNAPSHOT_MAX_INTERVAL_MS = 30 * 60_000;
+
 function basePrefix(prefix: string): string {
   const p = (prefix || "").replace(/^\/+|\/+$/g, "");
   return p ? `${p}/spaces/default` : "spaces/default";
@@ -249,6 +264,61 @@ function winnersSnapshot(db: DbDriver): Change[] {
     .all() as Change[];
 }
 
+// ---- snapshot frontier (vector clock) for incremental skip -----------------------
+
+/** Per-node HLC frontier: node_id → max HLC reflected for that node. A consumer
+ *  whose own frontier dominates a snapshot's already holds every winner in it. */
+type Frontier = Record<string, string>;
+
+/** Frontier of a winner set: per author node, the max winner HLC. */
+function frontierOfWinners(winners: Change[]): Frontier {
+  const f: Frontier = {};
+  for (const c of winners) if (!f[c.node_id] || c.hlc > f[c.node_id]!) f[c.node_id] = c.hlc;
+  return f;
+}
+
+/** This node's local frontier from its oplog (per node, max ingested HLC). Cheap
+ *  GROUP BY; segments are pulled gap-free per node so this is a true prefix. */
+function localFrontier(db: DbDriver): Frontier {
+  const rows = db
+    .query("SELECT node_id, MAX(hlc) AS h FROM crdt_changes GROUP BY node_id")
+    .all() as { node_id: string; h: string }[];
+  const f: Frontier = {};
+  for (const r of rows) f[r.node_id] = r.h;
+  return f;
+}
+
+/** True when `local` already covers every node frontier in `snap` (∀ node n:
+ *  local[n] ≥ snap[n]). Then ingesting the snapshot would add nothing → skip it. */
+function dominates(local: Frontier, snap: Frontier): boolean {
+  for (const n in snap) if (!local[n] || local[n]! < snap[n]!) return false;
+  return true;
+}
+
+/** Sidecar object carrying a snapshot's frontier so a caught-up consumer can skip
+ *  the (whole-hub) body GET, plus the publisher's own latest seg key at snapshot
+ *  time so a consumer that DID ingest the snapshot can advance its cursor past the
+ *  publisher's retained segments (⑤c) instead of re-pulling them. */
+interface SnapMeta {
+  frontier: Frontier;
+  ownNode: string;
+  ownSegHigh: string | null;
+}
+const vcKey = (snapKey: string) => `${snapKey}.vc`;
+
+async function encodeVc(meta: SnapMeta, key: Uint8Array | null): Promise<Uint8Array> {
+  const gz = await gzip(new TextEncoder().encode(JSON.stringify(meta)));
+  return key ? encryptBytes(key, gz) : gz;
+}
+async function decodeVc(bytes: Uint8Array, key: Uint8Array | null): Promise<SnapMeta | null> {
+  try {
+    const gz = key ? await decryptBytes(key, bytes) : bytes;
+    return JSON.parse(new TextDecoder().decode(await gunzip(gz))) as SnapMeta;
+  } catch {
+    return null; // unreadable/legacy snapshot with no .vc → caller falls back to GET
+  }
+}
+
 // ---- node-prefix discovery ------------------------------------------------------
 
 function nodesFromKeys(objs: StorageObject[], root: string): string[] {
@@ -333,32 +403,55 @@ export async function publishSnapshot(
   db: DbDriver,
   client: StorageClient,
   config: S3Config,
+  retainSegments: number = DEFAULT_RETAIN_SEGMENTS,
 ): Promise<{ key: string; changes: number } | null> {
   const key = masterKeyOf(config);
   const base = basePrefix(config.prefix);
   const winners = winnersSnapshot(db);
   if (winners.length === 0) return null;
+  const node = getNodeId(db);
   const maxHlc = winners.reduce((m, c) => (c.hlc > m ? c.hlc : m), "");
   // Hash a deterministic (sorted) view so row order can't change the key.
   const hash = await contentHash(winners.map((c) => JSON.stringify(c)).sort().join("\n"));
   const snapKey = `${snapshotRoot(base)}${maxHlc}${SNAP_SEP}${hash}.snap`;
+
+  // Our own segments present right now are all covered by this snapshot (winners
+  // of the same DB state). The highest is the cursor a consumer can jump to after
+  // ingesting the snapshot, so it won't re-pull the segments we retain below.
+  const ownSegs = (await client.list(nodePrefix(base, node)))
+    .map((o) => o.key)
+    .filter((k) => k.endsWith(".seg"))
+    .sort();
+  const ownSegHigh = ownSegs.length ? ownSegs[ownSegs.length - 1]! : null;
+
   await client.put(snapKey, await encodeSegment(winners, key), {
     contentType: "application/octet-stream",
   });
+  // Frontier sidecar (⑤b): pullSnapshots reads it to skip the whole-hub body GET
+  // when already caught up, and to advance its cursor past our retained segments.
+  await client.put(
+    vcKey(snapKey),
+    await encodeVc({ frontier: frontierOfWinners(winners), ownNode: node, ownSegHigh }, key),
+    { contentType: "application/octet-stream" },
+  );
 
-  // GC: drop snapshots from a strictly older frontier (keep this max-HLC and any
-  // concurrent sibling/newer one). maxHlc is fixed width, so a basename compare
-  // before SNAP_SEP is the max-HLC compare.
+  // GC: drop snapshots (and their .vc) from a strictly older frontier (keep this
+  // max-HLC and any concurrent sibling/newer one). maxHlc is fixed width, so a
+  // basename compare before SNAP_SEP is the max-HLC compare.
   for (const o of await client.list(snapshotRoot(base))) {
     if (!o.key.endsWith(".snap")) continue;
     const mh = o.key.slice(snapshotRoot(base).length).split(SNAP_SEP)[0]!;
-    if (mh < maxHlc) await client.del(o.key);
+    if (mh < maxHlc) {
+      await client.del(o.key);
+      await client.del(vcKey(o.key));
+    }
   }
 
-  // Truncate our own now-superseded segments.
-  const node = getNodeId(db);
-  const ownSegs = (await client.list(nodePrefix(base, node))).filter((o) => o.key.endsWith(".seg"));
-  for (const s of ownSegs) await client.del(s.key);
+  // Truncate our own superseded segments but RETAIN the most recent
+  // `retainSegments` (⑤c): a consumer behind by < a window catches up via segments
+  // (incremental) instead of re-downloading the whole-hub snapshot.
+  const toDelete = ownSegs.slice(0, Math.max(0, ownSegs.length - retainSegments));
+  for (const k of toDelete) await client.del(k);
   return { key: snapKey, changes: winners.length };
 }
 
@@ -392,13 +485,31 @@ export interface StorageSyncOpts {
    * lease — see publisher-lease.ts). Correctness never depends on a single
    * publisher: concurrent snapshots are content-addressed and idempotent. */
   publish?: boolean;
-  /** Min wall-clock gap between publisher snapshots (ms; default 60_000) so a
-   *  steady edit stream doesn't snapshot every round. An empty bucket is
-   *  snapshotted immediately regardless of this. */
-  snapshotMinIntervalMs?: number;
+  /** ⑤d snapshot trigger: publish once the whole-hub delta since the newest
+   *  snapshot reaches max(`snapshotMinDelta` ops, hub_size × `snapshotDeltaRatio`),
+   *  or `snapshotMaxIntervalMs` elapsed (safety). Replaces the old 60s timer that
+   *  re-checkpointed constantly and forced full re-downloads. Defaults:
+   *  DEFAULT_SNAPSHOT_MIN_DELTA / _DELTA_RATIO / _MAX_INTERVAL_MS. */
+  snapshotMinDelta?: number;
+  snapshotDeltaRatio?: number;
+  snapshotMaxIntervalMs?: number;
+  /** ⑤c: keep this many of our most recent own segments alive past a snapshot so
+   *  slightly-behind consumers catch up incrementally (default DEFAULT_RETAIN_SEGMENTS). */
+  snapshotRetainSegments?: number;
   /** This node's publisher priority when contending for the lease (higher wins;
    *  see publisher-lease.ts). Only consulted when `publish` is set. */
   priority?: number;
+  /**
+   * Run the PULL half of the round (snapshots + other nodes' segments). Default
+   * true. Set false for *push-only* rounds: an origin-backed replica gets a
+   * superset of bucket contents from its origin (HTTP), so it never needs to PULL
+   * the bucket — it only PUSHes its own segments here for independent durability
+   * (Path B). Skipping PULL drops the two unconditional LISTs (snapshot/, oplog/)
+   * that dominate idle bucket cost. A *publisher* must always PULL (it needs the
+   * snapshot list to decide what to publish), so callers never combine
+   * `publish:true` with `pull:false`.
+   */
+  pull?: boolean;
 }
 
 /** Epoch millis encoded in an HLC's first 15 chars (hlc.ts formatHlc). */
@@ -471,35 +582,41 @@ export async function syncWithStorage(
     // else: pending but below threshold → leave the cursor, retry next round.
   }
 
-  // PULL: snapshots first (every one we haven't ingested)…
-  const snapKeys = (await client.list(snapshotRoot(base)))
-    .map((o) => o.key)
-    .filter((k) => k.endsWith(".snap"));
+  // PULL: snapshots first (every one we haven't ingested)…then each other node's
+  // new segments. Skipped entirely in push-only mode (opts.pull === false) — see
+  // StorageSyncOpts.pull. `snapKeys` stays [] then; the PUBLISHER block below only
+  // runs when opts.publish, and a publisher always pulls, so it never sees [].
+  let snapKeys: string[] = [];
   let pulled = 0;
-  pulled += await pullSnapshots(db, peerUrl, snapKeys, client, key);
+  if (opts.pull ?? true) {
+    snapKeys = (await client.list(snapshotRoot(base)))
+      .map((o) => o.key)
+      .filter((k) => k.endsWith(".snap"));
+    pulled += await pullSnapshots(db, peerUrl, snapKeys, client, key);
 
-  // …then each other node's new segments.
-  for (const remote of await listRemoteNodes(client, base)) {
-    if (remote === node) continue; // never pull our own prefix back in
-    const cursor = getStorageCursor(db, peerUrl, remote);
-    // Cheap skip: HEAD names the latest segment key; if we're already at/after
-    // it there's nothing new. HEAD is written before its segment, so it's never
-    // behind the real latest — this can't skip a present-but-newer segment.
-    const head = await client.get(headKey(base, remote));
-    if (head) {
-      const latest = new TextDecoder().decode(head);
-      if (cursor && latest <= cursor) continue;
-    }
-    const segs = (await client.list(nodePrefix(base, remote), cursor ?? undefined)).filter(
-      (o) => o.key.endsWith(".seg"),
-    );
-    for (const seg of segs) {
-      const bytes = await client.get(seg.key);
-      if (!bytes) continue;
-      const changes = await decodeSegment(bytes, key);
-      ingest(db, changes);
-      pulled += changes.length;
-      setStorageCursor(db, peerUrl, remote, seg.key);
+    // …then each other node's new segments.
+    for (const remote of await listRemoteNodes(client, base)) {
+      if (remote === node) continue; // never pull our own prefix back in
+      const cursor = getStorageCursor(db, peerUrl, remote);
+      // Cheap skip: HEAD names the latest segment key; if we're already at/after
+      // it there's nothing new. HEAD is written before its segment, so it's never
+      // behind the real latest — this can't skip a present-but-newer segment.
+      const head = await client.get(headKey(base, remote));
+      if (head) {
+        const latest = new TextDecoder().decode(head);
+        if (cursor && latest <= cursor) continue;
+      }
+      const segs = (await client.list(nodePrefix(base, remote), cursor ?? undefined)).filter(
+        (o) => o.key.endsWith(".seg"),
+      );
+      for (const seg of segs) {
+        const bytes = await client.get(seg.key);
+        if (!bytes) continue;
+        const changes = await decodeSegment(bytes, key);
+        ingest(db, changes);
+        pulled += changes.length;
+        setStorageCursor(db, peerUrl, remote, seg.key);
+      }
     }
   }
 
@@ -510,21 +627,32 @@ export async function syncWithStorage(
   // snapshot every round; `snapKeys` was already listed above, so no extra LIST.
   let didSnapshot = false;
   if (opts.publish) {
-    const localMaxHlc =
-      (db.query("SELECT MAX(hlc) AS m FROM crdt_changes").get() as { m: string | null } | null)?.m ??
-      null;
-    if (localMaxHlc) {
+    const hubSize = (db.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n;
+    if (hubSize > 0) {
       const newest = newestSnapshotHlc(snapKeys, base);
-      const minInterval = opts.snapshotMinIntervalMs ?? 60_000;
+      // ⑤d: checkpoint when the whole-hub delta since the newest snapshot is worth
+      // a fresh baseline — max(min ops, hub_size × ratio) — or a safety time cap.
+      // Local-only queries; no extra bucket calls. (⑤a: forcePush no longer forces
+      // a snapshot — it only forces the PUSH above — so a steady "sync now" / user
+      // refresh can't trigger whole-hub re-publishes.)
+      const minDelta = opts.snapshotMinDelta ?? DEFAULT_SNAPSHOT_MIN_DELTA;
+      const ratio = opts.snapshotDeltaRatio ?? DEFAULT_SNAPSHOT_DELTA_RATIO;
+      const maxInterval = opts.snapshotMaxIntervalMs ?? DEFAULT_SNAPSHOT_MAX_INTERVAL_MS;
+      const delta =
+        newest === null
+          ? hubSize
+          : (db.query("SELECT COUNT(*) AS n FROM crdt_changes WHERE hlc > ?").get(newest) as {
+              n: number;
+            }).n;
       const due =
-        opts.forcePush ||
-        newest === null || // empty bucket → publish now
-        (localMaxHlc > newest && Date.now() - hlcMs(newest) >= minInterval); // advanced + throttled
+        newest === null || // empty bucket → first snapshot now
+        delta >= Math.max(minDelta, hubSize * ratio) ||
+        (delta > 0 && Date.now() - hlcMs(newest) >= maxInterval); // trickle → safety cap
       // Only publish when we're the elected publisher among live candidates, so
       // multiple publishers don't all upload the same snapshot. Election is
       // best-effort (idempotent snapshots make a double-elect harmless).
       if (due && (await isElectedPublisher(client, base, node, opts.priority ?? 0))) {
-        await publishSnapshot(db, client, config);
+        await publishSnapshot(db, client, config, opts.snapshotRetainSegments);
         didSnapshot = true;
       }
     }
@@ -539,14 +667,16 @@ export async function syncWithStorage(
     const ownCount = (await client.list(nodePrefix(base, node))).filter((o) =>
       o.key.endsWith(".seg"),
     ).length;
-    if (ownCount >= threshold) await publishSnapshot(db, client, config);
+    if (ownCount >= threshold) await publishSnapshot(db, client, config, opts.snapshotRetainSegments);
   }
 
   return { pushed, pulled };
 }
 
-/** Ingest every snapshot we haven't ingested yet (idempotent), then prune the
- *  consumed set to keys still present so it stays bounded as old snapshots GC. */
+/** Ingest only the snapshots we don't already cover, then prune the consumed set
+ *  to keys still present so it stays bounded as old snapshots GC. ⑤b: a small
+ *  frontier sidecar (.vc) lets a caught-up consumer skip the whole-hub body GET;
+ *  newest-first so ingesting the latest dominates (and thus skips) older ones. */
 async function pullSnapshots(
   db: DbDriver,
   peerUrl: string,
@@ -556,15 +686,33 @@ async function pullSnapshots(
 ): Promise<number> {
   if (present.length === 0) return 0;
   const consumed = getSnapshotConsumed(db, peerUrl);
+  const local = localFrontier(db);
   let pulled = 0;
-  for (const k of [...present].sort()) {
+  for (const k of [...present].sort().reverse()) {
     if (consumed.has(k)) continue;
+    // Read the small frontier sidecar. If our local frontier already dominates
+    // this snapshot we hold every winner in it → skip the whole-hub body GET.
+    const metaBytes = await client.get(vcKey(k));
+    const meta = metaBytes ? await decodeVc(metaBytes, key) : null;
+    if (meta && dominates(local, meta.frontier)) {
+      consumed.add(k);
+      continue;
+    }
     const bytes = await client.get(k);
     if (!bytes) continue;
     const changes = await decodeSegment(bytes, key);
     ingest(db, changes);
     pulled += changes.length;
     consumed.add(k);
+    for (const c of changes)
+      if (!local[c.node_id] || c.hlc > local[c.node_id]!) local[c.node_id] = c.hlc;
+    // ⑤c: the snapshot already covers the publisher's retained segments up to
+    // ownSegHigh — advance our cursor past them so the segment loop won't re-pull.
+    if (meta?.ownSegHigh) {
+      const cur = getStorageCursor(db, peerUrl, meta.ownNode);
+      if (!cur || cur < meta.ownSegHigh)
+        setStorageCursor(db, peerUrl, meta.ownNode, meta.ownSegHigh);
+    }
   }
   // Forget keys no longer in the bucket (GC'd) so the set can't grow unbounded.
   const presentSet = new Set(present);

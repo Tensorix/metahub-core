@@ -182,7 +182,18 @@ const ready: Promise<void> = (async () => {
 
 // ---- sync loop -----------------------------------------------------------------
 
-let syncing: Promise<void> | null = null;
+interface SyncOutcome {
+  pushed: number;
+  pulled: number;
+  ok: boolean;
+}
+let syncing: Promise<SyncOutcome> | null = null;
+
+/** Storage peers that have done at least one *full* (pull) round this session.
+ *  First round per peer is always full — initial hydration, first snapshot, and
+ *  the credentials/CORS check all need PULL; afterwards an origin-reachable round
+ *  goes push-only. */
+const bucketInitialSynced = new Set<string>();
 
 /** One logical sync: loops pull rounds while the server still has more than
  *  PULL_LIMIT changes for us (initial hydration), then settles. Broadcasts a
@@ -203,12 +214,12 @@ function hasSyncTarget(d: DbDriver): boolean {
 const STORAGE_PUSH_MIN_CHANGES = 25;
 const STORAGE_PUSH_AGE_MS = 10_000;
 
-async function runSync(force = false): Promise<void> {
-  if (!db) return;
+async function runSync(force = false): Promise<SyncOutcome> {
+  if (!db) return { pushed: 0, pulled: 0, ok: true };
   const d = db;
-  if (!hasSyncTarget(d)) return;
+  if (!hasSyncTarget(d)) return { pushed: 0, pulled: 0, ok: true };
   if (syncing) return syncing;
-  syncing = (async () => {
+  syncing = (async (): Promise<SyncOutcome> => {
     const before = (
       d.query("SELECT MAX(rowid) AS m FROM crdt_changes").get() as { m: number | null }
     ).m ?? 0;
@@ -218,7 +229,12 @@ async function runSync(force = false): Promise<void> {
     const errors: string[] = [];
 
     // Origin server (http), chunked initial hydration — only if paired. Its
-    // failure (server offline) must not stop storage-peer sync below.
+    // failure (server offline) must not stop storage-peer sync below. Whether it
+    // succeeded decides push-only vs full bucket rounds below: a reachable origin
+    // already delivers a superset of the bucket, so storage peers go push-only
+    // (Path B durability without the LIST-heavy PULL); origin down → full bucket
+    // round as the fallback transport.
+    let originOk = false;
     if (getPeer(d, origin)?.token != null) {
       try {
         for (;;) {
@@ -228,24 +244,31 @@ async function runSync(force = false): Promise<void> {
           if (r.pulled < PULL_LIMIT) break;
           setStatus({ state: "hydrating", hydrated: pulled });
         }
+        originOk = true;
       } catch (e) {
         errors.push(`server: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
-    // Storage (s3) peers — each captures its own error into last_status.
+    // Storage (s3) peers — each captures its own error into last_status. A round
+    // is push-only when the origin is reachable AND this isn't a forced sync AND
+    // the peer already did one full round this session; otherwise full (initial
+    // hydration / first snapshot / cred+CORS check all need PULL).
     for (const peer of listPeers(d)) {
       if (peer.enabled !== 1 || peer.kind !== "s3") continue;
+      const pushOnly = originOk && !force && bucketInitialSynced.has(peer.url);
       const out = await syncPeer(d, peer.url, {
         storage: {
           minPushChanges: STORAGE_PUSH_MIN_CHANGES,
           maxPushAgeMs: STORAGE_PUSH_AGE_MS,
           forcePush: force,
+          pull: !pushOnly,
         },
       });
       if (out.ok) {
         pushed += out.pushed ?? 0;
         pulled += out.pulled ?? 0;
+        if (!pushOnly) bucketInitialSynced.add(peer.url); // a full round happened
       } else {
         errors.push(`${peer.label ?? peer.url}: ${out.error}`);
       }
@@ -274,15 +297,51 @@ async function runSync(force = false): Promise<void> {
         pulled,
       });
     }
+    return { pushed, pulled, ok: errors.length === 0 };
   })().finally(() => {
     syncing = null;
   });
   return syncing;
 }
 
-setInterval(() => {
-  if (navigator.onLine !== false) void runSync();
-}, SYNC_INTERVAL_MS);
+// Background poll. A reactive, origin-backed replica does NOT poll in the
+// background — it syncs on events (writes → schedulePush; online/visibility/
+// refresh → the page's `sync` RPC) and revalidates the UI from the `synced`
+// event. Only a no-origin PWA (the bucket-only data home / publisher, with no
+// origin to track) must poll the bucket to receive other devices' edits; it backs
+// off when idle, capped well under the publisher-lease TTL so failover stays
+// timely.
+const POLL_MAX_MS = 150_000; // 2.5min ≈ publisher-lease TTL/2
+let pollDelay = SYNC_INTERVAL_MS;
+/** ②b: a served site page is non-reactive (no revalidate once rendered), so the
+ *  siteFile op re-pulls before serving when the local replica is older than this. */
+const SITE_FRESH_MAX_AGE_MS = 3 * 60_000;
+
+/** True only for a no-origin, bucket-only home: no reachable origin to track but
+ *  enabled storage peers to receive from. An origin-backed replica returns false
+ *  (event-driven, no background poll). */
+function mustBackgroundPoll(): boolean {
+  if (!db) return false;
+  if (getPeer(db, origin)?.token != null) return false; // origin-backed → event-driven
+  return listPeers(db).some((p) => p.enabled === 1 && p.kind === "s3");
+}
+
+async function pollTick(): Promise<void> {
+  try {
+    if (navigator.onLine !== false && mustBackgroundPoll()) {
+      const out = await runSync();
+      pollDelay =
+        out.pushed > 0 || out.pulled > 0
+          ? SYNC_INTERVAL_MS // real activity → keep polling promptly
+          : Math.min(pollDelay * 2, POLL_MAX_MS); // idle (or a down bucket) → back off
+    } else {
+      pollDelay = SYNC_INTERVAL_MS; // reset so a later role change polls promptly
+    }
+  } finally {
+    setTimeout(pollTick, pollDelay);
+  }
+}
+setTimeout(pollTick, pollDelay);
 
 // ---- pairing -------------------------------------------------------------------
 
@@ -461,10 +520,15 @@ const ops: Record<string, Op> = {
   // sites (offline serving: the SW asks for raw rows; blob-encoded content
   // can't replicate — its bytes live in the server's on-disk store — so it
   // resolves null and 404s offline)
-  siteFile: (
+  siteFile: async (
     name: string,
     path: string,
-  ): { content_type: string; encoding: FileEncoding; content: string | null } | null => {
+  ): Promise<{ content_type: string; encoding: FileEncoding; content: string | null } | null> => {
+    // ②b: the served page is non-reactive, so re-pull before serving when the
+    // local replica is very stale. runSync coalesces, so a navigation's many
+    // subresource requests share one in-flight sync.
+    const age = status.lastSync?.at ? Date.now() - status.lastSync.at : Infinity;
+    if (age > SITE_FRESH_MAX_AGE_MS) await runSync(true).catch(() => {});
     const d = db!;
     let siteId: string;
     try {
