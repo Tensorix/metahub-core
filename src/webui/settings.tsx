@@ -15,7 +15,6 @@ import {
   resetReplica,
   requestSync,
   isNoOrigin,
-  clientMode,
   call as replicaCall,
 } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
@@ -89,13 +88,13 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
         <SetGroup label="快速笔记"><QuickNotesSettings /></SetGroup>
       )}
 
-      {/* One "同步" chapter, two sub-blocks (doc 19): how THIS device holds data
-          (window/replica), and the workspace backend (server + cloud bucket).
-          The bucket lives on the server (origin) or this device (no-origin); the
-          page shows it in either mode so its ownership is never hidden. */}
+      {/* One "同步" chapter (doc 19): how THIS device uses the workspace
+          (lightweight / trusted), then the cloud bucket that keeps every device
+          in sync. The bucket lives on the server (origin) or this device
+          (no-origin); shown in either mode so its ownership is never hidden. */}
       <SetGroup label="同步">
-        <OfflineReplica />
-        <WorkspaceSync />
+        <DeviceSetup />
+        <SyncStorage />
       </SetGroup>
 
       {/* HTTP pairing + issued grants only make sense against a server (origin). */}
@@ -130,141 +129,101 @@ function replicaUnsupportedReason(): string | null {
   return null;
 }
 
-// ---- sync overview: a small topology map -----------------------------------
-// "How is THIS device wired?" answered at a glance instead of in prose. Chips
-// for this device, the server (origin mode), and the cloud bucket, joined by
-// HTTP / 桶 links (the live one solid, the idle one dashed). The publisher — who
-// mirrors the whole hub into the bucket — is named on the bucket chip. See
-// docs/impl-context/19-client-topology.
+// ---- mode diagram: a small animated topology ------------------------------
+// "How is this device wired right now?" as a schematic shown on the right when
+// a mode card is hovered. It reflects REAL state, not just the mode: 本设备↔服务器
+// (origin), 服务器→云桶 when the server publishes a bucket, and a direct 本设备→云桶
+// link only when THIS device has actually connected one. The self node reads
+// solid (信任) or hollow (轻量). See docs/impl-context/19-client-topology.
 
-function SyncTopology() {
-  const isElectron = typeof window !== "undefined" && !!window.metahubDesktop;
-  const [, bump] = useState(0);
-  // Re-render on replica state changes; the two axes come from clientMode().
-  useEffect(() => onReplicaStatus(() => bump((n) => n + 1)), []);
-  const mode = clientMode();
-  const noOrigin = mode.dataHome === "local";
-  // Two facts the diagram needs: does the workspace have a bucket node to draw
-  // (server's buckets in origin, this device's in no-origin), and does THIS
-  // device's replica reach it directly (vs only via the server)?
-  const [hasBucket, setHasBucket] = useState(false);
-  const [deviceDirect, setDeviceDirect] = useState(false);
-  useEffect(() => {
-    let live = true;
-    const load = async () => {
-      const local = replicaEnabled()
-        ? await replicaCall<unknown[]>("listStoragePeers").catch(() => [])
-        : [];
-      const workspaceHas = noOrigin
-        ? local.length > 0
-        : (await api.listServerS3Peers().catch(() => [])).length > 0;
-      if (!live) return;
-      setHasBucket(workspaceHas);
-      setDeviceDirect(local.length > 0);
-    };
-    load();
-    const off = onReplicaStatus(load);
-    return () => {
-      live = false;
-      off();
-    };
-  }, [noOrigin]);
-
-  const replica = mode.hold === "replica";
-  // This device's OWN connections — drawn as branches off 本设备, never a
-  // 本设备→服务器→桶 chain. The bucket is a shared dumb backend; whether THIS
-  // device reaches it directly depends on real state, not just the mode: it's
-  // direct only when this device's replica has actually activated a bucket
-  // (no-origin is always direct); otherwise the link reads "经服务器", dashed.
+function ModeDiagram({
+  kind,
+  noOrigin,
+  hasServerBucket,
+  deviceDirect,
+}: {
+  kind: "light" | "trusted";
+  noOrigin: boolean;
+  hasServerBucket: boolean;
+  deviceDirect: boolean;
+}) {
+  const trusted = kind === "trusted";
   const showServer = !noOrigin;
-  const bucketDirect = noOrigin || (replica && deviceDirect);
-  const bucketLabel = noOrigin ? "直连" : bucketDirect ? "直连 · 兜底" : "经服务器";
+  // 服务器→云桶 when the server publishes a bucket; 本设备→云桶 only when this device
+  // has actually connected one directly. The bucket node shows if either holds.
+  const serverToBucket = showServer && hasServerBucket;
+  const directToBucket = deviceDirect;
+  const showBucket = serverToBucket || directToBucket;
+  // Draw the direct link as a bypass under the chain only when a server sits
+  // between the two (no-origin already draws it as the plain self→bucket wire).
+  const bypass = directToBucket && showServer && showBucket;
 
   return (
-    <>
-      <div class="set-block-desc">你的工作区存在哪、设备之间怎么保持一致——下面是这台设备的连接方式。</div>
-      <div class="sync-tree">
-        <span class="sync-node self">
-          <span class="sync-node-top">
-            <Icon name={replica ? "database" : "eye"} cls="ico sm" />
-            本设备
+    <span
+      class={"md-graph" + (trusted ? " trusted" : " light") + (bypass ? " has-direct" : "")}
+      aria-hidden="true"
+    >
+      <span class="md-node self">
+        <span class="md-node-ico"><Icon name="monitor" cls="ico" /></span>
+        <span class="md-node-name">本设备</span>
+        <span class="md-node-tag">{trusted ? "存一份" : "不留存"}</span>
+      </span>
+      {showServer && (
+        <>
+          <span class="md-wire bi" />
+          <span class="md-node">
+            <span class="md-node-ico"><Icon name="globe" cls="ico" /></span>
+            <span class="md-node-name">服务器</span>
           </span>
-          <span class="sync-node-role">{replica ? "副本 · 可离线" : "窗口 · 在线"}</span>
-        </span>
-        {(showServer || hasBucket) && (
-          <div class="st-branches">
-            {showServer && (
-              <div class="st-branch">
-                <span class="st-edge" data-label="HTTP · 实时" />
-                <span class="sync-node">
-                  <span class="sync-node-top">
-                    <Icon name="globe" cls="ico sm" />
-                    {isElectron ? "内置服务" : "服务器"}
-                  </span>
-                  <span class="sync-node-role">常开节点</span>
-                </span>
-              </div>
-            )}
-            {hasBucket && (
-              <div class="st-branch">
-                <span class={"st-edge" + (bucketDirect ? "" : " idle")} data-label={bucketLabel} />
-                <span class="sync-node">
-                  <span class="sync-node-top">
-                    <Icon name="cube" cls="ico sm" />
-                    存储桶
-                  </span>
-                  <span class="sync-node-role">
-                    {noOrigin ? "本机发布" : "服务器发布"} · 多设备共享
-                  </span>
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-/** The "工作区后端" sub-block = the topology + the cloud bucket. Shown inline in
- *  every mode: even a window client mirrors the server's buckets read-only (the
- *  server is their source of truth), so tucking them behind an "advanced"
- *  disclosure would contradict that. Each inner piece self-subscribes to replica
- *  status, so this wrapper stays dumb. */
-function WorkspaceSync() {
-  return (
-    <div class="set-block">
-      <div class="set-block-head"><span class="set-block-title">工作区后端</span></div>
-      <SyncTopology />
-      <div class="set-subdivider" />
-      <SyncStorage />
-    </div>
+        </>
+      )}
+      {showBucket && (
+        <>
+          <span class={"md-wire " + (showServer ? "to" : "bi")} />
+          <span class="md-node">
+            <span class="md-node-ico"><Icon name="cube" cls="ico" /></span>
+            <span class="md-node-name">云桶</span>
+          </span>
+        </>
+      )}
+      {bypass && <span class="md-direct" data-label="直连" />}
+    </span>
   );
 }
 
 /**
- * The settings switch that turns THIS browser into a CRDT sync node: pairs it
- * with the server (self-service — the page already holds the master token),
- * hydrates a full local OPFS replica, and from then on reads/writes go local
- * with background /sync. Per-device choice; unpaired browsers stay plain
- * online clients. The issued grant shows up under 已授权设备 and can be
- * revoked server-side at any time.
+ * "设置这台设备" — the per-device decision, framed as two cards: 轻量模式 (a plain
+ * online window — fast, nothing kept here) vs 信任此设备 (turn THIS browser into a
+ * CRDT sync node: pair with the server, hydrate a full local OPFS replica, then
+ * read/write locally with background /sync). Hovering a card reveals its wiring
+ * as a ModeDiagram on the right (no persistent diagram). The issued grant
+ * appears under 已授权设备 and can be revoked server-side anytime.
  */
-function OfflineReplica() {
+function DeviceSetup() {
   const unsupported = replicaUnsupportedReason();
   const [enabled, setEnabled] = useState(replicaEnabled());
   const [st, setSt] = useState<ReplicaStatus>(replicaStatus());
   const [busy, setBusy] = useState(false);
   const [usage, setUsage] = useState<string | null>(null);
-  // Whether the workspace has a cloud bucket — so, in THIS device's scope, we can
-  // state that the replica also reaches it directly when the server is offline.
+  // Drives ModeDiagram's shape: no server node to draw in a bucket-only shell.
   const noOrigin = isNoOrigin();
-  const [hasBucket, setHasBucket] = useState(false);
+  // Real wiring the diagram reflects: does the server publish a bucket, and has
+  // THIS device connected one directly? (so the 云桶 edges are state-driven.)
+  const [hasServerBucket, setHasServerBucket] = useState(false);
+  const [deviceDirect, setDeviceDirect] = useState(false);
   useEffect(() => {
-    if (noOrigin) return;
     let live = true;
-    const load = () =>
-      api.listServerS3Peers().then((r) => live && setHasBucket(r.length > 0)).catch(() => {});
+    const load = async () => {
+      const direct = replicaEnabled()
+        ? (await replicaCall<unknown[]>("listStoragePeers").catch(() => [])).length > 0
+        : false;
+      const serverHas = noOrigin
+        ? false
+        : (await api.listServerS3Peers().catch(() => [])).length > 0;
+      if (!live) return;
+      setDeviceDirect(direct);
+      setHasServerBucket(serverHas);
+    };
     load();
     const off = onReplicaStatus(load);
     return () => {
@@ -272,6 +231,22 @@ function OfflineReplica() {
       off();
     };
   }, [noOrigin]);
+  // Which card's wiring to preview, and where to float it — out in the page's
+  // right margin (fixed, beside the content column), hover/focus only. Null when
+  // nothing is hovered or the window is too narrow to have a right margin.
+  const [preview, setPreview] = useState<{ kind: "light" | "trusted"; top: number; left: number } | null>(null);
+  const showAside = (kind: "light" | "trusted", e: { currentTarget: EventTarget | null }) => {
+    const el = e.currentTarget as HTMLElement | null;
+    const panel = el?.closest(".set-panel");
+    const cards = el?.closest(".sync-holds");
+    if (!panel || !cards) return;
+    const pr = panel.getBoundingClientRect();
+    const W = 248, GAP = 28;
+    // No room to the right of the content column → don't show it at all.
+    if (window.innerWidth - pr.right < W + GAP) return setPreview(null);
+    setPreview({ kind, left: pr.right + GAP, top: cards.getBoundingClientRect().top });
+  };
+  const hideAside = () => setPreview(null);
 
   useEffect(() => onReplicaStatus((s) => setSt({ ...s })), []);
 
@@ -345,7 +320,7 @@ function OfflineReplica() {
   };
 
   const statusLine = () => {
-    if (!enabled) return "未启用 — 此浏览器为纯在线客户端，断网不可用。";
+    if (!enabled) return "轻量模式 · 仅在线读写，断网不可用。";
     if (st.state === "error") return `副本异常（已自动回退在线模式）：${st.error ?? "未知错误"}`;
     if (st.state === "hydrating") return `正在下载数据… 已接收 ${st.hydrated ?? 0} 条变更`;
     if (st.lastSync) {
@@ -360,43 +335,73 @@ function OfflineReplica() {
   if (unsupported) {
     return (
       <div class="set-block">
-        <div class="set-block-head"><span class="set-block-title">这台设备</span></div>
-        <div class="set-block-desc">当前为窗口模式:在线读写,不在本机存储。</div>
-        <div class="peer-sub">⚠ 无法保留离线副本:{unsupported}</div>
+        <div class="set-block-head"><span class="set-block-title">设置这台设备</span></div>
+        <div class="set-block-desc">这台设备为轻量模式:仅在线读写,不在本机保存。</div>
+        <div class="peer-sub" style="margin-top:8px">⚠ 此设备无法「信任并本机保存」:{unsupported}</div>
       </div>
     );
   }
 
+  const diagram = (kind: "light" | "trusted") => (
+    <ModeDiagram
+      kind={kind}
+      noOrigin={noOrigin}
+      hasServerBucket={hasServerBucket}
+      // a lightweight window never keeps a direct bucket link
+      deviceDirect={kind === "trusted" && deviceDirect}
+    />
+  );
+
   return (
     <div class="set-block">
-      <div class="set-block-head"><span class="set-block-title">这台设备</span></div>
-      <div class="set-block-desc">
-        选择这台设备怎么拿数据。启用副本即与服务器配对,凭据可在「设备与授权 · 已授权设备」中单独吊销。
-      </div>
+      <div class="set-block-head"><span class="set-block-title">设置这台设备</span></div>
+      <div class="set-block-desc">选择这台设备如何使用工作区,之后可随时修改。</div>
       <div class="theme-grid sync-holds">
         <button
-          class={"theme-card" + (!enabled ? " sel" : "")}
+          class={"theme-card mode-card" + (!enabled ? " sel" : "")}
           aria-pressed={!enabled}
           disabled={busy}
           onClick={() => enabled && disable()}
+          onMouseEnter={(e) => showAside("light", e)}
+          onMouseLeave={hideAside}
+          onFocus={(e) => showAside("light", e)}
+          onBlur={hideAside}
         >
           <span class="tc-check"><Icon name="check" /></span>
           <span class="tc-ico"><Icon name="eye" /></span>
-          <span class="tc-name">窗口</span>
-          <span class="tc-desc">在线读 · 不在本机存 · 秒开</span>
+          <span class="mode-text">
+            <span class="tc-name">轻量模式</span>
+            <span class="tc-desc">仅在线使用</span>
+          </span>
         </button>
         <button
-          class={"theme-card" + (enabled ? " sel" : "")}
+          class={"theme-card mode-card" + (enabled ? " sel" : "")}
           aria-pressed={enabled}
           disabled={busy}
           onClick={() => !enabled && enable()}
+          onMouseEnter={(e) => showAside("trusted", e)}
+          onMouseLeave={hideAside}
+          onFocus={(e) => showAside("trusted", e)}
+          onBlur={hideAside}
         >
           <span class="tc-check"><Icon name="check" /></span>
           <span class="tc-ico"><Icon name="database" /></span>
-          <span class="tc-name">副本</span>
-          <span class="tc-desc">{busy && !enabled ? "启用中…" : "存一份完整数据 · 弱网/离线可读写"}</span>
+          <span class="mode-text">
+            <span class="tc-name">信任此设备</span>
+            <span class="tc-desc">{busy && !enabled ? "启用中…" : "本机保存,支持同步"}</span>
+          </span>
         </button>
       </div>
+      {preview && (
+        <div class="mode-aside" style={{ top: preview.top + "px", left: preview.left + "px" }}>
+          <div class="mp-show">
+            {diagram(preview.kind)}
+            <span class="mp-cap">
+              {preview.kind === "trusted" ? "本机存一份 · 离线也能读写" : "仅在线读写 · 不在本机保存"}
+            </span>
+          </div>
+        </div>
+      )}
       {enabled && (
         <div class="peer-actions" style={{ marginTop: 12 }}>
           <button class="btn btn-secondary" disabled={busy} onClick={() => requestSync()}>
@@ -412,9 +417,6 @@ function OfflineReplica() {
         {enabled && st.node ? ` · 节点 ${st.node}` : ""}
         {enabled && usage ? ` · 本地占用 ${usage} MB` : ""}
       </div>
-      {!noOrigin && enabled && hasBucket && (
-        <div class="peer-sub" style="margin-top:4px">离线时,这台设备也直接读写云端存储桶兜底(详见「工作区同步」)。</div>
-      )}
     </div>
   );
 }
@@ -538,7 +540,7 @@ function SyncStorage() {
   // Remove the bucket backend entirely (server-side, and this device's copy).
   const removeBucket = async (url: string, name: string) => {
     const ok = await confirmDialog({
-      title: "移除存储桶后端",
+      title: "移除存储桶",
       message: `确定移除 ${name}？将停止与该存储桶同步（桶内数据不受影响）。`,
       confirmLabel: "移除",
       danger: true,
@@ -596,7 +598,7 @@ function SyncStorage() {
         )}
         <MenuItem
           icon="trash"
-          label="移除存储桶后端"
+          label="移除存储桶"
           danger
           onClick={() => {
             close();
@@ -609,45 +611,33 @@ function SyncStorage() {
   const hasRows = (noOrigin ? localPeers : serverPeers)?.length ? true : false;
 
   return (
-    <>
-      <div class="set-block-head"><span class="set-block-title">云端存储桶</span></div>
+    <div class="set-block">
+      <div class="set-block-head"><span class="set-block-title">在所有设备间同步</span></div>
       <div class="set-block-desc">
-        一个 S3 兼容存储桶就让你所有设备保持同步——不需要公网服务器,对方离线也能收到,内容端到端加密。
+        连一个云端存储桶,手机、电脑就保持同步——不必开公网服务器,对方离线也收得到,内容端到端加密。
       </div>
 
-      {noOrigin ? (
-        <div class="set-meta">
-          <span class="set-meta-item">
-            <Icon name="cube" cls="ico sm" /> 这台设备就是工作区的家 · 桶是它的云端后端,其他设备扫码加入
-          </span>
-        </div>
-      ) : (
-        // The whole point, as three steps: server owns the bucket; the browser
-        // only mirrors it; a replica can re-enter the secret to talk to it
-        // directly. Step ③ greys out until this device is a replica.
-        <div class="bucket-flow">
-          <span class="bf-step"><span class="bf-num">1</span>配置在服务器</span>
-          <span class="bf-arrow">→</span>
-          <span class="bf-step"><span class="bf-num">2</span>浏览器同步显示</span>
-          <span class="bf-arrow">→</span>
-          <span class={"bf-step" + (enabled ? "" : " dim")}>
-            <span class="bf-num">3</span>副本重输密钥可直连
-          </span>
-        </div>
-      )}
+      <div class="set-meta">
+        <span class="set-meta-item">
+          <Icon name={noOrigin ? "cube" : "globe"} cls="ico sm" />
+          {noOrigin
+            ? "这台设备就是工作区的家,其他设备扫码加入即可一起同步。"
+            : "存储桶连在服务器上,所有设备自动共享;信任本设备后,它离线、在外时也能直接同步。"}
+        </span>
+      </div>
 
       <details class="set-disclosure">
-        <summary>工作原理</summary>
+        <summary>它是怎么工作的</summary>
         <div class="set-disclosure-body">
-          存储桶只当"哑"中转:每台设备把自己的变更加密上传、再拉取别人的,谁都不必同时在线、也不需要公网 IP。
+          存储桶只当"哑"中转:每台设备把自己的变更加密上传、再拉取别人的——谁都不必同时在线,也不需要公网 IP。
           {noOrigin
-            ? "这台设备把整库镜像发布到桶,新设备扫码加入后从桶秒水合。"
-            : "服务器作为发布者把整库镜像写进桶;启用「副本」的设备可重输密钥直连桶,服务器离线/你在外时经桶兜底——不经服务器中转。添加时服务器会自动为本站点开通桶的 CORS;密钥只存在服务器,不会同步到浏览器。"}
+            ? "这台设备把整个工作区发布到桶,新设备扫码加入后从桶秒恢复。"
+            : "密钥只存在服务器,不会同步到浏览器;信任的设备重输一次密钥即可直接同步,离线、在外也不中断。添加时会自动为本站点开通桶的访问权限(CORS)。"}
         </div>
       </details>
 
       {noOrigin && !enabled ? (
-        <div class="peer-sub" style="margin-top:12px">⚠ 请先在上方把「这台设备」设为「副本」,再连接存储桶。</div>
+        <div class="peer-sub" style="margin-top:12px">⚠ 请先在上方把这台设备设为「信任此设备」,再连接存储桶。</div>
       ) : (
         <>
           <div class="peer-actions" style={{ marginTop: 14 }}>
@@ -675,7 +665,7 @@ function SyncStorage() {
                           <div class="peer-main">
                             <div class="peer-url">{name}</div>
                             <div class="peer-tags">
-                              <span class="peer-tag"><Icon name="upload" cls="ico" /> 本设备发布</span>
+                              <span class="peer-tag"><Icon name="upload" cls="ico" /> 本机发布</span>
                             </div>
                             <div class="peer-sub">
                               {p.endpoint ? hostOf(p.endpoint) + " · " : ""}最近同步 {fmtTime(p.lastSyncAt)}
@@ -704,17 +694,17 @@ function SyncStorage() {
                           <div class="peer-main">
                             <div class="peer-url">{name}</div>
                             <div class="peer-tags">
-                              <span class="peer-tag"><Icon name="globe" cls="ico" /> 服务器后端</span>
+                              <span class="peer-tag"><Icon name="globe" cls="ico" /> 服务器同步</span>
                               {enabled ? (
                                 onDevice ? (
-                                  <span class="peer-tag ok"><Icon name="link" cls="ico" /> 本设备已直连</span>
+                                  <span class="peer-tag ok"><Icon name="link" cls="ico" /> 本机已直连</span>
                                 ) : (
                                   <button class="peer-tag act" onClick={() => activateHere(p)}>
-                                    <Icon name="link" cls="ico" /> 在本设备启用直连
+                                    <Icon name="link" cls="ico" /> 让本机直接同步
                                   </button>
                                 )
                               ) : (
-                                <span class="peer-tag muted">开启副本可直连</span>
+                                <span class="peer-tag muted">信任本设备后可直连</span>
                               )}
                             </div>
                             <div class="peer-sub">
@@ -731,7 +721,7 @@ function SyncStorage() {
           </div>
         </>
       )}
-    </>
+    </div>
   );
 }
 
@@ -748,7 +738,7 @@ function ActivateBucketOnDeviceModal({ peer, onDone }: { peer: S3Peer; onDone: (
   const host = peer.endpoint ? hostOf(peer.endpoint) : "";
 
   const submit = async () => {
-    if (!secretKey.trim()) return toast("密钥(secret access key)必填");
+    if (!secretKey.trim()) return toast("密钥必填");
     if (peer.encrypt && !passphrase) return toast("加密口令必填");
     if (!peer.endpoint || !peer.bucket || !peer.accessKeyId) {
       return toast("服务器未提供该桶的完整配置,无法在本设备激活");
@@ -767,7 +757,7 @@ function ActivateBucketOnDeviceModal({ peer, onDone }: { peer: S3Peer; onDone: (
         publish: false,
       };
       await replicaCall("addStorageReplica", config, passphrase);
-      toast("已在本设备启用直连 · 离线/在外经此桶兜底");
+      toast("已让本机直连存储桶 · 离线、在外也能直接同步");
       onDone();
     } catch (e) {
       const msg = (e as Error).message;
@@ -783,7 +773,7 @@ function ActivateBucketOnDeviceModal({ peer, onDone }: { peer: S3Peer; onDone: (
   return (
     <Modal
       title="在本设备启用直连"
-      sub="服务器已配置这个存储桶。为保护密钥,服务器不会把它同步到浏览器——再输入一次密钥,这台设备的副本就能与桶直连(离线/在外兜底)。"
+      sub="服务器已配置这个存储桶。为保护密钥,服务器不会把它同步到浏览器——再输入一次密钥,这台设备就能与桶直接同步(离线、在外也不中断)。"
       footer={
         <>
           <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>取消</button>
@@ -795,12 +785,12 @@ function ActivateBucketOnDeviceModal({ peer, onDone }: { peer: S3Peer; onDone: (
     >
       <div class="activate-id">
         <div class="activate-id-row"><span>存储桶</span><b>{peer.bucket}</b></div>
-        {host && <div class="activate-id-row"><span>Endpoint</span><b>{host}</b></div>}
+        {host && <div class="activate-id-row"><span>服务地址</span><b>{host}</b></div>}
         {peer.accessKeyId && (
-          <div class="activate-id-row"><span>Access Key ID</span><b>{maskKey(peer.accessKeyId)}</b></div>
+          <div class="activate-id-row"><span>访问密钥 ID</span><b>{maskKey(peer.accessKeyId)}</b></div>
         )}
       </div>
-      <div class="field-label">Secret Access Key</div>
+      <div class="field-label">密钥</div>
       <input
         class="text-input"
         type="password"
@@ -1021,7 +1011,7 @@ function AddStorageModal({
 
   const submit = async () => {
     if (!endpoint.trim() || !bucket.trim() || !accessKey.trim() || !secretKey.trim()) {
-      toast("endpoint、bucket、access key、secret key 必填");
+      toast("服务地址、桶名称、访问密钥 ID、密钥都要填");
       return;
     }
     if (encrypt && !passphrase) {
@@ -1056,9 +1046,9 @@ function AddStorageModal({
       toast(
         toServer
           ? alsoReplica
-            ? "已连接存储桶 · 服务器开始发布整库,这台设备也直连兜底"
-            : "已连接存储桶 · 服务器开始发布整库镜像"
-          : "已连接存储桶 · 这台设备开始发布整库镜像",
+            ? "已连接存储桶 · 服务器开始同步到桶,这台设备也直接同步"
+            : "已连接存储桶 · 服务器开始同步到桶"
+          : "已连接存储桶 · 这台设备开始同步到桶",
       );
       onDone();
     } catch (e) {
@@ -1100,7 +1090,7 @@ function AddStorageModal({
       </div>
       <div class="set-hint">{prov.hint}</div>
 
-      <div class="field-label">Endpoint</div>
+      <div class="field-label">服务地址</div>
       <input
         class="text-input"
         autofocus
@@ -1108,37 +1098,32 @@ function AddStorageModal({
         value={endpoint}
         onInput={(e) => setEndpoint((e.target as HTMLInputElement).value)}
       />
-      <div class="field-label">Bucket</div>
+      <div class="field-label">桶名称</div>
       <input
         class="text-input"
         placeholder="my-metahub"
         value={bucket}
         onInput={(e) => setBucket((e.target as HTMLInputElement).value)}
       />
-      <div class="field-label">Region</div>
+      <div class="field-label">访问密钥 ID</div>
       <input
         class="text-input"
-        placeholder={prov.region}
-        value={region}
-        onInput={(e) => setRegion((e.target as HTMLInputElement).value)}
-      />
-      <div class="field-label">Access Key ID</div>
-      <input
-        class="text-input"
+        placeholder="Access Key ID"
         value={accessKey}
         onInput={(e) => setAccessKey((e.target as HTMLInputElement).value)}
       />
-      <div class="field-label">Secret Access Key</div>
+      <div class="field-label">密钥</div>
       <input
         class="text-input"
         type="password"
+        placeholder="Secret Access Key"
         value={secretKey}
         onInput={(e) => setSecretKey((e.target as HTMLInputElement).value)}
       />
 
       <label class="set-check-row" style={{ marginTop: 14 }}>
         <input type="checkbox" checked={encrypt} onChange={(e) => setEncrypt((e.target as HTMLInputElement).checked)} />
-        <span>端到端加密(强烈建议;关闭后段文件为明文,仅限完全信任的存储)</span>
+        <span>端到端加密(强烈建议;关闭后文件以明文存放,仅限完全信任的存储)</span>
       </label>
       {encrypt && (
         <>
@@ -1151,14 +1136,22 @@ function AddStorageModal({
             onInput={(e) => setPassphrase((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
           />
-          <div class="set-hint">这是跨设备共用的一把加密钥——记牢它,换设备/加入已有桶时都要用它解开数据。</div>
+          <div class="set-hint">这是跨设备共用的一把加密钥——记牢它,换设备 / 加入已有桶时都要用它解开数据。</div>
         </>
       )}
 
       <details class="set-disclosure" style={{ marginTop: 14 }}>
         <summary>进阶</summary>
         <div class="set-disclosure-body">
-          <div class="field-label" style={{ marginTop: 0 }}>路径前缀</div>
+          <div class="field-label" style={{ marginTop: 0 }}>区域</div>
+          <input
+            class="text-input"
+            placeholder={prov.region}
+            value={region}
+            onInput={(e) => setRegion((e.target as HTMLInputElement).value)}
+          />
+          <div class="set-hint">大多按服务商默认即可(R2 用 auto)。</div>
+          <div class="field-label">路径前缀</div>
           <input
             class="text-input"
             placeholder="metahub"

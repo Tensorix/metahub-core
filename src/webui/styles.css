@@ -195,8 +195,6 @@
   /* body of the window-mode "高级 · 存储桶同步" disclosure — holds full UI, so it
      keeps normal (not muted/small) text, just adds spacing. */
   .set-advanced-body { margin-top:14px; }
-  /* hairline between the topology and the bucket inside the 工作区同步 block */
-  .set-subdivider { height:1px; background:var(--line); margin:16px 0; }
   /* provider preset chips in the add-bucket modal */
   .provider-grid { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:6px; }
   .provider-chip { padding:6px 12px; border-radius:999px; border:1px solid var(--line-strong); background:var(--surface);
@@ -237,47 +235,61 @@
   .theme-card.sel .tc-check { opacity:1; transform:scale(1); }
   @media (max-width:560px) { .theme-grid { grid-template-columns:1fr; } }
 
-  /* sync: window/replica two-card grid (doc 19 client-topology) */
+  /* sync: 轻量/信任 chooser — two cards; hovering one floats its wiring diagram
+     out in the page's right margin (see .mode-aside). doc 19 client-topology. */
   .sync-holds { grid-template-columns:repeat(2,1fr); }
   .theme-card:disabled { opacity:.55; cursor:not-allowed; }
   .theme-card:disabled:hover { transform:none; border-color:var(--line-strong); }
+  /* compact horizontal card: icon left, name+desc right (grid so the absolute
+     check mark and selected accent keep working as on the theme cards) */
+  .mode-card { display:grid; grid-template-columns:auto 1fr; align-items:center; gap:0 12px; padding:14px 16px; }
+  .mode-card .mode-text { display:flex; flex-direction:column; gap:2px; min-width:0; }
 
-  /* topology as a small tree: 本设备 branches DIRECTLY to each backend it talks
-     to (server / bucket) — never a 本设备→server→桶 chain, which would falsely
-     imply the bucket is relayed through the server. */
-  .sync-tree { display:flex; flex-direction:column; align-items:flex-start; }
-  .sync-node { display:inline-flex; flex-direction:column; justify-content:center; gap:4px; min-width:96px;
-    padding:9px 13px; border:1px solid var(--line-strong); border-radius:var(--radius); background:var(--bg);
-    box-shadow:var(--shadow-sm); animation:sync-pop .34s ease both; }
-  .sync-node-top { display:inline-flex; align-items:center; gap:7px; font-size:var(--fs-sm); font-weight:600;
-    color:var(--fg); white-space:nowrap; }
-  .sync-node-top svg { width:15px; height:15px; color:var(--accent); }
-  .sync-node-role { font-size:var(--fs-xs); color:var(--muted); white-space:nowrap; }
-  .sync-node.self { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset, var(--shadow-sm); }
-  .st-branches { display:flex; flex-direction:column; gap:14px; margin-top:11px; }
-  .st-branch { display:flex; align-items:center; position:relative; padding-left:42px;
-    animation:sync-pop .34s ease both; }
-  .st-branch:nth-child(1) { animation-delay:.06s; }
-  .st-branch:nth-child(2) { animation-delay:.12s; }
-  /* elbow connector hooking up-left toward 本设备 (vertical drop + rounded corner) */
-  .st-branch::before { content:""; position:absolute; left:13px; top:-18px; bottom:50%; width:20px;
-    border-left:2px solid var(--line-strong); border-bottom:2px solid var(--line-strong); border-bottom-left-radius:9px; }
-  /* labeled horizontal segment from the elbow into the backend node; flowing
-     dashes = live transport, static dashed = indirect ("经服务器"). */
-  .st-edge { position:relative; flex:none; width:40px; height:2px; margin-right:10px; border-radius:2px;
-    background-image:linear-gradient(90deg, var(--accent) 0 58%, transparent 58% 100%);
-    background-size:11px 2px; background-repeat:repeat-x; background-position:0 50%;
-    animation:sync-flow .9s linear infinite; }
-  .st-edge.idle { background:none; border-top:2px dashed var(--line-strong); animation:none; }
-  .st-edge::after { content:attr(data-label); position:absolute; top:-9px; left:50%; transform:translateX(-50%);
-    font-size:var(--fs-micro); color:var(--muted); background:var(--surface-2); padding:0 5px;
-    letter-spacing:.04em; white-space:nowrap; }
-  @keyframes sync-pop { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
-  @keyframes sync-flow { to { background-position:11px 50%; } }
+  /* the diagram, floated (fixed) beside the content column in the right margin;
+     JS sets top/left, and only shows it when that margin actually exists. */
+  .mode-aside { position:fixed; z-index:50; width:248px; padding:18px 18px 16px;
+    background:var(--bg); border:1px solid var(--line-strong); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-lg); animation:md-pop .18s ease both; }
+  .mp-show { display:flex; flex-direction:column; align-items:center; gap:13px; }
+  .mp-cap { font-size:var(--fs-xs); color:var(--muted); text-align:center; }
+
+  /* ModeDiagram — 本设备 ─ 服务器 ─ 云桶 chain, accent dashes flowing along the live
+     links; a bottom bracket marks a direct 本设备→云桶 link when configured. */
+  .md-graph { position:relative; display:inline-flex; align-items:center; }
+  .md-graph.has-direct { padding-bottom:20px; }
+  .md-node { display:inline-flex; flex-direction:column; align-items:center; gap:3px; min-width:54px;
+    padding:8px 10px; border:1px solid var(--line-strong); border-radius:var(--radius); background:var(--bg);
+    box-shadow:var(--shadow-sm); animation:md-pop .34s ease both; }
+  .md-node-ico { display:grid; place-items:center; width:24px; height:24px; border-radius:7px; background:var(--surface-2); color:var(--fg); }
+  .md-node-ico svg { width:14px; height:14px; }
+  .md-node-name { font-size:var(--fs-xs); font-weight:600; color:var(--fg); white-space:nowrap; }
+  .md-node-tag { font-size:var(--fs-micro); color:var(--muted); white-space:nowrap; }
+  .md-node.self { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset, var(--shadow-sm); }
+  .md-node.self .md-node-ico { background:var(--accent); color:var(--accent-fg); }
+  /* lightweight keeps nothing here → hollow, dashed self node */
+  .md-graph.light .md-node.self { border-style:dashed; box-shadow:none; }
+  .md-graph.light .md-node.self .md-node-ico { background:var(--surface-2); color:var(--accent); }
+  /* animated wire: accent dashes flowing along the link, arrowheads per direction */
+  .md-wire { position:relative; flex:none; width:38px; height:2px; margin:0 9px; border-radius:2px;
+    background-image:linear-gradient(90deg, var(--accent) 0 55%, transparent 55% 100%);
+    background-size:10px 2px; background-repeat:repeat-x; background-position:0 50%;
+    animation:md-flow .85s linear infinite; }
+  .md-wire::before, .md-wire::after { content:""; position:absolute; top:50%; transform:translateY(-50%);
+    border-top:3px solid transparent; border-bottom:3px solid transparent; }
+  .md-wire.to::after, .md-wire.bi::after { right:-1px; border-left:5px solid var(--accent); }
+  .md-wire.pull::before, .md-wire.bi::before { left:-1px; border-right:5px solid var(--accent); }
+  .md-wire.pull { animation-direction:reverse; }
+  /* direct 本设备→云桶 bypass under the chain (origin: a server sits between them) */
+  .md-direct { position:absolute; left:27px; right:27px; bottom:0; height:11px;
+    border:2px solid var(--accent); border-top:0; border-bottom-left-radius:9px; border-bottom-right-radius:9px; }
+  .md-direct::after { content:attr(data-label); position:absolute; left:50%; bottom:-7px; transform:translateX(-50%);
+    font-size:var(--fs-micro); color:var(--accent); background:var(--surface); padding:0 5px; white-space:nowrap; }
+  @keyframes md-pop { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  @keyframes md-flow { to { background-position:10px 50%; } }
   @media (max-width:560px) {
-    .sync-node { min-width:0; }
-    .st-branch { padding-left:34px; }
-    .st-edge { width:28px; }
+    /* single-column cards; the right-margin diagram never shows on touch */
+    .sync-holds { grid-template-columns:1fr; }
+    .mode-aside { display:none; }
   }
 
   /* sync devices / bucket rows */
@@ -306,17 +318,6 @@
   .peer-tag.muted { background:var(--surface-2); color:var(--muted); }
   .peer-tag.act { cursor:pointer; border:1px dashed var(--accent); transition:filter .12s; }
   .peer-tag.act:hover { filter:brightness(.97); }
-
-  /* the bucket "subject" model strip (origin only): server owns the bucket →
-     browser mirrors it → a replica re-enters the secret to talk to it directly.
-     Step ③ greys out until this device is a replica. */
-  .bucket-flow { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; margin:2px 0 14px; }
-  .bucket-flow .bf-step { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-sm); font-weight:550; color:var(--fg-soft); }
-  .bucket-flow .bf-num { display:grid; place-items:center; width:17px; height:17px; border-radius:50%;
-    background:var(--accent-soft); color:var(--accent); font-size:10px; font-weight:700; }
-  .bucket-flow .bf-arrow { color:var(--line-strong); font-size:13px; }
-  .bucket-flow .bf-step.dim { opacity:.45; }
-  .bucket-flow .bf-step.dim .bf-num { background:var(--surface-2); color:var(--muted); }
 
   /* activate-on-device modal: read-only bucket identity above the secret field */
   .activate-id { display:flex; flex-direction:column; gap:7px; padding:12px 14px; margin-bottom:6px;
