@@ -69,6 +69,9 @@ export interface S3PeerInput {
   prefix?: string;
   encrypt?: boolean;
   passphrase?: string;
+  /** Browser origin(s) the server should open bucket CORS for, so a replica
+   *  behind this server can sync via the bucket directly. Usually [location.origin]. */
+  corsOrigins?: string[];
 }
 export interface PairingCode {
   code: string;

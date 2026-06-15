@@ -22,6 +22,7 @@ import {
   syncPeer,
   addAndSyncStoragePeer,
 } from "./peers.ts";
+import { putBucketCors } from "./storage-s3-bun.ts";
 import type { S3Config } from "./storage.ts";
 
 // Peer pairing + management API. Mirrors the `mh config peer` CLI; the WebUI
@@ -71,6 +72,9 @@ const AddS3PeerReq = z.object({
   prefix: z.string().optional(),
   encrypt: z.boolean().optional(),
   passphrase: z.string().optional(),
+  /** Browser origin(s) to open bucket CORS for, so a replica behind this server
+   *  can hit the bucket directly (away-from-server sync). Usually [location.origin]. */
+  corsOrigins: z.array(z.string()).optional(),
 });
 /** S3 peer view for the WebUI — no secrets (creds/master key stay server-side). */
 const S3PeerSchema = z.object({
@@ -222,8 +226,19 @@ export const peersRoutes: Route[] = [
     request: AddS3PeerReq,
     response: S3PeerSchema,
     handler: handle(async (req, { db }) => {
-      const b = (await req.json()) as z.infer<typeof AddS3PeerReq>;
-      const { url } = await addAndSyncStoragePeer(db, { ...b, publish: true, priority: 100 });
+      const { corsOrigins, ...spec } = (await req.json()) as z.infer<typeof AddS3PeerReq>;
+      const { url, config } = await addAndSyncStoragePeer(db, { ...spec, publish: true, priority: 100 });
+      // Open the bucket's CORS for the caller's browser origin(s) so a replica
+      // behind this server can talk to the bucket directly (away-from-server sync).
+      // Only the server can do this (Bun PutBucketCors). Best-effort: if it doesn't
+      // take, the browser's own first sync surfaces a CORS error with a fix hint.
+      if (corsOrigins?.length) {
+        try {
+          await putBucketCors(config, corsOrigins, { merge: true });
+        } catch {
+          /* non-fatal: bucket is attached; retry via `mh config peer cors` */
+        }
+      }
       const view = s3PeerViews(db).find((v) => v.url === url);
       if (!view) throw new MhError("not_found", `storage peer ${url} missing after add`);
       return view;

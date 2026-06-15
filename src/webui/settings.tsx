@@ -395,6 +395,7 @@ function SyncStorage() {
     openModal(
       <AddStorageModal
         toServer={!noOrigin}
+        alsoReplica={!noOrigin && enabled}
         onDone={() => {
           closeModal();
           reload();
@@ -405,7 +406,11 @@ function SyncStorage() {
   const syncNow = async () => {
     try {
       if (noOrigin) await replicaCall("sync");
-      else await Promise.all((peers ?? []).map((p) => api.syncPeer(p.url)));
+      else {
+        await Promise.all((peers ?? []).map((p) => api.syncPeer(p.url)));
+        // A replica behind the server also peers the bucket directly — flush it too.
+        if (enabled) await replicaCall("sync").catch(() => {});
+      }
       toast("已触发同步");
       reload();
     } catch (e) {
@@ -421,8 +426,13 @@ function SyncStorage() {
       danger: true,
     });
     if (!ok) return;
-    if (noOrigin) await replicaCall("removeStorageReplica", p.url).catch((e) => toast((e as Error).message));
-    else await api.removePeer(p.url).catch((e) => toast((e as Error).message));
+    if (noOrigin) {
+      await replicaCall("removeStorageReplica", p.url).catch((e) => toast((e as Error).message));
+    } else {
+      await api.removePeer(p.url).catch((e) => toast((e as Error).message));
+      // Drop the replica's own copy of the bucket peer too, if it attached one.
+      if (enabled) await replicaCall("removeStorageReplica", p.url).catch(() => {});
+    }
     reload();
   };
 
@@ -446,7 +456,9 @@ function SyncStorage() {
         用 S3 兼容存储桶做云端副本 + 多设备中转——无需公网 IP、对方离线也能同步，上传前端到端加密。
         {noOrigin
           ? "本设备作为发布者，把整库镜像进桶。"
-          : "配置在服务器（数据家）上，由服务器作为发布者把整库镜像进桶。"}
+          : enabled
+            ? "配置在服务器（数据家）上由它作为发布者镜像整库；本机离线副本也会接入同一个桶，在外/服务器离线时经桶兜底同步。"
+            : "配置在服务器（数据家）上，由服务器作为发布者把整库镜像进桶。"}
       </div>
 
       {noOrigin && !enabled ? (
@@ -648,7 +660,15 @@ function OriginQrModal() {
   );
 }
 
-function AddStorageModal({ onDone, toServer }: { onDone: () => void; toServer?: boolean }) {
+function AddStorageModal({
+  onDone,
+  toServer,
+  alsoReplica,
+}: {
+  onDone: () => void;
+  toServer?: boolean;
+  alsoReplica?: boolean;
+}) {
   const [endpoint, setEndpoint] = useState("");
   const [bucket, setBucket] = useState("");
   const [region, setRegion] = useState("auto");
@@ -679,12 +699,26 @@ function AddStorageModal({ onDone, toServer }: { onDone: () => void; toServer?: 
         secretAccessKey: secretKey.trim(),
         encrypt,
       };
-      // origin → attach to the server (data home + publisher); no-origin → this
-      // browser's local replica (which is the home).
-      const r = toServer
-        ? await api.addServerS3Peer({ ...config, passphrase })
-        : await replicaCall<{ url: string }>("addStorageReplica", config, passphrase);
-      toast(`已添加云端副本 ${r.url}`);
+      // origin → attach to the server (data home + publisher), opening bucket CORS
+      // for this browser's origin; no-origin → this browser's local replica (which
+      // is the home). When origin AND this browser keeps an offline replica, ALSO
+      // attach the bucket here as a non-publisher (publish:false) so the replica
+      // can sync via the bucket when the server is unreachable (away-sync). Server
+      // first, so CORS is open before the browser hits the bucket directly.
+      let url: string;
+      if (toServer) {
+        ({ url } = await api.addServerS3Peer({ ...config, passphrase, corsOrigins: [location.origin] }));
+        if (alsoReplica) {
+          ({ url } = await replicaCall<{ url: string }>(
+            "addStorageReplica",
+            { ...config, publish: false },
+            passphrase,
+          ));
+        }
+      } else {
+        ({ url } = await replicaCall<{ url: string }>("addStorageReplica", config, passphrase));
+      }
+      toast(`已添加云端副本 ${url}`);
       onDone();
     } catch (e) {
       const msg = (e as Error).message;

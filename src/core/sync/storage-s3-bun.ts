@@ -109,6 +109,14 @@ function escapeXml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function unescapeXml(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&"); // ampersand last, so it can't re-trigger the others
+}
+
 function managedCorsRule(origins: string[]): string {
   const o = origins.map((x) => `<AllowedOrigin>${escapeXml(x)}</AllowedOrigin>`).join("");
   return (
@@ -133,27 +141,56 @@ export async function getBucketCors(config: S3Config): Promise<string | null> {
 }
 
 /**
- * Allow a browser shell served from `origins` to talk to the bucket directly
- * (GET/PUT/HEAD/DELETE). GET-merge-PUT: PutBucketCors replaces the whole config,
- * so we read what's there, keep every rule that isn't ours, and re-PUT with our
- * managed rule (id=metahub-pwa) refreshed — re-runs don't pile up, user rules
- * survive. Content-MD5 is required by the CORS API (S3 and COS both).
+ * Build the PutBucketCors XML body from the bucket's current config. PutBucketCors
+ * replaces the whole config, so we keep every rule that isn't ours and re-emit our
+ * managed rule (id=metahub-pwa). `merge` decides our rule's origins:
+ *  - false (CLI `peer cors`): SET — exactly `origins` (lets the user shrink/reset).
+ *  - true  (auto-open on bucket-attach): UNION with the managed rule's existing
+ *    origins, so attaching the same bucket from a second shell/origin (a homelab
+ *    server origin alongside the official PWA shell) adds to the allow-list
+ *    instead of clobbering it.
+ * A wildcard `*` collapses the set. Pure (no I/O) so it's unit-testable.
  */
-export async function putBucketCors(config: S3Config, origins: string[]): Promise<void> {
+export function buildCorsXml(existing: string | null, origins: string[], merge: boolean): string {
+  const kept: string[] = [];
+  const prev: string[] = [];
+  if (existing) {
+    for (const rule of existing.match(/<CORSRule>[\s\S]*?<\/CORSRule>/g) ?? []) {
+      if (rule.includes(`<ID>${MANAGED_CORS_RULE_ID}</ID>`)) {
+        if (merge)
+          for (const m of rule.matchAll(/<AllowedOrigin>([\s\S]*?)<\/AllowedOrigin>/g))
+            prev.push(unescapeXml(m[1]!.trim()));
+      } else {
+        kept.push(rule);
+      }
+    }
+  }
+  const merged = [...new Set([...prev, ...origins])];
+  const finalOrigins = merged.includes("*") ? ["*"] : merged;
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<CORSConfiguration>${kept.join("")}${managedCorsRule(finalOrigins)}</CORSConfiguration>`
+  );
+}
+
+/**
+ * Allow a browser shell served from `origins` to talk to the bucket directly
+ * (GET/PUT/HEAD/DELETE) via GET-merge-PUT (see buildCorsXml). `opts.merge` unions
+ * with existing managed origins instead of replacing them — used when a second
+ * origin attaches the same bucket. Content-MD5 is required by the CORS API
+ * (S3 and COS both).
+ */
+export async function putBucketCors(
+  config: S3Config,
+  origins: string[],
+  opts: { merge?: boolean } = {},
+): Promise<void> {
   const clean = origins.map((o) => o.trim()).filter(Boolean);
   if (clean.length === 0) throw new MhError("invalid_input", "putBucketCors: no origins given");
   const { aws, url } = corsEndpoint(config);
 
   const existing = await getBucketCors(config).catch(() => null);
-  const kept: string[] = [];
-  if (existing) {
-    for (const rule of existing.match(/<CORSRule>[\s\S]*?<\/CORSRule>/g) ?? []) {
-      if (!rule.includes(`<ID>${MANAGED_CORS_RULE_ID}</ID>`)) kept.push(rule);
-    }
-  }
-  const xml =
-    `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<CORSConfiguration>${kept.join("")}${managedCorsRule(clean)}</CORSConfiguration>`;
+  const xml = buildCorsXml(existing, clean, opts.merge ?? false);
   const body = new TextEncoder().encode(xml);
   const contentMd5 = new Bun.CryptoHasher("md5").update(body).digest("base64");
 
