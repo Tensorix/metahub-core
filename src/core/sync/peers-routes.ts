@@ -87,6 +87,15 @@ const S3PeerSchema = z.object({
   publish: z.boolean(),
   endpoint: z.string().nullable(),
   bucket: z.string().nullable(),
+  // Non-secret config bits so a browser replica can re-activate this server
+  // bucket for its OWN away-sync by re-entering only the secret (the secret and
+  // the encryption passphrase never leave the server). accessKeyId is the
+  // non-secret half (travels in every request header), so it's safe to surface.
+  region: z.string().nullable(),
+  prefix: z.string().nullable(),
+  accessKeyId: z.string().nullable(),
+  encrypt: z.boolean(),
+  virtualHostedStyle: z.boolean().nullable(),
 });
 const GrantSchema = z.object({
   token: z.string(),
@@ -105,20 +114,17 @@ function need(req: Request, key: string): string {
   return v;
 }
 
-/** Sanitized views of this server's 's3' peers for the WebUI: status + the few
- *  non-secret config bits (endpoint host, bucket, publisher role). Credentials
- *  and the master key never leave the server. */
+/** Sanitized views of this server's 's3' peers for the WebUI: status + the
+ *  non-secret config a replica needs to re-attach the same bucket (endpoint,
+ *  bucket, region, prefix, accessKeyId, encrypt flag, addressing style). The
+ *  secretAccessKey, the encryption passphrase and the master key never leave the
+ *  server — the browser re-enters the secret to activate the bucket on itself.
+ *  endpoint is the full URL (the UI extracts the host for display). */
 function s3PeerViews(db: RouteCtx["db"]): z.infer<typeof S3PeerSchema>[] {
   return listPeers(db)
     .filter((p) => p.kind === "s3" && p.config)
     .map((p) => {
       const c = JSON.parse(p.config!) as S3Config;
-      let host: string | null = null;
-      try {
-        host = new URL(c.endpoint).host;
-      } catch {
-        host = c.endpoint || null;
-      }
       return {
         url: p.url,
         label: p.label,
@@ -127,8 +133,13 @@ function s3PeerViews(db: RouteCtx["db"]): z.infer<typeof S3PeerSchema>[] {
         error: p.last_error,
         lastSyncAt: p.last_sync_at,
         publish: c.publish === true,
-        endpoint: host,
+        endpoint: c.endpoint || null,
         bucket: c.bucket ?? null,
+        region: c.region ?? null,
+        prefix: c.prefix ?? null,
+        accessKeyId: c.accessKeyId ?? null,
+        encrypt: c.encrypt !== false,
+        virtualHostedStyle: c.virtualHostedStyle ?? null,
       };
     });
 }

@@ -177,22 +177,32 @@
   .set-block-title { font-size:14px; font-weight:650; color:var(--fg); letter-spacing:-.005em; }
   .set-block-desc { color:var(--fg-soft); font-size:var(--fs-sm); line-height:1.55; margin-bottom:14px; max-width:56ch; }
   .set-block-desc:last-child { margin-bottom:0; }
-  .set-block-spacer { flex:1 1 auto; }
-  /* secondary header inside a block (e.g. 存储桶后端 under 工作区后端) */
-  .set-subhead { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:4px 0 7px; }
-  .set-subhead-title { font-size:13px; font-weight:600; color:var(--fg); }
-  .set-subhead-title .sh-dim { color:var(--muted); font-weight:500; }
-  /* read-only "this is where the data lives" fact line (origin: the server) */
-  .set-fact { display:flex; align-items:center; gap:9px; font-size:var(--fs-sm); color:var(--fg-soft);
-    padding:10px 12px; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius); margin-bottom:14px; }
-  .set-fact svg { width:16px; height:16px; color:var(--accent); }
-  .set-fact b { color:var(--fg); font-weight:600; }
-  .set-fact .sf-role { margin-left:auto; font-size:var(--fs-xs); color:var(--muted); white-space:nowrap; }
-  /* "挂载到 ▸ 服务器/本设备" — kills the bucket-attach ambiguity at a glance */
-  .mount-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:999px;
-    font-size:var(--fs-xs); font-weight:600; white-space:nowrap; background:var(--accent-soft); color:var(--accent);
-    border:1px solid transparent; }
-  .mount-badge .mb-k { color:var(--muted); font-weight:550; }
+  /* two-fact meta line under a block title (who publishes · where creds live) —
+     answers the questions hiding under "is this bucket for server or browser?" */
+  .set-meta { display:flex; flex-wrap:wrap; gap:8px 16px; margin:0 0 12px; }
+  .set-meta-item { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-sm); color:var(--fg-soft); }
+  .set-meta-item svg { width:14px; height:14px; color:var(--accent); }
+  /* a quiet helper line under a field / chip group */
+  .set-hint { font-size:var(--fs-xs); color:var(--muted); line-height:1.5; margin:3px 0 4px; }
+  /* progressive disclosure ("工作原理" / "进阶") — native details, themed */
+  .set-disclosure { margin:2px 0; }
+  .set-disclosure > summary { display:inline-flex; align-items:center; gap:6px; cursor:pointer; width:fit-content;
+    font-size:var(--fs-sm); font-weight:550; color:var(--accent); list-style:none; }
+  .set-disclosure > summary::-webkit-details-marker { display:none; }
+  .set-disclosure > summary::before { content:"▸"; font-size:.85em; color:var(--muted); transition:transform .15s; }
+  .set-disclosure[open] > summary::before { transform:rotate(90deg); }
+  .set-disclosure-body { font-size:var(--fs-sm); color:var(--fg-soft); line-height:1.6; margin-top:8px; max-width:58ch; }
+  /* body of the window-mode "高级 · 存储桶同步" disclosure — holds full UI, so it
+     keeps normal (not muted/small) text, just adds spacing. */
+  .set-advanced-body { margin-top:14px; }
+  /* hairline between the topology and the bucket inside the 工作区同步 block */
+  .set-subdivider { height:1px; background:var(--line); margin:16px 0; }
+  /* provider preset chips in the add-bucket modal */
+  .provider-grid { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:6px; }
+  .provider-chip { padding:6px 12px; border-radius:999px; border:1px solid var(--line-strong); background:var(--surface);
+    color:var(--fg-soft); font-size:var(--fs-sm); font-weight:550; transition:border-color .12s, background .12s, color .12s; }
+  .provider-chip:hover { border-color:var(--muted); color:var(--fg); }
+  .provider-chip.sel { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
   @media (max-width:560px) { .set-block { padding:16px 15px; } }
   .set-footer { margin-top:40px; padding-top:20px; border-top:1px solid var(--line); display:flex;
     flex-wrap:wrap; justify-content:center; align-items:center; gap:7px; color:var(--muted); font-size:12px; }
@@ -232,33 +242,42 @@
   .theme-card:disabled { opacity:.55; cursor:not-allowed; }
   .theme-card:disabled:hover { transform:none; border-color:var(--line-strong); }
 
-  /* topology as node cards joined by flowing/idle links — answers "how is THIS
-     device wired?" at a glance, and shows which node the bucket hangs off. */
-  .sync-topo { display:flex; align-items:stretch; flex-wrap:wrap; gap:0; }
-  .sync-node { display:flex; flex-direction:column; justify-content:center; gap:5px; min-width:104px;
-    padding:11px 14px; border:1px solid var(--line-strong); border-radius:var(--radius); background:var(--bg);
+  /* topology as a small tree: 本设备 branches DIRECTLY to each backend it talks
+     to (server / bucket) — never a 本设备→server→桶 chain, which would falsely
+     imply the bucket is relayed through the server. */
+  .sync-tree { display:flex; flex-direction:column; align-items:flex-start; }
+  .sync-node { display:inline-flex; flex-direction:column; justify-content:center; gap:4px; min-width:96px;
+    padding:9px 13px; border:1px solid var(--line-strong); border-radius:var(--radius); background:var(--bg);
     box-shadow:var(--shadow-sm); animation:sync-pop .34s ease both; }
   .sync-node-top { display:inline-flex; align-items:center; gap:7px; font-size:var(--fs-sm); font-weight:600;
     color:var(--fg); white-space:nowrap; }
   .sync-node-top svg { width:15px; height:15px; color:var(--accent); }
   .sync-node-role { font-size:var(--fs-xs); color:var(--muted); white-space:nowrap; }
   .sync-node.self { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset, var(--shadow-sm); }
-  .sync-node:nth-child(3) { animation-delay:.07s; }
-  .sync-node:nth-child(5) { animation-delay:.14s; }
-  .sync-link { position:relative; flex:1 1 34px; min-width:30px; height:2px; margin:0 4px; align-self:center;
-    background:var(--line-strong); border-radius:2px; }
-  .sync-link.active { background:transparent;
+  .st-branches { display:flex; flex-direction:column; gap:14px; margin-top:11px; }
+  .st-branch { display:flex; align-items:center; position:relative; padding-left:42px;
+    animation:sync-pop .34s ease both; }
+  .st-branch:nth-child(1) { animation-delay:.06s; }
+  .st-branch:nth-child(2) { animation-delay:.12s; }
+  /* elbow connector hooking up-left toward 本设备 (vertical drop + rounded corner) */
+  .st-branch::before { content:""; position:absolute; left:13px; top:-18px; bottom:50%; width:20px;
+    border-left:2px solid var(--line-strong); border-bottom:2px solid var(--line-strong); border-bottom-left-radius:9px; }
+  /* labeled horizontal segment from the elbow into the backend node; flowing
+     dashes = live transport, static dashed = indirect ("经服务器"). */
+  .st-edge { position:relative; flex:none; width:40px; height:2px; margin-right:10px; border-radius:2px;
     background-image:linear-gradient(90deg, var(--accent) 0 58%, transparent 58% 100%);
     background-size:11px 2px; background-repeat:repeat-x; background-position:0 50%;
     animation:sync-flow .9s linear infinite; }
-  .sync-link.idle { background:none; height:0; border-top:2px dashed var(--line-strong); }
-  .sync-link::after { content:attr(data-label); position:absolute; top:-9px; left:50%; transform:translateX(-50%);
-    font-size:var(--fs-micro); color:var(--muted); background:var(--surface-2); padding:0 5px; letter-spacing:.04em; }
+  .st-edge.idle { background:none; border-top:2px dashed var(--line-strong); animation:none; }
+  .st-edge::after { content:attr(data-label); position:absolute; top:-9px; left:50%; transform:translateX(-50%);
+    font-size:var(--fs-micro); color:var(--muted); background:var(--surface-2); padding:0 5px;
+    letter-spacing:.04em; white-space:nowrap; }
   @keyframes sync-pop { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
   @keyframes sync-flow { to { background-position:11px 50%; } }
   @media (max-width:560px) {
-    .sync-link { flex-basis:20px; min-width:16px; }
-    .sync-node { min-width:0; flex:1 1 38%; }
+    .sync-node { min-width:0; }
+    .st-branch { padding-left:34px; }
+    .st-edge { width:28px; }
   }
 
   /* sync devices / bucket rows */
@@ -278,11 +297,33 @@
   .peer-url { font-weight:600; font-size:var(--fs-body); color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .peer-sub { font-size:12px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .peer-menu { flex:none; padding:6px; }
-  /* per-row pill: where a bucket is mounted / who publishes to it */
-  .peer-tag { flex:none; padding:2px 9px; border-radius:999px; font-size:var(--fs-xs); font-weight:600;
-    white-space:nowrap; background:var(--bg); border:1px solid var(--line-strong); color:var(--fg-soft); }
-  .peer-tag.pub { background:var(--accent-soft); border-color:transparent; color:var(--accent); }
-  .peer-tag.fallback { color:var(--muted); }
+  /* per-bucket state pills: who the bucket is attached to / what this device can do */
+  .peer-tags { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:4px 0 2px; }
+  .peer-tag { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:550; line-height:1;
+    padding:3px 7px; border-radius:999px; background:var(--accent-soft); color:var(--accent); white-space:nowrap; border:0; }
+  .peer-tag .ico { width:12px; height:12px; }
+  .peer-tag.ok { background:color-mix(in srgb, var(--success) 14%, transparent); color:var(--success); }
+  .peer-tag.muted { background:var(--surface-2); color:var(--muted); }
+  .peer-tag.act { cursor:pointer; border:1px dashed var(--accent); transition:filter .12s; }
+  .peer-tag.act:hover { filter:brightness(.97); }
+
+  /* the bucket "subject" model strip (origin only): server owns the bucket →
+     browser mirrors it → a replica re-enters the secret to talk to it directly.
+     Step ③ greys out until this device is a replica. */
+  .bucket-flow { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; margin:2px 0 14px; }
+  .bucket-flow .bf-step { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-sm); font-weight:550; color:var(--fg-soft); }
+  .bucket-flow .bf-num { display:grid; place-items:center; width:17px; height:17px; border-radius:50%;
+    background:var(--accent-soft); color:var(--accent); font-size:10px; font-weight:700; }
+  .bucket-flow .bf-arrow { color:var(--line-strong); font-size:13px; }
+  .bucket-flow .bf-step.dim { opacity:.45; }
+  .bucket-flow .bf-step.dim .bf-num { background:var(--surface-2); color:var(--muted); }
+
+  /* activate-on-device modal: read-only bucket identity above the secret field */
+  .activate-id { display:flex; flex-direction:column; gap:7px; padding:12px 14px; margin-bottom:6px;
+    border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
+  .activate-id-row { display:flex; justify-content:space-between; gap:12px; font-size:var(--fs-sm); }
+  .activate-id-row span { color:var(--muted); }
+  .activate-id-row b { color:var(--fg); font-weight:600; font-family:var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pair-code { font-family:var(--mono); font-size:26px; font-weight:700; letter-spacing:.12em;
     text-align:center; padding:16px; border:1px dashed var(--line); border-radius:var(--radius); background:var(--surface); color:var(--fg); }
 

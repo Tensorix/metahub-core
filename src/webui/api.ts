@@ -59,6 +59,13 @@ export interface S3Peer {
   publish: boolean;
   endpoint: string | null;
   bucket: string | null;
+  // Non-secret config so a replica can re-activate this bucket on itself with
+  // only the secret re-entered (never the secretAccessKey / passphrase).
+  region: string | null;
+  prefix: string | null;
+  accessKeyId: string | null;
+  encrypt: boolean;
+  virtualHostedStyle: boolean | null;
 }
 export interface S3PeerInput {
   endpoint: string;
