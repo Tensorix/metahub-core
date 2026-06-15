@@ -4,7 +4,7 @@
 
 本文把"看起来有 5 种 client 形态"收敛成**一套不打架的心智模型**,并定义桶的**发布者角色**与各形态的**前端交互**。
 
-> 性质:架构 + 决策依据 + 实现记录。**A–H 已落地**(feat/syncv2;见 §8/§9)——发布者快照、配桶定位数据家、窗口/副本、统一同步页、心跳选举、`clientMode()`、副本接桶(homelab 在外兜底)均已实现;仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
+> 性质:架构 + 决策依据 + 实现记录。**A–I 已落地**(feat/syncv2;见 §8/§9)——发布者快照、配桶定位数据家、窗口/副本、统一同步页、心跳选举、`clientMode()`、副本接桶(homelab 在外兜底)、**重输密钥激活本设备直连 + 服务器非密钥配置下发 + 单桶状态 UI(I)**均已实现;仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
 
 ---
 
@@ -126,7 +126,7 @@
 
 **三个把"乱"按住的 UX 决定**:
 1. 能连 server 默认**窗口**(秒开、零下载);"留离线副本"是**显式开关**,绝不自动下全量。
-2. **配桶永远配到"数据家"那个节点**(场景 2/5→server/sidecar;3/4→本机);这是自然结果(你看的就是那个数据家),不是偷偷重路由。
+2. **配桶永远配到"数据家"那个节点**(场景 2/5→server/sidecar;3/4→本机);这是自然结果(你看的就是那个数据家),不是偷偷重路由。origin 下 server 是桶配置真源,浏览器(含窗口模式)只读镜像其桶列表;副本想直连某桶在外兜底,**只需对该桶重输一次密钥**(密钥永不下发,见 §9 I)。
 3. **发布者全自动**(租约),前端基本不露,顶多只读状态一行。
 
 ### 6.2 自适应「同步」页(一个页面,按场景换内容)
@@ -145,7 +145,7 @@
 ```
 
 - 场景 2(窗口):数据家=这台 server;设备切换可见;配桶→server;QR=`server/?token=` 链(扫码即进)。
-- 场景 2(开了离线副本):加桶时副本也以非发布者(`publish:false`)接入同一桶,在外/server 离线时经桶兜底——**自动,非勾选**(见 §9 H)。
+- 场景 2(开了离线副本):新建桶时副本随手以非发布者(`publish:false`)接入(密钥在手);对已在 server 配好的桶,则点该桶的「在本设备启用直连」**只重输密钥**激活(见 §9 H/I)。在外/server 离线时经桶兜底。每个 server 桶一行,徽章标 `服务器后端` / `本设备已直连` / `在本设备启用直连`(窗口模式则 `开启副本可直连`)。
 - 场景 3/4(no-origin):数据家=本设备;设备切换锁死副本;桶=后端;QR=`壳/#enroll=桶` 链 + 对方输口令。
 - 场景 5(Electron):数据家=本应用;配桶→sidecar;加设备走 QR/配对。
 - 场景 1(CLI)等价物:`mh config peer add --s3`(配桶+自动当发布者)、`mh config peer list/sync`。
@@ -157,9 +157,9 @@
 - **副本要 https**(OPFS/SW/WebCrypto);窗口纯在线**裸 HTTP 也行**(见 18:secure context 要求)。
 - 故"手机只想轻量看大数据"需要一台能连的 server;纯桶给不了。这也是 server 除"快"之外的独立价值。
 
-## 8. 实现状态(2026-06,A–H 已落地)
+## 8. 实现状态(2026-06,A–I 已落地)
 
-整套 A–G + H(副本接桶)已实现(`bun test` 全绿、tsc 维持基线、浏览器包 + `build:shell` 干净)。仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
+整套 A–G + H(副本接桶)+ I(重输密钥激活 + 非密钥配置下发 + 单桶状态 UI)已实现(`bun test` 全绿、tsc 维持基线、浏览器包 + `build:shell` 干净)。仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
 
 ## 9. 清单(已完成)
 
@@ -170,11 +170,19 @@
 - [x] **E. origin `?token=` 二维码**:`originEnrollUrl` + `OriginQrModal`(`currentToken()` from api.ts,服务器地址可配 `mh_server_base`)。
 - [x] **F. 发布者协调**:`publisher-lease.ts` —— **改用"心跳选举"而非 CAS/`If-Match`**(每候选写自己的 `publisher/<node>.lease` 心跳 + TTL,读全体取确定性赢家=最高优先级、tie 比 node id;过期即故障转移)。正确性靠内容寻址快照幂等兜底,故无需条件写,**比原计划的 ifMatch 更简单**。优先级:server/CLI=100、浏览器=10。多 server 即 HA。**选举单测**(高优先级胜出 + 过期故障转移)。
 - [x] **G. `clientMode()` 收敛**:`replica.ts` 加 `clientMode(){dataHome,hold}`,新同步页统一读它(保留窗口模式);api/sw/app 的底层 primitives 不变,可后续增量迁移。
-- [x] **H. 副本接桶(homelab 在外兜底)**:origin 模式下「副本 + server + 桶」打通——浏览器离线副本以**非发布者**(`publish:false`)直连同一个桶(推自产增量、拉他人段/快照,**不写整库快照**,发布权仍归 server)。加桶时 server 先配(发布者)并经 `POST /api/peer/s3` 的新入参 `corsOrigins` 为浏览器 origin **best-effort 开 CORS**,副本再 `addStorageReplica({...,publish:false})` 接同一桶;移除/立即同步两侧联动(`settings.tsx`)。`putBucketCors` 加 `merge` 选项(并集,防同桶多 origin 互清),抽纯函数 `buildCorsXml` + 6 个无网络单测。**传输层零改动**:`storage.ts` 的推/拉本就无条件,只快照发布受 `publish` 门控,故 `publish:false` peer 天然就是"参与同步但不镜像全库"。约束:桶凭据永不下发浏览器,故副本只能在用户当场输入凭据+口令时(加桶弹窗)接桶;加桶幂等,重输即兼任"已有桶补接"。
+- [x] **H. 副本接桶(homelab 在外兜底)**:origin 模式下「副本 + server + 桶」打通——浏览器离线副本以**非发布者**(`publish:false`)直连同一个桶(推自产增量、拉他人段/快照,**不写整库快照**,发布权仍归 server)。加桶时 server 先配(发布者)并经 `POST /api/peer/s3` 的新入参 `corsOrigins` 为浏览器 origin **best-effort 开 CORS**,副本再 `addStorageReplica({...,publish:false})` 接同一桶;移除/立即同步两侧联动(`settings.tsx`)。`putBucketCors` 加 `merge` 选项(并集,防同桶多 origin 互清),抽纯函数 `buildCorsXml` + 6 个无网络单测。**传输层零改动**:`storage.ts` 的推/拉本就无条件,只快照发布受 `publish` 门控,故 `publish:false` peer 天然就是"参与同步但不镜像全库"。约束:桶凭据永不下发浏览器,故副本接桶须用户当场输入凭据+口令——新建桶当场即接,已在 server 配好的桶则经 I 的「在本设备启用直连」**只重输密钥**激活(加桶幂等,重输即"补接")。
 
-**与原计划的偏差**:F 用心跳选举替代 `If-Match` 条件写(更简单、零新 client 表面;正确性已被快照幂等保证)。
+- [x] **I. 重输密钥激活本设备直连 + 服务器非密钥配置下发 + 单桶状态 UI**:把 H「副本接桶」从"加桶当场"解耦成"对 server 任一桶随时激活",并把桶的**归属**显式画给用户。
+  - **后端(唯一服务端改动)**:`s3PeerViews`/`S3PeerSchema`(`peers-routes.ts`)新增返回非密钥配置 `region`/`prefix`/`accessKeyId`/`encrypt`/`virtualHostedStyle` + 完整 `endpoint`(原仅 host),**永不返回** `secretAccessKey`/加密口令;`api.ts` `S3Peer` 同步。`accessKeyId` 视为非密钥半边可下发(请求头本就携带),secret 仍只存 server。
+  - **前端**:`SyncStorage` 改为**状态感知统一列表**——origin 按 `url` 合并 server 桶列表(`listServerS3Peers`)与副本本地列表(`listStoragePeers`);每行徽章 `服务器后端` / `本设备已直连`(绿)/ 行内 `在本设备启用直连` / 窗口 `开启副本可直连`;顶部「教学三步条」(配置在服务器 → 浏览器同步显示 → 副本重输密钥可直连,第③步窗口模式置灰)。新增 `ActivateBucketOnDeviceModal`:只读展示桶身份(endpoint/bucket/掩码 accessKeyId)+ **只重输 secret**(加密再输口令)→ 用非密钥视图组装 `S3Config` 调 `addStorageReplica({...,publish:false})`。
+  - **可见性**:取消窗口模式把桶区藏进「高级」折叠 —— server 桶在窗口模式也只读可见(配置真源就是 server);块名 `工作区同步`→`工作区后端`。
+  - **拓扑**:`SyncTopology` 的「本设备⇢桶」边反映**真实直连态**——实线 `直连·兜底` 仅当本设备副本确有已激活桶,否则虚线 `经服务器`;no-origin 恒实线 `直连`。
+  - **no-origin 不打架**:仍单主体(`本设备发布`),不渲染任何 server/归属/教学元素;`ActivateBucketOnDeviceModal`、`服务器后端` 等均 `noOrigin` 门控为 origin-only。
+  - 校验:tsc 维持基线、`bun test`(storage/e2ee/cors)绿。新增 `.peer-tag`/`.bucket-flow`/`.activate-id`(`styles.css`,全走 CSS 变量 + `color-mix`,兼容 dark)。**待测**:真浏览器 e2e(重输密钥激活 → 停 server 经桶兜底)。
+
+**与原计划的偏差**:F 用心跳选举替代 `If-Match` 条件写(更简单、零新 client 表面;正确性已被快照幂等保证)。I 把 H 的"加桶当场才能接桶"约束放宽为"对 server 任一桶随时重输密钥激活",并把 server 桶在浏览器侧只读镜像(原窗口模式藏在折叠里)。
 
 ## 10. 与 16/17/18 的关系 / 开放问题
 
 - 16=浏览器节点与离线副本;17=桶同步内核与快照;18=无 origin 壳与 Enroll。本文是**把它们统一到一个心智**并补"发布者"与"前端形态"两块。
-- 开放:① 真浏览器 e2e + 真桶(R2/MinIO/多 server)实测(含 H 在外兜底:停掉 server 后副本仍经桶双向同步、桶里不出现副本写的快照);② 纯 PWA 全离线时的"无人值班"窗口可接受度;③ 过期 lease 心跳的 GC(目前忽略不删,数量极少);④ 窗口模式下站点(sites)/大 blob 仍走 server(无回归);⑤ G 把 api/sw/app 也迁到 `clientMode()`;⑥ H 在家时副本对桶的冗余轮询优化(可按"server 不可达才走桶"收敛);⑦ 发布者优先级权重暴露(自动判定 vs 用户可调);⑧ B/H 的 server 端点鉴权与 grant 模型。
+- 开放:① 真浏览器 e2e + 真桶(R2/MinIO/多 server)实测(含 H 在外兜底:停掉 server 后副本仍经桶双向同步、桶里不出现副本写的快照);② 纯 PWA 全离线时的"无人值班"窗口可接受度;③ 过期 lease 心跳的 GC(目前忽略不删,数量极少);④ 窗口模式下站点(sites)/大 blob 仍走 server(无回归);⑤ G 把 api/sw/app 也迁到 `clientMode()`;⑥ H 在家时副本对桶的冗余轮询优化(可按"server 不可达才走桶"收敛);⑦ 发布者优先级权重暴露(自动判定 vs 用户可调);⑧ B/H 的 server 端点鉴权与 grant 模型;⑨ I 的 `accessKeyId` 下发取舍(当前视为非密钥半边随只读视图下发,以兑现"只重输 secret";若需更严格,激活弹窗可改为同时重输 `accessKeyId`+`secret`,则不暴露 `accessKeyId`)。
