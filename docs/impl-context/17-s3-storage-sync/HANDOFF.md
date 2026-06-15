@@ -5,17 +5,14 @@
 
 ## 一句话现状
 
-"免公网 IP 的多设备同步" **v1 + Phase A 硬化 + Phase B 移动端成形 + 自动 CORS + 官方壳 CI/CD 均已实现并验证**:用 S3 兼容桶(R2/MinIO/S3/**COS**)作哑 store-and-forward 中转,手机/电脑无需公网 IP、无需同时在线即可经桶双向同步。**已对真实腾讯云 COS 端到端验证(集成测试 + 真浏览器全流程 + `PutBucketCors`)。** Phase A(正确性/成本硬化)见 [design.md §13](./design.md);Phase B(无 origin 静态壳 + 扫码接入 + 离线站点)+ 自动 CORS + 官方壳发布(CF Pages + GitHub Actions)+ homelab(origin + 桶兜底)见 [18-no-origin-shell](../18-no-origin-shell/design.md) §9-11。
+"免公网 IP 的多设备同步" **v1 + Phase A 硬化 + Phase B 移动端成形 + 自动 CORS + 官方壳 CI/CD + 客户端拓扑统一(A–G)均已实现**:用 S3 兼容桶(R2/MinIO/S3/**COS**)作哑 store-and-forward 中转,手机/电脑无需公网 IP、无需同时在线即可经桶双向同步。**已对真实腾讯云 COS 端到端验证(集成测试 + 真浏览器全流程 + `PutBucketCors`)。** Phase A(正确性/成本硬化)见 [design.md §13](./design.md);Phase B(无 origin 静态壳 + 扫码接入 + 离线站点)+ 自动 CORS + 官方壳发布(CF Pages + GitHub Actions)+ homelab(origin + 桶兜底)见 [18-no-origin-shell](../18-no-origin-shell/design.md) §9-11;**客户端拓扑/发布者模型 + 统一同步页 + 心跳选举(A–G)见 [19-client-topology](../19-client-topology/design.md)**(真浏览器 e2e + 真桶多 server 待测)。
 
 ## 分支与提交状态
 
 - 分支:`feat/syncv2`
-- **已提交** `24cb273` ✨ feat(sync): S3 dumb-storage sync — 即 v1 六个任务的全部实现。
-- **未提交**(工作区改动):aws4fetch 切换 = `package.json`、`bun.lock`、`src/webui/data/storage-s3-browser.ts`。待提交信息:
-  ```
-  🔧 refactor(sync): swap hand-rolled browser SigV4 for aws4fetch (0 transitive deps, retires unverified-signing risk)
-  ```
-- ⚠️ **用户手动提交**:不要自己跑 `git commit`(有交互式 hook)。每完成一块停下、给一行提交信息、等用户提交。
+- 已提交里程碑:S3 v1(`24cb273`)→ aws4fetch(`c8b2415`)→ virt-host(`b29bedd`)→ Phase B(`478b305`/`a251d95`)→ 自动 CORS(`0b2bd1f`)→ 壳 CI/CD(`f2e7ae8`)。
+- **未提交**(工作区改动):客户端拓扑 A–G —— `storage.ts`、新增 `publisher-lease.ts`、`peers.ts`、`peers-routes.ts`、`config.ts`、`api.ts`、`db-worker.ts`、`replica.ts`、`settings.tsx`、`styles.css`、`storage.test.ts`、doc 19。
+- ⚠️ **用户手动提交**:不要自己跑 `git commit`(有交互式 hook)。给提交信息、等用户提交。
 
 ## 已完成(v1,6 个任务)
 
@@ -26,9 +23,10 @@
 5. **浏览器**:`storage-s3-browser.ts`(aws4fetch 签名);`db-worker.ts` `runSync` 多 peer 分发 + `addStorageReplica`/`removeStorageReplica`/`listStoragePeers` ops。
 6. **WebUI**:`settings.tsx`「同步存储」区块(需先启用离线副本;CORS 失败提示)。
 
-## 验证状态(更新 2026-06-14:含 Phase A/B)
+## 验证状态(更新 2026-06-15:含 Phase A/B + 客户端拓扑 A–G)
 
-- ✅ `bun test` **325/325**(+2 skip 的真桶集成测试);tsc 维持基线 12;`bun build --target browser`(app/sw/db-worker)成功无 Node-only 泄漏;`bun run build:shell` 产出 2.7MB 静态壳。
+- ✅ `bun test` **325 pass + 3 skip**(共 328;3 skip = 真桶集成测试);tsc 维持基线 12;`bun build --target browser`(app/sw/db-worker)成功无 Node-only 泄漏;`bun run build:shell` 产出 ~2.76MB 静态壳。
+- ✅ **客户端拓扑 A–G**(doc 19):发布者快照(空桶坑回归单测)、`POST /api/peer/s3`、统一同步页(拓扑图 + 窗口/副本 + 模式感知桶 + 两种二维码)、心跳选举(选举单测)、`clientMode()` —— 单测 + tsc + 浏览器包/`build:shell` 全过。**待测**:真浏览器 e2e + 真桶(R2/MinIO/多 server)。
 - ✅ **真实腾讯云 COS 端到端验证**:集成测试 `storage-s3.integration.test.ts` 2/2(往返 + 两节点收敛 + provision);**真浏览器(Playwright,no-origin 静态壳)**:扫码深链 enroll → 从 COS 水合 → 写回桶(双向)→ 离线建站/传文件 → `/sites/<name>/` 经 SW 副本 serve → 他端 Bun 节点拉到内容一致。
 - ✅ **自动 CORS** 对真实 COS 验证:集成测试 `putBucketCors sets/merges/reads…` 通过(`PutBucketCors` 接受 Content-MD5 + XML;GET-merge-PUT 不重复;收尾恢复 `*`)。
 - 验证中**抓到并修了真实兼容性问题**:COS 禁 path-style → 加 virtual-hosted(见 design.md §13);COS 桶名须含 APPID(短名会静默退化 path-style → 404 NoSuchKey)。
@@ -44,15 +42,13 @@
 - **浏览器签名用 aws4fetch**(0 传递依赖、~2.6KB),不手写 SigV4、更不引 AWS SDK。Bun 侧用内置 `Bun.S3Client`。
 - **存储 peer 存浏览器副本的 worker OPFS 库**,故 WebUI 加存储要求先启用离线副本。
 
-## 下一步候选(详见路线图 `~/.claude/plans/rosy-forging-wren.md`)
+## 下一步
 
-按"距最终目标"分层,Tier 1 是 v1 还没完整兑现原始目标的硬缺口:
-- **① 真实桶验证 + 补缺陷**(推荐先做):端到端验证 + 快照 GC(旧快照不回收)+ 推送攒批阈值。
-- **② 手机二维码接入**:电脑显示配置二维码、手机扫 + 输口令,免手敲(补"优雅")。
-- **③ 静态壳托管**:壳发 GitHub/CF Pages,彻底免服务器(同时解决"首次安装仍需服务器")。
-- **④ 只读分享 / 协作 / spaces**:更大愿景,见研究文档落地顺序。
+- **① 真浏览器 e2e + 真桶实测客户端拓扑 A–G**(推荐先做):origin 窗口↔副本切换、配桶走 `/api/peer/s3` 灌满桶、`?token` 二维码扫码即进;两台 server 并发发布(心跳选举 + HA);R2/MinIO 真桶。对 `mh.tensorix.org` + COS 跑。
+- **② 把 api/sw/app 也迁到 `clientMode()`**(doc 19 §10 ⑤,降熵收尾)。
+- **③ 只读分享 / 协作 / spaces**:更大愿景,见研究文档落地顺序。
 
-(用户上一轮在"选哪个方向展开"处暂停去澄清,方向尚未敲定。)
+(A–G 已实现,见 [19-client-topology](../19-client-topology/design.md) §9。)
 
 ## 关键代码位置地图
 
