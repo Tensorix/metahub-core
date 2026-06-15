@@ -1,17 +1,17 @@
 # 交接文档 · S3 哑存储同步
 
 > 用途:新开会话时,先读这一篇即可同步进度与 context。配套读物见末尾「恢复 context 的读物」。
-> 最近更新:2026-06-14。
+> 最近更新:2026-06-15。
 
 ## 一句话现状
 
-"免公网 IP 的多设备同步" **v1 + Phase A 硬化 + Phase B 移动端成形 + 自动 CORS + 官方壳 CI/CD + 客户端拓扑统一(A–G)均已实现**:用 S3 兼容桶(R2/MinIO/S3/**COS**)作哑 store-and-forward 中转,手机/电脑无需公网 IP、无需同时在线即可经桶双向同步。**已对真实腾讯云 COS 端到端验证(集成测试 + 真浏览器全流程 + `PutBucketCors`)。** Phase A(正确性/成本硬化)见 [design.md §13](./design.md);Phase B(无 origin 静态壳 + 扫码接入 + 离线站点)+ 自动 CORS + 官方壳发布(CF Pages + GitHub Actions)+ homelab(origin + 桶兜底)见 [18-no-origin-shell](../18-no-origin-shell/design.md) §9-11;**客户端拓扑/发布者模型 + 统一同步页 + 心跳选举(A–G)见 [19-client-topology](../19-client-topology/design.md)**(真浏览器 e2e + 真桶多 server 待测)。
+"免公网 IP 的多设备同步" **v1 + Phase A 硬化 + Phase B 移动端成形 + 自动 CORS + 官方壳 CI/CD + 客户端拓扑统一(A–G)+ 副本接桶(H)均已实现**:用 S3 兼容桶(R2/MinIO/S3/**COS**)作哑 store-and-forward 中转,手机/电脑无需公网 IP、无需同时在线即可经桶双向同步。**已对真实腾讯云 COS 端到端验证(集成测试 + 真浏览器全流程 + `PutBucketCors`)。** Phase A(正确性/成本硬化)见 [design.md §13](./design.md);Phase B(无 origin 静态壳 + 扫码接入 + 离线站点)+ 自动 CORS + 官方壳发布(CF Pages + GitHub Actions)+ homelab(origin + 桶兜底)见 [18-no-origin-shell](../18-no-origin-shell/design.md) §9-11;**客户端拓扑/发布者模型 + 统一同步页 + 心跳选举(A–G)+ 副本接桶/homelab 在外兜底(H)见 [19-client-topology](../19-client-topology/design.md)**(真浏览器 e2e + 真桶多 server 待测)。
 
 ## 分支与提交状态
 
 - 分支:`feat/syncv2`
-- 已提交里程碑:S3 v1(`24cb273`)→ aws4fetch(`c8b2415`)→ virt-host(`b29bedd`)→ Phase B(`478b305`/`a251d95`)→ 自动 CORS(`0b2bd1f`)→ 壳 CI/CD(`f2e7ae8`)。
-- **未提交**(工作区改动):客户端拓扑 A–G —— `storage.ts`、新增 `publisher-lease.ts`、`peers.ts`、`peers-routes.ts`、`config.ts`、`api.ts`、`db-worker.ts`、`replica.ts`、`settings.tsx`、`styles.css`、`storage.test.ts`、doc 19。
+- 已提交里程碑:S3 v1(`24cb273`)→ aws4fetch(`c8b2415`)→ virt-host(`b29bedd`)→ Phase B(`478b305`/`a251d95`)→ 自动 CORS(`0b2bd1f`)→ 壳 CI/CD(`f2e7ae8`)→ 客户端拓扑 A–G(`d4129fa` + 文档 `34e78c0`)→ 副本接桶 H(`4eb64f5`:`peers-routes.ts`/`storage-s3-bun.ts`/`api.ts`/`settings.tsx` + `storage-s3-cors.test.ts`)。
+- **未提交**(工作区改动):本次文档同步 —— doc 19(§8/§9 加 H、§6 自动接入、§10 合并去重)+ 本 HANDOFF。
 - ⚠️ **用户手动提交**:不要自己跑 `git commit`(有交互式 hook)。给提交信息、等用户提交。
 
 ## 已完成(v1,6 个任务)
@@ -25,8 +25,9 @@
 
 ## 验证状态(更新 2026-06-15:含 Phase A/B + 客户端拓扑 A–G)
 
-- ✅ `bun test` **325 pass + 3 skip**(共 328;3 skip = 真桶集成测试);tsc 维持基线 12;`bun build --target browser`(app/sw/db-worker)成功无 Node-only 泄漏;`bun run build:shell` 产出 ~2.76MB 静态壳。
-- ✅ **客户端拓扑 A–G**(doc 19):发布者快照(空桶坑回归单测)、`POST /api/peer/s3`、统一同步页(拓扑图 + 窗口/副本 + 模式感知桶 + 两种二维码)、心跳选举(选举单测)、`clientMode()` —— 单测 + tsc + 浏览器包/`build:shell` 全过。**待测**:真浏览器 e2e + 真桶(R2/MinIO/多 server)。
+- ✅ `bun test` **331 pass + 3 skip**(共 334;3 skip = 真桶集成测试);tsc 维持基线 12;`bun build --target browser`(app/sw/db-worker)成功无 Node-only 泄漏;`bun run build:shell` 产出 ~2.76MB 静态壳。
+- ✅ **客户端拓扑 A–G**(doc 19):发布者快照(空桶坑回归单测)、`POST /api/peer/s3`、统一同步页(拓扑图 + 窗口/副本 + 模式感知桶 + 两种二维码)、心跳选举(选举单测)、`clientMode()` —— 单测 + tsc + 浏览器包/`build:shell` 全过。
+- ✅ **副本接桶 H**(doc 19 §9 H):origin 模式下浏览器副本以 `publish:false` 直连同一桶(在外/server 离线兜底);加桶时 server 经 `POST /api/peer/s3` 的 `corsOrigins` 为浏览器 origin 开 CORS,副本再接入;`putBucketCors` 加 `merge`(并集)+ 纯函数 `buildCorsXml` 6 单测全过。**传输层零改动**(`publish:false` peer 被原语天然支持)。**待测**:真浏览器 e2e + 真桶(R2/MinIO/多 server),含停 server 模拟在外、桶里不应出现副本写的快照。
 - ✅ **真实腾讯云 COS 端到端验证**:集成测试 `storage-s3.integration.test.ts` 2/2(往返 + 两节点收敛 + provision);**真浏览器(Playwright,no-origin 静态壳)**:扫码深链 enroll → 从 COS 水合 → 写回桶(双向)→ 离线建站/传文件 → `/sites/<name>/` 经 SW 副本 serve → 他端 Bun 节点拉到内容一致。
 - ✅ **自动 CORS** 对真实 COS 验证:集成测试 `putBucketCors sets/merges/reads…` 通过(`PutBucketCors` 接受 Content-MD5 + XML;GET-merge-PUT 不重复;收尾恢复 `*`)。
 - 验证中**抓到并修了真实兼容性问题**:COS 禁 path-style → 加 virtual-hosted(见 design.md §13);COS 桶名须含 APPID(短名会静默退化 path-style → 404 NoSuchKey)。
@@ -44,11 +45,12 @@
 
 ## 下一步
 
-- **① 真浏览器 e2e + 真桶实测客户端拓扑 A–G**(推荐先做):origin 窗口↔副本切换、配桶走 `/api/peer/s3` 灌满桶、`?token` 二维码扫码即进;两台 server 并发发布(心跳选举 + HA);R2/MinIO 真桶。对 `mh.tensorix.org` + COS 跑。
+- **① 真浏览器 e2e + 真桶实测客户端拓扑 A–H**(推荐先做):origin 窗口↔副本切换、配桶走 `/api/peer/s3` 灌满桶、`?token` 二维码扫码即进;**H 在外兜底**:停掉/隔离 server 后,副本仍能经桶 push 自产 edit + pull 他端写入(双向),恢复后 HTTP 与桶两路收敛无重复,且桶里不出现副本写的整库快照;两台 server 并发发布(心跳选举 + HA);R2/MinIO 真桶。对 `mh.tensorix.org` + COS 跑。
 - **② 把 api/sw/app 也迁到 `clientMode()`**(doc 19 §10 ⑤,降熵收尾)。
-- **③ 只读分享 / 协作 / spaces**:更大愿景,见研究文档落地顺序。
+- **③ H 在家时副本对桶的冗余轮询优化**(doc 19 §10 ⑥,可按"server 不可达才走桶"收敛)。
+- **④ 只读分享 / 协作 / spaces**:更大愿景,见研究文档落地顺序。
 
-(A–G 已实现,见 [19-client-topology](../19-client-topology/design.md) §9。)
+(A–H 已实现,见 [19-client-topology](../19-client-topology/design.md) §9。)
 
 ## 关键代码位置地图
 

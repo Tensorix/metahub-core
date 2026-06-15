@@ -4,7 +4,7 @@
 
 本文把"看起来有 5 种 client 形态"收敛成**一套不打架的心智模型**,并定义桶的**发布者角色**与各形态的**前端交互**。
 
-> 性质:架构 + 决策依据 + 实现记录。**A–G 已落地**(feat/syncv2;见 §8/§9)——发布者快照、配桶定位数据家、窗口/副本、统一同步页、心跳选举、`clientMode()` 均已实现;仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
+> 性质:架构 + 决策依据 + 实现记录。**A–H 已落地**(feat/syncv2;见 §8/§9)——发布者快照、配桶定位数据家、窗口/副本、统一同步页、心跳选举、`clientMode()`、副本接桶(homelab 在外兜底)均已实现;仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
 
 ---
 
@@ -135,7 +135,7 @@
 ┌ 同步 ─────────────────────────────────┐
 │ 数据家:  〔这台 server / 本设备 / 本应用〕    │
 │ 这台设备: ◉ 窗口(只看)  ○ 留离线副本        │  ← 仅"能连 server"可切;no-origin 锁副本
-│           [副本] 离线时也走桶 ▢(高级)        │
+│           (副本+server:加桶时自动也接入桶,在外兜底) │  ← 已实现为自动(H),非勾选
 │ 云端副本(桶):                             │
 │   状态:已接入 / 未接入                      │
 │   发布者:server(自动) / 轮值中…(只读)      │
@@ -145,7 +145,7 @@
 ```
 
 - 场景 2(窗口):数据家=这台 server;设备切换可见;配桶→server;QR=`server/?token=` 链(扫码即进)。
-- 场景 2(开了离线副本):多出"离线时也走桶"高级勾选。
+- 场景 2(开了离线副本):加桶时副本也以非发布者(`publish:false`)接入同一桶,在外/server 离线时经桶兜底——**自动,非勾选**(见 §9 H)。
 - 场景 3/4(no-origin):数据家=本设备;设备切换锁死副本;桶=后端;QR=`壳/#enroll=桶` 链 + 对方输口令。
 - 场景 5(Electron):数据家=本应用;配桶→sidecar;加设备走 QR/配对。
 - 场景 1(CLI)等价物:`mh config peer add --s3`(配桶+自动当发布者)、`mh config peer list/sync`。
@@ -157,9 +157,9 @@
 - **副本要 https**(OPFS/SW/WebCrypto);窗口纯在线**裸 HTTP 也行**(见 18:secure context 要求)。
 - 故"手机只想轻量看大数据"需要一台能连的 server;纯桶给不了。这也是 server 除"快"之外的独立价值。
 
-## 8. 实现状态(2026-06,A–G 已落地)
+## 8. 实现状态(2026-06,A–H 已落地)
 
-整套 A–G 已实现(`bun test` 全绿、tsc 维持基线、浏览器包 + `build:shell` 干净)。仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
+整套 A–G + H(副本接桶)已实现(`bun test` 全绿、tsc 维持基线、浏览器包 + `build:shell` 干净)。仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
 
 ## 9. 清单(已完成)
 
@@ -170,15 +170,11 @@
 - [x] **E. origin `?token=` 二维码**:`originEnrollUrl` + `OriginQrModal`(`currentToken()` from api.ts,服务器地址可配 `mh_server_base`)。
 - [x] **F. 发布者协调**:`publisher-lease.ts` —— **改用"心跳选举"而非 CAS/`If-Match`**(每候选写自己的 `publisher/<node>.lease` 心跳 + TTL,读全体取确定性赢家=最高优先级、tie 比 node id;过期即故障转移)。正确性靠内容寻址快照幂等兜底,故无需条件写,**比原计划的 ifMatch 更简单**。优先级:server/CLI=100、浏览器=10。多 server 即 HA。**选举单测**(高优先级胜出 + 过期故障转移)。
 - [x] **G. `clientMode()` 收敛**:`replica.ts` 加 `clientMode(){dataHome,hold}`,新同步页统一读它(保留窗口模式);api/sw/app 的底层 primitives 不变,可后续增量迁移。
+- [x] **H. 副本接桶(homelab 在外兜底)**:origin 模式下「副本 + server + 桶」打通——浏览器离线副本以**非发布者**(`publish:false`)直连同一个桶(推自产增量、拉他人段/快照,**不写整库快照**,发布权仍归 server)。加桶时 server 先配(发布者)并经 `POST /api/peer/s3` 的新入参 `corsOrigins` 为浏览器 origin **best-effort 开 CORS**,副本再 `addStorageReplica({...,publish:false})` 接同一桶;移除/立即同步两侧联动(`settings.tsx`)。`putBucketCors` 加 `merge` 选项(并集,防同桶多 origin 互清),抽纯函数 `buildCorsXml` + 6 个无网络单测。**传输层零改动**:`storage.ts` 的推/拉本就无条件,只快照发布受 `publish` 门控,故 `publish:false` peer 天然就是"参与同步但不镜像全库"。约束:桶凭据永不下发浏览器,故副本只能在用户当场输入凭据+口令时(加桶弹窗)接桶;加桶幂等,重输即兼任"已有桶补接"。
 
 **与原计划的偏差**:F 用心跳选举替代 `If-Match` 条件写(更简单、零新 client 表面;正确性已被快照幂等保证)。
 
 ## 10. 与 16/17/18 的关系 / 开放问题
 
 - 16=浏览器节点与离线副本;17=桶同步内核与快照;18=无 origin 壳与 Enroll。本文是**把它们统一到一个心智**并补"发布者"与"前端形态"两块。
-- 开放:① 真浏览器 e2e + 真桶(R2/MinIO/多 server)实测;② 纯 PWA 全离线时的"无人值班"窗口可接受度;③ 过期 lease 心跳的 GC(目前忽略不删,数量极少);④ 窗口模式下站点(sites)/大 blob 仍走 server(无回归);⑤ G 把 api/sw/app 也迁到 `clientMode()`。
-
-## 10. 与 16/17/18 的关系 / 开放问题
-
-- 16=浏览器节点与离线副本;17=桶同步内核与快照;18=无 origin 壳与 Enroll。本文是**把它们统一到一个心智**并补"发布者"与"前端形态"两块。
-- 开放:① 发布者优先级权重怎么暴露(自动判定 vs 用户可调);② 纯 PWA 全离线时的"无人值班"窗口可接受度;③ B 的 server 端点鉴权与 grant 模型;④ 窗口模式下站点(sites)/大 blob 的读写路径(仍走 server,无回归)。
+- 开放:① 真浏览器 e2e + 真桶(R2/MinIO/多 server)实测(含 H 在外兜底:停掉 server 后副本仍经桶双向同步、桶里不出现副本写的快照);② 纯 PWA 全离线时的"无人值班"窗口可接受度;③ 过期 lease 心跳的 GC(目前忽略不删,数量极少);④ 窗口模式下站点(sites)/大 blob 仍走 server(无回归);⑤ G 把 api/sw/app 也迁到 `clientMode()`;⑥ H 在家时副本对桶的冗余轮询优化(可按"server 不可达才走桶"收敛);⑦ 发布者优先级权重暴露(自动判定 vs 用户可调);⑧ B/H 的 server 端点鉴权与 grant 模型。
