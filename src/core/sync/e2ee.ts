@@ -24,10 +24,13 @@ const SALT_BYTES = 16;
 const IV_BYTES = 12; // AES-GCM standard nonce length
 const KEY_BYTES = 32; // AES-256
 
-// TS 5.7 widens `Uint8Array` to `Uint8Array<ArrayBufferLike>`, but bun-types'
-// WebCrypto signatures want an ArrayBuffer-backed BufferSource. Every array we
-// hand them is ArrayBuffer-backed at runtime, so this boundary cast is sound.
-const bs = (u: Uint8Array): BufferSource => u as unknown as BufferSource;
+// TS 5.7 widens `Uint8Array` to `Uint8Array<ArrayBufferLike>`. Give WebCrypto an
+// explicit ArrayBuffer without naming DOM-only helper types in declaration builds.
+function ab(u: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(u.byteLength);
+  out.set(u);
+  return out.buffer;
+}
 
 /** The bucket's keys/main.json: the master key wrapped by the passphrase KEK. */
 export interface KeyEnvelope {
@@ -65,13 +68,13 @@ export function generateMasterKey(): Uint8Array {
 async function deriveKek(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
   const base = await crypto.subtle.importKey(
     "raw",
-    bs(new TextEncoder().encode(passphrase)),
+    ab(new TextEncoder().encode(passphrase)),
     "PBKDF2",
     false,
     ["deriveKey"],
   );
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: bs(salt), iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: ab(salt), iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     base,
     { name: "AES-GCM", length: 256 },
     false,
@@ -85,7 +88,7 @@ export async function wrapMasterKey(rawKey: Uint8Array, passphrase: string): Pro
   const kek = await deriveKek(passphrase, salt);
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const ct = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, kek, bs(rawKey)),
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv: ab(iv) }, kek, ab(rawKey)),
   );
   const packed = new Uint8Array(iv.length + ct.length);
   packed.set(iv, 0);
@@ -111,7 +114,7 @@ export async function unwrapMasterKey(env: KeyEnvelope, passphrase: string): Pro
   const iv = packed.subarray(0, IV_BYTES);
   const ct = packed.subarray(IV_BYTES);
   try {
-    const raw = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bs(iv) }, kek, bs(ct));
+    const raw = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ab(iv) }, kek, ab(ct));
     return new Uint8Array(raw);
   } catch {
     throw new MhError("auth", "wrong passphrase — could not unwrap the master key");
@@ -121,7 +124,7 @@ export async function unwrapMasterKey(env: KeyEnvelope, passphrase: string): Pro
 // ---- segment encryption --------------------------------------------------------
 
 async function importGcmKey(rawKey: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", bs(rawKey), { name: "AES-GCM" }, false, [
+  return crypto.subtle.importKey("raw", ab(rawKey), { name: "AES-GCM" }, false, [
     "encrypt",
     "decrypt",
   ]);
@@ -132,7 +135,7 @@ export async function encryptBytes(rawKey: Uint8Array, plaintext: Uint8Array): P
   const key = await importGcmKey(rawKey);
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const ct = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, bs(plaintext)),
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv: ab(iv) }, key, ab(plaintext)),
   );
   const out = new Uint8Array(iv.length + ct.length);
   out.set(iv, 0);
@@ -146,7 +149,7 @@ export async function decryptBytes(rawKey: Uint8Array, payload: Uint8Array): Pro
   const iv = payload.subarray(0, IV_BYTES);
   const ct = payload.subarray(IV_BYTES);
   try {
-    const raw = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bs(iv) }, key, bs(ct));
+    const raw = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ab(iv) }, key, ab(ct));
     return new Uint8Array(raw);
   } catch {
     throw new MhError("auth", "could not decrypt — wrong master key or corrupt data");

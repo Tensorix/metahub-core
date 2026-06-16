@@ -28,5 +28,7 @@ export async function serveSite(req: Request, ctx: RouteCtx): Promise<Response |
 
   const file = await getFileForServe(ctx.db, siteId, filePath);
   if (!file) return new Response("not found", { status: 404 });
-  return new Response(file.bytes, { headers: { "content-type": file.contentType } });
+  const body = new Uint8Array(file.bytes.byteLength);
+  body.set(file.bytes);
+  return new Response(body.buffer, { headers: { "content-type": file.contentType } });
 }

@@ -165,16 +165,18 @@ const mainKeyPath = (base: string) => `${base}/keys/main.json`;
 
 // ---- segment codec (Change[] ⇄ bytes) -------------------------------------------
 
-// new Response(bytes) wants BodyInit; TS 5.7's Uint8Array<ArrayBufferLike> isn't
-// seen as one. The bytes are always ArrayBuffer-backed, so the cast is sound.
-const body = (u: Uint8Array): BodyInit => u as unknown as BodyInit;
+function ab(u: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(u.byteLength);
+  out.set(u);
+  return out.buffer;
+}
 
 async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
-  const stream = new Response(body(bytes)).body!.pipeThrough(new CompressionStream("gzip"));
+  const stream = new Response(ab(bytes)).body!.pipeThrough(new CompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
-  const stream = new Response(body(bytes)).body!.pipeThrough(new DecompressionStream("gzip"));
+  const stream = new Response(ab(bytes)).body!.pipeThrough(new DecompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
@@ -206,7 +208,7 @@ function masterKeyOf(config: S3Config): Uint8Array | null {
 async function contentHash(s: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(s) as unknown as BufferSource,
+    ab(new TextEncoder().encode(s)),
   );
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
 }

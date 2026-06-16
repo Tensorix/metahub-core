@@ -196,7 +196,7 @@ export async function putBucketCors(
 
   const res = await aws.fetch(url, {
     method: "PUT",
-    body: body as unknown as BodyInit,
+    body: new Uint8Array(body).buffer,
     headers: { "content-type": "application/xml", "content-md5": contentMd5 },
   });
   if (!res.ok) {
