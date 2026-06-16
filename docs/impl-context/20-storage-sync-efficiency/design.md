@@ -90,6 +90,18 @@ snapshots-first 下,增量收益依然成立:**常态连接的消费者在快照
 
 **论证**:winner 的 HLC 每寄存器单调(LWW 无回退);整库 winners 快照是一致切面;消费者对每个 node 的知识或来自 **gap-free 段前缀**(顺序游标),或来自 **整库快照**(给出该 node 截至某 frontier 的所有 winner)——两者都满足"`maxHLC[N]=F` ⟹ 对每个寄存器 R 都已含其截至 F 的值"。故 `∀n: local[n] ≥ F[n]` ⟹ 每寄存器本地值 ≥ 快照值,ingest 该快照零增量。`.vc` 不可读(旧快照/解密失败)→ 回退整库 GET(安全)。
 
+### 6.3 退避的"进展信号"必须按**新收到**计,不是**传输量**
+
+§5 的空闲退避用 `busy = advanced || pushed>0 || pulled>0` 决定是否复位 cadence。**坑**:`pulled` 原先累计的是段/快照的**原始条数**(`pulled += changes.length`),不是真正新学到的条数。frontier 支配只在本地**完全支配**快照时跳过;只要落后 1 条,puller 就 GET 整库 body 并把整库条数计入 `pulled` → 该轮被误判"忙" → cadence 被摁回 30s。快照虽稀疏(⑤d),但每次 checkpoint 都会让所有 puller 报 `pulled=整库` → 退避在准空闲期被持续顶住。
+
+**修复(在 `ingest` 源头,语义统一全局)**:
+
+- `applyChange` 返回 `{ inserted, winner }`。`inserted` 由 `INSERT OR IGNORE` 的 `.changes>0` 得来,表示 oplog **真的新增了一行**;`winner` 仍门控 materialize。**关键**:对一个**已知且仍是 winner** 的变更,`INSERT OR IGNORE` 空操作后 `MAX(hlc)===c.hlc` 成立 → 旧实现返回 `true`,所以"winner 数"≈整库,不能拿来当进展信号;必须用 `inserted`。
+- `ingest` 累计 `inserted`,返回**新收到条数**(幂等重摄入 = 0)。
+- storage 段循环 / `pullSnapshots`、http `syncWithPeer` 一律 `pulled = ingest(...)`,语义对齐:`SyncResult.pulled` = 新收到条数。`server.ts` 的 `busy` 逻辑**无需改**,自然变正确。
+
+**净效果**:任何"只重读已知数据"的轮次 `pulled=0` → 判闲 → 退避照常放缓(即便将来出现某条每轮重拉路径,退避也兜得住请求数);有真新数据时 `received>0` 仍判忙,传播延迟不变。附带:CLI `restore` 的 "Merged N new changes" 自此名副其实(重复导入→0)。
+
 ## 7. ②b 非反应式消费者的新鲜度:`ensureFresh`
 
 **统一原则**:非反应式消费者(CLI 输出、PWA 服务的 site 页——渲染完不会 revalidate)用 **staleness-bounded 阻塞同步再出**;反应式 WebUI 视图才用 local-first + revalidate。
@@ -133,6 +145,7 @@ snapshots-first 下,增量收益依然成立:**常态连接的消费者在快照
 - **⑤b 不丢**:落后消费者仍整库下载并收敛(支配判断不误跳)。
 - **⑤ 增量**:连接消费者跨多次发布者快照只拉段、零整库重下。
 - **⑤c 保留**:发布后保留窗内段仍在(对照 `retainSegments:0` 的全截断)+ `.snap`/`.vc` 并存。
+- **6.3 进展信号**:puller 仅落后 1 条、上游强制发整库新快照 → `SyncResult.pulled === 1`(非整库),且紧接的空闲轮 `pulled === 0`、请求数在地板(≤4)。钉住"退避不被重读快照顶住"。
 - **④** 当选者收割过期满 TTL 的 lease、保留活 lease。
 
 ## 11. 未做 / 后续
