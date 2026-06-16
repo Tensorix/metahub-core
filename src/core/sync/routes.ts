@@ -11,6 +11,7 @@ import {
 } from "./protocol.ts";
 import { sitesRoutes } from "./sites-routes.ts";
 import { peersRoutes } from "./peers-routes.ts";
+import { blobRoutes } from "./blob-routes.ts";
 import { errorCode, type MhErrorCode } from "../errors.ts";
 
 /** Injected at server startup; handlers reuse the open DB connection. */
@@ -88,4 +89,4 @@ const syncRoutes: Route[] = [
 // CRDT sync protocol routes + read-only site endpoints (sites are authored via
 // the `mh site` CLI) + peer pairing/management endpoints. The WebUI's data API
 // is not part of core: it is injected via startServer's `ui` option.
-export const routes: Route[] = [...syncRoutes, ...sitesRoutes, ...peersRoutes];
+export const routes: Route[] = [...syncRoutes, ...sitesRoutes, ...peersRoutes, ...blobRoutes];

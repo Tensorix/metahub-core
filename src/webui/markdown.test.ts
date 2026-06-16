@@ -22,3 +22,22 @@ test("code spans are opaque to other inline rules", () => {
 test("plain text is escaped", () => {
   expect(inlineToHtml("1 < 2 & 3")).toBe("1 &lt; 2 &amp; 3");
 });
+
+test("renders a doc image as <img class=doc-img>", () => {
+  const html = inlineToHtml("![cat](/blob/abc123def456.png)");
+  expect(html).toContain('<img src="/blob/abc123def456.png"');
+  expect(html).toContain('alt="cat"');
+  expect(html).toContain('class="doc-img"');
+});
+
+test("the image rule does not swallow a following link", () => {
+  const html = inlineToHtml("![a](/blob/x.png) see [docs](http://e.com)");
+  expect(html).toContain("<img");
+  expect(html).toContain('<a href="http://e.com"');
+});
+
+test("a plain link still renders and is not turned into an image", () => {
+  const html = inlineToHtml("[docs](http://x)");
+  expect(html).toContain('<a href="http://x"');
+  expect(html).not.toContain("<img");
+});

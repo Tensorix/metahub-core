@@ -16,11 +16,22 @@ export function blobPath(hash: string): string {
  *  Addressing stays length-agnostic, so legacy full 64-hex refs still resolve. */
 export const BLOB_HASH_HEX = 32;
 
-/** Canonical content hash for new blobs: sha256 of the bytes, truncated. */
-export function blobHash(bytes: Uint8Array): string {
+/** Full sha256 hex of the bytes. */
+export function sha256Hex(bytes: Uint8Array): string {
   const hasher = new Bun.CryptoHasher("sha256");
   hasher.update(bytes);
-  return hasher.digest("hex").slice(0, BLOB_HASH_HEX);
+  return hasher.digest("hex");
+}
+
+/** Canonical content hash for new blobs: sha256 of the bytes, truncated. */
+export function blobHash(bytes: Uint8Array): string {
+  return sha256Hex(bytes).slice(0, BLOB_HASH_HEX);
+}
+
+/** Verify fetched bytes match a content reference of either length (canonical
+ *  32-hex or legacy 64-hex) — the ref is always a prefix of the full sha256. */
+export function verifyBlobBytes(bytes: Uint8Array, hash: string): boolean {
+  return sha256Hex(bytes).slice(0, hash.length) === hash;
 }
 
 /** Store bytes content-addressed under cache/. Returns its hash + path. */
@@ -41,6 +52,15 @@ export async function getBlob(hash: string): Promise<Uint8Array | null> {
   const file = Bun.file(blobPath(hash));
   if (!(await file.exists())) return null;
   return new Uint8Array(await file.arrayBuffer());
+}
+
+/** Store bytes under a GIVEN content hash (not recomputed) — for caching a blob
+ *  fetched from a peer/bucket by its reference, which may be a legacy 64-hex hash
+ *  that putBlob's truncation would not reproduce. Returns the byte length. */
+export async function putBlobAt(hash: string, bytes: Uint8Array): Promise<number> {
+  const path = blobPath(hash);
+  if (!(await Bun.file(path).exists())) await Bun.write(path, bytes);
+  return bytes.byteLength;
 }
 
 /** Remove a blob's bytes from the cache. Returns its size, or 0 if absent. */

@@ -533,6 +533,8 @@
   .editable b, .editable strong { font-weight:700; }
   .editable code { font-family:var(--mono); background:var(--surface-2); padding:1px 5px; border-radius:4px; font-size:.9em; }
   .editable a { color:var(--accent); }
+  /* document images (pasted/dropped → /blob/<hash>); fetched on demand */
+  .editable img.doc-img { max-width:100%; height:auto; border-radius:8px; margin:6px 0; display:block; vertical-align:bottom; }
 
   /* document table (GFM pipe table block) */
   .b-table .doc-table-wrap { flex:1; min-width:0; margin:4px 0; }

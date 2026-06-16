@@ -7,12 +7,15 @@ import { join } from "node:path";
 import { readdirSync, statSync } from "node:fs";
 import type { DbDriver } from "./driver.ts";
 import { cacheDir } from "./paths.ts";
-import { deleteBlob } from "./cache.ts";
+import { deleteBlob, getBlob, putBlobAt, verifyBlobBytes } from "./cache.ts";
+import { listPeers } from "./sync/peers.ts";
+import { type S3Config, getBucketBlob, putBucketBlob } from "./sync/storage.ts";
 import {
   cachedBlobs,
   isClearable,
   forgetBlob,
   recordBlob,
+  touchBlob,
   referencedHashes,
   announcePresence,
   retractPresence,
@@ -20,6 +23,99 @@ import {
 } from "./blobs-core.ts";
 
 export * from "./blobs-core.ts";
+
+// ---- byte transport: on-demand resolution + full-node maintenance -----------
+
+/** Cache bytes fetched for a reference (by the ref's own hash — which may be a
+ *  legacy 64-hex that putBlob's truncation would not reproduce). */
+async function storeFetched(db: DbDriver, hash: string, bytes: Uint8Array): Promise<void> {
+  await putBlobAt(hash, bytes);
+  recordBlob(db, hash, bytes.byteLength, null);
+}
+
+/**
+ * Resolve a blob's bytes by content hash: local cache → each enabled HTTP peer's
+ * `GET /blob/<hash>?local=1` (local=1 keeps the peer from re-resolving, so there
+ * are no fetch loops) → each attached bucket's `blobs/<hash>`. Content-addressed,
+ * so every source is verified by re-hashing and any source is interchangeable.
+ * The first verified hit is cached locally and returned; null when unreachable.
+ */
+export async function resolveBlob(db: DbDriver, hash: string): Promise<Uint8Array | null> {
+  const local = await getBlob(hash);
+  if (local) {
+    touchBlob(db, hash);
+    return local;
+  }
+  for (const peer of listPeers(db)) {
+    if (!peer.enabled) continue;
+    try {
+      if (peer.kind === "s3") {
+        if (!peer.config) continue;
+        const bytes = await getBucketBlob(JSON.parse(peer.config) as S3Config, hash);
+        if (bytes && verifyBlobBytes(bytes, hash)) {
+          await storeFetched(db, hash, bytes);
+          return bytes;
+        }
+      } else {
+        const res = await fetch(new URL(`/blob/${hash}?local=1`, peer.url), {
+          headers: peer.token ? { authorization: `Bearer ${peer.token}` } : {},
+        });
+        if (!res.ok) continue;
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        if (verifyBlobBytes(bytes, hash)) {
+          await storeFetched(db, hash, bytes);
+          return bytes;
+        }
+      }
+    } catch {
+      // unreachable / error — try the next source
+    }
+  }
+  return null;
+}
+
+export interface BlobMaintenanceResult {
+  acquired: number;
+  announced: number;
+  uploaded: number;
+}
+
+/**
+ * Background blob upkeep, run from the sync tick (throttled). Two jobs:
+ *  1. If this node is a full blob library, pull every referenced blob it is
+ *     missing (via resolveBlob) and announce the ones it holds, so other devices
+ *     can clear their copies.
+ *  2. Push every held, referenced blob to each attached bucket (`blobs/<hash>`,
+ *     deduped via If-None-Match) so it stays reachable when this node is offline.
+ */
+export async function blobMaintenance(db: DbDriver): Promise<BlobMaintenanceResult> {
+  let acquired = 0;
+  let announced = 0;
+  let uploaded = 0;
+  const refs = referencedHashes(db);
+  const full = isFullBlobNode(db);
+  const s3peers = listPeers(db).filter((p) => p.enabled && p.kind === "s3" && p.config);
+  if (!full && s3peers.length === 0) return { acquired, announced, uploaded };
+
+  for (const hash of refs) {
+    let bytes = await getBlob(hash);
+    if (!bytes && full) {
+      bytes = await resolveBlob(db, hash);
+      if (bytes) acquired++;
+    }
+    if (full && bytes && announcePresence(db, hash, bytes.byteLength)) announced++;
+    if (bytes) {
+      for (const p of s3peers) {
+        try {
+          if (await putBucketBlob(JSON.parse(p.config!) as S3Config, hash, bytes)) uploaded++;
+        } catch {
+          // bucket unreachable / credentials — skip, retry next round
+        }
+      }
+    }
+  }
+  return { acquired, announced, uploaded };
+}
 
 export interface ClearResult {
   /** Blobs whose bytes were dropped. */
@@ -86,8 +182,7 @@ export function announceLocalCache(db: DbDriver): number {
   reconcileCache(db);
   let n = 0;
   for (const b of cachedBlobs(db)) {
-    announcePresence(db, b.hash, b.size);
-    n++;
+    if (announcePresence(db, b.hash, b.size)) n++;
   }
   return n;
 }

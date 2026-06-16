@@ -279,6 +279,13 @@ export interface BlobPolicyResult {
   policy: BlobPolicyInfo;
   announced: number;
 }
+export interface DocImageUpload {
+  hash: string;
+  size: number;
+  content_type: string;
+  /** Stable served path to embed in the document, e.g. /blob/<hash>.png */
+  url: string;
+}
 
 const httpApi = {
   // databases
@@ -402,6 +409,21 @@ const httpApi = {
       throw new Error((data && (data as any).error) || `${res.status} ${res.statusText}`);
     }
     return data as SiteFile;
+  },
+
+  /** Upload a document image as a content-addressed blob; returns its /blob/<hash>
+   *  URL to embed in markdown. Raw bytes (can't use req(), which JSON-stringifies). */
+  uploadDocImage: async (file: Blob): Promise<DocImageUpload> => {
+    const res = await authFetch("/api/blob", {
+      method: "POST",
+      headers: { "content-type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || (data && (data as any).error)) {
+      throw new Error((data && (data as any).error) || `${res.status} ${res.statusText}`);
+    }
+    return data as DocImageUpload;
   },
 
   // blob cache (Settings storage panel)

@@ -86,17 +86,25 @@ export function isFullBlobNode(db: DbDriver, node?: string): boolean {
 const presenceId = (node: string, hash: string): string => `${node}~${hash}`;
 
 /** Announce that this device durably holds `hash` (call after the bytes are on
- *  disk). Only meaningful from a full-blob device — callers gate on that. */
-export const announcePresence = (db: DbDriver, hash: string, size: number): void =>
+ *  disk). Only meaningful from a full-blob device — callers gate on that.
+ *  Idempotent: a no-op when this device already announced the same hash+size, so
+ *  it is safe to call every maintenance round without spamming the oplog. */
+export const announcePresence = (db: DbDriver, hash: string, size: number): boolean => {
+  const node = getNodeId(db);
+  const id = presenceId(node, hash);
+  const cur = db
+    .query("SELECT present, size, __deleted FROM blob_presence WHERE id = ?")
+    .get(id) as { present: number; size: number | null; __deleted: number } | null;
+  if (cur && cur.present === 1 && cur.__deleted === 0 && cur.size === size) return false;
   withChangeGroup(null, () => {
-    const node = getNodeId(db);
-    const id = presenceId(node, hash);
     emit(db, "blob_presence", id, "node_id", node);
     emit(db, "blob_presence", id, "hash", hash);
     emit(db, "blob_presence", id, "size", size);
     emit(db, "blob_presence", id, "present", 1);
     emit(db, "blob_presence", id, "__deleted", 0);
   });
+  return true;
+};
 
 /** Retract this device's claim on `hash` (e.g. it was removed from a full node). */
 export const retractPresence = (db: DbDriver, hash: string): void => {
@@ -199,6 +207,14 @@ export function cachedBlobs(db: DbDriver): CachedBlob[] {
   return db
     .query("SELECT hash, size, content_type, last_access FROM blob_cache")
     .all() as CachedBlob[];
+}
+
+/** Recorded content type for a cached blob (null when unknown / not cached). */
+export function blobContentType(db: DbDriver, hash: string): string | null {
+  const row = db
+    .query("SELECT content_type FROM blob_cache WHERE hash = ?")
+    .get(hash) as { content_type: string | null } | null;
+  return row?.content_type ?? null;
 }
 
 export function cacheStats(db: DbDriver): CacheStats {

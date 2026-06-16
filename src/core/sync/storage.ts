@@ -214,6 +214,43 @@ function masterKeyOf(config: S3Config): Uint8Array | null {
   return fromB64(config.masterKey);
 }
 
+// ---- blob byte transport (content-addressed objects in the same bucket) --------
+// Doc images / large files never enter the oplog (only their hash does). A node
+// may publish a blob's bytes at <base>/blobs/<hash> (encrypted with the same
+// master key) so other nodes pull them on demand. A separate namespace from
+// oplog/snapshot — never listed during a sync round.
+
+const blobsKey = (base: string, hash: string) => `${base}/blobs/${hash}`;
+
+/** Upload a blob's bytes to the bucket (idempotent via If-None-Match). Returns
+ *  true when actually written, false when the object already existed. */
+export async function putBucketBlob(
+  config: S3Config,
+  hash: string,
+  bytes: Uint8Array,
+): Promise<boolean> {
+  const client = storageClientFor(config);
+  const key = blobsKey(basePrefix(config.prefix), hash);
+  const mk = masterKeyOf(config);
+  const body = mk ? await encryptBytes(mk, bytes) : bytes;
+  try {
+    await client.put(key, body, { ifNoneMatch: true, contentType: "application/octet-stream" });
+    return true;
+  } catch (e) {
+    if (errorCode(e) === "conflict") return false; // already present
+    throw e;
+  }
+}
+
+/** Fetch a blob's bytes from the bucket, or null if absent. */
+export async function getBucketBlob(config: S3Config, hash: string): Promise<Uint8Array | null> {
+  const client = storageClientFor(config);
+  const obj = await client.get(blobsKey(basePrefix(config.prefix), hash));
+  if (!obj) return null;
+  const mk = masterKeyOf(config);
+  return mk ? decryptBytes(mk, obj) : obj;
+}
+
 /** Short content hash (hex) for snapshot keying — runtime-agnostic (WebCrypto). */
 async function contentHash(s: string): Promise<string> {
   const digest = await crypto.subtle.digest(

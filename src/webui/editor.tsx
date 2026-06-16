@@ -520,6 +520,14 @@ export function DocView({
   // page like ChatGPT) and convert it to Markdown; fall back to `text/plain`.
   // Non-text payloads (images, files) fall through to the browser default.
   const onContentPaste = (e: ClipboardEvent, b: Block, el: HTMLElement) => {
+    // A pasted image (e.g. a screenshot) uploads as a blob and drops in as an
+    // image block; only its hash syncs (see blobs.ts), not the bytes.
+    const imgs = imageFilesFrom(e.clipboardData);
+    if (imgs.length) {
+      e.preventDefault();
+      void insertImages(b, el, imgs);
+      return;
+    }
     const html = e.clipboardData?.getData("text/html");
     const raw = html ? htmlToMarkdown(html) : (e.clipboardData?.getData("text/plain") ?? "");
     const text = raw.replace(/\r\n?/g, "\n");
@@ -559,6 +567,55 @@ export function DocView({
     scheduleSave();
     const caret = afterBlock ?? insert[insert.length - 1]!;
     requestAnimationFrame(() => focusBlock(caret.id, !afterBlock));
+  };
+
+  /** Upload pasted image file(s) and drop them in as image block(s) at the caret. */
+  const insertImages = async (b: Block, el: HTMLElement, files: File[]) => {
+    const found = findBlock(blocks, b.id);
+    if (!found) return;
+    const { before, after } = splitEditableAtCaret(el);
+    const mds: string[] = [];
+    for (const f of files) {
+      try {
+        mds.push(docImageMarkdown(f.name, (await api.uploadDocImage(f)).url));
+      } catch (err) {
+        toast(`图片上传失败：${(err as Error).message}`);
+      }
+    }
+    if (!mds.length) return;
+    const insert: Block[] = [...blocksFromBody(mds.join("\n\n"))];
+    const afterBlock = after.trim() !== "" ? makeBlock("p", { content: after }) : null;
+    if (afterBlock) insert.push(afterBlock);
+    if (before.trim() === "" && !found.block.children?.length) {
+      found.parent.splice(found.index, 1, ...insert);
+    } else {
+      b.content = before;
+      found.parent.splice(found.index + 1, 0, ...insert);
+    }
+    bump();
+    scheduleSave();
+    const caret = afterBlock ?? insert[insert.length - 1]!;
+    requestAnimationFrame(() => focusBlock(caret.id, !afterBlock));
+  };
+
+  /** Upload dropped image file(s) and insert them right after block `b`. */
+  const insertImagesAfter = async (b: Block, files: File[]) => {
+    const mds: string[] = [];
+    for (const f of files) {
+      try {
+        mds.push(docImageMarkdown(f.name, (await api.uploadDocImage(f)).url));
+      } catch (err) {
+        toast(`图片上传失败：${(err as Error).message}`);
+      }
+    }
+    if (!mds.length) return;
+    const found = findBlock(blocks, b.id);
+    if (!found) return;
+    const insert = blocksFromBody(mds.join("\n\n"));
+    found.parent.splice(found.index + 1, 0, ...insert);
+    bump();
+    scheduleSave();
+    requestAnimationFrame(() => focusBlock(insert[insert.length - 1]!.id, false));
   };
 
   const slashMatches = slash
@@ -1160,6 +1217,7 @@ export function DocView({
         onAdd={() => insertAfter(b.id)}
         onMenu={(e) => blockMenu(e, b)}
         onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
+        onDropFiles={(files) => void insertImagesAfter(b, files)}
         dragRef={dragRef}
         onReorder={(srcId, where) => {
           const ids = selectedIds;
@@ -1277,8 +1335,35 @@ export function DocView({
   );
 }
 
+/** Image files from a paste (clipboardData.items) or a drop (dataTransfer.files). */
+function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
+  if (!dt) return [];
+  const out: File[] = [];
+  for (let i = 0; i < (dt.items?.length ?? 0); i++) {
+    const it = dt.items[i]!;
+    if (it.kind === "file" && it.type.startsWith("image/")) {
+      const f = it.getAsFile();
+      if (f) out.push(f);
+    }
+  }
+  if (!out.length) {
+    for (let i = 0; i < (dt.files?.length ?? 0); i++) {
+      const f = dt.files[i]!;
+      if (f.type.startsWith("image/")) out.push(f);
+    }
+  }
+  return out;
+}
+
+/** Markdown for an uploaded image; the filename becomes the alt text (so an agent
+ *  reading the doc sees a label, not the hash). Bracket chars stripped to keep the
+ *  `![alt](url)` grammar intact. */
+function docImageMarkdown(name: string, url: string): string {
+  return `![${(name || "image").replace(/[[\]()]/g, "").trim()}](${url})`;
+}
+
 function BlockRow({
-  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, onAdd, onMenu, onToggle, dragRef, onReorder, children,
+  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, onAdd, onMenu, onToggle, onDropFiles, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
@@ -1296,6 +1381,7 @@ function BlockRow({
   onAdd: () => void;
   onMenu: (e: MouseEvent) => void;
   onToggle: () => void;
+  onDropFiles: (files: File[]) => void;
   dragRef: { current: string | null };
   onReorder: (srcId: string, where: "before" | "after") => void;
   children?: ComponentChildren;
@@ -1339,14 +1425,25 @@ function BlockRow({
             e.preventDefault();
             if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
             markBlockDrop(e.currentTarget as HTMLElement, e);
+          } else if (!dragRef.current && Array.from(e.dataTransfer?.items ?? []).some((i) => i.kind === "file")) {
+            // external file drag (image upload) — show a copy affordance
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
           }
         }}
         onDrop={(e) => {
-          if (!dragRef.current) return;
-          e.preventDefault();
-          const where = (e.currentTarget as HTMLElement).classList.contains("drop-after") ? "after" : "before";
-          const src = dragRef.current; dragRef.current = null; clearBlockDrop();
-          onReorder(src, where);
+          if (dragRef.current) {
+            e.preventDefault();
+            const where = (e.currentTarget as HTMLElement).classList.contains("drop-after") ? "after" : "before";
+            const src = dragRef.current; dragRef.current = null; clearBlockDrop();
+            onReorder(src, where);
+            return;
+          }
+          const files = imageFilesFrom(e.dataTransfer);
+          if (files.length) {
+            e.preventDefault();
+            onDropFiles(files);
+          }
         }}
       >
         <div class="gutter">

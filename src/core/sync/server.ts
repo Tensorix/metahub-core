@@ -8,6 +8,7 @@ import { routes, type Route, type RouteCtx } from "./routes.ts";
 import { SYNC_PATH, HEALTH_PATH, RENEW_PATH, PAIR_PATH } from "./protocol.ts";
 import { DEFAULT_TTL_MS, DEFAULT_GRACE_MS } from "./token.ts";
 import { syncPeer, listPeers } from "./peers.ts";
+import { blobMaintenance } from "../blobs.ts";
 import { buildOpenApi } from "./openapi.ts";
 import {
   type AuthConfig,
@@ -144,7 +145,9 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       // credentials — see ./pairing.ts, acceptsSyncToken). /health and
       // /auth/token stay open (the latter must work with an expired token), and
       // the pairing handshake authenticates via its one-time code in-handler.
-      if (url.pathname === SYNC_PATH) {
+      if (url.pathname === SYNC_PATH || url.pathname.startsWith("/blob/")) {
+        // /blob/<hash> byte transport authorizes like /sync: the master token OR
+        // a per-peer grant (a paired peer fetching a blob it only has the hash of).
         if (!acceptsSyncToken(req, url, auth, db)) return unauthorized();
       } else {
         const exempt =
@@ -199,6 +202,15 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
         if (res) return withShim(res, auth);
       }
 
+      // Content-addressed blob bytes at /blob/<hash>[.ext] (document images /
+      // large files). Resolves on demand (local → peers → bucket); raw bytes, no
+      // shim. See blob-routes.ts / blobs.ts.
+      if (req.method === "GET" && url.pathname.startsWith("/blob/")) {
+        const { serveBlob } = await import("./blob-routes.ts");
+        const res = await serveBlob(req, ctx);
+        if (res) return res;
+      }
+
       // Registered API routes.
       const route = allRoutes.find((r) => r.method === req.method && r.path === url.pathname);
       if (route) return route.handler(req, ctx);
@@ -237,6 +249,11 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     const s3Next = new Map<string, { delay: number; due: number }>();
     let lastMaxSeq = -1;
     let ticking = false;
+    // Blob upkeep is metered separately from the oplog poll: a full-blob device
+    // pulls/announces referenced blobs and pushes held blobs to buckets. Runs at
+    // most once a minute regardless of the (possibly faster) sync cadence.
+    const BLOB_MAINT_MS = 60_000;
+    let lastBlobMaint = 0;
     const tick = async (): Promise<void> => {
       const maxSeq =
         (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number | null }).s ?? 0;
@@ -257,6 +274,14 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
           ? syncIntervalMs
           : Math.min((st?.delay ?? syncIntervalMs) * 2, S3_POLL_MAX_MS);
         s3Next.set(p.url, { delay, due: Date.now() + delay });
+      }
+      if (Date.now() - lastBlobMaint >= BLOB_MAINT_MS) {
+        lastBlobMaint = Date.now();
+        try {
+          await blobMaintenance(db);
+        } catch (e) {
+          console.error("[blob] maintenance failed —", e);
+        }
       }
     };
     timer = setInterval(() => {

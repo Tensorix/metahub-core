@@ -25,6 +25,12 @@ export function inlineToHtml(src: string): string {
     return A + (codes.length - 1) + B;
   });
   s = escapeHtml(s);
+  // Images first — `![alt](url)` contains a `[alt](url)` the link rule would
+  // otherwise match. Doc images point at /blob/<hash>.<ext> (see blobs.ts).
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, alt, u) => {
+    const url = String(u).replace(/"/g, "&quot;");
+    return `<img src="${url}" alt="${alt}" class="doc-img" loading="lazy">`;
+  });
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, t, u) => {
     const url = String(u).replace(/"/g, "&quot;");
     return `<a href="${url}" target="_blank" rel="noreferrer">${t}</a>`;
@@ -59,6 +65,11 @@ function walk(node: Node): string {
     }
     if (!(n instanceof HTMLElement)) return;
     const tag = n.tagName.toLowerCase();
+    if (tag === "img") {
+      const src = n.getAttribute("src") || "";
+      out += src ? `![${n.getAttribute("alt") || ""}](${src})` : "";
+      return;
+    }
     const inner = walk(n);
     if (tag === "br") out += "\n";
     else if (tag === "strong" || tag === "b") out += inner ? `**${inner}**` : "";
