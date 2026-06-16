@@ -198,16 +198,31 @@ function materialize(
   }
 }
 
+/** Outcome of applying one change to the oplog. `inserted` reports whether the
+ *  oplog actually gained a NEW row (false when we already had this exact change —
+ *  the INSERT OR IGNORE was a no-op); it is the honest "did we receive new data"
+ *  signal, distinct from `winner` (whether this change now wins its register and
+ *  was materialized). Re-applying a change we already hold still returns
+ *  `winner:true` if it's the current max-HLC, so callers that want progress (not
+ *  re-materialization) must key off `inserted`. */
+export interface ApplyResult {
+  inserted: boolean;
+  winner: boolean;
+}
+
 /**
  * Record a change in the oplog (idempotent) and, if it is the latest write for
  * its register, materialize it. Order-independent: convergence holds regardless
  * of the order changes are applied, because the winner is recomputed as the max
  * HLC over the full oplog for that register.
  */
-export function applyChange(db: DbDriver, c: Change): boolean {
-  db.query(
-    "INSERT OR IGNORE INTO crdt_changes (hlc, node_id, dataset, row_id, col, value, txn) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(c.hlc, c.node_id, c.dataset, c.row_id, c.col, c.value, c.txn ?? null);
+export function applyChange(db: DbDriver, c: Change): ApplyResult {
+  const inserted =
+    db
+      .query(
+        "INSERT OR IGNORE INTO crdt_changes (hlc, node_id, dataset, row_id, col, value, txn) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(c.hlc, c.node_id, c.dataset, c.row_id, c.col, c.value, c.txn ?? null).changes > 0;
 
   const cur = db
     .query(
@@ -215,9 +230,9 @@ export function applyChange(db: DbDriver, c: Change): boolean {
     )
     .get(c.dataset, c.row_id, c.col) as { h: string | null };
 
-  if (cur.h !== c.hlc) return false; // a newer write already wins
+  if (cur.h !== c.hlc) return { inserted, winner: false }; // a newer write already wins
   materialize(db, c.dataset, c.row_id, c.col, c.value);
-  return true;
+  return { inserted, winner: true };
 }
 
 /** Apply a local write: assign a fresh HLC, append to oplog, materialize. */
@@ -256,18 +271,22 @@ export function emitFields(
   return out;
 }
 
-/** Apply remote changes from a sync peer (advances clock, then merges). */
+/** Apply remote changes from a sync peer (advances clock, then merges). Returns
+ *  the number of changes that were NEW to our oplog (rows actually inserted) —
+ *  the honest "received" count. Re-ingesting data we already hold returns 0, so
+ *  this is a reliable progress signal for the auto-sync backoff (a round that
+ *  only re-reads known data must not count as activity). */
 export function ingest(db: DbDriver, changes: Change[]): number {
   const node = getNodeId(db);
-  let applied = 0;
+  let received = 0;
   const tx = db.transaction((cs: Change[]) => {
     for (const c of cs) {
       observeHlc(db, node, c.hlc);
-      if (applyChange(db, c)) applied++;
+      if (applyChange(db, c).inserted) received++;
     }
   });
   tx(changes);
-  return applied;
+  return received;
 }
 
 /** All oplog changes with HLC strictly greater than `since` (test/debug helper). */

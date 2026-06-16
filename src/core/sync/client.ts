@@ -77,8 +77,10 @@ export async function syncWithPeer(
     );
 
   const data = (await res.json()) as SyncResponse;
-  const pulled = data.changes?.length ?? 0;
-  ingest(db, data.changes ?? []);
+  // `pulled` = changes new to our oplog (ingest's return), not the response size,
+  // so re-pulled-but-known data doesn't read as activity (consistent with the
+  // storage path; keeps the auto-sync backoff honest).
+  const pulled = ingest(db, data.changes ?? []);
   setPeer(db, url, { pull_cursor: data.cursor, push_cursor: toPush.cursor });
 
   return { pushed: toPush.changes.length, pulled };

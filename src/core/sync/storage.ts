@@ -666,8 +666,10 @@ export async function syncWithStorage(
         const bytes = await client.get(seg.key);
         if (!bytes) continue;
         const changes = await decodeSegment(bytes, key);
-        ingest(db, changes);
-        pulled += changes.length;
+        // Count only changes NEW to our oplog (ingest's return), not the segment's
+        // raw size — a re-read of already-known data is not sync progress and must
+        // not keep the auto-sync backoff (server.ts) flagged "busy".
+        pulled += ingest(db, changes);
         setStorageCursor(db, peerUrl, remote, seg.key);
       }
     }
@@ -753,8 +755,12 @@ async function pullSnapshots(
     const bytes = await client.get(k);
     if (!bytes) continue;
     const changes = await decodeSegment(bytes, key);
-    ingest(db, changes);
-    pulled += changes.length;
+    // A whole-hub snapshot mostly carries data we already hold; count only the
+    // rows new to our oplog (ingest's return), not the snapshot's full size, so a
+    // puller that's barely behind doesn't report a huge false "pulled" that pins
+    // the auto-sync backoff at full cadence. The frontier advance below still
+    // walks all changes (idempotent max).
+    pulled += ingest(db, changes);
     consumed.add(k);
     for (const c of changes)
       if (!local[c.node_id] || c.hlc > local[c.node_id]!) local[c.node_id] = c.hlc;

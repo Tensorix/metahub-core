@@ -687,3 +687,41 @@ test("④: the elected publisher reaps leases expired past the grace window", as
   expect(leases.some((o) => o.key.includes("deadXXXX"))).toBe(false); // reaped
   expect(leases.some((o) => o.key.includes("nodeLIVE"))).toBe(true); // our fresh heartbeat
 });
+
+// Regression: the auto-sync backoff (server.ts) keys off SyncResult.pulled. A
+// puller barely behind a freshly published whole-hub snapshot must report only
+// the changes NEW to it — not the snapshot's full size — or every checkpoint
+// would falsely flag the round "busy" and pin the bucket poll at full cadence.
+// See plan giggly-finding-donut: pulled = received (ingest), not changes.length.
+test("pulled reflects newly-received changes, not re-read snapshot size", async () => {
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA");
+  const b = makeNode("nodeBBBB");
+  const bucket = new CountingBucket();
+  // Force a fresh whole-hub snapshot on every publish round regardless of delta.
+  const pub = {
+    publish: true, snapshotMinDelta: 1, snapshotDeltaRatio: 0,
+    snapshotMaxIntervalMs: 0, snapshotRetainSegments: 0,
+  } as const;
+
+  const dbId = createDatabase(a, { name: "Tasks" }).id;
+  for (let i = 0; i < 20; i++) createDocument(a, { title: "D" + i, body: "x", database_id: dbId });
+  await syncWithStorage(a, PEER, bucket, cfg(K), pub);
+  await syncWithStorage(b, PEER, bucket, cfg(K)); // B catches up fully
+  const hub = (b.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n;
+  expect(hub).toBeGreaterThan(50); // a non-trivial hub, so an over-count would be large
+
+  // A makes ONE edit and republishes a brand-new whole-hub snapshot.
+  emit(a, "documents", "D0", "body", "edited");
+  await syncWithStorage(a, PEER, bucket, cfg(K), pub);
+
+  const r = await syncWithStorage(b, PEER, bucket, cfg(K)); // B pulls the new snapshot
+  expect(r.pulled).toBe(1); // received exactly 1 new change, not the whole hub (was `hub`)
+
+  // And a genuinely idle re-pull reports zero progress at the bare request floor.
+  bucket.gets.length = 0;
+  bucket.lists.length = 0;
+  const idle = await syncWithStorage(b, PEER, bucket, cfg(K));
+  expect(idle.pulled).toBe(0);
+  expect(bucket.gets.length + bucket.lists.length).toBeLessThanOrEqual(4); // ~2 LIST + 1 GET head
+});
