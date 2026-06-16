@@ -323,7 +323,6 @@ export interface BlobClearResult {
 }
 export interface BlobPolicyResult {
   policy: BlobPolicyInfo;
-  announced: number;
 }
 export interface DocImageUpload {
   hash: string;

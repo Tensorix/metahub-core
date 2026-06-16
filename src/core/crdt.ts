@@ -87,13 +87,10 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
       "__deleted",
     ]),
   },
-  // Blob presence/policy replicate so any device can decide offline whether a
-  // cached blob is safe to clear (see blobs.ts). blob_cache is node-local and
-  // deliberately absent here — it never enters the oplog.
-  blob_presence: {
-    table: "blob_presence",
-    cols: new Set(["node_id", "hash", "present", "size", "__deleted"]),
-  },
+  // blob_policy designates the durable full-blob device(s); it replicates so
+  // every node agrees on the anchor. blob_cache (incl. the local `pending` gate
+  // that governs clearing) is node-local and deliberately absent — clearing is
+  // decided purely locally, never synced. (The old synced blob_presence is gone.)
   blob_policy: {
     table: "blob_policy",
     cols: new Set(["full_nodes", "redundancy", "__deleted"]),

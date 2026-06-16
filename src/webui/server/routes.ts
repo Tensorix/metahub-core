@@ -59,7 +59,6 @@ import {
   setFullNodes,
   setRedundancy,
   setPinned,
-  announceLocalCache,
 } from "../../core/blobs.ts";
 import { getServerConfig } from "../../core/config.ts";
 import pkg from "../../../package.json" with { type: "json" };
@@ -314,7 +313,6 @@ const SetBlobPolicyReq = z.object({
 });
 const SetBlobPolicyResSchema = z.object({
   policy: BlobPolicySchema,
-  announced: z.number().describe("Blobs this device announced as held (if it just became a library)"),
 });
 
 // --- helpers ----------------------------------------------------------------
@@ -782,15 +780,14 @@ export const webuiRoutes: Route[] = [
     method: "POST",
     path: "/api/blob-policy",
     summary:
-      "Set the full blob device(s) and/or redundancy (all|any). When this device becomes a library it announces the blobs it already holds.",
+      "Set the full blob device(s) and/or redundancy (all|any). Anchor designation only — clearing is decided locally per device.",
     request: SetBlobPolicyReq,
     response: SetBlobPolicyResSchema,
     handler: handle(async (req, { db }) => {
       const body = (await req.json()) as { full_nodes?: string[]; redundancy?: "all" | "any" };
       if (body.full_nodes) setFullNodes(db, body.full_nodes);
       if (body.redundancy) setRedundancy(db, body.redundancy);
-      const announced = announceLocalCache(db); // no-op unless this node is now full
-      return { policy: readPolicy(db), announced };
+      return { policy: readPolicy(db) };
     }),
   },
 ];

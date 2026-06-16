@@ -13,7 +13,7 @@ import {
   putFileInline,
   getFileRow,
 } from "./sites-core.ts";
-import { recordBlob, touchBlob, isFullBlobNode, announcePresence } from "./blobs-core.ts";
+import { recordBlob, touchBlob } from "./blobs-core.ts";
 
 // A "site" is a named bucket of files (Supabase-Storage-style) served at
 // /sites/<name>/. Everything is written through emit() so sites replicate over
@@ -46,8 +46,7 @@ export async function putFile(
     // once they exceed the inline limit.
     if (isImageType(contentType) || bytes.byteLength > INLINE_LIMIT) {
       const info = await putBlob(bytes);
-      recordBlob(db, info.hash, info.size, contentType);
-      if (isFullBlobNode(db)) announcePresence(db, info.hash, info.size);
+      recordBlob(db, info.hash, info.size, contentType); // produced here → pending=1
       return writeFileRow(db, siteId, cleanPath, contentType, "blob", info.hash);
     }
   }

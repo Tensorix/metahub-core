@@ -18,8 +18,8 @@ import {
   recordBlob,
   touchBlob,
   referencedHashes,
-  announcePresence,
-  retractPresence,
+  pendingBlobs,
+  setPending,
   isFullBlobNode,
 } from "./blobs-core.ts";
 
@@ -31,7 +31,7 @@ export * from "./blobs-core.ts";
  *  legacy 64-hex that putBlob's truncation would not reproduce). */
 async function storeFetched(db: DbDriver, hash: string, bytes: Uint8Array): Promise<void> {
   await putBlobAt(hash, bytes);
-  recordBlob(db, hash, bytes.byteLength, null);
+  recordBlob(db, hash, bytes.byteLength, null, 0); // acquired cache → already durable at its source
 }
 
 /**
@@ -76,54 +76,63 @@ export async function resolveBlob(db: DbDriver, hash: string): Promise<Uint8Arra
 }
 
 export interface BlobMaintenanceResult {
+  /** Referenced blobs a full library pulled in this round. */
   acquired: number;
-  announced: number;
-  uploaded: number;
+  /** Pending productions confirmed flushed to the bucket(s) this round. */
+  flushed: number;
   /** Blobs auto-evicted to stay under the configured cache quota. */
   evicted: number;
 }
 
 /**
- * Background blob upkeep, run from the sync tick (throttled). Two jobs:
- *  1. If this node is a full blob library, pull every referenced blob it is
- *     missing (via resolveBlob) and announce the ones it holds, so other devices
- *     can clear their copies.
- *  2. Push every held, referenced blob to each attached bucket (`blobs/<hash>`,
- *     deduped via If-None-Match) so it stays reachable when this node is offline.
+ * Background blob upkeep, run from the sync tick (throttled). Cheap in steady
+ * state — it only touches work that actually exists:
+ *  1. A full blob library pulls every referenced blob it is still MISSING
+ *     (resolveBlob); self-limiting, a no-op once caught up.
+ *  2. This node flushes its own PENDING productions to each attached bucket, then
+ *     marks them flushed (→ clearable). It iterates ONLY pending blobs (empty in
+ *     steady state), so — unlike the old design — it does NOT re-read/encrypt/HEAD
+ *     every already-uploaded blob each round.
+ *  3. Evicts to stay under the cache quota.
  */
 export async function blobMaintenance(db: DbDriver): Promise<BlobMaintenanceResult> {
   let acquired = 0;
-  let announced = 0;
-  let uploaded = 0;
-  const refs = referencedHashes(db);
-  const full = isFullBlobNode(db);
+  let flushed = 0;
   const s3peers = listPeers(db).filter((p) => p.enabled && p.kind === "s3" && p.config);
 
-  // Acquisition / announce / bucket-push only apply to a full node or a node with
-  // an attached bucket; a plain consumer skips straight to quota eviction.
-  if (full || s3peers.length > 0) {
-    for (const hash of refs) {
-      let bytes = await getBlob(hash);
-      if (!bytes && full) {
-        bytes = await resolveBlob(db, hash);
-        if (bytes) acquired++;
-      }
-      if (full && bytes && announcePresence(db, hash, bytes.byteLength)) announced++;
-      if (bytes) {
-        for (const p of s3peers) {
-          try {
-            if (await putBucketBlob(JSON.parse(p.config!) as S3Config, hash, bytes)) uploaded++;
-          } catch {
-            // bucket unreachable / credentials — skip, retry next round
-          }
+  // 1) Full library: pull referenced blobs it's missing (O(missing); storeFetched
+  //    records them pending=0 — they're durable at their source).
+  if (isFullBlobNode(db)) {
+    for (const hash of referencedHashes(db)) {
+      if (await getBlob(hash)) continue;
+      if (await resolveBlob(db, hash)) acquired++;
+    }
+  }
+
+  // 2) Flush this node's pending productions to every attached bucket, then clear
+  //    pending. Only iterates the (steady-state-empty) pending worklist.
+  if (s3peers.length > 0) {
+    for (const { hash } of pendingBlobs(db)) {
+      const bytes = await getBlob(hash);
+      if (!bytes) continue; // bytes gone (shouldn't happen — pending is protected)
+      let ok = true;
+      for (const p of s3peers) {
+        try {
+          await putBucketBlob(JSON.parse(p.config!) as S3Config, hash, bytes); // true | already-there
+        } catch {
+          ok = false; // bucket unreachable / credentials — retry next round
         }
+      }
+      if (ok) {
+        setPending(db, hash, false);
+        flushed++;
       }
     }
   }
 
   // Keep the local cache under the configured quota (no-op when disabled / under).
   const { evicted } = await evictToQuota(db, getServerConfig(db).blobCacheQuotaBytes);
-  return { acquired, announced, uploaded, evicted };
+  return { acquired, flushed, evicted };
 }
 
 export interface EvictResult {
@@ -223,32 +232,17 @@ export async function clearCache(db: DbDriver): Promise<ClearResult> {
   return { cleared, freedBytes, skipped };
 }
 
-/** A device just designated as a full library announces presence for every blob
- *  it already holds, so other devices can immediately clear those copies. No-op
- *  unless this node is currently a full-blob device. Returns the count announced. */
-export function announceLocalCache(db: DbDriver): number {
-  if (!isFullBlobNode(db)) return 0;
-  reconcileCache(db);
-  let n = 0;
-  for (const b of cachedBlobs(db)) {
-    if (announcePresence(db, b.hash, b.size)) n++;
-  }
-  return n;
-}
-
 /** Drop bytes for blobs no live site_files / doc image still references (true
- *  garbage, distinct from clearable cache). Retracts our presence claim too. */
+ *  garbage, distinct from clearable cache). */
 export async function gcOrphans(db: DbDriver): Promise<GcResult> {
   reconcileCache(db);
   const referenced = referencedHashes(db);
-  const full = isFullBlobNode(db);
   let removed = 0;
   let freedBytes = 0;
   for (const b of cachedBlobs(db)) {
     if (referenced.has(b.hash)) continue;
     freedBytes += await deleteBlob(b.hash);
     forgetBlob(db, b.hash);
-    if (full) retractPresence(db, b.hash);
     removed++;
   }
   return { removed, freedBytes };

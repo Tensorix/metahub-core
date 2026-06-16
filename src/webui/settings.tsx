@@ -171,8 +171,7 @@ function BlobCacheSettings() {
   const saveFull = async (ids: string[]) => {
     setBusy(true);
     try {
-      const r = await api.setBlobPolicy({ full_nodes: ids });
-      if (r.announced) toast(`已登记本机持有的 ${r.announced} 个文件`);
+      await api.setBlobPolicy({ full_nodes: ids });
       load();
     } catch (e) {
       toast((e as Error).message);

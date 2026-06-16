@@ -2,14 +2,7 @@ import { z } from "zod";
 import { errorResponse, type Route, type RouteCtx } from "./routes.ts";
 import { MhError } from "../errors.ts";
 import { putBlob, getBlob } from "../cache.ts";
-import {
-  recordBlob,
-  touchBlob,
-  isFullBlobNode,
-  announcePresence,
-  resolveBlob,
-  blobContentType,
-} from "../blobs.ts";
+import { recordBlob, touchBlob, resolveBlob, blobContentType } from "../blobs.ts";
 import { inferContentType } from "../sites-core.ts";
 
 // Content-addressed blob byte transport (document images / large files). The
@@ -84,8 +77,7 @@ export const blobRoutes: Route[] = [
         const bytes = new Uint8Array(await req.arrayBuffer());
         if (!bytes.byteLength) throw new MhError("invalid_input", "empty blob body");
         const info = await putBlob(bytes);
-        recordBlob(db, info.hash, info.size, ct);
-        if (isFullBlobNode(db)) announcePresence(db, info.hash, info.size);
+        recordBlob(db, info.hash, info.size, ct); // produced here → pending=1
         const e = ext(ct);
         return Response.json({
           hash: info.hash,

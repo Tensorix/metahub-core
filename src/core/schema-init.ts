@@ -107,14 +107,22 @@ export function migrateDocBlocks(db: DbDriver): void {
 }
 
 /**
- * Add the node-local `pinned` column to a legacy `blob_cache` table. Idempotent —
- * guarded by hasColumn; existing blobs default to 0 (unpinned), so the migration
- * never changes which blobs are clearable. Pinned blobs are skipped by both
- * manual clear and automatic quota eviction.
+ * Bring a legacy `blob_cache` to the current shape and retire the old synced
+ * `blob_presence` table. Idempotent (guarded by hasColumn / IF EXISTS).
+ *  - `pinned`: node-local, never auto-evicted/cleared.
+ *  - `pending`: bytes produced here, not yet flushed to a durable anchor. Existing
+ *    rows can't be classified produced-vs-acquired, so default to 1 (protected);
+ *    the next online flush sets already-in-bucket blobs back to 0, so it self-heals
+ *    and is loss-free. See blobs.ts.
+ *  - `blob_presence` (was synced) is dropped: clearing is now decided locally from
+ *    `pending`. Leftover presence oplog changes are ignored (forward-compat).
  */
 export function migrateBlobCache(db: DbDriver): void {
   if (!hasColumn(db, "blob_cache", "pinned"))
     db.exec("ALTER TABLE blob_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+  if (!hasColumn(db, "blob_cache", "pending"))
+    db.exec("ALTER TABLE blob_cache ADD COLUMN pending INTEGER NOT NULL DEFAULT 1");
+  db.exec("DROP TABLE IF EXISTS blob_presence");
 }
 
 /**

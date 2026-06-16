@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { initSchema } from "./schema-init.ts";
-import { changesAfterSeq, ingest } from "./crdt.ts";
-import { setFullNodes, announcePresence, recordBlob, setPinned, isPinned, cachedBlobs } from "./blobs-core.ts";
+import { recordBlob, setPinned, isPinned, cachedBlobs } from "./blobs-core.ts";
 import { evictToQuota, clearCache } from "./blobs.ts";
 
 // evictToQuota / clearCache touch the on-disk cache (cache.ts → METAHUB_HOME/cache).
@@ -31,11 +30,6 @@ function makeNode(id: string): Database {
   return db;
 }
 
-function syncAll(from: Database, to: Database): void {
-  const { changes } = changesAfterSeq(from, 0);
-  ingest(to, changes);
-}
-
 const hx = (c: string) => c.repeat(32);
 const H1 = hx("a");
 const H2 = hx("b");
@@ -46,17 +40,13 @@ function setAccess(db: Database, hash: string, at: number): void {
   db.query("UPDATE blob_cache SET last_access = ? WHERE hash = ?").run(at, hash);
 }
 
-/** A consumer node whose three blobs are all clearable (the single full node
- *  holds them), each 100 bytes, with H1 oldest → H3 newest. */
+/** A consumer node whose three blobs are all clearable (acquired caches, pending=0),
+ *  each 100 bytes, with H1 oldest → H3 newest. */
 function consumerWithThree(): Database {
-  const full = makeNode("full");
   const phone = makeNode("phone");
-  setFullNodes(full, ["full"]);
-  for (const h of [H1, H2, H3]) announcePresence(full, h, 100);
-  syncAll(full, phone);
-  recordBlob(phone, H1, 100, "image/png");
-  recordBlob(phone, H2, 100, "image/png");
-  recordBlob(phone, H3, 100, "image/png");
+  recordBlob(phone, H1, 100, "image/png", 0);
+  recordBlob(phone, H2, 100, "image/png", 0);
+  recordBlob(phone, H3, 100, "image/png", 0);
   setAccess(phone, H1, 1000); // oldest
   setAccess(phone, H2, 2000);
   setAccess(phone, H3, 3000); // newest
@@ -97,7 +87,7 @@ test("evictToQuota never drops a pinned blob (skips to next LRU)", async () => {
 
 test("evictToQuota never drops a non-clearable (sole-copy) blob", async () => {
   const phone = makeNode("phone");
-  // No full node designated → nothing is clearable.
+  // Produced-but-unflushed (pending) → never clearable, so never evicted.
   recordBlob(phone, H1, 100, "image/png");
   recordBlob(phone, H2, 100, "image/png");
   const r = await evictToQuota(phone, 50); // way over quota, but none clearable

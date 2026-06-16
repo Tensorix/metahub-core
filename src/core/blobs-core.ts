@@ -30,6 +30,8 @@ export interface CachedBlob {
   last_access: number | null;
   /** Node-local pin: 1 = never auto-evicted / cleared (does not sync). */
   pinned: number;
+  /** 1 = bytes produced here, not yet flushed to a durable anchor — protected. */
+  pending: number;
 }
 
 export interface CacheStats {
@@ -83,64 +85,22 @@ export function isFullBlobNode(db: DbDriver, node?: string): boolean {
   return readPolicy(db).fullNodes.includes(id);
 }
 
-// ---- presence ---------------------------------------------------------------
-
-const presenceId = (node: string, hash: string): string => `${node}~${hash}`;
-
-/** Announce that this device durably holds `hash` (call after the bytes are on
- *  disk). Only meaningful from a full-blob device — callers gate on that.
- *  Idempotent: a no-op when this device already announced the same hash+size, so
- *  it is safe to call every maintenance round without spamming the oplog. */
-export const announcePresence = (db: DbDriver, hash: string, size: number): boolean => {
-  const node = getNodeId(db);
-  const id = presenceId(node, hash);
-  const cur = db
-    .query("SELECT present, size, __deleted FROM blob_presence WHERE id = ?")
-    .get(id) as { present: number; size: number | null; __deleted: number } | null;
-  if (cur && cur.present === 1 && cur.__deleted === 0 && cur.size === size) return false;
-  withChangeGroup(null, () => {
-    emit(db, "blob_presence", id, "node_id", node);
-    emit(db, "blob_presence", id, "hash", hash);
-    emit(db, "blob_presence", id, "size", size);
-    emit(db, "blob_presence", id, "present", 1);
-    emit(db, "blob_presence", id, "__deleted", 0);
-  });
-  return true;
-};
-
-/** Retract this device's claim on `hash` (e.g. it was removed from a full node). */
-export const retractPresence = (db: DbDriver, hash: string): void => {
-  const node = getNodeId(db);
-  emit(db, "blob_presence", presenceId(node, hash), "present", 0);
-};
-
-/** Node ids that currently announce holding `hash`. */
-export function holders(db: DbDriver, hash: string): string[] {
-  const rows = db
-    .query(
-      "SELECT node_id FROM blob_presence WHERE hash = ? AND present = 1 AND __deleted = 0",
-    )
-    .all(hash) as { node_id: string | null }[];
-  return rows.map((r) => r.node_id).filter((n): n is string => !!n);
-}
-
 // ---- clear judgment ---------------------------------------------------------
 
 /**
- * Whether this device may safely drop `hash`'s local bytes. True only when the
- * designated full set durably holds it (per `redundancy`), so it can be
- * re-fetched later. A full node keeps everything; with no full node designated
- * nothing is clearable (no re-fetch anchor).
+ * Whether this device may safely drop `hash`'s local bytes — a purely LOCAL,
+ * offline decision. Clearable = this node is not a full-blob library AND the blob
+ * is not a `pending` production (bytes produced here, not yet flushed to a durable
+ * anchor). Everything else — flushed productions and acquired caches — is
+ * re-fetchable, so dropping it is loss-free. This replaces the old synced
+ * blob_presence lookup; see docs/impl-context/22-blob-sync.
  */
 export function isClearable(db: DbDriver, hash: string): boolean {
-  const me = getNodeId(db);
-  const { fullNodes, redundancy } = readPolicy(db);
-  if (fullNodes.length === 0) return false;
-  if (fullNodes.includes(me)) return false;
-  const held = new Set(holders(db, hash));
-  return redundancy === "all"
-    ? fullNodes.every((n) => held.has(n))
-    : fullNodes.some((n) => held.has(n));
+  if (isFullBlobNode(db)) return false; // a full library keeps everything
+  const row = db
+    .query("SELECT pending FROM blob_cache WHERE hash = ?")
+    .get(hash) as { pending: number } | null;
+  return !!row && row.pending === 0;
 }
 
 // ---- reference index --------------------------------------------------------
@@ -180,20 +140,31 @@ export function referencedHashes(db: DbDriver): Set<string> {
 // ---- node-local cache ledger (blob_cache) -----------------------------------
 
 /** Record/refresh a blob's ledger row after its bytes land in the cache. */
+/** Record/refresh a cached blob. `pending`: 1 for bytes PRODUCED here (must flush
+ *  to an anchor before they're clearable), 0 for an ACQUIRED cache copy (already
+ *  durable at its source). */
 export function recordBlob(
   db: DbDriver,
   hash: string,
   size: number,
   contentType?: string | null,
+  pending = 1,
 ): void {
   db.query(
-    `INSERT INTO blob_cache (hash, size, content_type, last_access)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO blob_cache (hash, size, content_type, last_access, pending)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(hash) DO UPDATE SET
        size = excluded.size,
        content_type = coalesce(excluded.content_type, blob_cache.content_type),
-       last_access = excluded.last_access`,
-  ).run(hash, size, contentType ?? null, Date.now());
+       last_access = excluded.last_access,
+       pending = excluded.pending`,
+  ).run(hash, size, contentType ?? null, Date.now(), pending ? 1 : 0);
+}
+
+/** Mark a blob flushed (0) or pending (1). Flush is set after the bytes are
+ *  confirmed at the durable anchor (see blobs.ts blobMaintenance). */
+export function setPending(db: DbDriver, hash: string, pending: boolean): void {
+  db.query("UPDATE blob_cache SET pending = ? WHERE hash = ?").run(pending ? 1 : 0, hash);
 }
 
 /** Bump last_access on a cache hit (LRU signal for stats/future eviction). */
@@ -207,8 +178,16 @@ export function forgetBlob(db: DbDriver, hash: string): void {
 
 export function cachedBlobs(db: DbDriver): CachedBlob[] {
   return db
-    .query("SELECT hash, size, content_type, last_access, pinned FROM blob_cache")
+    .query("SELECT hash, size, content_type, last_access, pinned, pending FROM blob_cache")
     .all() as CachedBlob[];
+}
+
+/** Blobs produced here that are not yet flushed to a durable anchor (the upload
+ *  worklist; steady state is empty). */
+export function pendingBlobs(db: DbDriver): { hash: string; size: number }[] {
+  return db
+    .query("SELECT hash, size FROM blob_cache WHERE pending = 1")
+    .all() as { hash: string; size: number }[];
 }
 
 /** Pin/unpin a cached blob (node-local; never synced). Returns true when a row

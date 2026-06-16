@@ -1,6 +1,5 @@
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
-import { getNodeId } from "../../core/node.ts";
 import {
   readPolicy,
   setFullNodes,
@@ -12,7 +11,6 @@ import {
   clearCache,
   gcOrphans,
   reconcileCache,
-  announceLocalCache,
   type Redundancy,
   type KnownNode,
 } from "../../core/blobs.ts";
@@ -116,12 +114,7 @@ async function fullDeviceDispatch(db: Db, target: string, args: Record<string, a
         "mh cache full-device add --node <id>",
       );
       setFullNodes(db, [...fullNodes, node]);
-      // If this very device just became a library, announce what it already holds
-      // so other devices can immediately clear those blobs.
-      const announced = node === getNodeId(db) ? announceLocalCache(db) : 0;
-      print({ fullNodes: readPolicy(db).fullNodes, announced }, () =>
-        `added full blob device ${node}` + (announced ? ` (announced ${announced} held blob(s))` : ""),
-      );
+      print({ fullNodes: readPolicy(db).fullNodes }, () => `added full blob device ${node}`);
       return;
     }
     case "rm": {

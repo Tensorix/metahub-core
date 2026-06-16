@@ -1,15 +1,14 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { initSchema } from "./schema-init.ts";
-import { emit, changesAfterSeq, ingest } from "./crdt.ts";
+import { emit } from "./crdt.ts";
 import {
   readPolicy,
   setFullNodes,
   setRedundancy,
   isFullBlobNode,
-  announcePresence,
-  holders,
   isClearable,
+  setPending,
   referencedHashes,
   recordBlob,
   cacheStats,
@@ -21,12 +20,6 @@ function makeNode(id: string): Database {
   initSchema(db);
   db.query("INSERT INTO meta (key, value) VALUES ('node_id', ?)").run(id);
   return db;
-}
-
-/** Replicate every change from `from` into `to` (one-way full sync). */
-function syncAll(from: Database, to: Database): void {
-  const { changes } = changesAfterSeq(from, 0);
-  ingest(to, changes);
 }
 
 const H1 = "a".repeat(32); // canonical 32-hex hashes
@@ -49,53 +42,35 @@ test("setFullNodes / setRedundancy persist and de-dupe", () => {
   expect(p.redundancy).toBe("any");
 });
 
-test("no anchor → nothing clearable", () => {
+test("a produced-but-unflushed blob (pending) is NOT clearable; flushing makes it clearable", () => {
   const db = makeNode("n1");
-  recordBlob(db, H1, 100, "image/png");
-  expect(isClearable(db, H1)).toBe(false); // fullNodes empty
+  recordBlob(db, H1, 100, "image/png"); // produced here → pending=1, protected
+  expect(isClearable(db, H1)).toBe(false);
+  setPending(db, H1, false); // confirmed flushed to the anchor
+  expect(isClearable(db, H1)).toBe(true);
 });
 
-test("a full node never clears its own blobs", () => {
+test("an acquired cache blob (pending=0) is clearable", () => {
+  const db = makeNode("n1");
+  recordBlob(db, H1, 100, "image/png", 0); // acquired → already durable at its source
+  expect(isClearable(db, H1)).toBe(true);
+});
+
+test("a full blob device never clears anything", () => {
   const db = makeNode("full");
   setFullNodes(db, ["full"]);
-  recordBlob(db, H1, 100, "image/png");
-  announcePresence(db, H1, 100);
+  recordBlob(db, H1, 100, "image/png", 0); // even a non-pending blob
   expect(isFullBlobNode(db)).toBe(true);
   expect(isClearable(db, H1)).toBe(false);
 });
 
-test("consumer may clear once the single full node holds it", () => {
-  const full = makeNode("full");
+test("clear decision is purely local/offline — no sync needed", () => {
+  // phone never syncs anything; clearability comes only from the local pending flag.
   const phone = makeNode("phone");
-  setFullNodes(full, ["full"]);
-  recordBlob(full, H1, 100, "image/png");
-  announcePresence(full, H1, 100);
-
-  syncAll(full, phone); // policy + presence replicate
-
-  expect(readPolicy(phone).fullNodes).toEqual(["full"]);
-  expect(holders(phone, H1)).toEqual(["full"]);
-  recordBlob(phone, H1, 100, "image/png"); // phone downloaded it
-  expect(isClearable(phone, H1)).toBe(true); // re-fetchable from full → safe
-  expect(isClearable(phone, H2)).toBe(false); // full doesn't hold H2
-});
-
-test("redundancy all vs any with two full nodes", () => {
-  const a = makeNode("A");
-  const b = makeNode("B");
-  const phone = makeNode("phone");
-  setFullNodes(a, ["A", "B"]);
-  announcePresence(a, H1, 100); // only A holds H1
-  syncAll(a, phone);
-  syncAll(b, phone); // B holds nothing
-
-  // all: needs both A and B → not clearable yet
-  expect(isClearable(phone, H1)).toBe(false);
-
-  // any: A holding it is enough
-  setRedundancy(a, "any");
-  syncAll(a, phone);
+  recordBlob(phone, H1, 100, "image/png", 0); // acquired → clearable
+  recordBlob(phone, H2, 100, "image/png"); // produced, unflushed → protected
   expect(isClearable(phone, H1)).toBe(true);
+  expect(isClearable(phone, H2)).toBe(false);
 });
 
 test("referencedHashes unions site_files blobs and doc image markdown", () => {
@@ -118,17 +93,11 @@ test("referencedHashes unions site_files blobs and doc image markdown", () => {
   expect(referencedHashes(db).has(H2)).toBe(false);
 });
 
-test("cacheStats splits clearable vs retained bytes", () => {
-  const full = makeNode("full");
-  const phone = makeNode("phone");
-  setFullNodes(full, ["full"]);
-  announcePresence(full, H1, 1000); // full holds H1 only
-  syncAll(full, phone);
-
-  recordBlob(phone, H1, 1000, "image/png"); // clearable
-  recordBlob(phone, H2, 500, "image/png"); // sole copy → retained
-
-  const s = cacheStats(phone);
+test("cacheStats: pending bytes retained, non-pending bytes clearable", () => {
+  const db = makeNode("n1");
+  recordBlob(db, H1, 1000, "image/png", 0); // acquired → clearable
+  recordBlob(db, H2, 500, "image/png"); // produced unflushed → retained
+  const s = cacheStats(db);
   expect(s.totalBytes).toBe(1500);
   expect(s.clearableBytes).toBe(1000);
   expect(s.retainedBytes).toBe(500);
