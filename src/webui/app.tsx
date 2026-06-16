@@ -76,8 +76,13 @@ function App() {
   const [dbActivity, setDbActivity] = useState(false);
   const [replicaSt, setReplicaSt] = useState(() => replicaStatus());
   const [saveFlash, setSaveFlash] = useState(false);
+  const [kbdPulse, setKbdPulse] = useState(false);
   const docHandleRef = useRef<DocViewHandle | null>(null);
   const hadBucketWork = useRef(false);
+  // Holds the latest ⌘S/Ctrl+S handler so the once-bound keydown listener below
+  // always sees current saveState/view without re-subscribing. Returns true when
+  // it handled the key (caller then preventDefaults the browser "save page").
+  const saveHotkeyRef = useRef<(() => boolean) | null>(null);
   const isMobile = useIsMobile();
 
   const onError = useCallback((m: string) => setError(m), []);
@@ -259,6 +264,12 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         document.querySelector<HTMLInputElement>(".sb-search input")?.focus();
+        return;
+      }
+      // ⌘S / Ctrl+S — save to the cloud bucket instead of the browser's "save
+      // page". Delegates to the latest render's handler (see saveHotkeyRef).
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        if (saveHotkeyRef.current?.()) e.preventDefault();
       }
     };
     window.addEventListener("keydown", on);
@@ -333,30 +344,64 @@ function App() {
         : saveState === "share"
           ? "分享"
           : "保存";
-  const saveIcon = saveState === "share" ? "share" : saveState === "saved" ? "check" : "upload";
+  const saveIcon =
+    saveState === "share"
+      ? "share"
+      : saveState === "saved"
+        ? "check"
+        : saveState === "saving"
+          ? "spinner"
+          : "upload";
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  const saveHint = isMobile ? "" : isMac ? " · ⌘S" : " · Ctrl+S";
   const shareSaveTitle =
     saveState === "share"
       ? "分享"
       : saveState === "error"
         ? `保存到云端失败：${replicaSt.bucketError ?? ""}`
-        : "保存到云端";
+        : `保存到云端${saveHint}`;
 
-  const shareSaveClick = async (e: MouseEvent) => {
-    if (saveState === "share") {
-      shareMenu(e);
-      return;
-    }
-    if (saveState === "saving" || saveState === "saved") return;
+  // Quiet success / loud failure: success rides on the inline "已保存" flash
+  // (saveFlash, see above), so no success toast — we only shout on failure.
+  // Shared by the button click and the ⌘S shortcut.
+  const saveToBucket = async () => {
     try {
       await docHandleRef.current?.flushSave();
       await syncReplicaNow();
       const st = replicaStatus();
       if (st.bucketError) throw new Error(st.bucketError);
       if (st.bucketDirty) throw new Error("仍有改动尚未保存到云端");
-      toast("已保存到云端");
     } catch (err) {
       toast(`保存失败：${(err as Error).message}`);
     }
+  };
+
+  const triggerKbdPulse = () => {
+    setKbdPulse(true);
+    window.setTimeout(() => setKbdPulse(false), 320);
+  };
+
+  const shareSaveClick = (e: MouseEvent) => {
+    if (saveState === "share") {
+      shareMenu(e);
+      return;
+    }
+    if (saveState === "saving" || saveState === "saved") return;
+    void saveToBucket();
+  };
+
+  // ⌘S / Ctrl+S — re-bound each render so the once-bound listener sees fresh state.
+  saveHotkeyRef.current = () => {
+    if (view.kind !== "doc" && view.kind !== "db") return false; // leave default elsewhere
+    if (saveState === "saving" || saveState === "saved") return true; // already in flight
+    if (saveState === "dirty" || saveState === "error") {
+      void saveToBucket();
+      triggerKbdPulse();
+    } else if (replicaActive()) {
+      toast("已是最新"); // synced — nothing to push, just acknowledge
+      triggerKbdPulse();
+    }
+    return true; // doc/db view → swallow the browser "save page" regardless
   };
 
   const moreMenu = (e: MouseEvent) => {
@@ -459,7 +504,7 @@ function App() {
           {(view.kind === "doc" || view.kind === "db") && (
             <>
               <button
-                class={`btn share-save share-save-${saveState}`}
+                class={`btn share-save share-save-${saveState}${kbdPulse ? " share-save-kbd" : ""}`}
                 title={shareSaveTitle}
                 disabled={saveState === "saving" || saveState === "saved"}
                 onClick={shareSaveClick}

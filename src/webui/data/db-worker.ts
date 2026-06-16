@@ -306,7 +306,12 @@ async function runSync(force = false): Promise<SyncOutcome> {
     const errors: string[] = [];
     const bucketErrors: string[] = [];
     const hasBuckets = enabledStoragePeers(d).length > 0;
-    if (hasBuckets) setStatus({ bucketSyncing: true, bucketError: undefined });
+    // Only surface "saving" for rounds that actually flush the bucket. Every
+    // user-meaningful bucket write is a forced round (the 10s coalesce timer,
+    // explicit save / ⌘S, first sync); the non-forced debounce/poll rounds skip
+    // the push under STORAGE_PUSH thresholds (see storage.ts) and uploaded
+    // nothing — flagging them made the button flicker "保存中…" while just typing.
+    if (hasBuckets && force) setStatus({ bucketSyncing: true, bucketError: undefined });
 
     // Origin server (http), chunked initial hydration — only if paired. Its
     // failure (server offline) must not stop storage-peer sync below. Whether it
