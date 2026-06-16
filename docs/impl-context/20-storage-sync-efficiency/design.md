@@ -72,7 +72,7 @@ publisher 的 lease/心跳只在"快照该出时"刷新(`due && isElectedPublish
 
 - **(a) 解耦 force-push 与 publish**:`due` 里去掉 `forcePush`。force 只强制刷段(编辑不滞留),**绝不强制 PUBLISH**——护栏,防②的"用户刷新→force"落到 publisher 触发整库快照风暴。
 - **(b) 消费端优先段 + frontier 跳过**:发布快照时算 **per-node HLC frontier** `F[n]=快照内 n 所 author winner 的 max HLC`,存为**小伴生对象** `<snapKey>.vc`(`StorageClient` 只有 list/get/put/del、无 head/metadata 读,故用伴生对象而非 metadata;gzip+AES-GCM 同段编码)。`pullSnapshots` 先 GET `.vc`:**本地 frontier 支配 F ⟹ 跳过整库 body GET**;只有真落后才下整库。`.vc` 还带 `ownSegHigh`(发布者发布时自己最高段键),消费端**真下了**快照后据此把游标推过保留段,避免重拉。
-- **(c) 段保留窗口**:`publishSnapshot` **只删超出保留窗口的旧段**(`retainSegments`,默认 40),不删光。落后 < 窗口的消费者继续拉段增量、不被打回整库。桶仍有界(窗口 + 快照 GC)。
+- **(c) 段保留窗口**:`publishSnapshot` **只删超出保留窗口的旧段**(`retainSegments`,默认 40),不删光。落后 < 窗口的消费者继续拉段增量、不被打回整库。桶仍有界(窗口 + 快照 GC)。`snapshotEverySegments` 触发的段收口也是 **publisher-only**: `publish:false` 副本只推 own segments,绝不写 whole-hub snapshot;非 publisher 段 GC 需另设安全机制,不能借整库快照实现。
 - **(d) 快照按 delta-体积触发**:`due` 从 60s 定时器改成 `delta >= max(snapshotMinDelta, hub_size × snapshotDeltaRatio)`(delta = `COUNT(hlc > newest_snapshot_hlc)`,纯本地查询)+ 宽松时间上限(`snapshotMaxIntervalMs`,默认 30min)。小 hub→频繁但整库便宜;大 hub→段长寿走增量。
 
 **净效果**:稳态走段(增量),快照退回"新/远落后节点基线 + 收口段体积"本职;只有离线很久者整库下载(那种情况整库本就比重放更省)。
@@ -93,9 +93,9 @@ snapshots-first 下,增量收益依然成立:**常态连接的消费者在快照
 
 **统一原则**:非反应式消费者(CLI 输出、PWA 服务的 site 页——渲染完不会 revalidate)用 **staleness-bounded 阻塞同步再出**;反应式 WebUI 视图才用 local-first + revalidate。
 
-`peers.ts` 加 `ensureFresh(db, opts?)`:`age = now - max(peers.last_sync_at)`;无 enabled peer → no-op;`age ≤ 阈值`(默认 3min)→ 直接读本地;`age > 阈值` → 读前阻塞同步一轮(`syncAllPeers`,带 8s 超时,超时/失败回退本地)。有 daemon 时 age 恒小、恒 no-op,对 agent 批量命令零开销;只在**无 daemon / daemon 掉线且隔了一段时间**才真正触发。env:`MH_OFFLINE`/`MH_FRESH`/`MH_SYNC_MAX_AGE`。
+`peers.ts` 加 `ensureFresh(db, opts?)`:`age = now - max(peers.last_success_at)`;无 enabled peer → no-op;`age ≤ 阈值`(默认 3min)→ 直接读本地;`age > 阈值` → 读前阻塞同步一轮(`syncAllPeers`,带 8s 超时,超时/失败回退本地)。`last_sync_at` 只表示最近尝试,失败也会更新;失败不会更新 `last_success_at`,所以"刚失败过"不会被误判为新鲜。有 daemon 且同步成功时 age 恒小、恒 no-op,对 agent 批量命令零开销;只在**无 daemon / daemon 掉线且隔了一段时间**才真正触发。env:`MH_OFFLINE`/`MH_FRESH`/`MH_SYNC_MAX_AGE`。
 
-- **CLI**:`cli/fresh.ts` 暴露 `FRESH_ARGS`(`--offline`/`--fresh`)+ `freshDb(args)`,接入 `get`/`search`(可推广到 `doc`/`record` 读)。
+- **CLI**:`cli/fresh.ts` 暴露 `FRESH_ARGS`(`--offline`/`--fresh`)+ `freshDb(args)`,接入纯读路径:`get`/`search`,`db list|get|activity`,`doc list|get|read|history`,`record list|get|history`,`prop list|history`,`site list|files`。写命令不做隐式 pre-sync,避免改变写入延迟模型。
 - **PWA siteFile**(`sw.ts` 无-origin 分支 → worker `siteFile` op):服务前按陈旧度 `await runSync(true)`。`runSync` 的在途 promise 已合并,故**一次导航的多子资源只触发一次同步**。
 
 ### Site 链路已核实(`sites-core.ts`/`sw.ts`)

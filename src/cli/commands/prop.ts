@@ -20,6 +20,7 @@ import { idKind } from "../../core/ids.ts";
 import { resolveDb } from "../refs.ts";
 import { print, table, guard, warn } from "../output.ts";
 import type { Database } from "bun:sqlite";
+import { FRESH_ARGS, freshDb } from "../fresh.ts";
 
 /** Duplicate names are legal (offline peers can converge on them) but make
  *  name-keyed record access ambiguous — flag it loudly when an add/rename
@@ -84,9 +85,12 @@ const add = defineCommand({
 
 const list = defineCommand({
   meta: { name: "list", description: "List properties of a database" },
-  args: { database: { type: "positional", required: false, description: "Database ref (default: current)" } },
-  run: guard((args) => {
-    const db = openMetahub();
+  args: {
+    database: { type: "positional", required: false, description: "Database ref (default: current)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const rows = listProperties(db, resolveDb(db, args.database));
     print(rows, () =>
       table(rows.map((r) => ({ id: r.id, name: r.name, type: r.type, position: r.position }))),
@@ -142,9 +146,12 @@ function propRevisionSummary(r: PropertyRevision): string {
 
 const history = defineCommand({
   meta: { name: "history", description: "List a property's definition revisions (newest first)" },
-  args: { id: { type: "positional", required: true, description: "Property ref (id/prefix/name)" } },
-  run: guard((args) => {
-    const db = openMetahub();
+  args: {
+    id: { type: "positional", required: true, description: "Property ref (id/prefix/name)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const rows = listPropertyRevisions(db, propIdMaybeDeleted(db, args.id));
     print(rows, () =>
       table(

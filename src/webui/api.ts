@@ -45,6 +45,7 @@ export interface Peer {
   node_id: string | null;
   enabled: number;
   last_sync_at: number | null;
+  last_success_at: number | null;
   last_status: string | null;
   last_error: string | null;
 }
@@ -57,6 +58,7 @@ export interface S3Peer {
   status: string | null;
   error: string | null;
   lastSyncAt: number | null;
+  lastAttemptAt: number | null;
   publish: boolean;
   endpoint: string | null;
   bucket: string | null;

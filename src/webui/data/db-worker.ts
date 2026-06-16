@@ -437,7 +437,8 @@ const ops: Record<string, Op> = {
         enabled: p.enabled === 1,
         status: p.last_status,
         error: p.last_error,
-        lastSyncAt: p.last_sync_at,
+        lastSyncAt: p.last_success_at,
+        lastAttemptAt: p.last_sync_at,
       })),
 
   // databases

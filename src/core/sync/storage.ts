@@ -458,9 +458,9 @@ export async function publishSnapshot(
 // ---- one sync round -------------------------------------------------------------
 
 export interface StorageSyncOpts {
-  /** Publish a snapshot + truncate once this node's own segment count reaches
-   *  this. Default 200 — high enough that typical use rarely hits it, low enough
-   *  to keep the bucket bounded under heavy use. */
+  /** Publisher-only: publish a snapshot + truncate once this node's own segment
+   *  count reaches this. Default 200 — high enough that typical use rarely hits
+   *  it, low enough to keep the bucket bounded under heavy publisher use. */
   snapshotEverySegments?: number;
   /** Push-batching: defer uploading our pending own ops until there are at least
    *  this many (default 1 → push every round). Coalesces a burst of edits into
@@ -658,11 +658,10 @@ export async function syncWithStorage(
     }
   }
 
-  // Keep the bucket bounded: snapshot + truncate once our own prefix grows large.
-  // Only right after a push (when our segment count actually changed) and only if
-  // the publisher path didn't already snapshot this round, so idle rounds don't
-  // pay a LIST and we never snapshot twice.
-  if (!didSnapshot && pushed > 0) {
+  // Publisher-only bucket bounding: snapshot + truncate once our own prefix grows
+  // large. Non-publishers may push their own segments, but `publish:false` is a
+  // hard promise that this node never writes a whole-hub snapshot.
+  if (opts.publish && !didSnapshot && pushed > 0) {
     const threshold = opts.snapshotEverySegments ?? 200;
     const ownCount = (await client.list(nodePrefix(base, node))).filter((o) =>
       o.key.endsWith(".seg"),

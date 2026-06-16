@@ -26,6 +26,7 @@ test("migratePeers adds kind/config to a legacy peers table, preserving cursors"
   migratePeers(db);
   expect(hasCol(db, "peers", "kind")).toBe(true);
   expect(hasCol(db, "peers", "config")).toBe(true);
+  expect(hasCol(db, "peers", "last_success_at")).toBe(true);
   expect(hasCol(db, "peers", "token")).toBe(true); // older pairing columns too
 
   const row = db
@@ -34,6 +35,34 @@ test("migratePeers adds kind/config to a legacy peers table, preserving cursors"
   expect(row.pull_cursor).toBe(5); // cursors survive the migration
   expect(row.push_cursor).toBe(7);
   expect(row.kind).toBe("http"); // existing rows backfill to the default transport
+});
+
+test("migratePeers backfills last_success_at from a previous successful sync", () => {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE peers (
+    url TEXT PRIMARY KEY,
+    pull_cursor INTEGER,
+    push_cursor INTEGER,
+    last_sync_at INTEGER,
+    last_status TEXT
+  )`);
+  db.query(
+    "INSERT INTO peers (url, pull_cursor, push_cursor, last_sync_at, last_status) VALUES (?, 0, 0, ?, ?)",
+  ).run("http://ok", 123, "ok");
+  db.query(
+    "INSERT INTO peers (url, pull_cursor, push_cursor, last_sync_at, last_status) VALUES (?, 0, 0, ?, ?)",
+  ).run("http://err", 456, "error");
+
+  migratePeers(db);
+
+  const ok = db.query("SELECT last_success_at FROM peers WHERE url = 'http://ok'").get() as {
+    last_success_at: number | null;
+  };
+  const err = db.query("SELECT last_success_at FROM peers WHERE url = 'http://err'").get() as {
+    last_success_at: number | null;
+  };
+  expect(ok.last_success_at).toBe(123);
+  expect(err.last_success_at).toBeNull();
 });
 
 test("migratePeers is idempotent (running twice is a no-op)", () => {

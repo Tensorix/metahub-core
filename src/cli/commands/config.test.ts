@@ -10,6 +10,7 @@ const peer = (over: Partial<PeerRow> = {}): PeerRow =>
     node_id: null,
     enabled: 1,
     last_sync_at: null,
+    last_success_at: null,
     last_status: null,
     ...over,
   }) as PeerRow;

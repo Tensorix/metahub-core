@@ -25,6 +25,7 @@ import { resolveRef } from "../../core/resolve.ts";
 import { errorCode } from "../../core/errors.ts";
 import { idKind } from "../../core/ids.ts";
 import { print, table, guard } from "../output.ts";
+import { FRESH_ARGS, freshDb } from "../fresh.ts";
 
 /** Resolve a document ref (id/prefix/title) to its id. */
 function docId(db: Database, ref: string): string {
@@ -101,9 +102,12 @@ const create = defineCommand({
 
 const list = defineCommand({
   meta: { name: "list", description: "List documents as a parent/child tree" },
-  args: { db: { type: "string", description: "Filter by database ref (id/prefix/name)" } },
-  run: guard((args) => {
-    const db = openMetahub();
+  args: {
+    db: { type: "string", description: "Filter by database ref (id/prefix/name)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const rows = listDocuments(db, {
       database_id: args.db != null ? resolveRef(db, args.db, { kind: "db" }) : undefined,
     });
@@ -116,9 +120,10 @@ const get = defineCommand({
   args: {
     id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" },
     at: { type: "string", description: "Show the document as of this version token (from `doc history`)" },
+    ...FRESH_ARGS,
   },
-  run: guard((args) => {
-    const db = openMetahub();
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     if (args.at !== undefined) {
       const past = documentAtVersion(db, docIdMaybeDeleted(db, args.id), args.at);
       print(past, () => past.body);
@@ -156,9 +161,12 @@ const read = defineCommand({
     name: "read",
     description: "Read a document with a version token (read before edit)",
   },
-  args: { id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" } },
-  run: guard((args) => {
-    const db = openMetahub();
+  args: {
+    id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const id = docId(db, args.id);
     const row = getDocument(db, id)!;
     const body = row.body ?? "";
@@ -245,9 +253,12 @@ function docRevisionSummary(r: DocRevision): string {
 
 const history = defineCommand({
   meta: { name: "history", description: "List a document's revisions (newest first)" },
-  args: { id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" } },
-  run: guard((args) => {
-    const db = openMetahub();
+  args: {
+    id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const rows = listDocumentRevisions(db, docIdMaybeDeleted(db, args.id));
     print(rows, () =>
       table(

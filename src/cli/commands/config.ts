@@ -81,7 +81,8 @@ function peerView(p: PeerRow) {
     label: p.label ?? "",
     enabled: p.enabled ? "yes" : "no",
     status: p.last_status ?? "",
-    last_sync: iso(p.last_sync_at),
+    last_attempt: iso(p.last_sync_at),
+    last_success: iso(p.last_success_at),
   };
 }
 

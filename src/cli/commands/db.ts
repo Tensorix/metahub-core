@@ -12,6 +12,7 @@ import { listProperties } from "../../core/properties.ts";
 import { resolveRef } from "../../core/resolve.ts";
 import { resolveDb } from "../refs.ts";
 import { print, table, guard } from "../output.ts";
+import { FRESH_ARGS, freshDb } from "../fresh.ts";
 
 const create = defineCommand({
   meta: { name: "create", description: "Create a database" },
@@ -27,17 +28,21 @@ const create = defineCommand({
 
 const list = defineCommand({
   meta: { name: "list", description: "List databases" },
-  run: guard(() => {
-    const rows = listDatabases(openMetahub());
+  args: { ...FRESH_ARGS },
+  run: guard(async (args) => {
+    const rows = listDatabases(await freshDb(args));
     print(rows, () => table(rows));
   }),
 });
 
 const get = defineCommand({
   meta: { name: "get", description: "Show one database" },
-  args: { id: { type: "positional", required: true, description: "Database ref (id/prefix/name)" } },
-  run: guard((args) => {
-    const db = openMetahub();
+  args: {
+    id: { type: "positional", required: true, description: "Database ref (id/prefix/name)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     print(getDatabase(db, resolveRef(db, args.id, { kind: "db" })));
   }),
 });
@@ -94,9 +99,10 @@ const activity = defineCommand({
   args: {
     id: { type: "positional", required: false, description: "Database ref (default: current)" },
     limit: { type: "string", description: "Max entries (default 100)" },
+    ...FRESH_ARGS,
   },
-  run: guard((args) => {
-    const db = openMetahub();
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const databaseId = resolveDb(db, args.id);
     const rows = listDatabaseActivity(db, databaseId, {
       limit: args.limit != null ? Number(args.limit) : undefined,

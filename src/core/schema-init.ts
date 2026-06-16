@@ -69,8 +69,8 @@ export function migrateRecords(db: DbDriver): void {
 
 /**
  * Add the peer-pairing columns to a legacy `peers` table (token/label/node_id/
- * enabled/last_sync_at/last_status/last_error). Idempotent — guarded per column,
- * never drops the table so existing replication cursors survive.
+ * enabled/last_sync_at/last_success_at/last_status/last_error). Idempotent —
+ * guarded per column, never drops the table so existing replication cursors survive.
  */
 export function migratePeers(db: DbDriver): void {
   const add: [string, string][] = [
@@ -79,6 +79,7 @@ export function migratePeers(db: DbDriver): void {
     ["node_id", "TEXT"],
     ["enabled", "INTEGER NOT NULL DEFAULT 1"],
     ["last_sync_at", "INTEGER"],
+    ["last_success_at", "INTEGER"],
     ["last_status", "TEXT"],
     ["last_error", "TEXT"],
     // Storage-sync (sync/storage.ts): kind selects the transport, config holds
@@ -89,6 +90,10 @@ export function migratePeers(db: DbDriver): void {
   for (const [col, decl] of add) {
     if (!hasColumn(db, "peers", col)) db.exec(`ALTER TABLE peers ADD COLUMN ${col} ${decl}`);
   }
+  db.exec(
+    "UPDATE peers SET last_success_at = last_sync_at " +
+      "WHERE last_success_at IS NULL AND last_status = 'ok' AND last_sync_at IS NOT NULL",
+  );
 }
 
 /**

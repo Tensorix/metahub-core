@@ -211,15 +211,30 @@ test("compaction + VACUUM does not strand new writes from the push cursor", asyn
   expect(data.title).toBe("v19"); // and the pre-vacuum winner converged too
 });
 
-test("snapshotEverySegments threshold triggers auto snapshot + truncation", async () => {
+test("publisher snapshotEverySegments threshold triggers auto snapshot + truncation", async () => {
   const K = generateMasterKey();
   const a = makeNode("nodeAAAA");
   const bucket = new FakeBucket();
   const config = cfg(K);
 
-  // Each sync round with new ops writes one segment; threshold 2 collapses them.
+  // Create the initial publisher baseline, then make the threshold path (not the
+  // empty-bucket publisher path) collapse two later segments.
+  createDatabase(a, { name: "seed" });
+  await syncWithStorage(a, PEER, bucket, config, {
+    publish: true,
+    snapshotRetainSegments: 0,
+  });
+
+  // Each later sync round with new ops writes one segment; threshold 2 collapses them.
   // retainSegments:0 forces a full collapse so we can assert truncation here.
-  const opts = { snapshotEverySegments: 2, snapshotRetainSegments: 0 };
+  const opts = {
+    publish: true,
+    snapshotEverySegments: 2,
+    snapshotRetainSegments: 0,
+    snapshotMinDelta: 9999,
+    snapshotDeltaRatio: 9999,
+    snapshotMaxIntervalMs: Number.MAX_SAFE_INTEGER,
+  };
   createDatabase(a, { name: "1" });
   await syncWithStorage(a, PEER, bucket, config, opts);
   createDatabase(a, { name: "2" });
@@ -233,6 +248,26 @@ test("snapshotEverySegments threshold triggers auto snapshot + truncation", asyn
     o.key.endsWith(".seg"),
   );
   expect(segs.length).toBe(0); // collapsed into the snapshot
+});
+
+test("publish:false never writes a whole-hub snapshot at the segment threshold", async () => {
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA");
+  const bucket = new FakeBucket();
+  const config = cfg(K);
+  const opts = { publish: false, snapshotEverySegments: 1, snapshotRetainSegments: 0 };
+
+  createDatabase(a, { name: "OnlySegments" });
+  await syncWithStorage(a, PEER, bucket, config, opts);
+
+  const snaps = (await bucket.list("mh/spaces/default/snapshot/")).filter((o) =>
+    o.key.endsWith(".snap"),
+  );
+  expect(snaps.length).toBe(0);
+  const segs = (await bucket.list("mh/spaces/default/oplog/nodeAAAA/")).filter((o) =>
+    o.key.endsWith(".seg"),
+  );
+  expect(segs.length).toBe(1);
 });
 
 test("publisher writes a whole-hub snapshot even with no own ops (empty-bucket fix)", async () => {
@@ -594,7 +629,7 @@ test("⑤c: publishSnapshot retains recent own segments (default window), bucket
 
 test("④: the elected publisher reaps leases expired past the grace window", async () => {
   const bucket = new FakeBucket();
-  const base = "mh/spaces/default";
+  const base = "mh-lease-gc/spaces/default";
   const enc = (o: object) => new TextEncoder().encode(JSON.stringify(o));
   const TTL = 5 * 60_000;
   // A long-dead candidate (expired by > a full TTL) lingers in the bucket.
@@ -602,9 +637,9 @@ test("④: the elected publisher reaps leases expired past the grace window", as
     `${base}/publisher/deadXXXX.lease`,
     enc({ node: "deadXXXX", priority: 100, expiresAt: Date.now() - 2 * TTL }),
   );
-  const elected = await isElectedPublisher(bucket, base, "nodeAAAA", 10);
+  const elected = await isElectedPublisher(bucket, base, "nodeLIVE", 10);
   expect(elected).toBe(true); // only live candidate → we win
   const leases = (await bucket.list(`${base}/publisher/`)).filter((o) => o.key.endsWith(".lease"));
   expect(leases.some((o) => o.key.includes("deadXXXX"))).toBe(false); // reaped
-  expect(leases.some((o) => o.key.includes("nodeAAAA"))).toBe(true); // our fresh heartbeat
+  expect(leases.some((o) => o.key.includes("nodeLIVE"))).toBe(true); // our fresh heartbeat
 });

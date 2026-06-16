@@ -447,6 +447,7 @@ interface StoragePeerView {
   status: string | null;
   error: string | null;
   lastSyncAt: number | null;
+  lastAttemptAt: number | null;
   bucket?: string | null;
   endpoint?: string | null;
 }
@@ -1620,7 +1621,7 @@ function SyncDevices() {
               <div class="peer-main">
                 <div class="peer-url">{p.label || p.url}</div>
                 <div class="peer-sub">
-                  {p.enabled ? "已启用" : "已禁用"} · 最近同步 {fmtTime(p.last_sync_at)}
+                  {p.enabled ? "已启用" : "已禁用"} · 最近同步 {fmtTime(p.last_success_at)}
                   {p.last_status === "error" && p.last_error ? ` · 错误：${p.last_error}` : ""}
                 </div>
               </div>

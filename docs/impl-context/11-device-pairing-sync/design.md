@@ -47,10 +47,11 @@ B 无入站网络时省略 `--self-url`:仅 B 单向登记 A,但单次同步轮�
 ```text
 peers: url PK, pull_cursor, push_cursor,
        token, label, node_id, enabled,
-       last_sync_at, last_status, last_error
+       last_sync_at, last_success_at, last_status, last_error
 ```
 
-老库经 `migratePeers(db)` 用 `hasColumn` 守卫的 `ALTER TABLE` 幂等补列(参考既有 `migrateRecords`),不删表、保留游标。
+老库经 `migratePeers(db)` 用 `hasColumn` 守卫的 `ALTER TABLE` 幂等补列(参考既有 `migrateRecords`),不删表、保留游标;新增 `last_success_at` 时会从 `last_status='ok'` 的旧 `last_sync_at` 回填。
+`last_sync_at` 表示最近尝试(成功/失败都会刷新),`last_success_at` 只在成功同步后刷新,供 CLI 读前 freshness 判断使用。
 
 新表:
 
@@ -67,7 +68,7 @@ pairing_codes: code PK, exp, used, created_at            -- 一次性配对码
 
 ## 5. 自动同步定时器
 
-`startServer` 内 `setInterval(() => syncAllPeers(db), interval)`(`peers.ts:syncAllPeers` 遍历 `enabled` peer 调 `syncPeer`,回写 `last_sync_at/status/error`)。默认 30s,`opts.syncIntervalMs` / `--sync-interval` / `METAHUB_SYNC_INTERVAL` / 持久化 config / `--no-auto-sync` 控制;`RunningServer.stop()` 清定时器 + 关 server。**DB 是 source of truth**:独立进程 `mh config` 改的 peer,下一 tick 自动生效,无需重启。`timer.unref()` 不挡进程退出。
+`startServer` 内 `setInterval(() => syncAllPeers(db), interval)`(`peers.ts:syncAllPeers` 遍历 `enabled` peer 调 `syncPeer`,回写 `last_sync_at/status/error`,成功时另写 `last_success_at`)。默认 30s,`opts.syncIntervalMs` / `--sync-interval` / `METAHUB_SYNC_INTERVAL` / 持久化 config / `--no-auto-sync` 控制;`RunningServer.stop()` 清定时器 + 关 server。**DB 是 source of truth**:独立进程 `mh config` 改的 peer,下一 tick 自动生效,无需重启。`timer.unref()` 不挡进程退出。
 
 ## 6. 配置入口 `mh config`(`src/cli/commands/config.ts`)
 

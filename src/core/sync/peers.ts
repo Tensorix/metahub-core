@@ -15,7 +15,7 @@ import {
 } from "./storage.ts";
 
 const PEER_COLS =
-  "url, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_status, last_error, kind, config";
+  "url, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_success_at, last_status, last_error, kind, config";
 
 export interface PeerRow {
   url: string;
@@ -25,7 +25,10 @@ export interface PeerRow {
   label: string | null;
   node_id: string | null;
   enabled: number;
+  /** Last sync attempt, successful or failed. */
   last_sync_at: number | null;
+  /** Last successful sync. Freshness gates must use this, not last_sync_at. */
+  last_success_at: number | null;
   last_status: string | null;
   last_error: string | null;
   /** Transport: 'http' (POST /sync) or 's3' (bucket store-and-forward). */
@@ -172,9 +175,16 @@ export function updatePeerStatus(
   status: string,
   error?: string | null,
 ): void {
+  const now = Date.now();
+  if (status === "ok") {
+    db.query(
+      "UPDATE peers SET last_sync_at = ?, last_success_at = ?, last_status = ?, last_error = ? WHERE url = ?",
+    ).run(now, now, status, error ?? null, url);
+    return;
+  }
   db.query(
     "UPDATE peers SET last_sync_at = ?, last_status = ?, last_error = ? WHERE url = ?",
-  ).run(Date.now(), status, error ?? null, url);
+  ).run(now, status, error ?? null, url);
 }
 
 export interface PeerSyncOutcome {
@@ -227,7 +237,7 @@ export async function syncAllPeers(db: DbDriver): Promise<PeerSyncOutcome[]> {
   return out;
 }
 
-/** Reads within this of the last sync skip the network entirely. */
+/** Reads within this of the last successful sync skip the network entirely. */
 const DEFAULT_FRESH_MAX_AGE_MS = 3 * 60_000;
 /** Bound on the blocking pre-read sync so a read never hangs on a slow bucket. */
 const FRESH_SYNC_TIMEOUT_MS = 8_000;
@@ -236,13 +246,15 @@ const FRESH_SYNC_TIMEOUT_MS = 8_000;
  * Freshness gate for *non-reactive* consumers — CLI reads and the PWA's served
  * site pages (②b). Their local DB is only as fresh as the last sync, and unlike
  * the reactive WebUI they have no background poll and no `synced` revalidate. So
- * if the newest peer sync is older than `maxAgeMs`, block on one bounded sync
- * round before the caller reads; otherwise return immediately (read local).
+ * if the newest successful peer sync is older than `maxAgeMs`, block on one
+ * bounded sync round before the caller reads; otherwise return immediately
+ * (read local).
  *
- * No enabled peers → no-op. A running daemon keeps `last_sync_at` recent, so this
- * is a near-instant no-op there and only does real work on a daemon-less node that
- * hasn't synced in a while — exactly "very stale → re-pull". Env overrides:
- * MH_OFFLINE=1 skips; MH_FRESH=1 forces; MH_SYNC_MAX_AGE=<ms> tunes the threshold.
+ * No enabled peers → no-op. A running daemon keeps `last_success_at` recent, so
+ * this is a near-instant no-op there and only does real work on a daemon-less node
+ * that hasn't synced successfully in a while. Failed attempts update
+ * `last_sync_at`, but never make local data fresh. Env overrides: MH_OFFLINE=1
+ * skips; MH_FRESH=1 forces; MH_SYNC_MAX_AGE=<ms> tunes the threshold.
  */
 export async function ensureFresh(
   db: DbDriver,
@@ -253,7 +265,7 @@ export async function ensureFresh(
   if (peers.length === 0) return;
   if (!(opts.force ?? process.env.MH_FRESH === "1")) {
     const maxAge = opts.maxAgeMs ?? (Number(process.env.MH_SYNC_MAX_AGE) || DEFAULT_FRESH_MAX_AGE_MS);
-    const last = Math.max(0, ...peers.map((p) => p.last_sync_at ?? 0));
+    const last = Math.max(0, ...peers.map((p) => p.last_success_at ?? 0));
     if (last && Date.now() - last < maxAge) return; // fresh enough → read local
   }
   // Stale (or forced): one bounded sync; on timeout/error fall back to local data.

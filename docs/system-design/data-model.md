@@ -210,12 +210,12 @@ doc_blocks(id, doc_id, text, order_key, blank_after, __deleted)
 多设备同步的本机表(都不进 oplog、不随 sync;见 [11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md)):
 
 ```text
-peers(url PK, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_status, last_error)
+peers(url PK, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_success_at, last_status, last_error)
 peer_grants(token PK, peer_url, node_id, created_at)
 pairing_codes(code PK, exp, used, created_at)
 ```
 
-- `peers`(出站):我会同步去的对端。`pull_cursor`/`push_cursor` 是基于 rowid 的复制游标;`token` 是对端配对时签发给我、我出站 `/sync` 时出示的凭据;`enabled` 决定是否进自动同步定时器;`last_*` 为状态。老库经 `migratePeers` 幂等补列。
+- `peers`(出站):我会同步去的对端。`pull_cursor`/`push_cursor` 是基于 rowid 的复制游标;`token` 是对端配对时签发给我、我出站 `/sync` 时出示的凭据;`enabled` 决定是否进自动同步定时器;`last_sync_at` 是最近尝试,`last_success_at` 是最近成功(读前 freshness 只看它),`last_status/error` 为状态。老库经 `migratePeers` 幂等补列。
 - `peer_grants`(入站):我签发、并在 `/sync` 上接受的长期 bearer 凭据(`acceptsSyncToken` = 主 token 或命中此表)。`peer_url` 记签发对象,`removePeer` 据此连带吊销;单向配对产生的 `peer_url` 为 null,需 `grant revoke`。**目前无过期**。
 - `pairing_codes`:一次性配对码(随机 12 位 base36,默认 10min)。兑换是单条原子 `UPDATE ... WHERE used=0 AND 未过期`(防 TOCTOU 双兑换);生成时清理过期/已用码。
 

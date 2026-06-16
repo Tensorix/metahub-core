@@ -15,6 +15,7 @@ import {
 import { resolveValue } from "../input.ts";
 import { errorCode, MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
+import { FRESH_ARGS, freshDb } from "../fresh.ts";
 
 const create = defineCommand({
   meta: { name: "create", description: "Create a static site (bucket)" },
@@ -101,8 +102,9 @@ function resolveSiteForPublish(db: Database, ref: string, create: boolean) {
 
 const list = defineCommand({
   meta: { name: "list", description: "List sites" },
-  run: guard(() => {
-    const db = openMetahub();
+  args: { ...FRESH_ARGS },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const rows = listSites(db);
     print(rows, () => table(rows.map((r) => ({ id: r.id, name: r.name, title: r.title ?? "" }))));
   }),
@@ -110,9 +112,12 @@ const list = defineCommand({
 
 const files = defineCommand({
   meta: { name: "files", description: "List a site's files" },
-  args: { site: { type: "positional", required: true, description: "Site ref (id/name)" } },
-  run: guard((args) => {
-    const db = openMetahub();
+  args: {
+    site: { type: "positional", required: true, description: "Site ref (id/name)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const site = resolveSite(db, args.site);
     const rows = listFiles(db, site.id);
     print(

@@ -21,6 +21,7 @@ import { idKind } from "../../core/ids.ts";
 import { resolveDb } from "../refs.ts";
 import { print, table, guard } from "../output.ts";
 import type { Database } from "bun:sqlite";
+import { FRESH_ARGS, freshDb } from "../fresh.ts";
 
 /** Resolve a record ref, letting a full id of a tombstoned record pass through —
  *  history and revert must reach deleted records (revert resurrects them). */
@@ -71,9 +72,10 @@ const list = defineCommand({
     sort: { type: "string", description: "Sort field (default created)" },
     desc: { type: "boolean", description: "Sort descending" },
     limit: { type: "string", description: "Max rows" },
+    ...FRESH_ARGS,
   },
   run: guard(async (args) => {
-    const db = openMetahub();
+    const db = await freshDb(args);
     const databaseId = resolveDb(db, args.database);
     const filter = await resolveJson<Record<string, unknown>>(args.filter);
     // Core takes a single sort string ("-field" = desc); compose from --desc so
@@ -98,9 +100,12 @@ const list = defineCommand({
 
 const get = defineCommand({
   meta: { name: "get", description: "Show one record" },
-  args: { id: { type: "positional", required: true, description: "Record ref (id/prefix)" } },
-  run: guard((args) => {
-    const db = openMetahub();
+  args: {
+    id: { type: "positional", required: true, description: "Record ref (id/prefix)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     print(getRecord(db, resolveRef(db, args.id, { kind: "rec" })));
   }),
 });
@@ -135,9 +140,10 @@ const history = defineCommand({
   args: {
     id: { type: "positional", required: true, description: "Record ref (id/prefix)" },
     field: { type: "string", description: "Show the value trail of one field instead" },
+    ...FRESH_ARGS,
   },
-  run: guard((args) => {
-    const db = openMetahub();
+  run: guard(async (args) => {
+    const db = await freshDb(args);
     const id = recIdMaybeDeleted(db, args.id);
     const names = propNames(db, id);
     if (args.field !== undefined) {

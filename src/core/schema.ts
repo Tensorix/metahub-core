@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS peers (
   node_id      TEXT,
   enabled      INTEGER NOT NULL DEFAULT 1,
   last_sync_at INTEGER,
+  last_success_at INTEGER,
   last_status  TEXT,
   last_error   TEXT,
   kind         TEXT NOT NULL DEFAULT 'http',
