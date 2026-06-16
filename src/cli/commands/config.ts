@@ -21,6 +21,7 @@ import {
   type PeerRow,
 } from "../../core/sync/peers.ts";
 import { type S3Config } from "../../core/sync/storage.ts";
+import { decodeEnroll } from "../../core/sync/enroll.ts";
 import { putBucketCors } from "../../core/sync/storage-s3-bun.ts";
 import { MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
@@ -196,19 +197,38 @@ async function storagePeerAdd(
   args: Record<string, any>,
 ): Promise<void> {
   const usage =
-    "mh config peer add --s3 --endpoint <url> --bucket <name> --access-key <id> --secret-key <key> [--prefix <p>] [--region <r>] [--passphrase <pw>] [--no-encrypt]";
-  const endpoint = flagOrAsk(args.endpoint, "endpoint", usage);
-  const bucket = flagOrAsk(args.bucket, "bucket", usage);
-  const accessKeyId = flagOrAsk(args["access-key"], "access-key", usage);
-  const secretAccessKey = flagOrAsk(args["secret-key"], "secret-key", usage);
-  const prefix = typeof args.prefix === "string" && args.prefix ? args.prefix : "metahub";
-  const region = typeof args.region === "string" && args.region ? args.region : "auto";
-  const encrypt = args.encrypt !== false; // --no-encrypt sets this false (citty negation)
+    "mh config peer add --s3 --enroll <code>  |  --s3 --endpoint <url> --bucket <name> --access-key <id> --secret-key <key> [--prefix <p>] [--region <r>] [--passphrase <pw>] [--no-encrypt]";
+
+  // `--enroll <code>` joins an existing bucket from the same token the WebUI QR /
+  // 「添加设备」 carries (endpoint + creds, never the passphrase). Explicit flags
+  // still win, so a code can be tweaked inline. An enroll join is a *secondary*
+  // device → low publisher priority; a hand-typed setup is the data home (100).
+  const enrolled =
+    typeof args.enroll === "string" && args.enroll ? decodeEnroll(args.enroll) : null;
+  const pick = (flag: unknown, fromCode: string | undefined, label: string): string =>
+    typeof flag === "string" && flag !== ""
+      ? flag
+      : fromCode != null && fromCode !== ""
+        ? fromCode
+        : flagOrAsk(flag, label, usage);
+
+  const endpoint = pick(args.endpoint, enrolled?.endpoint, "endpoint");
+  const bucket = pick(args.bucket, enrolled?.bucket, "bucket");
+  const accessKeyId = pick(args["access-key"], enrolled?.accessKeyId, "access-key");
+  const secretAccessKey = pick(args["secret-key"], enrolled?.secretAccessKey, "secret-key");
+  const prefix =
+    typeof args.prefix === "string" && args.prefix ? args.prefix : enrolled?.prefix || "metahub";
+  const region =
+    typeof args.region === "string" && args.region ? args.region : enrolled?.region || "auto";
+  // --no-encrypt always forces plaintext; else honor the code's flag, default on.
+  const encrypt = args.encrypt === false ? false : enrolled?.encrypt ?? true;
   const passphrase = encrypt ? flagOrAsk(args.passphrase, "passphrase", usage) : undefined;
 
   const { url, config, sync } = await addAndSyncStoragePeer(db, {
-    endpoint, region, bucket, prefix, accessKeyId, secretAccessKey, encrypt, passphrase,
-    publish: true, priority: 100, label: bucket,
+    endpoint, region, bucket, prefix, accessKeyId, secretAccessKey,
+    virtualHostedStyle: enrolled?.virtualHostedStyle,
+    encrypt, passphrase,
+    publish: true, priority: enrolled ? 10 : 100, label: bucket,
   });
 
   // Optional one-shot: open CORS for a browser shell so a phone can connect
@@ -364,6 +384,7 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
       options: [
         { value: "add", label: "添加设备", hint: "对方地址 + 配对码" },
         { value: "add-s3", label: "添加同步存储 (S3/R2)", hint: "用对象存储中转,免公网 IP" },
+        { value: "join-code", label: "粘贴接入码加入存储", hint: "用另一台设备的「添加设备」接入码" },
         { value: "code", label: "生成本机配对码" },
         { value: "list", label: "列出设备" },
         { value: "rm", label: "移除设备" },
@@ -430,6 +451,49 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
             accessKeyId, secretAccessKey, encrypt, passphrase, publish: true, priority: 100, label: bucket,
           });
           s.stop(`✓ 已添加存储 ${url}`);
+          p.note(syncLine(sync), "同步结果");
+        } catch (e) {
+          s.stop(`✗ ${(e as Error).message}`);
+        }
+      } else if (action === "join-code") {
+        const codeIn = await p.text({
+          message: "接入码",
+          placeholder: "从另一台设备「添加设备」复制",
+          validate: required,
+        });
+        if (cancelled(codeIn)) continue;
+        let payload: ReturnType<typeof decodeEnroll>;
+        try {
+          payload = decodeEnroll(codeIn);
+        } catch (e) {
+          p.note(`✗ ${(e as Error).message}`, "无效的接入码");
+          continue;
+        }
+        let passphrase = "";
+        if (payload.encrypt !== false) {
+          const pw = await p.password({ message: "加密口令 (与其他设备相同)", validate: required });
+          if (cancelled(pw)) continue;
+          passphrase = pw;
+        }
+        const s = p.spinner();
+        s.start("连接存储并同步…");
+        try {
+          // Pasted enroll code → join as a secondary device (low publisher priority).
+          const { url, sync } = await addAndSyncStoragePeer(db, {
+            endpoint: payload.endpoint,
+            region: payload.region || "auto",
+            bucket: payload.bucket,
+            prefix: payload.prefix || "metahub",
+            accessKeyId: payload.accessKeyId,
+            secretAccessKey: payload.secretAccessKey,
+            virtualHostedStyle: payload.virtualHostedStyle,
+            encrypt: payload.encrypt !== false,
+            passphrase,
+            publish: true,
+            priority: 10,
+            label: payload.bucket,
+          });
+          s.stop(`✓ 已加入存储 ${url}`);
           p.note(syncLine(sync), "同步结果");
         } catch (e) {
           s.stop(`✗ ${(e as Error).message}`);
@@ -533,6 +597,7 @@ export default defineCommand({
     token: { type: "string", description: "Issued credential token or prefix (grant revoke)" },
     // Storage peer (peer add --s3): an S3-compatible bucket as store-and-forward.
     s3: { type: "boolean", description: "Add an S3 storage peer (R2/MinIO/S3) instead of pairing" },
+    enroll: { type: "string", description: "Enroll code from another device's 「添加设备」/QR — joins that bucket as a secondary device (peer add --s3)" },
     endpoint: { type: "string", description: "S3 endpoint URL (peer add --s3)" },
     bucket: { type: "string", description: "S3 bucket name (peer add --s3)" },
     "access-key": { type: "string", description: "S3 access key id (peer add --s3)" },

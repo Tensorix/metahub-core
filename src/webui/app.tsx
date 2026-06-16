@@ -15,6 +15,7 @@ import {
   syncReplicaNow,
 } from "./data/replica.ts";
 import type { S3Config } from "../core/sync/storage.ts";
+import { decodeEnroll } from "../core/sync/enroll.ts";
 import { Icon } from "./icons.tsx";
 import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
@@ -647,8 +648,7 @@ function readEnrollConfig(): Partial<S3Config> | null {
   const m = /[#&]enroll=([^&]+)/.exec(location.hash);
   if (!m) return null;
   try {
-    const b64 = m[1]!.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(decodeURIComponent(escape(atob(b64)))) as Partial<S3Config>;
+    return decodeEnroll(m[1]!);
   } catch {
     return null;
   }

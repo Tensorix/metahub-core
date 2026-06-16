@@ -1322,3 +1322,15 @@
      modules scan in any theme. */
   .qr-box { display:flex; justify-content:center; padding:14px; background:#fff; border-radius:10px; }
   .qr-box svg { width:208px; height:208px; display:block; }
+
+  /* Unified 添加设备 modal: tab strip, CLI command box, advanced-tab sections. */
+  .add-tabs { display:flex; gap:4px; margin-bottom:14px; background:var(--surface-2); padding:4px; border-radius:9px; }
+  .add-tab { flex:1; padding:6px 8px; border:none; background:transparent; color:var(--muted);
+             font-size:13px; font-weight:600; border-radius:6px; cursor:pointer; white-space:nowrap; }
+  .add-tab:hover { color:var(--fg); }
+  .add-tab.on { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
+  .enroll-cmd { font-family:var(--mono); font-size:12px; line-height:1.5; word-break:break-all;
+                background:var(--surface-2); border:1px solid var(--line); border-radius:8px;
+                padding:10px 12px; max-height:120px; overflow:auto; }
+  .enroll-section { font-size:13px; font-weight:700; color:var(--fg); margin:0 0 8px; }
+  .enroll-sep { height:1px; background:var(--line); margin:18px 0 14px; }

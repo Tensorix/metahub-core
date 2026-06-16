@@ -3,6 +3,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { S3Config } from "../core/sync/storage.ts";
+import { encodeEnroll } from "../core/sync/enroll.ts";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { api, currentToken, type Peer, type Grant, type S3Peer } from "./api.ts";
@@ -620,22 +621,35 @@ function SyncStorage() {
     reload();
   };
 
-  // Show a QR a phone scans to enroll the same bucket (no manual typing): the
-  // link carries the bucket credentials but never the passphrase — the phone
-  // types that. The shell base URL is configurable, never hardcoded.
-  const openPhone = async (url: string) => {
-    try {
-      // Desktop has no replica to read the config from; the sidecar serves the
-      // full (incl. secret) bucket config on its master-token-gated /api surface.
-      const config = desktop
-        ? await api.serverS3Config(url)
-        : await replicaCall<S3Config | null>("storagePeerConfig", url);
-      if (!config) return toast("找不到该存储的配置");
-      openModal(<QrModal config={config} />);
-    } catch (e) {
-      toast((e as Error).message);
-    }
-  };
+  // Resolve a bucket's full config (incl. the secret needed to mint an enroll
+  // token). The server (origin/desktop sidecar) holds the secret on its
+  // master-token-gated /api surface; in no-origin the replica IS the home.
+  const getConfig = (peerUrl: string): Promise<S3Config | null> =>
+    noOrigin
+      ? replicaCall<S3Config | null>("storagePeerConfig", peerUrl)
+      : api.serverS3Config(peerUrl);
+
+  // Buckets this device can enroll another device onto.
+  const bucketList = ((noOrigin ? localPeers : serverPeers) ?? []).map((pr) => ({
+    url: pr.url,
+    name: pr.label || pr.bucket || pr.url,
+  }));
+
+  // Unified "添加设备": phone (scan/link), computer/CLI (command/code), or — with
+  // a server — live HTTP pairing. Carries the bucket's enroll token, never the
+  // passphrase. Single entry point; the per-row "open on phone" button is gone.
+  const addDevice = () =>
+    openModal(
+      <AddDeviceModal
+        buckets={bucketList}
+        getConfig={getConfig}
+        server={!noOrigin}
+        onPaired={() => {
+          closeModal();
+          reload();
+        }}
+      />,
+    );
 
   const rowMenu = (e: MouseEvent, p: S3Peer, onDevice: boolean) =>
     openMenu(e, (close) => (
@@ -700,11 +714,16 @@ function SyncStorage() {
         <>
           <div class="peer-actions" style={{ marginTop: 14 }}>
             <button class="btn btn-primary" onClick={add}>
-              <Icon name="plus" cls="ico sm" /> 连接存储桶
+              <Icon name="cube" cls="ico sm" /> 连接存储桶
             </button>
+            {(!noOrigin || bucketList.length > 0) && (
+              <button class="btn btn-secondary" onClick={addDevice}>
+                <Icon name="monitor" cls="ico sm" /> 添加设备
+              </button>
+            )}
             {hasRows && (
               <button class="btn btn-secondary" onClick={syncNow}>
-                <Icon name="share" cls="ico sm" /> 立即同步
+                <Icon name="cloudUp" cls="ico sm" /> 立即同步
               </button>
             )}
           </div>
@@ -727,9 +746,6 @@ function SyncStorage() {
                               {p.status === "error" && p.error ? ` · 错误:${p.error}` : ""}
                             </div>
                           </div>
-                          <button class="btn btn-ghost peer-menu" title="在手机上打开" onClick={() => openPhone(p.url)}>
-                            <Icon name="share" cls="ico sm" />
-                          </button>
                           <button class="btn btn-ghost peer-menu" title="移除" onClick={() => removeBucket(p.url, name)}>
                             <Icon name="trash" cls="ico sm" />
                           </button>
@@ -756,9 +772,6 @@ function SyncStorage() {
                               {p.status === "error" && p.error ? ` · 错误:${p.error}` : ""}
                             </div>
                           </div>
-                          <button class="btn btn-ghost peer-menu" title="在手机上打开" onClick={() => openPhone(p.url)}>
-                            <Icon name="share" cls="ico sm" />
-                          </button>
                           <button class="btn btn-ghost peer-menu" title="移除" onClick={() => removeBucket(p.url, name)}>
                             <Icon name="trash" cls="ico sm" />
                           </button>
@@ -911,25 +924,43 @@ const SHELL_BASE_KEY = "mh_shell_base";
  *  the phone types the passphrase. `shellBase` is the static-shell domain
  *  (configurable; defaults to the current origin for LAN/Tailscale setups). */
 function enrollUrl(shellBase: string, c: S3Config): string {
-  const slim = {
-    endpoint: c.endpoint,
-    region: c.region,
-    bucket: c.bucket,
-    prefix: c.prefix,
-    accessKeyId: c.accessKeyId,
-    secretAccessKey: c.secretAccessKey,
-    encrypt: c.encrypt,
-    virtualHostedStyle: c.virtualHostedStyle,
-  };
-  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(slim))))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
   const base = (shellBase || location.origin).replace(/\/+$/, "");
-  return `${base}/#enroll=${b64}`;
+  return `${base}/#enroll=${encodeEnroll(c)}`;
 }
 
-function QrModal({ config }: { config: S3Config }) {
+type AddTab = "phone" | "cli" | "server";
+
+/** Render `data` as an inline QR SVG (white quiet-zone box). */
+function QrSvg({ data }: { data: string }) {
+  const qr = qrcode(0, "M");
+  qr.addData(data);
+  qr.make();
+  return (
+    <div
+      class="qr-box"
+      dangerouslySetInnerHTML={{ __html: qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true }) }}
+    />
+  );
+}
+
+/** Full-width copy-to-clipboard button with a toast confirmation. */
+function CopyRow({ text, label, done, primary }: { text: string; label: string; done: string; primary?: boolean }) {
+  return (
+    <button
+      class={"btn " + (primary ? "btn-primary" : "btn-secondary")}
+      style={{ width: "100%", marginTop: 10 }}
+      onClick={() => {
+        navigator.clipboard?.writeText(text);
+        toast(done);
+      }}
+    >
+      <Icon name="copy" cls="ico sm" /> {label}
+    </button>
+  );
+}
+
+/** Phone tab: a QR (and copyable link) a phone scans to join the bucket. */
+function PhoneEnroll({ config }: { config: S3Config }) {
   const [shellBase, setShellBase] = useState(() => {
     try {
       return localStorage.getItem(SHELL_BASE_KEY) || location.origin;
@@ -938,11 +969,6 @@ function QrModal({ config }: { config: S3Config }) {
     }
   });
   const url = enrollUrl(shellBase, config);
-  const qr = qrcode(0, "M");
-  qr.addData(url);
-  qr.make();
-  const svg = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-
   const onBase = (v: string) => {
     setShellBase(v);
     try {
@@ -951,14 +977,9 @@ function QrModal({ config }: { config: S3Config }) {
       /* private mode */
     }
   };
-
   return (
-    <Modal
-      title="在手机上打开"
-      sub="手机相机扫码打开 PWA,输入加密口令即可同步。二维码只含桶访问凭据,不含口令。"
-      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
-    >
-      <div class="qr-box" dangerouslySetInnerHTML={{ __html: svg }} />
+    <>
+      <QrSvg data={url} />
       <div class="field-label">壳地址（手机访问的静态站点域名；留空用当前地址）</div>
       <input
         class="text-input"
@@ -966,17 +987,238 @@ function QrModal({ config }: { config: S3Config }) {
         value={shellBase}
         onInput={(e) => onBase((e.target as HTMLInputElement).value)}
       />
-      <button
-        class="btn btn-secondary"
-        style={{ width: "100%", marginTop: 12 }}
-        onClick={() => {
-          navigator.clipboard?.writeText(url);
-          toast("已复制链接");
-        }}
-      >
-        <Icon name="copy" cls="ico sm" /> 复制链接
+      <CopyRow text={url} label="复制链接" done="已复制链接" />
+      <div class="peer-sub" style="margin-top:8px">手机相机扫码打开,输入加密口令即可同步。</div>
+    </>
+  );
+}
+
+/** Computer/CLI tab: a one-line `mh` command (and the raw code) to join the bucket. */
+function CliEnroll({ config }: { config: S3Config }) {
+  const token = encodeEnroll(config);
+  const cmd = `mh config peer add --s3 --enroll ${token}`;
+  return (
+    <>
+      <div class="field-label">在另一台电脑的终端运行</div>
+      <div class="enroll-cmd">{cmd}</div>
+      <CopyRow text={cmd} label="复制命令" done="已复制命令" primary />
+      <CopyRow text={token} label="复制接入码" done="已复制接入码" />
+      <div class="peer-sub" style="margin-top:8px">
+        对方运行后会提示输入加密口令。也可在 <code>mh config</code> 向导选「粘贴接入码加入存储」。
+      </div>
+    </>
+  );
+}
+
+/** A generated pairing code with a live countdown to expiry. */
+function PairCodeView({ code, exp }: { code: string; exp: number }) {
+  const [left, setLeft] = useState(Math.max(0, Math.round((exp - Date.now()) / 1000)));
+  useEffect(() => {
+    const t = setInterval(() => setLeft(Math.max(0, Math.round((exp - Date.now()) / 1000))), 1000);
+    return () => clearInterval(t);
+  }, [exp]);
+  const mm = Math.floor(left / 60);
+  const ss = String(left % 60).padStart(2, "0");
+  return (
+    <>
+      <div class="pair-code">{code}</div>
+      <div class="muted" style={{ textAlign: "center", marginTop: 8 }}>
+        {left > 0 ? `${mm}:${ss} 后过期` : "已过期,请重新生成"}
+      </div>
+      <CopyRow text={code} label="复制配对码" done="已复制配对码" />
+    </>
+  );
+}
+
+/** Advanced tab: live HTTP pairing against a server (generate / redeem a one-time
+ *  code), plus the server-login QR a phone scans to open this server. */
+function ServerPairing({ onPaired }: { onPaired: () => void }) {
+  const [code, setCode] = useState<{ code: string; exp: number } | null>(null);
+  const [genBusy, setGenBusy] = useState(false);
+  const gen = async () => {
+    setGenBusy(true);
+    try {
+      setCode(await api.newPairingCode());
+    } catch (e) {
+      toast(`生成失败：${(e as Error).message}`);
+    } finally {
+      setGenBusy(false);
+    }
+  };
+
+  const [url, setUrl] = useState("");
+  const [rcode, setRcode] = useState("");
+  const [selfUrl, setSelfUrl] = useState(location.origin);
+  const [busy, setBusy] = useState(false);
+  const redeem = async () => {
+    if (!url.trim() || !rcode.trim()) return toast("地址和配对码必填");
+    setBusy(true);
+    try {
+      const r = await api.addPeerByPairing({ url: url.trim(), code: rcode.trim(), self_url: selfUrl.trim() || undefined });
+      await api.syncPeer(r.url).catch(() => {});
+      toast(`已配对 ${r.url}`);
+      onPaired();
+    } catch (e) {
+      toast(`配对失败：${(e as Error).message}`);
+      setBusy(false);
+    }
+  };
+
+  const [base, setBase] = useState(() => {
+    try {
+      return localStorage.getItem(SERVER_BASE_KEY) || location.origin;
+    } catch {
+      return location.origin;
+    }
+  });
+  const onBase = (v: string) => {
+    setBase(v);
+    try {
+      v ? localStorage.setItem(SERVER_BASE_KEY, v) : localStorage.removeItem(SERVER_BASE_KEY);
+    } catch {
+      /* private mode */
+    }
+  };
+  const loginUrl = originEnrollUrl(base, currentToken());
+
+  return (
+    <>
+      <div class="enroll-section">邀请另一台服务器配对</div>
+      {code ? (
+        <PairCodeView code={code.code} exp={code.exp} />
+      ) : (
+        <button class="btn btn-secondary" style={{ width: "100%" }} disabled={genBusy} onClick={gen}>
+          <Icon name="link" cls="ico sm" /> {genBusy ? "生成中…" : "生成本机配对码"}
+        </button>
+      )}
+
+      <div class="enroll-sep" />
+      <div class="enroll-section">已有对方的配对码?</div>
+      <div class="field-label">对方服务器地址</div>
+      <input class="text-input" placeholder="http://192.168.1.10:7777" value={url} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
+      <div class="field-label">配对码</div>
+      <input
+        class="text-input"
+        placeholder="对方「生成本机配对码」得到的码"
+        value={rcode}
+        onInput={(e) => setRcode((e.target as HTMLInputElement).value)}
+        onKeyDown={(e) => e.key === "Enter" && redeem()}
+      />
+      <div class="field-label">本机可达地址（可选）</div>
+      <input class="text-input" placeholder="留空则仅本机主动同步" value={selfUrl} onInput={(e) => setSelfUrl((e.target as HTMLInputElement).value)} />
+      <button class="btn btn-primary" style={{ width: "100%", marginTop: 10 }} disabled={busy} onClick={redeem}>
+        {busy ? "配对中…" : "配对"}
       </button>
-      <div class="peer-sub" style="margin-top:8px">⚠ 二维码含桶访问密钥,请勿公开分享。</div>
+
+      <div class="enroll-sep" />
+      <div class="enroll-section">在手机上打开本服务器</div>
+      <QrSvg data={loginUrl} />
+      <div class="field-label">服务器地址（手机访问的域名；留空用当前地址）</div>
+      <input class="text-input" placeholder={location.origin} value={base} onInput={(e) => onBase((e.target as HTMLInputElement).value)} />
+      <CopyRow text={loginUrl} label="复制链接" done="已复制链接" />
+      <div class="peer-sub" style="margin-top:8px">⚠ 含访问令牌,请勿公开分享。</div>
+    </>
+  );
+}
+
+/** Unified "添加设备" surface: one modal that brings another device onto the
+ *  workspace — a phone (scan/link), a computer/CLI (command/code), or, against a
+ *  server, live HTTP pairing. The enroll token carries bucket access only (never
+ *  the passphrase); the joining device types that. Replaces the old per-bucket
+ *  QrModal, the server-login OriginQrModal, and the pairing add/code modals. */
+function AddDeviceModal({
+  buckets,
+  getConfig,
+  server,
+  onPaired,
+}: {
+  buckets: { url: string; name: string }[];
+  getConfig: (url: string) => Promise<S3Config | null>;
+  server: boolean;
+  onPaired: () => void;
+}) {
+  const hasBuckets = buckets.length > 0;
+  const tabs: { id: AddTab; label: string }[] = [
+    ...(hasBuckets
+      ? ([
+          { id: "phone", label: "手机扫码" },
+          { id: "cli", label: "电脑 / 命令行" },
+        ] as { id: AddTab; label: string }[])
+      : []),
+    ...(server ? ([{ id: "server", label: "高级:服务器配对" }] as { id: AddTab; label: string }[]) : []),
+  ];
+  const [tab, setTab] = useState<AddTab>(tabs[0]?.id ?? "server");
+  const [bucketUrl, setBucketUrl] = useState(buckets[0]?.url ?? "");
+  const [config, setConfig] = useState<S3Config | null>(null);
+  const [loadErr, setLoadErr] = useState("");
+
+  useEffect(() => {
+    if (!hasBuckets || !bucketUrl) return;
+    let live = true;
+    setConfig(null);
+    setLoadErr("");
+    getConfig(bucketUrl)
+      .then((c) => {
+        if (!live) return;
+        c ? setConfig(c) : setLoadErr("找不到该存储的配置");
+      })
+      .catch((e) => live && setLoadErr((e as Error).message));
+    return () => {
+      live = false;
+    };
+  }, [bucketUrl]);
+
+  return (
+    <Modal
+      title="添加设备"
+      sub="让另一台设备加入同一个工作区——手机扫码,或在电脑上粘贴接入码。"
+      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
+      width={420}
+    >
+      {tabs.length > 1 && (
+        <div class="add-tabs">
+          {tabs.map((t) => (
+            <button key={t.id} class={"add-tab" + (tab === t.id ? " on" : "")} onClick={() => setTab(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(tab === "phone" || tab === "cli") && (
+        <>
+          {buckets.length > 1 && (
+            <>
+              <div class="field-label">存储桶</div>
+              <select
+                class="text-input"
+                value={bucketUrl}
+                onChange={(e) => setBucketUrl((e.target as HTMLSelectElement).value)}
+              >
+                {buckets.map((b) => (
+                  <option key={b.url} value={b.url}>{b.name}</option>
+                ))}
+              </select>
+            </>
+          )}
+          {loadErr ? (
+            <div class="enroll-err">{loadErr}</div>
+          ) : !config ? (
+            <div class="muted">加载中…</div>
+          ) : tab === "phone" ? (
+            <PhoneEnroll config={config} />
+          ) : (
+            <CliEnroll config={config} />
+          )}
+          {config && (
+            <div class="peer-sub" style="margin-top:8px">
+              ⚠ 接入码含桶访问密钥,请勿公开分享;不含加密口令——新设备需另输口令。
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === "server" && <ServerPairing onPaired={onPaired} />}
     </Modal>
   );
 }
@@ -1000,57 +1242,9 @@ function originEnrollUrl(base: string, token: string | null): string {
   return token ? `${b}/?token=${encodeURIComponent(token)}` : b;
 }
 
-function OriginQrModal() {
-  const [base, setBase] = useState(() => {
-    try {
-      return localStorage.getItem(SERVER_BASE_KEY) || location.origin;
-    } catch {
-      return location.origin;
-    }
-  });
-  const url = originEnrollUrl(base, currentToken());
-  const qr = qrcode(0, "M");
-  qr.addData(url);
-  qr.make();
-  const svg = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-
-  const onBase = (v: string) => {
-    setBase(v);
-    try {
-      v ? localStorage.setItem(SERVER_BASE_KEY, v) : localStorage.removeItem(SERVER_BASE_KEY);
-    } catch {
-      /* private mode */
-    }
-  };
-
-  return (
-    <Modal
-      title="在手机上打开"
-      sub="手机相机扫码即可打开并登录本服务器（无需手输访问令牌）。"
-      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
-    >
-      <div class="qr-box" dangerouslySetInnerHTML={{ __html: svg }} />
-      <div class="field-label">服务器地址（手机访问的域名；留空用当前地址）</div>
-      <input
-        class="text-input"
-        placeholder={location.origin}
-        value={base}
-        onInput={(e) => onBase((e.target as HTMLInputElement).value)}
-      />
-      <button
-        class="btn btn-secondary"
-        style={{ width: "100%", marginTop: 12 }}
-        onClick={() => {
-          navigator.clipboard?.writeText(url);
-          toast("已复制链接");
-        }}
-      >
-        <Icon name="copy" cls="ico sm" /> 复制链接
-      </button>
-      <div class="peer-sub" style="margin-top:8px">⚠ 二维码含访问令牌，请勿公开分享。</div>
-    </Modal>
-  );
-}
+// The server-login QR ("在手机上打开本服务器") now lives in AddDeviceModal's
+// 「高级:服务器配对」 tab (ServerPairing); originEnrollUrl + SERVER_BASE_KEY above
+// are shared with it.
 
 /** Provider presets — prefill the right region + endpoint shape + a one-line
  *  hint, so the user isn't staring at a blank "endpoint" field wondering what an
@@ -1539,25 +1733,6 @@ function SyncDevices() {
     reload();
   }, []);
 
-  const showCode = async () => {
-    try {
-      const c = await api.newPairingCode();
-      openModal(<PairingCodeModal code={c.code} exp={c.exp} />);
-    } catch (e) {
-      toast(`生成失败：${(e as Error).message}`);
-    }
-  };
-
-  const addPeer = () =>
-    openModal(
-      <AddPeerModal
-        onDone={() => {
-          closeModal();
-          reload();
-        }}
-      />,
-    );
-
   const syncNow = async (p: Peer) => {
     try {
       const r = await api.syncPeer(p.url);
@@ -1603,19 +1778,7 @@ function SyncDevices() {
     <div class="set-block">
       <div class="set-block-head"><span class="set-block-title">同步设备</span></div>
       <div class="set-block-desc">
-        与其他设备配对,自动双向同步数据。在对方设备生成配对码,然后在此添加。
-      </div>
-
-      <div class="peer-actions">
-        <button class="btn btn-primary" onClick={addPeer}>
-          <Icon name="plus" cls="ico sm" /> 添加设备
-        </button>
-        <button class="btn btn-secondary" onClick={() => openModal(<OriginQrModal />)}>
-          <Icon name="share" cls="ico sm" /> 在手机上打开
-        </button>
-        <button class="btn btn-ghost" onClick={showCode}>
-          <Icon name="link" cls="ico sm" /> 生成配对码
-        </button>
+        已直接配对的设备(服务器 HTTP 双向同步)。新增请用上方「同步 → 添加设备 → 高级:服务器配对」。
       </div>
 
       <div class="peer-list flush">
@@ -1702,101 +1865,5 @@ function IssuedGrants() {
   );
 }
 
-function PairingCodeModal({ code, exp }: { code: string; exp: number }) {
-  const [left, setLeft] = useState(Math.max(0, Math.round((exp - Date.now()) / 1000)));
-  useEffect(() => {
-    const t = setInterval(() => setLeft(Math.max(0, Math.round((exp - Date.now()) / 1000))), 1000);
-    return () => clearInterval(t);
-  }, [exp]);
-  const mm = Math.floor(left / 60);
-  const ss = String(left % 60).padStart(2, "0");
-  return (
-    <Modal
-      title="本机配对码"
-      sub="在另一台设备上输入此服务器地址和下面的配对码即可配对。配对码一次性使用。"
-      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
-    >
-      <div class="pair-code">{code}</div>
-      <div class="muted" style={{ textAlign: "center", marginTop: 8 }}>
-        {left > 0 ? `${mm}:${ss} 后过期` : "已过期，请重新生成"}
-      </div>
-      <button
-        class="btn btn-secondary"
-        style={{ width: "100%", marginTop: 12 }}
-        onClick={() => {
-          navigator.clipboard?.writeText(code);
-          toast("已复制配对码");
-        }}
-      >
-        <Icon name="copy" cls="ico sm" /> 复制
-      </button>
-    </Modal>
-  );
-}
-
-function AddPeerModal({ onDone }: { onDone: () => void }) {
-  const [url, setUrl] = useState("");
-  const [code, setCode] = useState("");
-  const [selfUrl, setSelfUrl] = useState(location.origin);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    if (!url.trim() || !code.trim()) {
-      toast("地址和配对码必填");
-      return;
-    }
-    setBusy(true);
-    try {
-      const r = await api.addPeerByPairing({
-        url: url.trim(),
-        code: code.trim(),
-        self_url: selfUrl.trim() || undefined,
-      });
-      await api.syncPeer(r.url).catch(() => {});
-      toast(`已配对 ${r.url}`);
-      onDone();
-    } catch (e) {
-      toast(`配对失败：${(e as Error).message}`);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title="添加同步设备"
-      sub="输入对方 Metahub 服务器的地址，以及它生成的一次性配对码。"
-      footer={
-        <>
-          <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>取消</button>
-          <button class="btn btn-primary" onClick={submit} disabled={busy}>
-            {busy ? "配对中…" : "配对"}
-          </button>
-        </>
-      }
-    >
-      <div class="field-label">对方服务器地址</div>
-      <input
-        class="text-input"
-        autofocus
-        placeholder="http://192.168.1.10:7777"
-        value={url}
-        onInput={(e) => setUrl((e.target as HTMLInputElement).value)}
-      />
-      <div class="field-label">配对码</div>
-      <input
-        class="text-input"
-        placeholder="对方「生成本机配对码」得到的码"
-        value={code}
-        onInput={(e) => setCode((e.target as HTMLInputElement).value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
-      />
-      <div class="field-label">本机可达地址（可选）</div>
-      <input
-        class="text-input"
-        placeholder="留空则仅本机主动同步"
-        value={selfUrl}
-        onInput={(e) => setSelfUrl((e.target as HTMLInputElement).value)}
-      />
-    </Modal>
-  );
-}
+// PairingCodeModal + AddPeerModal folded into AddDeviceModal's 「高级:服务器配对」
+// tab (PairCodeView + ServerPairing).

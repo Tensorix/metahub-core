@@ -136,6 +136,9 @@ export interface StoragePeerSpec {
   prefix?: string;
   accessKeyId: string;
   secretAccessKey: string;
+  /** Virtual-hosted (COS) vs path-style addressing; undefined → auto-detect.
+   *  Carried by enroll codes so COS buckets join correctly. */
+  virtualHostedStyle?: boolean;
   /** Default true; pass false for `--no-encrypt` plaintext buckets. */
   encrypt?: boolean;
   /** Required when encrypt — provisions/adopts the bucket's wrapped master key. */
@@ -167,6 +170,7 @@ export async function addAndSyncStoragePeer(
     accessKeyId: spec.accessKeyId.trim(),
     secretAccessKey: spec.secretAccessKey.trim(),
     encrypt,
+    virtualHostedStyle: spec.virtualHostedStyle,
     publish: spec.publish,
     priority: spec.priority,
   };
