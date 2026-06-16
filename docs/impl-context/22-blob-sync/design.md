@@ -4,7 +4,7 @@
 
 本文把"大资源 blob(文档图片 / 大文件)"从**只同步 hash、字节困在产出机**,升级为**字节按需在节点间流动**:oplog 仍只搬 hash,字节经一个与传输无关的 resolver(本地 cache → HTTP peer → 桶)惰性取回;并据此让用户**安全清理本地缓存省空间**(以一台"全量 blob 设备"为锚),同时新增**文档拖拽/粘贴插图**。
 
-> 性质:决策依据 + 实现记录。**已落地**(feat/syncv2):A(账本/判定/清理)提交于 `acd0e7e`+`1d90ca4`,B(传输)+C(插图)待提交;`bun test` 375 全过(新增 blob 判定 + 图片渲染用例),tsc 维持基线(11 既有错,均 `dist/*` 产物缺失 + `index.ts` citty 泛型),`bun run build` 前端打包过。冒烟:双节点 HTTP 回源(A 传图→B 同步只拿 hash→`GET B/blob/<hash>` 字节匹配、B 缓存回填)、文档插图往返(`POST /api/blob`→嵌入文档→经 `doc_blocks` 往返完好→serve 200)。**待办**:真桶(R2/COS)端到端、浏览器侧离线取图/插图(见 §7)。
+> 性质:决策依据 + 实现记录。**已落地**(feat/syncv2):A(账本/判定/清理)提交于 `acd0e7e`+`1d90ca4`,B(传输)+C(插图)待提交;`bun test` 375 全过(新增 blob 判定 + 图片渲染用例),tsc 维持基线(11 既有错,均 `dist/*` 产物缺失 + `index.ts` citty 泛型),`bun run build` 前端打包过。冒烟:双节点 HTTP 回源(A 传图→B 同步只拿 hash→`GET B/blob/<hash>` 字节匹配、B 缓存回填)、文档插图往返(`POST /api/blob`→嵌入文档→经 `doc_blocks` 往返完好→serve 200)。**修订(已落地)**:durability 由同步 `blob_presence` 改为本地 `blob_cache.pending`、`blobMaintenance` 只 flush pending(消灭空闲桶风暴)——`bun test` 385 全过,新增 `blob-maintenance.test.ts` 风暴回归;见 D4/D7。**待办**:真桶(R2/COS)端到端、浏览器侧离线取图/插图(见 §7)。
 
 ---
 
@@ -18,7 +18,7 @@
 ## 2. 关键决策
 
 ### D1 · 字节内容寻址,规范 hash = sha256 截短 32 hex(128-bit)
-- 字节**仅按 hash 寻址**(`cache/<hash>`),传输/presence/cache/清理全部 source-agnostic。
+- 字节**仅按 hash 寻址**(`cache/<hash>`),传输/cache/清理全部 source-agnostic。
 - `putBlob` 的 digest 截短到 **32 hex**(`cache.ts` `BLOB_HASH_HEX`/`blobHash`):缩短 doc markdown `![](/blob/<hash>.png)` 的噪声,碰撞概率 ~N²/2¹²⁹ 可忽略。
 - `getBlob`/`resolveBlob` 按"引用里携带的字符串"寻址 ⇒ **长度无关**,旧 64-hex 引用继续可解,仅新 `putBlob` 输出 32-hex。校验用 `verifyBlobBytes`(`sha256Hex(bytes).slice(0, hash.length)===hash`,兼容两种长度)。
 
@@ -31,11 +31,15 @@
 - **serve 两态**(`blob-routes.ts` `serveBlob`):默认 resolve(浏览器 `<img>`/远端按需回源);**`?local=1` 只查本地、不再 resolve**——peer 间取用此参,杜绝 A→B→A 取回环。
 - 桶读写(`storage.ts` `putBucketBlob`/`getBucketBlob`):`<base>/blobs/<hash>`,复用 master key `encryptBytes`/`decryptBytes`,`ifNoneMatch` 去重;与 oplog 段/快照同桶但**独立 namespace,sync 轮次从不 list**。
 
-### D4 · 可清安全锚:指定 1~N 台"全量 blob 设备" + 同步 presence 表
-- 清理安全的前提是一条不变量:**只清已在指定全量设备上持有、之后还能回源的 blob;唯一副本绝不清。**
-- `blob_policy`(同步,单行)记 `full_nodes`(1~N 台)+ `redundancy`(`all`/`any`);`blob_presence`(同步)**仅全量设备署名**其持有。普通设备 `isClearable` = 纯本地、**可离线**判定。
-- **为何"记几台指定全量设备"而非"记所有缓存持有者"**:后者与本功能目标(人人清缓存)反相关——presence 随淘汰反复翻转、刷屏复制 oplog、且 snapshot 压不掉 churn;前者作者集有界稳定、snapshot 一压一个 cell。冗余靠"指定 2 台 + `all`"获得,而非追踪全网持有者。
-- 风险正视:presence 是**信任声明**,全量设备真丢字节而别处已清 = 真丢;故全量设备只在**持久落库后**署名、不 GC 仍被引用的 blob。
+### D4 · 可清安全锚:本地「待传队列」(`pending`),不再同步 presence
+> **修订(已落地)**:初版用同步表 `blob_presence`(全量设备署名其持有,消费者据此离线判定)。**已弃用**,改为下面的本地 `pending` 模型——更简单、无 staleness、离线零网络。原 presence 方案保留在 git 历史。
+
+- 不变量不变:**只清之后还能回源的 blob;本机未备份的产出绝不清。**
+- **关键洞察**:判断"能不能清一个本地 blob"需要的信息**本就在本地**——不是"它 durable 吗"(要查桶/同步 presence),而是"**它是不是我自己还没上传成功的产出**"。
+- `blob_cache.pending`(**node-local,不进 oplog**):本机产出、尚未确认 flush 到锚(桶,或无桶时的全量设备)的 blob,**是唯一必须保护的**。产出置 1;flush 成功置 0;**取得的缓存直接置 0**。
+- `isClearable` = `本机非全量设备 && pending==0`:**纯本地、可离线、零网络**。pending=0 者要么是已 flush 的产出(锚上有)、要么是取来的缓存(可重取;取不到说明它本就没 durable、非本机删的锅)。
+- `blob_policy`(同步)**保留**,只做**锚的指定**(全量设备:永不清 + pull 全量,是无桶拓扑的 durable 落点);`redundancy` 暂未用。
+- **为何弃 presence**:① presence 把"远端桶/锚的内容"缓存成同步声明,必然可能过期(假性可清);② 它存在的唯一理由是"让任意设备离线随时判断",而清理本是非紧急操作——`pending` 把同一判断变成对**自己动作**的认知,从本机视角**永不过期**;③ **缓存副本不是 durability 责任**(系统故意不保全"生产者没传成就掉线、只靠消费者缓存吊命"的 blob),承认这点后离线本地判定即自洽。
 
 ### D5 · 图片一律 blob(不再 base64 inline 进 oplog)
 - `image/*`(svg 除外,svg 当文本)**不论大小**都走 `putBlob`、只同步 hash(`sites.ts` 调整判定 + 新 `isImageType`)。保持 oplog/每台 OPFS 精简,契合"别撑爆浏览器"。代价:小图离线也得靠 cache 命中(由 §7 浏览器侧补)。
@@ -46,19 +50,22 @@
 - 上传走**新 `POST /api/blob`**(`blob-routes.ts`),区别于 `/api/site/file`:**只存内容寻址字节、不建 `site_files` 引用行**——引用只在 doc markdown,避免双重引用(与"不加引用表"一致)。
 - 渲染:`markdown.tsx` `inlineToHtml` 加 `![alt](url)`→`<img class="doc-img">`、`htmlToInline` 回写 `<img>`→`![alt](src)`;编辑器 `editor.tsx` 粘贴(`clipboardData.items` 图片)/拖拽(`.editable` 上的 `dataTransfer.files` 图片)→ `api.uploadDocImage` → 插入图片块。`.doc-img` CSS 限宽圆角。
 
-### D7 · 清理手动为主 + 全量设备后台维护
-- 清理触发**手动为主**(Settings「存储」面板 + `mh cache`),不做自动 LRU、暂不做 pin。
-- 全量设备的字节获取/上桶/署名在 server **sync-tick 节流跑**(`blobMaintenance`,60s 一次):拉全缺失的被引用 blob(经 resolver)→ 幂等 `announcePresence`;把持有的被引用 blob 上桶(`ifNoneMatch` 去重)。NAT 后生产者若挂桶也机会性自传,使全量设备可从桶拉到。
+### D7 · 清理 + 全量设备后台维护(只 flush `pending`)
+> **修订(已落地)**:`blobMaintenance` 不再每分钟对**所有被引用 blob** 调 `putBucketBlob`。旧设计 = 每个持有 blob × 每个桶 一次「读盘 + 全量 AES 加密 + `ifNoneMatch` HEAD」的**空闲风暴**,纯为确认不可变对象还在桶里而空烧。
+
+- 清理**手动为主**(Settings + `mh cache`)+ 可选**自动配额 LRU**(`evictToQuota`:只淘汰 `isClearable` 且非 `pinned`,按 `last_access` 降到低水位)。
+- `blobMaintenance`(server tick,60s 节流)三件事:① 全量设备 pull 缺失的被引用 blob(经 resolver,O(缺失)、自限,持有后不再取);② **只 flush 本机 `pending`**(`pendingBlobs`,稳态为空 → 近乎 no-op)到各桶,成功后 `setPending(0)` → 变 clearable;③ 配额淘汰。**不再扫已传 blob**,稳态对桶零调用。
+- NAT 后生产者若自身挂桶,产出经同一 flush 进桶 → 全量设备可从桶拉到。
 
 ## 3. 实现落点
 
 | 层 | 文件 | 内容 |
 |---|---|---|
-| schema | `src/core/schema.ts` | `blob_cache`(本地) / `blob_presence` / `blob_policy`(同步)|
-| oplog | `src/core/crdt.ts` | `DOMAIN` 注册 `blob_presence`/`blob_policy` |
+| schema | `src/core/schema.ts` | `blob_cache`(本地,含 `pending`/`pinned`) / `blob_policy`(同步)。**`blob_presence` 已删** |
+| oplog | `src/core/crdt.ts` | `DOMAIN` 只注册 `blob_policy`(presence 已删) |
 | 字节 | `src/core/cache.ts` | `sha256Hex`/`blobHash`(截短)/`verifyBlobBytes`/`putBlobAt`/`deleteBlob` |
-| 账本/判定/传输 | `src/core/blobs-core.ts`(可移植) | policy、presence(幂等)、`isClearable`、`referencedHashes`/`blobRefsIn`、`blob_cache` 账本、`knownNodes` |
-| ↑ node 半 | `src/core/blobs.ts` | `resolveBlob`、`blobMaintenance`、`clearCache`/`gcOrphans`/`reconcileCache`、`announceLocalCache` |
+| 账本/判定/传输 | `src/core/blobs-core.ts`(可移植) | policy、`pending`/`isClearable`(本地)、`setPending`/`pendingBlobs`、`referencedHashes`/`blobRefsIn`、`blob_cache` 账本(含 `pinned`)、`knownNodes` |
+| ↑ node 半 | `src/core/blobs.ts` | `resolveBlob`、`blobMaintenance`(只 flush pending)、`clearCache`/`gcOrphans`/`evictToQuota`/`reconcileCache` |
 | 桶 | `src/core/sync/storage.ts` | `putBucketBlob`/`getBucketBlob`(`blobs/<hash>`)|
 | 路由 | `src/core/sync/blob-routes.ts`(新) | `GET /blob/:hash`(resolve;`?local=1` 仅本地)、`POST /api/blob` |
 | 服务器 | `src/core/sync/server.ts` | `/blob/` 鉴权用 `acceptsSyncToken` + 前缀分发 + tick 节流 `blobMaintenance` |
@@ -73,12 +80,12 @@
 
 ## 4. 数据流
 
-- **写(产出)**:`putFile`/`POST /api/blob` → `putBlob`(32-hex)→ `cache/<hash>` + `recordBlob`(blob_cache);若本机是全量设备则 `announcePresence`。引用:site 走 `site_files.content=hash`,文档走块内 `![](/blob/<hash>)`。
+- **写(产出)**:`putFile`/`POST /api/blob` → `putBlob`(32-hex)→ `cache/<hash>` + `recordBlob`(blob_cache,**pending=1**)。取得侧 `resolveBlob`→`storeFetched` 记 **pending=0**(缓存)。引用:site 走 `site_files.content=hash`,文档走块内 `![](/blob/<hash>)`。
 - **读(消费)**:`<img src="/blob/<hash>.png">` → server `serveBlob` resolve(本地→peer→桶,回填本地)→ 字节 + content-type。peer 间取用 `?local=1` 只查本地。
-- **可清**:全量设备经 `blobMaintenance` 拉全字节并 `announcePresence` → 其他设备 `isClearable` 转真 → 用户在 Settings/`mh cache` 清理,字节释放、引用与 hash 留存、再浏览自动回源。
+- **可清**:本机 `blobMaintenance` 把 `pending` 产出 flush 到桶 → `setPending(0)` → `isClearable` 转真 → 用户在 Settings/`mh cache` 清理(或自动配额 LRU），字节释放、引用与 hash 留存、再浏览自动回源。全量设备 pull 全量、自身永不清,作 durable 锚。
 
 ## 5. 验证
-- 单测(`bun test`):`blobs.test.ts`(`isClearable` all/any×单多全量×空×本机即全量、presence 经 `ingest` 跨库收敛、`referencedHashes` 并集、`cacheStats`);`markdown.test.ts`(图片渲染/不吞链接);`sites.test.ts`(图片一律 blob,临时 home 隔离);`compact.test.ts`(gcBlobs 认截短 hash + 不误删 doc 图)。
+- 单测(`bun test`):`blobs.test.ts`(`isClearable`:pending 受保护不可清 / flushed+acquired 可清 / 全量设备恒不清、纯本地无需同步、`referencedHashes` 并集、`cacheStats`);`blobs-evict.test.ts`(配额 LRU 只淘汰 clearable、pinned 永留、sole-copy 不动);**`blob-maintenance.test.ts`(计数 FakeBucket:flush pending 后稳态再跑 `blobMaintenance` 对桶零调用 —— 风暴消失回归)**;`markdown.test.ts`(图片渲染/不吞链接);`sites.test.ts`(图片一律 blob,临时 home 隔离);`compact.test.ts`(gcBlobs 认截短 hash + 不误删 doc 图)。
 - 端到端冒烟见顶部「性质」。
 
 ## 6. 浏览器离线体验(replica)——已落地

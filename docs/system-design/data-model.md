@@ -242,19 +242,20 @@ site_files(id, site_id, path, content_type, encoding, content, created_hlc, __de
 - `encoding ∈ {utf8, base64, blob}`:文本(html/css/js/svg/...)存 `utf8`、小号非图片二进制存 `base64`(内联、随 oplog 同步);**图片(image/* 除 svg)一律**、其余超阈值二进制经 `cache.ts` 的 `putBlob` 内容寻址,`encoding=blob`、`content=<hash>`(规范 hash = sha256 截短 32 hex;旧 64-hex 引用仍可解,寻址长度无关)。
 - **blob 字节**:存节点本地 `cache/`,**不进 oplog**;`site_files` 清单(含 hash)照常同步,字节**按需**经 blob 传输层取回(`GET /blob/<hash>`:本地 cache → HTTP peer → 桶)。见 [22-blob-sync](../impl-context/22-blob-sync/design.md)。
 
-## blob_cache / blob_presence / blob_policy
+## blob_cache / blob_policy
 
-blob 字节层(文档插图 / 大文件)的账本与同步状态(见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。`blob_cache` 本地,后两者随 oplog 同步、登记进 `crdt.ts` 的 `DOMAIN`。
+blob 字节层(文档插图 / 大文件)的账本与策略(见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。`blob_cache` 本地;`blob_policy` 随 oplog 同步、登记进 `crdt.ts` 的 `DOMAIN`。
 
 ```text
-blob_cache(hash PK, size, content_type, last_access)                       -- node-local,不进 DOMAIN
-blob_presence(id="<node>~<hash>", node_id, hash, present, size, __deleted)  -- 同步
-blob_policy(id="default", full_nodes, redundancy, __deleted)               -- 同步,单行
+blob_cache(hash PK, size, content_type, last_access, pinned, pending)  -- node-local,不进 DOMAIN
+blob_policy(id="default", full_nodes, redundancy, __deleted)            -- 同步,单行
 ```
 
-- `blob_cache`:给内容寻址的裸文件(`cache/<hash>`)配元数据,供统计/清理/serve 用;**仅本地**,像 `peers`/`storage_cursors` 一样不入 oplog。
-- `blob_presence`:哪台设备持有哪个 blob 字节。**仅被指定的「全量 blob 设备」署名**(`present=1`,在字节落库后);row id 含 node_id,故各设备的声明落在不同 register、互不覆盖。`announcePresence` 幂等(同 hash+size 已声明则不再 emit),避免维护循环刷屏 oplog。其他设备据此**离线判定**某 blob 是否可安全清理。
-- `blob_policy`:工作区级策略——`full_nodes`(JSON node_id 数组,指定 1~N 台全量设备)+ `redundancy`(`all`=全部持有才可清 / `any`=任一即可)。普通设备:`isClearable(hash)` = 全量集按 redundancy 都持有且本机不是全量设备;唯一副本绝不清。
+- `blob_cache`:给内容寻址的裸文件(`cache/<hash>`)配元数据;**仅本地**,像 `peers`/`storage_cursors` 一样不入 oplog。
+  - `pending`:本机**产出**、尚未确认 flush 到锚(桶/全量设备)的字节——**唯一必须保护**的。产出置 1,flush 成功(`blobMaintenance`)置 0;**取得的缓存直接置 0**。
+  - `pinned`:用户「离线保留」,永不自动淘汰/清理。
+  - **可清判定**:`isClearable(hash)` = `本机非全量设备 && pending==0` —— **纯本地、可离线、零网络**。pending=0 者要么是已 flush 的产出(锚上有)、要么是可重取的缓存。**此本地事实取代了旧的同步 `blob_presence` 表**(已删):presence 缓存远端真相必然过期(假性可清),而 `pending` 是对本机**自己动作**的认知,永不过期。
+- `blob_policy`:工作区级策略——`full_nodes`(JSON node_id 数组,指定 1~N 台**全量设备 = durable 锚**:永不清 + pull 全量,无桶拓扑的落点)。`redundancy` 字段保留但当前未用(清理已移到本地 `pending` 模型)。
 
 ## 完整性约束(invariant)
 
