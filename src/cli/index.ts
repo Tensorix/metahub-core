@@ -19,6 +19,7 @@ import restore from "./commands/restore.ts";
 import doctor from "./commands/doctor.ts";
 import repair from "./commands/repair.ts";
 import compact from "./commands/compact.ts";
+import cache from "./commands/cache.ts";
 import config from "./commands/config.ts";
 import { parseDuration } from "../core/sync/token.ts";
 import { startServer } from "../core/sync/server.ts";
@@ -67,6 +68,7 @@ const main = defineCommand({
     doctor,
     repair,
     compact,
+    cache,
     config,
   },
 });

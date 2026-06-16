@@ -14,6 +14,7 @@ import {
   forgetBlob,
   recordBlob,
   referencedHashes,
+  announcePresence,
   retractPresence,
   isFullBlobNode,
 } from "./blobs-core.ts";
@@ -75,6 +76,20 @@ export async function clearCache(db: DbDriver): Promise<ClearResult> {
     cleared++;
   }
   return { cleared, freedBytes, skipped };
+}
+
+/** A device just designated as a full library announces presence for every blob
+ *  it already holds, so other devices can immediately clear those copies. No-op
+ *  unless this node is currently a full-blob device. Returns the count announced. */
+export function announceLocalCache(db: DbDriver): number {
+  if (!isFullBlobNode(db)) return 0;
+  reconcileCache(db);
+  let n = 0;
+  for (const b of cachedBlobs(db)) {
+    announcePresence(db, b.hash, b.size);
+    n++;
+  }
+  return n;
 }
 
 /** Drop bytes for blobs no live site_files / doc image still references (true

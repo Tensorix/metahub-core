@@ -49,6 +49,16 @@ import {
 } from "../../core/history.ts";
 import { search } from "../../core/search.ts";
 import { getNodeId } from "../../core/node.ts";
+import {
+  cacheStats,
+  readPolicy,
+  knownNodes,
+  clearCache,
+  reconcileCache,
+  setFullNodes,
+  setRedundancy,
+  announceLocalCache,
+} from "../../core/blobs.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
 // Read-only viewer + light editing for the browser UI. These routes wrap the
@@ -260,6 +270,40 @@ const NodeInfoSchema = z.object({
   node_id: z.string(),
   label: z.string().nullable().describe("Peer label from pairing; null when unnamed"),
   self: z.boolean().describe("True for the node serving this request"),
+});
+const CacheStatsSchema = z.object({
+  totalBytes: z.number(),
+  clearableBytes: z.number(),
+  retainedBytes: z.number(),
+  count: z.number(),
+  clearableCount: z.number(),
+});
+const BlobPolicySchema = z.object({
+  fullNodes: z.array(z.string()),
+  redundancy: z.enum(["all", "any"]),
+});
+const KnownNodeSchema = z.object({
+  nodeId: z.string(),
+  label: z.string().nullable(),
+  self: z.boolean(),
+});
+const BlobCacheSchema = z.object({
+  stats: CacheStatsSchema,
+  policy: BlobPolicySchema,
+  nodes: z.array(KnownNodeSchema),
+});
+const ClearResultSchema = z.object({
+  cleared: z.number(),
+  freedBytes: z.number(),
+  skipped: z.number(),
+});
+const SetBlobPolicyReq = z.object({
+  full_nodes: z.array(z.string()).optional().describe("Node ids designated as full blob libraries"),
+  redundancy: z.enum(["all", "any"]).optional(),
+});
+const SetBlobPolicyResSchema = z.object({
+  policy: BlobPolicySchema,
+  announced: z.number().describe("Blobs this device announced as held (if it just became a library)"),
 });
 
 // --- helpers ----------------------------------------------------------------
@@ -678,6 +722,41 @@ export const webuiRoutes: Route[] = [
     handler: handle((req, { db }) => {
       const limit = opt(req, "limit");
       return search(db, need(req, "q"), { limit: limit ? Number(limit) : undefined });
+    }),
+  },
+  {
+    method: "GET",
+    path: "/api/blob-cache",
+    summary:
+      "Local blob cache stats + clear policy + device roster (Settings storage panel). " +
+      "Only blobs durably held by a designated full blob device are clearable.",
+    response: BlobCacheSchema,
+    handler: handle((_req, { db }) => {
+      reconcileCache(db);
+      return { stats: cacheStats(db), policy: readPolicy(db), nodes: knownNodes(db) };
+    }),
+  },
+  {
+    method: "POST",
+    path: "/api/blob-cache/clear",
+    summary:
+      "Drop locally-cached blob bytes a full blob device durably holds (the reference stays; bytes re-download on demand). Returns bytes freed.",
+    response: ClearResultSchema,
+    handler: handle((_req, { db }) => clearCache(db)),
+  },
+  {
+    method: "POST",
+    path: "/api/blob-policy",
+    summary:
+      "Set the full blob device(s) and/or redundancy (all|any). When this device becomes a library it announces the blobs it already holds.",
+    request: SetBlobPolicyReq,
+    response: SetBlobPolicyResSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { full_nodes?: string[]; redundancy?: "all" | "any" };
+      if (body.full_nodes) setFullNodes(db, body.full_nodes);
+      if (body.redundancy) setRedundancy(db, body.redundancy);
+      const announced = announceLocalCache(db); // no-op unless this node is now full
+      return { policy: readPolicy(db), announced };
     }),
   },
 ];

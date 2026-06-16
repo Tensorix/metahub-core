@@ -247,6 +247,39 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 const q = (s: string) => encodeURIComponent(s);
 
+// Blob cache (document images / large files): managed on the server (data home);
+// always HTTP — the browser replica has no local counterpart for the node cache.
+export interface BlobCacheStats {
+  totalBytes: number;
+  clearableBytes: number;
+  retainedBytes: number;
+  count: number;
+  clearableCount: number;
+}
+export interface BlobPolicyInfo {
+  fullNodes: string[];
+  redundancy: "all" | "any";
+}
+export interface BlobCacheNode {
+  nodeId: string;
+  label: string | null;
+  self: boolean;
+}
+export interface BlobCacheInfo {
+  stats: BlobCacheStats;
+  policy: BlobPolicyInfo;
+  nodes: BlobCacheNode[];
+}
+export interface BlobClearResult {
+  cleared: number;
+  freedBytes: number;
+  skipped: number;
+}
+export interface BlobPolicyResult {
+  policy: BlobPolicyInfo;
+  announced: number;
+}
+
 const httpApi = {
   // databases
   listDatabases: () => req<Db[]>("GET", "/api/databases"),
@@ -370,6 +403,12 @@ const httpApi = {
     }
     return data as SiteFile;
   },
+
+  // blob cache (Settings storage panel)
+  blobCache: () => req<BlobCacheInfo>("GET", "/api/blob-cache"),
+  clearBlobCache: () => req<BlobClearResult>("POST", "/api/blob-cache/clear"),
+  setBlobPolicy: (b: { full_nodes?: string[]; redundancy?: "all" | "any" }) =>
+    req<BlobPolicyResult>("POST", "/api/blob-policy", b),
 
   // version of the running core (sidecar)
   version: () => req<{ version: string }>("GET", "/api/version"),

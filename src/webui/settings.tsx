@@ -6,7 +6,7 @@ import type { S3Config } from "../core/sync/storage.ts";
 import { encodeEnroll } from "../core/sync/enroll.ts";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
-import { api, currentToken, type Peer, type Grant, type S3Peer } from "./api.ts";
+import { api, currentToken, type Peer, type Grant, type S3Peer, type BlobCacheInfo } from "./api.ts";
 import {
   replicaEnabled,
   replicaStatus,
@@ -105,6 +105,14 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
         <SyncStorage />
       </SetGroup>
 
+      {/* Blob cache (document images / large files) lives on the data home; the
+          no-origin replica keeps its blobs in browser Cache Storage instead. */}
+      {!isNoOrigin() && (
+        <SetGroup label="存储">
+          <BlobCacheSettings />
+        </SetGroup>
+      )}
+
       {/* HTTP pairing + issued grants only make sense against a server (origin). */}
       {!isNoOrigin() && (
         <SetGroup label="设备与授权">
@@ -114,6 +122,170 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
       )}
 
       <VersionFooter onUpdatePending={onUpdatePending} />
+    </div>
+  );
+}
+
+// ---- blob cache (document images / large files) ----------------------------
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+/**
+ * Storage panel: the local blob cache (document images / large files) + the
+ * clear policy. A blob is clearable only once a designated "full blob device"
+ * durably holds it — the reference stays, bytes re-download on demand. Server-
+ * backed only (a no-origin replica keeps blobs in browser Cache Storage).
+ */
+function BlobCacheSettings() {
+  const [info, setInfo] = useState<BlobCacheInfo | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    api
+      .blobCache()
+      .then((i) => {
+        setInfo(i);
+        setErr(null);
+      })
+      .catch((e) => setErr((e as Error).message));
+  };
+  useEffect(() => load(), []);
+
+  if (err || !info) {
+    return (
+      <div class="set-block">
+        <div class="set-block-head"><span class="set-block-title">本地缓存</span></div>
+        <div class="set-block-desc">{err ? `无法读取缓存信息：${err}` : "加载中…"}</div>
+      </div>
+    );
+  }
+
+  const { stats, policy, nodes } = info;
+
+  const saveFull = async (ids: string[]) => {
+    setBusy(true);
+    try {
+      const r = await api.setBlobPolicy({ full_nodes: ids });
+      if (r.announced) toast(`已登记本机持有的 ${r.announced} 个文件`);
+      load();
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggleNode = (id: string) => {
+    const set = new Set(policy.fullNodes);
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    void saveFull([...set]);
+  };
+  const pickRedundancy = async (r: "all" | "any") => {
+    setBusy(true);
+    try {
+      await api.setBlobPolicy({ redundancy: r });
+      load();
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const clear = async () => {
+    const ok = await confirmDialog({
+      title: "清理缓存",
+      message: `将释放约 ${fmtBytes(stats.clearableBytes)}。只删除已在全量设备上保存的副本——引用仍在，需要时自动重新下载。`,
+      confirmLabel: "清理",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await api.clearBlobCache();
+      toast(r.cleared ? `已清理 ${r.cleared} 项，释放 ${fmtBytes(r.freedBytes)}` : "没有可清理的缓存");
+      load();
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div class="set-block">
+      <div class="set-block-head"><span class="set-block-title">本地缓存</span></div>
+      <div class="set-block-desc">
+        文档图片等大文件存在本机缓存。指定一台「全量设备」长期保存全部副本后，其他设备即可安全清理本地缓存省空间——引用仍在，需要时自动重新下载。
+      </div>
+
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", margin: "10px 0", fontSize: 13 }}>
+        <span>
+          共 <b>{stats.count}</b> 项 · {fmtBytes(stats.totalBytes)}
+        </span>
+        <span style={{ color: "var(--text-muted, #888)" }}>
+          可清理 {fmtBytes(stats.clearableBytes)} · 保留 {fmtBytes(stats.retainedBytes)}
+        </span>
+      </div>
+
+      <div class="set-block-desc">全量 blob 设备（长期保存全部，自身不被清理）</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "6px 0 10px" }}>
+        {nodes.map((n) => (
+          <label
+            key={n.nodeId}
+            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={policy.fullNodes.includes(n.nodeId)}
+              disabled={busy}
+              onChange={() => toggleNode(n.nodeId)}
+            />
+            <span>
+              {n.label || n.nodeId}
+              {n.self ? " · 本机" : ""}
+            </span>
+          </label>
+        ))}
+      </div>
+
+      {policy.fullNodes.length > 1 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 10px", fontSize: 13 }}>
+          <span class="set-block-desc" style={{ margin: 0 }}>冗余</span>
+          <button
+            class={"btn btn-ghost" + (policy.redundancy === "all" ? " sel" : "")}
+            disabled={busy}
+            onClick={() => void pickRedundancy("all")}
+          >
+            全部持有才可清
+          </button>
+          <button
+            class={"btn btn-ghost" + (policy.redundancy === "any" ? " sel" : "")}
+            disabled={busy}
+            onClick={() => void pickRedundancy("any")}
+          >
+            任一持有即可清
+          </button>
+        </div>
+      )}
+
+      <button
+        class="btn btn-secondary"
+        disabled={busy || stats.clearableBytes === 0}
+        onClick={() => void clear()}
+      >
+        <Icon name="trash" cls="ico sm" /> 清理缓存
+        {stats.clearableBytes ? `（${fmtBytes(stats.clearableBytes)}）` : ""}
+      </button>
+      {policy.fullNodes.length === 0 && (
+        <div class="set-block-desc" style={{ marginTop: 6 }}>
+          尚未指定全量设备，暂无可安全清理的项。
+        </div>
+      )}
     </div>
   );
 }
