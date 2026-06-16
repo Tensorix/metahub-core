@@ -373,6 +373,19 @@ test("provisionMasterKey: If-None-Match makes a concurrent first-init adopt the 
   expect(kB).toBe(kA); // B adopted A's key instead of overwriting it
 });
 
+test("encrypt:true with a missing master key fails loud (never writes plaintext)", async () => {
+  const a = makeNode("nodeAAAA");
+  const bucket = new FakeBucket();
+  createDatabase(a, { name: "Secret" }); // a pending change that would be pushed
+  // ENC has encrypt:true but no masterKey — masterKeyOf must refuse, not fall
+  // back to encoding the segment as plaintext into the "encrypted" bucket.
+  await expect(syncWithStorage(a, PEER, bucket, ENC)).rejects.toThrow(/master key missing/);
+  const segs = (await bucket.list("mh/spaces/default/oplog/nodeAAAA/")).filter((o) =>
+    o.key.endsWith(".seg"),
+  );
+  expect(segs.length).toBe(0); // nothing leaked to the bucket
+});
+
 // ---- A0-3: HEAD written before its segment --------------------------------
 
 test("push writes HEAD before its segment (a crash can't leave HEAD behind a seg)", async () => {

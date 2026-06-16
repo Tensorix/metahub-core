@@ -22,6 +22,7 @@
 // triggers the update flow; activation drops caches from older versions.
 
 import { mapApiRequest } from "./data/api-map.ts";
+import { probeOrigin, type OriginMode } from "./data/origin.ts";
 
 // Local structural types: the project compiles this file under two tsconfigs
 // (root: ESNext-only libs; src/webui: DOM libs) and lib.webworker conflicts
@@ -96,18 +97,15 @@ function cacheable(res: Response): boolean {
 // Is this origin a metahub server, or a data-blind static shell host? When
 // there's no server (CDN shell), /api and /sites have no backend — a network
 // attempt would 404 (a *response*, not a failure) and mask the local replica,
-// so we serve those replica-first instead. /health returns {ok:true}; a CDN
-// 404s or (SPA fallback) returns index.html, so we check the parsed body.
-let swOriginMode: "server" | "none" | null = null;
+// so we serve those replica-first instead. Classification (incl. treating a
+// transient 5xx as inconclusive, never "none") is shared with the main thread
+// via classifyOrigin — see data/origin.ts.
+let swOriginMode: OriginMode | null = null;
 async function swNoOrigin(): Promise<boolean> {
   if (swOriginMode == null) {
-    try {
-      const res = await fetch("/health", { cache: "no-store" });
-      const d = res.ok ? ((await res.json().catch(() => null)) as { ok?: boolean } | null) : null;
-      swOriginMode = d?.ok === true ? "server" : "none";
-    } catch {
-      swOriginMode = "server"; // inconclusive (offline) → assume server
-    }
+    const mode = await probeOrigin();
+    if (mode === "unknown") return false; // inconclusive → assume server, don't cache
+    swOriginMode = mode;
   }
   return swOriginMode === "none";
 }

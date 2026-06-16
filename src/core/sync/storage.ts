@@ -201,7 +201,17 @@ async function decodeSegment(bytes: Uint8Array, key: Uint8Array | null): Promise
 }
 
 function masterKeyOf(config: S3Config): Uint8Array | null {
-  return config.encrypt && config.masterKey ? fromB64(config.masterKey) : null;
+  if (!config.encrypt) return null;
+  // encrypt is on but the key is absent: provisioning partially failed or a
+  // config migration dropped masterKey. Refuse loudly — silently returning null
+  // here would let encodeSegment/decodeSegment write/read *plaintext* segments
+  // to an "encrypted" bucket.
+  if (!config.masterKey)
+    throw new MhError(
+      "invalid_input",
+      "encrypted bucket but master key missing — refusing to read/write plaintext",
+    );
+  return fromB64(config.masterKey);
 }
 
 /** Short content hash (hex) for snapshot keying — runtime-agnostic (WebCrypto). */

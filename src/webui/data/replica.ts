@@ -7,6 +7,7 @@
 
 import { authFetch, NAV_INVALIDATE } from "../api.ts";
 import { getReplicaBus, BusError } from "./replica-bus.ts";
+import { probeOrigin, type OriginMode } from "./origin.ts";
 import type { ReplicaStatus, WorkerEvent } from "./db-worker.ts";
 import type { S3Config } from "../../core/sync/storage.ts";
 
@@ -72,7 +73,6 @@ export function replicaActive(): boolean {
 // mode — bucket is the only data source). We auto-detect so nothing hardcodes a
 // domain; the shell always works off its own self.location.origin.
 
-type OriginMode = "server" | "none";
 let originModeMemo: OriginMode | null = (() => {
   try {
     const v = localStorage.getItem(ORIGIN_MODE_KEY);
@@ -118,19 +118,16 @@ export function clientMode(): ClientMode {
 /**
  * Detect whether this origin is a metahub server. /health returns {ok:true};
  * a static CDN returns 404 or — with SPA fallback — index.html, so we check the
- * parsed body, not the status. Cached so an offline reload keeps the mode
- * instead of misdetecting; a network error stays inconclusive (defaults server,
- * so an offline origin user never gets the enroll screen).
+ * parsed body, not the status (see classifyOrigin). Only a definitive verdict is
+ * cached; anything inconclusive — offline, a network error, or a transient 5xx
+ * from a deploying server — defaults to server and is NOT cached, so a brief
+ * deploy-window 502 can't lock a first-visit user onto the enroll screen.
  */
 export async function detectOriginMode(): Promise<OriginMode> {
   if (originModeMemo) return originModeMemo;
-  try {
-    const res = await fetch("/health", { cache: "no-store" });
-    const d = res.ok ? ((await res.json().catch(() => null)) as { ok?: boolean } | null) : null;
-    originModeMemo = d?.ok === true ? "server" : "none";
-  } catch {
-    return "server"; // inconclusive (offline) — don't cache, assume server
-  }
+  const mode = await probeOrigin();
+  if (mode === "unknown") return "server"; // inconclusive — assume server, don't cache → re-probe next load
+  originModeMemo = mode;
   try {
     localStorage.setItem(ORIGIN_MODE_KEY, originModeMemo);
   } catch {
