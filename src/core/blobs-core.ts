@@ -28,6 +28,8 @@ export interface CachedBlob {
   size: number;
   content_type: string | null;
   last_access: number | null;
+  /** Node-local pin: 1 = never auto-evicted / cleared (does not sync). */
+  pinned: number;
 }
 
 export interface CacheStats {
@@ -205,8 +207,25 @@ export function forgetBlob(db: DbDriver, hash: string): void {
 
 export function cachedBlobs(db: DbDriver): CachedBlob[] {
   return db
-    .query("SELECT hash, size, content_type, last_access FROM blob_cache")
+    .query("SELECT hash, size, content_type, last_access, pinned FROM blob_cache")
     .all() as CachedBlob[];
+}
+
+/** Pin/unpin a cached blob (node-local; never synced). Returns true when a row
+ *  was updated (false when the hash isn't in the ledger). */
+export function setPinned(db: DbDriver, hash: string, pinned: boolean): boolean {
+  return (
+    db.query("UPDATE blob_cache SET pinned = ? WHERE hash = ?").run(pinned ? 1 : 0, hash)
+      .changes > 0
+  );
+}
+
+/** Is a cached blob pinned? (false when not in the ledger). */
+export function isPinned(db: DbDriver, hash: string): boolean {
+  const row = db
+    .query("SELECT pinned FROM blob_cache WHERE hash = ?")
+    .get(hash) as { pinned: number } | null;
+  return !!row?.pinned;
 }
 
 /** Recorded content type for a cached blob (null when unknown / not cached). */

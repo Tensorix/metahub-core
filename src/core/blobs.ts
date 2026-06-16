@@ -10,6 +10,7 @@ import { cacheDir } from "./paths.ts";
 import { deleteBlob, getBlob, putBlobAt, verifyBlobBytes } from "./cache.ts";
 import { listPeers } from "./sync/peers.ts";
 import { type S3Config, getBucketBlob, putBucketBlob } from "./sync/storage.ts";
+import { getServerConfig } from "./config.ts";
 import {
   cachedBlobs,
   isClearable,
@@ -78,6 +79,8 @@ export interface BlobMaintenanceResult {
   acquired: number;
   announced: number;
   uploaded: number;
+  /** Blobs auto-evicted to stay under the configured cache quota. */
+  evicted: number;
 }
 
 /**
@@ -95,26 +98,71 @@ export async function blobMaintenance(db: DbDriver): Promise<BlobMaintenanceResu
   const refs = referencedHashes(db);
   const full = isFullBlobNode(db);
   const s3peers = listPeers(db).filter((p) => p.enabled && p.kind === "s3" && p.config);
-  if (!full && s3peers.length === 0) return { acquired, announced, uploaded };
 
-  for (const hash of refs) {
-    let bytes = await getBlob(hash);
-    if (!bytes && full) {
-      bytes = await resolveBlob(db, hash);
-      if (bytes) acquired++;
-    }
-    if (full && bytes && announcePresence(db, hash, bytes.byteLength)) announced++;
-    if (bytes) {
-      for (const p of s3peers) {
-        try {
-          if (await putBucketBlob(JSON.parse(p.config!) as S3Config, hash, bytes)) uploaded++;
-        } catch {
-          // bucket unreachable / credentials — skip, retry next round
+  // Acquisition / announce / bucket-push only apply to a full node or a node with
+  // an attached bucket; a plain consumer skips straight to quota eviction.
+  if (full || s3peers.length > 0) {
+    for (const hash of refs) {
+      let bytes = await getBlob(hash);
+      if (!bytes && full) {
+        bytes = await resolveBlob(db, hash);
+        if (bytes) acquired++;
+      }
+      if (full && bytes && announcePresence(db, hash, bytes.byteLength)) announced++;
+      if (bytes) {
+        for (const p of s3peers) {
+          try {
+            if (await putBucketBlob(JSON.parse(p.config!) as S3Config, hash, bytes)) uploaded++;
+          } catch {
+            // bucket unreachable / credentials — skip, retry next round
+          }
         }
       }
     }
   }
-  return { acquired, announced, uploaded };
+
+  // Keep the local cache under the configured quota (no-op when disabled / under).
+  const { evicted } = await evictToQuota(db, getServerConfig(db).blobCacheQuotaBytes);
+  return { acquired, announced, uploaded, evicted };
+}
+
+export interface EvictResult {
+  evicted: number;
+  freedBytes: number;
+}
+
+/** Fraction of the quota to drain down to when eviction triggers, so a node that
+ *  crosses the quota doesn't re-evict one blob per tick at the boundary. */
+const EVICT_LOW_WATER = 0.8;
+
+/**
+ * Auto-evict clearable, unpinned blobs by least-recently-accessed order until the
+ * local cache total is at/under the low-water mark. No-op when quotaBytes <= 0
+ * (disabled) or the cache is already under quota. Only touches blobs `isClearable`
+ * marks safe (durable on the full set) and never a pinned blob — bytes stay
+ * re-fetchable, so this is loss-free.
+ */
+export async function evictToQuota(db: DbDriver, quotaBytes: number): Promise<EvictResult> {
+  let evicted = 0;
+  let freedBytes = 0;
+  if (quotaBytes <= 0) return { evicted, freedBytes };
+  reconcileCache(db);
+  const blobs = cachedBlobs(db);
+  let total = blobs.reduce((s, b) => s + b.size, 0);
+  if (total <= quotaBytes) return { evicted, freedBytes };
+  const lowWater = Math.floor(quotaBytes * EVICT_LOW_WATER);
+  // Oldest first; a null last_access (never touched since record) sorts as oldest.
+  const candidates = blobs
+    .filter((b) => !b.pinned && isClearable(db, b.hash))
+    .sort((a, b) => (a.last_access ?? 0) - (b.last_access ?? 0));
+  for (const b of candidates) {
+    if (total <= lowWater) break;
+    freedBytes += await deleteBlob(b.hash);
+    forgetBlob(db, b.hash);
+    total -= b.size;
+    evicted++;
+  }
+  return { evicted, freedBytes };
 }
 
 export interface ClearResult {
@@ -163,7 +211,8 @@ export async function clearCache(db: DbDriver): Promise<ClearResult> {
   let freedBytes = 0;
   let skipped = 0;
   for (const b of cachedBlobs(db)) {
-    if (!isClearable(db, b.hash)) {
+    // Pinned blobs are kept regardless of clearability (user opt-out of eviction).
+    if (b.pinned || !isClearable(db, b.hash)) {
       skipped++;
       continue;
     }

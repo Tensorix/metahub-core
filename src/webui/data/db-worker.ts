@@ -28,8 +28,21 @@ import {
   addStoragePeer,
   syncPeer,
 } from "../../core/sync/peers.ts";
-import { provisionMasterKey, storageClientFor, type S3Config } from "../../core/sync/storage.ts";
+import {
+  provisionMasterKey,
+  storageClientFor,
+  getBucketBlob,
+  putBucketBlob,
+  type S3Config,
+} from "../../core/sync/storage.ts";
 import "./storage-s3-browser.ts"; // side effect: register the browser SigV4 S3 client
+import {
+  spoolGet,
+  spoolPending,
+  spoolDelete,
+  cachePut,
+  verifyBytes,
+} from "./blob-store.ts";
 import { PAIR_PATH, type PairRequest, type PairResponse } from "../../core/sync/protocol.ts";
 import {
   listDatabases,
@@ -291,6 +304,41 @@ function restorePeerRow(d: DbDriver, row: NonNullable<ReturnType<typeof getPeer>
   );
 }
 
+/**
+ * Drain offline-composed blob bytes (spool) to attached buckets. Used by a
+ * no-origin (bucket-only) replica, which has no server to POST /api/blob to — an
+ * origin-backed replica drains via the page instead (api.ts drainBlobSpool, which
+ * holds the master token). On a successful upload the bytes move to the evictable
+ * byte cache and leave the spool, so pending storage stays bounded.
+ */
+async function drainSpoolToBuckets(d: DbDriver): Promise<void> {
+  const buckets = enabledStoragePeers(d);
+  if (!buckets.length) return;
+  let pending: Awaited<ReturnType<typeof spoolPending>>;
+  try {
+    pending = await spoolPending();
+  } catch {
+    return;
+  }
+  for (const e of pending) {
+    let durable = false;
+    for (const peer of buckets) {
+      if (!peer.config) continue;
+      try {
+        await putBucketBlob(JSON.parse(peer.config) as S3Config, e.hash, new Uint8Array(e.bytes));
+        durable = true;
+        break;
+      } catch {
+        // bucket unreachable — keep it spooled, retry next round
+      }
+    }
+    if (durable) {
+      await cachePut(e.hash, e.bytes, e.content_type).catch(() => {});
+      await spoolDelete(e.hash).catch(() => {});
+    }
+  }
+}
+
 async function runSync(force = false): Promise<SyncOutcome> {
   if (!db) return { pushed: 0, pulled: 0, ok: true };
   const d = db;
@@ -359,6 +407,11 @@ async function runSync(force = false): Promise<SyncOutcome> {
         bucketErrors.push(msg);
       }
     }
+
+    // No-origin (bucket-only) replica: also push offline-composed blob bytes to
+    // the bucket so other devices can fetch them (an origin-backed replica drains
+    // to its server from the page instead).
+    if (getPeer(d, origin)?.token == null && hasBuckets) await drainSpoolToBuckets(d);
 
     const bucketDirty = hasBuckets ? hasPendingBucketPush(d) : false;
     if (bucketDirty && bucketErrors.length === 0) scheduleBucketFlush();
@@ -644,6 +697,26 @@ const ops: Record<string, Op> = {
     const row = getFileRow(d, siteId, path);
     if (!row || row.encoding === "blob") return null;
     return row;
+  },
+
+  // blob bytes (offline document images): the SW asks for a blob's bytes by hash
+  // when neither its local Cache Storage nor the network had them. We answer from
+  // the local spool (bytes composed offline) or by pulling + decrypting them from
+  // an attached bucket — the only byte source a browser replica can reach. Returns
+  // an ArrayBuffer (structured-cloned back to the SW) or null when unreachable.
+  blobBytes: async (hash: string): Promise<ArrayBuffer | null> => {
+    const sp = await spoolGet(hash).catch(() => undefined);
+    if (sp) return sp.bytes;
+    for (const peer of enabledStoragePeers(db!)) {
+      if (!peer.config) continue;
+      try {
+        const bytes = await getBucketBlob(JSON.parse(peer.config) as S3Config, hash);
+        if (bytes && (await verifyBytes(bytes, hash))) return new Uint8Array(bytes).buffer;
+      } catch {
+        // bucket unreachable / decrypt failure — try the next peer
+      }
+    }
+    return null;
   },
 
   // sites management (offline / no-origin): portable read+write paths so the

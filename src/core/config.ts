@@ -10,6 +10,7 @@ const K_HOST = "cfg_host";
 const K_PORT = "cfg_port";
 const K_SYNC_INTERVAL = "cfg_sync_interval";
 const K_AUTO_SYNC = "cfg_auto_sync";
+const K_BLOB_QUOTA = "cfg_blob_quota";
 
 export interface ServerConfig {
   host: string;
@@ -17,6 +18,9 @@ export interface ServerConfig {
   /** Auto-sync poll interval in ms; <= 0 disables the timer. */
   syncIntervalMs: number;
   autoSync: boolean;
+  /** Local blob cache quota in bytes. When the cache exceeds it, the sync tick
+   *  auto-evicts clearable, unpinned blobs (LRU). <= 0 disables eviction. */
+  blobCacheQuotaBytes: number;
 }
 
 export const DEFAULT_CONFIG: ServerConfig = {
@@ -24,6 +28,7 @@ export const DEFAULT_CONFIG: ServerConfig = {
   port: 7777,
   syncIntervalMs: parseDuration(process.env.METAHUB_SYNC_INTERVAL, 30_000),
   autoSync: true,
+  blobCacheQuotaBytes: Number(process.env.METAHUB_BLOB_QUOTA) || 2 * 1024 * 1024 * 1024,
 };
 
 function getMeta(db: DbDriver, key: string): string | null {
@@ -45,11 +50,14 @@ export function getServerConfig(db: DbDriver): ServerConfig {
   const port = getMeta(db, K_PORT);
   const interval = getMeta(db, K_SYNC_INTERVAL);
   const auto = getMeta(db, K_AUTO_SYNC);
+  const blobQuota = getMeta(db, K_BLOB_QUOTA);
   return {
     host: host ?? DEFAULT_CONFIG.host,
     port: port != null ? Number(port) : DEFAULT_CONFIG.port,
     syncIntervalMs: interval != null ? Number(interval) : DEFAULT_CONFIG.syncIntervalMs,
     autoSync: auto != null ? auto === "1" : DEFAULT_CONFIG.autoSync,
+    blobCacheQuotaBytes:
+      blobQuota != null ? Number(blobQuota) : DEFAULT_CONFIG.blobCacheQuotaBytes,
   };
 }
 
@@ -60,5 +68,7 @@ export function setServerConfig(db: DbDriver, partial: Partial<ServerConfig>): S
   if (partial.syncIntervalMs != null)
     setMeta(db, K_SYNC_INTERVAL, String(partial.syncIntervalMs));
   if (partial.autoSync != null) setMeta(db, K_AUTO_SYNC, partial.autoSync ? "1" : "0");
+  if (partial.blobCacheQuotaBytes != null)
+    setMeta(db, K_BLOB_QUOTA, String(partial.blobCacheQuotaBytes));
   return getServerConfig(db);
 }

@@ -166,7 +166,7 @@ function BlobCacheSettings() {
     );
   }
 
-  const { stats, policy, nodes } = info;
+  const { stats, policy, nodes, quotaBytes, pinnedCount, pinnedBytes } = info;
 
   const saveFull = async (ids: string[]) => {
     setBusy(true);
@@ -229,8 +229,14 @@ function BlobCacheSettings() {
         </span>
         <span style={{ color: "var(--text-muted, #888)" }}>
           可清理 {fmtBytes(stats.clearableBytes)} · 保留 {fmtBytes(stats.retainedBytes)}
+          {pinnedCount > 0 ? ` · 固定 ${pinnedCount} 项（${fmtBytes(pinnedBytes)}）` : ""}
         </span>
       </div>
+      {quotaBytes > 0 && (
+        <div class="set-block-desc" style={{ marginTop: -4 }}>
+          超过 {fmtBytes(quotaBytes)} 时自动按最久未用淘汰可清理项（固定项不淘汰）。
+        </div>
+      )}
 
       <div class="set-block-desc">全量 blob 设备（长期保存全部，自身不被清理）</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "6px 0 10px" }}>

@@ -185,7 +185,8 @@ CREATE TABLE IF NOT EXISTS blob_cache (
   hash         TEXT PRIMARY KEY,
   size         INTEGER NOT NULL,
   content_type TEXT,
-  last_access  INTEGER
+  last_access  INTEGER,
+  pinned       INTEGER NOT NULL DEFAULT 0  -- node-local: never auto-evicted / cleared
 );
 
 -- Synced blob presence: which node holds which blob's bytes. Only "full blob

@@ -107,6 +107,17 @@ export function migrateDocBlocks(db: DbDriver): void {
 }
 
 /**
+ * Add the node-local `pinned` column to a legacy `blob_cache` table. Idempotent —
+ * guarded by hasColumn; existing blobs default to 0 (unpinned), so the migration
+ * never changes which blobs are clearable. Pinned blobs are skipped by both
+ * manual clear and automatic quota eviction.
+ */
+export function migrateBlobCache(db: DbDriver): void {
+  if (!hasColumn(db, "blob_cache", "pinned"))
+    db.exec("ALTER TABLE blob_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+}
+
+/**
  * Add the `order_key` column to a legacy `documents` table and backfill it.
  * Idempotent — guarded by hasColumn; backfill only touches rows with a NULL key,
  * assigning per-parent fractional indices in current created_hlc order, so the
@@ -185,4 +196,5 @@ export function initSchema(db: DbDriver): void {
   migratePeers(db);
   migrateDocBlocks(db);
   migrateDocuments(db);
+  migrateBlobCache(db);
 }

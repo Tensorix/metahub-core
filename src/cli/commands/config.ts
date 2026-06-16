@@ -67,6 +67,7 @@ function showConfig(db: ReturnType<typeof openMetahub>): void {
       `  port:          ${cfg.port}`,
       `  sync-interval: ${Math.round(cfg.syncIntervalMs / 1000)}s`,
       `  auto-sync:     ${cfg.autoSync}`,
+      `  blob-quota:    ${fmtBytes(cfg.blobCacheQuotaBytes)}`,
       "",
       "peers:",
       peers.length ? table(peers) : "  (none)",
@@ -94,6 +95,11 @@ function applySet(db: ReturnType<typeof openMetahub>, args: Record<string, any>)
   if (args["sync-interval"] != null && args["sync-interval"] !== "")
     partial.syncIntervalMs = parseDuration(String(args["sync-interval"]), 30_000);
   if (args["auto-sync"] != null) partial.autoSync = parseBool(args["auto-sync"]);
+  if (args["blob-quota"] != null && args["blob-quota"] !== "") {
+    const q = parseBytes(String(args["blob-quota"]));
+    if (q == null) throw new MhError("invalid_input", "invalid --blob-quota (e.g. 2gb, 500mb, 0)");
+    partial.blobCacheQuotaBytes = q;
+  }
   const next = setServerConfig(db, partial);
   print(next, () => `updated. (restart --server to apply host/port/interval changes)`);
 }
@@ -322,6 +328,34 @@ export function grantChoices(grants: GrantRow[]): { value: string; label: string
   }));
 }
 
+/** Human byte size, e.g. 2.0 GB. */
+function fmtBytes(n: number): string {
+  if (n <= 0) return "disabled";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+/** Parse a byte size accepting suffixes (kb/mb/gb, case-insensitive) or a plain
+ *  byte count. "0"/"off"/"none" disable the quota. Returns null when unparseable. */
+function parseBytes(s: string | undefined): number | null {
+  if (s == null) return null;
+  const t = s.trim().toLowerCase();
+  if (t === "" ) return null;
+  if (t === "0" || t === "off" || t === "none" || t === "disabled") return 0;
+  const m = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/.exec(t);
+  if (!m) return null;
+  const v = Number(m[1]);
+  const mult = { b: 1, kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3 }[m[2] ?? "b"]!;
+  return Math.round(v * mult);
+}
+
+/** Validate a byte-size string (suffix or plain bytes, or 0/off to disable). */
+export function validateBytes(s: string | undefined): string | undefined {
+  return parseBytes(s) != null ? undefined : "请输入字节数或带单位 (如 2gb, 500mb, 0 关闭)";
+}
+
 /** Validate a port string: an integer in 1–65535. Returns an error message or undefined. */
 export function validatePort(s: string | undefined): string | undefined {
   const n = Number(s);
@@ -346,6 +380,7 @@ async function serverWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
         { value: "port", label: "Port", hint: String(working.port) },
         { value: "interval", label: "同步间隔", hint: secs(working.syncIntervalMs) },
         { value: "auto", label: "Auto-sync", hint: working.autoSync ? "on" : "off" },
+        { value: "quota", label: "缓存配额", hint: fmtBytes(working.blobCacheQuotaBytes) },
         { value: "save", label: "保存并返回" },
         { value: "back", label: "返回 (放弃修改)" },
       ],
@@ -372,6 +407,14 @@ async function serverWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
       const v = await p.confirm({ message: "启用 auto-sync?", initialValue: working.autoSync });
       if (cancelled(v)) return;
       working.autoSync = v;
+    } else if (field === "quota") {
+      const v = await p.text({
+        message: "本地缓存配额 (如 2gb, 500mb, 0 关闭自动淘汰)",
+        initialValue: fmtBytes(working.blobCacheQuotaBytes),
+        validate: validateBytes,
+      });
+      if (cancelled(v)) return;
+      working.blobCacheQuotaBytes = parseBytes(v) ?? working.blobCacheQuotaBytes;
     }
   }
 }
@@ -591,6 +634,7 @@ export default defineCommand({
     port: { type: "string", description: "Server port" },
     "sync-interval": { type: "string", description: "Auto-sync interval (e.g. 30s, 5m)" },
     "auto-sync": { type: "string", description: "Enable auto-sync timer (true/false)" },
+    "blob-quota": { type: "string", description: "Local blob cache quota (e.g. 2gb, 500mb, 0 to disable auto-eviction)" },
     url: { type: "string", description: "Peer URL (peer add/rm/enable/disable/sync)" },
     code: { type: "string", description: "One-time pairing code (peer add)" },
     "self-url": { type: "string", description: "This device's reachable URL (peer add, optional)" },
@@ -622,7 +666,8 @@ export default defineCommand({
       args.host != null ||
       args.port != null ||
       args["sync-interval"] != null ||
-      args["auto-sync"] != null;
+      args["auto-sync"] != null ||
+      args["blob-quota"] != null;
 
     if (!section) {
       if (hasSettingFlag) return applySet(db, args);

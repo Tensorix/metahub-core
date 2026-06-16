@@ -51,14 +51,17 @@ import { search } from "../../core/search.ts";
 import { getNodeId } from "../../core/node.ts";
 import {
   cacheStats,
+  cachedBlobs,
   readPolicy,
   knownNodes,
   clearCache,
   reconcileCache,
   setFullNodes,
   setRedundancy,
+  setPinned,
   announceLocalCache,
 } from "../../core/blobs.ts";
+import { getServerConfig } from "../../core/config.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
 // Read-only viewer + light editing for the browser UI. These routes wrap the
@@ -291,7 +294,15 @@ const BlobCacheSchema = z.object({
   stats: CacheStatsSchema,
   policy: BlobPolicySchema,
   nodes: z.array(KnownNodeSchema),
+  quotaBytes: z.number().describe("Auto-evict over this many bytes; 0 = disabled"),
+  pinnedCount: z.number(),
+  pinnedBytes: z.number(),
 });
+const PinReq = z.object({
+  hash: z.string(),
+  pinned: z.boolean(),
+});
+const PinResSchema = z.object({ hash: z.string(), pinned: z.boolean() });
 const ClearResultSchema = z.object({
   cleared: z.number(),
   freedBytes: z.number(),
@@ -733,7 +744,15 @@ export const webuiRoutes: Route[] = [
     response: BlobCacheSchema,
     handler: handle((_req, { db }) => {
       reconcileCache(db);
-      return { stats: cacheStats(db), policy: readPolicy(db), nodes: knownNodes(db) };
+      const pinned = cachedBlobs(db).filter((b) => b.pinned);
+      return {
+        stats: cacheStats(db),
+        policy: readPolicy(db),
+        nodes: knownNodes(db),
+        quotaBytes: getServerConfig(db).blobCacheQuotaBytes,
+        pinnedCount: pinned.length,
+        pinnedBytes: pinned.reduce((s, b) => s + b.size, 0),
+      };
     }),
   },
   {
@@ -743,6 +762,21 @@ export const webuiRoutes: Route[] = [
       "Drop locally-cached blob bytes a full blob device durably holds (the reference stays; bytes re-download on demand). Returns bytes freed.",
     response: ClearResultSchema,
     handler: handle((_req, { db }) => clearCache(db)),
+  },
+  {
+    method: "POST",
+    path: "/api/blob-cache/pin",
+    summary:
+      "Pin/unpin a cached blob by hash (node-local; never synced). Pinned blobs are kept by both manual clear and automatic quota eviction.",
+    request: PinReq,
+    response: PinResSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { hash: string; pinned: boolean };
+      reconcileCache(db);
+      if (!setPinned(db, body.hash, body.pinned))
+        throw new MhError("not_found", `blob not in cache: ${body.hash}`);
+      return { hash: body.hash, pinned: body.pinned };
+    }),
   },
   {
     method: "POST",

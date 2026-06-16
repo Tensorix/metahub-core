@@ -81,11 +81,22 @@
 - 单测(`bun test`):`blobs.test.ts`(`isClearable` all/any×单多全量×空×本机即全量、presence 经 `ingest` 跨库收敛、`referencedHashes` 并集、`cacheStats`);`markdown.test.ts`(图片渲染/不吞链接);`sites.test.ts`(图片一律 blob,临时 home 隔离);`compact.test.ts`(gcBlobs 认截短 hash + 不误删 doc 图)。
 - 端到端冒烟见顶部「性质」。
 
-## 6. 当前离线体验(replica)
+## 6. 浏览器离线体验(replica)——已落地
+
+> 浏览器离线取图 + 离线 compose 插图 + 节点/浏览器双侧配额淘汰与 pin 已实现。`bun test` 全过(新增 `blobHash32`↔服务端 `blobHash` 对拍、`evictToQuota`/clearCache pinned/setPinned 用例),tsc 维持基线(root 11、webui 0),`bun run build` 前端打包过。SW/IndexedDB 部分待真浏览器 e2e。
+
 - **结构化数据全可用**(文档/记录/表,OPFS,离线可读写);utf8 + 小号非图片 base64 站点文件可 serve。
-- **图片离线全裂**:`sw.ts` 的 fetch 分发**没拦 `/blob/`** → 离线/server 不可达时走默认网络失败 = 裂图;站点 blob 图同理(replica 只有 hash、`siteFileResponse` 误把 hash 当 base64)。数据不丢(hash+markdown 已同步),恢复网络即加载。no-origin 纯桶拓扑下图片在线也不显示(无 server resolve)。
+- **图片离线取图**:`sw.ts` fetch 分发新增 `/blob/<hash>` → `handleBlob`:① 查有界 `mh-blob-v1`(Cache Storage)命中即出;② 有 server 且可达 → 网络回源(`serveBlob` resolve 本地→peer→桶)→存缓存;③ 离线/无 server/server 404(未 drain)→ `localRpc("blobBytes")` 转 DB worker;worker 从 **spool** 或挂载桶(`getBucketBlob` + 解密 + `verifyBytes`)取字节。content-type 由 URL 后缀 `inferBlobType` 定。
+- **离线 compose 插图**:`api.uploadDocImage` 在 server 不可达时(replica/no-origin)用 `blobHash32`(WebCrypto,与服务端同款 32-hex)算 hash → 写 **IndexedDB spool**(`durable=0`,唯一副本、绝不淘汰)→ 立即返回 `/blob/<hash>.<ext>`,编辑器即时渲染(SW→worker→spool)。
+- **drain**:origin-backed replica 由页面 `drainBlobSpool`(持 master token)在 `online`/下次上传时 `POST /api/blob`;no-origin replica 由 worker `runSync` 末尾 `drainSpoolToBuckets` 直传桶。成功后字节下放到可淘汰 `mh-blob-v1`、移出 spool。
+- **配额淘汰 + pin**:
+  - 浏览器侧 `mh-blob-v1` 有界(默认 200MB):`blob-store.ts` 用 IndexedDB `meta` 索引记 size/accessed/pinned,超高水位按 LRU 淘汰未 pin 项到低水位(spool 唯一副本不在此列)。
+  - 节点侧 `blob_cache` 加 `pinned` 列(本地不同步,迁移走 `migrateBlobCache`);`blobMaintenance` 末尾 `evictToQuota`(`ServerConfig.blobCacheQuotaBytes`,默认 2GB,0=禁用)按 `last_access` 淘汰 `isClearable` 且未 pin 项;手动 `clearCache` 同样跳过 pinned。入口:`mh cache pin|unpin <hash>` + `mh config --blob-quota` + Settings 存储面板(配额/固定显示)+ `POST /api/blob-cache/pin`。
+- **作用域**:仅对 `clientMode().hold === "replica"`(含 no-origin)有意义;轻量 window 永远在线打 server。no-origin 离线必须挂桶才能取图(浏览器唯一字节源),没桶 → 404/占位,非 bug。`teardownPwa` 降级时删 `mh-blob-v1`(可重取),保留 spool(IndexedDB)避免丢未 drain 的离线插图。
+
+### 实现偏离记录
+- **spool/缓存索引用 IndexedDB,非 OPFS**:plan 写的"OPFS spool"是泛称。改用 IndexedDB object store(`mh-blobs` 库:`spool` + `meta`)——window/worker/SW 三上下文共享同一 origin IndexedDB 且无需 OPFS sync handle(dedicated-worker-only)的笨重。字节存 Cache Storage(`mh-blob-v1`),IndexedDB 只存 spool 字节 + LRU 元数据。
 
 ## 7. 待办(下一步)
-- **浏览器离线取图**:SW 拦 `/blob/<hash>` → 浏览器侧 resolver(aws4fetch 读桶 `blobs/<hash>` + 解密)→ 写入**有界 Cache Storage LRU**(新 `mh-blob-*` 缓存,不进 OPFS,按配额淘汰);在线优先网络回退。
-- **离线 compose 插图**:OPFS **blob spool** 暂存离线产出的字节(浏览器算同款截短 hash)→ `uploadDocImage` 改 spool-first 即时渲染 → 联网/桶可达时 drain 到 `POST /api/blob` 或直传桶 → durable 后下放到可淘汰缓存。spool 即浏览器版"唯一副本/pending",受保护不淘汰。
-- 自动配额 LRU 淘汰、pin(离线保留)。真桶 R2/COS 端到端。
+- 真桶 R2/COS 端到端 + 真浏览器 e2e(replica 离线粘图→刷新仍在→恢复 drain→清缓存尊重 pin)。
+- 浏览器侧 pin 已具备底座(`setCachePinned`,LRU 跳过 `meta.pinned`),但尚无编辑器/Settings 入口(replica 的 Settings pin 走服务端 `api.pinBlob`,no-origin 无 server);如需 replica 端 pin UI 再补 worker op + 面板。

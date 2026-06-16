@@ -8,6 +8,14 @@
 // at the bottom of this file.
 
 import { localApi, localSites, replicaActive, isNoOrigin } from "./data/local-api.ts";
+import {
+  blobHash32,
+  extForType,
+  spoolPut,
+  spoolPending,
+  spoolDelete,
+  cachePut,
+} from "./data/blob-store.ts";
 import type { S3Config } from "../core/sync/storage.ts";
 
 // API row types come straight from core via type-only imports — erased at
@@ -247,6 +255,40 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 const q = (s: string) => encodeURIComponent(s);
 
+/** Push blob bytes composed offline (spool) to the server for an origin-backed
+ *  replica — the page holds the master token POST /api/blob needs (a no-origin
+ *  client drains to its bucket from the worker instead). On success the bytes move
+ *  to the evictable byte cache and leave the spool. Best-effort + single-flight;
+ *  stops at the first failure (still offline) and retries on the next trigger. */
+let draining = false;
+export async function drainBlobSpool(): Promise<void> {
+  if (draining || isNoOrigin()) return;
+  draining = true;
+  try {
+    for (const e of await spoolPending()) {
+      let res: Response;
+      try {
+        res = await authFetch("/api/blob", {
+          method: "POST",
+          headers: { "content-type": e.content_type },
+          body: e.bytes,
+        });
+      } catch {
+        break; // still offline — retry on the next online/upload
+      }
+      if (!res.ok) break;
+      await cachePut(e.hash, e.bytes, e.content_type).catch(() => {});
+      await spoolDelete(e.hash).catch(() => {});
+    }
+  } finally {
+    draining = false;
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => void drainBlobSpool());
+}
+
 // Blob cache (document images / large files): managed on the server (data home);
 // always HTTP — the browser replica has no local counterpart for the node cache.
 export interface BlobCacheStats {
@@ -269,6 +311,10 @@ export interface BlobCacheInfo {
   stats: BlobCacheStats;
   policy: BlobPolicyInfo;
   nodes: BlobCacheNode[];
+  /** Auto-evict over this many bytes; 0 = disabled. */
+  quotaBytes: number;
+  pinnedCount: number;
+  pinnedBytes: number;
 }
 export interface BlobClearResult {
   cleared: number;
@@ -412,18 +458,33 @@ const httpApi = {
   },
 
   /** Upload a document image as a content-addressed blob; returns its /blob/<hash>
-   *  URL to embed in markdown. Raw bytes (can't use req(), which JSON-stringifies). */
+   *  URL to embed in markdown. Raw bytes (can't use req(), which JSON-stringifies).
+   *  Replica clients can compose offline: when the upload can't reach the server,
+   *  the bytes are spooled under the SAME hash the server would assign and the
+   *  stable URL is returned immediately (the SW serves them from the spool); a
+   *  later drain (online) pushes them to the server. */
   uploadDocImage: async (file: Blob): Promise<DocImageUpload> => {
-    const res = await authFetch("/api/blob", {
-      method: "POST",
-      headers: { "content-type": file.type || "application/octet-stream" },
-      body: file,
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || (data && (data as any).error)) {
+    try {
+      const res = await authFetch("/api/blob", {
+        method: "POST",
+        headers: { "content-type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data && !(data as any).error) {
+        void drainBlobSpool(); // online again — flush anything stranded earlier
+        return data as DocImageUpload;
+      }
       throw new Error((data && (data as any).error) || `${res.status} ${res.statusText}`);
+    } catch (e) {
+      if (!(replicaActive() || isNoOrigin())) throw e;
+      const buf = await file.arrayBuffer();
+      const hash = await blobHash32(buf);
+      const ct = file.type || "application/octet-stream";
+      await spoolPut(hash, buf, ct);
+      const ext = extForType(ct);
+      return { hash, size: buf.byteLength, content_type: ct, url: `/blob/${hash}${ext ? "." + ext : ""}` };
     }
-    return data as DocImageUpload;
   },
 
   // blob cache (Settings storage panel)
@@ -431,6 +492,8 @@ const httpApi = {
   clearBlobCache: () => req<BlobClearResult>("POST", "/api/blob-cache/clear"),
   setBlobPolicy: (b: { full_nodes?: string[]; redundancy?: "all" | "any" }) =>
     req<BlobPolicyResult>("POST", "/api/blob-policy", b),
+  pinBlob: (hash: string, pinned: boolean) =>
+    req<{ hash: string; pinned: boolean }>("POST", "/api/blob-cache/pin", { hash, pinned }),
 
   // version of the running core (sidecar)
   version: () => req<{ version: string }>("GET", "/api/version"),

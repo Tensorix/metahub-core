@@ -348,11 +348,13 @@ function installSwBridge(): void {
 
 let pwaWired = false;
 
-/** Unregister the service worker and drop its shell/api caches. The bridge
+/** Unregister the service worker and drop its shell/api/blob caches. The bridge
  *  message listener (installSwBridge) is intentionally left in place: it's inert
  *  with no SW to message, idempotent on a later re-enable, and was added as an
  *  anonymous handler that can't be removeEventListener'd anyway. The wasm cache
- *  is kept so re-enabling a trusted device doesn't re-download ~1MB. */
+ *  is kept so re-enabling a trusted device doesn't re-download ~1MB. The blob
+ *  spool (IndexedDB) is left untouched so offline-composed images still pending
+ *  upload aren't lost on a downgrade to lightweight. */
 export async function teardownPwa(): Promise<void> {
   try {
     if ("serviceWorker" in navigator) {
@@ -365,7 +367,8 @@ export async function teardownPwa(): Promise<void> {
   try {
     if ("caches" in globalThis) {
       for (const key of await caches.keys()) {
-        if (key.startsWith("mh-shell-") || key === "mh-api-v1") await caches.delete(key);
+        if (key.startsWith("mh-shell-") || key === "mh-api-v1" || key === "mh-blob-v1")
+          await caches.delete(key);
       }
     }
   } catch {

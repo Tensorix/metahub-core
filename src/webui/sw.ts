@@ -23,6 +23,7 @@
 
 import { mapApiRequest } from "./data/api-map.ts";
 import { probeOrigin, type OriginMode } from "./data/origin.ts";
+import { cacheGet, cachePut, inferBlobType } from "./data/blob-store.ts";
 
 // Local structural types: the project compiles this file under two tsconfigs
 // (root: ESNext-only libs; src/webui: DOM libs) and lib.webworker conflicts
@@ -402,6 +403,57 @@ async function handleSite(event: FetchEventLike): Promise<Response> {
   }
 }
 
+// ---- /blob/* gateway ----------------------------------------------------------------
+
+/**
+ * Serve `GET /blob/<hash>[.ext]` for a replica client. Order:
+ *   1. the bounded local Cache Storage (mh-blob-v1) — instant, offline;
+ *   2. the network (server resolves local→peer→bucket) when an origin is present
+ *      and reachable — the canonical path once a blob is uploaded;
+ *   3. the local replica worker (blobBytes), which serves bytes composed offline
+ *      (spool) or pulls + decrypts them from an attached bucket.
+ * A success from 2/3 is cached for next time. 404 when no source has the bytes
+ * (e.g. a no-origin client offline with no bucket — expected, shows broken img).
+ */
+async function handleBlob(event: FetchEventLike): Promise<Response> {
+  const req = event.request;
+  const url = new URL(req.url);
+  const rest = decodeURIComponent(url.pathname.slice("/blob/".length));
+  const dot = rest.indexOf(".");
+  const hash = (dot >= 0 ? rest.slice(0, dot) : rest).toLowerCase();
+  if (!/^[0-9a-f]{16,64}$/.test(hash)) return fetch(req); // not a blob URL — pass through
+  const ct = inferBlobType(rest);
+
+  const hit = await cacheGet(hash);
+  if (hit) return hit;
+
+  // Network (server resolve) first when there's a reachable origin. A 404 here
+  // (blob composed offline, not yet drained to the server) falls through to the
+  // replica, which still holds it in its spool.
+  if (!(await swNoOrigin())) {
+    try {
+      const res = await fetchWithTimeout(req, NETWORK_TIMEOUT_MS * 2);
+      if (res.ok) {
+        const buf = await res.clone().arrayBuffer();
+        await cachePut(hash, buf, res.headers.get("content-type") ?? ct);
+        return res;
+      }
+    } catch {
+      /* offline / unreachable — try the local replica */
+    }
+  }
+
+  const reply = await localRpc(event, "blobBytes", [hash]);
+  if (reply?.ok && reply.result) {
+    const buf = reply.result as ArrayBuffer;
+    await cachePut(hash, buf, ct);
+    return new Response(buf, {
+      headers: { "content-type": ct, "x-mh-source": "replica" },
+    });
+  }
+  return new Response("blob unavailable offline", { status: 404 });
+}
+
 // ---- dispatch -------------------------------------------------------------------------
 
 sw.addEventListener("fetch", (event) => {
@@ -418,6 +470,11 @@ sw.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/sites/")) {
     event.respondWith(handleSite(event));
+    return;
+  }
+
+  if (url.pathname.startsWith("/blob/")) {
+    event.respondWith(handleBlob(event));
     return;
   }
 

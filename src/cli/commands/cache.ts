@@ -7,6 +7,8 @@ import {
   setRedundancy,
   knownNodes,
   cacheStats,
+  cachedBlobs,
+  setPinned,
   clearCache,
   gcOrphans,
   reconcileCache,
@@ -14,6 +16,7 @@ import {
   type Redundancy,
   type KnownNode,
 } from "../../core/blobs.ts";
+import { getServerConfig } from "../../core/config.ts";
 import { MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
 import * as p from "@clack/prompts";
@@ -37,16 +40,21 @@ function showStatus(db: Db): void {
   reconcileCache(db);
   const stats = cacheStats(db);
   const { fullNodes, redundancy } = readPolicy(db);
+  const quota = getServerConfig(db).blobCacheQuotaBytes;
+  const pinned = cachedBlobs(db).filter((b) => b.pinned);
+  const pinnedBytes = pinned.reduce((s, b) => s + b.size, 0);
   const known = knownNodes(db);
   const fullView = fullNodes.map((id) => {
     const n = known.find((k) => k.nodeId === id);
     return n ? nodeLabel(n) : id;
   });
-  print({ stats, policy: { fullNodes, redundancy } }, () =>
+  print({ stats, policy: { fullNodes, redundancy }, quotaBytes: quota, pinnedCount: pinned.length }, () =>
     [
       `cache: ${stats.count} blob(s), ${fmtBytes(stats.totalBytes)}`,
       `  clearable: ${stats.clearableCount} blob(s) · ${fmtBytes(stats.clearableBytes)}`,
       `  retained:  ${fmtBytes(stats.retainedBytes)}`,
+      `  pinned:    ${pinned.length} blob(s) · ${fmtBytes(pinnedBytes)}`,
+      `quota: ${quota > 0 ? `${fmtBytes(quota)} (auto-evicts over this)` : "disabled"}`,
       ``,
       `full blob device(s): ${
         fullView.length ? fullView.join(", ") : "(none — nothing is clearable until you set one)"
@@ -142,18 +150,19 @@ export default defineCommand({
       "Inspect and clear the local blob cache (document images / large files). " +
       "Only blobs durably held by a designated 'full blob device' are clearable — " +
       "the reference stays, the bytes re-download on demand. " +
-      "Actions: status (default) | clear | gc | full-device list|add|rm | redundancy all|any.",
+      "Actions: status (default) | clear | gc | full-device list|add|rm | redundancy all|any | " +
+      "pin <hash> | unpin <hash>.",
   },
   args: {
     action: {
       type: "positional",
       required: false,
-      description: "status | clear | gc | full-device | redundancy (default status)",
+      description: "status | clear | gc | full-device | redundancy | pin | unpin (default status)",
     },
     target: {
       type: "positional",
       required: false,
-      description: "full-device: list|add|rm · redundancy: all|any",
+      description: "full-device: list|add|rm · redundancy: all|any · pin/unpin: <hash>",
     },
     node: { type: "string", description: "Device node id (full-device add/rm)" },
   },
@@ -193,10 +202,21 @@ export default defineCommand({
         print({ redundancy: target }, () => `redundancy set to ${target}`);
         return;
       }
+      case "pin":
+      case "unpin": {
+        if (!target) throw new MhError("invalid_input", `usage: mh cache ${action} <hash>`);
+        reconcileCache(db); // fold disk-only blobs into the ledger so a fresh hash can be pinned
+        const ok = setPinned(db, target, action === "pin");
+        if (!ok) throw new MhError("not_found", `blob not in cache: ${target}`);
+        print({ hash: target, pinned: action === "pin" }, () =>
+          action === "pin" ? `pinned ${target} (kept on clear / eviction)` : `unpinned ${target}`,
+        );
+        return;
+      }
       default:
         throw new MhError(
           "invalid_input",
-          `unknown cache action '${action}' (status|clear|gc|full-device|redundancy)`,
+          `unknown cache action '${action}' (status|clear|gc|full-device|redundancy|pin|unpin)`,
         );
     }
   }),
