@@ -7,6 +7,7 @@ import {
   replicaActive,
   replicaEnabled,
   detectOriginMode,
+  ensurePwaRegistration,
   enableReplicaFromBucket,
   startReplica,
   onReplicaStatus,
@@ -144,27 +145,14 @@ function App() {
     return () => clearTimeout(timer);
   }, [replicaSt.bucketDirty, replicaSt.bucketSyncing, replicaSt.bucketError]);
 
-  // PWA: register the service worker (offline shell + stale read mirror).
-  // Secure-context only — plain-HTTP LAN setups keep today's behavior. On an
-  // update taking control mid-session the running page is one bundle behind;
-  // first-install claims are silent (hadController distinguishes the two).
+  // PWA: register the service worker only for a replica-holding client (trusted
+  // device or no-origin bucket home). A lightweight online-only window keeps no
+  // SW — a leftover one would intercept /api/* and surface a raw offline
+  // ERR_CONNECTION_REFUSED — so ensurePwaRegistration() tears any stale one down.
+  // Deferred behind detectOriginMode() so clientMode() (isNoOrigin) is settled
+  // first; it also wires the one-shot auto-reload when a new SW version takes over.
   useEffect(() => {
-    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-    if (!window.isSecureContext) return;
-    const hadController = navigator.serviceWorker.controller != null;
-    let notified = false;
-    navigator.serviceWorker.register("/sw.js").catch((e) => {
-      // Progressive enhancement — never block the app — but warn: a silent
-      // failure here silently costs offline support.
-      console.warn("[webui] service worker registration failed —", e);
-    });
-    const onChange = () => {
-      if (!hadController || notified) return;
-      notified = true;
-      toast("界面已更新,刷新页面生效");
-    };
-    navigator.serviceWorker.addEventListener("controllerchange", onChange);
-    return () => navigator.serviceWorker.removeEventListener("controllerchange", onChange);
+    void detectOriginMode().then(() => ensurePwaRegistration());
   }, []);
 
   // Online/offline indicator: phase 1 offline is a stale read-only mirror, so

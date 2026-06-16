@@ -326,11 +326,20 @@ function DeviceSetup() {
       danger: true,
     });
     if (!ok) return;
+    // unregister() doesn't un-control the already-loaded page; if a SW was
+    // controlling, reload once after teardown so this session lands cleanly in
+    // lightweight (no SW intercepting /api/*). The reloaded page is uncontrolled
+    // (registration is gone), so this can't loop.
+    const hadSw =
+      typeof navigator !== "undefined" &&
+      "serviceWorker" in navigator &&
+      navigator.serviceWorker.controller != null;
     setBusy(true);
     try {
       await disableReplica();
       setEnabled(false);
       toast("已停用离线副本");
+      if (hadSw) location.reload();
     } finally {
       setBusy(false);
     }

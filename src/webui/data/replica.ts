@@ -237,6 +237,7 @@ export async function enableReplica(): Promise<void> {
     await call("pair", code);
   }
   setFlag(ENABLED_KEY, true);
+  ensurePwaRegistration(); // now a replica → register the SW live (no reload needed)
   requestSync();
 }
 
@@ -255,6 +256,7 @@ export async function enableReplicaFromBucket(
   await waitReady();
   const r = await call<{ url: string }>("addStorageReplica", config, passphrase);
   setFlag(ENABLED_KEY, true);
+  ensurePwaRegistration(); // now a replica → register the SW live (no reload needed)
   requestSync();
   return r;
 }
@@ -269,6 +271,9 @@ export async function disableReplica(): Promise<void> {
   } catch {
     /* worker may be dead; flags above already make this browser HTTP-only */
   }
+  // Lightweight window keeps no SW: drop the offline gateway + shell/api caches so
+  // it stops intercepting /api/* (the offline ERR_CONNECTION_REFUSED source).
+  await teardownPwa();
 }
 
 /** Wipe the local replica entirely (settings → 重置本地副本): close + delete
@@ -283,6 +288,7 @@ export async function resetReplica(): Promise<void> {
     }
   } finally {
     getReplicaBus().stopWorker();
+    void teardownPwa(); // full wipe → also drop the SW + shell/api caches
     // Drop the stale "ready" status and the started flag so a later
     // enableReplica() re-runs the full join (startReplica → fresh worker) and
     // waitReady() actually waits for that worker, instead of resolving on this
@@ -332,5 +338,77 @@ function installSwBridge(): void {
       (err: ReplicaError) =>
         port.postMessage({ ok: false, error: { message: err.message, code: err.code } }),
     );
+  });
+}
+
+// ---- PWA (service worker) lifecycle -------------------------------------------
+// Only a replica-holding client (trusted device, or a no-origin bucket-only home)
+// has any use for the SW: it's the offline shell + the /api offline gateway. A
+// lightweight online-only window must NOT keep one — a leftover SW from a prior
+// trusted session keeps intercepting /api/*, forwards to a now-unreachable origin,
+// and surfaces a raw net::ERR_CONNECTION_REFUSED offline. So registration is gated
+// on clientMode().hold, and switching to lightweight actively tears the SW down.
+
+let pwaWired = false;
+
+/** Unregister the service worker and drop its shell/api caches. The bridge
+ *  message listener (installSwBridge) is intentionally left in place: it's inert
+ *  with no SW to message, idempotent on a later re-enable, and was added as an
+ *  anonymous handler that can't be removeEventListener'd anyway. The wasm cache
+ *  is kept so re-enabling a trusted device doesn't re-download ~1MB. */
+export async function teardownPwa(): Promise<void> {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
+    }
+  } catch {
+    /* unsupported / insecure context — nothing to tear down */
+  }
+  try {
+    if ("caches" in globalThis) {
+      for (const key of await caches.keys()) {
+        if (key.startsWith("mh-shell-") || key === "mh-api-v1") await caches.delete(key);
+      }
+    }
+  } catch {
+    /* CacheStorage unavailable — best effort */
+  }
+}
+
+/** Reconcile the SW with this client's mode. A replica registers /sw.js (and
+ *  wires a one-shot auto-reload when a new version takes control); a lightweight
+ *  window tears any leftover SW down. Idempotent — safe to call on every boot and
+ *  on each enable/disable. */
+export function ensurePwaRegistration(): void {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  if (typeof window === "undefined" || !window.isSecureContext) return;
+  // Desktop renderer is a pure window onto the local sidecar (its data home), so
+  // it never needs the SW — and a stale mh_replica flag must not make it register
+  // one. Treat it as not-a-replica regardless of clientMode().
+  if (window.metahubDesktop || clientMode().hold !== "replica") {
+    void teardownPwa(); // lightweight window / desktop → self-heal a stale SW
+    return;
+  }
+  navigator.serviceWorker.register("/sw.js").catch((e) => {
+    // Progressive enhancement — never block the app — but warn: a silent failure
+    // here silently costs offline support.
+    console.warn("[webui] service worker registration failed —", e);
+  });
+  if (pwaWired) return;
+  pwaWired = true;
+  // Auto-reload once when a *new* SW version takes control, so a long-lived tab
+  // never keeps running a bundle behind the active worker. The first claim of a
+  // fresh install (page loaded uncontrolled) is skipped; only later updates reload.
+  let controlled = navigator.serviceWorker.controller != null;
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!controlled) {
+      controlled = true;
+      return;
+    }
+    if (refreshing) return;
+    refreshing = true;
+    location.reload();
   });
 }
