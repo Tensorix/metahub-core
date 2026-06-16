@@ -59,7 +59,10 @@ const PATHS: Record<string, string> = {
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
   lock: '<rect x="4.5" y="11" width="15" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   upload: '<path d="M12 16V4M8 8l4-4 4 4M5 20h14"/>',
-  spinner: '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  spinner: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+  cloudUp: '<path d="M12 13v8"/><path d="m8 17 4-4 4 4"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>',
+  cloudCheck: '<path d="M17 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 0 1 2.86 8"/><path d="m9 14 2 2 4-4"/>',
+  cloudOff: '<path d="m2 2 20 20"/><path d="M5.78 5.78A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.3-.2"/><path d="M21.4 14.4A4.5 4.5 0 0 0 17.5 8h-1.8A7 7 0 0 0 9.4 4.6"/>',
   externalLink: '<path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
 };
 

@@ -348,10 +348,12 @@ function App() {
     saveState === "share"
       ? "share"
       : saveState === "saved"
-        ? "check"
+        ? "cloudCheck"
         : saveState === "saving"
           ? "spinner"
-          : "upload";
+          : saveState === "error"
+            ? "cloudOff"
+            : "cloudUp";
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   const saveHint = isMobile ? "" : isMac ? " · ⌘S" : " · Ctrl+S";
   const shareSaveTitle =
@@ -511,7 +513,6 @@ function App() {
               >
                 <span class="share-save-ico"><Icon name={saveIcon} cls="ico sm" /></span>
                 <span class="share-save-label">{saveLabel}</span>
-                {saveState === "error" && <span class="share-save-dot" />}
               </button>
               <button class="iconbtn" onClick={moreMenu}><Icon name="dots" /></button>
             </>

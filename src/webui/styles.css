@@ -350,36 +350,35 @@
   .btn-primary { background:var(--accent); color:var(--accent-fg); box-shadow:var(--shadow-sm); }
   .btn-primary:hover { filter:brightness(1.07); }
   .btn-danger { background:var(--danger); color:#fff; } .btn-danger:hover { filter:brightness(1.05); }
+  /* Notion-style ambient sync indicator: a quiet ghost control living in the
+     topbar icon row. State reads through the *text/icon colour* — no filled pill
+     or drop shadow — and only the error state escalates to a visible danger tone.
+     Width is a fixed floor (fits the widest "保存中…") so changes never jolt. */
   .share-save {
-    position:relative; min-width:96px; justify-content:center; overflow:hidden; color:var(--fg-soft);
-    transition:background .18s ease, color .18s ease, box-shadow .18s ease, border-color .18s ease, transform .12s ease;
+    position:relative; min-width:96px; justify-content:center; color:var(--fg-soft);
+    transition:background .15s ease, color .15s ease, transform .12s ease;
   }
-  /* ghost hover only on the idle "share" state — the accent save states must
-     *brighten* on hover (a CTA), not fall back to the grey ghost background. */
-  .share-save-share:hover { background:var(--hover-2); color:var(--fg); }
-  .share-save-dirty, .share-save-saving, .share-save-saved, .share-save-error {
-    color:var(--accent-fg); background:var(--accent); box-shadow:var(--shadow-sm);
-  }
-  .share-save-dirty:hover, .share-save-error:hover { filter:brightness(1.07); }
-  .share-save-error { background:var(--danger); color:#fff; animation:save-shake .4s ease both; }
-  .share-save:not(:disabled):active { transform:scale(.96); }
+  .share-save:not(:disabled):hover { background:var(--hover-2); color:var(--fg); }
+  .share-save:not(:disabled):active { transform:scale(.97); }
+  .share-save-dirty { color:var(--accent); }
+  .share-save-dirty:not(:disabled):hover { background:var(--accent-soft); color:var(--accent); }
+  .share-save-saving { color:var(--fg-soft); }
+  .share-save-saved { color:var(--success); }
+  .share-save-error { color:var(--danger); animation:save-shake .4s ease both; }
+  .share-save-error:not(:disabled):hover { background:var(--danger-soft); color:var(--danger); }
   .share-save-kbd { animation:save-kbd-pulse .32s ease; }
-  .share-save:disabled { cursor:default; filter:none; }
+  .share-save:disabled { cursor:default; }
   .share-save-ico, .share-save-label {
-    display:inline-flex; align-items:center; transition:opacity .18s ease, transform .18s ease;
+    display:inline-flex; align-items:center; transition:opacity .15s ease, transform .15s ease;
   }
-  .share-save-dirty .share-save-ico, .share-save-error .share-save-ico { animation:save-rise .22s ease both; }
+  .share-save-dirty .share-save-ico { animation:save-rise .22s ease both; }
   .share-save-saving .share-save-ico { animation:save-spin .8s linear infinite; }
   .share-save-saved .share-save-ico { animation:save-pop .24s cubic-bezier(.18,.9,.24,1.22) both; }
-  .share-save-dot {
-    position:absolute; top:5px; right:6px; width:6px; height:6px; border-radius:50%; background:#fff;
-    box-shadow:0 0 0 2px color-mix(in srgb,var(--danger) 74%,#0000);
-  }
-  @keyframes save-rise { from { opacity:0; transform:translateY(6px) scale(.9); } to { opacity:1; transform:none; } }
+  @keyframes save-rise { from { opacity:0; transform:translateY(5px) scale(.92); } to { opacity:1; transform:none; } }
   @keyframes save-spin { to { transform:rotate(360deg); } }
-  @keyframes save-pop { 0% { transform:scale(.72); } 100% { transform:scale(1); } }
-  @keyframes save-shake { 10%,90% { transform:translateX(-1px); } 20%,80% { transform:translateX(2px); } 30%,50%,70% { transform:translateX(-3px); } 40%,60% { transform:translateX(3px); } }
-  @keyframes save-kbd-pulse { 0% { transform:scale(1); } 45% { transform:scale(1.06); } 100% { transform:scale(1); } }
+  @keyframes save-pop { 0% { transform:scale(.7); } 100% { transform:scale(1); } }
+  @keyframes save-shake { 10%,90% { transform:translateX(-1px); } 20%,80% { transform:translateX(1.5px); } 30%,50%,70% { transform:translateX(-2px); } 40%,60% { transform:translateX(2px); } }
+  @keyframes save-kbd-pulse { 0% { transform:scale(1); } 45% { transform:scale(1.05); } 100% { transform:scale(1); } }
 
   /* macOS desktop (hiddenInset frameless): drop the sidebar logo and reserve a
      draggable strip so the inset traffic lights never overlap our controls.
