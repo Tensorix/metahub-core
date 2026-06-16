@@ -101,6 +101,8 @@
 - **A0-2 主密钥首配竞态**:`provisionMasterKey` 改条件写(浏览器真 `If-None-Match`;Bun `exists()` 预检兜底,`Bun.S3Client` 无原子 CAS),防两台新设备并发初始化互相覆盖主密钥。
 - **A0-3 HEAD 崩溃窗口**:push **先写 HEAD 再写 seg**(崩在中间只让消费者多 LIST 一次、不漏段;原顺序会让 HEAD 滞后于已写段而被廉价跳过误跳)。
 - **A0-4 快照键唯一性**:`<maxHlc>~<hash>.snap`(内容寻址)+ 消费改**集合游标**,防同 maxHlc 不同内容的并发快照互相覆盖/被跳过。
+- **A0-5 快照切面竞态**:`publishSnapshot` 先截取本节点已存在 segment 高水位,再读取 winners;同节点并发上传的新 segment 要么进入 snapshot,要么留在 `.vc.ownSegHigh` 之后继续被拉取,不能被消费者游标跳过。`syncPeer` 同 peer in-flight 合并 + server auto-sync tick guard 进一步避免同进程重叠轮次回写 HEAD/cursor。
+- **A0-6 添加桶 fail-fast**:`addAndSyncStoragePeer` 首次 sync 返回 `ok:false` 时抛错并回滚 peer 配置;WebUI/CLI 添加流程不再把坏 endpoint/凭据/CORS 误报为“已连接”。手动 sync 仍返回 `{ok:false}` 用于状态展示。
 
 **成本/带宽**:
 - **A1 推送攒批**:`StorageSyncOpts` 加 `minPushChanges`/`maxPushAgeMs`/`forcePush`;db-worker ≥25 条 或 ≥10s 才产段,显式 sync / 切后台 `force` 兜底——消除碎对象(R2/COS 按**请求数**计费)。

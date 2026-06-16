@@ -350,6 +350,29 @@
   .btn-primary { background:var(--accent); color:var(--accent-fg); box-shadow:var(--shadow-sm); }
   .btn-primary:hover { filter:brightness(1.07); }
   .btn-danger { background:var(--danger); color:#fff; } .btn-danger:hover { filter:brightness(1.05); }
+  .share-save {
+    position:relative; min-width:76px; justify-content:center; overflow:hidden; color:var(--fg-soft);
+    transition:background .18s ease, color .18s ease, box-shadow .18s ease, border-color .18s ease, min-width .18s ease;
+  }
+  .share-save:hover { background:var(--hover-2); color:var(--fg); }
+  .share-save-dirty, .share-save-saving, .share-save-saved, .share-save-error {
+    min-width:92px; color:var(--accent-fg); background:var(--accent); box-shadow:var(--shadow-sm);
+  }
+  .share-save-error { background:var(--danger); color:#fff; }
+  .share-save:disabled { cursor:default; filter:none; }
+  .share-save-ico, .share-save-label {
+    display:inline-flex; align-items:center; transition:opacity .18s ease, transform .18s ease;
+  }
+  .share-save-dirty .share-save-ico, .share-save-error .share-save-ico { animation:save-rise .22s ease both; }
+  .share-save-saving .share-save-ico { animation:save-spin .9s linear infinite; }
+  .share-save-saved .share-save-ico { animation:save-pop .24s cubic-bezier(.18,.9,.24,1.22) both; }
+  .share-save-dot {
+    position:absolute; top:5px; right:6px; width:6px; height:6px; border-radius:50%; background:#fff;
+    box-shadow:0 0 0 2px color-mix(in srgb,var(--danger) 74%,#0000);
+  }
+  @keyframes save-rise { from { opacity:0; transform:translateY(6px) scale(.9); } to { opacity:1; transform:none; } }
+  @keyframes save-spin { to { transform:rotate(360deg); } }
+  @keyframes save-pop { 0% { transform:scale(.72); } 100% { transform:scale(1); } }
 
   /* macOS desktop (hiddenInset frameless): drop the sidebar logo and reserve a
      draggable strip so the inset traffic lights never overlap our controls.

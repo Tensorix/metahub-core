@@ -4,7 +4,7 @@
 
 本文把"看起来有 5 种 client 形态"收敛成**一套不打架的心智模型**,并定义桶的**发布者角色**与各形态的**前端交互**。
 
-> 性质:架构 + 决策依据 + 实现记录。**A–I 已落地**(feat/syncv2;见 §8/§9)——发布者快照、配桶定位数据家、窗口/副本、统一同步页、心跳选举、`clientMode()`、副本接桶(homelab 在外兜底)、**重输密钥激活本设备直连 + 服务器非密钥配置下发 + 单桶状态 UI(I)**均已实现;仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
+> 性质:架构 + 决策依据 + 实现记录。**A–K 已落地**(feat/syncv2;见 §8/§9)——发布者快照、配桶定位数据家、窗口/副本、统一同步页、心跳选举、`clientMode()`、副本接桶(homelab 在外兜底)、**重输密钥激活本设备直连 + 服务器非密钥配置下发 + 单桶状态 UI(I)**、**直连桶 PWA 的“分享→保存”落桶状态(J)**、**添加桶首次验证 fail-fast(K)**均已实现;仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
 
 ---
 
@@ -157,9 +157,9 @@
 - **副本要 https**(OPFS/SW/WebCrypto);窗口纯在线**裸 HTTP 也行**(见 18:secure context 要求)。
 - 故"手机只想轻量看大数据"需要一台能连的 server;纯桶给不了。这也是 server 除"快"之外的独立价值。
 
-## 8. 实现状态(2026-06,A–I 已落地)
+## 8. 实现状态(2026-06,A–K 已落地)
 
-整套 A–G + H(副本接桶)+ I(重输密钥激活 + 非密钥配置下发 + 单桶状态 UI)已实现(`bun test` 全绿、tsc 维持基线、浏览器包 + `build:shell` 干净)。仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
+整套 A–G + H(副本接桶)+ I(重输密钥激活 + 非密钥配置下发 + 单桶状态 UI)+ J(分享→保存落桶状态)+ K(添加桶首次验证 fail-fast)已实现(`bun test` 全绿、tsc 维持基线、浏览器包 + `build:shell` 干净)。仍待真浏览器 e2e + 真桶(R2/MinIO/多 server)实测。
 
 ## 9. 清单(已完成)
 
@@ -179,6 +179,10 @@
   - **拓扑**:`SyncTopology` 的「本设备⇢桶」边反映**真实直连态**——实线 `直连·兜底` 仅当本设备副本确有已激活桶,否则虚线 `经服务器`;no-origin 恒实线 `直连`。
   - **no-origin 不打架**:仍单主体(`本设备发布`),不渲染任何 server/归属/教学元素;`ActivateBucketOnDeviceModal`、`服务器后端` 等均 `noOrigin` 门控为 origin-only。
   - 校验:tsc 维持基线、`bun test`(storage/e2ee/cors)绿。新增 `.peer-tag`/`.bucket-flow`/`.activate-id`(`styles.css`,全走 CSS 变量 + `color-mix`,兼容 dark)。**待测**:真浏览器 e2e(重输密钥激活 → 停 server 经桶兜底)。
+
+- [x] **J. 直连桶 PWA 的“分享→保存”落桶状态**:把“本地已写入、尚未推到直连桶”的状态从 worker 暴露为 `bucketDirty/bucketSyncing/bucketError`;storage push batching 延迟时保持 dirty 并安排短延迟 force flush,页面隐藏/用户点击立即 flush。主界面右上角原“分享”按钮在 dirty 时动画变为“保存”,点击先 flush 当前文档编辑器再强制同步;成功短暂显示“已保存”后回到“分享”,失败保留保存按钮并提示错误。server/sidecar 继续攒批,窗口模式无直连桶时仍只显示分享。
+
+- [x] **K. 添加桶首次验证 fail-fast**:CLI/WebUI 添加 S3/R2 peer 时,首次 sync 失败即抛错并回滚 peer 配置,避免“已连接”但之后一直失败。已有同 URL peer 更新失败时恢复旧配置;手动 sync 仍只返回 `{ok:false}` 供状态页展示。
 
 **与原计划的偏差**:F 用心跳选举替代 `If-Match` 条件写(更简单、零新 client 表面;正确性已被快照幂等保证)。I 把 H 的"加桶当场才能接桶"约束放宽为"对 server 任一桶随时重输密钥激活",并把 server 桶在浏览器侧只读镜像(原窗口模式藏在折叠里)。
 

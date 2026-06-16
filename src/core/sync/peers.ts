@@ -16,6 +16,12 @@ import {
 
 const PEER_COLS =
   "url, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_success_at, last_status, last_error, kind, config";
+const syncInFlight = new WeakMap<object, Map<string, Promise<PeerSyncOutcome>>>();
+
+async function waitForPeerIdle(db: DbDriver, url: string): Promise<void> {
+  const existing = syncInFlight.get(db as object)?.get(url);
+  if (existing) await existing.catch(() => undefined);
+}
 
 export interface PeerRow {
   url: string;
@@ -87,6 +93,39 @@ export function addStoragePeer(db: DbDriver, input: AddStoragePeerInput): void {
   ).run(input.url, JSON.stringify(input.config), input.label ?? null);
 }
 
+function restorePeerRow(db: DbDriver, row: PeerRow): void {
+  db.query(
+    `UPDATE peers SET
+       pull_cursor = ?,
+       push_cursor = ?,
+       token = ?,
+       label = ?,
+       node_id = ?,
+       enabled = ?,
+       last_sync_at = ?,
+       last_success_at = ?,
+       last_status = ?,
+       last_error = ?,
+       kind = ?,
+       config = ?
+     WHERE url = ?`,
+  ).run(
+    row.pull_cursor,
+    row.push_cursor,
+    row.token,
+    row.label,
+    row.node_id,
+    row.enabled,
+    row.last_sync_at,
+    row.last_success_at,
+    row.last_status,
+    row.last_error,
+    row.kind,
+    row.config,
+    row.url,
+  );
+}
+
 /** Synthetic peer key for a storage peer: one per bucket+prefix. */
 export const storageUrl = (bucket: string, prefix: string) => `s3://${bucket}/${prefix}`;
 
@@ -137,8 +176,15 @@ export async function addAndSyncStoragePeer(
       (await provisionMasterKey(storageClientFor(config), config, spec.passphrase)) ?? undefined;
   }
   const url = storageUrl(config.bucket, prefix);
+  await waitForPeerIdle(db, url);
+  const previous = getPeer(db, url);
   addStoragePeer(db, { url, config, label: spec.label ?? config.bucket });
   const sync = await syncPeer(db, url);
+  if (!sync.ok) {
+    if (previous) restorePeerRow(db, previous);
+    else removePeer(db, url);
+    throw new MhError("network", `storage peer first sync failed: ${sync.error ?? "unknown error"}`);
+  }
   return { url, config, sync };
 }
 
@@ -192,6 +238,7 @@ export interface PeerSyncOutcome {
   ok: boolean;
   pushed?: number;
   pulled?: number;
+  pendingPush?: boolean;
   error?: string;
 }
 
@@ -199,6 +246,25 @@ export interface PeerSyncOutcome {
  *  thrown. Dispatches on transport: 's3' peers go through the bucket
  *  store-and-forward client, everything else POSTs /sync. */
 export async function syncPeer(
+  db: DbDriver,
+  url: string,
+  opts?: { storage?: StorageSyncOpts },
+): Promise<PeerSyncOutcome> {
+  let byUrl = syncInFlight.get(db as object);
+  if (!byUrl) {
+    byUrl = new Map();
+    syncInFlight.set(db as object, byUrl);
+  }
+  const existing = byUrl.get(url);
+  if (existing) return existing;
+  const run = syncPeerOnce(db, url, opts).finally(() => {
+    if (byUrl.get(url) === run) byUrl.delete(url);
+  });
+  byUrl.set(url, run);
+  return run;
+}
+
+async function syncPeerOnce(
   db: DbDriver,
   url: string,
   opts?: { storage?: StorageSyncOpts },
@@ -221,7 +287,7 @@ export async function syncPeer(
       result = await syncWithPeer(db, url);
     }
     updatePeerStatus(db, url, "ok", null);
-    return { url, ok: true, pushed: result.pushed, pulled: result.pulled };
+    return { url, ok: true, pushed: result.pushed, pulled: result.pulled, pendingPush: result.pendingPush };
   } catch (e) {
     const error = (e as Error).message;
     updatePeerStatus(db, url, "error", error);

@@ -26,6 +26,8 @@ function setPeer(db: DbDriver, url: string, c: { pull_cursor: number; push_curso
 export interface SyncResult {
   pushed: number;
   pulled: number;
+  /** Storage-sync only: local own ops exist but were deferred by push batching. */
+  pendingPush?: boolean;
 }
 
 export interface SyncOpts {

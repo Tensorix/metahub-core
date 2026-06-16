@@ -37,6 +37,7 @@
 | **②b** ensureFresh | 非反应式消费者(CLI 读、PWA 服务的 site 页)陈旧才阻塞重拉 | `peers.ts`、`cli/fresh.ts`、`get/search.ts`、`db-worker.ts` `siteFile` |
 | **④** lease GC | 当选 publisher 顺手删过期满一个 TTL 的 lease | `publisher-lease.ts` |
 | **⑤** log-structured 快照 | 段=增量日志、快照=压缩检查点:解耦 force/publish + 消费端 frontier 跳过 + 段保留窗口 + delta-体积触发 | `storage.ts` |
+| **⑥** in-flight guard | 同一 peer 同时只跑一轮 sync,避免 HEAD/cursor/snapshot 切面重叠 | `peers.ts`、`server.ts` |
 
 执行顺序:① → ⑤ → ② → ④。③(降 server per-round LIST)经评估**转后续**(§7)。
 
@@ -57,7 +58,7 @@
 
 **门控**:一个节点**可完全不后台轮询**,当且仅当它是**反应式 WebUI 副本**(db-worker,有 `synced` 事件可在同步落地后更新视图)**且背后没有 CLI**。
 
-- **反应式 origin-backed 副本(db-worker)→ 取消 15s 后台轮询,纯事件驱动**:写 → `schedulePush`(去抖)→ 桶 push-only;online/visibilitychange/手动刷新 → 页面 `sync` RPC(force,完整轮次,已在 `replica.ts` 接好)。收敛性锚在持续轮询的 publisher;副本"被观测时收敛",用户一交互即追平。**已拍板纯按需**:可见但用户不操作时也不前台轮询,挂机请求归零。
+- **反应式 origin-backed 副本(db-worker)→ 取消 15s 后台轮询,事件驱动 + 明确保存态**:写 → `schedulePush`(去抖)→ 桶 push-only;online/visibilitychange/手动刷新 → 页面 `sync` RPC(force,完整轮次,已在 `replica.ts` 接好)。storage push 若因 `minPushChanges/maxPushAgeMs` 延迟,worker 保持 `bucketDirty` 并安排一条短延迟 force flush;右上角“分享”按钮动画变成“保存”,用户点击会先 flush 编辑器再强制落桶。收敛性锚在持续轮询的 publisher;副本"被观测时收敛",用户一交互即追平。**已拍板纯按需**:可见但用户不操作时也不前台轮询,挂机请求归零;但本机自产小尾巴最迟一个攒批窗口落桶。
 - **publisher(sidecar `server.ts`;无-origin PWA db-worker)→ 保留后台轮询 + 空闲退避**:必须持续拉远端编辑 + 发布,不可消除。sidecar 用 per-peer "next-due" 时间戳;base 30s → 退到 ≤ `TTL_MS/2`(2.5min,与 publisher-lease 一致性对齐)。**用全局"hub 是否推进"(`MAX(seq)` 变化)决定是否跳过 backed-off 的 s3 peer**——本地编辑或远端拉取都即时复位,纯空闲才退避。db-worker 无-origin PWA 同理自适应。
 
 > **为什么 daemon 必须保留轮询**:CLI 读命令(`get`/`search`/`doc`/`record`)只 `openMetahub()` 读本地 DB、**无 revalidate、无 pre-sync**;DB 不被后台喂新 CLI 就读到旧数据且无提示。所以"无后台轮询"只适用于反应式副本,任何 CLI 背后的 daemon 都要轮询(带退避)。
@@ -118,12 +119,15 @@ snapshots-first 下,增量收益依然成立:**常态连接的消费者在快照
 | `snapshotMaxIntervalMs` | 30min | ⑤d 时间上限 |
 | 退避 cap | 2.5min(=TTL/2) | ② sidecar/PWA 空闲退避上限 |
 | `ensureFresh` 阈值 | 3min | ②b 陈旧门槛(`MH_SYNC_MAX_AGE`) |
+| PWA bucket save delay | 10s | 直连桶副本有未落桶小改动时的自动 force flush 窗口,同 `maxPushAgeMs` |
 
 ## 10. 验证
 
-`storage.test.ts` 扩展(`bun test` 全绿 338 pass / 0 fail,root+webui tsc 0 错误):
+`storage.test.ts` 扩展(`bun test` 全绿;本轮相关浏览器 bundle 通过,全仓 tsc 维持既有 dist/CLI 基线错误):
 
 - **①** push-only 轮次不做 `snapshot/`、`oplog/` 根 LIST,但仍写段。
+- **①b** push batching 延迟小批量时返回 pending,force flush 后清零;worker 用它和本地 cursor 驱动“保存”按钮。
+- **⑥** 同 peer 并发 `syncPeer` 合并成一轮;server auto-sync 上一 tick 未结束时跳过下一 tick。
 - **Path B** 持久性:一条编辑仅经作者自己的段就让全新节点水合(无快照)。
 - **⑤b 跳过**:已追平消费者对新快照只读 `.vc`、**零整库 body GET**,仍收敛。
 - **⑤b 不丢**:落后消费者仍整库下载并收敛(支配判断不误跳)。

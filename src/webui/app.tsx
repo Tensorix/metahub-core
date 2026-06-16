@@ -10,6 +10,8 @@ import {
   enableReplicaFromBucket,
   startReplica,
   onReplicaStatus,
+  replicaStatus,
+  syncReplicaNow,
 } from "./data/replica.ts";
 import type { S3Config } from "../core/sync/storage.ts";
 import { Icon } from "./icons.tsx";
@@ -72,7 +74,10 @@ function App() {
   const [updatePending, setUpdatePending] = useState(false);
   const [docHistory, setDocHistory] = useState(false);
   const [dbActivity, setDbActivity] = useState(false);
+  const [replicaSt, setReplicaSt] = useState(() => replicaStatus());
+  const [saveFlash, setSaveFlash] = useState(false);
   const docHandleRef = useRef<DocViewHandle | null>(null);
+  const hadBucketWork = useRef(false);
   const isMobile = useIsMobile();
 
   const onError = useCallback((m: string) => setError(m), []);
@@ -117,6 +122,22 @@ function App() {
     if (typeof window !== "undefined" && window.metahubDesktop) return;
     resumeReplicaIfEnabled();
   }, []);
+
+  useEffect(() => onReplicaStatus((s) => setReplicaSt({ ...s })), []);
+
+  useEffect(() => {
+    const pending = Boolean(replicaSt.bucketDirty || replicaSt.bucketSyncing);
+    if (pending) {
+      hadBucketWork.current = true;
+      setSaveFlash(false);
+      return;
+    }
+    if (!hadBucketWork.current || replicaSt.bucketError) return;
+    hadBucketWork.current = false;
+    setSaveFlash(true);
+    const timer = setTimeout(() => setSaveFlash(false), 900);
+    return () => clearTimeout(timer);
+  }, [replicaSt.bucketDirty, replicaSt.bucketSyncing, replicaSt.bucketError]);
 
   // PWA: register the service worker (offline shell + stale read mirror).
   // Secure-context only — plain-HTTP LAN setups keep today's behavior. On an
@@ -294,6 +315,50 @@ function App() {
     ));
   };
 
+  const saveState =
+    replicaActive() && (replicaSt.bucketDirty || replicaSt.bucketSyncing || replicaSt.bucketError || saveFlash)
+      ? replicaSt.bucketSyncing
+        ? "saving"
+        : saveFlash
+          ? "saved"
+          : replicaSt.bucketError
+            ? "error"
+            : "dirty"
+      : "share";
+  const saveLabel =
+    saveState === "saving"
+      ? "保存中…"
+      : saveState === "saved"
+        ? "已保存"
+        : saveState === "share"
+          ? "分享"
+          : "保存";
+  const saveIcon = saveState === "share" ? "share" : saveState === "saved" ? "check" : "upload";
+  const shareSaveTitle =
+    saveState === "share"
+      ? "分享"
+      : saveState === "error"
+        ? `保存到云端失败：${replicaSt.bucketError ?? ""}`
+        : "保存到云端";
+
+  const shareSaveClick = async (e: MouseEvent) => {
+    if (saveState === "share") {
+      shareMenu(e);
+      return;
+    }
+    if (saveState === "saving" || saveState === "saved") return;
+    try {
+      await docHandleRef.current?.flushSave();
+      await syncReplicaNow();
+      const st = replicaStatus();
+      if (st.bucketError) throw new Error(st.bucketError);
+      if (st.bucketDirty) throw new Error("仍有改动尚未保存到云端");
+      toast("已保存到云端");
+    } catch (err) {
+      toast(`保存失败：${(err as Error).message}`);
+    }
+  };
+
   const moreMenu = (e: MouseEvent) => {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
@@ -393,7 +458,16 @@ function App() {
           </div>
           {(view.kind === "doc" || view.kind === "db") && (
             <>
-              <button class="btn btn-ghost" onClick={shareMenu}><Icon name="share" cls="ico sm" />分享</button>
+              <button
+                class={`btn share-save share-save-${saveState}`}
+                title={shareSaveTitle}
+                disabled={saveState === "saving" || saveState === "saved"}
+                onClick={shareSaveClick}
+              >
+                <span class="share-save-ico"><Icon name={saveIcon} cls="ico sm" /></span>
+                <span class="share-save-label">{saveLabel}</span>
+                {saveState === "error" && <span class="share-save-dot" />}
+              </button>
               <button class="iconbtn" onClick={moreMenu}><Icon name="dots" /></button>
             </>
           )}

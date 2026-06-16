@@ -236,6 +236,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     const S3_POLL_MAX_MS = 150_000; // 2.5min ≈ publisher-lease TTL/2
     const s3Next = new Map<string, { delay: number; due: number }>();
     let lastMaxSeq = -1;
+    let ticking = false;
     const tick = async (): Promise<void> => {
       const maxSeq =
         (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number | null }).s ?? 0;
@@ -259,9 +260,15 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       }
     };
     timer = setInterval(() => {
+      if (ticking) return;
+      ticking = true;
       // Per-peer errors are already recorded in the DB (last_error) by syncPeer and
       // surfaced via CLI/WebUI; this catch only covers an *unexpected* tick crash.
-      void tick().catch((e) => console.error("[sync] auto-sync tick failed —", e));
+      void tick()
+        .catch((e) => console.error("[sync] auto-sync tick failed —", e))
+        .finally(() => {
+          ticking = false;
+        });
     }, syncIntervalMs);
     timer.unref?.();
   }

@@ -197,6 +197,11 @@ export function requestSync(): void {
   if (started) void call("sync").catch(() => {});
 }
 
+export function syncReplicaNow(): Promise<ReplicaStatus["lastSync"]> {
+  if (!started) return Promise.reject(new ReplicaError("replica not running", undefined));
+  return call<ReplicaStatus["lastSync"]>("sync");
+}
+
 function waitReady(timeoutMs = 30_000): Promise<void> {
   if (status.state === "ready") return Promise.resolve();
   return new Promise((resolve, reject) => {

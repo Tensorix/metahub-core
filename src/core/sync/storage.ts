@@ -409,22 +409,23 @@ export async function publishSnapshot(
 ): Promise<{ key: string; changes: number } | null> {
   const key = masterKeyOf(config);
   const base = basePrefix(config.prefix);
-  const winners = winnersSnapshot(db);
-  if (winners.length === 0) return null;
   const node = getNodeId(db);
-  const maxHlc = winners.reduce((m, c) => (c.hlc > m ? c.hlc : m), "");
-  // Hash a deterministic (sorted) view so row order can't change the key.
-  const hash = await contentHash(winners.map((c) => JSON.stringify(c)).sort().join("\n"));
-  const snapKey = `${snapshotRoot(base)}${maxHlc}${SNAP_SEP}${hash}.snap`;
 
-  // Our own segments present right now are all covered by this snapshot (winners
-  // of the same DB state). The highest is the cursor a consumer can jump to after
-  // ingesting the snapshot, so it won't re-pull the segments we retain below.
+  // Cut the segment frontier BEFORE reading winners. If another local sync uploads
+  // a segment while we are publishing, it either lands before this list and is in
+  // the snapshot, or after it and remains below the consumer's cursor.
   const ownSegs = (await client.list(nodePrefix(base, node)))
     .map((o) => o.key)
     .filter((k) => k.endsWith(".seg"))
     .sort();
   const ownSegHigh = ownSegs.length ? ownSegs[ownSegs.length - 1]! : null;
+
+  const winners = winnersSnapshot(db);
+  if (winners.length === 0) return null;
+  const maxHlc = winners.reduce((m, c) => (c.hlc > m ? c.hlc : m), "");
+  // Hash a deterministic (sorted) view so row order can't change the key.
+  const hash = await contentHash(winners.map((c) => JSON.stringify(c)).sort().join("\n"));
+  const snapKey = `${snapshotRoot(base)}${maxHlc}${SNAP_SEP}${hash}.snap`;
 
   await client.put(snapKey, await encodeSegment(winners, key), {
     contentType: "application/octet-stream",
@@ -557,6 +558,7 @@ export async function syncWithStorage(
   const pushCursor = getPushCursor(db, peerUrl);
   const batch = changesAfterSeq(db, pushCursor, { onlyNode: node });
   let pushed = 0;
+  let pendingPush = false;
   if (batch.changes.length === 0) {
     // No own ops pending: still advance past any ingested foreign rows so they
     // aren't rescanned every round (changesAfterSeq's high-water on exhaustion).
@@ -580,8 +582,10 @@ export async function syncWithStorage(
       });
       setPushCursor(db, peerUrl, batch.cursor);
       pushed = batch.changes.length;
+    } else {
+      pendingPush = true;
     }
-    // else: pending but below threshold → leave the cursor, retry next round.
+    // Pending but below threshold → leave the cursor, retry next round.
   }
 
   // PULL: snapshots first (every one we haven't ingested)…then each other node's
@@ -671,7 +675,7 @@ export async function syncWithStorage(
     if (ownCount >= threshold) await publishSnapshot(db, client, config, opts.snapshotRetainSegments);
   }
 
-  return { pushed, pulled };
+  return { pushed, pulled, pendingPush };
 }
 
 /** Ingest only the snapshots we don't already cover, then prune the consumed set

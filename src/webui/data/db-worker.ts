@@ -18,6 +18,7 @@ import { initSchema } from "../../core/schema-init.ts";
 import { getNodeId } from "../../core/node.ts";
 import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
+import { changesAfterSeq } from "../../core/crdt.ts";
 import { syncWithPeer } from "../../core/sync/client.ts";
 import {
   addPeer,
@@ -109,6 +110,12 @@ export interface ReplicaStatus {
   /** Total changes pulled so far during an in-progress hydration. */
   hydrated?: number;
   lastSync?: { at: number; ok: boolean; pushed: number; pulled: number; error?: string };
+  /** This browser has local own ops not yet pushed to a directly attached bucket. */
+  bucketDirty?: boolean;
+  /** A direct bucket push/pull is currently running. */
+  bucketSyncing?: boolean;
+  /** Last direct bucket sync error, if the dirty changes could not be saved. */
+  bucketError?: string;
   error?: string;
 }
 export type WorkerEvent =
@@ -174,7 +181,9 @@ const ready: Promise<void> = (async () => {
   const driver = db!;
   const node = getNodeId(driver);
   const paired = getPeer(driver, origin)?.token != null;
-  setStatus({ state: "ready", node, paired });
+  const bucketDirty = hasPendingBucketPush(driver);
+  if (bucketDirty) scheduleBucketFlush();
+  setStatus({ state: "ready", node, paired, bucketDirty });
 })().catch((e) => {
   setStatus({ state: "error", error: e instanceof Error ? e.message : String(e) });
   throw e;
@@ -207,12 +216,80 @@ function hasSyncTarget(d: DbDriver): boolean {
   return listPeers(d).some((p) => p.enabled === 1 && p.kind === "s3");
 }
 
+function enabledStoragePeers(d: DbDriver) {
+  return listPeers(d).filter((p) => p.enabled === 1 && p.kind === "s3");
+}
+
+function hasPendingBucketPush(d: DbDriver): boolean {
+  const node = getNodeId(d);
+  return enabledStoragePeers(d).some(
+    (p) => changesAfterSeq(d, p.push_cursor, { onlyNode: node }).changes.length > 0,
+  );
+}
+
 /** Push-batching for storage peers: coalesce edits into ~one segment per
  *  STORAGE_PUSH_AGE_MS (or per STORAGE_PUSH_MIN_CHANGES) instead of a tiny
  *  object per debounce, which costs a billed request + a GET for every puller.
  *  `force` (explicit "sync now") bypasses the thresholds so edits never strand. */
 const STORAGE_PUSH_MIN_CHANGES = 25;
 const STORAGE_PUSH_AGE_MS = 10_000;
+let bucketFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleBucketFlush(): void {
+  if (bucketFlushTimer) return;
+  bucketFlushTimer = setTimeout(() => {
+    bucketFlushTimer = null;
+    if (navigator.onLine !== false) void runSync(true);
+  }, STORAGE_PUSH_AGE_MS);
+}
+
+function clearBucketFlush(): void {
+  if (!bucketFlushTimer) return;
+  clearTimeout(bucketFlushTimer);
+  bucketFlushTimer = null;
+}
+
+function markBucketDirty(): void {
+  const d = db;
+  if (!d) return;
+  const bucketDirty = enabledStoragePeers(d).length > 0 && hasPendingBucketPush(d);
+  setStatus({ bucketDirty, bucketError: undefined });
+  if (bucketDirty) scheduleBucketFlush();
+  else clearBucketFlush();
+}
+
+function restorePeerRow(d: DbDriver, row: NonNullable<ReturnType<typeof getPeer>>): void {
+  d.query(
+    `UPDATE peers SET
+       pull_cursor = ?,
+       push_cursor = ?,
+       token = ?,
+       label = ?,
+       node_id = ?,
+       enabled = ?,
+       last_sync_at = ?,
+       last_success_at = ?,
+       last_status = ?,
+       last_error = ?,
+       kind = ?,
+       config = ?
+     WHERE url = ?`,
+  ).run(
+    row.pull_cursor,
+    row.push_cursor,
+    row.token,
+    row.label,
+    row.node_id,
+    row.enabled,
+    row.last_sync_at,
+    row.last_success_at,
+    row.last_status,
+    row.last_error,
+    row.kind,
+    row.config,
+    row.url,
+  );
+}
 
 async function runSync(force = false): Promise<SyncOutcome> {
   if (!db) return { pushed: 0, pulled: 0, ok: true };
@@ -227,6 +304,9 @@ async function runSync(force = false): Promise<SyncOutcome> {
     let pushed = 0;
     let pulled = 0;
     const errors: string[] = [];
+    const bucketErrors: string[] = [];
+    const hasBuckets = enabledStoragePeers(d).length > 0;
+    if (hasBuckets) setStatus({ bucketSyncing: true, bucketError: undefined });
 
     // Origin server (http), chunked initial hydration — only if paired. Its
     // failure (server offline) must not stop storage-peer sync below. Whether it
@@ -254,8 +334,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
     // is push-only when the origin is reachable AND this isn't a forced sync AND
     // the peer already did one full round this session; otherwise full (initial
     // hydration / first snapshot / cred+CORS check all need PULL).
-    for (const peer of listPeers(d)) {
-      if (peer.enabled !== 1 || peer.kind !== "s3") continue;
+    for (const peer of enabledStoragePeers(d)) {
       const pushOnly = originOk && !force && bucketInitialSynced.has(peer.url);
       const out = await syncPeer(d, peer.url, {
         storage: {
@@ -270,10 +349,15 @@ async function runSync(force = false): Promise<SyncOutcome> {
         pulled += out.pulled ?? 0;
         if (!pushOnly) bucketInitialSynced.add(peer.url); // a full round happened
       } else {
-        errors.push(`${peer.label ?? peer.url}: ${out.error}`);
+        const msg = `${peer.label ?? peer.url}: ${out.error}`;
+        errors.push(msg);
+        bucketErrors.push(msg);
       }
     }
 
+    const bucketDirty = hasBuckets ? hasPendingBucketPush(d) : false;
+    if (bucketDirty && bucketErrors.length === 0) scheduleBucketFlush();
+    else clearBucketFlush();
     const touched = d
       .query("SELECT DISTINCT dataset, row_id FROM crdt_changes WHERE rowid > ?")
       .all(before) as { dataset: string; row_id: string }[];
@@ -287,6 +371,9 @@ async function runSync(force = false): Promise<SyncOutcome> {
         pulled,
         error: errors.join("; ") || undefined,
       },
+      bucketDirty,
+      bucketSyncing: false,
+      bucketError: bucketErrors.join("; ") || undefined,
     });
     if (touched.length || pushed) {
       post({
@@ -299,6 +386,11 @@ async function runSync(force = false): Promise<SyncOutcome> {
     }
     return { pushed, pulled, ok: errors.length === 0 };
   })().finally(() => {
+    if (db && enabledStoragePeers(db).length > 0 && !status.bucketSyncing) {
+      const bucketDirty = hasPendingBucketPush(db);
+      if (bucketDirty && !status.bucketError) scheduleBucketFlush();
+      else clearBucketFlush();
+    }
     syncing = null;
   });
   return syncing;
@@ -416,8 +508,15 @@ const ops: Record<string, Op> = {
     if (cfg.encrypt)
       cfg.masterKey = (await provisionMasterKey(storageClientFor(cfg), cfg, passphrase)) ?? undefined;
     const url = `s3://${cfg.bucket}/${cfg.prefix}`;
+    if (syncing) await syncing;
+    const previous = getPeer(d, url);
     addStoragePeer(d, { url, config: cfg, label: cfg.bucket });
-    await runSync();
+    await runSync(true);
+    if (status.bucketError) {
+      if (previous) restorePeerRow(d, previous);
+      else removePeer(d, url);
+      throw new MhError("network", `storage peer first sync failed: ${status.bucketError}`);
+    }
     return { url, lastSync: status.lastSync };
   },
   removeStorageReplica: (url: string) => ({ ok: removePeer(requireDb(), url) }),
@@ -622,7 +721,10 @@ self.onmessage = async (e: MessageEvent) => {
     if (!fn) throw new MhError("invalid_input", `unknown op: ${op}`);
     const result = await fn(...(args ?? []));
     post({ id, ok: true, result });
-    if (MUTATING.test(op)) schedulePush();
+    if (MUTATING.test(op)) {
+      markBucketDirty();
+      schedulePush();
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const code = errorCode(err) ?? undefined;

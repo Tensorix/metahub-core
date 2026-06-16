@@ -172,6 +172,35 @@ test("a fresh node hydrates from snapshot + tail after truncation", async () => 
   expect(getDocument(c, doc.id)!.body).toBe("v3");
 });
 
+test("snapshot frontier does not skip a segment uploaded while publishing", async () => {
+  const K = generateMasterKey();
+  const a = makeNode("nodeAAAA");
+  const config = cfg(K);
+  const dbId = createDatabase(a, { name: "Notes" }).id;
+  const doc = createDocument(a, { title: "Doc", body: "v1", database_id: dbId });
+
+  class RaceBucket extends FakeBucket {
+    raced = false;
+    override async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
+      if (!this.raced && prefix === "mh/spaces/default/oplog/nodeAAAA/") {
+        this.raced = true;
+        updateDocument(a, doc.id, { body: "v2" });
+        await syncWithStorage(a, PEER, this, config, { pull: false, forcePush: true });
+      }
+      return super.list(prefix, startAfter, delimiter);
+    }
+  }
+  const bucket = new RaceBucket();
+
+  await syncWithStorage(a, PEER, bucket, config);
+  await publishSnapshot(a, bucket, config, 0);
+
+  const c = makeNode("nodeCCCC");
+  await syncWithStorage(c, PEER, bucket, config);
+  expect(getDocument(c, doc.id)!.body).toBe("v2");
+  expect(headState(c)).toEqual(headState(a));
+});
+
 test("compaction + VACUUM does not strand new writes from the push cursor", async () => {
   // Regression for the rowid-cursor hole: compaction's VACUUM renumbers a
   // legacy table's rowids 1..N; a peer's push_cursor then sat above the new
@@ -481,13 +510,15 @@ test("push batching defers small bursts and force flushes them", async () => {
   const batched = { minPushChanges: 100, maxPushAgeMs: 999_999 }; // never auto-flush a small batch
 
   createDatabase(a, { name: "X" }); // a handful of changes, well under 100
-  await syncWithStorage(a, PEER, bucket, cfg(K), batched);
+  const deferred = await syncWithStorage(a, PEER, bucket, cfg(K), batched);
+  expect(deferred.pendingPush).toBe(true);
   let segs = (await bucket.list("mh/spaces/default/oplog/nodeAAAA/")).filter((o) =>
     o.key.endsWith(".seg"),
   );
   expect(segs.length).toBe(0); // deferred — no tiny segment written
 
-  await syncWithStorage(a, PEER, bucket, cfg(K), { ...batched, forcePush: true });
+  const flushed = await syncWithStorage(a, PEER, bucket, cfg(K), { ...batched, forcePush: true });
+  expect(flushed.pendingPush).toBe(false);
   segs = (await bucket.list("mh/spaces/default/oplog/nodeAAAA/")).filter((o) =>
     o.key.endsWith(".seg"),
   );
@@ -505,11 +536,11 @@ test("push batching defers small bursts and force flushes them", async () => {
 class CountingBucket extends FakeBucket {
   gets: string[] = [];
   lists: string[] = [];
-  async get(key: string): Promise<Uint8Array | null> {
+  override async get(key: string): Promise<Uint8Array | null> {
     this.gets.push(key);
     return super.get(key);
   }
-  async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
+  override async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
     this.lists.push(prefix);
     return super.list(prefix, startAfter, delimiter);
   }
