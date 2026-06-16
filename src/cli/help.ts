@@ -51,6 +51,7 @@ OUTPUT
 COMMANDS
   setup
     init                              Create ~/.metahub (SQLite db + cache dir)
+    init --claude                     Install the /mh skill into ~/.claude (Claude Code)
   databases
     db create <name> [--icon]         Create a database (table)
     db list | get <ref> | delete <ref>
@@ -99,7 +100,7 @@ COMMANDS
                                       pins a fixed token instead. Both windows are
                                       env-tunable (METAHUB_TOKEN_TTL / _GRACE).
     snapshot <out.mhpack>             Package all data into a portable file
-    restore <pack> [--reset --yes]    Restore (merge by default)
+    restore <pack> [--reset --force]  Restore (merge by default)
   shell
     completion <bash|zsh|fish>        Print a completion script
 
@@ -132,7 +133,11 @@ Run 'mh <command> --help' for arguments and examples of a specific command.`;
  * Appended under an EXAMPLES heading after citty's generated usage.
  */
 const EXAMPLES: Record<string, string[]> = {
-  init: ["mh init", "METAHUB_HOME=/tmp/mh mh init   # use an alternate home"],
+  init: [
+    "mh init",
+    "mh init --claude   # install the /mh skill into ~/.claude (Claude Code)",
+    "METAHUB_HOME=/tmp/mh mh init   # use an alternate home",
+  ],
   "db create": ['mh db create "Tasks"', 'mh db create "Notes" --icon 📓'],
   "db get": ["mh db get tasks", "mh db get db_tasks-k3f9c1"],
   use: ["mh use tasks", "mh use            # show current", "mh use --clear"],
@@ -186,7 +191,7 @@ const EXAMPLES: Record<string, string[]> = {
     "mh sync tasks.csv tasks              # import CSV → table",
   ],
   snapshot: ["mh snapshot backup.mhpack"],
-  restore: ["mh restore backup.mhpack", "mh restore backup.mhpack --reset --yes"],
+  restore: ["mh restore backup.mhpack", "mh restore backup.mhpack --reset --force"],
   completion: ['eval "$(mh completion zsh)"', "mh completion bash >> ~/.bashrc"],
 };
 

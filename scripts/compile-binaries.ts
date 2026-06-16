@@ -5,6 +5,7 @@ import { $ } from "bun";
 import pkg from "../package.json" with { type: "json" };
 import { hostBunTarget, verifyBinaryVersion } from "./verify-binary-version.ts";
 import { smokeWebui } from "./smoke-webui.ts";
+import { smokeSkill } from "./smoke-skill.ts";
 
 const targets = [
   "bun-darwin-arm64",
@@ -38,6 +39,8 @@ for (const target of targets) {
   if (target === host) {
     await verifyBinaryVersion(resolve(outfile), { expected: pkg.version, kind: "cli" });
     await smokeWebui(resolve(outfile));
+    // Proves the embedded `/mh` skill (SKILL.md text import) rode into the binary.
+    await smokeSkill(resolve(outfile));
   }
 }
 

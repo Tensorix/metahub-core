@@ -1,11 +1,13 @@
 ---
-name: metahub-cli
+name: mh
 description: >-
   Use the metahub CLI (`mh` / `metahub`) as an AI agent's durable local knowledge
   base — typed tables (Notion-style rows/columns) for structured data and Markdown
   documents for long-form knowledge, with a Read/Edit/Write-style editing interface.
   Use this skill whenever you need to store, recall, search, or incrementally edit
   the agent's working memory, or run the metahub sync server / WebUI / hosted sites.
+argument-hint: "[task — e.g. log today's progress to the Notes doc]"
+allowed-tools: Bash(mh:*), Bash(metahub:*)
 ---
 
 # metahub CLI
@@ -270,7 +272,7 @@ mh sync ./data.csv <db-ref>                     # import a CSV into a table
 
 # Persistent multi-device pairing (sync both ways on a timer, no repeated `mh sync`):
 mh config peer code                             # device A: print a one-time pairing code
-mh config peer add <code>                       # device B: pair using it
+mh config peer add --url http://A-host:7777 --code <code>   # device B: pair with A
 mh config                                       # interactive wizard for host/port/sync-interval/auto-sync
 ```
 
