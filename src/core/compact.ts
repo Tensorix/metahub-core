@@ -3,6 +3,7 @@ import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { formatHlc } from "./hlc.ts";
 import { cacheDir } from "./paths.ts";
+import { blobRefsIn } from "./blobs-core.ts";
 import { MhError } from "./errors.ts";
 
 // Retention-window oplog compaction. Inside the window history is kept intact;
@@ -118,9 +119,10 @@ export function compactOplog(db: Database, opts: CompactOptions): CompactResult 
 }
 
 /**
- * Delete cache blobs no longer referenced by any remaining oplog value or
- * materialized site file. Conservative: only files named like a sha256 hash
- * are candidates; anything else in the cache dir is left alone.
+ * Delete cache blobs no longer referenced by any remaining oplog value, a
+ * materialized site file, or a `/blob/<hash>` doc image reference. Conservative:
+ * only files named like a content hash (canonical 32-hex or legacy 64-hex) are
+ * candidates; anything else in the cache dir is left alone.
  */
 export function gcBlobs(
   db: Database,
@@ -151,11 +153,28 @@ export function gcBlobs(
   collect(
     db.query("SELECT DISTINCT content AS v FROM site_files").all() as { v: string | null }[],
   );
+  // Doc images reference blobs via `/blob/<hash>` inside doc_blocks markdown
+  // (surviving oplog history + materialized text), not site_files.content.
+  const collectDocRefs = (rows: { v: string | null }[]) => {
+    for (const r of rows) for (const h of blobRefsIn(r.v)) referenced.add(h);
+  };
+  collectDocRefs(
+    db
+      .query(
+        "SELECT DISTINCT value AS v FROM crdt_changes WHERE dataset = 'doc_blocks' AND col = 'text' AND value LIKE '%/blob/%'",
+      )
+      .all() as { v: string | null }[],
+  );
+  collectDocRefs(
+    db.query("SELECT DISTINCT text AS v FROM doc_blocks WHERE text LIKE '%/blob/%'").all() as {
+      v: string | null;
+    }[],
+  );
 
   let deleted = 0;
   let bytes = 0;
   for (const name of readdirSync(dir)) {
-    if (!/^[0-9a-f]{64}$/.test(name)) continue;
+    if (!/^(?:[0-9a-f]{32}|[0-9a-f]{64})$/.test(name)) continue;
     if (referenced.has(name)) continue;
     const path = join(dir, name);
     try {

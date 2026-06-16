@@ -175,6 +175,44 @@ CREATE TABLE IF NOT EXISTS site_files (
   __deleted    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_site_files_site ON site_files(site_id);
+
+-- Node-local blob cache ledger (NOT synced, like peers/storage_cursors): one row
+-- per blob byte-file held in cache.ts's content-addressed store (~/.metahub/cache).
+-- Gives the bare hash-named files the metadata clearing/stats need (size,
+-- content_type, last access). hash is the canonical content key (sha256 truncated
+-- to 32 hex; legacy 64-hex entries coexist — addressing is length-agnostic).
+CREATE TABLE IF NOT EXISTS blob_cache (
+  hash         TEXT PRIMARY KEY,
+  size         INTEGER NOT NULL,
+  content_type TEXT,
+  last_access  INTEGER
+);
+
+-- Synced blob presence: which node holds which blob's bytes. Only "full blob
+-- devices" (see blob_policy) announce rows here, after the bytes are durably
+-- stored, so other devices can decide OFFLINE whether a local blob is safe to
+-- clear (present on the required full set ⇒ re-fetchable later). row id is
+-- "<node_id>~<hash>" so each device's claim is an independent CRDT register.
+CREATE TABLE IF NOT EXISTS blob_presence (
+  id        TEXT PRIMARY KEY,   -- "<node_id>~<hash>"
+  node_id   TEXT,
+  hash      TEXT,
+  present   INTEGER NOT NULL DEFAULT 1,
+  size      INTEGER,
+  __deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_blob_presence_hash ON blob_presence(hash);
+
+-- Synced workspace policy (single row "default"): which nodes are designated
+-- full-blob libraries and the redundancy rule used to gate clearing. full_nodes
+-- is a JSON array of node_id; redundancy is 'all' (clearable only when every
+-- full node holds it) or 'any'.
+CREATE TABLE IF NOT EXISTS blob_policy (
+  id          TEXT PRIMARY KEY,  -- always "default"
+  full_nodes  TEXT,              -- JSON array of node_id
+  redundancy  TEXT,              -- 'all' | 'any'
+  __deleted   INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 // Best-effort: FTS5 may not be compiled in. Search falls back to LIKE if this fails.

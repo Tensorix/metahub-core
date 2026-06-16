@@ -206,6 +206,13 @@ export function isTextType(contentType: string): boolean {
   );
 }
 
+/** Raster image types (svg is text, handled by isTextType). These always store
+ *  as a content-addressed blob regardless of size — they never base64-inline
+ *  into the oplog, keeping replicas lean. */
+export function isImageType(contentType: string): boolean {
+  return contentType.toLowerCase().startsWith("image/") && !isTextType(contentType);
+}
+
 export function toBytes(data: string | Uint8Array | ArrayBuffer): Uint8Array {
   if (typeof data === "string") return new TextEncoder().encode(data);
   return data instanceof Uint8Array ? data : new Uint8Array(data);

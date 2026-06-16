@@ -1,5 +1,8 @@
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runSchema } from "./db.ts";
 import { ingest, changesSince } from "./crdt.ts";
 import {
@@ -29,6 +32,20 @@ function makeNode(id: string): Database {
 }
 
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);
+
+// Isolate blob writes (images / large binaries hit cache.ts → METAHUB_HOME/cache)
+// into a throwaway dir so tests never touch the real ~/.metahub.
+const ORIGINAL_HOME = process.env.METAHUB_HOME;
+let TMP_HOME: string;
+beforeAll(() => {
+  TMP_HOME = mkdtempSync(join(tmpdir(), "mh-sites-"));
+  process.env.METAHUB_HOME = TMP_HOME;
+});
+afterAll(() => {
+  if (ORIGINAL_HOME === undefined) delete process.env.METAHUB_HOME;
+  else process.env.METAHUB_HOME = ORIGINAL_HOME;
+  rmSync(TMP_HOME, { recursive: true, force: true });
+});
 
 test("create / get / list / resolve by name and id", () => {
   const db = makeNode("n1");
@@ -136,13 +153,26 @@ test('"" and trailing slash resolve to index.html', async () => {
   expect(await getFileForServe(db, s.id, "missing/")).toBeNull();
 });
 
-test("binary files store inline as base64 and round-trip", async () => {
+test("small non-image binaries store inline as base64 and round-trip", async () => {
+  const db = makeNode("n1");
+  const s = createSite(db, { name: "demo" });
+  const bin = new Uint8Array([0x00, 0x01, 0x02, 0xfe, 0xff, 3, 4, 5]);
+  const f = await putFile(db, s.id, "data/payload.bin", { data: bin });
+  expect(f.encoding).toBe("base64");
+  expect(f.content_type).toBe("application/octet-stream");
+
+  const served = await getFileForServe(db, s.id, "data/payload.bin");
+  expect(Array.from(served!.bytes)).toEqual(Array.from(bin));
+});
+
+test("images always store as a blob (never inline base64) and round-trip", async () => {
   const db = makeNode("n1");
   const s = createSite(db, { name: "demo" });
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
   const f = await putFile(db, s.id, "img/logo.png", { data: png });
-  expect(f.encoding).toBe("base64");
+  expect(f.encoding).toBe("blob");
   expect(f.content_type).toBe("image/png");
+  expect(f.content).toHaveLength(32); // canonical 32-hex content hash
 
   const served = await getFileForServe(db, s.id, "img/logo.png");
   expect(Array.from(served!.bytes)).toEqual(Array.from(png));

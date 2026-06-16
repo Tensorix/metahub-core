@@ -7,11 +7,13 @@ import {
   inferContentType,
   normalizeSitePath,
   isTextType,
+  isImageType,
   toBytes,
   writeFileRow,
   putFileInline,
   getFileRow,
 } from "./sites-core.ts";
+import { recordBlob, touchBlob, isFullBlobNode, announcePresence } from "./blobs-core.ts";
 
 // A "site" is a named bucket of files (Supabase-Storage-style) served at
 // /sites/<name>/. Everything is written through emit() so sites replicate over
@@ -40,9 +42,13 @@ export async function putFile(
   const contentType = opts.contentType ?? inferContentType(cleanPath);
   if (!isTextType(contentType)) {
     const bytes = toBytes(opts.data);
-    if (bytes.byteLength > INLINE_LIMIT) {
-      const hash = (await putBlob(bytes)).hash;
-      return writeFileRow(db, siteId, cleanPath, contentType, "blob", hash);
+    // Images always offload to a blob (never base64-inline); other binaries only
+    // once they exceed the inline limit.
+    if (isImageType(contentType) || bytes.byteLength > INLINE_LIMIT) {
+      const info = await putBlob(bytes);
+      recordBlob(db, info.hash, info.size, contentType);
+      if (isFullBlobNode(db)) announcePresence(db, info.hash, info.size);
+      return writeFileRow(db, siteId, cleanPath, contentType, "blob", info.hash);
     }
   }
   return putFileInline(db, siteId, cleanPath, opts);
@@ -61,7 +67,10 @@ export async function getFileForServe(
   let bytes: Uint8Array | null;
   if (row.encoding === "utf8") bytes = new TextEncoder().encode(content);
   else if (row.encoding === "base64") bytes = new Uint8Array(Buffer.from(content, "base64"));
-  else bytes = await getBlob(content); // blob hash
+  else {
+    bytes = await getBlob(content); // blob hash
+    if (bytes) touchBlob(db, content); // LRU signal for cache stats/clearing
+  }
   if (!bytes) return null;
 
   return { contentType: row.content_type, bytes };

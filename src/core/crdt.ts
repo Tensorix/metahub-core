@@ -87,6 +87,17 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
       "__deleted",
     ]),
   },
+  // Blob presence/policy replicate so any device can decide offline whether a
+  // cached blob is safe to clear (see blobs.ts). blob_cache is node-local and
+  // deliberately absent here — it never enters the oplog.
+  blob_presence: {
+    table: "blob_presence",
+    cols: new Set(["node_id", "hash", "present", "size", "__deleted"]),
+  },
+  blob_policy: {
+    table: "blob_policy",
+    cols: new Set(["full_nodes", "redundancy", "__deleted"]),
+  },
 };
 
 // The `records` dataset is special: these cols hit the `records` table, any
