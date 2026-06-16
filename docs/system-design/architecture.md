@@ -170,7 +170,7 @@ oplog 是 append-only 的,历史是纯读侧能力(`src/core/history.ts`,见 [15
 
 ## 存储压缩架构
 
-`mh compact`(`src/core/compact.ts`)做保留窗口式 oplog 压缩:窗口外每 register 只留"截止点胜者"。四条承重不变量:只删 LWW 输家(收敛不变)、墓碑胜者存活(不复活)、保护 `MAX(rowid)` 行(防 rowid 复用跳 peer 游标)、纯本地不复制(各节点独立清理)。配套 blob GC(引用集 = 剩余 oplog site_files.content ∪ 物化行)与 `VACUUM`。代价:窗口外 `history`/`revert` 坍缩为基线。
+`mh compact`(`src/core/compact.ts`)做保留窗口式 oplog 压缩:窗口外每 register 只留"截止点胜者"。四条承重不变量:只删 LWW 输家(收敛不变)、墓碑胜者存活(不复活)、保护 `MAX(rowid)` 行(防 rowid 复用跳 peer 游标)、纯本地不复制(各节点独立清理)。配套 blob GC(引用集 = 剩余 oplog `site_files.content` ∪ 物化行 ∪ `doc_blocks` 里 `/blob/<hash>` 文档插图,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))与 `VACUUM`。代价:窗口外 `history`/`revert` 坍缩为基线。
 
 ## 快照架构
 

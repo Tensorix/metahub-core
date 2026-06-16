@@ -284,7 +284,7 @@ mh config peer list|sync|enable|disable|rm   |   mh config grant list|revoke
 当前未实现:
 
 - 冲突解释或用户可见 diff。
-- blob 按需同步协议(站点 blob 文件离线 404)。
+- blob **离线**取图(浏览器侧 Cache Storage LRU + OPFS spool;字节**按需**跨机传输已实现,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。
 - 配对凭据过期(目前靠撤销管理)、`/api/pair` 限频。
 - TLS 已可由 `--tls-cert/--tls-key` 直出或反代承担;裸 HTTP 下凭据仍是明文 Bearer,需可信网络。
 
@@ -375,7 +375,7 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
 - REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
 - WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。
 - **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化；文档表格、数学、脚注、callout、TOC。
-- **静态站点托管**:AI agent 用 `mh site create|put|publish|list|files|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联,大二进制走 `cache/` blob、字节暂本机)。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
+- **静态站点托管**:AI agent 用 `mh site create|put|publish|list|files|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联;图片与大二进制走 `cache/` blob,字节不进 oplog、**按需**跨机取回,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
   - **WebUI「站点管理」页**(v2.9,2026-06-09):侧栏页脚入口 → 卡片列表 + 右侧 peek 文件抽屉(上传/预览/删除)+ 应用内 iframe 预览(直指已 serve 的 `/sites/<name>/`);配套补了 `POST/PATCH/DELETE /api/site*` HTTP 写接口(建站/改名·改标题/删站/传文件/删文件),仍是同一套 `emit()`。见 [08-agent-sites §6](../impl-context/08-agent-sites/design.md)。
   - **站点读写数据正式化 + 离线**(v3,2026-06-11):站点页同源调用 `/api/*` 的写路径纳入契约;可选 SDK `/metahub-sdk.js`(类型化方法 + code 化错误 + token 续期,裸 fetch 永远等价)。启用离线副本的浏览器里站点页**离线可打开**(含从未访问过的——站点文件随 oplog 在副本里,SW 网关从副本 serve,冷启动走自举壳页)、**离线可读写数据**,回网自动同步。信任模型显式化:站点同源=持有完整 hub 读写权限,只发布自产站点。见 [08-agent-sites v3](../impl-context/08-agent-sites/design.md) / [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
 - **PWA 离线副本**:设置页「离线副本」开关(环境不满足时显示具体原因:HTTP 非安全上下文 / 无 OPFS);启用=自助配对+全量水合,之后本地优先(Proxy 门面,HTTP 回落永久保留)、离线编辑块级合并、离线 FTS 搜索、`synced` 事件驱动编辑器/表格原位合并刷新;「立即同步/停用/重置本地副本」与占用显示(`storage.estimate()`),水合后申请 `storage.persist()`。多标签 Web Locks 选主 + BroadcastChannel 代理。见 [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
@@ -383,7 +383,7 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
 
 当前未实现/限制:
 
-- blob 字节不随 oplog 复制(大二进制站点资源跨机需另传,浏览器副本离线对其 404)。
+- blob 字节不进 oplog(按设计),但已可**按需**跨机取回(`/blob/<hash>`:本地 → HTTP peer → 桶,见 [22-blob-sync](../impl-context/22-blob-sync/design.md));浏览器副本**离线**仍取不到图(待浏览器侧 Cache Storage/OPFS spool)。
 - 表格无分页、无范围/contains 过滤(沿用 `listRecords` 现状)。
 - 快速加属性仅支持 text/number/checkbox/date/url;select/relation 等需带配置的类型仍走 CLI。
 - 无并发编辑冲突的用户可见提示(底层 CRDT 仍按字段 LWW 收敛)。
