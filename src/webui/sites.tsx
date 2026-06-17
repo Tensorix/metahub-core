@@ -20,6 +20,9 @@ import {
 // (no inlining) and file preview fetches the served bytes.
 
 const siteUrl = (name: string) => location.origin + "/sites/" + name + "/";
+// Display form: drop the shared `${origin}/sites` prefix (identical for every
+// site) and show only the part that varies. Full URL is still used for copy/open.
+const siteUrlShort = (name: string) => "/" + name + "/";
 const ext = (p: string) => (/\.([a-z0-9]+)$/i.exec(p)?.[1] ?? "").toLowerCase();
 const isImage = (ct: string) => ct.startsWith("image/");
 
@@ -121,18 +124,13 @@ export function SitesView() {
   };
 
   return (
-    <div class="db">
+    <div class="db sites-page">
       <div class="db-head">
-        <div class="db-icon">🌐</div>
         <div>
           <div class="db-title">站点管理</div>
-          <div class="db-desc">静态文件站点 · 通过 /sites/&lt;name&gt;/ 对外提供，随同步无冲突复制</div>
+          <div class="db-desc">发布静态站点，生成可分享的访问链接。</div>
         </div>
-      </div>
-
-      <div class="toolbar">
-        <div class="spacer" style={{ flex: 1 }} />
-        <button class="btn btn-primary" onClick={newSite}>
+        <button class="btn btn-primary site-new" onClick={newSite}>
           <Icon name="plus" cls="ico sm" />
           新建站点
         </button>
@@ -144,7 +142,7 @@ export function SitesView() {
         </div>
       ) : sites.length === 0 ? (
         <div class="site-empty">
-          <div class="ei">🌐</div>
+          <div class="ei"><Icon name="globe" /></div>
           <div class="et">还没有站点</div>
           <div class="ed">站点是一个命名文件桶，发布后可通过 /sites/&lt;name&gt;/ 直接访问。</div>
           <button class="btn btn-primary" onClick={newSite}>
@@ -155,8 +153,8 @@ export function SitesView() {
       ) : (
         <>
           <div class="sites-grid">
-            {sites.map((s) => (
-              <div class="site-card" key={s.id} onClick={() => setPeek(s)}>
+            {sites.map((s, i) => (
+              <div class="site-card" key={s.id} style={`--i:${i}`} onClick={() => setPeek(s)}>
                 <div class="site-card-head">
                   <span class="si">
                     <Icon name="globe" />
@@ -175,7 +173,7 @@ export function SitesView() {
                   }}
                 >
                   <Icon name="link" cls="ico sm" />
-                  <span>{siteUrl(s.name)}</span>
+                  <span>{siteUrlShort(s.name)}</span>
                 </button>
                 <div class="site-card-meta">
                   <span>
@@ -370,6 +368,7 @@ function SitePeek({
   };
 
   const url = siteUrl(site.name);
+  const urlShort = siteUrlShort(site.name);
   return (
     <>
       <div class={"scrim" + (open ? " open" : "")} onClick={close} />
@@ -413,7 +412,7 @@ function SitePeek({
           <h2 style={{ margin: "0 0 20px" }}>{site.title || site.name}</h2>
 
           <div class="acc-link">
-            <span class="url">{url}</span>
+            <span class="url">{urlShort}</span>
             <button title="复制地址" onClick={() => copyText(url)}>
               <Icon name="copy" cls="ico sm" />
             </button>

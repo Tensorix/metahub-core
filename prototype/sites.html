@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>站点管理 — UI 评审原型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── 真实设计 token（取自 src/webui/styles.css:1-38） ───────────────── */
+  :root {
+    color-scheme: light;
+    --bg:#ffffff; --surface:#fbfbfa; --surface-2:#f1f1ef; --sidebar:#f7f7f5;
+    --fg:#2c2c30; --fg-soft:#5b5b62; --muted:#75757f; --line:#ebebe8; --line-strong:#dededb;
+    --accent:#4a55d6; --accent-fg:#ffffff; --accent-soft:#eef0ff; --danger:#d6473b; --danger-soft:#fdeceb;
+    --success:#1f8f3e;
+    --hover:rgba(45,45,55,.045); --hover-2:rgba(45,45,55,.08);
+    --shadow-sm:0 1px 2px rgba(20,20,40,.06),0 1px 1px rgba(20,20,40,.04);
+    --shadow-md:0 4px 12px rgba(20,20,40,.08),0 2px 4px rgba(20,20,40,.05);
+    --shadow-lg:0 16px 48px rgba(20,20,40,.16),0 4px 12px rgba(20,20,40,.08);
+    --radius:8px; --radius-sm:6px; --radius-lg:14px; --radius-xl:16px;
+    --fs-body:14px; --fs-ui:13.5px; --fs-sm:12.5px; --fs-xs:11.5px; --fs-micro:11px;
+    --ui:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
+  }
+  :root[data-resolved="dark"] {
+    color-scheme: dark;
+    --bg:#1a1a1c; --surface:#202022; --surface-2:#2a2a2d; --sidebar:#171719;
+    --fg:#e6e6e9; --fg-soft:#b4b4bb; --muted:#8b8b95; --line:#2c2c30; --line-strong:#3a3a40;
+    --accent:#7b86ff; --accent-fg:#14141a; --accent-soft:#23243a; --danger:#f87168; --danger-soft:#341e1c;
+    --success:#3fb950;
+    --hover:rgba(255,255,255,.05); --hover-2:rgba(255,255,255,.09);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 14px rgba(0,0,0,.45); --shadow-lg:0 20px 56px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing:border-box; }
+  html, body { margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font-family:var(--ui); font-size:var(--fs-body);
+    -webkit-font-smoothing:antialiased; transition:background .25s, color .25s; }
+
+  /* ── 真实组件类（faithfully copied） ──────────────────────────────── */
+  .ico { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  .ico.sm { width:14px; height:14px; }
+
+  .btn { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:var(--radius-sm);
+    font-size:13px; font-weight:500; transition:all .12s; white-space:nowrap; cursor:pointer; border:0;
+    background:none; color:var(--fg); font-family:inherit; }
+  .btn-primary { background:var(--accent); color:var(--accent-fg); box-shadow:var(--shadow-sm); }
+  .btn-primary:hover { filter:brightness(1.07); }
+  .btn-primary:active { transform:translateY(.5px); }
+  .btn-secondary { background:var(--bg); border:1px solid var(--line-strong); color:var(--fg); box-shadow:var(--shadow-sm); }
+  .btn-secondary:hover { background:var(--surface-2); }
+  .iconbtn { width:30px; height:30px; display:grid; place-items:center; border-radius:var(--radius-sm);
+    color:var(--fg-soft); transition:background .12s, color .12s; cursor:pointer; border:0; background:none; }
+  .iconbtn:hover { background:var(--hover-2); color:var(--fg); }
+
+  .db { padding:22px 36px 90px; min-width:0; }
+  .db-head { display:flex; align-items:center; gap:14px; }
+  .db-title { font-size:27px; font-weight:700; letter-spacing:-.02em; }
+  .db-desc { color:var(--muted); font-size:13px; margin-top:3px; }
+  .toolbar { display:flex; align-items:center; gap:2px; padding:14px 0 4px; }
+  .toolbar .spacer { flex:1; }
+
+  /* ── sites grid + cards（精修版） ─────────────────────────────────── */
+  .sites-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(264px, 1fr)); gap:14px; margin-top:10px; }
+  .site-card { display:flex; flex-direction:column; gap:13px; padding:16px 16px 14px; background:var(--bg);
+    border:1px solid var(--line); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); cursor:pointer;
+    transition:box-shadow .18s cubic-bezier(.32,.72,0,1), border-color .18s, transform .18s cubic-bezier(.32,.72,0,1); }
+  .site-card:hover { box-shadow:var(--shadow-md); border-color:var(--line-strong); transform:translateY(-2px); }
+  .site-card-head { display:flex; align-items:center; gap:11px; min-width:0; }
+  .site-card .si { width:40px; height:40px; border-radius:11px; background:var(--accent-soft); color:var(--accent);
+    display:grid; place-items:center; flex:none; transition:transform .18s cubic-bezier(.32,.72,0,1), background .18s; }
+  .site-card .si svg { width:20px; height:20px; }
+  .site-card:hover .si { transform:scale(1.06) rotate(-3deg); }
+  .site-card-id { min-width:0; }
+  .site-card .slug { font-family:var(--mono); font-weight:600; font-size:14.5px; color:var(--fg);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .site-card .ttl { font-size:12px; color:var(--fg-soft); margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .site-card .ttl.muted { color:var(--muted); font-style:italic; }
+  .site-addr { display:flex; align-items:center; gap:6px; width:100%; text-align:left; background:var(--surface);
+    border:1px solid var(--line); border-radius:var(--radius-sm); padding:6px 9px; color:var(--muted);
+    font-family:var(--mono); font-size:var(--fs-xs); transition:border-color .12s, color .12s; cursor:pointer; }
+  .site-addr svg { flex:none; }
+  .site-addr span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .site-addr:hover { border-color:var(--accent); color:var(--accent); }
+  .site-card-meta { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted); }
+  .site-card-meta b { color:var(--fg-soft); font-weight:600; font-variant-numeric:tabular-nums; }
+  .site-card-meta .dot { color:var(--line-strong); }
+  .site-card-foot { display:flex; align-items:center; gap:6px; padding-top:12px; margin-top:1px; border-top:1px solid var(--line); }
+  .site-card-foot .btn-secondary { padding:6px 12px; justify-content:center; flex:1; }
+
+  .gridfoot { display:flex; gap:18px; color:var(--muted); font-size:12px; padding:14px 2px; }
+
+  /* ── 空状态（精修版） ─────────────────────────────────────────────── */
+  .site-empty { display:flex; flex-direction:column; align-items:center; text-align:center; color:var(--muted);
+    border:1px dashed var(--line-strong); border-radius:var(--radius-lg); padding:56px 24px; margin-top:10px; }
+  .site-empty .ei { width:60px; height:60px; border-radius:16px; background:var(--surface-2); border:1px solid var(--line);
+    color:var(--fg-soft); display:grid; place-items:center; margin-bottom:16px; }
+  .site-empty .ei svg { width:30px; height:30px; }
+  .site-empty .et { font-size:15px; color:var(--fg); margin-bottom:5px; font-weight:650; letter-spacing:-.01em; }
+  .site-empty .ed { font-size:var(--fs-sm); margin-bottom:18px; max-width:42ch; line-height:1.55; }
+
+  /* ── 头部站点标记（A/B/C 三方案，本原型核心评审对象） ─────────────── */
+  .site-mark { flex:none; display:grid; place-items:center;
+    transition:background .22s cubic-bezier(.32,.72,0,1), color .22s, box-shadow .22s, transform .22s cubic-bezier(.32,.72,0,1); }
+  .mk { display:none; }
+  .mk svg { display:block; }
+  /* 这些标记 SVG 不带 .ico 类，需显式描边（否则 fill:none 渲染成空） */
+  .site-mark svg, .site-empty .ei svg { stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+
+  /* A — 精致单色线描地球：克制的灰底 squircle，与设置页 tc-ico 同语言 */
+  [data-icon="A"] .site-mark { width:44px; height:44px; border-radius:13px; background:var(--surface-2);
+    border:1px solid var(--line); color:var(--fg-soft); }
+  [data-icon="A"] .site-mark .mk-globe { display:block; }
+  [data-icon="A"] .site-mark svg { width:23px; height:23px; stroke-width:1.6; }
+  [data-icon="A"] .db-head:hover .site-mark { background:var(--accent-soft); border-color:transparent;
+    color:var(--accent); box-shadow:0 0 0 1px var(--accent-soft); transform:translateY(-1px); }
+
+  /* B — 纯字体头部：无图标盒（1:1 照搬设置页头部气质） */
+  [data-icon="B"] .site-mark { display:none; }
+
+  /* 状态显隐（放静态 CSS，避免首帧空状态闪烁） */
+  [data-state="data"] #emptyState { display:none; }
+  [data-state="empty"] #grid, [data-state="empty"] #gridfoot { display:none; }
+
+  /* C — 定制极简「站点」标记：地球 + 轨道节点，accent 容器，更有记忆点 */
+  [data-icon="C"] .site-mark { width:44px; height:44px; border-radius:13px;
+    background:var(--accent-soft); color:var(--accent); }
+  [data-icon="C"] .site-mark .mk-bespoke { display:block; }
+  [data-icon="C"] .site-mark svg { width:24px; height:24px; stroke-width:1.7; }
+  [data-icon="C"] .mk-bespoke .orbit-node { transform-box:fill-box; transform-origin:12px 12px; }
+  [data-icon="C"] .db-head:hover .site-mark { transform:translateY(-1px) rotate(2deg); box-shadow:var(--shadow-sm); }
+
+  /* 空状态图标跟随所选方案（C 用定制标记，A/B 用线描地球） */
+  #emptyMark .mk-globe { display:block; }
+  [data-icon="C"] #emptyMark .mk-globe { display:none; }
+  [data-icon="C"] #emptyMark .mk-bespoke { display:block; }
+  [data-icon="C"] .site-empty .ei { background:var(--accent-soft); border-color:transparent; color:var(--accent); }
+
+  /* ── 高级感交互：加载渐入 + 级联 ─────────────────────────────────── */
+  @keyframes headIn { from { opacity:0; transform:translateY(-7px); } to { opacity:1; transform:none; } }
+  @keyframes cardIn { from { opacity:0; transform:translateY(12px) scale(.985); } to { opacity:1; transform:none; } }
+  @keyframes orbitDrift { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+
+  .db-head { animation:headIn .55s cubic-bezier(.32,.72,0,1) both; }
+  .toolbar { animation:headIn .55s cubic-bezier(.32,.72,0,1) both .06s; }
+  .sites-grid .site-card { opacity:0; }
+  .sites-grid.reveal .site-card { animation:cardIn .55s cubic-bezier(.32,.72,0,1) forwards;
+    animation-delay:calc(var(--i,0) * 55ms + 80ms); }
+
+  /* 定制标记的轨道节点缓慢漂移（仅 C，restraint：很慢、很轻） */
+  [data-icon="C"] .orbit-node { animation:orbitDrift 14s linear infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .db-head, .toolbar { animation:none; }
+    .sites-grid .site-card { opacity:1; }
+    .sites-grid.reveal .site-card { animation:none; }
+    .orbit-node { animation:none !important; }
+    .site-card, .site-card .si, .site-mark { transition:none; }
+  }
+
+  /* ── 原型评审控制条（脚手架，非设计的一部分） ─────────────────────── */
+  .proto-bar { position:sticky; top:0; z-index:50; display:flex; align-items:center; flex-wrap:wrap; gap:18px;
+    padding:10px 36px; background:color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter:saturate(1.4) blur(10px); -webkit-backdrop-filter:saturate(1.4) blur(10px);
+    border-bottom:1px solid var(--line); font-size:var(--fs-sm); }
+  .proto-tag { display:inline-flex; align-items:center; gap:7px; font-weight:700; letter-spacing:.04em;
+    text-transform:uppercase; font-size:10.5px; color:var(--muted); }
+  .proto-tag .pdot { width:7px; height:7px; border-radius:50%; background:var(--accent); }
+  .proto-grp { display:inline-flex; align-items:center; gap:9px; }
+  .proto-grp > .lbl { color:var(--muted); font-size:var(--fs-xs); }
+  .seg { display:inline-flex; padding:2px; gap:2px; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:9px; }
+  .seg button { padding:4px 11px; border:0; border-radius:7px; background:none; color:var(--fg-soft);
+    font-family:inherit; font-size:var(--fs-xs); font-weight:550; cursor:pointer; transition:all .14s; }
+  .seg button:hover { color:var(--fg); }
+  .seg button.active { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
+  .proto-spacer { flex:1; }
+  .proto-note { color:var(--muted); font-size:var(--fs-xs); }
+  @media (max-width:640px) { .proto-bar, .db { padding-left:18px; padding-right:18px; } }
+</style>
+</head>
+<body>
+  <!-- ░░ 原型评审控制条（非设计的一部分） ░░ -->
+  <div class="proto-bar">
+    <span class="proto-tag"><span class="pdot"></span>原型评审</span>
+    <span class="proto-grp"><span class="lbl">头部图标</span>
+      <span class="seg" id="segIcon">
+        <button data-val="A">A · 单色线描</button>
+        <button data-val="B">B · 无图标</button>
+        <button data-val="C">C · 定制标记</button>
+      </span>
+    </span>
+    <span class="proto-grp"><span class="lbl">状态</span>
+      <span class="seg" id="segState">
+        <button data-val="data">有数据</button>
+        <button data-val="empty">空状态</button>
+      </span>
+    </span>
+    <span class="proto-grp"><span class="lbl">主题</span>
+      <span class="seg" id="segTheme">
+        <button data-val="light">浅色</button>
+        <button data-val="dark">深色</button>
+      </span>
+    </span>
+    <span class="proto-spacer"></span>
+    <span class="proto-note">悬停标题区可看头部图标的微交互 · 悬停卡片看上浮/图标微动</span>
+  </div>
+
+  <!-- ░░ 站点管理页（被评审的设计） ░░ -->
+  <div class="db" id="page" data-icon="A" data-state="data">
+    <div class="db-head">
+      <span class="site-mark">
+        <!-- A/空状态：现有线描 globe -->
+        <span class="mk mk-globe"><svg viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M3 12h18M12 3c2.4 2.5 3.7 5.7 3.7 9S14.4 18.5 12 21c-2.4-2.5-3.7-5.7-3.7-9S9.6 5.5 12 3z"/>
+        </svg></span>
+        <!-- C：定制「站点」标记 = 地球 + 轨道 + 节点 -->
+        <span class="mk mk-bespoke"><svg viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="6.4"/>
+          <path d="M12 5.6c2 1.7 3 3.9 3 6.4s-1 4.7-3 6.4c-2-1.7-3-3.9-3-6.4s1-4.7 3-6.4z"/>
+          <path d="M5.6 12h12.8"/>
+          <g class="orbit-node">
+            <ellipse cx="12" cy="12" rx="10" ry="3.8" transform="rotate(-25 12 12)" opacity=".5"/>
+            <circle cx="21" cy="7.8" r="1.25" fill="currentColor" stroke="none"/>
+          </g>
+        </svg></span>
+      </span>
+      <div>
+        <div class="db-title">站点管理</div>
+        <div class="db-desc">静态文件站点 · 经 /sites/&lt;name&gt;/ 对外提供，随同步无冲突复制</div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="spacer"></div>
+      <button class="btn btn-primary">
+        <svg class="ico sm" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14"/></svg>
+        新建站点
+      </button>
+    </div>
+
+    <!-- 有数据 -->
+    <div class="sites-grid reveal" id="grid"></div>
+    <div class="gridfoot" id="gridfoot"></div>
+
+    <!-- 空状态 -->
+    <div class="site-empty" id="emptyState">
+      <span class="ei" id="emptyMark">
+        <span class="mk mk-globe"><svg viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M3 12h18M12 3c2.4 2.5 3.7 5.7 3.7 9S14.4 18.5 12 21c-2.4-2.5-3.7-5.7-3.7-9S9.6 5.5 12 3z"/>
+        </svg></span>
+        <span class="mk mk-bespoke"><svg viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="6.4"/>
+          <path d="M12 5.6c2 1.7 3 3.9 3 6.4s-1 4.7-3 6.4c-2-1.7-3-3.9-3-6.4s1-4.7 3-6.4z"/>
+          <path d="M5.6 12h12.8"/>
+          <ellipse cx="12" cy="12" rx="10" ry="3.8" transform="rotate(-25 12 12)" opacity=".5"/>
+          <circle cx="21" cy="7.8" r="1.25" fill="currentColor" stroke="none"/>
+        </svg></span>
+      </span>
+      <div class="et">还没有站点</div>
+      <div class="ed">站点是一个命名文件桶，发布后可通过 /sites/&lt;name&gt;/ 直接访问。</div>
+      <button class="btn btn-primary">
+        <svg class="ico sm" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14"/></svg>
+        新建站点
+      </button>
+    </div>
+  </div>
+
+<script>
+  // 示例站点数据
+  const SITES = [
+    { name:"docs",      title:"产品文档",        files:128, date:"2026-05-02" },
+    { name:"blog",      title:"工程博客",        files:46,  date:"2026-04-18" },
+    { name:"demo",      title:null,             files:9,   date:"2026-06-01" },
+    { name:"api",       title:"API 参考",        files:212, date:"2026-03-27" },
+    { name:"landing",   title:"产品落地页",      files:23,  date:"2026-05-30" },
+    { name:"changelog", title:"更新日志",        files:64,  date:"2026-06-12" },
+  ];
+
+  const ICONS = {
+    link:'<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>',
+    globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.5 3.7 5.7 3.7 9S14.4 18.5 12 21c-2.4-2.5-3.7-5.7-3.7-9S9.6 5.5 12 3z"/>',
+    dots:'<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  };
+  const svg = (paths, cls) => `<svg class="${cls||'ico'}" viewBox="0 0 24 24" fill="none">${paths}</svg>`;
+  const origin = location.origin === "null" || location.protocol === "file:" ? "https://hub.local" : location.origin;
+
+  function renderGrid() {
+    const grid = document.getElementById("grid");
+    grid.innerHTML = SITES.map((s, i) => `
+      <div class="site-card" style="--i:${i}">
+        <div class="site-card-head">
+          <span class="si">${svg(ICONS.globe)}</span>
+          <div class="site-card-id">
+            <div class="slug">${s.name}</div>
+            <div class="ttl${s.title ? "" : " muted"}">${s.title || "未命名站点"}</div>
+          </div>
+        </div>
+        <button class="site-addr" title="点击复制访问地址">
+          ${svg(ICONS.link, "ico sm")}<span>${origin}/sites/${s.name}/</span>
+        </button>
+        <div class="site-card-meta">
+          <span><b>${s.files}</b> 文件</span>
+          <span class="dot">·</span>
+          <span>${s.date}</span>
+        </div>
+        <div class="site-card-foot">
+          <button class="btn btn-secondary">${svg(ICONS.globe, "ico sm")}访问</button>
+          <button class="iconbtn" title="更多">${svg(ICONS.dots)}</button>
+        </div>
+      </div>`).join("");
+    document.getElementById("gridfoot").innerHTML =
+      `<span>共 ${SITES.length} 个站点</span><span>${SITES.reduce((n, s) => n + s.files, 0)} 个文件</span>`;
+  }
+
+  const page = document.getElementById("page");
+  const rootEl = document.documentElement;
+
+  function activate(segId, val) {
+    document.querySelectorAll(`#${segId} button`).forEach(b =>
+      b.classList.toggle("active", b.dataset.val === val));
+  }
+  function replay() {
+    const grid = document.getElementById("grid");
+    grid.classList.remove("reveal");
+    void grid.offsetWidth;           // 强制 reflow 以重放级联
+    grid.classList.add("reveal");
+  }
+  function setIcon(v)  { page.dataset.icon = v;  activate("segIcon", v); }
+  function setState(v) { page.dataset.state = v; activate("segState", v); if (v === "data") replay(); }
+  function setTheme(v) { v === "dark" ? rootEl.setAttribute("data-resolved", "dark") : rootEl.removeAttribute("data-resolved"); activate("segTheme", v); }
+
+  document.getElementById("segIcon").addEventListener("click", e => { const v = e.target.dataset.val; if (v) setIcon(v); });
+  document.getElementById("segState").addEventListener("click", e => { const v = e.target.dataset.val; if (v) setState(v); });
+  document.getElementById("segTheme").addEventListener("click", e => { const v = e.target.dataset.val; if (v) setTheme(v); });
+
+  renderGrid();
+  setIcon("A"); setState("data"); setTheme("light");
+</script>
+</body>
+</html>

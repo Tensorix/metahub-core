@@ -721,13 +721,26 @@
     padding:8px 11px; background:transparent; }
 
   /* ---- sites (站点管理) ---- */
-  .sites-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(264px, 1fr)); gap:14px; margin-top:6px; }
+  .sites-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(264px, 1fr)); gap:14px; margin-top:4px; }
+  /* card entrance is opacity-only (no transform) so the :hover lift below isn't
+     blocked by the forwards-filled animation occupying the transform property. */
   .site-card { display:flex; flex-direction:column; gap:13px; padding:16px 16px 14px; background:var(--bg); border:1px solid var(--line);
-    border-radius:var(--radius); box-shadow:var(--shadow-sm); cursor:pointer; transition:box-shadow .16s, border-color .16s, transform .16s; }
-  .site-card:hover { box-shadow:var(--shadow-md); border-color:var(--line-strong); transform:translateY(-1px); }
+    border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); cursor:pointer;
+    transition:box-shadow .18s cubic-bezier(.32,.72,0,1), border-color .18s, transform .18s cubic-bezier(.32,.72,0,1);
+    opacity:0; animation:siteCardIn .45s ease forwards; animation-delay:calc(var(--i, 0) * 50ms + 60ms); }
+  .site-card:hover { box-shadow:var(--shadow-md); border-color:var(--line-strong); transform:translateY(-2px); }
+  @keyframes siteCardIn { from { opacity:0; } to { opacity:1; } }
+  /* sites-page header: the action button shares the title row (no separate
+     toolbar). .db-head is shared with the database view, so scope extras here. */
+  .sites-page .db-head { animation:siteHeadIn .5s cubic-bezier(.32,.72,0,1) both; align-items:center; gap:16px; margin-bottom:20px; }
+  .sites-page .db-head > div:first-child { min-width:0; }
+  .sites-page .db-head .site-new { margin-left:auto; flex:none; }
+  @keyframes siteHeadIn { from { opacity:0; transform:translateY(-7px); } to { opacity:1; transform:none; } }
   .site-card-head { display:flex; align-items:center; gap:11px; min-width:0; }
-  .site-card .si { width:40px; height:40px; border-radius:11px; background:var(--accent-soft); color:var(--accent); display:grid; place-items:center; flex:none; }
+  .site-card .si { width:40px; height:40px; border-radius:11px; background:var(--accent-soft); color:var(--accent); display:grid; place-items:center; flex:none;
+    transition:transform .18s cubic-bezier(.32,.72,0,1); }
   .site-card .si svg { width:20px; height:20px; }
+  .site-card:hover .si { transform:scale(1.05); }
   .site-card-id { min-width:0; }
   .site-card .slug { font-family:var(--mono); font-weight:600; font-size:14.5px; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .site-card .ttl { font-size:12px; color:var(--fg-soft); margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -743,10 +756,13 @@
   .site-card-foot { display:flex; align-items:center; gap:6px; padding-top:12px; margin-top:1px; border-top:1px solid var(--line); }
   .site-card-foot .btn-secondary { padding:6px 12px; justify-content:center; }
 
-  .site-empty { text-align:center; color:var(--muted); border:1px dashed var(--line-strong); border-radius:var(--radius); padding:48px 24px; margin-top:8px; }
-  .site-empty .ei { font-size:30px; margin-bottom:10px; }
-  .site-empty .et { font-size:var(--fs-body); color:var(--fg-soft); margin-bottom:4px; font-weight:600; }
-  .site-empty .ed { font-size:var(--fs-sm); margin-bottom:16px; }
+  .site-empty { display:flex; flex-direction:column; align-items:center; text-align:center; color:var(--muted);
+    border:1px dashed var(--line-strong); border-radius:var(--radius-lg); padding:56px 24px; margin-top:4px; }
+  .site-empty .ei { width:60px; height:60px; border-radius:var(--radius-xl); background:var(--surface-2); border:1px solid var(--line);
+    color:var(--fg-soft); display:grid; place-items:center; margin-bottom:16px; }
+  .site-empty .ei svg { width:30px; height:30px; }
+  .site-empty .et { font-size:15px; color:var(--fg); margin-bottom:5px; font-weight:650; letter-spacing:-.01em; }
+  .site-empty .ed { font-size:var(--fs-sm); margin-bottom:18px; max-width:42ch; line-height:1.55; }
 
   /* site peek: access bar + file manager */
   .acc-link { display:flex; align-items:center; gap:6px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:7px 8px 7px 11px; margin-bottom:16px; }
