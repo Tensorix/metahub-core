@@ -23,7 +23,7 @@
 
 import { mapApiRequest } from "./data/api-map.ts";
 import { probeOrigin, type OriginMode } from "./data/origin.ts";
-import { cacheGet, cachePut, inferBlobType } from "./data/blob-store.ts";
+import { cacheGet, cachePut, inferBlobType, verifyBytes } from "./data/blob-store.ts";
 
 // Local structural types: the project compiles this file under two tsconfigs
 // (root: ESNext-only libs; src/webui: DOM libs) and lib.webworker conflicts
@@ -412,8 +412,14 @@ async function handleSite(event: FetchEventLike): Promise<Response> {
  *      and reachable — the canonical path once a blob is uploaded;
  *   3. the local replica worker (blobBytes), which serves bytes composed offline
  *      (spool) or pulls + decrypts them from an attached bucket.
- * A success from 2/3 is cached for next time. 404 when no source has the bytes
- * (e.g. a no-origin client offline with no bucket — expected, shows broken img).
+ * A success from 2/3 is cached for next time, but ONLY after the bytes are
+ * verified to content-address to `hash` — blobs are content-addressed, so a 200
+ * that doesn't hash to `hash` (an SPA-fallback index.html, a captive-portal
+ * page, a truncated body) is NOT the blob: caching it would poison `mh-blob-v1`
+ * permanently (cacheGet would keep serving the HTML to <img> as a broken image).
+ * Such a response is dropped and we fall through to the next source.
+ * 404 when no source has the bytes (e.g. a no-origin client offline with no
+ * bucket — expected, shows broken img).
  */
 async function handleBlob(event: FetchEventLike): Promise<Response> {
   const req = event.request;
@@ -427,16 +433,23 @@ async function handleBlob(event: FetchEventLike): Promise<Response> {
   const hit = await cacheGet(hash);
   if (hit) return hit;
 
-  // Network (server resolve) first when there's a reachable origin. A 404 here
-  // (blob composed offline, not yet drained to the server) falls through to the
-  // replica, which still holds it in its spool.
+  // Network (server resolve) first when there's a reachable origin. `no-store`
+  // bypasses the browser's HTTP cache: a /blob URL is served immutable, so a
+  // poisoned entry (cached before the SW controlled the page) would never
+  // revalidate — we keep our own verified copy in mh-blob-v1 instead. A 404 here
+  // (blob composed offline, not yet drained to the server) or bytes that fail to
+  // verify fall through to the replica, which still holds it in its spool.
   if (!(await swNoOrigin())) {
     try {
-      const res = await fetchWithTimeout(req, NETWORK_TIMEOUT_MS * 2);
+      const res = await fetchWithTimeout(new Request(url.href, { cache: "no-store" }), NETWORK_TIMEOUT_MS * 2);
       if (res.ok) {
         const buf = await res.clone().arrayBuffer();
-        await cachePut(hash, buf, res.headers.get("content-type") ?? ct);
-        return res;
+        if (await verifyBytes(buf, hash)) {
+          await cachePut(hash, buf, res.headers.get("content-type") ?? ct);
+          return res;
+        }
+        // 200 but not the blob bytes (SPA fallback / interstitial / corrupt) —
+        // don't cache or return it; try the local replica.
       }
     } catch {
       /* offline / unreachable — try the local replica */
@@ -446,10 +459,12 @@ async function handleBlob(event: FetchEventLike): Promise<Response> {
   const reply = await localRpc(event, "blobBytes", [hash]);
   if (reply?.ok && reply.result) {
     const buf = reply.result as ArrayBuffer;
-    await cachePut(hash, buf, ct);
-    return new Response(buf, {
-      headers: { "content-type": ct, "x-mh-source": "replica" },
-    });
+    if (await verifyBytes(buf, hash)) {
+      await cachePut(hash, buf, ct);
+      return new Response(buf, {
+        headers: { "content-type": ct, "x-mh-source": "replica" },
+      });
+    }
   }
   return new Response("blob unavailable offline", { status: 404 });
 }

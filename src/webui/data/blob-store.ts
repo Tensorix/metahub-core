@@ -177,11 +177,27 @@ export async function setCachePinned(hash: string, pinned: boolean): Promise<boo
   return true;
 }
 
-/** A cached blob's bytes, or undefined on miss. Bumps its LRU access time. */
+/** A `text/*` body never is a blob — it's a poisoned entry (an SPA-fallback
+ *  index.html, an unlock/login page, or a captive-portal interstitial that a
+ *  prior `res.ok`-only write captured under a blob hash). Treated as a miss and
+ *  purged on read so an already-poisoned device self-heals without clearing
+ *  storage (the refetch goes through the now hash-verified write path). */
+export function isPoisonContentType(ct: string): boolean {
+  return ct.trim().toLowerCase().startsWith("text/");
+}
+
+/** A cached blob's bytes, or undefined on miss. Bumps its LRU access time.
+ *  A poisoned (text/*) hit is deleted and reported as a miss — see above. */
 export async function cacheGet(hash: string): Promise<Response | undefined> {
   const c = await caches.open(BLOB_CACHE);
   const hit = await c.match(cacheKey(hash));
-  if (hit) void metaTouch(hash);
+  if (!hit) return undefined;
+  if (isPoisonContentType(hit.headers.get("content-type") ?? "")) {
+    await c.delete(cacheKey(hash));
+    await txn(META, "readwrite", (s) => s.delete(hash)).catch(() => {});
+    return undefined;
+  }
+  void metaTouch(hash);
   return hit;
 }
 

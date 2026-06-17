@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { blobHash32, verifyBytes, inferBlobType, extForType } from "./blob-store.ts";
+import { blobHash32, verifyBytes, inferBlobType, extForType, isPoisonContentType } from "./blob-store.ts";
 import { blobHash, verifyBlobBytes } from "../../core/cache.ts";
 
 // The offline-composed URL /blob/<hash> must match what the server would assign,
@@ -21,6 +21,21 @@ test("verifyBytes agrees with core verifyBlobBytes (32- and 64-hex)", async () =
   expect(await verifyBytes(bytes, h32)).toBe(true);
   expect(verifyBlobBytes(bytes, h32)).toBe(true);
   expect(await verifyBytes(new Uint8Array([4, 2, 0]), h32)).toBe(false);
+});
+
+// cacheGet's read-side self-heal: a real blob is never text/*; an SPA-fallback
+// index.html / unlock page / captive-portal interstitial is. Such a poisoned hit
+// is purged and reported as a miss so an already-poisoned device recovers without
+// clearing storage (the refetch goes through the now hash-verified write path).
+test("isPoisonContentType flags text/* (the poison signature) only", () => {
+  expect(isPoisonContentType("text/html")).toBe(true);
+  expect(isPoisonContentType("text/html; charset=utf-8")).toBe(true);
+  expect(isPoisonContentType("  TEXT/Plain  ")).toBe(true);
+  expect(isPoisonContentType("image/png")).toBe(false);
+  expect(isPoisonContentType("image/jpeg")).toBe(false);
+  expect(isPoisonContentType("application/pdf")).toBe(false);
+  expect(isPoisonContentType("application/octet-stream")).toBe(false);
+  expect(isPoisonContentType("")).toBe(false);
 });
 
 test("content-type inference + extension round-trip", () => {
