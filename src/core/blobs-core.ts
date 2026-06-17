@@ -5,10 +5,13 @@
 // missing bytes over the network) lives in blobs.ts.
 //
 // Model: blob bytes are content-addressed (cache.ts). A device may CLEAR a local
-// blob's bytes only when they are durably held by the designated "full blob
-// devices" (blob_policy) — proven via the synced blob_presence table — so the
+// blob's bytes only when a durable anchor is designated (blob_policy.fullNodes)
+// AND the blob is not this node's own not-yet-flushed production — so the
 // reference (hash, kept in the oplog) stays re-fetchable. A device that is itself
-// a full node, or any device when no full node is designated, never clears.
+// a full node, or ANY device while no full node is designated, never clears (the
+// safety floor: with no anchor there is no guaranteed holder, so a cache copy may
+// be the last copy). Durability is judged locally via blob_cache.pending; see
+// docs/impl-context/22-blob-sync (D4, safety-floor revision).
 
 import type { DbDriver } from "./driver.ts";
 import { emit, withChangeGroup } from "./crdt.ts";
@@ -93,14 +96,23 @@ export function isFullBlobNode(db: DbDriver, node?: string): boolean {
 
 /**
  * Whether this device may safely drop `hash`'s local bytes — a purely LOCAL,
- * offline decision. Clearable = this node is not a full-blob library AND the blob
- * is not a `pending` production (bytes produced here, not yet flushed to a durable
- * anchor). Everything else — flushed productions and acquired caches — is
- * re-fetchable, so dropping it is loss-free. This replaces the old synced
- * blob_presence lookup; see docs/impl-context/22-blob-sync.
+ * offline decision. Clearable requires ALL of:
+ *  1. A durable anchor is designated (blob_policy.fullNodes non-empty). With no
+ *     anchor there is no guaranteed holder, so dropping a cache copy could erase
+ *     the last copy → never clear (the safety floor). This is a coarse, policy-
+ *     level guard: it does NOT verify the anchor actually holds THIS hash — that
+ *     per-blob redundancy(all|any) guarantee is deferred.
+ *  2. This node is not itself the full-blob library (a full node keeps everything).
+ *  3. The blob is not a `pending` production (bytes produced here, not yet flushed
+ *     to the anchor) — the only locally-unique copy.
+ * Honours the D4 invariant "only clear blobs that can be re-fetched": pending=0 AND
+ * an anchor exists ⇒ re-fetchable. See docs/impl-context/22-blob-sync (D4, safety
+ * floor). Durability is judged from the local `pending` flag — no sync needed.
  */
 export function isClearable(db: DbDriver, hash: string): boolean {
-  if (isFullBlobNode(db)) return false; // a full library keeps everything
+  const policy = readPolicy(db);
+  if (policy.fullNodes.length === 0) return false; // no anchor → nothing is safe to drop
+  if (policy.fullNodes.includes(getNodeId(db))) return false; // this node IS the full library
   const row = db
     .query("SELECT pending FROM blob_cache WHERE hash = ?")
     .get(hash) as { pending: number } | null;

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { initSchema } from "./schema-init.ts";
-import { recordBlob, setPinned, isPinned, cachedBlobs } from "./blobs-core.ts";
+import { recordBlob, setPinned, isPinned, cachedBlobs, setFullNodes } from "./blobs-core.ts";
 import { evictToQuota, clearCache } from "./blobs.ts";
 
 // evictToQuota / clearCache touch the on-disk cache (cache.ts → METAHUB_HOME/cache).
@@ -41,9 +41,11 @@ function setAccess(db: Database, hash: string, at: number): void {
 }
 
 /** A consumer node whose three blobs are all clearable (acquired caches, pending=0),
- *  each 100 bytes, with H1 oldest → H3 newest. */
+ *  each 100 bytes, with H1 oldest → H3 newest. A durable anchor is designated, so
+ *  the safety floor is satisfied and clearability comes down to pending/LRU. */
 function consumerWithThree(): Database {
   const phone = makeNode("phone");
+  setFullNodes(phone, ["anchor"]); // designated anchor (the safety floor)
   recordBlob(phone, H1, 100, "image/png", 0);
   recordBlob(phone, H2, 100, "image/png", 0);
   recordBlob(phone, H3, 100, "image/png", 0);
@@ -87,12 +89,25 @@ test("evictToQuota never drops a pinned blob (skips to next LRU)", async () => {
 
 test("evictToQuota never drops a non-clearable (sole-copy) blob", async () => {
   const phone = makeNode("phone");
+  setFullNodes(phone, ["anchor"]); // anchor designated, so pending is the ONLY protection
   // Produced-but-unflushed (pending) → never clearable, so never evicted.
   recordBlob(phone, H1, 100, "image/png");
   recordBlob(phone, H2, 100, "image/png");
   const r = await evictToQuota(phone, 50); // way over quota, but none clearable
   expect(r.evicted).toBe(0);
   expect(hashes(phone).size).toBe(2);
+});
+
+test("evictToQuota is a no-op when NO durable anchor is designated (safety floor)", async () => {
+  const phone = makeNode("phone");
+  // Three acquired caches (pending=0) but no anchor → none clearable → none evicted,
+  // even far over quota. Guards against the background sweep deleting the last copy.
+  recordBlob(phone, H1, 100, "image/png", 0);
+  recordBlob(phone, H2, 100, "image/png", 0);
+  recordBlob(phone, H3, 100, "image/png", 0);
+  const r = await evictToQuota(phone, 50);
+  expect(r.evicted).toBe(0);
+  expect(hashes(phone).size).toBe(3);
 });
 
 test("clearCache keeps pinned blobs even when clearable", async () => {

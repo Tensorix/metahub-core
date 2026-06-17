@@ -59,6 +59,7 @@ test("setFullNodes / setRedundancy persist and de-dupe", () => {
 
 test("a produced-but-unflushed blob (pending) is NOT clearable; flushing makes it clearable", () => {
   const db = makeNode("n1");
+  setFullNodes(db, ["anchorX"]); // a designated durable anchor exists (the safety floor)
   recordBlob(db, H1, 100, "image/png"); // produced here → pending=1, protected
   expect(isClearable(db, H1)).toBe(false);
   setPending(db, H1, false); // confirmed flushed to the anchor
@@ -67,8 +68,16 @@ test("a produced-but-unflushed blob (pending) is NOT clearable; flushing makes i
 
 test("an acquired cache blob (pending=0) is clearable", () => {
   const db = makeNode("n1");
+  setFullNodes(db, ["anchorX"]); // designated anchor → cache is re-fetchable
   recordBlob(db, H1, 100, "image/png", 0); // acquired → already durable at its source
   expect(isClearable(db, H1)).toBe(true);
+});
+
+test("with NO durable anchor designated, nothing is clearable (safety floor)", () => {
+  const db = makeNode("n1");
+  recordBlob(db, H1, 100, "image/png", 0); // acquired, pending=0 — but no anchor exists
+  expect(readPolicy(db).fullNodes).toEqual([]);
+  expect(isClearable(db, H1)).toBe(false); // no guaranteed holder → never drop the last copy
 });
 
 test("a full blob device never clears anything", () => {
@@ -80,8 +89,10 @@ test("a full blob device never clears anything", () => {
 });
 
 test("clear decision is purely local/offline — no sync needed", () => {
-  // phone never syncs anything; clearability comes only from the local pending flag.
+  // phone never syncs anything; clearability comes from the local pending flag plus
+  // the locally-stored policy (a designated anchor) — both offline, no sync.
   const phone = makeNode("phone");
+  setFullNodes(phone, ["cloud"]); // designate a durable anchor (local policy)
   recordBlob(phone, H1, 100, "image/png", 0); // acquired → clearable
   recordBlob(phone, H2, 100, "image/png"); // produced, unflushed → protected
   expect(isClearable(phone, H1)).toBe(true);
@@ -110,6 +121,7 @@ test("referencedHashes unions site_files blobs and doc image markdown", () => {
 
 test("cacheStats: pending bytes retained, non-pending bytes clearable", () => {
   const db = makeNode("n1");
+  setFullNodes(db, ["anchorX"]); // a designated anchor exists (else nothing is clearable)
   recordBlob(db, H1, 1000, "image/png", 0); // acquired → clearable
   recordBlob(db, H2, 500, "image/png"); // produced unflushed → retained
   const s = cacheStats(db);

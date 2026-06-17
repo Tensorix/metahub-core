@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { S3Config } from "../core/sync/storage.ts";
 import { encodeEnroll } from "../core/sync/enroll.ts";
@@ -135,6 +135,36 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+const prefersReduced = () =>
+  typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Smoothly counts the displayed byte figure from its previous value to the new
+ *  target whenever it changes (easeOutCubic, ~600ms). Honours reduced-motion. */
+function useCountUp(target: number, ms = 600): number {
+  const [val, setVal] = useState(target);
+  const from = useRef(target);
+  useEffect(() => {
+    if (prefersReduced()) {
+      from.current = target;
+      setVal(target);
+      return;
+    }
+    const start = from.current;
+    const t0 = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - t0) / ms);
+      const e = 1 - Math.pow(1 - p, 3);
+      setVal(Math.round(start + (target - start) * e));
+      if (p < 1) raf = requestAnimationFrame(tick);
+      else from.current = target;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target]);
+  return val;
+}
+
 /**
  * Storage panel: the local blob cache (document images / large files) + the
  * clear policy. A blob is clearable only once a designated "full blob device"
@@ -157,16 +187,26 @@ function BlobCacheSettings() {
   };
   useEffect(() => load(), []);
 
+  // `drawn` flips on after mount so the ring arcs animate from 0 → their share.
+  const [drawn, setDrawn] = useState(false);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setDrawn(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+  // Count-up for the ring centre figure. Called unconditionally (hook rules) —
+  // 0 while the panel is still loading.
+  const count = useCountUp(info?.stats.clearableBytes ?? 0);
+
   if (err || !info) {
     return (
       <div class="set-block">
-        <div class="set-block-head"><span class="set-block-title">本地缓存</span></div>
+        <div class="set-block-head"><span class="set-block-title">本机存储</span></div>
         <div class="set-block-desc">{err ? `无法读取缓存信息：${err}` : "加载中…"}</div>
       </div>
     );
   }
 
-  const { stats, policy, nodes, buckets, quotaBytes, pinnedCount, pinnedBytes } = info;
+  const { stats, policy, nodes, buckets, quotaBytes, pinnedBytes } = info;
 
   // Bucket anchors to show: locally-attached buckets, plus any s3:// anchor already
   // in the synced policy this device hasn't configured locally — still surface it as
@@ -195,28 +235,17 @@ function BlobCacheSettings() {
     else set.add(id);
     void saveFull([...set]);
   };
-  const pickRedundancy = async (r: "all" | "any") => {
-    setBusy(true);
-    try {
-      await api.setBlobPolicy({ redundancy: r });
-      load();
-    } catch (e) {
-      toast((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
   const clear = async () => {
     const ok = await confirmDialog({
-      title: "清理缓存",
-      message: `将释放约 ${fmtBytes(stats.clearableBytes)}。只删除已在全量设备上保存的副本——引用仍在，需要时自动重新下载。`,
+      title: "清理腾空间",
+      message: `将释放约 ${fmtBytes(stats.clearableBytes)}。只删别处已备份的副本，文件不会丢，用到时自动取回。`,
       confirmLabel: "清理",
     });
     if (!ok) return;
     setBusy(true);
     try {
       const r = await api.clearBlobCache();
-      toast(r.cleared ? `已清理 ${r.cleared} 项，释放 ${fmtBytes(r.freedBytes)}` : "没有可清理的缓存");
+      toast(r.cleared ? `已腾出 ${fmtBytes(r.freedBytes)}（${r.cleared} 项）` : "暂时没有可清理的");
       load();
     } catch (e) {
       toast((e as Error).message);
@@ -225,99 +254,196 @@ function BlobCacheSettings() {
     }
   };
 
+  // Three ring segments (their bytes sum to total; pinned ⊆ retained):
+  //   freeable  = clearable bytes (the space you can reclaim)   → accent
+  //   retained  = held-but-not-pinned                           → neutral grey
+  //   pinned    = bytes you locked from eviction                → muted, thinner
+  const total = Math.max(1, stats.totalBytes);
+  const retainedFree = Math.max(0, stats.retainedBytes - pinnedBytes);
+  const pct = (v: number) => (v / total) * 100;
+  const segClear = pct(stats.clearableBytes);
+  const segRetain = pct(retainedFree);
+  const segPin = pct(pinnedBytes);
+  const hasFreeable = stats.clearableBytes > 0;
+  // Mirror the core safety floor (blobs-core isClearable) for the ring's centre:
+  // with no designated anchor nothing is clearable, and a device that is itself the
+  // full library keeps everything — neither is the cheerful "all backed up" state.
+  const noAnchor = policy.fullNodes.length === 0;
+  const selfNode = nodes.find((n) => n.self);
+  const selfIsFull = !!selfNode && policy.fullNodes.includes(selfNode.nodeId);
+  const ringState = selfIsFull ? "self-full" : noAnchor ? "no-anchor" : hasFreeable ? "free" : "safe";
+
+  // Stroke is sized in pathLength=100 units so segment lengths read as percent.
+  // `drawn` flips on after mount so the arcs animate from 0 → their share.
+  const arc = (len: number) => (drawn ? len : 0);
+
   return (
-    <div class="set-block">
-      <div class="set-block-head"><span class="set-block-title">本地缓存</span></div>
+    <div class="set-block blob-pane">
+      <div class="set-block-head"><span class="set-block-title">本机存储</span></div>
       <div class="set-block-desc">
-        文档图片等大文件存在本机缓存。指定一台「全量设备」或一个对象存储桶长期保存全部副本后，其他设备即可安全清理本地缓存省空间——引用仍在，需要时自动重新下载。
+        图片和大文件会先存在这台设备上，打开快。只要别处留了一份长期备份，这里随时能清——文件不会丢，需要时自动取回。
       </div>
 
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", margin: "10px 0", fontSize: 13 }}>
-        <span>
-          共 <b>{stats.count}</b> 项 · {fmtBytes(stats.totalBytes)}
-        </span>
-        <span style={{ color: "var(--text-muted, #888)" }}>
-          可清理 {fmtBytes(stats.clearableBytes)} · 保留 {fmtBytes(stats.retainedBytes)}
-          {pinnedCount > 0 ? ` · 固定 ${pinnedCount} 项（${fmtBytes(pinnedBytes)}）` : ""}
-        </span>
-      </div>
-      {quotaBytes > 0 && (
-        <div class="set-block-desc" style={{ marginTop: -4 }}>
-          超过 {fmtBytes(quotaBytes)} 时自动按最久未用淘汰可清理项（固定项不淘汰）。
-        </div>
-      )}
-
-      <div class="set-block-desc">全量 blob 库（长期保存全部副本，作为可清理的安全锚点）</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "6px 0 10px" }}>
-        {nodes.map((n) => (
-          <label
-            key={n.nodeId}
-            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}
-          >
-            <input
-              type="checkbox"
-              checked={policy.fullNodes.includes(n.nodeId)}
-              disabled={busy}
-              onChange={() => toggleNode(n.nodeId)}
-            />
-            <span>
-              {n.label || n.nodeId}
-              {n.self ? " · 本机" : ""}
-            </span>
-          </label>
-        ))}
-        {bucketAnchors.map((b) => (
-          <label
-            key={b.url}
-            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}
-          >
-            <input
-              type="checkbox"
-              checked={policy.fullNodes.includes(b.url)}
-              disabled={busy}
-              onChange={() => toggleNode(b.url)}
-            />
-            <span>
-              {b.label || b.bucket || b.url}
-              <span style={{ color: "var(--text-muted, #888)" }}> · 对象存储</span>
-            </span>
-          </label>
-        ))}
-      </div>
-
-      {policy.fullNodes.length > 1 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 10px", fontSize: 13 }}>
-          <span class="set-block-desc" style={{ margin: 0 }}>冗余</span>
+      <div class="blob-hero">
+        <div class="blob-hero-main">
+          <div class="blob-legend">
+            <div class="blob-legend-row">
+              <span class="blob-dot free" /> <span class="blob-legend-k">可释放</span>
+              <b>{fmtBytes(stats.clearableBytes)}</b>
+            </div>
+            <div class="blob-legend-row">
+              <span class="blob-dot keep" /> <span class="blob-legend-k">保留中</span>
+              <b>{fmtBytes(retainedFree)}</b>
+            </div>
+            {pinnedBytes > 0 && (
+              <div class="blob-legend-row">
+                <span class="blob-dot pin" /> <span class="blob-legend-k">已固定</span>
+                <b>{fmtBytes(pinnedBytes)}</b>
+              </div>
+            )}
+          </div>
+          <div class="blob-total">共 {stats.count} 项 · {fmtBytes(stats.totalBytes)}</div>
           <button
-            class={"btn btn-ghost" + (policy.redundancy === "all" ? " sel" : "")}
-            disabled={busy}
-            onClick={() => void pickRedundancy("all")}
+            class="btn btn-secondary blob-clear"
+            disabled={busy || !hasFreeable}
+            onClick={() => void clear()}
           >
-            全部持有才可清
-          </button>
-          <button
-            class={"btn btn-ghost" + (policy.redundancy === "any" ? " sel" : "")}
-            disabled={busy}
-            onClick={() => void pickRedundancy("any")}
-          >
-            任一持有即可清
+            <Icon name="trash" cls="ico sm" />
+            {hasFreeable ? `清理腾出 ${fmtBytes(stats.clearableBytes)}` : "无需清理"}
           </button>
         </div>
-      )}
 
-      <button
-        class="btn btn-secondary"
-        disabled={busy || stats.clearableBytes === 0}
-        onClick={() => void clear()}
-      >
-        <Icon name="trash" cls="ico sm" /> 清理缓存
-        {stats.clearableBytes ? `（${fmtBytes(stats.clearableBytes)}）` : ""}
-      </button>
-      {policy.fullNodes.length === 0 && (
-        <div class="set-block-desc" style={{ marginTop: 6 }}>
-          尚未指定全量设备或对象存储桶，暂无安全锚点。
+        <div
+          class={
+            "blob-ring" +
+            (ringState === "free" ? " has-free" : ringState === "safe" ? " all-safe" : " locked")
+          }
+        >
+          <svg viewBox="0 0 100 100" class="blob-ring-svg" aria-hidden="true">
+            <g transform="rotate(-90 50 50)">
+              <circle class="blob-ring-track" cx="50" cy="50" r="42" pathLength={100} />
+              {segPin > 0 && (
+                <circle
+                  class="blob-seg pin"
+                  cx="50"
+                  cy="50"
+                  r="42"
+                  pathLength={100}
+                  stroke-dasharray={`${arc(segPin)} ${100 - arc(segPin)}`}
+                  stroke-dashoffset={-(segClear + segRetain)}
+                />
+              )}
+              <circle
+                class="blob-seg keep"
+                cx="50"
+                cy="50"
+                r="42"
+                pathLength={100}
+                stroke-dasharray={`${arc(segRetain)} ${100 - arc(segRetain)}`}
+                stroke-dashoffset={-segClear}
+              />
+              <circle
+                class="blob-seg free"
+                cx="50"
+                cy="50"
+                r="42"
+                pathLength={100}
+                stroke-dasharray={`${arc(segClear)} ${100 - arc(segClear)}`}
+                stroke-dashoffset={0}
+              />
+            </g>
+          </svg>
+          <div class="blob-ring-center">
+            {ringState === "free" && (
+              <>
+                <div class="blob-ring-big">{fmtBytes(count)}</div>
+                <div class="blob-ring-cap">可释放</div>
+              </>
+            )}
+            {ringState === "safe" && (
+              <>
+                <div class="blob-ring-check"><Icon name="check" cls="ico" /></div>
+                <div class="blob-ring-cap strong">都备份好了</div>
+                <div class="blob-ring-cap">暂时无需清理</div>
+              </>
+            )}
+            {ringState === "no-anchor" && (
+              <>
+                <div class="blob-ring-lock"><Icon name="lock" cls="ico" /></div>
+                <div class="blob-ring-cap strong">未设置长期备份</div>
+                <div class="blob-ring-cap">指定后才能清理</div>
+              </>
+            )}
+            {ringState === "self-full" && (
+              <>
+                <div class="blob-ring-lock"><Icon name="database" cls="ico" /></div>
+                <div class="blob-ring-cap strong">本机长期备份库</div>
+                <div class="blob-ring-cap">保留全部副本</div>
+              </>
+            )}
+          </div>
         </div>
-      )}
+      </div>
+
+      <div class="blob-anchors">
+        <div class="blob-sub-title">长期备份保存在</div>
+        {nodes.map((n) => {
+          const on = policy.fullNodes.includes(n.nodeId);
+          return (
+            <div class="blob-anchor-row" key={n.nodeId}>
+              <span class="blob-anchor-ico"><Icon name="monitor" cls="ico sm" /></span>
+              <div class="blob-anchor-main">
+                <div class="blob-anchor-name">
+                  {n.label || n.nodeId}{n.self ? " · 本机" : ""}
+                </div>
+                <div class="blob-anchor-sub">{on ? "正在长期保存全部副本" : "开启后保存全部副本"}</div>
+              </div>
+              <button
+                class={"switch" + (on ? " on" : "")}
+                role="switch"
+                aria-checked={on}
+                disabled={busy}
+                onClick={() => toggleNode(n.nodeId)}
+              >
+                <span class="switch-knob" />
+              </button>
+            </div>
+          );
+        })}
+        {bucketAnchors.map((b) => {
+          const on = policy.fullNodes.includes(b.url);
+          return (
+            <div class="blob-anchor-row" key={b.url}>
+              <span class="blob-anchor-ico"><Icon name="database" cls="ico sm" /></span>
+              <div class="blob-anchor-main">
+                <div class="blob-anchor-name">
+                  {b.label || b.bucket || b.url} · 云端
+                </div>
+                <div class="blob-anchor-sub">{on ? "正在长期保存全部副本" : "开启后保存全部副本"}</div>
+              </div>
+              <button
+                class={"switch" + (on ? " on" : "")}
+                role="switch"
+                aria-checked={on}
+                disabled={busy}
+                onClick={() => toggleNode(b.url)}
+              >
+                <span class="switch-knob" />
+              </button>
+            </div>
+          );
+        })}
+
+        {noAnchor && (
+          <div class="blob-hint">还没设置长期备份。先指定一处，之后就能放心清理这台设备。</div>
+        )}
+
+        {quotaBytes > 0 && (
+          <div class="blob-foot">
+            缓存超过 {fmtBytes(quotaBytes)} 时，会自动清掉最久没用的那些（已备份的），你固定的不动。
+          </div>
+        )}
+      </div>
     </div>
   );
 }
