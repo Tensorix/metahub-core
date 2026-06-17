@@ -441,7 +441,7 @@ async function handleBlob(event: FetchEventLike): Promise<Response> {
   // verify fall through to the replica, which still holds it in its spool.
   if (!(await swNoOrigin())) {
     try {
-      const res = await fetchWithTimeout(new Request(url.href, { cache: "no-store" }), NETWORK_TIMEOUT_MS * 2);
+      const res = await fetchWithTimeout(new Request(req, { cache: "no-store" }), NETWORK_TIMEOUT_MS * 2);
       if (res.ok) {
         const buf = await res.clone().arrayBuffer();
         if (await verifyBytes(buf, hash)) {

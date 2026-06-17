@@ -23,16 +23,21 @@ test("verifyBytes agrees with core verifyBlobBytes (32- and 64-hex)", async () =
   expect(await verifyBytes(new Uint8Array([4, 2, 0]), h32)).toBe(false);
 });
 
-// cacheGet's read-side self-heal: a real blob is never text/*; an SPA-fallback
-// index.html / unlock page / captive-portal interstitial is. Such a poisoned hit
-// is purged and reported as a miss so an already-poisoned device recovers without
-// clearing storage (the refetch goes through the now hash-verified write path).
-test("isPoisonContentType flags text/* (the poison signature) only", () => {
+// cacheGet's read-side self-heal: the historical poison (SPA-fallback index.html,
+// unlock/login page, captive-portal interstitial, CDN 200 error page) is always
+// text/html. Such a hit is purged and reported as a miss so an already-poisoned
+// device recovers without clearing storage (the refetch goes through the now
+// hash-verified write path). Scoped to text/html — /blob is a general large-file
+// endpoint, so legit text/css|javascript|plain|markdown blobs must NOT be purged.
+test("isPoisonContentType flags text/html (the real poison) only", () => {
   expect(isPoisonContentType("text/html")).toBe(true);
   expect(isPoisonContentType("text/html; charset=utf-8")).toBe(true);
-  expect(isPoisonContentType("  TEXT/Plain  ")).toBe(true);
+  expect(isPoisonContentType("  TEXT/HTML  ")).toBe(true);
+  expect(isPoisonContentType("text/plain")).toBe(false); // legit large-file blobs stay cacheable
+  expect(isPoisonContentType("text/css")).toBe(false);
+  expect(isPoisonContentType("text/javascript")).toBe(false);
+  expect(isPoisonContentType("text/markdown")).toBe(false);
   expect(isPoisonContentType("image/png")).toBe(false);
-  expect(isPoisonContentType("image/jpeg")).toBe(false);
   expect(isPoisonContentType("application/pdf")).toBe(false);
   expect(isPoisonContentType("application/octet-stream")).toBe(false);
   expect(isPoisonContentType("")).toBe(false);

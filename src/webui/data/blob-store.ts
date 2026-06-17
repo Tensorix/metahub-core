@@ -177,13 +177,16 @@ export async function setCachePinned(hash: string, pinned: boolean): Promise<boo
   return true;
 }
 
-/** A `text/*` body never is a blob — it's a poisoned entry (an SPA-fallback
+/** A `text/html` body never is a blob — it's a poisoned entry (an SPA-fallback
  *  index.html, an unlock/login page, or a captive-portal interstitial that a
  *  prior `res.ok`-only write captured under a blob hash). Treated as a miss and
  *  purged on read so an already-poisoned device self-heals without clearing
- *  storage (the refetch goes through the now hash-verified write path). */
+ *  storage (the refetch goes through the now hash-verified write path).
+ *  Scoped to text/html (not all text/*) because /blob is a general large-file
+ *  endpoint: legit text/css|javascript|plain|markdown blobs must stay cacheable.
+ *  Any other non-image 200 is blocked at write by the hash check, not here. */
 export function isPoisonContentType(ct: string): boolean {
-  return ct.trim().toLowerCase().startsWith("text/");
+  return ct.trim().toLowerCase().startsWith("text/html");
 }
 
 /** A cached blob's bytes, or undefined on miss. Bumps its LRU access time.
