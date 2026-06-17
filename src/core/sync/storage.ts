@@ -242,6 +242,23 @@ export async function putBucketBlob(
   }
 }
 
+/** Every blob hash the bucket durably holds — one paginated LIST of the `blobs/`
+ *  namespace (the client loops continuation tokens internally). Used by the
+ *  on-demand clear-presence verify; keeps the `<base>/blobs/<hash>` key layout
+ *  encapsulated here. Throws if the bucket is unreachable (caller treats the
+ *  anchor as unverified). */
+export async function listBucketBlobHashes(config: S3Config): Promise<Set<string>> {
+  const client = storageClientFor(config);
+  const prefix = blobsKey(basePrefix(config.prefix), "");
+  const objs = await client.list(prefix);
+  const out = new Set<string>();
+  for (const o of objs) {
+    const tail = o.key.slice(prefix.length);
+    if (tail) out.add(tail); // key tail after `blobs/` is the hash
+  }
+  return out;
+}
+
 /** Fetch a blob's bytes from the bucket, or null if absent. */
 export async function getBucketBlob(config: S3Config, hash: string): Promise<Uint8Array | null> {
   const client = storageClientFor(config);

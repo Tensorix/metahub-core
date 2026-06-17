@@ -191,7 +191,8 @@ CREATE TABLE IF NOT EXISTS blob_cache (
   content_type TEXT,
   last_access  INTEGER,
   pinned       INTEGER NOT NULL DEFAULT 0, -- node-local: never auto-evicted / cleared
-  pending      INTEGER NOT NULL DEFAULT 1  -- produced here, not yet flushed to anchor
+  pending      INTEGER NOT NULL DEFAULT 1, -- produced here, not yet flushed to anchor
+  anchored     INTEGER NOT NULL DEFAULT 0  -- node-local: last verify confirmed a designated anchor holds it (per redundancy). Drives isClearable; reset on policy change
 );
 
 -- Synced workspace policy (single row "default"): which nodes are designated

@@ -60,7 +60,10 @@ import {
   setFullNodes,
   setRedundancy,
   setPinned,
+  verifyAnchorPresence,
+  readBlobVerifiedAt,
 } from "../../core/blobs.ts";
+import type { DbDriver } from "../../core/driver.ts";
 import { getServerConfig } from "../../core/config.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
@@ -303,6 +306,13 @@ const BlobCacheSchema = z.object({
   quotaBytes: z.number().describe("Auto-evict over this many bytes; 0 = disabled"),
   pinnedCount: z.number(),
   pinnedBytes: z.number(),
+  lastVerifiedAt: z
+    .number()
+    .nullable()
+    .describe("Epoch-ms of the last anchor-presence verify; null = never / invalidated"),
+  unreachableAnchors: z
+    .array(z.string())
+    .describe("Anchors the last verify couldn't reach (only populated by /verify)"),
 });
 const PinReq = z.object({
   hash: z.string(),
@@ -355,6 +365,24 @@ function handle(
 // --- routes -----------------------------------------------------------------
 
 const VersionSchema = z.object({ version: z.string() });
+
+/** Shape the Settings storage-panel payload. `unreachable` is supplied by /verify
+ *  (the anchors it couldn't reach); GET reports the stored last-verified stamp. */
+function blobCacheInfo(db: DbDriver, unreachable: string[] = []) {
+  reconcileCache(db);
+  const pinned = cachedBlobs(db).filter((b) => b.pinned);
+  return {
+    stats: cacheStats(db),
+    policy: readPolicy(db),
+    nodes: knownNodes(db),
+    buckets: knownBuckets(db),
+    quotaBytes: getServerConfig(db).blobCacheQuotaBytes,
+    pinnedCount: pinned.length,
+    pinnedBytes: pinned.reduce((s, b) => s + b.size, 0),
+    lastVerifiedAt: readBlobVerifiedAt(db),
+    unreachableAnchors: unreachable,
+  };
+}
 
 export const webuiRoutes: Route[] = [
   {
@@ -747,21 +775,22 @@ export const webuiRoutes: Route[] = [
     method: "GET",
     path: "/api/blob-cache",
     summary:
-      "Local blob cache stats + clear policy + device roster (Settings storage panel). " +
-      "Only blobs durably held by a designated full blob device are clearable.",
+      "Local blob cache stats + clear policy + device/bucket roster (Settings storage panel). " +
+      "A blob is clearable only once a presence verify confirmed a designated anchor holds it.",
     response: BlobCacheSchema,
-    handler: handle((_req, { db }) => {
-      reconcileCache(db);
-      const pinned = cachedBlobs(db).filter((b) => b.pinned);
-      return {
-        stats: cacheStats(db),
-        policy: readPolicy(db),
-        nodes: knownNodes(db),
-        buckets: knownBuckets(db),
-        quotaBytes: getServerConfig(db).blobCacheQuotaBytes,
-        pinnedCount: pinned.length,
-        pinnedBytes: pinned.reduce((s, b) => s + b.size, 0),
-      };
+    handler: handle((_req, { db }) => blobCacheInfo(db)),
+  },
+  {
+    method: "POST",
+    path: "/api/blob-cache/verify",
+    summary:
+      "Verify NOW which cached blobs the designated anchors durably hold (bucket LIST / " +
+      "device /api/blobs/has), recording the per-blob `anchored` flag that gates clearing. " +
+      "Returns the refreshed cache info incl. any unreachable anchors. Run on panel open / refresh.",
+    response: BlobCacheSchema,
+    handler: handle(async (_req, { db }) => {
+      const r = await verifyAnchorPresence(db);
+      return blobCacheInfo(db, r.unreachable);
     }),
   },
   {

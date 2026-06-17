@@ -122,6 +122,8 @@ export function migrateBlobCache(db: DbDriver): void {
     db.exec("ALTER TABLE blob_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
   if (!hasColumn(db, "blob_cache", "pending"))
     db.exec("ALTER TABLE blob_cache ADD COLUMN pending INTEGER NOT NULL DEFAULT 1");
+  if (!hasColumn(db, "blob_cache", "anchored"))
+    db.exec("ALTER TABLE blob_cache ADD COLUMN anchored INTEGER NOT NULL DEFAULT 0");
   db.exec("DROP TABLE IF EXISTS blob_presence");
 }
 

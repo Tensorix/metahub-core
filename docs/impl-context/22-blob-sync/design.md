@@ -37,9 +37,11 @@
 - 不变量不变:**只清之后还能回源的 blob;本机未备份的产出绝不清。**
 - **关键洞察**:判断"能不能清一个本地 blob"需要的信息**本就在本地**——不是"它 durable 吗"(要查桶/同步 presence),而是"**它是不是我自己还没上传成功的产出**"。
 - `blob_cache.pending`(**node-local,不进 oplog**):本机产出、尚未确认 flush 到锚(桶,或无桶时的全量设备)的 blob,**是唯一必须保护的**。产出置 1;flush 成功置 0;**取得的缓存直接置 0**。
-- `isClearable` = `指定了锚(fullNodes 非空) && 本机非全量设备 && pending==0`:**纯本地、可离线、零网络**。pending=0 者要么是已 flush 的产出(锚上有)、要么是取来的缓存(可重取)。
-- **修订(安全底线,已落地)**:`isClearable` 增加前置「`fullNodes` 非空」。动机——回到本段不变量「只清能回源的」:**一处锚都没指定时,一份取来的缓存可能本就是全网唯一副本**(来源是临时 peer、它消失即回不了源),此退化情形下 `pending==0` 会误判可清 → 清理/自动配额淘汰都会丢数据。底线堵住该情形;D4「缓存非 durability 责任」哲学在**有锚**时不变。这是**策略级粗判**(只验"有锚",不验"该锚是否持有此 hash");逐 blob presence / `redundancy(all|any)` 精确保证仍 **deferred**。`cacheStats`/`evictToQuota`/`clearCache`/CLI/WebUI 经 `isClearable` 自动跟随。
-- `blob_policy`(同步)**保留**,只做**锚的指定**(全量设备:永不清 + pull 全量,是无桶拓扑的 durable 落点);`redundancy` 字段当前**无代码读取**(WebUI 已移除其控件),留待 deferred 的逐 blob 冗余设计。
+- `isClearable` = `本机非全量设备 && pending==0 && anchored==1`:**纯本地、可离线、零网络**(读三个本地标记)。
+- **修订(按需现查 presence,已落地)**:初版只看 `pending`,对"取来的缓存"默认可回源——但**一处锚都没指定 / 锚上其实没这份**时,该缓存可能是全网唯一副本,清掉就违反本段不变量「只清能回源的」。改为**逐 blob 现查**:`blob_cache.anchored`(node-local 列)由 `verifyAnchorPresence(db)` 写入——**桶**走一趟 `listBucketBlobHashes`(分页 LIST `<base>/blobs/`)、**设备锚**走 `POST /api/blobs/has`(仿 `/blob/` 鉴权);按 `redundancy` 聚合(`any`=∃可达锚含它;`all`=每个指定锚都可达且含它,任一不可达→保守 0)。改策略(`setFullNodes`/`setRedundancy`)即 `invalidateAnchored` 清空所有 `anchored`+`last_verified`,逼重核对。
+- **触发**:开存储面板 / 刷新按钮 / **超配额淘汰前**(`evictToQuota` 仅超额时现查,非每 tick → 避开桶风暴)。**离线退化**:锚不可达 → 该 blob `anchored=0` → 既不可手动清也不被淘汰 → 缓存允许暂时超额,等下个 tick 网络恢复自然补做(**宁可超额,不可丢数据**;不沿用旧 `anchored` 值)。`cacheStats`/`evictToQuota`/`clearCache`/CLI/WebUI 经 `isClearable` 自动跟随。
+- 比初版同步 `blob_presence`(staleness、桶风暴)和 pending-only 近似(消费者假定可回源)都更准:现查 = 清理那刻真值、零陈旧;按需 = 不进 60s 循环。
+- `blob_policy`(同步)**保留**,只做**锚的指定**(全量设备:永不清 + pull 全量,是无桶拓扑的 durable 落点);`redundancy(all|any)` 现由 `verifyAnchorPresence` **真正生效**(WebUI 控件已恢复)。
 - **为何弃 presence**:① presence 把"远端桶/锚的内容"缓存成同步声明,必然可能过期(假性可清);② 它存在的唯一理由是"让任意设备离线随时判断",而清理本是非紧急操作——`pending` 把同一判断变成对**自己动作**的认知,从本机视角**永不过期**;③ **缓存副本不是 durability 责任**(系统故意不保全"生产者没传成就掉线、只靠消费者缓存吊命"的 blob),承认这点后离线本地判定即自洽。
 
 ### D5 · 图片一律 blob(不再 base64 inline 进 oplog)

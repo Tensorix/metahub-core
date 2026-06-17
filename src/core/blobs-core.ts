@@ -35,6 +35,9 @@ export interface CachedBlob {
   pinned: number;
   /** 1 = bytes produced here, not yet flushed to a durable anchor — protected. */
   pending: number;
+  /** Node-local: 1 = the last presence verify confirmed a designated anchor holds
+   *  this blob (per redundancy). Drives isClearable; reset to 0 on policy change. */
+  anchored: number;
 }
 
 export interface CacheStats {
@@ -71,7 +74,7 @@ export function readPolicy(db: DbDriver): BlobPolicy {
  *  either a node id (a device that keeps everything) OR a bucket url `s3://…`
  *  (object storage as a durable full library). Bucket urls never match a node id,
  *  so isFullBlobNode()/isClearable() are unaffected — they're a visible guardrail. */
-export const setFullNodes = (db: DbDriver, nodeIds: string[]): void =>
+export const setFullNodes = (db: DbDriver, nodeIds: string[]): void => {
   withChangeGroup(null, () => {
     // de-dupe, keep order
     const seen = new Set<string>();
@@ -81,9 +84,12 @@ export const setFullNodes = (db: DbDriver, nodeIds: string[]): void =>
     const cur = readPolicy(db);
     if (cur.redundancy == null) emit(db, "blob_policy", POLICY_ID, "redundancy", "all");
   });
+  invalidateAnchored(db); // anchor set changed → prior verify verdict is stale
+};
 
 export const setRedundancy = (db: DbDriver, redundancy: Redundancy): void => {
   emit(db, "blob_policy", POLICY_ID, "redundancy", redundancy);
+  invalidateAnchored(db); // any/all changed → re-verify before anything is clearable
 };
 
 /** Is `node` (default: this device) a designated full-blob library? */
@@ -96,27 +102,60 @@ export function isFullBlobNode(db: DbDriver, node?: string): boolean {
 
 /**
  * Whether this device may safely drop `hash`'s local bytes — a purely LOCAL,
- * offline decision. Clearable requires ALL of:
- *  1. A durable anchor is designated (blob_policy.fullNodes non-empty). With no
- *     anchor there is no guaranteed holder, so dropping a cache copy could erase
- *     the last copy → never clear (the safety floor). This is a coarse, policy-
- *     level guard: it does NOT verify the anchor actually holds THIS hash — that
- *     per-blob redundancy(all|any) guarantee is deferred.
- *  2. This node is not itself the full-blob library (a full node keeps everything).
- *  3. The blob is not a `pending` production (bytes produced here, not yet flushed
- *     to the anchor) — the only locally-unique copy.
- * Honours the D4 invariant "only clear blobs that can be re-fetched": pending=0 AND
- * an anchor exists ⇒ re-fetchable. See docs/impl-context/22-blob-sync (D4, safety
- * floor). Durability is judged from the local `pending` flag — no sync needed.
+ * offline decision read from local flags. Clearable requires ALL of:
+ *  1. This node is not itself the full-blob library (a full node keeps everything).
+ *  2. The blob is not a `pending` production (bytes produced here, not yet flushed
+ *     to an anchor) — the only locally-unique copy.
+ *  3. `anchored == 1`: the last presence verify confirmed a designated anchor holds
+ *     this blob, per redundancy(any/all). Until a verify runs (or after a policy
+ *     change resets it), anchored is 0 → nothing is clearable (conservative). This
+ *     replaces the earlier coarse "an anchor is designated" floor with a per-blob,
+ *     freshly-verified fact. See verifyAnchorPresence (blobs.ts) and
+ *     docs/impl-context/22-blob-sync (D4, on-demand presence verify).
  */
 export function isClearable(db: DbDriver, hash: string): boolean {
-  const policy = readPolicy(db);
-  if (policy.fullNodes.length === 0) return false; // no anchor → nothing is safe to drop
-  if (policy.fullNodes.includes(getNodeId(db))) return false; // this node IS the full library
+  if (isFullBlobNode(db)) return false; // this node IS the full library → keeps everything
   const row = db
-    .query("SELECT pending FROM blob_cache WHERE hash = ?")
-    .get(hash) as { pending: number } | null;
-  return !!row && row.pending === 0;
+    .query("SELECT pending, anchored FROM blob_cache WHERE hash = ?")
+    .get(hash) as { pending: number; anchored: number } | null;
+  return !!row && row.pending === 0 && row.anchored === 1;
+}
+
+// ---- verified-presence bookkeeping (node-local) -----------------------------
+
+/** Record/clear the per-blob "a designated anchor verifiably holds this" flag. */
+export function setAnchored(db: DbDriver, hash: string, anchored: boolean): void {
+  db.query("UPDATE blob_cache SET anchored = ? WHERE hash = ?").run(anchored ? 1 : 0, hash);
+}
+
+export function isAnchored(db: DbDriver, hash: string): boolean {
+  const row = db.query("SELECT anchored FROM blob_cache WHERE hash = ?").get(hash) as
+    | { anchored: number }
+    | null;
+  return !!row && row.anchored === 1;
+}
+
+/** Drop every verified verdict (after a policy change) — forces a re-verify before
+ *  anything is clearable again. Also clears the last-verified stamp. */
+export function invalidateAnchored(db: DbDriver): void {
+  db.query("UPDATE blob_cache SET anchored = 0").run();
+  db.query("DELETE FROM meta WHERE key = ?").run(BLOB_VERIFIED_AT_KEY);
+}
+
+const BLOB_VERIFIED_AT_KEY = "blob_verified_at";
+
+/** Epoch-ms of the last successful presence verify, or null if never / invalidated. */
+export function readBlobVerifiedAt(db: DbDriver): number | null {
+  const row = db.query("SELECT value FROM meta WHERE key = ?").get(BLOB_VERIFIED_AT_KEY) as
+    | { value: string }
+    | null;
+  return row ? Number(row.value) : null;
+}
+
+export function writeBlobVerifiedAt(db: DbDriver, ts: number): void {
+  db.query(
+    "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(BLOB_VERIFIED_AT_KEY, String(ts));
 }
 
 // ---- reference index --------------------------------------------------------
@@ -194,7 +233,7 @@ export function forgetBlob(db: DbDriver, hash: string): void {
 
 export function cachedBlobs(db: DbDriver): CachedBlob[] {
   return db
-    .query("SELECT hash, size, content_type, last_access, pinned, pending FROM blob_cache")
+    .query("SELECT hash, size, content_type, last_access, pinned, pending, anchored FROM blob_cache")
     .all() as CachedBlob[];
 }
 

@@ -322,6 +322,10 @@ export interface BlobCacheInfo {
   quotaBytes: number;
   pinnedCount: number;
   pinnedBytes: number;
+  /** Epoch-ms of the last anchor-presence verify; null = never / invalidated. */
+  lastVerifiedAt: number | null;
+  /** Anchors the last verify couldn't reach (only populated by verifyBlobCache). */
+  unreachableAnchors: string[];
 }
 export interface BlobClearResult {
   cleared: number;
@@ -495,6 +499,7 @@ const httpApi = {
 
   // blob cache (Settings storage panel)
   blobCache: () => req<BlobCacheInfo>("GET", "/api/blob-cache"),
+  verifyBlobCache: () => req<BlobCacheInfo>("POST", "/api/blob-cache/verify"),
   clearBlobCache: () => req<BlobClearResult>("POST", "/api/blob-cache/clear"),
   setBlobPolicy: (b: { full_nodes?: string[]; redundancy?: "all" | "any" }) =>
     req<BlobPolicyResult>("POST", "/api/blob-policy", b),

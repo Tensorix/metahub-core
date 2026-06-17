@@ -9,8 +9,9 @@ import type { DbDriver } from "./driver.ts";
 import { cacheDir } from "./paths.ts";
 import { deleteBlob, getBlob, putBlobAt, verifyBlobBytes } from "./cache.ts";
 import { listPeers } from "./sync/peers.ts";
-import { type S3Config, getBucketBlob, putBucketBlob } from "./sync/storage.ts";
+import { type S3Config, getBucketBlob, putBucketBlob, listBucketBlobHashes } from "./sync/storage.ts";
 import { getServerConfig } from "./config.ts";
+import { getNodeId } from "./node.ts";
 import {
   cachedBlobs,
   isClearable,
@@ -21,6 +22,9 @@ import {
   pendingBlobs,
   setPending,
   isFullBlobNode,
+  readPolicy,
+  setAnchored,
+  writeBlobVerifiedAt,
 } from "./blobs-core.ts";
 
 export * from "./blobs-core.ts";
@@ -97,6 +101,104 @@ export async function resolveBlob(db: DbDriver, hash: string): Promise<Uint8Arra
     }
   }
   return null;
+}
+
+// ---- on-demand presence verify (drives isClearable's `anchored`) -------------
+
+export interface VerifyResult {
+  /** Blobs confirmed durable on the anchor set (per redundancy) → clearable. */
+  anchoredCount: number;
+  anchoredBytes: number;
+  /** Designated anchors (bucket urls / device node ids) we could not reach to
+   *  check. Under `all`, any unreachable anchor makes everything un-clearable. */
+  unreachable: string[];
+  /** Epoch-ms this verify ran. */
+  at: number;
+}
+
+/** Ask a designated full-blob DEVICE anchor which of `hashes` it holds. */
+async function queryPeerHas(
+  url: string,
+  token: string | null,
+  hashes: string[],
+): Promise<Set<string>> {
+  const res = await fetch(new URL("/api/blobs/has", url), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ hashes }),
+  });
+  if (!res.ok) throw new Error(`/api/blobs/has → ${res.status}`);
+  const data = (await res.json()) as { has?: string[] };
+  return new Set(data.has ?? []);
+}
+
+/**
+ * Verify, right now, which locally-cached blobs a designated anchor durably holds,
+ * and record the per-blob `anchored` flag that `isClearable` reads. Buckets are
+ * checked with one paginated LIST (listBucketBlobHashes); device anchors with a
+ * `POST /api/blobs/has`. An anchor we can't reach (offline / no stored url+token /
+ * bad creds) goes into `unreachable` and is treated as NOT holding anything —
+ * conservative, so a transient outage defers clearing rather than risking loss.
+ *
+ * Redundancy: `any` → present on ≥1 reachable anchor; `all` → every designated
+ * anchor reachable AND holding it. Run on demand only (panel open / refresh /
+ * pre-eviction when over quota), never in the steady-state maintenance loop.
+ */
+export async function verifyAnchorPresence(db: DbDriver): Promise<VerifyResult> {
+  const policy = readPolicy(db);
+  const self = getNodeId(db);
+  const anchors = policy.fullNodes.filter((a) => a !== self);
+  const blobs = cachedBlobs(db);
+  const at = Date.now();
+
+  if (anchors.length === 0) {
+    for (const b of blobs) setAnchored(db, b.hash, false);
+    writeBlobVerifiedAt(db, at);
+    return { anchoredCount: 0, anchoredBytes: 0, unreachable: [], at };
+  }
+
+  const peers = listPeers(db);
+  const localHashes = blobs.map((b) => b.hash);
+  const anchorSets: Set<string>[] = [];
+  const unreachable: string[] = [];
+
+  for (const a of anchors) {
+    let set: Set<string> | null = null;
+    try {
+      if (a.startsWith("s3://")) {
+        const peer = peers.find((p) => p.url === a && p.kind === "s3" && p.config);
+        if (peer) set = await listBucketBlobHashes(JSON.parse(peer.config!) as S3Config);
+      } else {
+        const peer = peers.find((p) => p.node_id === a && p.kind !== "s3" && p.url);
+        if (peer) set = await queryPeerHas(peer.url, peer.token, localHashes);
+      }
+    } catch {
+      set = null; // unreachable / error
+    }
+    if (set) anchorSets.push(set);
+    else unreachable.push(a);
+  }
+
+  const allReachable = unreachable.length === 0;
+  let anchoredCount = 0;
+  let anchoredBytes = 0;
+  for (const b of blobs) {
+    const presentIn = anchorSets.reduce((n, s) => n + (s.has(b.hash) ? 1 : 0), 0);
+    const ok =
+      policy.redundancy === "all"
+        ? allReachable && presentIn === anchors.length // every designated anchor holds it
+        : presentIn >= 1; // any reachable anchor holds it
+    setAnchored(db, b.hash, ok);
+    if (ok) {
+      anchoredCount++;
+      anchoredBytes += b.size;
+    }
+  }
+  writeBlobVerifiedAt(db, at);
+  return { anchoredCount, anchoredBytes, unreachable, at };
 }
 
 export interface BlobMaintenanceResult {
@@ -180,9 +282,16 @@ export async function evictToQuota(db: DbDriver, quotaBytes: number): Promise<Ev
   let freedBytes = 0;
   if (quotaBytes <= 0) return { evicted, freedBytes };
   reconcileCache(db);
-  const blobs = cachedBlobs(db);
+  let blobs = cachedBlobs(db);
   let total = blobs.reduce((s, b) => s + b.size, 0);
   if (total <= quotaBytes) return { evicted, freedBytes };
+  // Over quota: verify presence on the anchors NOW so eviction only drops blobs a
+  // designated anchor verifiably still holds. When an anchor is offline the verify
+  // marks the affected blobs anchored=0 → they fall out of the candidate set →
+  // nothing is evicted and the cache stays over quota until the next tick can
+  // confirm (loss-free degradation: eviction defers, it never loses data).
+  await verifyAnchorPresence(db);
+  blobs = cachedBlobs(db);
   const lowWater = Math.floor(quotaBytes * EVICT_LOW_WATER);
   // Oldest first; a null last_access (never touched since record) sorts as oldest.
   const candidates = blobs

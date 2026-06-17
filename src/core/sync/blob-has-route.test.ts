@@ -1,0 +1,60 @@
+import { test, expect, beforeAll, afterAll } from "bun:test";
+import { Database } from "bun:sqlite";
+import { join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { initSchema } from "../schema-init.ts";
+import { putBlob } from "../cache.ts";
+import { recordBlob } from "../blobs-core.ts";
+import { routes, type Route, type RouteCtx } from "./routes.ts";
+
+// Real on-disk bytes (putBlob writes under METAHUB_HOME/cache) so the route's
+// reconcileCache keeps the rows instead of dropping them as orphans.
+const ORIGINAL_HOME = process.env.METAHUB_HOME;
+let TMP_HOME: string;
+beforeAll(() => {
+  TMP_HOME = mkdtempSync(join(tmpdir(), "mh-blob-has-"));
+  process.env.METAHUB_HOME = TMP_HOME;
+});
+afterAll(() => {
+  if (ORIGINAL_HOME === undefined) delete process.env.METAHUB_HOME;
+  else process.env.METAHUB_HOME = ORIGINAL_HOME;
+  rmSync(TMP_HOME, { recursive: true, force: true });
+});
+
+const hasRoute = routes.find((r: Route) => r.path === "/api/blobs/has" && r.method === "POST")!;
+
+function makeNode(id: string): Database {
+  const db = new Database(":memory:");
+  initSchema(db);
+  db.query("INSERT INTO meta (key, value) VALUES ('node_id', ?)").run(id);
+  return db;
+}
+
+test("POST /api/blobs/has returns only the candidate hashes this node holds", async () => {
+  const db = makeNode("anchor");
+  const a = await putBlob("doc-image-a");
+  const b = await putBlob("doc-image-b");
+  recordBlob(db, a.hash, a.size, "image/png", 0);
+  recordBlob(db, b.hash, b.size, "image/png", 0);
+  const absent = "f".repeat(32); // never stored
+
+  const ctx: RouteCtx = { db, node: "anchor" };
+  const req = new Request("http://x/api/blobs/has", {
+    method: "POST",
+    body: JSON.stringify({ hashes: [a.hash, absent, b.hash] }),
+  });
+  const res = await hasRoute.handler(req, ctx);
+  const data = (await res.json()) as { has: string[] };
+  expect(new Set(data.has)).toEqual(new Set([a.hash, b.hash]));
+  expect(data.has).not.toContain(absent);
+});
+
+test("POST /api/blobs/has tolerates a missing/empty hash list", async () => {
+  const db = makeNode("anchor");
+  const ctx: RouteCtx = { db, node: "anchor" };
+  const req = new Request("http://x/api/blobs/has", { method: "POST", body: JSON.stringify({}) });
+  const res = await hasRoute.handler(req, ctx);
+  const data = (await res.json()) as { has: string[] };
+  expect(data.has).toEqual([]);
+});

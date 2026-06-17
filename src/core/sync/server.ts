@@ -145,9 +145,14 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       // credentials — see ./pairing.ts, acceptsSyncToken). /health and
       // /auth/token stay open (the latter must work with an expired token), and
       // the pairing handshake authenticates via its one-time code in-handler.
-      if (url.pathname === SYNC_PATH || url.pathname.startsWith("/blob/")) {
-        // /blob/<hash> byte transport authorizes like /sync: the master token OR
-        // a per-peer grant (a paired peer fetching a blob it only has the hash of).
+      if (
+        url.pathname === SYNC_PATH ||
+        url.pathname.startsWith("/blob/") ||
+        url.pathname === "/api/blobs/has"
+      ) {
+        // /blob/<hash> byte transport (and /api/blobs/has presence probe) authorize
+        // like /sync: the master token OR a per-peer grant (a paired peer fetching a
+        // blob it only has the hash of, or asking whether this node holds hashes).
         if (!acceptsSyncToken(req, url, auth, db)) return unauthorized();
       } else {
         const exempt =

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { errorResponse, type Route, type RouteCtx } from "./routes.ts";
 import { MhError } from "../errors.ts";
 import { putBlob, getBlob } from "../cache.ts";
-import { recordBlob, touchBlob, resolveBlob, blobContentType } from "../blobs.ts";
+import { recordBlob, touchBlob, resolveBlob, blobContentType, cachedBlobs, reconcileCache } from "../blobs.ts";
 import { inferContentType } from "../sites-core.ts";
 
 // Content-addressed blob byte transport (document images / large files). The
@@ -62,7 +62,36 @@ const BlobUploadSchema = z.object({
   url: z.string().describe("Stable served path, e.g. /blob/<hash>.png"),
 });
 
+const BlobHasReq = z.object({
+  hashes: z.array(z.string()).describe("Candidate blob hashes to check for presence."),
+});
+const BlobHasRes = z.object({
+  has: z.array(z.string()).describe("Subset of the requested hashes this node holds."),
+});
+
 export const blobRoutes: Route[] = [
+  {
+    method: "POST",
+    path: "/api/blobs/has",
+    summary:
+      "Given candidate blob hashes, return the subset this node durably holds. A peer's " +
+      "clear-presence verify calls this on a designated full-blob device anchor to confirm " +
+      "the anchor still holds a blob before the peer drops its own cached copy. " +
+      "Authorized like /blob/ byte transport (master token or per-peer grant).",
+    request: BlobHasReq,
+    response: BlobHasRes,
+    handler: async (req, { db }) => {
+      try {
+        const body = (await req.json()) as { hashes?: unknown };
+        const want = Array.isArray(body.hashes) ? body.hashes.filter((h) => typeof h === "string") : [];
+        reconcileCache(db); // disk is the truth — drop rows whose bytes are gone
+        const held = new Set(cachedBlobs(db).map((b) => b.hash));
+        return Response.json({ has: want.filter((h) => held.has(h as string)) });
+      } catch (err) {
+        return errorResponse(err);
+      }
+    },
+  },
   {
     method: "POST",
     path: "/api/blob",

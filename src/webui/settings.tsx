@@ -135,6 +135,21 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+/** Coarse "时间前" label for the last anchor-presence verify. */
+function fmtAgo(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return "刚刚";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.round(h / 24)} 天前`;
+}
+
+/** A verify older than this (or never) makes an over-quota cache "stuck" — surfaced
+ *  so "over quota but not evicting" reads as offline/stale, not a broken quota. */
+const VERIFY_STALE_MS = 5 * 60 * 1000;
+
 const prefersReduced = () =>
   typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -175,6 +190,7 @@ function BlobCacheSettings() {
   const [info, setInfo] = useState<BlobCacheInfo | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
   const load = () => {
     api
@@ -185,7 +201,24 @@ function BlobCacheSettings() {
       })
       .catch((e) => setErr((e as Error).message));
   };
-  useEffect(() => load(), []);
+  // Re-check, right now, which cached blobs the designated anchors actually hold
+  // (bucket LIST / device /api/blobs/has) and record the per-blob verdict clearing
+  // reads. Runs in the background on panel open + on the manual refresh button.
+  const verify = async (manual = false) => {
+    setVerifying(true);
+    try {
+      setInfo(await api.verifyBlobCache());
+      setErr(null);
+    } catch (e) {
+      if (manual) toast((e as Error).message); // background failures stay quiet
+    } finally {
+      setVerifying(false);
+    }
+  };
+  useEffect(() => {
+    load(); // show last-known instantly…
+    void verify(); // …then confirm presence against the anchors
+  }, []);
 
   // `drawn` flips on after mount so the ring arcs animate from 0 → their share.
   const [drawn, setDrawn] = useState(false);
@@ -222,7 +255,7 @@ function BlobCacheSettings() {
     setBusy(true);
     try {
       await api.setBlobPolicy({ full_nodes: ids });
-      load();
+      await verify(); // anchor set changed → server reset verdicts; re-check presence
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -234,6 +267,17 @@ function BlobCacheSettings() {
     if (set.has(id)) set.delete(id);
     else set.add(id);
     void saveFull([...set]);
+  };
+  const pickRedundancy = async (r: "all" | "any") => {
+    setBusy(true);
+    try {
+      await api.setBlobPolicy({ redundancy: r });
+      await verify(); // any/all changed → re-check which blobs now qualify
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
   const clear = async () => {
     const ok = await confirmDialog({
@@ -265,13 +309,29 @@ function BlobCacheSettings() {
   const segRetain = pct(retainedFree);
   const segPin = pct(pinnedBytes);
   const hasFreeable = stats.clearableBytes > 0;
-  // Mirror the core safety floor (blobs-core isClearable) for the ring's centre:
-  // with no designated anchor nothing is clearable, and a device that is itself the
-  // full library keeps everything — neither is the cheerful "all backed up" state.
+  // Ring centre mirrors the core clear judgment (blobs-core isClearable): no anchor
+  // → nothing clearable; this device IS the full library → keeps everything; an
+  // anchor designated but never verified → unknown until a refresh confirms it.
   const noAnchor = policy.fullNodes.length === 0;
   const selfNode = nodes.find((n) => n.self);
   const selfIsFull = !!selfNode && policy.fullNodes.includes(selfNode.nodeId);
-  const ringState = selfIsFull ? "self-full" : noAnchor ? "no-anchor" : hasFreeable ? "free" : "safe";
+  const unverified = !noAnchor && !selfIsFull && info.lastVerifiedAt == null;
+  const ringState = selfIsFull
+    ? "self-full"
+    : noAnchor
+      ? "no-anchor"
+      : unverified
+        ? "unverified"
+        : hasFreeable
+          ? "free"
+          : "safe";
+  const verifyStale = info.lastVerifiedAt == null || Date.now() - info.lastVerifiedAt > VERIFY_STALE_MS;
+  // Over quota but the sweep evicted nothing because presence couldn't be confirmed
+  // (anchor offline / verdict stale) — surface so it doesn't read as a broken quota.
+  const overQuotaStuck =
+    quotaBytes > 0 &&
+    stats.totalBytes > quotaBytes &&
+    (info.unreachableAnchors.length > 0 || verifyStale);
 
   // Stroke is sized in pathLength=100 units so segment lengths read as percent.
   // `drawn` flips on after mount so the arcs animate from 0 → their share.
@@ -305,12 +365,29 @@ function BlobCacheSettings() {
           <div class="blob-total">共 {stats.count} 项 · {fmtBytes(stats.totalBytes)}</div>
           <button
             class="btn btn-secondary blob-clear"
-            disabled={busy || !hasFreeable}
+            disabled={busy || verifying || !hasFreeable}
             onClick={() => void clear()}
           >
             <Icon name="trash" cls="ico sm" />
             {hasFreeable ? `清理腾出 ${fmtBytes(stats.clearableBytes)}` : "无需清理"}
           </button>
+          <div class="blob-verify">
+            <button
+              class="btn btn-ghost blob-verify-btn"
+              disabled={busy || verifying}
+              onClick={() => void verify(true)}
+            >
+              <Icon name="history" cls={"ico sm" + (verifying ? " spin" : "")} />
+              {verifying ? "核对中…" : "刷新核对"}
+            </button>
+            <span class="blob-verify-at">
+              {verifying
+                ? ""
+                : info.lastVerifiedAt != null
+                  ? `上次核对 ${fmtAgo(info.lastVerifiedAt)}`
+                  : "尚未核对"}
+            </span>
+          </div>
         </div>
 
         <div
@@ -372,6 +449,13 @@ function BlobCacheSettings() {
                 <div class="blob-ring-lock"><Icon name="lock" cls="ico" /></div>
                 <div class="blob-ring-cap strong">未设置长期备份</div>
                 <div class="blob-ring-cap">指定后才能清理</div>
+              </>
+            )}
+            {ringState === "unverified" && (
+              <>
+                <div class="blob-ring-lock"><Icon name="history" cls={"ico" + (verifying ? " spin" : "")} /></div>
+                <div class="blob-ring-cap strong">{verifying ? "核对中…" : "待核对"}</div>
+                <div class="blob-ring-cap">刷新后确认可清量</div>
               </>
             )}
             {ringState === "self-full" && (
@@ -438,9 +522,43 @@ function BlobCacheSettings() {
           <div class="blob-hint">还没设置长期备份。先指定一处，之后就能放心清理这台设备。</div>
         )}
 
+        {policy.fullNodes.length > 1 && (
+          <div class="blob-strategy">
+            <div class="blob-sub-title">清理前先确认</div>
+            <div class="seg">
+              <button
+                class={"seg-opt" + (policy.redundancy === "any" ? " on" : "")}
+                disabled={busy || verifying}
+                onClick={() => void pickRedundancy("any")}
+              >
+                <span class="seg-opt-t">有一处备份就行</span>
+                <span class="seg-opt-s">更省空间</span>
+              </button>
+              <button
+                class={"seg-opt" + (policy.redundancy === "all" ? " on" : "")}
+                disabled={busy || verifying}
+                onClick={() => void pickRedundancy("all")}
+              >
+                <span class="seg-opt-t">每处都备份好</span>
+                <span class="seg-opt-s">更稳妥</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {info.unreachableAnchors.length > 0 && (
+          <div class="blob-hint warn">
+            部分长期备份暂时连不上，未纳入核对
+            {policy.redundancy === "all" ? "（「每处都备份好」下相关项暂不可清）" : ""}。
+          </div>
+        )}
+        {overQuotaStuck && (
+          <div class="blob-hint warn">缓存已超上限，但长期备份暂时离线、未做清理——联网后自动处理。</div>
+        )}
+
         {quotaBytes > 0 && (
           <div class="blob-foot">
-            缓存超过 {fmtBytes(quotaBytes)} 时，会自动清掉最久没用的那些（已备份的），你固定的不动。
+            缓存超过 {fmtBytes(quotaBytes)} 时，会自动清掉最久没用的那些（已核对在备份上的），你固定的不动。
           </div>
         )}
       </div>

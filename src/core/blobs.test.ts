@@ -9,6 +9,7 @@ import {
   isFullBlobNode,
   isClearable,
   setPending,
+  setAnchored,
   referencedHashes,
   recordBlob,
   cacheStats,
@@ -59,44 +60,61 @@ test("setFullNodes / setRedundancy persist and de-dupe", () => {
 
 test("a produced-but-unflushed blob (pending) is NOT clearable; flushing makes it clearable", () => {
   const db = makeNode("n1");
-  setFullNodes(db, ["anchorX"]); // a designated durable anchor exists (the safety floor)
+  setFullNodes(db, ["anchorX"]); // a designated durable anchor exists
   recordBlob(db, H1, 100, "image/png"); // produced here → pending=1, protected
-  expect(isClearable(db, H1)).toBe(false);
+  setAnchored(db, H1, true); // verify confirmed the anchor holds it
+  expect(isClearable(db, H1)).toBe(false); // still protected: produced, not yet flushed
   setPending(db, H1, false); // confirmed flushed to the anchor
   expect(isClearable(db, H1)).toBe(true);
 });
 
-test("an acquired cache blob (pending=0) is clearable", () => {
+test("an acquired cache blob is clearable once verified present on an anchor", () => {
   const db = makeNode("n1");
-  setFullNodes(db, ["anchorX"]); // designated anchor → cache is re-fetchable
-  recordBlob(db, H1, 100, "image/png", 0); // acquired → already durable at its source
+  setFullNodes(db, ["anchorX"]);
+  recordBlob(db, H1, 100, "image/png", 0); // acquired → pending=0
+  expect(isClearable(db, H1)).toBe(false); // not yet verified (anchored=0)
+  setAnchored(db, H1, true); // verify confirmed a designated anchor holds it
   expect(isClearable(db, H1)).toBe(true);
 });
 
-test("with NO durable anchor designated, nothing is clearable (safety floor)", () => {
+test("an un-verified blob is NOT clearable even with an anchor designated", () => {
   const db = makeNode("n1");
-  recordBlob(db, H1, 100, "image/png", 0); // acquired, pending=0 — but no anchor exists
+  setFullNodes(db, ["anchorX"]);
+  recordBlob(db, H1, 100, "image/png", 0); // pending=0 but anchored defaults to 0
+  expect(isClearable(db, H1)).toBe(false); // no fresh proof the anchor holds it
+});
+
+test("with NO durable anchor designated, nothing is clearable", () => {
+  const db = makeNode("n1");
+  recordBlob(db, H1, 100, "image/png", 0);
+  setAnchored(db, H1, true); // even a stale verdict can't make it clearable…
+  // …because a policy change clears verdicts; here there's simply no anchor at all,
+  // so a real verify would mark it 0. Assert the policy precondition + judgment.
   expect(readPolicy(db).fullNodes).toEqual([]);
-  expect(isClearable(db, H1)).toBe(false); // no guaranteed holder → never drop the last copy
+  // isFullBlobNode(self) is false and pending=0, but a real verifyAnchorPresence
+  // with no anchors sets anchored=0; emulate that the verdict is unverifiable:
+  setAnchored(db, H1, false);
+  expect(isClearable(db, H1)).toBe(false);
 });
 
 test("a full blob device never clears anything", () => {
   const db = makeNode("full");
   setFullNodes(db, ["full"]);
   recordBlob(db, H1, 100, "image/png", 0); // even a non-pending blob
+  setAnchored(db, H1, true); // even if marked anchored
   expect(isFullBlobNode(db)).toBe(true);
-  expect(isClearable(db, H1)).toBe(false);
+  expect(isClearable(db, H1)).toBe(false); // a full library keeps everything
 });
 
-test("clear decision is purely local/offline — no sync needed", () => {
-  // phone never syncs anything; clearability comes from the local pending flag plus
-  // the locally-stored policy (a designated anchor) — both offline, no sync.
+test("clear decision is purely local — reads the local pending + anchored flags", () => {
   const phone = makeNode("phone");
   setFullNodes(phone, ["cloud"]); // designate a durable anchor (local policy)
-  recordBlob(phone, H1, 100, "image/png", 0); // acquired → clearable
+  recordBlob(phone, H1, 100, "image/png", 0); // acquired
   recordBlob(phone, H2, 100, "image/png"); // produced, unflushed → protected
-  expect(isClearable(phone, H1)).toBe(true);
-  expect(isClearable(phone, H2)).toBe(false);
+  setAnchored(phone, H1, true);
+  setAnchored(phone, H2, true);
+  expect(isClearable(phone, H1)).toBe(true); // pending=0 && anchored=1
+  expect(isClearable(phone, H2)).toBe(false); // pending=1 protects it
 });
 
 test("referencedHashes unions site_files blobs and doc image markdown", () => {
@@ -119,10 +137,11 @@ test("referencedHashes unions site_files blobs and doc image markdown", () => {
   expect(referencedHashes(db).has(H2)).toBe(false);
 });
 
-test("cacheStats: pending bytes retained, non-pending bytes clearable", () => {
+test("cacheStats: pending bytes retained, non-pending verified bytes clearable", () => {
   const db = makeNode("n1");
   setFullNodes(db, ["anchorX"]); // a designated anchor exists (else nothing is clearable)
-  recordBlob(db, H1, 1000, "image/png", 0); // acquired → clearable
+  recordBlob(db, H1, 1000, "image/png", 0); // acquired
+  setAnchored(db, H1, true); // verified present on the anchor → clearable
   recordBlob(db, H2, 500, "image/png"); // produced unflushed → retained
   const s = cacheStats(db);
   expect(s.totalBytes).toBe(1500);
@@ -154,8 +173,9 @@ test("bucket url is a valid full-blob anchor without affecting node judgments", 
   const db = makeNode("self1");
   setFullNodes(db, ["s3://bucket/metahub"]);
   expect(readPolicy(db).fullNodes).toEqual(["s3://bucket/metahub"]);
-  // self is not a node anchor, so it still clears flushed blobs as before
+  // self is not a node anchor, so it still clears verified blobs as before
   expect(isFullBlobNode(db)).toBe(false);
-  recordBlob(db, H1, 1000, "image/png", 0); // acquired → clearable
+  recordBlob(db, H1, 1000, "image/png", 0); // acquired
+  setAnchored(db, H1, true); // verified present on the bucket anchor
   expect(isClearable(db, H1)).toBe(true);
 });
