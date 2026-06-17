@@ -166,7 +166,17 @@ function BlobCacheSettings() {
     );
   }
 
-  const { stats, policy, nodes, quotaBytes, pinnedCount, pinnedBytes } = info;
+  const { stats, policy, nodes, buckets, quotaBytes, pinnedCount, pinnedBytes } = info;
+
+  // Bucket anchors to show: locally-attached buckets, plus any s3:// anchor already
+  // in the synced policy this device hasn't configured locally — still surface it as
+  // a (checked) anchor so the user sees a full copy is designated.
+  const bucketAnchors = [
+    ...buckets,
+    ...policy.fullNodes
+      .filter((a) => a.startsWith("s3://") && !buckets.some((b) => b.url === a))
+      .map((url) => ({ url, label: null, bucket: null })),
+  ];
 
   const saveFull = async (ids: string[]) => {
     setBusy(true);
@@ -219,7 +229,7 @@ function BlobCacheSettings() {
     <div class="set-block">
       <div class="set-block-head"><span class="set-block-title">本地缓存</span></div>
       <div class="set-block-desc">
-        文档图片等大文件存在本机缓存。指定一台「全量设备」长期保存全部副本后，其他设备即可安全清理本地缓存省空间——引用仍在，需要时自动重新下载。
+        文档图片等大文件存在本机缓存。指定一台「全量设备」或一个对象存储桶长期保存全部副本后，其他设备即可安全清理本地缓存省空间——引用仍在，需要时自动重新下载。
       </div>
 
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", margin: "10px 0", fontSize: 13 }}>
@@ -237,7 +247,7 @@ function BlobCacheSettings() {
         </div>
       )}
 
-      <div class="set-block-desc">全量 blob 设备（长期保存全部，自身不被清理）</div>
+      <div class="set-block-desc">全量 blob 库（长期保存全部副本，作为可清理的安全锚点）</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "6px 0 10px" }}>
         {nodes.map((n) => (
           <label
@@ -253,6 +263,23 @@ function BlobCacheSettings() {
             <span>
               {n.label || n.nodeId}
               {n.self ? " · 本机" : ""}
+            </span>
+          </label>
+        ))}
+        {bucketAnchors.map((b) => (
+          <label
+            key={b.url}
+            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={policy.fullNodes.includes(b.url)}
+              disabled={busy}
+              onChange={() => toggleNode(b.url)}
+            />
+            <span>
+              {b.label || b.bucket || b.url}
+              <span style={{ color: "var(--text-muted, #888)" }}> · 对象存储</span>
             </span>
           </label>
         ))}
@@ -288,7 +315,7 @@ function BlobCacheSettings() {
       </button>
       {policy.fullNodes.length === 0 && (
         <div class="set-block-desc" style={{ marginTop: 6 }}>
-          尚未指定全量设备，暂无可安全清理的项。
+          尚未指定全量设备或对象存储桶，暂无安全锚点。
         </div>
       )}
     </div>

@@ -14,6 +14,21 @@ import {
   cacheStats,
   knownNodes,
 } from "./blobs-core.ts";
+import { knownBuckets } from "./blobs.ts";
+import { addStoragePeer } from "./sync/peers.ts";
+import type { S3Config } from "./sync/storage.ts";
+
+function s3Config(bucket = "bucket"): S3Config {
+  return {
+    endpoint: "https://example.com",
+    region: "auto",
+    bucket,
+    prefix: "metahub",
+    accessKeyId: "id",
+    secretAccessKey: "secret",
+    encrypt: false,
+  };
+}
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -110,4 +125,25 @@ test("knownNodes always includes self", () => {
   const nodes = knownNodes(db);
   const self = nodes.find((n) => n.self);
   expect(self?.nodeId).toBe("self1");
+});
+
+test("knownBuckets lists attached s3 peers (empty without)", () => {
+  const db = makeNode("n1");
+  expect(knownBuckets(db)).toEqual([]);
+  addStoragePeer(db, { url: "s3://bucket/metahub", config: s3Config("mybucket"), label: "Home" });
+  const bs = knownBuckets(db);
+  expect(bs).toHaveLength(1);
+  expect(bs[0]).toMatchObject({ url: "s3://bucket/metahub", label: "Home", bucket: "mybucket" });
+  // s3 peer never pollutes the node roster
+  expect(knownNodes(db).some((n) => n.nodeId === "s3://bucket/metahub")).toBe(false);
+});
+
+test("bucket url is a valid full-blob anchor without affecting node judgments", () => {
+  const db = makeNode("self1");
+  setFullNodes(db, ["s3://bucket/metahub"]);
+  expect(readPolicy(db).fullNodes).toEqual(["s3://bucket/metahub"]);
+  // self is not a node anchor, so it still clears flushed blobs as before
+  expect(isFullBlobNode(db)).toBe(false);
+  recordBlob(db, H1, 1000, "image/png", 0); // acquired → clearable
+  expect(isClearable(db, H1)).toBe(true);
 });

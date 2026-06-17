@@ -307,10 +307,17 @@ export interface BlobCacheNode {
   label: string | null;
   self: boolean;
 }
+export interface BlobCacheBucket {
+  url: string;
+  label: string | null;
+  bucket: string | null;
+}
 export interface BlobCacheInfo {
   stats: BlobCacheStats;
   policy: BlobPolicyInfo;
   nodes: BlobCacheNode[];
+  /** Attached object-storage buckets, selectable as full-blob anchors. */
+  buckets: BlobCacheBucket[];
   /** Auto-evict over this many bytes; 0 = disabled. */
   quotaBytes: number;
   pinnedCount: number;

@@ -54,6 +54,7 @@ import {
   cachedBlobs,
   readPolicy,
   knownNodes,
+  knownBuckets,
   clearCache,
   reconcileCache,
   setFullNodes,
@@ -289,10 +290,16 @@ const KnownNodeSchema = z.object({
   label: z.string().nullable(),
   self: z.boolean(),
 });
+const BucketAnchorSchema = z.object({
+  url: z.string(),
+  label: z.string().nullable(),
+  bucket: z.string().nullable(),
+});
 const BlobCacheSchema = z.object({
   stats: CacheStatsSchema,
   policy: BlobPolicySchema,
   nodes: z.array(KnownNodeSchema),
+  buckets: z.array(BucketAnchorSchema).describe("Attached object-storage buckets, selectable as full-blob anchors"),
   quotaBytes: z.number().describe("Auto-evict over this many bytes; 0 = disabled"),
   pinnedCount: z.number(),
   pinnedBytes: z.number(),
@@ -308,7 +315,10 @@ const ClearResultSchema = z.object({
   skipped: z.number(),
 });
 const SetBlobPolicyReq = z.object({
-  full_nodes: z.array(z.string()).optional().describe("Node ids designated as full blob libraries"),
+  full_nodes: z
+    .array(z.string())
+    .optional()
+    .describe("Full-blob anchors: node ids and/or bucket urls (s3://…)"),
   redundancy: z.enum(["all", "any"]).optional(),
 });
 const SetBlobPolicyResSchema = z.object({
@@ -747,6 +757,7 @@ export const webuiRoutes: Route[] = [
         stats: cacheStats(db),
         policy: readPolicy(db),
         nodes: knownNodes(db),
+        buckets: knownBuckets(db),
         quotaBytes: getServerConfig(db).blobCacheQuotaBytes,
         pinnedCount: pinned.length,
         pinnedBytes: pinned.reduce((s, b) => s + b.size, 0),

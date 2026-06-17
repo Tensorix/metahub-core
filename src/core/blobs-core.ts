@@ -64,6 +64,10 @@ export function readPolicy(db: DbDriver): BlobPolicy {
   return { fullNodes, redundancy };
 }
 
+/** Designate the full-blob anchors (synced workspace policy). Each entry is
+ *  either a node id (a device that keeps everything) OR a bucket url `s3://…`
+ *  (object storage as a durable full library). Bucket urls never match a node id,
+ *  so isFullBlobNode()/isClearable() are unaffected — they're a visible guardrail. */
 export const setFullNodes = (db: DbDriver, nodeIds: string[]): void =>
   withChangeGroup(null, () => {
     // de-dupe, keep order

@@ -25,6 +25,30 @@ import {
 
 export * from "./blobs-core.ts";
 
+export interface KnownBucket {
+  url: string;
+  label: string | null;
+  bucket: string | null;
+}
+
+/** Attached object-storage buckets (s3 peers), for the "pick a full-blob anchor"
+ *  selector in Settings. A bucket is a durable full-blob library but is NOT a node
+ *  (1:N store-and-forward, no single node id), so it lives alongside knownNodes()
+ *  rather than inside it — designated by its synthetic url, not a node_id. */
+export function knownBuckets(db: DbDriver): KnownBucket[] {
+  return listPeers(db)
+    .filter((p) => p.kind === "s3" && p.config)
+    .map((p) => {
+      let bucket: string | null = null;
+      try {
+        bucket = (JSON.parse(p.config!) as S3Config).bucket ?? null;
+      } catch {
+        // malformed config — show url only
+      }
+      return { url: p.url, label: p.label, bucket };
+    });
+}
+
 // ---- byte transport: on-demand resolution + full-node maintenance -----------
 
 /** Cache bytes fetched for a reference (by the ref's own hash — which may be a
