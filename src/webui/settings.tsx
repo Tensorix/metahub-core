@@ -363,30 +363,30 @@ function BlobCacheSettings() {
             )}
           </div>
           <div class="blob-total">共 {stats.count} 项 · {fmtBytes(stats.totalBytes)}</div>
-          <button
-            class="btn btn-secondary blob-clear"
-            disabled={busy || verifying || !hasFreeable}
-            onClick={() => void clear()}
-          >
-            <Icon name="trash" cls="ico sm" />
-            {hasFreeable ? `清理腾出 ${fmtBytes(stats.clearableBytes)}` : "无需清理"}
-          </button>
-          <div class="blob-verify">
+          <div class="blob-actions">
+            <button
+              class="btn btn-secondary blob-clear"
+              disabled={busy || verifying || !hasFreeable}
+              onClick={() => void clear()}
+            >
+              <Icon name="trash" cls="ico sm" />
+              {hasFreeable ? `清理腾出 ${fmtBytes(stats.clearableBytes)}` : "无需清理"}
+            </button>
             <button
               class="btn btn-ghost blob-verify-btn"
               disabled={busy || verifying}
               onClick={() => void verify(true)}
             >
               <Icon name="history" cls={"ico sm" + (verifying ? " spin" : "")} />
-              {verifying ? "核对中…" : "刷新核对"}
+              {verifying ? "检查中…" : "重新检查"}
             </button>
-            <span class="blob-verify-at">
-              {verifying
-                ? ""
-                : info.lastVerifiedAt != null
-                  ? `上次核对 ${fmtAgo(info.lastVerifiedAt)}`
-                  : "尚未核对"}
-            </span>
+          </div>
+          <div class="blob-verify-at">
+            {verifying
+              ? ""
+              : info.lastVerifiedAt != null
+                ? `${fmtAgo(info.lastVerifiedAt)}检查过`
+                : "未检查"}
           </div>
         </div>
 
@@ -454,8 +454,8 @@ function BlobCacheSettings() {
             {ringState === "unverified" && (
               <>
                 <div class="blob-ring-lock"><Icon name="history" cls={"ico" + (verifying ? " spin" : "")} /></div>
-                <div class="blob-ring-cap strong">{verifying ? "核对中…" : "待核对"}</div>
-                <div class="blob-ring-cap">刷新后确认可清量</div>
+                <div class="blob-ring-cap strong">{verifying ? "检查中…" : "未检查"}</div>
+                <div class="blob-ring-cap">检查后才知道</div>
               </>
             )}
             {ringState === "self-full" && (
@@ -547,18 +547,15 @@ function BlobCacheSettings() {
         )}
 
         {info.unreachableAnchors.length > 0 && (
-          <div class="blob-hint warn">
-            部分长期备份暂时连不上，未纳入核对
-            {policy.redundancy === "all" ? "（「每处都备份好」下相关项暂不可清）" : ""}。
-          </div>
+          <div class="blob-hint warn">部分长期备份连不上，相关文件暂不清理。</div>
         )}
         {overQuotaStuck && (
-          <div class="blob-hint warn">缓存已超上限，但长期备份暂时离线、未做清理——联网后自动处理。</div>
+          <div class="blob-hint warn">空间超了，但备份暂时离线，先没清理。</div>
         )}
 
         {quotaBytes > 0 && (
           <div class="blob-foot">
-            缓存超过 {fmtBytes(quotaBytes)} 时，会自动清掉最久没用的那些（已核对在备份上的），你固定的不动。
+            缓存超过 {fmtBytes(quotaBytes)} 时，自动清理最久没用、已有备份的，你固定的不动。
           </div>
         )}
       </div>

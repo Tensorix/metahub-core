@@ -1349,7 +1349,6 @@
   .blob-dot.keep { background:var(--line-strong); }
   .blob-dot.pin { background:var(--muted); opacity:.6; }
   .blob-total { margin:13px 0 14px; font-size:var(--fs-xs); color:var(--muted); }
-  .blob-clear { margin-top:2px; }
 
   .blob-ring { position:relative; width:152px; height:152px; flex:none; }
   .blob-ring-svg { width:100%; height:100%; display:block; }
@@ -1399,10 +1398,10 @@
     background:var(--danger-soft); }
   .blob-foot { font-size:var(--fs-xs); color:var(--muted); line-height:1.55; margin-top:14px; max-width:56ch; }
 
-  /* refresh-verify row */
-  .blob-verify { display:flex; align-items:center; gap:10px; margin-top:8px; }
+  /* clear + refresh on one row, last-checked caption beneath */
+  .blob-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:2px; }
   .blob-verify-btn { padding:5px 9px; }
-  .blob-verify-at { font-size:var(--fs-xs); color:var(--muted); }
+  .blob-verify-at { font-size:var(--fs-xs); color:var(--muted); margin-top:6px; min-height:1em; }
   .ico.spin { animation:save-spin .8s linear infinite; }
 
   /* clear-policy segmented control (redundancy any/all) */
