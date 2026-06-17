@@ -191,7 +191,11 @@ async function reportedVersion(binPath: string): Promise<string> {
  * install it into the cache. Returns the written metadata. Throws on any failure
  * (caller swallows); a thrown error always leaves the previous binary intact.
  */
-async function downloadAndStage(release: GhRelease, signal?: AbortSignal): Promise<CoreVersionMeta> {
+async function downloadAndStage(
+  release: GhRelease,
+  signal?: AbortSignal,
+  onProgress?: (received: number, total: number) => void,
+): Promise<CoreVersionMeta> {
   const dir = coreDir();
   await mkdir(dir, { recursive: true });
   await sweepStaleTmp(dir);
@@ -223,7 +227,25 @@ async function downloadAndStage(release: GhRelease, signal?: AbortSignal): Promi
       signal,
     });
     if (!binRes.ok) throw new Error(`download failed (${binRes.status})`);
-    const bytes = Buffer.from(await binRes.arrayBuffer());
+    // Stream the body so we can report download progress (the asset is ~64 MB).
+    // Falls back to a single arrayBuffer read if the body isn't a stream.
+    let bytes: Buffer;
+    if (binRes.body) {
+      const total = Number(binRes.headers.get("content-length")) || 0;
+      const reader = binRes.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        onProgress?.(received, total);
+      }
+      bytes = Buffer.concat(chunks);
+    } else {
+      bytes = Buffer.from(await binRes.arrayBuffer());
+    }
 
     const actual = createHash("sha256").update(bytes).digest("hex");
     if (actual.toLowerCase() !== expected.toLowerCase()) {
@@ -268,7 +290,9 @@ async function downloadAndStage(release: GhRelease, signal?: AbortSignal): Promi
  * Check for and stage a newer core sidecar. Never throws; applies on next
  * launch. Returns the new version if one was staged, else null.
  */
-export async function maybeUpdateCore(): Promise<string | null> {
+export async function maybeUpdateCore(
+  onProgress?: (received: number, total: number) => void,
+): Promise<string | null> {
   try {
     const release = await fetchLatestCoreRelease(timeoutSignal(API_TIMEOUT_MS));
     if (!release) return null;
@@ -282,7 +306,7 @@ export async function maybeUpdateCore(): Promise<string | null> {
 
     console.log(`[core-updater] updating core ${installed} → ${latest}`);
     // Fresh, generous budget for the ~64 MB download — not the API budget.
-    const meta = await downloadAndStage(release, timeoutSignal(DOWNLOAD_TIMEOUT_MS));
+    const meta = await downloadAndStage(release, timeoutSignal(DOWNLOAD_TIMEOUT_MS), onProgress);
     console.log(`[core-updater] staged core ${meta.version}; applies on next launch`);
     return meta.version;
   } catch (err) {

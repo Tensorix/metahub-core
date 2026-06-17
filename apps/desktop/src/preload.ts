@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     check: () => ipcRenderer.invoke("core:check"),
     download: () => ipcRenderer.invoke("core:download"),
     restart: () => ipcRenderer.invoke("core:restart"),
+    onDownloadProgress: (cb: (p: { received: number; total: number }) => void) => {
+      const l = (_e: unknown, p: { received: number; total: number }) => cb(p);
+      ipcRenderer.on("core:download-progress", l);
+      return () => ipcRenderer.removeListener("core:download-progress", l);
+    },
   },
   quicknote: {
     getSettings: () => ipcRenderer.invoke("qn:get-settings"),

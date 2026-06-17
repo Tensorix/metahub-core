@@ -1910,6 +1910,7 @@ function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => 
   const [latest, setLatest] = useState<string | null>(null); // L
   const [state, setState] = useState<UpdateState>("idle");
   const [errMsg, setErrMsg] = useState("");
+  const [progress, setProgress] = useState<{ received: number; total: number } | null>(null);
 
   useEffect(() => {
     api.version().then((v) => setRunning(v.version)).catch(() => setRunning(null));
@@ -1964,7 +1965,9 @@ function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => 
 
   const download = async () => {
     setState("downloading");
+    setProgress(null);
     setErrMsg("");
+    const off = cu!.onDownloadProgress?.((p) => setProgress(p));
     try {
       const v = await cu!.download();
       if (v) {
@@ -1980,6 +1983,8 @@ function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => 
     } catch (e) {
       setErrMsg((e as Error).message);
       setState("error");
+    } finally {
+      off?.();
     }
   };
 
@@ -1991,9 +1996,21 @@ function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => 
       case "checking":
         update = <span class="ver-act" aria-disabled="true">检查中…</span>;
         break;
-      case "downloading":
-        update = <span class="ver-act" aria-disabled="true">下载中…</span>;
+      case "downloading": {
+        const pct =
+          progress && progress.total > 0
+            ? Math.min(100, Math.round((progress.received / progress.total) * 100))
+            : null;
+        update = (
+          <span class="ver-up ver-dl">
+            <span class={`ver-bar${pct == null ? " indet" : ""}`}>
+              <span class="ver-bar-fill" style={pct != null ? { width: `${pct}%` } : undefined} />
+            </span>
+            <span class="ver-num">{pct != null ? `${pct}%` : "下载中…"}</span>
+          </span>
+        );
         break;
+      }
       case "available":
         update = (
           <span class="ver-up">

@@ -216,6 +216,22 @@
   .ver-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; }
   .ver-dot.pulse { animation:verpulse 1.8s ease-in-out infinite; }
   @keyframes verpulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+  /* download progress: a slim, refined inline bar that stays in key with the
+     quiet 12px mono footer — determinate fill + traveling sheen, or an
+     indeterminate sweep when the total is unknown. */
+  .ver-dl { gap:8px; }
+  .ver-bar { position:relative; width:120px; height:4px; border-radius:999px;
+    background:var(--surface-2); box-shadow:inset 0 0 0 1px var(--line); overflow:hidden; }
+  .ver-bar-fill { position:absolute; top:0; bottom:0; left:0; width:0; border-radius:999px;
+    background:linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 72%, #fff));
+    transition:width .25s ease; }
+  .ver-bar-fill::after { content:""; position:absolute; inset:0;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+    background-size:60px 100%; animation:ver-sheen 1.1s linear infinite; }
+  .ver-bar.indet .ver-bar-fill { width:42%; transition:none; animation:ver-indet 1.25s ease-in-out infinite; }
+  @keyframes ver-sheen { from { background-position:-60px 0; } to { background-position:180px 0; } }
+  @keyframes ver-indet { 0% { left:-42%; } 100% { left:100%; } }
+  @media (max-width:560px) { .ver-bar { width:90px; } }
   .theme-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
   .theme-card { position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:10px;
     text-align:left; padding:16px; border:1px solid var(--line-strong); border-radius:var(--radius);

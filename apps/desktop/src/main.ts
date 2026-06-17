@@ -476,7 +476,21 @@ function registerIpc(): void {
   });
   // Reuses the startup auto-updater: fetch latest, compare vs staged, download +
   // verify + stage. Returns the staged version, or null if nothing newer.
-  ipcMain.handle("core:download", () => maybeUpdateCore());
+  // Streams download progress to the invoking window (WebUI footer progress bar);
+  // throttled to whole-percent changes (or ~100ms) so a ~64 MB download's thousands
+  // of chunks don't flood IPC.
+  ipcMain.handle("core:download", (e) => {
+    let lastPct = -1;
+    let lastAt = 0;
+    return maybeUpdateCore((received, total) => {
+      const now = Date.now();
+      const pct = total > 0 ? Math.floor((received / total) * 100) : -1;
+      if (pct === lastPct && now - lastAt < 100) return;
+      lastPct = pct;
+      lastAt = now;
+      e.sender.send("core:download-progress", { received, total });
+    });
+  });
   ipcMain.handle("core:restart", () => {
     app.relaunch();
     app.quit();

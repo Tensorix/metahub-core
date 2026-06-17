@@ -26,6 +26,12 @@ export interface MetahubDesktop {
     check: () => Promise<{ latest: string | null }>;
     download: () => Promise<string | null>;
     restart: () => Promise<void>;
+    /**
+     * Subscribe to download progress while `download()` runs. `total` is 0 when
+     * the server sent no Content-Length (render an indeterminate bar). Returns an
+     * unsubscribe fn. Optional — absent on older preload builds.
+     */
+    onDownloadProgress?: (cb: (p: { received: number; total: number }) => void) => () => void;
   };
   quicknote?: {
     getSettings: () => Promise<QuickNoteSettings>;
