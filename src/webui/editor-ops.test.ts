@@ -211,3 +211,13 @@ test("serializeBlocks renders the topmost selection as Markdown", () => {
 
   expect(serializeBlocks(blocks, ["h", "parent", "child"])).toBe("## Title\n- parent\n  - child");
 });
+
+test("serializeBlocks re-sequences numbered runs across the selection", () => {
+  const blocks: Block[] = [
+    { id: "a", type: "numbered", content: "a", start: 1 },
+    { id: "b", type: "numbered", content: "b" },
+    { id: "c", type: "numbered", content: "c" },
+  ];
+
+  expect(serializeBlocks(blocks, ["a", "b", "c"])).toBe("1. a\n2. b\n3. c");
+});

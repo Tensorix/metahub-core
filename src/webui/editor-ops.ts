@@ -1,4 +1,4 @@
-import { type Block, blockToText, genId, isListType } from "./blocks.ts";
+import { type Block, blocksToText, genId, isListType } from "./blocks.ts";
 
 export interface FoundBlock {
   block: Block;
@@ -227,13 +227,10 @@ export function moveBlocks(
 
 /** Serialize the topmost selected blocks (with children) to Markdown. */
 export function serializeBlocks(blocks: Block[], ids: readonly string[]): string {
-  return topmostBlockIds(blocks, ids)
-    .map((id) => {
-      const found = findBlock(blocks, id);
-      return found ? blockToText(found.block) : "";
-    })
-    .filter(Boolean)
-    .join("\n");
+  const selection = topmostBlockIds(blocks, ids)
+    .map((id) => findBlock(blocks, id)?.block)
+    .filter((b): b is Block => !!b);
+  return blocksToText(selection);
 }
 
 export function indentBlocks(blocks: Block[], ids: readonly string[]): string[] {

@@ -150,6 +150,16 @@ export function blockToText(b: Block): string {
   return renderBlock(b, 0, 1).join("\n");
 }
 
+/** Serialize a flat selection of blocks to Markdown, re-sequencing numbered
+ *  runs across the selection (copy/cut). Joined tightly like blockToText, not
+ *  with bodyFromBlocks's blank-line separators. */
+export function blocksToText(selection: readonly Block[]): string {
+  const numbers = computeListNumbers(selection.filter((b) => !isBlankSpacer(b)));
+  return selection
+    .map((b) => renderBlock(b, 0, numbers.get(b.id) ?? 1).join("\n"))
+    .join("\n");
+}
+
 /** Body Markdown -> editor block tree. */
 export function blocksFromBody(body: string | null | undefined): Block[] {
   const normalized = (body ?? "").replace(/\r\n?/g, "\n");
