@@ -47,12 +47,123 @@ const THEMES: { value: ThemeChoice; icon: string; name: string; desc: string }[]
 /** A titled gray panel that groups related settings blocks. The page is white;
  *  the panel is a subtle gray surface so the white widget cards inside read as
  *  raised insets (macOS System Settings / Notion grouped-list feel). Children
- *  are `.set-block`s, hairline-divided by CSS. */
-function SetGroup({ label, children }: { label: string; children: ComponentChildren }) {
+ *  are `.set-block`s, hairline-divided by CSS. `id` doubles as the scroll anchor
+ *  the left quick-jump rail (SettingsRail) targets. */
+function SetGroup({ id, label, children }: { id?: string; label: string; children: ComponentChildren }) {
   return (
-    <div class="set-group">
+    <div class="set-group" id={id}>
       <div class="set-group-label">{label}</div>
       <div class="set-panel">{children}</div>
+    </div>
+  );
+}
+
+/** Single source of truth for the settings chapters: drives BOTH the left
+ *  quick-jump rail and the `id` anchors on each `SetGroup`, so the two can never
+ *  drift. `show()` mirrors the exact render conditions in `SettingsView`. */
+const SEC = {
+  appearance: "appearance",
+  quicknote: "quicknote",
+  sync: "sync",
+  storage: "storage",
+  devices: "devices",
+} as const;
+
+const SECTIONS: { id: string; label: string; icon: string; show: () => boolean }[] = [
+  { id: SEC.appearance, label: "外观", icon: "sun", show: () => true },
+  { id: SEC.quicknote, label: "快速笔记", icon: "pin",
+    show: () => typeof window !== "undefined" && !!window.metahubDesktop?.quicknote },
+  { id: SEC.sync, label: "同步", icon: "cloudCheck", show: () => true },
+  { id: SEC.storage, label: "存储", icon: "database", show: () => !isNoOrigin() },
+  { id: SEC.devices, label: "设备与授权", icon: "monitor", show: () => !isNoOrigin() },
+];
+
+/** Floating quick-jump rail in the centred column's left gutter (wide screens
+ *  only — gated by a container query in CSS). One labelled row per visible
+ *  chapter; a scroll-spy highlights the chapter in view and a single accent bar
+ *  slides to it. Mirrors the proven scroll-spy in editor.tsx's DocToc. */
+function SettingsRail({ sections }: { sections: { id: string; label: string; icon: string }[] }) {
+  const [activeId, setActiveId] = useState(sections[0]?.id ?? "");
+  const navRef = useRef<HTMLElement>(null);
+  // Honour a click's selection while its smooth scroll is in flight, so the
+  // scroll-spy doesn't yank the highlight mid-travel (timestamp = ignore-until).
+  const lockRef = useRef(0);
+  const idsKey = sections.map((s) => s.id).join("|");
+
+  useEffect(() => {
+    const scroller = document.querySelector(".content");
+    let raf = 0;
+    // Active = the last chapter whose top has scrolled above a line just below
+    // the topbar. Cheap to read rects for a handful of sections on each scroll.
+    const compute = () => {
+      if (Date.now() < lockRef.current) return; // a click owns the highlight for now
+      // Bottom clamp: a short page can't scroll the last chapter's top up to the
+      // line, so it'd never light up — force it active once we hit the bottom.
+      const atBottom = scroller
+        ? scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2
+        : window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+      if (atBottom) { setActiveId(sections[sections.length - 1]!.id); return; }
+      const line = Math.max(scroller ? scroller.getBoundingClientRect().top : 0, 0) + 72;
+      let active = sections[0]!.id;
+      for (const s of sections) {
+        const el = document.getElementById(s.id);
+        if (!el) continue;
+        if (el.getBoundingClientRect().top - line <= 1) active = s.id;
+        else break;
+      }
+      setActiveId(active);
+    };
+    const onScroll = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; compute(); }); };
+    compute();
+    const obs = new IntersectionObserver(compute, {
+      root: scroller as Element | null,
+      rootMargin: "-72px 0px -70% 0px",
+      threshold: [0, 1],
+    });
+    for (const s of sections) { const el = document.getElementById(s.id); if (el) obs.observe(el); }
+    scroller?.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true }); // mobile: document scrolls
+    return () => {
+      obs.disconnect();
+      scroller?.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [idsKey]);
+
+  // Slide the single accent bar to the active row via CSS vars; CSS transitions it.
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const row = nav.querySelector<HTMLElement>(`.set-rail-row[data-sec="${activeId}"]`);
+    if (!row) return;
+    nav.style.setProperty("--mark-y", `${row.offsetTop}px`);
+    nav.style.setProperty("--mark-h", `${row.offsetHeight}px`);
+  }, [activeId, idsKey]);
+
+  const jump = (id: string) => {
+    lockRef.current = Date.now() + 600; // ~smooth-scroll duration
+    setActiveId(id); // optimistic: highlight the clicked row at once (incl. the last)
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return (
+    <div class="set-rail-slot">
+      <nav class="set-rail" ref={navRef} aria-label="设置区块">
+        <span class="set-rail-mark" />
+        {sections.map((s) => (
+          <button
+            key={s.id}
+            data-sec={s.id}
+            class={"set-rail-row" + (s.id === activeId ? " active" : "")}
+            aria-current={s.id === activeId ? "true" : undefined}
+            onClick={() => jump(s.id)}
+          >
+            <span class="set-rail-ico"><Icon name={s.icon} /></span>
+            <span class="set-rail-label">{s.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
@@ -65,63 +176,68 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
     setThemeState(t);
   };
 
+  const visibleSections = SECTIONS.filter((s) => s.show());
+
   return (
-    <div class="set-page">
-      <div class="set-title">设置</div>
-      <div class="set-sub">个性化你的 Metahub 工作区。</div>
+    <div class="set-shell">
+      <div class="set-page">
+        {visibleSections.length >= 2 && <SettingsRail sections={visibleSections} />}
+        <div class="set-title">设置</div>
+        <div class="set-sub">个性化你的 Metahub 工作区。</div>
 
-      <SetGroup label="外观">
-        <div class="set-block">
-          <div class="set-block-head"><span class="set-block-title">颜色主题</span></div>
-          <div class="set-block-desc">选择界面的明暗外观。</div>
-          <div class="theme-grid">
-            {THEMES.map((t) => (
-              <button
-                key={t.value}
-                class={"theme-card" + (theme === t.value ? " sel" : "")}
-                aria-pressed={theme === t.value}
-                onClick={() => pick(t.value)}
-              >
-                <span class="tc-check"><Icon name="check" /></span>
-                <span class="tc-ico"><Icon name={t.icon} /></span>
-                <span class="tc-name">{t.name}</span>
-                <span class="tc-desc">{t.desc}</span>
-              </button>
-            ))}
+        <SetGroup id={SEC.appearance} label="外观">
+          <div class="set-block">
+            <div class="set-block-head"><span class="set-block-title">颜色主题</span></div>
+            <div class="set-block-desc">选择界面的明暗外观。</div>
+            <div class="theme-grid">
+              {THEMES.map((t) => (
+                <button
+                  key={t.value}
+                  class={"theme-card" + (theme === t.value ? " sel" : "")}
+                  aria-pressed={theme === t.value}
+                  onClick={() => pick(t.value)}
+                >
+                  <span class="tc-check"><Icon name="check" /></span>
+                  <span class="tc-ico"><Icon name={t.icon} /></span>
+                  <span class="tc-name">{t.name}</span>
+                  <span class="tc-desc">{t.desc}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      </SetGroup>
-
-      {typeof window !== "undefined" && window.metahubDesktop?.quicknote && (
-        <SetGroup label="快速笔记"><QuickNotesSettings /></SetGroup>
-      )}
-
-      {/* One "同步" chapter (doc 19): how THIS device uses the workspace
-          (lightweight / trusted), then the cloud bucket that keeps every device
-          in sync. The bucket lives on the server (origin) or this device
-          (no-origin); shown in either mode so its ownership is never hidden. */}
-      <SetGroup label="同步">
-        {!isDesktop() && <DeviceSetup />}
-        <SyncStorage />
-      </SetGroup>
-
-      {/* Blob cache (document images / large files) lives on the data home; the
-          no-origin replica keeps its blobs in browser Cache Storage instead. */}
-      {!isNoOrigin() && (
-        <SetGroup label="存储">
-          <BlobCacheSettings />
         </SetGroup>
-      )}
 
-      {/* HTTP pairing + issued grants only make sense against a server (origin). */}
-      {!isNoOrigin() && (
-        <SetGroup label="设备与授权">
-          <SyncDevices />
-          <IssuedGrants />
+        {typeof window !== "undefined" && window.metahubDesktop?.quicknote && (
+          <SetGroup id={SEC.quicknote} label="快速笔记"><QuickNotesSettings /></SetGroup>
+        )}
+
+        {/* One "同步" chapter (doc 19): how THIS device uses the workspace
+            (lightweight / trusted), then the cloud bucket that keeps every device
+            in sync. The bucket lives on the server (origin) or this device
+            (no-origin); shown in either mode so its ownership is never hidden. */}
+        <SetGroup id={SEC.sync} label="同步">
+          {!isDesktop() && <DeviceSetup />}
+          <SyncStorage />
         </SetGroup>
-      )}
 
-      <VersionFooter onUpdatePending={onUpdatePending} />
+        {/* Blob cache (document images / large files) lives on the data home; the
+            no-origin replica keeps its blobs in browser Cache Storage instead. */}
+        {!isNoOrigin() && (
+          <SetGroup id={SEC.storage} label="存储">
+            <BlobCacheSettings />
+          </SetGroup>
+        )}
+
+        {/* HTTP pairing + issued grants only make sense against a server (origin). */}
+        {!isNoOrigin() && (
+          <SetGroup id={SEC.devices} label="设备与授权">
+            <SyncDevices />
+            <IssuedGrants />
+          </SetGroup>
+        )}
+
+        <VersionFooter onUpdatePending={onUpdatePending} />
+      </div>
     </div>
   );
 }

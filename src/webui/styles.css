@@ -154,7 +154,11 @@
     box-shadow:0 0 0 2px var(--surface); margin-right:2px; }
 
   /* settings page */
-  .set-page { max-width:680px; margin:0 auto; padding:40px 28px 64px; }
+  /* Shell is a width container so the left quick-jump rail decides whether it
+     fits by the *content area* width (not the viewport) — the app sidebar is
+     resizable, so a viewport media query would misjudge the gutter. */
+  .set-shell { container-type:inline-size; }
+  .set-page { max-width:680px; margin:0 auto; padding:40px 28px 64px; position:relative; }
   .set-title { font-size:26px; font-weight:700; letter-spacing:-.02em; color:var(--fg); }
   .set-sub { color:var(--muted); margin-top:4px; }
   .set-section { margin-top:34px; }
@@ -165,7 +169,7 @@
      The page is white; each panel is a subtle gray surface so the white widget
      cards inside (theme / window-replica / topology nodes) read as raised insets
      (macOS System Settings / Notion grouped-list feel). */
-  .set-group { margin-top:30px; }
+  .set-group { margin-top:30px; scroll-margin-top:28px; }
   .set-group:first-of-type { margin-top:24px; }
   .set-group-label { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em;
     color:var(--muted); margin:0 0 9px 2px; }
@@ -173,6 +177,33 @@
     box-shadow:var(--shadow-sm); overflow:hidden; }
   .set-block { padding:18px 20px; }
   .set-block + .set-block { border-top:1px solid var(--line); }
+
+  /* Left quick-jump rail: lives in the centred column's left gutter so it never
+     touches .content or the resizable app sidebar. The slot is absolute against
+     .set-page (right:100% → just left of the column) and spans its full height
+     so the sticky nav has travel room. Hidden until the gutter actually fits it
+     (container query below). */
+  .set-rail-slot { display:none; position:absolute; right:100%; top:0; bottom:0;
+    width:184px; margin-right:28px; pointer-events:none; }
+  .set-rail-slot > .set-rail { pointer-events:auto; }
+  .set-rail { position:sticky; top:40px; display:flex; flex-direction:column; gap:2px; padding-left:12px; }
+  /* full-height track + a single accent segment that slides to the active row
+     (driven by --mark-y / --mark-h from JS, eased by CSS) */
+  .set-rail::before { content:""; position:absolute; left:0; top:4px; bottom:4px;
+    width:2px; border-radius:2px; background:var(--line); }
+  .set-rail-mark { position:absolute; left:0; width:2px; border-radius:2px; background:var(--accent);
+    height:var(--mark-h,0); transform:translateY(var(--mark-y,0));
+    transition:transform .26s cubic-bezier(.4,0,.2,1), height .26s cubic-bezier(.4,0,.2,1); }
+  .set-rail-row { display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:var(--radius-sm);
+    color:var(--muted); text-align:left; cursor:pointer; transition:color .14s, background .14s; }
+  .set-rail-row:hover { background:var(--hover); color:var(--fg); }
+  .set-rail-row.active { color:var(--accent); }
+  .set-rail-ico { flex:none; display:grid; place-items:center; width:16px; height:16px; opacity:.85; }
+  .set-rail-ico svg { width:15px; height:15px; }
+  .set-rail-label { font-size:var(--fs-sm); font-weight:550; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .set-rail-row.active .set-rail-label { font-weight:600; }
+  /* wide enough = left gutter (content_w − 680)/2 ⩾ rail 184 + gap 28 + slack */
+  @container (min-width:1160px) { .set-rail-slot { display:block; } }
   .set-block-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:4px; }
   .set-block-title { font-size:14px; font-weight:650; color:var(--fg); letter-spacing:-.005em; }
   .set-block-desc { color:var(--fg-soft); font-size:var(--fs-sm); line-height:1.55; margin-bottom:14px; max-width:56ch; }
