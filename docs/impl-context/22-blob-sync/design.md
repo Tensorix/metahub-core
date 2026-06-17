@@ -51,7 +51,14 @@
 - 插图 = 普通 `doc_block`,文本 `![原文件名](/blob/<hash>.<ext>)`(`alt` 写文件名→Agent 读 alt 即懂语义,不必读 hash)。`parseDocBlocks/serializeDocBlocks` 当普通块,随 `doc_blocks` 正常同步、同图去重——**core 不动**。
 - URL 用真实路径 `/blob/<hash>.<ext>`(**非** `blob://`:`blob:` 是浏览器 Object URL 保留 scheme,`<img>` 不认且不可移植);serve 的 content-type 由 URL 后缀 `inferContentType` 定。
 - 上传走**新 `POST /api/blob`**(`blob-routes.ts`),区别于 `/api/site/file`:**只存内容寻址字节、不建 `site_files` 引用行**——引用只在 doc markdown,避免双重引用(与"不加引用表"一致)。
-- 渲染:`markdown.tsx` `inlineToHtml` 加 `![alt](url)`→`<img class="doc-img">`、`htmlToInline` 回写 `<img>`→`![alt](src)`;编辑器 `editor.tsx` 粘贴(`clipboardData.items` 图片)/拖拽(`.editable` 上的 `dataTransfer.files` 图片)→ `api.uploadDocImage` → 插入图片块。`.doc-img` CSS 限宽圆角。
+- 渲染:`markdown.tsx` `inlineToHtml` 加 `![alt](url)`→`<img class="doc-img">`、`htmlToInline` 回写 `<img>`→`![alt](src)`;编辑器 `editor.tsx` 粘贴(`clipboardData.items` 图片)/拖拽(`dataTransfer.files` 图片)→ `api.uploadDocImage` → 插入图片块。`.doc-img` CSS 限宽圆角。
+
+> **修订(已落地)· 拖拽落点改容器级 + 就近插入 + 指示线**:旧实现把 `onDragOver/onDrop` **只挂在每个 `.block`** 上,落点不在块上就失效——**空文档**(只有占位 `.editable`)、**块间空隙 / 末块下方 / 标题区**全拖不进,浏览器默认行为接管(导航打开图片)。
+> - **决策**:外部图片拖放**全部上移到 `.doc` 容器**(`docRootRef`)统一处理,块级 `onDragOver/onDrop` 只留**内部块重排**;重排 `onDrop` 补 `stopPropagation`,防同一次 drop 既被块处理又冒泡到容器**重复插入**。
+> - **就近插入 + 指示线**:新 `nearestTopBlock(root, clientY)` 在 `:scope > .block-wrap > .block`(**仅顶层块**,避免误插入列表子项)里取光标所在/最近的块;复用 `pointer-drag.ts` 的 `markDropHalf`/`clearDropMarks` 画 `.block.drop-before/after` 指示线(CSS 已存在),松手按上下半区插到该块前/后;空文档则 `appendImages` 追加到根。
+> - **容器 `onDragOver` 必须 `preventDefault` + `dropEffect="copy"`**,否则浏览器在空隙处显示禁止光标并在 drop 时导航离开页面。`onDragLeave` 仅在真正离开文档(`relatedTarget` 不在 `docRootRef` 内)时清指示线,避免跨块时闪烁。
+> - **插入辅助**:抽 `uploadImageMarkdowns`(共享上传链路)+ `insertImagesAt(id, where, files)` / `appendImages(files)`,替代原 `insertImagesAfter`;`onDropFiles` prop 一并移除。源码模式 textarea 本次不处理。
+> - **坑**:`onDrop` 不能先 `clearBlockDrop()` 再读 `drop-after` class(class 已被清,`where` 恒为 before)——改用 `markDropHalf` 的返回值定 `where`。
 
 ### D7 · 清理 + 全量设备后台维护(只 flush `pending`)
 > **修订(已落地)**:`blobMaintenance` 不再每分钟对**所有被引用 blob** 调 `putBucketBlob`。旧设计 = 每个持有 blob × 每个桶 一次「读盘 + 全量 AES 加密 + `ifNoneMatch` HEAD」的**空闲风暴**,纯为确认不可变对象还在桶里而空烧。
@@ -77,7 +84,7 @@
 | CLI | `src/cli/commands/cache.ts`(新) | `mh cache status\|clear\|gc\|full-device\|redundancy` |
 | WebUI | `src/webui/server/routes.ts` | `GET /api/blob-cache`、`POST /api/blob-cache/clear`、`POST /api/blob-policy` |
 | WebUI | `src/webui/api.ts` / `settings.tsx` | `blobCache`/`clearBlobCache`/`setBlobPolicy`/`uploadDocImage` + 「存储」面板 |
-| WebUI | `src/webui/editor.tsx` / `markdown.tsx` / `styles.css` | 插图粘贴/拖拽 + `<img>` 渲染/回写 + `.doc-img` |
+| WebUI | `src/webui/editor.tsx` / `markdown.tsx` / `styles.css` | 插图粘贴/拖拽(`.doc` 容器级 drop + `nearestTopBlock` 就近插入 + `markDropHalf` 指示线)+ `<img>` 渲染/回写 + `.doc-img` |
 
 **鉴权**:`/blob/<hash>` 像 `/sync` 一样走 `acceptsSyncToken`(master token 或 per-peer grant),故已配对 peer 凭 grant 即可取字节;`POST /api/blob` 走 master-token 门(浏览器上传)。serve 用 `cache-control: immutable`(内容寻址 URL 永不变)。
 

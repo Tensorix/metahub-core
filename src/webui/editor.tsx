@@ -598,8 +598,9 @@ export function DocView({
     requestAnimationFrame(() => focusBlock(caret.id, !afterBlock));
   };
 
-  /** Upload dropped image file(s) and insert them right after block `b`. */
-  const insertImagesAfter = async (b: Block, files: File[]) => {
+  /** Upload image file(s) to blobs and return one image-markdown line each
+   *  (failures toast and are skipped). */
+  const uploadImageMarkdowns = async (files: File[]): Promise<string[]> => {
     const mds: string[] = [];
     for (const f of files) {
       try {
@@ -608,11 +609,29 @@ export function DocView({
         toast(`图片上传失败：${(err as Error).message}`);
       }
     }
+    return mds;
+  };
+
+  /** Upload dropped image file(s) and insert them before/after block `targetId`. */
+  const insertImagesAt = async (targetId: string, where: "before" | "after", files: File[]) => {
+    const mds = await uploadImageMarkdowns(files);
     if (!mds.length) return;
-    const found = findBlock(blocks, b.id);
+    const found = findBlock(blocks, targetId);
     if (!found) return;
     const insert = blocksFromBody(mds.join("\n\n"));
-    found.parent.splice(found.index + 1, 0, ...insert);
+    found.parent.splice(found.index + (where === "after" ? 1 : 0), 0, ...insert);
+    bump();
+    scheduleSave();
+    requestAnimationFrame(() => focusBlock(insert[insert.length - 1]!.id, false));
+  };
+
+  /** Upload dropped image file(s) and append them at the end of the document
+   *  (used when the doc is empty or the drop lands past the last block). */
+  const appendImages = async (files: File[]) => {
+    const mds = await uploadImageMarkdowns(files);
+    if (!mds.length) return;
+    const insert = blocksFromBody(mds.join("\n\n"));
+    blocks.push(...insert);
     bump();
     scheduleSave();
     requestAnimationFrame(() => focusBlock(insert[insert.length - 1]!.id, false));
@@ -1217,7 +1236,6 @@ export function DocView({
         onAdd={() => insertAfter(b.id)}
         onMenu={(e) => blockMenu(e, b)}
         onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
-        onDropFiles={(files) => void insertImagesAfter(b, files)}
         dragRef={dragRef}
         onReorder={(srcId, where) => {
           const ids = selectedIds;
@@ -1258,6 +1276,36 @@ export function DocView({
       onMouseDown={(e) => onDocMouseDown(e as MouseEvent)}
       onMouseUp={() => updateBar(setBar)}
       onKeyUp={(e) => { if (e.shiftKey || e.key.startsWith("Arrow")) updateBar(setBar); }}
+      onDragOver={(e) => {
+        // External image-file drag: accept the drop anywhere in the doc (over a
+        // block, in a gap, an empty doc) and preview the insertion point. Internal
+        // block reorder (dragRef) is handled by the block handlers.
+        if (dragRef.current || mode === "source") return;
+        if (!Array.from(e.dataTransfer?.items ?? []).some((i) => i.kind === "file")) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        const el = nearestTopBlock(docRootRef.current, e.clientY);
+        if (el) markBlockDrop(el, e); else clearBlockDrop();
+      }}
+      onDragLeave={(e) => {
+        // Only clear when leaving the doc entirely, not when crossing between blocks.
+        if (!e.relatedTarget || !docRootRef.current?.contains(e.relatedTarget as Node)) clearBlockDrop();
+      }}
+      onDrop={(e) => {
+        if (dragRef.current || mode === "source") return;
+        const files = imageFilesFrom(e.dataTransfer);
+        if (!files.length) return;
+        e.preventDefault();
+        const el = nearestTopBlock(docRootRef.current, e.clientY);
+        if (el?.dataset.bid) {
+          const where = markDropHalf(el, e, "y"); // before/after el's midpoint
+          clearBlockDrop();
+          void insertImagesAt(el.dataset.bid, where, files);
+        } else {
+          clearBlockDrop();
+          void appendImages(files);
+        }
+      }}
     >
       {conflict && (
         <div class="doc-conflict" role="alert">
@@ -1363,7 +1411,7 @@ function docImageMarkdown(name: string, url: string): string {
 }
 
 function BlockRow({
-  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, onAdd, onMenu, onToggle, onDropFiles, dragRef, onReorder, children,
+  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, onAdd, onMenu, onToggle, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
@@ -1381,7 +1429,6 @@ function BlockRow({
   onAdd: () => void;
   onMenu: (e: MouseEvent) => void;
   onToggle: () => void;
-  onDropFiles: (files: File[]) => void;
   dragRef: { current: string | null };
   onReorder: (srcId: string, where: "before" | "after") => void;
   children?: ComponentChildren;
@@ -1421,28 +1468,21 @@ function BlockRow({
         class={cls}
         data-bid={block.id}
         onDragOver={(e) => {
+          // Internal block reorder. External image-file drags are handled at the
+          // document container so drops land anywhere (gaps, empty doc, margins).
           if (dragRef.current && dragRef.current !== block.id) {
             e.preventDefault();
             if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
             markBlockDrop(e.currentTarget as HTMLElement, e);
-          } else if (!dragRef.current && Array.from(e.dataTransfer?.items ?? []).some((i) => i.kind === "file")) {
-            // external file drag (image upload) — show a copy affordance
-            e.preventDefault();
-            if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
           }
         }}
         onDrop={(e) => {
           if (dragRef.current) {
             e.preventDefault();
+            e.stopPropagation(); // don't let the container's image-drop handler also fire
             const where = (e.currentTarget as HTMLElement).classList.contains("drop-after") ? "after" : "before";
             const src = dragRef.current; dragRef.current = null; clearBlockDrop();
             onReorder(src, where);
-            return;
-          }
-          const files = imageFilesFrom(e.dataTransfer);
-          if (files.length) {
-            e.preventDefault();
-            onDropFiles(files);
           }
         }}
       >
@@ -2133,4 +2173,24 @@ function resizeSourceEditor(ta: HTMLTextAreaElement) {
 const clearBlockDrop = clearDropMarks;
 function markBlockDrop(el: HTMLElement, e: DragEvent) {
   markDropHalf(el, e, "y");
+}
+/** The top-level `.block` the pointer is over (or vertically nearest) inside
+ *  `root` — used to place an external image drop. Returns null for an empty doc. */
+function nearestTopBlock(root: HTMLElement | null, clientY: number): HTMLElement | null {
+  if (!root) return null;
+  const blocks = Array.from(
+    root.querySelectorAll<HTMLElement>(":scope > .block-wrap > .block"),
+  );
+  let best: HTMLElement | null = null;
+  let bestDist = Infinity;
+  for (const el of blocks) {
+    const r = el.getBoundingClientRect();
+    if (clientY >= r.top && clientY <= r.bottom) return el;
+    const dist = clientY < r.top ? r.top - clientY : clientY - r.bottom;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = el;
+    }
+  }
+  return best;
 }
