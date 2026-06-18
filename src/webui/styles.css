@@ -657,7 +657,6 @@
   table.grid td.filler { border-right:0; border-bottom:0; background:transparent; }
   body.col-resizing { user-select:none; cursor:col-resize; }
   table.grid .selcell { width:38px; min-width:38px; max-width:38px; text-align:center; }
-  table.grid .gripcol, table.grid .rowgrip { width:26px; min-width:26px; max-width:26px; text-align:center; }
   /* relative: anchors the .celledit overlay editor to the cell */
   td.cell-td { position:relative; vertical-align:top; }
   .cell { padding:8px 11px; min-height:37px; cursor:text; word-break:break-word; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
@@ -673,13 +672,32 @@
   td.cell-td.cellsel, td.cell-td.cellsel:hover { background:var(--accent-soft); }
   body.cell-selecting { user-select:none; cursor:cell; }
   body.cell-selecting .cell { cursor:cell; }
-  table.grid tr.drop-before td { box-shadow:inset 0 2px 0 0 var(--accent); }
-  table.grid tr.drop-after td { box-shadow:inset 0 -2px 0 0 var(--accent); }
+  /* column reorder still marks the target <th>; rows use the .rowdrop line below */
   table.grid th.drop-before { box-shadow:inset 2px 0 0 0 var(--accent); }
   table.grid th.drop-after { box-shadow:inset -2px 0 0 0 var(--accent); }
-  .rowgrip { color:transparent; cursor:grab; vertical-align:middle; touch-action:none; }
-  .rowgrip[aria-disabled="true"] { cursor:not-allowed; }
-  tbody tr:hover .rowgrip { color:var(--muted); }
+  /* The handle floats left of the card. Extend .gridhost's box left by a gutter
+     (negative margin + equal padding cancel, so the table doesn't move) so the
+     handle lives *inside* the hover box — otherwise moving the cursor from a row
+     onto the handle crosses .db and fires onMouseLeave, clearing the handle. */
+  .gridhost { --grip-gutter:30px; position:relative;
+    margin-left:calc(-1 * var(--grip-gutter)); padding-left:var(--grip-gutter); }
+  /* compact 22×24 chip, vertically centred on the row (top set inline to row
+     centre), matching the document editor's block handle (.gutter button). */
+  .rowgrip-ext { position:absolute; left:calc((var(--grip-gutter) - 22px) / 2); width:22px; height:24px;
+    transform:translateY(-50%); display:flex; align-items:center; justify-content:center;
+    color:var(--muted); cursor:grab; touch-action:none; border-radius:5px; pointer-events:auto;
+    animation:gripFade .12s ease both; }
+  .rowgrip-ext:hover { background:var(--hover-2); color:var(--fg); }
+  .rowgrip-ext:active { cursor:grabbing; }
+  .rowgrip-ext.is-disabled { cursor:not-allowed; color:var(--muted); }
+  body.table-dragging .rowgrip-ext { display:none; }
+  @keyframes gripFade { from { opacity:0; } to { opacity:1; } }
+  /* row-reorder drop line: spans the full visible width including the left gutter
+     (so it's visible while dragging in the margin), with a dot at the left end. */
+  .rowdrop { position:absolute; left:0; right:0; height:0; border-top:2px solid var(--accent);
+    pointer-events:none; z-index:3; }
+  .rowdrop::before { content:""; position:absolute; left:1px; top:-4px; width:8px; height:8px;
+    border-radius:50%; background:var(--accent); box-shadow:0 0 0 2px var(--bg); }
   .colhead { touch-action:none; }
   .drag-source { opacity:.35; }
   body.table-dragging { user-select:none; cursor:grabbing; }
@@ -1241,7 +1259,9 @@
     .block { scroll-margin-top:calc(49px + env(safe-area-inset-top) + 8px); }
     /* Find bar clears the taller mobile topbar (49px min + notch inset). */
     .find-bar { top:calc(49px + env(safe-area-inset-top) + 8px); }
-    .db { padding:16px 14px 90px; }
+    /* narrower handle gutter on phones; .db left padding must be ≥ --grip-gutter */
+    .db { padding:16px 14px 90px 24px; }
+    .gridhost { --grip-gutter:24px; }
     .peek { width:100%; }
     /* history drawer: the side-by-side list/preview doesn't fit a phone — stack. */
     .hist-split { flex-direction:column; }
@@ -1294,7 +1314,6 @@
     .navitem .acts, .sb-section-head .add { opacity:1; }
     table.doc-table .doc-row-del { opacity:1; }
     .selcell input { opacity:1; }
-    .rowgrip { color:var(--muted); }
     .tl-item .tl-h { opacity:1; }
     /* Neutralize the stickiest tap-residue tints (a tap "hovers" until the
        next tap elsewhere); transient menus/buttons are left alone. */

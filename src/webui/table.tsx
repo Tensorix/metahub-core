@@ -31,6 +31,8 @@ import {
   startPointerDrag,
   startGhostDrag,
   startColumnResize,
+  createDragGhost,
+  positionGhost,
 } from "./pointer-drag.ts";
 
 const VIEW_TABS: [string, string][] = [
@@ -72,6 +74,39 @@ export function DatabaseView({
   // Column width lives in prop.config.width (persisted + replicated); 180 is the default.
   const colWidth = (p: Prop) => p.config?.width ?? 180;
   const suppressColClick = useRef(false);
+  // The row drag handle lives *outside* the table card (in the left margin), so it
+  // can't be a table cell (clipped by .tablescroll/.tablewrap). A single handle
+  // follows the hovered row: `grip` holds its row id + geometry relative to .gridhost.
+  const tableRef = useRef<HTMLTableElement>(null);
+  const gridHostRef = useRef<HTMLDivElement>(null);
+  const [grip, setGrip] = useState<{ id: string; top: number; height: number } | null>(null);
+  // Row-reorder drop indicator: a full-width accent line in .gridhost at `dropY`
+  // (relative to .gridhost). dropRef mirrors the live target for the pointerup commit.
+  const [dropY, setDropY] = useState<number | null>(null);
+  const dropRef = useRef<{ id: string; where: DropWhere; y: number } | null>(null);
+  // Show the handle for whichever body row the pointer's Y falls into — across the
+  // whole .gridhost, so hovering the left gutter/margin (where the handle floats),
+  // not just the table cells, summons that row's handle. Header / below-last → hide.
+  const trackGripAt = (clientY: number) => {
+    if (document.body.classList.contains("table-dragging")) return;
+    const host = gridHostRef.current, tbl = tableRef.current;
+    if (!host || !tbl) return;
+    // fast path: still within the row already shown (one rect read, no re-render)
+    const cur = grip && tbl.querySelector<HTMLElement>(`tbody tr[data-row-id="${grip.id}"]`);
+    if (cur) {
+      const r = cur.getBoundingClientRect();
+      if (clientY >= r.top && clientY < r.bottom) return;
+    }
+    const hostTop = host.getBoundingClientRect().top;
+    for (const tr of Array.from(tbl.querySelectorAll<HTMLElement>("tbody tr[data-row-id]"))) {
+      const r = tr.getBoundingClientRect();
+      if (clientY >= r.top && clientY < r.bottom) {
+        setGrip({ id: tr.dataset.rowId!, top: r.top - hostTop, height: r.height });
+        return;
+      }
+    }
+    if (grip) setGrip(null);
+  };
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => onError(String(e.message)));
 
@@ -174,19 +209,56 @@ export function DatabaseView({
     });
   };
 
-  const startRowDrag = (e: any, rec: Rec) => {
+  // Resolve the drop target from the pointer's Y alone (the handle is dragged in
+  // the left margin, so X-based hit-testing via elementFromPoint can't see a row).
+  // Returns the target row + side + the indicator line's y relative to .gridhost.
+  const rowDropTarget = (clientY: number, selfId: string): { id: string; where: DropWhere; y: number } | null => {
+    const host = gridHostRef.current, tbl = tableRef.current;
+    if (!host || !tbl) return null;
+    const rows = Array.from(tbl.querySelectorAll<HTMLElement>("tbody tr[data-row-id]"));
+    if (!rows.length) return null;
+    const hostTop = host.getBoundingClientRect().top;
+    let target = rows[rows.length - 1]!, where: DropWhere = "after";
+    for (const tr of rows) {
+      const r = tr.getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) { target = tr; where = "before"; break; }
+      if (clientY <= r.bottom) { target = tr; where = "after"; break; }
+    }
+    if (target.dataset.rowId === selfId) return null; // over the source row itself: no-op
+    const r = target.getBoundingClientRect();
+    return { id: target.dataset.rowId!, where, y: (where === "before" ? r.top : r.bottom) - hostTop };
+  };
+
+  const startRowDrag = (e: any, recId: string) => {
     if (sort || e.button !== 0) return;
-    const source = (e.currentTarget as HTMLElement).closest("tr") as HTMLElement | null;
+    // The handle lives outside the table now, so resolve the row from the table itself.
+    const source = tableRef.current?.querySelector<HTMLElement>(`tr[data-row-id="${recId}"]`);
     if (!source) return;
     e.preventDefault();
-    startGhostDrag(e, {
-      source,
-      axis: "y",
-      ghostCls: "row-ghost",
-      ghostText: rowGhostText(source),
-      targetSelector: "tr[data-row-id]",
-      isSelf: (el) => el.dataset.rowId === rec.id,
-      onDrop: (el, where) => persistRecordMove(rec.id, el.dataset.rowId!, where),
+    const rect = source.getBoundingClientRect();
+    const offX = e.clientX - rect.left, offY = e.clientY - rect.top;
+    let ghost: HTMLElement | null = null;
+    startPointerDrag(e, {
+      onStart: () => {
+        ghost = createDragGhost("row-ghost", rect, rowGhostText(source));
+        source.classList.add("drag-source");
+        document.body.classList.add("table-dragging");
+      },
+      onMove: (ev) => {
+        positionGhost(ghost, ev.clientX - offX, ev.clientY - offY);
+        const t = rowDropTarget(ev.clientY, recId);
+        dropRef.current = t;
+        setDropY(t ? t.y : null);
+      },
+      onEnd: (_ev, active) => {
+        ghost?.remove();
+        source.classList.remove("drag-source");
+        document.body.classList.remove("table-dragging");
+        const t = dropRef.current;
+        dropRef.current = null;
+        setDropY(null);
+        if (active && t) persistRecordMove(recId, t.id, t.where);
+      },
     });
   };
 
@@ -415,12 +487,29 @@ export function DatabaseView({
           onOpenRecord={setPeek}
         />
       ) : (
-        <div class="tablewrap">
+        <div
+          class="gridhost"
+          ref={gridHostRef}
+          onMouseMove={(e) => trackGripAt(e.clientY)}
+          onMouseLeave={() => { if (!document.body.classList.contains("table-dragging")) setGrip(null); }}
+        >
+          {grip && (
+            <button
+              class={"rowgrip-ext" + (sort ? " is-disabled" : "")}
+              style={{ top: grip.top + grip.height / 2 }}
+              title={sort ? "清除排序后可拖拽移动" : "拖拽移动"}
+              aria-disabled={sort ? "true" : undefined}
+              onPointerDown={(e) => startRowDrag(e, grip.id)}
+            >
+              <Icon name="grip" cls="ico sm" />
+            </button>
+          )}
+          {dropY != null && <div class="rowdrop" style={{ top: dropY }} />}
+          <div class="tablewrap">
           <div class="tablescroll">
-            <table class="grid">
+            <table class="grid" ref={tableRef}>
               <colgroup>
                 <col style={{ width: 38 }} />
-                <col style={{ width: 26 }} />
                 {props.map((p) => (
                   <col key={p.id} data-col-id={p.id} style={{ width: colWidth(p) }} />
                 ))}
@@ -437,7 +526,6 @@ export function DatabaseView({
                       }
                     />
                   </th>
-                  <th class="gripcol" />
                   {props.map((p) => (
                     <th key={p.id} data-col-id={p.id}>
                       <div
@@ -488,14 +576,6 @@ export function DatabaseView({
                           setSel((s) => { const n = new Set(s); n.has(rec.id) ? n.delete(rec.id) : n.add(rec.id); return n; })
                         }
                       />
-                    </td>
-                    <td
-                      class="rowgrip"
-                      title={sort ? "清除排序后可拖拽移动" : "拖拽移动"}
-                      aria-disabled={sort ? "true" : undefined}
-                      onPointerDown={(e) => startRowDrag(e, rec)}
-                    >
-                      <Icon name="grip" cls="ico sm" />
                     </td>
                     {props.map((p, ci) => {
                       const inSel = cr != null && ri >= cr.r0 && ri <= cr.r1 && ci >= cr.c0 && ci <= cr.c1;
@@ -548,6 +628,7 @@ export function DatabaseView({
             </table>
           </div>
           <div class="addrow" onClick={newRecord}><Icon name="plus" cls="ico sm" />新建记录</div>
+          </div>
         </div>
       )}
 
