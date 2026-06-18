@@ -14,7 +14,6 @@ import {
   type ColAlign,
   BLOCK_MENU,
   COMMON_LANGS,
-  applyBlockDraft,
   blocksFromBody,
   bodyFromBlocks,
   bulletTodoShortcut,
@@ -27,6 +26,7 @@ import {
 import {
   blockRangeIds,
   cloneBlock,
+  convertBlockType,
   countBlocks,
   deleteBlocks,
   duplicateBlocks,
@@ -42,6 +42,7 @@ import {
   previousBlock,
   removeBlockById,
   serializeBlocks,
+  topmostBlockIds,
 } from "./editor-ops.ts";
 import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
 import { startColumnResize, markDropHalf, clearDropMarks } from "./pointer-drag.ts";
@@ -474,19 +475,14 @@ export function DocView({
   };
 
   const convert = (id: string, type: BlockType, draft: Partial<BlockDraft> = {}) => {
-    const found = findBlock(blocks, id);
-    const b = found?.block;
+    const b = findBlock(blocks, id)?.block;
     if (!b) return;
     // A conversion that replaces the text (shortcuts, marker strips) starts the
     // caret at the top; one that keeps the text (block menu) keeps the caret
     // where it was, too.
     const offset =
       draft.content === undefined || draft.content === b.content ? captureBlockCaret(id) : null;
-    // Converting between list types keeps the children; any other target drops them.
-    const children = isListType(type) ? b.children : undefined;
-    applyBlockDraft(b, type, draft);
-    if (children?.length) b.children = children;
-    else delete b.children;
+    if (!convertBlockType(blocks, id, type, draft)) return;
     bump();
     if (type !== "divider" && type !== "table")
       requestAnimationFrame(() => (offset != null ? restoreBlockCaret(id, offset) : focusBlock(id)));
@@ -742,6 +738,22 @@ export function DocView({
   const copySelectedBlocks = (ids: string[]) => {
     const text = serializeBlocks(blocks, ids);
     if (text) navigator.clipboard?.writeText(text).catch(() => {});
+  };
+
+  // Convert every selected block to one type at once. Operates on the topmost
+  // selected blocks (children ride along / drop per the single-block rule) and
+  // preserves each block's own text. Block ids are unchanged, so the selection
+  // stays up and the menu can keep converting.
+  const convertSelectedBlocks = (ids: string[], type: BlockType) => {
+    syncRenderedBlocks(blocks); // editables are blurred in block mode — sync their text first
+    let changed = false;
+    for (const id of topmostBlockIds(blocks, ids)) {
+      const b = findBlock(blocks, id)?.block;
+      if (b && convertBlockType(blocks, id, type, { content: b.content })) changed = true;
+    }
+    if (!changed) return;
+    bump();
+    scheduleSave();
   };
 
   // Block-mode keyboard: routed at the document level because the active
@@ -1073,18 +1085,23 @@ export function DocView({
 
   const blockMenu = (e: MouseEvent, b: Block) => {
     e.stopPropagation();
+    // When the gripped block is part of a multi-block selection, the menu acts on
+    // the whole group; otherwise it's the usual single-block menu.
+    const ids = selectedIds;
+    const multi = ids.length > 1 && ids.includes(b.id);
+    const count = multi ? topmostBlockIds(blocks, ids).length : 1;
     openMenu(e, (close) => (
       <>
-        <MenuLabel>转换为</MenuLabel>
-        {BLOCK_MENU.filter((m) => m.type !== "divider").map((m) => (
+        <MenuLabel>{multi ? `转换为（${count} 个块）` : "转换为"}</MenuLabel>
+        {BLOCK_MENU.filter((m) => m.type !== "divider" && (!multi || m.type !== "table")).map((m) => (
           // Pass the current content explicitly: convert() resets content to the
           // draft's (the slash menu relies on that to clear its "/query" text),
           // so a bare convert() here would wipe the block's text.
-          <MenuItem key={m.type} icon={m.ic} label={m.t} checked={b.type === m.type} onClick={() => { convert(b.id, m.type, { content: b.content }); close(); }} />
+          <MenuItem key={m.type} icon={m.ic} label={m.t} checked={!multi && b.type === m.type} onClick={() => { multi ? convertSelectedBlocks(ids, m.type) : convert(b.id, m.type, { content: b.content }); close(); }} />
         ))}
         <MenuSep />
-        <MenuItem icon="copy" label="复制块" onClick={() => { const found = findBlock(blocks, b.id); if (found) found.parent.splice(found.index + 1, 0, cloneBlock(b)); bump(); scheduleSave(); close(); }} />
-        <MenuItem icon="trash" label="删除块" danger onClick={() => { remove(b.id); close(); }} />
+        <MenuItem icon="copy" label={multi ? "复制块组" : "复制块"} onClick={() => { if (multi) duplicateSelectedBlocks(ids); else { const found = findBlock(blocks, b.id); if (found) found.parent.splice(found.index + 1, 0, cloneBlock(b)); bump(); scheduleSave(); } close(); }} />
+        <MenuItem icon="trash" label={multi ? "删除块组" : "删除块"} danger onClick={() => { if (multi) deleteSelectedBlocks(ids); else remove(b.id); close(); }} />
       </>
     ));
   };

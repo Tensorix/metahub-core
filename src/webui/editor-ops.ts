@@ -1,4 +1,4 @@
-import { type Block, blocksToText, genId, isListType } from "./blocks.ts";
+import { type Block, type BlockDraft, type BlockType, applyBlockDraft, blocksToText, genId, isListType } from "./blocks.ts";
 
 export interface FoundBlock {
   block: Block;
@@ -149,6 +149,26 @@ export function topmostBlockIds(blocks: readonly Block[], ids: readonly string[]
   };
   visit(blocks, false);
   return out;
+}
+
+/** Convert a single block to a target type in place, mirroring the editor's
+ *  single-block rules: a list→list change keeps the children, any other target
+ *  drops them. Returns false if the id isn't found. Shared by the editor's
+ *  single-block `convert` and the multi-select `convertSelected`. */
+export function convertBlockType(
+  blocks: Block[],
+  id: string,
+  type: BlockType,
+  draft: Partial<BlockDraft> = {},
+): boolean {
+  const found = findBlock(blocks, id);
+  const b = found?.block;
+  if (!b) return false;
+  const children = isListType(type) ? b.children : undefined;
+  applyBlockDraft(b, type, draft);
+  if (children?.length) b.children = children;
+  else delete b.children;
+  return true;
 }
 
 /** Flatten-ordered ids spanning anchor..focus inclusive (continuous range). */

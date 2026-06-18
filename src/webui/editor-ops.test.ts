@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bodyFromBlocks, type Block } from "./blocks.ts";
 import {
   blockRangeIds,
+  convertBlockType,
   deleteBlocks,
   duplicateBlocks,
   indentBlock,
@@ -210,6 +211,50 @@ test("serializeBlocks renders the topmost selection as Markdown", () => {
   ];
 
   expect(serializeBlocks(blocks, ["h", "parent", "child"])).toBe("## Title\n- parent\n  - child");
+});
+
+test("convertBlockType changes a block's type in place and keeps its content", () => {
+  const blocks: Block[] = [{ id: "p", type: "p", content: "hello" }];
+
+  expect(convertBlockType(blocks, "p", "h2", { content: "hello" })).toBe(true);
+  expect(blocks[0]!.type).toBe("h2");
+  expect(blocks[0]!.content).toBe("hello");
+});
+
+test("convertBlockType keeps children when converting between list types", () => {
+  const blocks: Block[] = [
+    {
+      id: "parent",
+      type: "bullet",
+      content: "parent",
+      children: [{ id: "child", type: "bullet", content: "child" }],
+    },
+  ];
+
+  convertBlockType(blocks, "parent", "todo", { content: "parent" });
+  expect(blocks[0]!.type).toBe("todo");
+  expect(blocks[0]!.children).toHaveLength(1);
+});
+
+test("convertBlockType drops children when the target is not a list type", () => {
+  const blocks: Block[] = [
+    {
+      id: "parent",
+      type: "bullet",
+      content: "parent",
+      children: [{ id: "child", type: "bullet", content: "child" }],
+    },
+  ];
+
+  convertBlockType(blocks, "parent", "p", { content: "parent" });
+  expect(blocks[0]!.type).toBe("p");
+  expect(blocks[0]!.children).toBeUndefined();
+});
+
+test("convertBlockType returns false for an unknown id", () => {
+  const blocks: Block[] = [{ id: "p", type: "p", content: "hello" }];
+
+  expect(convertBlockType(blocks, "missing", "h1")).toBe(false);
 });
 
 test("serializeBlocks re-sequences numbered runs across the selection", () => {
