@@ -6,6 +6,11 @@
 import type { DbDriver } from "./driver.ts";
 import { parseDuration } from "./sync/token.ts";
 
+/** Authoritative upper bound for a single POST /api/blob upload (bytes). The
+ *  WebUI applies friendlier per-kind caps (image 25MB / av 100MB / file 100MB)
+ *  client-side; this is the hard server ceiling. Override with METAHUB_MAX_BLOB_UPLOAD. */
+export const MAX_BLOB_UPLOAD_BYTES = Number(process.env.METAHUB_MAX_BLOB_UPLOAD) || 100 * 1024 * 1024;
+
 const K_HOST = "cfg_host";
 const K_PORT = "cfg_port";
 const K_SYNC_INTERVAL = "cfg_sync_interval";

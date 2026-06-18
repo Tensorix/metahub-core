@@ -342,6 +342,60 @@ export interface DocImageUpload {
   /** Stable served path to embed in the document, e.g. /blob/<hash>.png */
   url: string;
 }
+/** Alias: uploads aren't image-only anymore (video/audio/file too). */
+export type DocBlobUpload = DocImageUpload;
+
+/** Friendly client-side upload caps by kind (the server enforces a single hard
+ *  ceiling, see core MAX_BLOB_UPLOAD_BYTES). */
+export const MAX_UPLOAD_BYTES: Record<"image" | "video" | "audio" | "file", number> = {
+  image: 25 * 1024 * 1024,
+  video: 100 * 1024 * 1024,
+  audio: 100 * 1024 * 1024,
+  file: 100 * 1024 * 1024,
+};
+
+/** Extension of a path/URL (no query/fragment), lowercased, or "". */
+function urlExt(s: string): string {
+  const clean = s.split(/[?#]/, 1)[0] ?? s;
+  const base = clean.slice(clean.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** Best stable `/blob/<hash>.<ext>` URL: prefer the server's extension (correct
+ *  type for known media), else the original filename's, else infer from the MIME
+ *  type. A trustworthy extension lets the byte route serve the right content-type
+ *  and lets the editor re-detect video/audio on reload. */
+function blobUrlWithExt(hash: string, serverUrl: string, ct: string, filename: string): string {
+  const ext = urlExt(serverUrl) || urlExt(filename) || extForType(ct);
+  return `/blob/${hash}${ext ? "." + ext : ""}`;
+}
+
+/** Upload arbitrary doc bytes (image/video/audio/file) and return a stable
+ *  `/blob/<hash>.<ext>` URL. Replica clients compose offline: when the upload
+ *  can't reach the server, the bytes spool under the SAME hash the server would
+ *  assign and the URL returns immediately (the SW serves from the spool); a later
+ *  drain (online) pushes them to the server. */
+async function uploadDocBlobImpl(file: Blob): Promise<DocBlobUpload> {
+  const ct = file.type || "application/octet-stream";
+  const filename = (file as File).name || "";
+  try {
+    const res = await authFetch("/api/blob", { method: "POST", headers: { "content-type": ct }, body: file });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data && !(data as any).error) {
+      void drainBlobSpool(); // online again — flush anything stranded earlier
+      const d = data as DocBlobUpload;
+      return { ...d, url: blobUrlWithExt(d.hash, d.url, ct, filename) };
+    }
+    throw new Error((data && (data as any).error) || `${res.status} ${res.statusText}`);
+  } catch (e) {
+    if (!(replicaActive() || isNoOrigin())) throw e;
+    const buf = await file.arrayBuffer();
+    const hash = await blobHash32(buf);
+    await spoolPut(hash, buf, ct);
+    return { hash, size: buf.byteLength, content_type: ct, url: blobUrlWithExt(hash, "", ct, filename) };
+  }
+}
 
 const httpApi = {
   // databases
@@ -467,35 +521,11 @@ const httpApi = {
     return data as SiteFile;
   },
 
-  /** Upload a document image as a content-addressed blob; returns its /blob/<hash>
-   *  URL to embed in markdown. Raw bytes (can't use req(), which JSON-stringifies).
-   *  Replica clients can compose offline: when the upload can't reach the server,
-   *  the bytes are spooled under the SAME hash the server would assign and the
-   *  stable URL is returned immediately (the SW serves them from the spool); a
-   *  later drain (online) pushes them to the server. */
-  uploadDocImage: async (file: Blob): Promise<DocImageUpload> => {
-    try {
-      const res = await authFetch("/api/blob", {
-        method: "POST",
-        headers: { "content-type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      const data = await res.json().catch(() => null);
-      if (res.ok && data && !(data as any).error) {
-        void drainBlobSpool(); // online again — flush anything stranded earlier
-        return data as DocImageUpload;
-      }
-      throw new Error((data && (data as any).error) || `${res.status} ${res.statusText}`);
-    } catch (e) {
-      if (!(replicaActive() || isNoOrigin())) throw e;
-      const buf = await file.arrayBuffer();
-      const hash = await blobHash32(buf);
-      const ct = file.type || "application/octet-stream";
-      await spoolPut(hash, buf, ct);
-      const ext = extForType(ct);
-      return { hash, size: buf.byteLength, content_type: ct, url: `/blob/${hash}${ext ? "." + ext : ""}` };
-    }
-  },
+  /** Upload doc bytes (image/video/audio/file) as a content-addressed blob;
+   *  returns a /blob/<hash>.<ext> URL to embed. See uploadDocBlobImpl. */
+  uploadDocBlob: uploadDocBlobImpl,
+  /** @deprecated use uploadDocBlob — kept for older call sites. */
+  uploadDocImage: uploadDocBlobImpl,
 
   // blob cache (Settings storage panel)
   blobCache: () => req<BlobCacheInfo>("GET", "/api/blob-cache"),

@@ -1,6 +1,38 @@
 import { test, expect } from "bun:test";
 import { blocksFromBody, bodyFromBlocks, textToBlock, blockToText, shortcutFromInput, bulletTodoShortcut } from "./blocks.ts";
 
+test("void embed blocks round-trip through Markdown", () => {
+  // image with a resized width (?w=) — stored as src + width, re-emitted as ?w=
+  const img = blocksFromBody("![shot](/blob/abc123abc123abc1.png?w=320)");
+  expect(img).toMatchObject([{ type: "image", src: "/blob/abc123abc123abc1.png", name: "shot", width: 320 }]);
+  expect(bodyFromBlocks(img)).toBe("![shot](/blob/abc123abc123abc1.png?w=320)");
+
+  // video / audio: same image grammar, kind inferred from the extension
+  expect(blocksFromBody("![clip](/blob/deadbeefdeadbeef.mp4)")[0]).toMatchObject({ type: "video" });
+  expect(blocksFromBody("![tune](/blob/deadbeefdeadbeef.mp3)")[0]).toMatchObject({ type: "audio" });
+
+  // file: a standalone /blob link (no `!`), byte size kept in the title
+  const file = blocksFromBody('[report.zip](/blob/feedfacefeedface.zip "10240")');
+  expect(file).toMatchObject([{ type: "file", src: "/blob/feedfacefeedface.zip", name: "report.zip", size: 10240 }]);
+  expect(bodyFromBlocks(file)).toBe('[report.zip](/blob/feedfacefeedface.zip "10240")');
+
+  // html: a reserved ```mh-html fence, body preserved verbatim
+  const html = blocksFromBody("```mh-html\n<b>hi</b>\n<i>there</i>\n```");
+  expect(html).toMatchObject([{ type: "html", content: "<b>hi</b>\n<i>there</i>" }]);
+  expect(bodyFromBlocks(html)).toBe("```mh-html\n<b>hi</b>\n<i>there</i>\n```");
+});
+
+test("media promotion only fires when the block is solely the embed", () => {
+  // an image followed by prose (same paragraph) stays an inline-image paragraph
+  expect(blocksFromBody("see ![x](/blob/abcdef0123456789.png) here")[0]!.type).toBe("p");
+  // a plain standalone hyperlink (not /blob) stays a paragraph, not a file card
+  expect(blocksFromBody("[docs](https://example.com)")[0]!.type).toBe("p");
+  // a bare image link with no width is a plain image block (no ?w=)
+  expect(bodyFromBlocks(blocksFromBody("![](/blob/abcdef0123456789.png)"))).toBe(
+    "![](/blob/abcdef0123456789.png)",
+  );
+});
+
 test("textToBlock recognises each block type", () => {
   expect(textToBlock("# Title").type).toBe("h1");
   expect(textToBlock("## Title").type).toBe("h2");

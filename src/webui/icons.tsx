@@ -71,6 +71,19 @@ const PATHS: Record<string, string> = {
   cloudCheck: '<path d="M17 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 0 1 2.86 8"/><path d="m9 14 2 2 4-4"/>',
   cloudOff: '<path d="m2 2 20 20"/><path d="M5.78 5.78A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.3-.2"/><path d="M21.4 14.4A4.5 4.5 0 0 0 17.5 8h-1.8A7 7 0 0 0 9.4 4.6"/>',
   externalLink: '<path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+  // ---- media / file blocks + image lightbox & annotator ----
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-4.5-4.5L6 21"/>',
+  video: '<rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="m16 10 5.2-3a.5.5 0 0 1 .8.4v9.2a.5.5 0 0 1-.8.4L16 14z"/>',
+  audio: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  htmlTag: '<path d="m9 8-4 4 4 4M15 8l4 4-4 4"/>',
+  zoomIn: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2M11 8.5v5M8.5 11h5"/>',
+  zoomOut: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2M8.5 11h5"/>',
+  square: '<rect x="4" y="4" width="16" height="16" rx="1.5"/>',
+  arrowUpRight: '<path d="M7 17 17 7M8 7h9v9"/>',
+  type: '<path d="M4 7V5h16v2M9 19h6M12 5v14"/>',
+  maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a4 4 0 0 1 0 8h-2"/>',
 };
 
 export function Icon({ name, cls = "ico" }: { name: string; cls?: string }) {

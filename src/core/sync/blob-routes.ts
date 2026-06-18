@@ -4,6 +4,7 @@ import { MhError } from "../errors.ts";
 import { putBlob, getBlob, blobExists } from "../cache.ts";
 import { recordBlob, touchBlob, resolveBlob, blobContentType } from "../blobs.ts";
 import { inferContentType } from "../sites-core.ts";
+import { MAX_BLOB_UPLOAD_BYTES } from "../config.ts";
 
 // Content-addressed blob byte transport (document images / large files). The
 // oplog carries only the hash; bytes move on demand over this endpoint and the
@@ -28,6 +29,22 @@ function ext(ct: string): string {
     "image/avif": "avif",
     "image/svg+xml": "svg",
     "application/pdf": "pdf",
+    // Media: give the served URL a real extension so the byte route can infer
+    // the right content-type and <video>/<audio> play (see sites-core MIME).
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/ogg": "ogv",
+    "video/quicktime": "mov",
+    "video/x-matroska": "mkv",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    "audio/ogg": "ogg",
+    "audio/mp4": "m4a",
+    "audio/aac": "aac",
+    "audio/flac": "flac",
+    "audio/opus": "opus",
+    "audio/webm": "weba",
   };
   return map[t] ?? "";
 }
@@ -121,8 +138,16 @@ export const blobRoutes: Route[] = [
     handler: async (req, { db }) => {
       try {
         const ct = req.headers.get("content-type") || "application/octet-stream";
+        // Reject oversize uploads from the Content-Length header BEFORE buffering
+        // the body, so a huge file can't blow up memory via arrayBuffer().
+        const declared = Number(req.headers.get("content-length") || 0);
+        if (declared > MAX_BLOB_UPLOAD_BYTES)
+          throw new MhError("invalid_input", `blob too large (max ${MAX_BLOB_UPLOAD_BYTES} bytes)`);
         const bytes = new Uint8Array(await req.arrayBuffer());
         if (!bytes.byteLength) throw new MhError("invalid_input", "empty blob body");
+        // Re-check the actual size (a chunked / spoofed Content-Length can lie).
+        if (bytes.byteLength > MAX_BLOB_UPLOAD_BYTES)
+          throw new MhError("invalid_input", `blob too large (max ${MAX_BLOB_UPLOAD_BYTES} bytes)`);
         const info = await putBlob(bytes);
         recordBlob(db, info.hash, info.size, ct); // produced here → pending=1
         const e = ext(ct);

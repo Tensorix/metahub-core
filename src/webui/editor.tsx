@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { api, ApiError } from "./api.ts";
+import { api, ApiError, MAX_UPLOAD_BYTES } from "./api.ts";
 import { replicaActive, SYNCED_EVENT } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep, promptDialog, toast } from "./ui.tsx";
@@ -20,9 +20,14 @@ import {
   computeListNumbers,
   isBlankSpacer,
   isListType,
+  isUploadType,
   makeBlock,
+  mediaKindFromMime,
   shortcutFromInput,
 } from "./blocks.ts";
+import { ImageBlock, VideoBlock, AudioBlock, FileBlock } from "./media/media-blocks.tsx";
+import { HtmlBlock } from "./media/html-block.tsx";
+import { ImageLightbox } from "./media/image-lightbox.tsx";
 import {
   blockRangeIds,
   cloneBlock,
@@ -187,6 +192,8 @@ export function DocView({
   // contentEditable host and the browser can't span a native selection across
   // them. null = no block selection (normal single-block editing).
   const [sel, setSel] = useState<{ anchorId: string; focusId: string } | null>(null);
+  // Fullscreen image preview / annotator overlay (image void blocks).
+  const [lightbox, setLightbox] = useState<{ id: string; src: string; name?: string } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   // ---- save pipeline state ----
   // version: the if_match token from the last read/save; dirty: unsaved local
@@ -516,12 +523,12 @@ export function DocView({
   // page like ChatGPT) and convert it to Markdown; fall back to `text/plain`.
   // Non-text payloads (images, files) fall through to the browser default.
   const onContentPaste = (e: ClipboardEvent, b: Block, el: HTMLElement) => {
-    // A pasted image (e.g. a screenshot) uploads as a blob and drops in as an
-    // image block; only its hash syncs (see blobs.ts), not the bytes.
-    const imgs = imageFilesFrom(e.clipboardData);
-    if (imgs.length) {
+    // A pasted file (screenshot, video, audio, attachment) uploads as a blob and
+    // drops in as a void block; only its hash syncs (see blobs.ts), not the bytes.
+    const dropped = mediaFilesFrom(e.clipboardData);
+    if (dropped.length) {
       e.preventDefault();
-      void insertImages(b, el, imgs);
+      void insertImages(b, el, dropped);
       return;
     }
     const html = e.clipboardData?.getData("text/html");
@@ -565,21 +572,36 @@ export function DocView({
     requestAnimationFrame(() => focusBlock(caret.id, !afterBlock));
   };
 
-  /** Upload pasted image file(s) and drop them in as image block(s) at the caret. */
+  /** Upload doc files → one void block each (image/video/audio/file), enforcing
+   *  the friendly per-kind size caps. Failures toast and are skipped. */
+  const uploadToBlocks = async (files: File[]): Promise<Block[]> => {
+    const out: Block[] = [];
+    for (const f of files) {
+      const kind = mediaKindFromMime(f.type);
+      const cap = MAX_UPLOAD_BYTES[kind];
+      if (f.size > cap) {
+        toast(`${f.name || "文件"} 超过 ${Math.round(cap / 1024 / 1024)}MB 上限`);
+        continue;
+      }
+      try {
+        const up = await api.uploadDocBlob(f);
+        out.push(makeBlock(kind, { src: up.url, name: f.name || undefined, size: kind === "file" ? up.size : undefined }));
+      } catch (err) {
+        toast(`上传失败：${(err as Error).message}`);
+      }
+    }
+    return out;
+  };
+
+  /** Paste/drop files at the caret inside block `b`: split the line and drop the
+   *  uploaded void blocks between. */
   const insertImages = async (b: Block, el: HTMLElement, files: File[]) => {
     const found = findBlock(blocks, b.id);
     if (!found) return;
     const { before, after } = splitEditableAtCaret(el);
-    const mds: string[] = [];
-    for (const f of files) {
-      try {
-        mds.push(docImageMarkdown(f.name, (await api.uploadDocImage(f)).url));
-      } catch (err) {
-        toast(`图片上传失败：${(err as Error).message}`);
-      }
-    }
-    if (!mds.length) return;
-    const insert: Block[] = [...blocksFromBody(mds.join("\n\n"))];
+    const made = await uploadToBlocks(files);
+    if (!made.length) return;
+    const insert: Block[] = [...made];
     const afterBlock = after.trim() !== "" ? makeBlock("p", { content: after }) : null;
     if (afterBlock) insert.push(afterBlock);
     if (before.trim() === "" && !found.block.children?.length) {
@@ -594,43 +616,95 @@ export function DocView({
     requestAnimationFrame(() => focusBlock(caret.id, !afterBlock));
   };
 
-  /** Upload image file(s) to blobs and return one image-markdown line each
-   *  (failures toast and are skipped). */
-  const uploadImageMarkdowns = async (files: File[]): Promise<string[]> => {
-    const mds: string[] = [];
-    for (const f of files) {
-      try {
-        mds.push(docImageMarkdown(f.name, (await api.uploadDocImage(f)).url));
-      } catch (err) {
-        toast(`图片上传失败：${(err as Error).message}`);
-      }
-    }
-    return mds;
-  };
-
-  /** Upload dropped image file(s) and insert them before/after block `targetId`. */
+  /** Upload dropped files and insert the void blocks before/after `targetId`. */
   const insertImagesAt = async (targetId: string, where: "before" | "after", files: File[]) => {
-    const mds = await uploadImageMarkdowns(files);
-    if (!mds.length) return;
+    const made = await uploadToBlocks(files);
+    if (!made.length) return;
     const found = findBlock(blocks, targetId);
     if (!found) return;
-    const insert = blocksFromBody(mds.join("\n\n"));
-    found.parent.splice(found.index + (where === "after" ? 1 : 0), 0, ...insert);
+    found.parent.splice(found.index + (where === "after" ? 1 : 0), 0, ...made);
     bump();
     scheduleSave();
-    requestAnimationFrame(() => focusBlock(insert[insert.length - 1]!.id, false));
+    requestAnimationFrame(() => focusBlock(made[made.length - 1]!.id, false));
   };
 
-  /** Upload dropped image file(s) and append them at the end of the document
-   *  (used when the doc is empty or the drop lands past the last block). */
+  /** Upload dropped files and append them at the end (empty doc / drop past the
+   *  last block). */
   const appendImages = async (files: File[]) => {
-    const mds = await uploadImageMarkdowns(files);
-    if (!mds.length) return;
-    const insert = blocksFromBody(mds.join("\n\n"));
-    blocks.push(...insert);
+    const made = await uploadToBlocks(files);
+    if (!made.length) return;
+    blocks.push(...made);
     bump();
     scheduleSave();
-    requestAnimationFrame(() => focusBlock(insert[insert.length - 1]!.id, false));
+    requestAnimationFrame(() => focusBlock(made[made.length - 1]!.id, false));
+  };
+
+  /** Open a native file picker for a slash-menu upload type, then replace the
+   *  (empty) slash block with the uploaded void block(s), or insert after it. */
+  const pickAndInsert = (kind: BlockType, blockId: string) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = kind === "image" ? "image/*" : kind === "video" ? "video/*" : kind === "audio" ? "audio/*" : "";
+    input.onchange = async () => {
+      const files = Array.from(input.files ?? []);
+      if (!files.length) return;
+      const made = await uploadToBlocks(files);
+      if (!made.length) return;
+      const found = findBlock(blocks, blockId);
+      if (!found) blocks.push(...made);
+      else if (found.block.type === "p" && !found.block.content.trim() && !found.block.children?.length)
+        found.parent.splice(found.index, 1, ...made);
+      else found.parent.splice(found.index + 1, 0, ...made);
+      bump();
+      scheduleSave();
+      requestAnimationFrame(() => focusBlock(made[made.length - 1]!.id, false));
+    };
+    input.click();
+  };
+
+  /** Patch a void block's fields (image width, html content, replaced src). */
+  const updateVoid = (id: string, patch: Partial<Block>) => {
+    const found = findBlock(blocks, id);
+    if (!found) return;
+    Object.assign(found.block, patch);
+    if ("width" in patch && !patch.width) delete found.block.width;
+    recordHistory("void:" + id);
+    bump();
+    scheduleSave();
+  };
+
+  /** Keyboard on a focused (non-editing) void block: delete / add line / navigate.
+   *  Events from a media control or the html source textarea pass through. */
+  const onVoidKeyDown = (e: KeyboardEvent, b: Block) => {
+    if ((e.target as HTMLElement).closest("textarea, input, select, video, audio")) return;
+    if (e.key === "Backspace" || e.key === "Delete") {
+      e.preventDefault();
+      const prev = previousBlock(blocks, b.id);
+      const next = nextBlock(blocks, b.id);
+      remove(b.id);
+      requestAnimationFrame(() => (prev ? focusBlock(prev.id, true) : next ? focusBlock(next.id) : undefined));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      insertAfter(b.id);
+    } else if (e.key === "ArrowUp") {
+      const prev = previousBlock(blocks, b.id);
+      if (prev) { e.preventDefault(); focusBlock(prev.id, true); }
+    } else if (e.key === "ArrowDown") {
+      const next = nextBlock(blocks, b.id);
+      if (next) { e.preventDefault(); focusBlock(next.id); }
+    }
+  };
+
+  /** Replace an image block's bytes with an annotated PNG (flatten-on-save). */
+  const replaceAnnotated = async (id: string, blob: Blob) => {
+    try {
+      const up = await api.uploadDocBlob(new File([blob], "annotated.png", { type: "image/png" }));
+      updateVoid(id, { src: up.url });
+      setLightbox((lb) => (lb && lb.id === id ? { ...lb, src: up.url } : lb));
+    } catch (err) {
+      toast(`保存失败：${(err as Error).message}`);
+    }
   };
 
   const slashMatches = slash
@@ -639,8 +713,11 @@ export function DocView({
 
   const applySlash = (m: { type: BlockType }) => {
     if (!slash) return;
-    convert(slash.blockId, m.type);
+    const blockId = slash.blockId;
     setSlash(null);
+    // Media/file blocks aren't a text conversion — pick file(s) and drop them in.
+    if (isUploadType(m.type)) pickAndInsert(m.type, blockId);
+    else convert(blockId, m.type);
   };
 
   const applyShortcut = (b: Block, draft: BlockDraft) => {
@@ -820,7 +897,7 @@ export function DocView({
     const target = e.target as HTMLElement;
     // let interactive affordances (gutter buttons, popovers, form controls, the
     // table column resizer) work
-    if (target.closest(".gutter") || target.closest(".pop") || target.closest(".doc-col-resizer") || target.closest("input, button, select, a")) return;
+    if (target.closest(".gutter") || target.closest(".pop") || target.closest(".doc-col-resizer") || target.closest("input, button, select, a") || target.closest("video, audio, iframe, textarea, .img-handle")) return;
 
     const blockEl = closestBlockElement(e.target as Node);
     const id = blockEl?.getAttribute("data-bid") ?? null;
@@ -1093,7 +1170,9 @@ export function DocView({
     openMenu(e, (close) => (
       <>
         <MenuLabel>{multi ? `转换为（${count} 个块）` : "转换为"}</MenuLabel>
-        {BLOCK_MENU.filter((m) => m.type !== "divider" && (!multi || m.type !== "table")).map((m) => (
+        {/* Upload blocks (image/video/audio/file) need a file picker, not a text
+            conversion — they're offered via the slash menu, not "turn into". */}
+        {BLOCK_MENU.filter((m) => m.type !== "divider" && !isUploadType(m.type) && (!multi || m.type !== "table")).map((m) => (
           // Pass the current content explicitly: convert() resets content to the
           // draft's (the slash menu relies on that to clear its "/query" text),
           // so a bare convert() here would wipe the block's text.
@@ -1253,6 +1332,9 @@ export function DocView({
         onAdd={() => insertAfter(b.id)}
         onMenu={(e) => blockMenu(e, b)}
         onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
+        onVoidChange={(patch) => updateVoid(b.id, patch)}
+        onVoidKey={(e) => onVoidKeyDown(e, b)}
+        onPreview={() => setLightbox({ id: b.id, src: b.src ?? "", name: b.name })}
         dragRef={dragRef}
         onReorder={(srcId, where) => {
           const ids = selectedIds;
@@ -1310,7 +1392,7 @@ export function DocView({
       }}
       onDrop={(e) => {
         if (dragRef.current || mode === "source") return;
-        const files = imageFilesFrom(e.dataTransfer);
+        const files = mediaFilesFrom(e.dataTransfer);
         if (!files.length) return;
         e.preventDefault();
         const el = nearestTopBlock(docRootRef.current, e.clientY);
@@ -1396,39 +1478,37 @@ export function DocView({
 
       {bar && !sel && <FormatBar x={bar.x} y={bar.y} onCommand={applyFormatCommand} />}
     </div>
+    {lightbox && (
+      <ImageLightbox
+        src={lightbox.src}
+        name={lightbox.name}
+        onClose={() => setLightbox(null)}
+        onReplace={(blob) => void replaceAnnotated(lightbox.id, blob)}
+      />
+    )}
     </>
   );
 }
 
-/** Image files from a paste (clipboardData.items) or a drop (dataTransfer.files). */
-function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
+/** File payloads from a paste (clipboardData.items) or a drop (dataTransfer.files):
+ *  any file kind — image/video/audio render as media, everything else as a file
+ *  card (kind decided per-file at upload time, see uploadToBlocks). */
+function mediaFilesFrom(dt: DataTransfer | null | undefined): File[] {
   if (!dt) return [];
   const out: File[] = [];
   for (let i = 0; i < (dt.items?.length ?? 0); i++) {
     const it = dt.items[i]!;
-    if (it.kind === "file" && it.type.startsWith("image/")) {
+    if (it.kind === "file") {
       const f = it.getAsFile();
       if (f) out.push(f);
     }
   }
-  if (!out.length) {
-    for (let i = 0; i < (dt.files?.length ?? 0); i++) {
-      const f = dt.files[i]!;
-      if (f.type.startsWith("image/")) out.push(f);
-    }
-  }
+  if (!out.length) for (let i = 0; i < (dt.files?.length ?? 0); i++) out.push(dt.files[i]!);
   return out;
 }
 
-/** Markdown for an uploaded image; the filename becomes the alt text (so an agent
- *  reading the doc sees a label, not the hash). Bracket chars stripped to keep the
- *  `![alt](url)` grammar intact. */
-function docImageMarkdown(name: string, url: string): string {
-  return `![${(name || "image").replace(/[[\]()]/g, "").trim()}](${url})`;
-}
-
 function BlockRow({
-  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, onAdd, onMenu, onToggle, dragRef, onReorder, children,
+  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, onAdd, onMenu, onToggle, onVoidChange, onVoidKey, onPreview, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
@@ -1446,6 +1526,9 @@ function BlockRow({
   onAdd: () => void;
   onMenu: (e: MouseEvent) => void;
   onToggle: () => void;
+  onVoidChange: (patch: Partial<Block>) => void;
+  onVoidKey: (e: KeyboardEvent) => void;
+  onPreview: () => void;
   dragRef: { current: string | null };
   onReorder: (srcId: string, where: "before" | "after") => void;
   children?: ComponentChildren;
@@ -1528,6 +1611,20 @@ function BlockRow({
           <hr />
         ) : block.type === "table" ? (
           <TableBlock block={block} renderKey={renderKey} onCellInput={onCellInput} onTableChange={onTableChange} />
+        ) : block.type === "image" || block.type === "video" || block.type === "audio" || block.type === "file" || block.type === "html" ? (
+          <div class="void-host" tabindex={0} onKeyDown={(e) => onVoidKey(e as KeyboardEvent)}>
+            {block.type === "image" ? (
+              <ImageBlock block={block} selected={selected} onResize={(w) => onVoidChange({ width: w })} onPreview={onPreview} />
+            ) : block.type === "video" ? (
+              <VideoBlock block={block} />
+            ) : block.type === "audio" ? (
+              <AudioBlock block={block} />
+            ) : block.type === "file" ? (
+              <FileBlock block={block} />
+            ) : (
+              <HtmlBlock block={block} selected={selected} onChange={(c) => onVoidChange({ content: c })} />
+            )}
+          </div>
         ) : (
           <>
             {block.type === "bullet" && <div class="marker">•</div>}
@@ -2164,10 +2261,13 @@ function focusBlockAtOffset(id: string, offset: number) {
   s?.addRange(range);
 }
 function focusBlock(id: string, atEnd = false) {
-  const sel = `.block[data-bid="${id}"] .editable, .block[data-bid="${id}"] .code-input`;
+  const sel = `.block[data-bid="${id}"] .editable, .block[data-bid="${id}"] .code-input, .block[data-bid="${id}"] .void-host`;
   const el = document.querySelector(sel) as HTMLElement | null;
   if (!el) return;
   el.focus();
+  // Void blocks (image/video/audio/file/html) have no text caret — just focus
+  // the host so Backspace/arrows in onVoidKeyDown apply.
+  if (el.classList.contains("void-host")) return;
   if (el instanceof HTMLTextAreaElement) {
     const pos = atEnd ? el.value.length : 0;
     el.setSelectionRange(pos, pos);

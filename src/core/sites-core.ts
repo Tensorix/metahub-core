@@ -69,6 +69,35 @@ const MIME: Record<string, string> = {
   otf: "font/otf",
   pdf: "application/pdf",
   wasm: "application/wasm",
+  // Audio / video: doc media blocks serve from /blob/<hash>.<ext>, so the byte
+  // route needs a correct type for <video>/<audio> to play (esp. Safari, which
+  // refuses octet-stream). Keep in sync with blocks.ts VIDEO_EXTS / AUDIO_EXTS.
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  webm: "video/webm",
+  ogv: "video/ogg",
+  mov: "video/quicktime",
+  mkv: "video/x-matroska",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  flac: "audio/flac",
+  opus: "audio/opus",
+  weba: "audio/webm",
+  // Common attachment types so a downloaded file keeps a sensible type.
+  csv: "text/csv; charset=utf-8",
+  zip: "application/zip",
+  gz: "application/gzip",
+  tar: "application/x-tar",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
 /** Guess a content type from a file path's extension; default octet-stream. */

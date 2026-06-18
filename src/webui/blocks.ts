@@ -14,20 +14,130 @@ export type BlockType =
   | "quote"
   | "code"
   | "table"
-  | "divider";
+  | "divider"
+  // Block-level "void" embeds. Not contentEditable: rendered as standalone
+  // widgets (selectable, resizable, draggable). They still serialize to plain
+  // Markdown so core stays byte-only — image/video/audio as `![](url)`, file as a
+  // `[](/blob/..)` link, html as a reserved ```mh-html fence (see renderBlock /
+  // matchMediaLine). A block is promoted to a void type only when its whole text
+  // IS the embed; inline images/links inside prose stay inline.
+  | "image"
+  | "video"
+  | "audio"
+  | "file"
+  | "html";
 
 export type ColAlign = "left" | "center" | "right" | null;
 
 export interface Block {
   id: string;
   type: BlockType;
-  content: string; // inner text, without the markdown prefix/fence
+  content: string; // inner text, without the markdown prefix/fence (html: raw HTML)
   checked?: boolean; // todo only
   lang?: string; // code only
   start?: number; // numbered only: explicit start number of a run (first item)
   children?: Block[]; // list items only
   rows?: string[][]; // table only: rows[0] is the header; each cell is inline markdown
   align?: ColAlign[]; // table only: per-column text alignment
+  src?: string; // image/video/audio/file only: the embed URL (usually /blob/<hash>.<ext>)
+  name?: string; // image/video/audio/file only: alt / display filename
+  width?: number; // image only: rendered width in px (round-trips as a ?w= query)
+  size?: number; // file only: byte size (round-trips in the link title)
+}
+
+/** Embeds carried by the `![](url)` / `[](url)` / ```mh-html grammar — promoted to
+ *  a block-level widget only when the block's whole text is the embed. */
+export type MediaKind = "image" | "video" | "audio" | "file";
+
+/** Reserved code-fence info string for a rendered-HTML block. `cleanLang` keeps
+ *  the hyphen, so it round-trips, and it can't collide with a real language id. */
+const HTML_FENCE = "mh-html";
+
+const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "m4v", "ogv", "mkv", "ogg"]);
+const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "opus", "oga", "weba"]);
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "bmp", "ico", "apng"]);
+
+/** Void-embed block type for an uploaded file, by its MIME type. Drives the
+ *  drop/paste pipeline (image|video|audio render inline, everything else → file). */
+export function mediaKindFromMime(mime: string): MediaKind {
+  const m = (mime || "").toLowerCase();
+  if (m.startsWith("image/")) return "image";
+  if (m.startsWith("video/")) return "video";
+  if (m.startsWith("audio/")) return "audio";
+  return "file";
+}
+
+/** Lowercased file extension of a URL (no query/fragment), or "". */
+function extOf(url: string): string {
+  const clean = url.split(/[?#]/, 1)[0] ?? url;
+  const base = clean.slice(clean.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** Which `![](url)` embed a media URL is, by extension. Image syntax never maps
+ *  to "file": an unknown extension written as `![]()` is treated as an image. */
+function imageSyntaxKind(ext: string): "image" | "video" | "audio" {
+  if (VIDEO_EXTS.has(ext)) return "video";
+  if (AUDIO_EXTS.has(ext)) return "audio";
+  return "image";
+}
+
+/** Split a media URL into its base src and an optional `w=` width, preserving any
+ *  other query params / fragment (external images may carry signed tokens). */
+function parseMediaUrl(url: string): { src: string; width?: number } {
+  const hash = url.indexOf("#");
+  const frag = hash >= 0 ? url.slice(hash) : "";
+  const noFrag = hash >= 0 ? url.slice(0, hash) : url;
+  const q = noFrag.indexOf("?");
+  if (q < 0) return { src: url };
+  const base = noFrag.slice(0, q);
+  let width: number | undefined;
+  const kept: string[] = [];
+  for (const p of noFrag.slice(q + 1).split("&").filter(Boolean)) {
+    const m = p.match(/^w=(\d+)$/);
+    if (m) width = parseInt(m[1]!, 10);
+    else kept.push(p);
+  }
+  return { src: base + (kept.length ? "?" + kept.join("&") : "") + frag, width };
+}
+
+/** Re-attach an image block's width as a `?w=` query on its src. */
+function mediaUrl(b: Block): string {
+  const url = b.src ?? "";
+  if (b.type !== "image" || !b.width || b.width <= 0) return url;
+  return url + (url.includes("?") ? "&" : "?") + "w=" + Math.round(b.width);
+}
+
+/** Strip the chars that would break `![alt](url)` / `[text](url)` grammar. */
+function safeLabel(s: string): string {
+  return s.replace(/[[\]()]/g, "").trim();
+}
+
+/** A line that is solely one embed → its void block draft, else null. Media use
+ *  `![alt](url)` (kind by extension); file uses a `[name](/blob/..)` link so a
+ *  plain standalone hyperlink stays a paragraph. */
+function matchMediaLine(line: string): BlockDraft | null {
+  const t = line.trim();
+  let m = t.match(/^!\[([^\]]*)\]\(([^\s)]+)\)$/);
+  if (m) {
+    const { src, width } = parseMediaUrl(m[2]!);
+    const type = imageSyntaxKind(extOf(src));
+    const b: BlockDraft = { type, content: "", src, name: m[1]! };
+    if (type === "image" && width) b.width = width;
+    return b;
+  }
+  m = t.match(/^\[([^\]]*)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)$/);
+  if (m && m[2]!.startsWith("/blob/")) {
+    const b: BlockDraft = { type: "file", content: "", src: m[2]!, name: m[1]! };
+    if (m[3] != null && /^\d+$/.test(m[3])) b.size = parseInt(m[3], 10);
+    return b;
+  }
+  return null;
+}
+
+function isMediaType(type: BlockType): boolean {
+  return type === "image" || type === "video" || type === "audio" || type === "file";
 }
 
 export type BlockDraft = Omit<Block, "id">;
@@ -104,6 +214,20 @@ export function applyBlockDraft(b: Block, type: BlockType, draft: Partial<BlockD
     delete b.rows;
     delete b.align;
   }
+  if (isMediaType(type)) {
+    b.src = draft.src ?? "";
+    if (draft.name != null) b.name = draft.name;
+    else delete b.name;
+    if (type === "image" && draft.width) b.width = draft.width;
+    else delete b.width;
+    if (type === "file" && draft.size != null) b.size = draft.size;
+    else delete b.size;
+  } else {
+    delete b.src;
+    delete b.name;
+    delete b.width;
+    delete b.size;
+  }
 }
 
 /** Construct a fresh block of `type` from a draft. */
@@ -122,9 +246,15 @@ export function textToBlock(text: string): BlockDraft {
     const lines = text.split("\n");
     if (RE.fenceOpen.test(lines[0]!)) lines.shift();
     if (lines.length && isFenceClose(lines[lines.length - 1]!, fence[1]![0]!, fence[1]!.length)) lines.pop();
-    return { type: "code", content: lines.join("\n"), lang: cleanLang(fence[2] ?? "") };
+    const lang = cleanLang(fence[2] ?? "");
+    if (lang === HTML_FENCE) return { type: "html", content: lines.join("\n") };
+    return { type: "code", content: lines.join("\n"), lang };
   }
   if (RE.divider.test(text.trim()) && !text.includes("\n")) return { type: "divider", content: "" };
+  if (!text.includes("\n")) {
+    const media = matchMediaLine(text);
+    if (media) return media;
+  }
 
   let m: RegExpMatchArray | null;
   if ((m = firstLine.match(RE.h))) {
@@ -388,6 +518,11 @@ function parseLeafBlock(lines: string[], start: number, minIndent: number): Pars
   }
 
   if (RE.quote.test(first)) return parseQuoteBlock(lines, start, minIndent);
+  // A line that is solely one embed becomes its own void block; anything else
+  // (incl. an image with trailing prose) falls through to the paragraph parser
+  // and renders inline as before.
+  const media = matchMediaLine(first);
+  if (media) return { block: { id: genId(), ...media }, next: start + 1 };
   return parseParagraph(lines, start, minIndent);
 }
 
@@ -416,8 +551,11 @@ function parseCodeBlock(
   // Bail out and let the caller fall through to the paragraph parser. Explicit
   // creation paths (typing shortcut, textToBlock conversion) stay lenient.
   if (!closed) return null;
+  const lang = cleanLang(open[2] ?? "");
+  if (lang === HTML_FENCE)
+    return { block: { id: genId(), type: "html", content: content.join("\n") }, next: i };
   return {
-    block: { id: genId(), type: "code", content: content.join("\n"), lang: cleanLang(open[2] ?? "") },
+    block: { id: genId(), type: "code", content: content.join("\n"), lang },
     next: i,
   };
 }
@@ -621,6 +759,19 @@ function renderBlock(block: Block, indent: number, number: number): string[] {
       return renderTable(block, indent);
     case "divider":
       return [`${pad}---`];
+    case "image":
+    case "video":
+    case "audio":
+      return [`${pad}![${safeLabel(block.name ?? "")}](${mediaUrl(block)})`];
+    case "file": {
+      const title = block.size != null ? ` "${block.size}"` : "";
+      return [`${pad}[${safeLabel(block.name ?? "文件")}](${block.src ?? ""}${title})`];
+    }
+    case "html": {
+      const first = `${pad}\`\`\`${HTML_FENCE}`;
+      const body = block.content.split("\n").map((line) => `${pad}${line}`);
+      return [first, ...body, `${pad}\`\`\``];
+    }
     default:
       return block.content.split("\n").map((line) => `${pad}${escapeFenceLine(line)}`);
   }
@@ -659,6 +810,8 @@ function shouldPersist(block: Block): boolean {
   if (isListType(block.type)) return true;
   if (block.type === "code") return block.content.trim() !== "" || !!block.lang?.trim();
   if (block.type === "table") return (block.rows ?? []).some((r) => r.some((c) => c.trim() !== ""));
+  if (isMediaType(block.type)) return !!block.src;
+  if (block.type === "html") return block.content.trim() !== "";
   return block.content.trim() !== "";
 }
 
@@ -743,4 +896,14 @@ export const BLOCK_MENU: { type: BlockType; ic: string; t: string; d: string }[]
   { type: "code", ic: "code", t: "代码", d: "代码块" },
   { type: "table", ic: "table", t: "表格", d: "插入表格" },
   { type: "divider", ic: "minus", t: "分隔线", d: "水平分隔" },
+  { type: "image", ic: "image", t: "图片", d: "上传或拖入图片" },
+  { type: "video", ic: "video", t: "视频", d: "上传视频文件" },
+  { type: "audio", ic: "audio", t: "音频", d: "上传音频文件" },
+  { type: "file", ic: "file", t: "文件", d: "上传任意文件" },
+  { type: "html", ic: "htmlTag", t: "HTML", d: "嵌入并渲染 HTML" },
 ];
+
+/** Block types inserted via a file picker (not a plain text-conversion). */
+export function isUploadType(type: BlockType): boolean {
+  return type === "image" || type === "video" || type === "audio" || type === "file";
+}
