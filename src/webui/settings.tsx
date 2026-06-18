@@ -19,6 +19,7 @@ import {
   call as replicaCall,
 } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
+import { cacheStats, clearCache, spoolPending, BLOB_QUOTA_BYTES } from "./data/blob-store.ts";
 import { cmpVer } from "./version.ts";
 import {
   Modal,
@@ -74,7 +75,7 @@ const SECTIONS: { id: string; label: string; icon: string; show: () => boolean }
   { id: SEC.quicknote, label: "快速笔记", icon: "pin",
     show: () => typeof window !== "undefined" && !!window.metahubDesktop?.quicknote },
   { id: SEC.sync, label: "同步", icon: "cloudCheck", show: () => true },
-  { id: SEC.storage, label: "存储", icon: "database", show: () => !isNoOrigin() },
+  { id: SEC.storage, label: "存储", icon: "database", show: () => true },
   { id: SEC.devices, label: "设备与授权", icon: "monitor", show: () => !isNoOrigin() },
 ];
 
@@ -220,13 +221,13 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
           <SyncStorage />
         </SetGroup>
 
-        {/* Blob cache (document images / large files) lives on the data home; the
-            no-origin replica keeps its blobs in browser Cache Storage instead. */}
-        {!isNoOrigin() && (
-          <SetGroup id={SEC.storage} label="存储">
-            <BlobCacheSettings />
-          </SetGroup>
-        )}
+        {/* Blob cache (document images / large files). On a server-backed client
+            it lives on the data home (BlobCacheSettings, with anchors + presence
+            verify); a no-origin shell keeps its blobs in browser Cache Storage,
+            so it gets the local-only LocalCacheSettings instead. */}
+        <SetGroup id={SEC.storage} label="存储">
+          {isNoOrigin() ? <LocalCacheSettings /> : <BlobCacheSettings />}
+        </SetGroup>
 
         {/* HTTP pairing + issued grants only make sense against a server (origin). */}
         {!isNoOrigin() && (
@@ -672,6 +673,222 @@ function BlobCacheSettings() {
         {quotaBytes > 0 && (
           <div class="blob-foot">
             缓存超过 {fmtBytes(quotaBytes)} 时，自动清理最久没用、已有备份的，你固定的不动。
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Storage panel for a no-origin shell (bucket-only). There is no server ledger
+ * or anchor model here: the cloud bucket IS the durable home, and `mh-blob-v1`
+ * (browser Cache Storage) is purely a local read cache whose bytes re-download
+ * on demand. So every unpinned cached byte is freeable; the only bytes that are
+ * NOT safe to drop are the pending spool (composed offline, not yet uploaded),
+ * which `clearCache` never touches — surfaced here as a "待上传" caution instead.
+ */
+function LocalCacheSettings() {
+  const [stats, setStats] = useState<{ count: number; totalBytes: number; pinnedBytes: number } | null>(null);
+  const [pending, setPending] = useState<{ count: number; bytes: number }>({ count: 0, bytes: 0 });
+  const [usage, setUsage] = useState<number | null>(null);
+  const [persisted, setPersisted] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const [s, pend] = await Promise.all([cacheStats(), spoolPending()]);
+      setStats(s);
+      setPending({ count: pend.length, bytes: pend.reduce((n, e) => n + e.bytes.byteLength, 0) });
+    } catch {
+      /* IndexedDB unavailable — fall through to the loading card */
+    }
+    if (navigator.storage?.estimate) {
+      try {
+        const e = await navigator.storage.estimate();
+        if (e.usage != null) setUsage(e.usage);
+      } catch {
+        /* estimate unsupported */
+      }
+    }
+    if (navigator.storage?.persisted) {
+      try {
+        setPersisted(await navigator.storage.persisted());
+      } catch {
+        /* persisted unsupported */
+      }
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+
+  // `drawn` flips on after mount so the ring arcs animate from 0 → their share.
+  const [drawn, setDrawn] = useState(false);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setDrawn(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+
+  // Everything unpinned in the read cache is freeable (the bucket still holds it).
+  const clearable = stats ? Math.max(0, stats.totalBytes - stats.pinnedBytes) : 0;
+  const count = useCountUp(clearable); // hook rules: call unconditionally
+
+  if (!stats) {
+    return (
+      <div class="set-block">
+        <div class="set-block-head"><span class="set-block-title">本机存储</span></div>
+        <div class="set-block-desc">加载中…</div>
+      </div>
+    );
+  }
+
+  const clear = async () => {
+    const ok = await confirmDialog({
+      title: "清理腾空间",
+      message: `将释放约 ${fmtBytes(clearable)}。只清本机缓存，文件已存在云桶，用到时自动取回。待上传的内容不会动。`,
+      confirmLabel: "清理",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await clearCache();
+      toast(r.cleared ? `已腾出 ${fmtBytes(r.freedBytes)}（${r.cleared} 项）` : "暂时没有可清理的");
+      await load();
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestPersist = async () => {
+    if (!navigator.storage?.persist) return;
+    setBusy(true);
+    try {
+      const ok = await navigator.storage.persist();
+      setPersisted(ok);
+      toast(ok ? "已设为常驻，系统不会自动清理" : "浏览器暂未授予常驻");
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Ring: freeable (accent) + pinned (muted), summing to the cache total.
+  const total = Math.max(1, stats.totalBytes);
+  const pct = (v: number) => (v / total) * 100;
+  const segClear = pct(clearable);
+  const segPin = pct(stats.pinnedBytes);
+  const arc = (len: number) => (drawn ? len : 0);
+  const hasFreeable = clearable > 0;
+  const ringState = hasFreeable ? "free" : "safe";
+
+  return (
+    <div class="set-block blob-pane">
+      <div class="set-block-head"><span class="set-block-title">本机存储</span></div>
+      <div class="set-block-desc">
+        图片和大文件会先缓存在这台设备上，打开快。云桶里始终有一份，所以这里随时能清——文件不会丢，需要时自动取回。
+      </div>
+
+      <div class="blob-hero">
+        <div class="blob-hero-main">
+          <div class="blob-legend">
+            <div class="blob-legend-row">
+              <span class="blob-dot free" /> <span class="blob-legend-k">可释放</span>
+              <b>{fmtBytes(clearable)}</b>
+            </div>
+            {stats.pinnedBytes > 0 && (
+              <div class="blob-legend-row">
+                <span class="blob-dot pin" /> <span class="blob-legend-k">已固定</span>
+                <b>{fmtBytes(stats.pinnedBytes)}</b>
+              </div>
+            )}
+          </div>
+          <div class="blob-total">共 {stats.count} 项 · {fmtBytes(stats.totalBytes)}</div>
+          <div class="blob-actions">
+            <button
+              class="btn btn-secondary blob-clear"
+              disabled={busy || !hasFreeable}
+              onClick={() => void clear()}
+            >
+              <Icon name="trash" cls="ico sm" />
+              {hasFreeable ? `清理腾出 ${fmtBytes(clearable)}` : "无需清理"}
+            </button>
+          </div>
+        </div>
+
+        <div class={"blob-ring" + (ringState === "free" ? " has-free" : " all-safe")}>
+          <svg viewBox="0 0 100 100" class="blob-ring-svg" aria-hidden="true">
+            <g transform="rotate(-90 50 50)">
+              <circle class="blob-ring-track" cx="50" cy="50" r="42" pathLength={100} />
+              {segPin > 0 && (
+                <circle
+                  class="blob-seg pin"
+                  cx="50"
+                  cy="50"
+                  r="42"
+                  pathLength={100}
+                  stroke-dasharray={`${arc(segPin)} ${100 - arc(segPin)}`}
+                  stroke-dashoffset={-segClear}
+                />
+              )}
+              <circle
+                class="blob-seg free"
+                cx="50"
+                cy="50"
+                r="42"
+                pathLength={100}
+                stroke-dasharray={`${arc(segClear)} ${100 - arc(segClear)}`}
+                stroke-dashoffset={0}
+              />
+            </g>
+          </svg>
+          <div class="blob-ring-center">
+            {ringState === "free" ? (
+              <>
+                <div class="blob-ring-big">{fmtBytes(count)}</div>
+                <div class="blob-ring-cap">可释放</div>
+              </>
+            ) : (
+              <>
+                <div class="blob-ring-check"><Icon name="check" cls="ico" /></div>
+                <div class="blob-ring-cap strong">已是最省</div>
+                <div class="blob-ring-cap">暂无缓存可清</div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div class="blob-anchors">
+        {pending.count > 0 && (
+          <div class="blob-hint warn">
+            {pending.count} 项（约 {fmtBytes(pending.bytes)}）还没上传到云桶，仅存在这台设备上。建议先「立即同步」再清理——清理不会动这些待上传的内容。
+          </div>
+        )}
+
+        <div class="blob-anchor-row">
+          <span class="blob-anchor-ico"><Icon name="lock" cls="ico sm" /></span>
+          <div class="blob-anchor-main">
+            <div class="blob-anchor-name">常驻存储{persisted == null ? "" : persisted ? " · 已开启" : " · 未开启"}</div>
+            <div class="blob-anchor-sub">
+              {persisted
+                ? "系统空间紧张时不会自动清掉本地数据。"
+                : "开启后，系统空间紧张时也不会自动清掉本地数据。"}
+            </div>
+          </div>
+          {persisted !== true && (
+            <button class="btn btn-ghost" disabled={busy || !navigator.storage?.persist} onClick={() => void requestPersist()}>
+              请求常驻
+            </button>
+          )}
+        </div>
+
+        {usage != null && (
+          <div class="blob-foot">
+            此浏览器为本工作区共占用约 {fmtBytes(usage)}（含本地数据库与缓存）。缓存超过 {fmtBytes(BLOB_QUOTA_BYTES)} 时自动清理最久没用、已在云桶的，你固定的不动。
           </div>
         )}
       </div>

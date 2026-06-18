@@ -231,3 +231,34 @@ export async function evictCache(): Promise<void> {
     total -= r.size;
   }
 }
+
+/** Aggregate the bounded byte cache from its LRU index: how many blobs it holds,
+ *  their total bytes, and how many of those bytes are pinned (never evicted). */
+export async function cacheStats(): Promise<{ count: number; totalBytes: number; pinnedBytes: number }> {
+  const rows = (await txn<MetaRow[]>(META, "readonly", (s) => s.getAll())) ?? [];
+  let totalBytes = 0;
+  let pinnedBytes = 0;
+  for (const r of rows) {
+    totalBytes += r.size;
+    if (r.pinned) pinnedBytes += r.size;
+  }
+  return { count: rows.length, totalBytes, pinnedBytes };
+}
+
+/** Evict every unpinned cached blob — bytes re-fetch on demand from the bucket.
+ *  Leaves pinned entries and the pending spool (the only copy of not-yet-uploaded
+ *  bytes) untouched. Returns what was reclaimed. */
+export async function clearCache(): Promise<{ cleared: number; freedBytes: number }> {
+  const rows = (await txn<MetaRow[]>(META, "readonly", (s) => s.getAll())) ?? [];
+  const c = await caches.open(BLOB_CACHE);
+  let cleared = 0;
+  let freedBytes = 0;
+  for (const r of rows) {
+    if (r.pinned) continue;
+    await c.delete(cacheKey(r.hash));
+    await txn(META, "readwrite", (s) => s.delete(r.hash));
+    cleared++;
+    freedBytes += r.size;
+  }
+  return { cleared, freedBytes };
+}
