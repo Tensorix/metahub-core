@@ -1,10 +1,10 @@
 /** @jsxImportSource preact */
-import type { ComponentChildren } from "preact";
+import type { ComponentChild, ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { S3Config } from "../core/sync/storage.ts";
 import { encodeEnroll } from "../core/sync/enroll.ts";
-import { Icon } from "./icons.tsx";
+import { Icon, CUBE_PATH } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { api, currentToken, type Peer, type Grant, type S3Peer, type BlobCacheInfo } from "./api.ts";
 import {
@@ -1708,16 +1708,65 @@ function enrollUrl(shellBase: string, c: S3Config): string {
 
 type AddTab = "phone" | "cli" | "server";
 
-/** Render `data` as an inline QR SVG (white quiet-zone box). */
+/** Render `data` as a polished inline QR: rounded-dot data modules, rounded
+ *  finder eyes, and a centre cube badge. Foreground/background come from CSS
+ *  vars (--qr-fg / --qr-bg on .qr-box) so it adapts to light/dark with zero JS.
+ *  ECC "H" (30% recovery) keeps it scannable despite the centre logo cut-out. */
 function QrSvg({ data }: { data: string }) {
-  const qr = qrcode(0, "M");
+  const qr = qrcode(0, "H");
   qr.addData(data);
   qr.make();
+  const n = qr.getModuleCount();
+  const margin = 2; // quiet zone (modules) — .qr-box padding adds the rest
+  const mid = n / 2;
+  const logo = Math.max(5, Math.floor(n * 0.22)); // centre clear-zone (modules)
+  const half = logo / 2;
+
+  // The three 7×7 finder patterns (corners) get drawn as eyes, not dots.
+  const inFinder = (r: number, c: number) =>
+    (r < 7 && c < 7) || (r < 7 && c >= n - 7) || (r >= n - 7 && c < 7);
+  // Cleared square behind the centre badge.
+  const inLogo = (r: number, c: number) =>
+    Math.abs(r + 0.5 - mid) < half && Math.abs(c + 0.5 - mid) < half;
+
+  const dots: ComponentChild[] = [];
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (!qr.isDark(r, c) || inFinder(r, c) || inLogo(r, c)) continue;
+      dots.push(<circle key={r * n + c} cx={c + 0.5} cy={r + 0.5} r={0.45} fill="var(--qr-fg)" />);
+    }
+  }
+
+  // A finder eye: rounded outer ring (1-module stroke) + rounded inner square.
+  const eye = (fr: number, fc: number) => (
+    <>
+      <rect x={fc + 0.5} y={fr + 0.5} width={6} height={6} rx={2} ry={2} fill="none" stroke="var(--qr-fg)" stroke-width={1} />
+      <rect x={fc + 2} y={fr + 2} width={3} height={3} rx={1} fill="var(--qr-fg)" />
+    </>
+  );
+
+  const badge = logo + 0.6; // bg rect rounds the square hole + covers its edges
+  const s = (logo * 0.62) / 24; // scale the 24-unit cube path to ~62% of clear-zone
+
   return (
-    <div
-      class="qr-box"
-      dangerouslySetInnerHTML={{ __html: qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true }) }}
-    />
+    <div class="qr-box">
+      <svg viewBox={`${-margin} ${-margin} ${n + margin * 2} ${n + margin * 2}`} shape-rendering="geometricPrecision">
+        {dots}
+        {eye(0, 0)}
+        {eye(0, n - 7)}
+        {eye(n - 7, 0)}
+        <rect x={mid - badge / 2} y={mid - badge / 2} width={badge} height={badge} rx={badge * 0.26} ry={badge * 0.26} fill="var(--qr-bg)" />
+        <g
+          transform={`translate(${mid} ${mid}) scale(${s}) translate(-12 -12)`}
+          fill="none"
+          stroke="var(--qr-fg)"
+          stroke-width={1.6}
+          stroke-linejoin="round"
+          stroke-linecap="round"
+          dangerouslySetInnerHTML={{ __html: CUBE_PATH }}
+        />
+      </svg>
+    </div>
   );
 }
 

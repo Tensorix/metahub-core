@@ -2,8 +2,11 @@
 // Lucide-style line icons. One shared <Icon> keeps SVG out of every component
 // and gives consistent stroke/size. `name` indexes PATHS below.
 
+/** The metahub mark (a cube outline). Shared with the QR-code centre badge. */
+export const CUBE_PATH = '<path d="M21 7.5 12 2 3 7.5v9L12 22l9-5.5z"/><path d="m3 7.5 9 5.5 9-5.5M12 22v-9"/>';
+
 const PATHS: Record<string, string> = {
-  cube: '<path d="M21 7.5 12 2 3 7.5v9L12 22l9-5.5z"/><path d="m3 7.5 9 5.5 9-5.5M12 22v-9"/>',
+  cube: CUBE_PATH,
   chevron: '<path d="m9 6 6 6-6 6"/>',
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
   arrowLeft: '<path d="M15 18l-6-6 6-6"/>',
