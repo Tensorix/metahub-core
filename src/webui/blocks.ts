@@ -8,6 +8,9 @@ export type BlockType =
   | "h1"
   | "h2"
   | "h3"
+  | "h4"
+  | "h5"
+  | "h6"
   | "bullet"
   | "numbered"
   | "todo"
@@ -153,10 +156,11 @@ export function genId(): string {
 }
 
 const LIST_TYPES = new Set<BlockType>(["bullet", "numbered", "todo"]);
+const HEADING_TYPES = new Set<BlockType>(["h1", "h2", "h3", "h4", "h5", "h6"]);
 
 const RE = {
   fenceOpen: /^\s*(`{3,}|~{3,})\s*([^\s`]*)?.*$/,
-  h: /^(#{1,3})\s+(.*)$/,
+  h: /^(#{1,6})\s+(.*)$/,
   todo: /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/,
   bullet: /^\s*[-*+]\s+(.*)$/,
   numbered: /^\s*(\d+)[.)]\s+(.*)$/,
@@ -187,6 +191,10 @@ interface Shortcut {
 
 export function isListType(type: BlockType): boolean {
   return LIST_TYPES.has(type);
+}
+
+export function isHeadingType(type: BlockType): boolean {
+  return HEADING_TYPES.has(type);
 }
 
 // Starter table for slash-insert / block conversion: header row + 1 body row,
@@ -408,9 +416,8 @@ function serializeContainer(blocks: readonly Block[], indent: number, isTop: boo
 
 export function shortcutFromInput(text: string, key: " " | "Enter"): Shortcut | null {
   if (key === " ") {
-    if (text === "# ") return { type: "h1", content: "" };
-    if (text === "## ") return { type: "h2", content: "" };
-    if (text === "### ") return { type: "h3", content: "" };
+    const heading = text.match(/^(#{1,6}) $/);
+    if (heading) return { type: `h${heading[1]!.length}` as BlockType, content: "" };
     if (text === "> ") return { type: "quote", content: "" };
     if (/^[-*+] $/.test(text)) return { type: "bullet", content: "" };
     const numbered = text.match(/^(\d+)[.)] $/);
@@ -742,13 +749,9 @@ function matchListLine(line: string, minIndent: number): ListLine | null {
 
 function renderBlock(block: Block, indent: number, number: number): string[] {
   const pad = " ".repeat(indent);
+  if (isHeadingType(block.type))
+    return [`${pad}${"#".repeat(Number(block.type.slice(1)))} ${block.content}`];
   switch (block.type) {
-    case "h1":
-      return [`${pad}# ${block.content}`];
-    case "h2":
-      return [`${pad}## ${block.content}`];
-    case "h3":
-      return [`${pad}### ${block.content}`];
     case "bullet":
     case "numbered":
     case "todo":

@@ -477,6 +477,9 @@
   .toc-row.lvl-1 .toc-tick { width:16px; }
   .toc-row.lvl-2 .toc-tick { width:11px; }
   .toc-row.lvl-3 .toc-tick { width:7px; }
+  .toc-row.lvl-4 .toc-tick { width:5px; }
+  .toc-row.lvl-5 .toc-tick { width:4px; }
+  .toc-row.lvl-6 .toc-tick { width:3px; }
   .toc-row.active .toc-tick { background:var(--accent); }
   .doc-toc:hover .toc-tick { width:0; margin:0; }
   /* expanded: labels, indented by level; hidden until hover */
@@ -485,6 +488,9 @@
   .doc-toc:hover .toc-label { opacity:1; }
   .toc-row.lvl-2 .toc-label { padding-left:12px; font-size:var(--fs-sm); }
   .toc-row.lvl-3 .toc-label { padding-left:24px; font-size:var(--fs-sm); color:var(--fg-soft); }
+  .toc-row.lvl-4 .toc-label { padding-left:36px; font-size:var(--fs-sm); color:var(--fg-soft); }
+  .toc-row.lvl-5 .toc-label { padding-left:48px; font-size:var(--fs-sm); color:var(--fg-soft); }
+  .toc-row.lvl-6 .toc-label { padding-left:60px; font-size:var(--fs-sm); color:var(--fg-soft); }
   .toc-row.active .toc-label { color:var(--accent); font-weight:550; }
   /* not enough room for the gutter → hide entirely (also covers mobile) */
   @media (max-width:1100px) { .doc-toc { display:none; } }
@@ -523,7 +529,11 @@
   .b-h1 .editable { font-size:28px; font-weight:700; letter-spacing:-.02em; padding-top:12px; }
   .b-h2 .editable { font-size:22px; font-weight:650; letter-spacing:-.01em; padding-top:8px; }
   .b-h3 .editable { font-size:18px; font-weight:600; padding-top:4px; }
+  .b-h4 .editable { font-size:16px; font-weight:600; padding-top:2px; }
+  .b-h5 .editable { font-size:14px; font-weight:600; }
+  .b-h6 .editable { font-size:13px; font-weight:600; color:var(--fg-soft); }
   .b-h1 .gutter { top:22px; } .b-h2 .gutter { top:14px; } .b-h3 .gutter { top:7px; }
+  .b-h4 .gutter { top:4px; } .b-h5 .gutter { top:3px; } .b-h6 .gutter { top:2px; }
   .b-quote .editable { border-left:3px solid var(--line-strong); padding:1px 0 1px 16px; color:var(--fg-soft); font-style:italic; }
 
   /* code block: transparent textarea over a highlight.js mirror */

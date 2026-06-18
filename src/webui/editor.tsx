@@ -19,6 +19,7 @@ import {
   bulletTodoShortcut,
   computeListNumbers,
   isBlankSpacer,
+  isHeadingType,
   isListType,
   isUploadType,
   makeBlock,
@@ -97,7 +98,7 @@ function stripInline(s: string): string {
  *  its `key`, so edits to headings flow through automatically. */
 function DocToc({ blocks }: { blocks: Block[] }) {
   const headings = flattenBlocks(blocks)
-    .filter((b) => b.type === "h1" || b.type === "h2" || b.type === "h3")
+    .filter((b) => isHeadingType(b.type))
     .map((b) => ({ id: b.id, level: Number(b.type.slice(1)), text: stripInline(b.content) || "无标题" }));
   const [activeId, setActiveId] = useState<string | null>(null);
   const ids = headings.map((h) => h.id).join("|");
@@ -1064,15 +1065,22 @@ export function DocView({
         if (next) { e.preventDefault(); focusBlock(next.id); return; }
       }
     }
-    if (e.key === " " && !hasExpandedSelection() && (b.type === "p" || b.type === "bullet")) {
+    if (
+      e.key === " " &&
+      !hasExpandedSelection() &&
+      (b.type === "p" || isHeadingType(b.type) || b.type === "bullet")
+    ) {
       // Match the marker against the text *before* the caret, not the whole line,
       // so a prefix typed at the start of a paragraph that already has content
       // ("1. " before "hello") still promotes the block — keeping the trailing
       // text as the new content.
       const { before, after } = splitEditableAtCaret(el);
-      if (b.type === "p") {
+      if (b.type === "p" || isHeadingType(b.type)) {
         const shortcut = shortcutFromInput(before + " ", " ");
-        if (shortcut) {
+        // Paragraphs accept any marker; an existing heading only responds to a
+        // heading marker (#/##/…) so typing "- " or "> " at its start won't
+        // demote it into a list/quote — it just switches the heading level.
+        if (shortcut && (b.type === "p" || isHeadingType(shortcut.type))) {
           e.preventDefault();
           applyShortcut(b, { ...shortcut, content: after });
           return;

@@ -37,6 +37,11 @@ test("textToBlock recognises each block type", () => {
   expect(textToBlock("# Title").type).toBe("h1");
   expect(textToBlock("## Title").type).toBe("h2");
   expect(textToBlock("### Title").type).toBe("h3");
+  expect(textToBlock("#### Title").type).toBe("h4");
+  expect(textToBlock("##### Title").type).toBe("h5");
+  expect(textToBlock("###### Title").type).toBe("h6");
+  // 7+ hashes is not a heading (CommonMark caps at 6)
+  expect(textToBlock("####### Title").type).toBe("p");
   expect(textToBlock("- item")).toMatchObject({ type: "bullet", content: "item" });
   expect(textToBlock("1. item")).toMatchObject({ type: "numbered", content: "item" });
   expect(textToBlock("- [x] done")).toMatchObject({ type: "todo", content: "done", checked: true });
@@ -377,7 +382,17 @@ test("typing shortcuts recognise markdown prefixes", () => {
   expect(shortcutFromInput("- [ ] ", " ")).toMatchObject({ type: "todo", checked: false });
   expect(shortcutFromInput("- [x] ", " ")).toMatchObject({ type: "todo", checked: true });
   expect(shortcutFromInput("## ", " ")).toMatchObject({ type: "h2", content: "" });
+  expect(shortcutFromInput("#### ", " ")).toMatchObject({ type: "h4", content: "" });
+  expect(shortcutFromInput("###### ", " ")).toMatchObject({ type: "h6", content: "" });
+  expect(shortcutFromInput("####### ", " ")).toBeNull(); // 7 hashes is not a heading
   expect(shortcutFromInput("```python", "Enter")).toMatchObject({ type: "code", lang: "python" });
+});
+
+test("h4-h6 headings round-trip through Markdown losslessly", () => {
+  const md = "#### four\n\n##### five\n\n###### six";
+  const blocks = blocksFromBody(md);
+  expect(blocks.map((b) => b.type)).toEqual(["h4", "h5", "h6"]);
+  expect(bodyFromBlocks(blocks)).toBe(md);
 });
 
 test("a bullet promotes to a todo when its '[ ]'/'[x]' prefix completes", () => {
