@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { errorResponse, type Route, type RouteCtx } from "./routes.ts";
 import { MhError } from "../errors.ts";
-import { putBlob, getBlob } from "../cache.ts";
-import { recordBlob, touchBlob, resolveBlob, blobContentType, cachedBlobs, reconcileCache } from "../blobs.ts";
+import { putBlob, getBlob, blobExists } from "../cache.ts";
+import { recordBlob, touchBlob, resolveBlob, blobContentType } from "../blobs.ts";
 import { inferContentType } from "../sites-core.ts";
 
 // Content-addressed blob byte transport (document images / large files). The
@@ -80,13 +80,19 @@ export const blobRoutes: Route[] = [
       "Authorized like /blob/ byte transport (master token or per-peer grant).",
     request: BlobHasReq,
     response: BlobHasRes,
-    handler: async (req, { db }) => {
+    handler: async (req, _ctx) => {
       try {
         const body = (await req.json()) as { hashes?: unknown };
-        const want = Array.isArray(body.hashes) ? body.hashes.filter((h) => typeof h === "string") : [];
-        reconcileCache(db); // disk is the truth — drop rows whose bytes are gone
-        const held = new Set(cachedBlobs(db).map((b) => b.hash));
-        return Response.json({ has: want.filter((h) => held.has(h as string)) });
+        const want = (
+          Array.isArray(body.hashes) ? body.hashes.filter((h) => typeof h === "string") : []
+        ) as string[];
+        // Disk is the truth: check each requested hash's bytes actually exist on
+        // disk rather than trusting the ledger (which only grows — a row can
+        // outlive its file after a crash, compaction GC, or manual cache wipe).
+        // A peer drops its own last copy based on this answer, so a false "yes"
+        // risks total loss.
+        const present = await Promise.all(want.map((h) => blobExists(h)));
+        return Response.json({ has: want.filter((_h, i) => present[i]) });
       } catch (err) {
         return errorResponse(err);
       }

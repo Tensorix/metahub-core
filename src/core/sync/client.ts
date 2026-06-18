@@ -26,6 +26,11 @@ function setPeer(db: DbDriver, url: string, c: { pull_cursor: number; push_curso
 export interface SyncResult {
   pushed: number;
   pulled: number;
+  /** Response page size (changes the peer returned this round), independent of
+   *  how many were new to our oplog. Pagination must break on this, NOT on
+   *  `pulled`: a page of all-known changes ingests 0 but may not be the last
+   *  page (e.g. after a cursor reset re-pulls data we already hold). */
+  received?: number;
   /** Storage-sync only: local own ops exist but were deferred by push batching. */
   pendingPush?: boolean;
 }
@@ -77,11 +82,13 @@ export async function syncWithPeer(
     );
 
   const data = (await res.json()) as SyncResponse;
+  const changes = data.changes ?? [];
   // `pulled` = changes new to our oplog (ingest's return), not the response size,
   // so re-pulled-but-known data doesn't read as activity (consistent with the
-  // storage path; keeps the auto-sync backoff honest).
-  const pulled = ingest(db, data.changes ?? []);
+  // storage path; keeps the auto-sync backoff honest). `received` carries the
+  // response page size separately so paginated hydration can break on it.
+  const pulled = ingest(db, changes);
   setPeer(db, url, { pull_cursor: data.cursor, push_cursor: toPush.cursor });
 
-  return { pushed: toPush.changes.length, pulled };
+  return { pushed: toPush.changes.length, pulled, received: changes.length };
 }

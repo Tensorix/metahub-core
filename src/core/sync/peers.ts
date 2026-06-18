@@ -126,8 +126,25 @@ function restorePeerRow(db: DbDriver, row: PeerRow): void {
   );
 }
 
-/** Synthetic peer key for a storage peer: one per bucket+prefix. */
-export const storageUrl = (bucket: string, prefix: string) => `s3://${bucket}/${prefix}`;
+/**
+ * Synthetic peer key for a storage peer: one per endpoint+bucket+prefix. The
+ * endpoint host is part of the identity because bucket names are only unique
+ * within a single S3-compatible endpoint (R2/MinIO/COS each have their own
+ * namespace) — without it, the same bucket+prefix on a second endpoint would
+ * collide with (and silently overwrite, keeping the stale cursor) the first.
+ */
+export const storageUrl = (endpoint: string, bucket: string, prefix: string) =>
+  `s3://${storageEndpointHost(endpoint)}/${bucket}/${prefix}`;
+
+/** Stable host[:port] component of an S3 endpoint for the peer key. Falls back to
+ *  the trimmed raw string if it isn't a parseable URL (kept deterministic). */
+export function storageEndpointHost(endpoint: string): string {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return endpoint.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  }
+}
 
 export interface StoragePeerSpec {
   endpoint: string;
@@ -179,7 +196,7 @@ export async function addAndSyncStoragePeer(
     config.masterKey =
       (await provisionMasterKey(storageClientFor(config), config, spec.passphrase)) ?? undefined;
   }
-  const url = storageUrl(config.bucket, prefix);
+  const url = storageUrl(config.endpoint, config.bucket, prefix);
   await waitForPeerIdle(db, url);
   const previous = getPeer(db, url);
   addStoragePeer(db, { url, config, label: spec.label ?? config.bucket });

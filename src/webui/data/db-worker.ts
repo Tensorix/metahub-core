@@ -374,7 +374,10 @@ async function runSync(force = false): Promise<SyncOutcome> {
           const r = await syncWithPeer(d, origin, { pullLimit: PULL_LIMIT });
           pushed += r.pushed;
           pulled += r.pulled;
-          if (r.pulled < PULL_LIMIT) break;
+          // Break on the response page size, not the newly-ingested count: a page
+          // of all-known changes ingests 0 but isn't necessarily the last page
+          // (e.g. after a seq-migration cursor reset re-pulls data we already hold).
+          if ((r.received ?? r.pulled) < PULL_LIMIT) break;
           setStatus({ state: "hydrating", hydrated: pulled });
         }
         originOk = true;
@@ -408,10 +411,13 @@ async function runSync(force = false): Promise<SyncOutcome> {
       }
     }
 
-    // No-origin (bucket-only) replica: also push offline-composed blob bytes to
-    // the bucket so other devices can fetch them (an origin-backed replica drains
-    // to its server from the page instead).
-    if (getPeer(d, origin)?.token == null && hasBuckets) await drainSpoolToBuckets(d);
+    // When this round's origin push didn't happen — no origin configured, OR an
+    // origin is configured but was unreachable — drain offline-composed blob bytes
+    // to the bucket so other devices that pulled the doc from the bucket can fetch
+    // them. (A reachable origin drains spool to its server from the page instead,
+    // so gating on `originOk` rather than "origin unconfigured" also covers the
+    // configured-but-offline case where doc changes still reached the bucket.)
+    if (!originOk && hasBuckets) await drainSpoolToBuckets(d);
 
     const bucketDirty = hasBuckets ? hasPendingBucketPush(d) : false;
     if (bucketDirty && bucketErrors.length === 0) scheduleBucketFlush();

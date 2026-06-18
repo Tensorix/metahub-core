@@ -26,6 +26,30 @@ export interface AuthConfig {
 }
 
 const COOKIE = "mh_token";
+/** Shared cookie attributes for the token cookie (server Set-Cookie and the
+ *  unlock page's client-side write must stay identical). */
+const COOKIE_ATTRS = "path=/; SameSite=Strict; Max-Age=31536000";
+
+/** The `Set-Cookie` value that persists `token` as the browser's mh_token. */
+function tokenCookie(token: string): string {
+  return `${COOKIE}=${encodeURIComponent(token)}; ${COOKIE_ATTRS}`;
+}
+
+/**
+ * When a request authenticated via a `?token=` query param and carries no cookie
+ * yet, return the `Set-Cookie` to persist it; otherwise null. A `/?token=...`
+ * link (QR / "copy login link") authorizes only that one navigation — without
+ * this, the browser's follow-up /webui.css, /webui.js etc. carry no credential
+ * and 401, serving a broken page. Setting the cookie on the HTML response lets
+ * those same-origin sub-requests ride it automatically.
+ */
+export function queryTokenCookie(req: Request, url: URL, cfg: AuthConfig): string | null {
+  const cur = activeToken(cfg);
+  if (!cur) return null; // auth off — nothing to persist
+  if (cookieToken(req) != null) return null; // already has a cookie session
+  const q = url.searchParams.get("token");
+  return q && q === cur.token ? tokenCookie(cur.token) : null;
+}
 
 function cookieToken(req: Request): string | null {
   const header = req.headers.get("cookie");
@@ -132,7 +156,7 @@ export function unlockPage(): string {
   var KEY = "mh_token";
   function save(t) {
     localStorage.setItem(KEY, t);
-    document.cookie = "${COOKIE}=" + encodeURIComponent(t) + "; path=/; SameSite=Strict; Max-Age=31536000";
+    document.cookie = "${COOKIE}=" + encodeURIComponent(t) + "; ${COOKIE_ATTRS}";
   }
   function showForm() {
     document.getElementById("f").style.display = "block";
@@ -180,12 +204,25 @@ export function injectShim(html: string): string {
 
 /** Inject the page runtime into HTML responses. Unconditional (unlike the old
  *  token-only shim): the offline bridge matters even in --debug mode where
- *  auth is off — the token half simply no-ops without a stored token. */
-export async function withShim(res: Response, _cfg: AuthConfig): Promise<Response> {
+ *  auth is off — the token half simply no-ops without a stored token.
+ *
+ *  When `req`/`url` are supplied and the navigation authenticated via a `?token=`
+ *  query param, persist that token as the mh_token cookie on this HTML response
+ *  so the browser's follow-up asset requests (/webui.css, /webui.js) carry it. */
+export async function withShim(
+  res: Response,
+  cfg: AuthConfig,
+  req?: Request,
+  url?: URL,
+): Promise<Response> {
   const ct = res.headers.get("content-type") ?? "";
   if (!ct.includes("text/html")) return res;
   const html = injectShim(await res.text());
   const headers = new Headers(res.headers);
+  if (req && url) {
+    const cookie = queryTokenCookie(req, url, cfg);
+    if (cookie) headers.append("set-cookie", cookie);
+  }
   return new Response(html, { status: res.status, headers });
 }
 

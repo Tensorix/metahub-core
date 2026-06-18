@@ -1,5 +1,5 @@
 import type { DbDriver } from "./driver.ts";
-import { putBlob, getBlob } from "./cache.ts";
+import { putBlob } from "./cache.ts";
 import { MhError } from "./errors.ts";
 import {
   type SiteFileRow,
@@ -13,7 +13,8 @@ import {
   putFileInline,
   getFileRow,
 } from "./sites-core.ts";
-import { recordBlob, touchBlob } from "./blobs-core.ts";
+import { recordBlob } from "./blobs-core.ts";
+import { resolveBlob } from "./blobs.ts";
 
 // A "site" is a named bucket of files (Supabase-Storage-style) served at
 // /sites/<name>/. Everything is written through emit() so sites replicate over
@@ -67,8 +68,11 @@ export async function getFileForServe(
   if (row.encoding === "utf8") bytes = new TextEncoder().encode(content);
   else if (row.encoding === "base64") bytes = new Uint8Array(Buffer.from(content, "base64"));
   else {
-    bytes = await getBlob(content); // blob hash
-    if (bytes) touchBlob(db, content); // LRU signal for cache stats/clearing
+    // blob hash — resolve on demand (local cache → HTTP peer → bucket) so a
+    // published asset whose local bytes were cache-evicted still serves from a
+    // bucket/peer instead of 404ing, consistent with /blob. resolveBlob touches
+    // the LRU on a local hit and caches any remote fetch.
+    bytes = await resolveBlob(db, content);
   }
   if (!bytes) return null;
 

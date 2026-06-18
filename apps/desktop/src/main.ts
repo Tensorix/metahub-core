@@ -488,7 +488,9 @@ function registerIpc(): void {
       if (pct === lastPct && now - lastAt < 100) return;
       lastPct = pct;
       lastAt = now;
-      e.sender.send("core:download-progress", { received, total });
+      // Best-effort: the window may be gone before the ~64 MB stream finishes;
+      // sending to a destroyed WebContents must not throw into the download.
+      if (!e.sender.isDestroyed()) e.sender.send("core:download-progress", { received, total });
     });
   });
   ipcMain.handle("core:restart", () => {

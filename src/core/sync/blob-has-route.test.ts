@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { initSchema } from "../schema-init.ts";
-import { putBlob } from "../cache.ts";
+import { putBlob, deleteBlob } from "../cache.ts";
 import { recordBlob } from "../blobs-core.ts";
 import { routes, type Route, type RouteCtx } from "./routes.ts";
 
@@ -48,6 +48,25 @@ test("POST /api/blobs/has returns only the candidate hashes this node holds", as
   const data = (await res.json()) as { has: string[] };
   expect(new Set(data.has)).toEqual(new Set([a.hash, b.hash]));
   expect(data.has).not.toContain(absent);
+});
+
+test("POST /api/blobs/has does NOT claim a blob whose ledger row outlived its bytes", async () => {
+  // Regression: the ledger only grows, so a row can survive its file after a
+  // crash / compaction GC / manual cache wipe. Answering from the ledger would
+  // tell a peer "I hold it" and let it drop its own last copy → total loss.
+  const db = makeNode("anchor");
+  const a = await putBlob("vanishing-blob");
+  recordBlob(db, a.hash, a.size, "image/png", 0);
+  await deleteBlob(a.hash); // bytes gone from disk, ledger row remains
+
+  const ctx: RouteCtx = { db, node: "anchor" };
+  const req = new Request("http://x/api/blobs/has", {
+    method: "POST",
+    body: JSON.stringify({ hashes: [a.hash] }),
+  });
+  const res = await hasRoute.handler(req, ctx);
+  const data = (await res.json()) as { has: string[] };
+  expect(data.has).toEqual([]);
 });
 
 test("POST /api/blobs/has tolerates a missing/empty hash list", async () => {

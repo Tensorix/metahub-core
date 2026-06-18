@@ -190,13 +190,13 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
         return Response.json(buildOpenApi(pkg.version, allRoutes));
       }
       if (req.method === "GET" && url.pathname === "/docs") {
-        return withShim(new Response(scalarHtml("/docs.json"), { headers: HTML_HEADERS }), auth);
+        return withShim(new Response(scalarHtml("/docs.json"), { headers: HTML_HEADERS }), auth, req, url);
       }
 
       // Injected browser UI assets (core itself ships no UI).
       if (req.method === "GET" && opts.ui) {
         const res = await opts.ui.serveAssets(req);
-        if (res) return withShim(res, auth);
+        if (res) return withShim(res, auth, req, url);
       }
 
       // Agent-published static sites at /sites/<name>/<path...>. Lazy-imported
@@ -204,7 +204,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       if (req.method === "GET" && url.pathname.startsWith("/sites/")) {
         const { serveSite } = await import("./sites-serve.ts");
         const res = await serveSite(req, ctx);
-        if (res) return withShim(res, auth);
+        if (res) return withShim(res, auth, req, url);
       }
 
       // Content-addressed blob bytes at /blob/<hash>[.ext] (document images /

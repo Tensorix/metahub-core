@@ -1,6 +1,12 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { runSchema, migratePeers, migrateCrdtChangesSeq } from "./schema-init.ts";
+import {
+  runSchema,
+  migratePeers,
+  migrateCrdtChangesSeq,
+  migrateStoragePeerUrls,
+} from "./schema-init.ts";
+import { readPolicy, setFullNodes } from "./blobs-core.ts";
 
 function hasCol(db: Database, table: string, col: string): boolean {
   return (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(
@@ -115,6 +121,59 @@ test("migrateCrdtChangesSeq rebuilds a legacy oplog with a stable AUTOINCREMENT 
   };
   expect(p.pull_cursor).toBe(0);
   expect(p.push_cursor).toBe(0);
+});
+
+test("migrateStoragePeerUrls folds the endpoint into the peer key across all references", () => {
+  const db = new Database(":memory:");
+  runSchema(db);
+  db.query("INSERT INTO meta (key, value) VALUES ('node_id', 'self')").run();
+
+  const oldUrl = "s3://backups/metahub"; // legacy bucket+prefix key
+  const config = JSON.stringify({
+    endpoint: "https://s3.us-east-1.amazonaws.com",
+    bucket: "backups",
+    prefix: "metahub",
+  });
+  db.query("INSERT INTO peers (url, kind, config, enabled, pull_cursor, push_cursor) VALUES (?, 's3', ?, 1, 0, 0)").run(oldUrl, config);
+  db.query("INSERT INTO storage_cursors (peer_url, node_id, last_key) VALUES (?, 'peerNode', 'k')").run(oldUrl);
+  setFullNodes(db, [oldUrl]); // bucket designated as a full-blob anchor
+
+  migrateStoragePeerUrls(db);
+
+  const newUrl = "s3://s3.us-east-1.amazonaws.com/backups/metahub";
+  expect(db.query("SELECT url FROM peers WHERE kind='s3'").get()).toEqual({ url: newUrl });
+  expect(
+    db.query("SELECT peer_url FROM storage_cursors").get(),
+  ).toEqual({ peer_url: newUrl });
+  expect(readPolicy(db).fullNodes).toEqual([newUrl]);
+});
+
+test("migrateStoragePeerUrls is idempotent and lets same-bucket endpoints coexist", () => {
+  const db = new Database(":memory:");
+  runSchema(db);
+  db.query("INSERT INTO meta (key, value) VALUES ('node_id', 'self')").run();
+
+  // Same bucket+prefix on two different endpoints — used to collide on one key.
+  db.query("INSERT INTO peers (url, kind, config, enabled, pull_cursor, push_cursor) VALUES (?, 's3', ?, 1, 0, 0)").run(
+    "s3://shared/data",
+    JSON.stringify({ endpoint: "https://a.r2.example.com", bucket: "shared", prefix: "data" }),
+  );
+
+  migrateStoragePeerUrls(db);
+  const first = db.query("SELECT url FROM peers").get() as { url: string };
+  expect(first.url).toBe("s3://a.r2.example.com/shared/data");
+
+  // A second endpoint's same-named bucket now gets its own distinct key.
+  db.query("INSERT INTO peers (url, kind, config, enabled, pull_cursor, push_cursor) VALUES (?, 's3', ?, 1, 0, 0)").run(
+    "s3://b.minio.example.com/shared/data",
+    JSON.stringify({ endpoint: "https://b.minio.example.com", bucket: "shared", prefix: "data" }),
+  );
+  migrateStoragePeerUrls(db); // re-run: no-op for both (already endpoint-qualified)
+
+  const urls = (db.query("SELECT url FROM peers ORDER BY url").all() as { url: string }[]).map(
+    (r) => r.url,
+  );
+  expect(urls).toEqual(["s3://a.r2.example.com/shared/data", "s3://b.minio.example.com/shared/data"]);
 });
 
 test("migrateCrdtChangesSeq is idempotent on the current schema", () => {

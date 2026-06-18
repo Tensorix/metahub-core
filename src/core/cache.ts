@@ -54,6 +54,14 @@ export async function getBlob(hash: string): Promise<Uint8Array | null> {
   return new Uint8Array(await file.arrayBuffer());
 }
 
+/** Whether this node currently holds a blob's bytes on disk — a cheap existence
+ *  check (no read). Use over the ledger when correctness depends on the bytes
+ *  actually being present (e.g. answering a peer's "do you hold X" before it
+ *  drops its own copy), since the ledger can lag a vanished file. */
+export function blobExists(hash: string): Promise<boolean> {
+  return Bun.file(blobPath(hash)).exists();
+}
+
 /** Store bytes under a GIVEN content hash (not recomputed) — for caching a blob
  *  fetched from a peer/bucket by its reference, which may be a legacy 64-hex hash
  *  that putBlob's truncation would not reproduce. Returns the byte length. */

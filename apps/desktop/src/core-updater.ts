@@ -240,7 +240,14 @@ async function downloadAndStage(
         if (done) break;
         chunks.push(value);
         received += value.length;
-        onProgress?.(received, total);
+        // Progress reporting is best-effort — a failing reporter (e.g. IPC to a
+        // closed window) must never abort an otherwise-valid download and trip
+        // the finally that wipes the staging dir.
+        try {
+          onProgress?.(received, total);
+        } catch {
+          // ignore — keep downloading
+        }
       }
       bytes = Buffer.concat(chunks);
     } else {
