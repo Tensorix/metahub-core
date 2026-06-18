@@ -30,9 +30,11 @@ const COOKIE = "mh_token";
  *  unlock page's client-side write must stay identical). */
 const COOKIE_ATTRS = "path=/; SameSite=Strict; Max-Age=31536000";
 
-/** The `Set-Cookie` value that persists `token` as the browser's mh_token. */
-function tokenCookie(token: string): string {
-  return `${COOKIE}=${encodeURIComponent(token)}; ${COOKIE_ATTRS}`;
+/** The `Set-Cookie` value that persists `token` as the browser's mh_token. Adds
+ *  `Secure` over TLS so a cookie carrying the master credential can't leak over an
+ *  accidental plaintext same-host request. */
+function tokenCookie(token: string, secure: boolean): string {
+  return `${COOKIE}=${encodeURIComponent(token)}; ${COOKIE_ATTRS}${secure ? "; Secure" : ""}`;
 }
 
 /**
@@ -48,7 +50,7 @@ export function queryTokenCookie(req: Request, url: URL, cfg: AuthConfig): strin
   if (!cur) return null; // auth off — nothing to persist
   if (cookieToken(req) != null) return null; // already has a cookie session
   const q = url.searchParams.get("token");
-  return q && q === cur.token ? tokenCookie(cur.token) : null;
+  return q && q === cur.token ? tokenCookie(cur.token, url.protocol === "https:") : null;
 }
 
 function cookieToken(req: Request): string | null {
@@ -156,7 +158,8 @@ export function unlockPage(): string {
   var KEY = "mh_token";
   function save(t) {
     localStorage.setItem(KEY, t);
-    document.cookie = "${COOKIE}=" + encodeURIComponent(t) + "; ${COOKIE_ATTRS}";
+    document.cookie = "${COOKIE}=" + encodeURIComponent(t) + "; ${COOKIE_ATTRS}" +
+      (location.protocol === "https:" ? "; Secure" : "");
   }
   function showForm() {
     document.getElementById("f").style.display = "block";

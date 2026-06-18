@@ -8,6 +8,7 @@ import { CORE_SCHEMA, FTS_SCHEMA } from "./schema.ts";
 import { backfillRecordOrderKeys } from "./records.ts";
 import { backfillDocumentOrderKeys } from "./documents.ts";
 import { readPolicy, setFullNodes } from "./blobs-core.ts";
+import { storageUrl } from "./sync/storage-url.ts";
 
 export function runSchema(db: DbDriver): void {
   db.exec(CORE_SCHEMA);
@@ -198,18 +199,6 @@ export function migrateCrdtChangesSeq(db: DbDriver): void {
   tx();
 }
 
-/** Host[:port] of an S3 endpoint, for folding into the storage peer key.
- *  Inlined (not imported from sync/peers.ts) so this stays runtime-agnostic —
- *  sync/peers.ts pulls in the Bun-only storage client, but initSchema also runs
- *  in the browser worker. Must match peers.ts `storageEndpointHost`. */
-function storageEndpointHost(endpoint: string): string {
-  try {
-    return new URL(endpoint).host;
-  } catch {
-    return endpoint.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  }
-}
-
 /**
  * Migrate legacy storage-peer keys `s3://<bucket>/<prefix>` to the
  * endpoint-qualified `s3://<host>/<bucket>/<prefix>` so two endpoints sharing a
@@ -218,8 +207,22 @@ function storageEndpointHost(endpoint: string): string {
  * places the key is referenced — the peers row, its storage_cursors, and any
  * blob_policy.fullNodes anchor pointing at the bucket.
  *
+ * Key derivation goes through the shared `storageUrl` (storage-url.ts) so every
+ * producer — CLI/server, the WebUI worker, and this migration — agrees byte for
+ * byte; otherwise a producer still minting the legacy shape turns the rename into
+ * a permanent whack-a-mole.
+ *
  * Idempotent — a row already at its endpoint-qualified key produces no rename.
  * Keyed off config.endpoint (authoritative), so re-running is a no-op.
+ *
+ * Cross-version note: rewriting blob_policy.fullNodes is a CRDT write, so it
+ * replicates. A device still on the old code keeps a legacy-format storage peer
+ * and matches anchors by exact string, so it won't recognize the new-format
+ * anchor until it upgrades — during that window a bucket-anchored device pauses
+ * cache eviction (loss-free: bytes stay, nothing is dropped) and self-heals once
+ * the fleet is upgraded. Only affects setups that designate a bucket as a
+ * full-blob anchor. (Accepted over a tolerant-matcher rewrite, which is wider and
+ * still can't fix already-shipped old clients.)
  */
 export function migrateStoragePeerUrls(db: DbDriver): void {
   if (!tableExists(db, "peers")) return;
@@ -229,6 +232,7 @@ export function migrateStoragePeerUrls(db: DbDriver): void {
   if (rows.length === 0) return;
 
   const renames: { oldUrl: string; newUrl: string }[] = [];
+  const claimed = new Set<string>(); // newUrls taken this batch — avoid two→one
   for (const r of rows) {
     let cfg: { endpoint?: string; bucket?: string; prefix?: string };
     try {
@@ -237,11 +241,24 @@ export function migrateStoragePeerUrls(db: DbDriver): void {
       continue; // malformed config — leave the row untouched
     }
     if (!cfg.endpoint || !cfg.bucket || !cfg.prefix) continue;
-    const newUrl = `s3://${storageEndpointHost(cfg.endpoint)}/${cfg.bucket}/${cfg.prefix}`;
-    if (newUrl === r.url) continue; // already endpoint-qualified
-    // Don't clobber an existing row already at the target key (would violate the
-    // PK / merge two peers); skip and leave the legacy row as-is.
-    if (db.query("SELECT 1 FROM peers WHERE url = ?").get(newUrl)) continue;
+    const newUrl = storageUrl(cfg.endpoint, cfg.bucket, cfg.prefix);
+    if (newUrl === r.url) {
+      claimed.add(newUrl); // already canonical — reserve so nothing renames onto it
+      continue;
+    }
+    // Skip if the target key is already occupied — by an existing peers row, an
+    // existing storage_cursors row (composite PK would throw), or another row in
+    // this same batch. A throwing migration would make the DB fail to open; the
+    // legacy row is left as-is instead (collisions are vanishingly rare).
+    if (
+      claimed.has(newUrl) ||
+      db.query("SELECT 1 FROM peers WHERE url = ?").get(newUrl) ||
+      (tableExists(db, "storage_cursors") &&
+        db.query("SELECT 1 FROM storage_cursors WHERE peer_url = ?").get(newUrl))
+    ) {
+      continue;
+    }
+    claimed.add(newUrl);
     renames.push({ oldUrl: r.url, newUrl });
   }
   if (renames.length === 0) return;
@@ -253,7 +270,8 @@ export function migrateStoragePeerUrls(db: DbDriver): void {
         db.query("UPDATE storage_cursors SET peer_url = ? WHERE peer_url = ?").run(newUrl, oldUrl);
       db.query("UPDATE peers SET url = ? WHERE url = ?").run(newUrl, oldUrl);
     }
-    // Rewrite synced anchor references (CRDT-backed, so this replicates).
+    // Rewrite synced anchor references (CRDT-backed, so this replicates). See the
+    // cross-version note above.
     if (tableExists(db, "blob_policy")) {
       const fullNodes = readPolicy(db).fullNodes;
       if (fullNodes.some((n) => map.has(n)))

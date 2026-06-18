@@ -69,6 +69,38 @@ test("POST /api/blobs/has does NOT claim a blob whose ledger row outlived its by
   expect(data.has).toEqual([]);
 });
 
+test("POST /api/blobs/has ignores non-hash entries (no path-traversal existence oracle)", async () => {
+  // `want` flows into blobExists → blobPath → join(cacheDir, h); an unchecked
+  // "../" would probe arbitrary filesystem paths. They must be filtered out before
+  // touching disk.
+  const db = makeNode("anchor");
+  const a = await putBlob("real-blob");
+  recordBlob(db, a.hash, a.size, "image/png", 0);
+
+  const ctx: RouteCtx = { db, node: "anchor" };
+  const req = new Request("http://x/api/blobs/has", {
+    method: "POST",
+    body: JSON.stringify({ hashes: [a.hash, "../../../../etc/passwd", "Robots.txt", "NOTAHASH"] }),
+  });
+  const res = await hasRoute.handler(req, ctx);
+  const data = (await res.json()) as { has: string[] };
+  expect(data.has).toEqual([a.hash]); // only the valid hash, traversal strings dropped
+});
+
+test("POST /api/blobs/has caps the candidate list (no unbounded fan-out)", async () => {
+  const db = makeNode("anchor");
+  const ctx: RouteCtx = { db, node: "anchor" };
+  // 5000 well-formed but absent hashes — must not error or stat all of them.
+  const hashes = Array.from({ length: 5000 }, (_, i) => i.toString(16).padStart(32, "0"));
+  const req = new Request("http://x/api/blobs/has", {
+    method: "POST",
+    body: JSON.stringify({ hashes }),
+  });
+  const res = await hasRoute.handler(req, ctx);
+  const data = (await res.json()) as { has: string[] };
+  expect(data.has).toEqual([]); // none present; request handled without error
+});
+
 test("POST /api/blobs/has tolerates a missing/empty hash list", async () => {
   const db = makeNode("anchor");
   const ctx: RouteCtx = { db, node: "anchor" };

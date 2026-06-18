@@ -28,6 +28,7 @@ import {
   addStoragePeer,
   syncPeer,
 } from "../../core/sync/peers.ts";
+import { storageUrl } from "../../core/sync/storage-url.ts";
 import {
   provisionMasterKey,
   storageClientFor,
@@ -370,15 +371,24 @@ async function runSync(force = false): Promise<SyncOutcome> {
     let originOk = false;
     if (getPeer(d, origin)?.token != null) {
       try {
+        let received = 0;
         for (;;) {
+          const cursorBefore = getPeer(d, origin)?.pull_cursor ?? 0;
           const r = await syncWithPeer(d, origin, { pullLimit: PULL_LIMIT });
           pushed += r.pushed;
           pulled += r.pulled;
+          received += r.received ?? r.pulled;
           // Break on the response page size, not the newly-ingested count: a page
           // of all-known changes ingests 0 but isn't necessarily the last page
           // (e.g. after a seq-migration cursor reset re-pulls data we already hold).
           if ((r.received ?? r.pulled) < PULL_LIMIT) break;
-          setStatus({ state: "hydrating", hydrated: pulled });
+          // Self-protection: a well-behaved server advances the cursor every full
+          // page (monotonic seq). If it returned a full page WITHOUT advancing
+          // (buggy/old server), stop instead of re-pulling the same page forever.
+          if ((getPeer(d, origin)?.pull_cursor ?? 0) === cursorBefore) break;
+          // Progress reflects rows actually received (not just newly-ingested), so
+          // a re-pulled-but-known catch-up doesn't appear frozen at 0.
+          setStatus({ state: "hydrating", hydrated: received });
         }
         originOk = true;
       } catch (e) {
@@ -571,7 +581,10 @@ const ops: Record<string, Op> = {
     const cfg: S3Config = { publish: true, priority: 10, ...config };
     if (cfg.encrypt)
       cfg.masterKey = (await provisionMasterKey(storageClientFor(cfg), cfg, passphrase)) ?? undefined;
-    const url = `s3://${cfg.bucket}/${cfg.prefix}`;
+    // Same derivation as the CLI/server (addAndSyncStoragePeer) — one shared
+    // helper so the WebUI can't mint a divergent key the migration would then
+    // chase forever.
+    const url = storageUrl(cfg.endpoint, cfg.bucket, cfg.prefix);
     if (syncing) await syncing;
     const previous = getPeer(d, url);
     addStoragePeer(d, { url, config: cfg, label: cfg.bucket });

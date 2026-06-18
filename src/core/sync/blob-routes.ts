@@ -10,6 +10,14 @@ import { inferContentType } from "../sites-core.ts";
 // bucket (see blobs.ts resolveBlob). Reference lives wherever the caller put it
 // (doc markdown `/blob/<hash>` or a site_files row) — this layer is hash-only.
 
+/** A content-addressed blob hash: canonical 32-hex or legacy 64-hex (any length
+ *  in between for forward-compat). The single source of truth for "is this a hash
+ *  shape we serve" — used by both GET /blob/<hash> and the /api/blobs/has probe so
+ *  the latter never feeds peer-supplied path fragments to the filesystem. */
+const HASH_RE = /^[0-9a-f]{16,64}$/;
+/** Cap a presence probe so a peer can't fan out an unbounded existence sweep. */
+const MAX_HAS_HASHES = 1024;
+
 function ext(ct: string): string {
   const t = ct.toLowerCase().split(";")[0]!.trim();
   const map: Record<string, string> = {
@@ -38,7 +46,7 @@ export async function serveBlob(req: Request, ctx: RouteCtx): Promise<Response |
   if (!rest) return null;
   const dot = rest.indexOf(".");
   const hash = (dot >= 0 ? rest.slice(0, dot) : rest).toLowerCase();
-  if (!/^[0-9a-f]{16,64}$/.test(hash)) return null;
+  if (!HASH_RE.test(hash)) return null;
 
   const localOnly = url.searchParams.get("local") === "1";
   const bytes = localOnly ? await getBlob(hash) : await resolveBlob(ctx.db, hash);
@@ -83,9 +91,13 @@ export const blobRoutes: Route[] = [
     handler: async (req, _ctx) => {
       try {
         const body = (await req.json()) as { hashes?: unknown };
-        const want = (
-          Array.isArray(body.hashes) ? body.hashes.filter((h) => typeof h === "string") : []
-        ) as string[];
+        // Validate the shape and cap the count BEFORE touching the filesystem:
+        // `want` is peer-supplied and flows into blobExists → blobPath → join,
+        // so an unchecked entry like "../../etc/passwd" would be a path-traversal
+        // existence oracle, and an unbounded list a fan-out of exists() calls.
+        const want = (Array.isArray(body.hashes) ? body.hashes : [])
+          .filter((h): h is string => typeof h === "string" && HASH_RE.test(h))
+          .slice(0, MAX_HAS_HASHES);
         // Disk is the truth: check each requested hash's bytes actually exist on
         // disk rather than trusting the ledger (which only grows — a row can
         // outlive its file after a crash, compaction GC, or manual cache wipe).

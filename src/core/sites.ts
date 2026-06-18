@@ -54,6 +54,13 @@ export async function putFile(
   return putFileInline(db, siteId, cleanPath, opts);
 }
 
+/** Upper bound on remote blob resolution from the site-serve path. A miss fans
+ *  out to every peer + bucket; without a cap a slow/unreachable source would hang
+ *  the (token-gated) /sites/<name>/<asset> request. On timeout we 404 — the local
+ *  cache hit is still instant (resolveBlob is local-first), so this only bounds
+ *  the self-heal-from-remote tail. */
+const SITE_BLOB_RESOLVE_TIMEOUT_MS = 5_000;
+
 /** Resolve a file to served bytes + content type. "" / trailing "/" → index.html. */
 export async function getFileForServe(
   db: DbDriver,
@@ -71,8 +78,13 @@ export async function getFileForServe(
     // blob hash — resolve on demand (local cache → HTTP peer → bucket) so a
     // published asset whose local bytes were cache-evicted still serves from a
     // bucket/peer instead of 404ing, consistent with /blob. resolveBlob touches
-    // the LRU on a local hit and caches any remote fetch.
-    bytes = await resolveBlob(db, content);
+    // the LRU on a local hit and caches any remote fetch. Bounded so a slow source
+    // can't hang the serve path (404 on timeout; an in-flight fetch still finishes
+    // and populates the cache for the next request).
+    bytes = await Promise.race([
+      resolveBlob(db, content),
+      new Promise<null>((r) => setTimeout(() => r(null), SITE_BLOB_RESOLVE_TIMEOUT_MS)),
+    ]);
   }
   if (!bytes) return null;
 

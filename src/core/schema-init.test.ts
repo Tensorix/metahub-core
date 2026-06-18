@@ -176,6 +176,48 @@ test("migrateStoragePeerUrls is idempotent and lets same-bucket endpoints coexis
   expect(urls).toEqual(["s3://a.r2.example.com/shared/data", "s3://b.minio.example.com/shared/data"]);
 });
 
+test("migrateStoragePeerUrls skips a rename that would collide on storage_cursors PK (no throw)", () => {
+  const db = new Database(":memory:");
+  runSchema(db);
+  db.query("INSERT INTO meta (key, value) VALUES ('node_id', 'self')").run();
+
+  // Legacy-keyed peer whose canonical key is already occupied by a storage_cursors
+  // row — renaming would violate the (peer_url,node_id) PK and brick DB open.
+  const oldUrl = "s3://backups/metahub";
+  const newUrl = "s3://s3.amazonaws.com/backups/metahub";
+  db.query("INSERT INTO peers (url, kind, config, enabled, pull_cursor, push_cursor) VALUES (?, 's3', ?, 1, 0, 0)").run(
+    oldUrl,
+    JSON.stringify({ endpoint: "https://s3.amazonaws.com", bucket: "backups", prefix: "metahub" }),
+  );
+  db.query("INSERT INTO storage_cursors (peer_url, node_id, last_key) VALUES (?, 'n', 'k')").run(newUrl);
+
+  expect(() => migrateStoragePeerUrls(db)).not.toThrow();
+  // Left as-is rather than renamed onto the occupied key.
+  expect(db.query("SELECT url FROM peers WHERE kind='s3'").get()).toEqual({ url: oldUrl });
+});
+
+test("migrateStoragePeerUrls maps two legacy rows that canonicalize to one key without colliding", () => {
+  const db = new Database(":memory:");
+  runSchema(db);
+  db.query("INSERT INTO meta (key, value) VALUES ('node_id', 'self')").run();
+
+  // Two rows whose endpoints differ only by an explicit :443 → same canonical key.
+  db.query("INSERT INTO peers (url, kind, config, enabled, pull_cursor, push_cursor) VALUES (?, 's3', ?, 1, 0, 0)").run(
+    "s3://h.example.com/b/p",
+    JSON.stringify({ endpoint: "https://h.example.com", bucket: "b", prefix: "p" }),
+  );
+  db.query("INSERT INTO peers (url, kind, config, enabled, pull_cursor, push_cursor) VALUES (?, 's3', ?, 1, 0, 0)").run(
+    "s3://legacy/b/p", // legacy-shaped, canonicalizes to s3://h.example.com/b/p
+    JSON.stringify({ endpoint: "https://h.example.com:443", bucket: "b", prefix: "p" }),
+  );
+
+  expect(() => migrateStoragePeerUrls(db)).not.toThrow();
+  // One row already canonical; the other is left rather than renamed onto it.
+  const urls = (db.query("SELECT url FROM peers ORDER BY url").all() as { url: string }[]).map((r) => r.url);
+  expect(urls).toContain("s3://h.example.com/b/p");
+  expect(new Set(urls).size).toBe(urls.length); // no duplicate key
+});
+
 test("migrateCrdtChangesSeq is idempotent on the current schema", () => {
   const db = new Database(":memory:");
   runSchema(db); // already has seq
