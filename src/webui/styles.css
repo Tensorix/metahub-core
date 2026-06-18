@@ -834,10 +834,10 @@
   .spv-frame { flex:1; width:100%; border:0; background:#fff; }
 
   .selbar { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:65; display:flex; align-items:center; gap:4px;
-    background:var(--fg); color:var(--bg); padding:7px 8px 7px 14px; border-radius:11px; box-shadow:var(--shadow-lg); }
+    background:var(--surface); color:var(--fg); border:1px solid var(--line); padding:7px 8px 7px 14px; border-radius:11px; box-shadow:var(--shadow-lg); }
   .selbar .cnt { font-size:13px; font-weight:600; margin-right:6px; }
-  .selbar button { display:flex; align-items:center; gap:6px; color:var(--bg); padding:6px 10px; border-radius:7px; font-size:13px; font-weight:500; }
-  .selbar button:hover { background:color-mix(in srgb,var(--bg) 25%,transparent); }
+  .selbar button { display:flex; align-items:center; gap:6px; color:var(--fg-soft); padding:6px 10px; border-radius:7px; font-size:13px; font-weight:500; }
+  .selbar button:hover { background:var(--hover-2); color:var(--fg); }
   .selbar .del:hover { background:var(--danger); color:#fff; }
 
   /* record peek */
