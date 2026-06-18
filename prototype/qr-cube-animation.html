@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>二维码中心 logo 动画 — 方案评审原型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,18..72,400;0,18..72,500;1,18..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --bg:#ffffff; --surface:#fbfbfa; --surface-2:#f1f1ef; --sidebar:#f7f7f5;
+    --fg:#2c2c30; --fg-soft:#5b5b62; --muted:#75757f; --line:#ebebe8; --line-strong:#dededb;
+    --accent:#4a55d6; --accent-fg:#ffffff; --accent-soft:#eef0ff;
+    --danger:#d6473b; --success:#1f8f3e;
+    --hover:rgba(45,45,55,.045); --hover-2:rgba(45,45,55,.08);
+    --shadow-sm:0 1px 2px rgba(20,20,40,.06),0 1px 1px rgba(20,20,40,.04);
+    --shadow-md:0 4px 12px rgba(20,20,40,.08),0 2px 4px rgba(20,20,40,.05);
+    --shadow-lg:0 16px 48px rgba(20,20,40,.16),0 4px 12px rgba(20,20,40,.08);
+    --radius:8px; --radius-sm:6px; --radius-lg:14px; --radius-xl:18px;
+    --ui:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --serif:"Newsreader",Georgia,"Songti SC",serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
+    /* QR chip — light: dark modules on light chip */
+    --qr-fg:#16161a; --qr-bg:#ffffff;
+    --qr-border:var(--line); --qr-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.08);
+    --as:1; /* animation speed multiplier */
+  }
+  :root[data-resolved="dark"] {
+    color-scheme: dark;
+    --bg:#161618; --surface:#202022; --surface-2:#2a2a2d; --sidebar:#171719;
+    --fg:#e6e6e9; --fg-soft:#b4b4bb; --muted:#8b8b95; --line:#2c2c30; --line-strong:#3a3a40;
+    --accent:#7b86ff; --accent-fg:#14141a; --accent-soft:#23243a;
+    --danger:#f87168; --success:#3fb950;
+    --hover:rgba(255,255,255,.05); --hover-2:rgba(255,255,255,.09);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 14px rgba(0,0,0,.45); --shadow-lg:0 20px 56px rgba(0,0,0,.6);
+    /* QR chip — dark: light modules on dark chip (theme-inverted) */
+    --qr-fg:#ededf0; --qr-bg:#161619;
+    --qr-border:var(--line-strong); --qr-shadow:0 1px 2px rgba(0,0,0,.5),0 10px 30px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing:border-box; }
+  html,body { margin:0; }
+  body {
+    font-family:var(--ui); color:var(--fg); background:var(--bg);
+    -webkit-font-smoothing:antialiased; line-height:1.5;
+    background-image:radial-gradient(120% 80% at 50% -10%, var(--surface-2) 0%, transparent 55%);
+    min-height:100vh;
+  }
+
+  /* ── Review control bar ─────────────────────────────── */
+  .bar {
+    position:sticky; top:0; z-index:20;
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:12px 24px; background:color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter:saturate(140%) blur(12px); border-bottom:1px solid var(--line);
+  }
+  .bar .brand { display:flex; align-items:center; gap:9px; font-weight:600; font-size:13.5px; letter-spacing:-.01em; }
+  .bar .brand svg { width:20px; height:20px; fill:none; stroke:var(--accent); stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+  .bar .spacer { flex:1 1 auto; }
+  .seg { display:flex; background:var(--surface-2); border-radius:9px; padding:3px; gap:2px; }
+  .seg button {
+    border:none; background:transparent; color:var(--muted); cursor:pointer;
+    font-family:var(--ui); font-size:12.5px; font-weight:600; padding:5px 11px; border-radius:6px;
+    transition:color .15s, background .15s;
+  }
+  .seg button:hover { color:var(--fg); }
+  .seg button.on { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
+  .ctl-label { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-right:-6px; }
+
+  /* ── Header ─────────────────────────────── */
+  .wrap { max-width:1060px; margin:0 auto; padding:40px 24px 80px; }
+  .eyebrow { font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
+  h1 { font-family:var(--serif); font-weight:500; font-size:clamp(30px,5vw,46px); line-height:1.06; letter-spacing:-.015em; margin:12px 0 0; }
+  h1 em { font-style:italic; color:var(--accent); }
+  .lede { color:var(--fg-soft); font-size:15.5px; max-width:62ch; margin:14px 0 0; }
+  .header { animation:fadeUp .6s cubic-bezier(.32,.72,0,1) both; }
+
+  /* ── Gallery grid ─────────────────────────────── */
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(248px,1fr)); gap:20px; margin-top:38px; }
+  .card {
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-xl);
+    padding:26px 22px 20px; display:flex; flex-direction:column; align-items:center;
+    box-shadow:var(--shadow-sm); position:relative; overflow:hidden;
+    animation:cardUp .6s cubic-bezier(.32,.72,0,1) both; animation-delay:calc(var(--i,0)*70ms + 120ms);
+  }
+  .card.feature { grid-column:1/-1; }
+  .card .badge-no { position:absolute; top:14px; left:16px; font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .card .port { position:absolute; top:13px; right:14px; font-size:10.5px; font-weight:600; letter-spacing:.02em;
+                padding:3px 8px; border-radius:999px; }
+  .port.full { color:var(--success); background:color-mix(in srgb, var(--success) 14%, transparent); }
+  .port.mid  { color:var(--accent);  background:var(--accent-soft); }
+
+  .card .name { font-family:var(--serif); font-size:20px; font-weight:500; letter-spacing:-.01em; margin:20px 0 2px; text-align:center; }
+  .card .name .en { font-family:var(--mono); font-size:11px; font-weight:500; color:var(--muted); display:block; letter-spacing:.02em; margin-top:3px; text-transform:uppercase; }
+  .card .desc { color:var(--fg-soft); font-size:13px; text-align:center; max-width:30ch; margin:8px 0 0; line-height:1.5; }
+  .card .replay-hint { font-size:11px; color:var(--muted); margin-top:12px; display:flex; align-items:center; gap:5px; opacity:.8; }
+  .card .replay-hint svg { width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .feature .name { font-size:24px; }
+
+  /* ── QR chip ─────────────────────────────── */
+  .qr-box {
+    position:relative; width:fit-content; padding:18px; cursor:pointer;
+    background:var(--qr-bg); border:1px solid var(--qr-border); border-radius:18px;
+    box-shadow:var(--qr-shadow);
+    transition:transform .35s cubic-bezier(.32,.72,0,1), box-shadow .35s;
+  }
+  .qr-box:hover { transform:translateY(-2px); }
+  .qr { display:block; width:200px; height:200px; }
+  .feature .qr { width:236px; height:236px; }
+  .qr .dot { fill:var(--qr-fg); }
+  .qr .eye-ring { fill:none; stroke:var(--qr-fg); stroke-width:1; }
+  .qr .eye-core { fill:var(--qr-fg); }
+  .qr .badge { fill:var(--qr-bg); }
+
+  /* centre cube overlay */
+  .cube-wrap {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:34px; height:34px; display:grid; place-items:center;
+    perspective:240px;
+  }
+  .feature .cube-wrap { width:40px; height:40px; }
+  .glow {
+    position:absolute; inset:-40%; border-radius:50%; pointer-events:none; opacity:0;
+    background:radial-gradient(circle, color-mix(in srgb,var(--accent) 55%, transparent) 0%, transparent 68%);
+  }
+  .cube { width:100%; height:100%; overflow:visible; transform-style:preserve-3d; }
+  .cube .edge { fill:none; stroke:var(--qr-fg); stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+  .cube .face { fill:none; opacity:0; }
+  [data-resolved="dark"] .cube .face.face-top   { fill:color-mix(in srgb,var(--accent) 42%, var(--qr-bg)); }
+  [data-resolved="dark"] .cube .face.face-left  { fill:color-mix(in srgb,var(--accent) 26%, var(--qr-bg)); }
+  [data-resolved="dark"] .cube .face.face-right { fill:color-mix(in srgb,var(--accent) 14%, var(--qr-bg)); }
+  .cube .face.face-top   { fill:color-mix(in srgb,var(--accent) 30%, var(--qr-bg)); }
+  .cube .face.face-left  { fill:color-mix(in srgb,var(--accent) 17%, var(--qr-bg)); }
+  .cube .face.face-right { fill:color-mix(in srgb,var(--accent) 8%,  var(--qr-bg)); }
+
+  /* ════════ Keyframes ════════ */
+  @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+  @keyframes cardUp { from { opacity:0; transform:translateY(16px) scale(.97); } to { opacity:1; transform:none; } }
+  @keyframes draw   { to { stroke-dashoffset:0; } }
+  @keyframes idleFloat  { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-2.5px); } }
+  @keyframes breathe    { 0%,100% { transform:scale(1); } 50% { transform:scale(1.06); } }
+  @keyframes glowPulse  { 0%,100% { opacity:.0; transform:scale(.9); } 50% { opacity:.5; transform:scale(1.12); } }
+  @keyframes spin3d     { 0% { transform:rotateX(8deg) rotateY(-22deg); } 50% { transform:rotateX(8deg) rotateY(22deg); } 100% { transform:rotateX(8deg) rotateY(-22deg); } }
+  @keyframes faceFade   { from { opacity:0; } to { opacity:1; } }
+  @keyframes settle     { 0% { transform:scale(.86); } 70% { transform:scale(1.04); } 100% { transform:scale(1); } }
+
+  /* ── Variant 1 · DRAW-ON ── */
+  [data-anim="draw"] .edge { stroke-dasharray:64; stroke-dashoffset:64; }
+  [data-anim="draw"].run .edge-outer { animation:draw calc(.85s / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.05s / var(--as)); }
+  [data-anim="draw"].run .edge-inner { animation:draw calc(.6s / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.6s / var(--as)); }
+
+  /* ── Variant 2 · BREATHE + FLOAT ── */
+  [data-anim="breathe"] .cube { animation:breathe calc(3.4s / var(--as)) ease-in-out infinite; }
+  [data-anim="breathe"] .cube-wrap { animation:idleFloat calc(3.4s / var(--as)) ease-in-out infinite; }
+  [data-anim="breathe"].run .edge { stroke-dasharray:64; stroke-dashoffset:64; animation:draw calc(.7s / var(--as)) ease-out forwards; }
+
+  /* ── Variant 3 · ISOMETRIC TILT ── */
+  [data-anim="tilt"] .cube { animation:spin3d calc(6s / var(--as)) cubic-bezier(.45,0,.55,1) infinite; }
+  [data-anim="tilt"].run .edge { stroke-dasharray:64; stroke-dashoffset:64; animation:draw calc(.7s / var(--as)) ease-out forwards; }
+
+  /* ── Variant 4 · FACE-SHADE + GLOW ── */
+  [data-anim="faces"] .glow { animation:glowPulse calc(3.6s / var(--as)) ease-in-out infinite; }
+  [data-anim="faces"].run .face { animation:faceFade calc(.5s / var(--as)) ease-out forwards; }
+  [data-anim="faces"].run .face-top   { animation-delay:calc(.15s / var(--as)); }
+  [data-anim="faces"].run .face-left  { animation-delay:calc(.32s / var(--as)); }
+  [data-anim="faces"].run .face-right { animation-delay:calc(.49s / var(--as)); }
+  [data-anim="faces"] .face { opacity:0; }
+  [data-anim="faces"].run .face { opacity:1; }
+  [data-anim="faces"].run .edge { stroke-dasharray:64; stroke-dashoffset:64; animation:draw calc(.7s / var(--as)) ease-out forwards; }
+
+  /* ── Feature · DRAW entrance → BREATHE idle ── */
+  [data-anim="feature"] .cube-wrap { animation:idleFloat calc(4s / var(--as)) ease-in-out infinite; }
+  [data-anim="feature"] .cube { animation:breathe calc(4s / var(--as)) ease-in-out infinite; }
+  [data-anim="feature"] .edge { stroke-dasharray:64; stroke-dashoffset:64; }
+  [data-anim="feature"].run .edge-outer { animation:draw calc(.9s / var(--as)) cubic-bezier(.5,0,.2,1) forwards; }
+  [data-anim="feature"].run .edge-inner { animation:draw calc(.6s / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.6s / var(--as)); }
+  [data-anim="feature"].run .glow { animation:glowPulse calc(2.4s / var(--as)) ease-in-out .9s 2; }
+
+  /* paused state */
+  body.paused *, body.paused *::before, body.paused *::after { animation-play-state:paused !important; }
+
+  footer { text-align:center; color:var(--muted); font-size:12px; margin-top:46px; }
+  footer code { font-family:var(--mono); color:var(--fg-soft); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
+    .edge { stroke-dashoffset:0 !important; } .face { opacity:1 !important; } .glow { opacity:.3 !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24"><path d="M21 7.5 12 2 3 7.5v9L12 22l9-5.5z"/><path d="m3 7.5 9 5.5 9-5.5M12 22v-9"/></svg>
+      二维码 logo 动画
+    </div>
+    <div class="spacer"></div>
+    <span class="ctl-label">主题</span>
+    <div class="seg" id="segTheme">
+      <button data-v="light" class="on">浅色</button>
+      <button data-v="dark">深色</button>
+    </div>
+    <span class="ctl-label">速度</span>
+    <div class="seg" id="segSpeed">
+      <button data-v="0.5">0.5×</button>
+      <button data-v="1" class="on">1×</button>
+      <button data-v="2">2×</button>
+    </div>
+    <div class="seg" id="segPlay">
+      <button data-v="play" class="on">⏸ 暂停</button>
+      <button data-v="replay">↻ 重播</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="header">
+      <div class="eyebrow">Prototype · 动画评审</div>
+      <h1>会呼吸的<em>立方体</em>，<br>嵌在每一枚二维码中心</h1>
+      <p class="lede">四种 Notion 风格的中心 logo 微动效——克制、优雅、不抢扫码焦点。鼠标悬停任意二维码可重播进场动画。挑一个你最喜欢的，我再把它移植进真实的 <code style="font-family:var(--mono);font-size:13px">QrSvg</code>。</p>
+    </div>
+
+    <div class="grid" id="grid">
+      <!-- feature card -->
+      <article class="card feature" data-anim="feature" style="--i:0">
+        <span class="badge-no">★ 推荐组合</span>
+        <span class="port full">移植性 · 满分</span>
+        <div class="qr-box" data-qr></div>
+        <div class="name">绘制 → 呼吸<span class="en">draw-in, then breathe</span></div>
+        <p class="desc">进场时立方体一笔笔画出，随后转入持续的轻微呼吸与浮动。最贴近 Notion 的「内容缓缓显形」手感。</p>
+        <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
+      </article>
+
+      <article class="card" data-anim="draw" style="--i:1">
+        <span class="badge-no">01</span><span class="port full">满分</span>
+        <div class="qr-box" data-qr></div>
+        <div class="name">绘制组装<span class="en">draw-on</span></div>
+        <p class="desc">外框与内棱依次描边画出，收尾轻回弹。纯线条，零额外元素。</p>
+        <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
+      </article>
+
+      <article class="card" data-anim="breathe" style="--i:2">
+        <span class="badge-no">02</span><span class="port full">满分</span>
+        <div class="qr-box" data-qr></div>
+        <div class="name">呼吸悬浮<span class="en">breathe + float</span></div>
+        <p class="desc">立方体持续轻微缩放与上下浮动，安静而有生命感的 idle 循环。</p>
+        <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
+      </article>
+
+      <article class="card" data-anim="tilt" style="--i:3">
+        <span class="badge-no">03</span><span class="port mid">移植性 · 中</span>
+        <div class="qr-box" data-qr></div>
+        <div class="name">等距翻面<span class="en">isometric tilt</span></div>
+        <p class="desc">缓慢的 3D 左右翻转，最有体积感。移植到 SVG 需注意 3D 兼容。</p>
+        <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
+      </article>
+
+      <article class="card" data-anim="faces" style="--i:4">
+        <span class="badge-no">04</span><span class="port mid">移植性 · 中</span>
+        <div class="qr-box" data-qr></div>
+        <div class="name">面着色 + 微光<span class="en">face-shade + glow</span></div>
+        <p class="desc">上 / 左 / 右三面错峰着色成实体立方，背后一圈柔光脉动。视觉最强，但改变线稿调性。</p>
+        <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
+      </article>
+    </div>
+
+    <footer>同一枚真实二维码（ECC&nbsp;H · 57×57）· 中心遮挡≈5% · 动画只动 logo，不影响扫描 · <code>prototype/qr-cube-animation.html</code></footer>
+  </div>
+
+<script>
+  const MATRIX = ["111111101011010111111001000010001110101111110011001111111","100000100000001100001001001100000000000100010001001000001","101110101001000111100110110100000010100110001111001011101","101110100110111011101100010111011100011110011101001011101","101110101110011010101001111111101100110001111001001011101","100000100000111100100101011000100101010010011010001000001","111111101010101010101010101010101010101010101010101111111","000000001010111001000000001000100011111000011100000000000","000001100101111011111110111111101101001001110100001010101","000101010010101101100110110110000111110011111111111010000","010001100101000010011010110100111000000011111101111110010","010011000111010111100011101001111100111100110000111110100","001101101100111110010011111000010111010010001001001010001","101010000111010001001110101011000111010011110001110000001","010000101111001101010110110010111000101100100010101001110","001101010001111001001011111100001001110001001101000011110","111110111100000100111111101100111011101000010111010000111","000100010110111110001101000011001110010100100100110011011","001101100100000101001010110100100111100010010100100111101","111110010011101111100011011000000101001011111010100111110","100010111001100101101000101001011001100101110110101000110","001001011010111100111111000010111001111011111111111001110","010010100011111010010101101111011011001101001111111110110","001000000011010011001011001110100110111000010000000011100","111100110000001000011111101111101001111110101001000010111","001010000000111101110101011111110110110101111100110101110","000011111111000101101000001111101001010110110100111110110","100010001011011101100000001000101101000110100111100011100","011110101110010111111010101010100110110001110100101010000","101110001010110100000110111000101000010011110100100011100","000111111101001000111001101111100011111100010110111111101","110111000110110010100100101011011111110101011111011001110","111101110011110010100111011110001011010001010100100010001","111001011100010101001001000011010111111010111110100011000","100010110111100000100001101001010100101010010000010000110","110101001110101010111111110011011010010001001110000011111","111001101101111010101000001001111110010010011001100001000","010110011110000111000010100011111011110011111101110001100","000010111100111100110010011000100011100010011110110110110","101111001000010010100010100110101100001001101111011010110","011100111010110001100100001110110101010001010000010011010","100111000100001000110011010111011001000011110100100000111","101000110110010001100101011010111011001001110000001110101","100111011011101000011000101000010111111010010011111111111","000000111010101100001111000101000000001001110110010111101","000110001111010000110001010011110111011111111010111110000","101001110100111101001010100001010111100110001111110000010","111110010001101111111011101010110101011010110101001000101","000000100101110010001011001111101111010011101111111110011","000000001011110000001000111000101010011111110100100010101","111111100111110111011001101010100010000100101110101011010","100000101110101000111001001000101000011101101001100011111","101110100100000010010001111111110010110000110000111110111","101110100101101001010001001101110010000001111100010111100","101110100001011110001110010000001000110111111110101011011","100000100111101011100101010101001000010110011111110001100","111111100101101110110000011111001110101100010110011110110"];
+  const N = MATRIX.length;                 // 57
+  const M = 2;                             // quiet zone (modules)
+  const MID = N / 2;
+  const LOGO = Math.floor(N * 0.22);       // centre clear-zone (modules)
+  const HALF = LOGO / 2;
+  const NS = "http://www.w3.org/2000/svg";
+
+  const bit = (r, c) => MATRIX[r][c] === "1";
+  const inFinder = (r, c) => (r < 7 && c < 7) || (r < 7 && c >= N - 7) || (r >= N - 7 && c < 7);
+  const inLogo = (r, c) => Math.abs(r + 0.5 - MID) < HALF && Math.abs(c + 0.5 - MID) < HALF;
+
+  function el(name, attrs) {
+    const e = document.createElementNS(NS, name);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  // Build the QR <svg> (dots + finder eyes + centre badge) — mirrors src/webui/settings.tsx QrSvg.
+  function buildQR() {
+    const svg = el("svg", { class: "qr", viewBox: `${-M} ${-M} ${N + M * 2} ${N + M * 2}`, "shape-rendering": "geometricPrecision" });
+    const frag = document.createDocumentFragment();
+    for (let r = 0; r < N; r++)
+      for (let c = 0; c < N; c++) {
+        if (!bit(r, c) || inFinder(r, c) || inLogo(r, c)) continue;
+        frag.appendChild(el("circle", { class: "dot", cx: c + 0.5, cy: r + 0.5, r: 0.45 }));
+      }
+    const eye = (fr, fc) => {
+      frag.appendChild(el("rect", { class: "eye-ring", x: fc + 0.5, y: fr + 0.5, width: 6, height: 6, rx: 2, ry: 2 }));
+      frag.appendChild(el("rect", { class: "eye-core", x: fc + 2, y: fr + 2, width: 3, height: 3, rx: 1 }));
+    };
+    eye(0, 0); eye(0, N - 7); eye(N - 7, 0);
+    const badge = LOGO + 0.6;
+    frag.appendChild(el("rect", { class: "badge", x: MID - badge / 2, y: MID - badge / 2, width: badge, height: badge, rx: badge * 0.26, ry: badge * 0.26 }));
+    svg.appendChild(frag);
+    return svg;
+  }
+
+  // Centre cube overlay (HTML wrapper + inline SVG so 3D/transform anims are easy).
+  function buildCube() {
+    const wrap = document.createElement("div");
+    wrap.className = "cube-wrap";
+    const glow = document.createElement("span"); glow.className = "glow"; wrap.appendChild(glow);
+    const svg = el("svg", { class: "cube", viewBox: "0 0 24 24" });
+    const faces = el("g", { class: "cube-faces" });
+    faces.appendChild(el("polygon", { class: "face face-top",   points: "12,2 21,7.5 12,13 3,7.5" }));
+    faces.appendChild(el("polygon", { class: "face face-left",  points: "3,7.5 12,13 12,22 3,16.5" }));
+    faces.appendChild(el("polygon", { class: "face face-right", points: "21,7.5 12,13 12,22 21,16.5" }));
+    svg.appendChild(faces);
+    svg.appendChild(el("path", { class: "edge edge-outer", d: "M21 7.5 12 2 3 7.5v9L12 22l9-5.5z" }));
+    svg.appendChild(el("path", { class: "edge edge-inner", d: "m3 7.5 9 5.5 9-5.5M12 22v-9" }));
+    wrap.appendChild(svg);
+    return wrap;
+  }
+
+  // Populate every .qr-box
+  document.querySelectorAll("[data-qr]").forEach((box) => {
+    box.appendChild(buildQR());
+    box.appendChild(buildCube());
+  });
+
+  // Trigger entrance animations (and allow replay by re-adding .run)
+  function replay(card) { card.classList.remove("run"); void card.offsetWidth; card.classList.add("run"); }
+  const cards = [...document.querySelectorAll(".card")];
+  function replayAll() { cards.forEach(replay); }
+  // initial play, staggered after the cards reveal
+  cards.forEach((c, i) => setTimeout(() => replay(c), 350 + i * 120));
+  // hover replays that card's entrance
+  cards.forEach((c) => c.addEventListener("mouseenter", () => replay(c)));
+
+  // ── Controls ──
+  const root = document.documentElement;
+  function wireSeg(id, fn) {
+    const seg = document.getElementById(id);
+    seg.addEventListener("click", (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      [...seg.children].forEach((x) => x.classList.toggle("on", x === b));
+      fn(b.dataset.v, b);
+    });
+  }
+  wireSeg("segTheme", (v) => v === "dark" ? root.setAttribute("data-resolved", "dark") : root.removeAttribute("data-resolved"));
+  wireSeg("segSpeed", (v) => root.style.setProperty("--as", v));
+  // play/pause + replay share a seg but act as buttons
+  document.getElementById("segPlay").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.v === "replay") { replayAll(); return; }
+    const paused = document.body.classList.toggle("paused");
+    b.textContent = paused ? "▶ 播放" : "⏸ 暂停";
+  });
+</script>
+</body>
+</html>
