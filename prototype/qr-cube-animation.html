@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>二维码中心 logo 动画 — 方案评审原型</title>
+<title>二维码中心 logo · idle 动效对比 — 原型</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,18..72,400;0,18..72,500;1,18..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -22,7 +22,6 @@
     --ui:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
     --serif:"Newsreader",Georgia,"Songti SC",serif;
     --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
-    /* QR chip — light: dark modules on light chip */
     --qr-fg:#16161a; --qr-bg:#ffffff;
     --qr-border:var(--line); --qr-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.08);
     --as:1; /* animation speed multiplier */
@@ -35,7 +34,6 @@
     --danger:#f87168; --success:#3fb950;
     --hover:rgba(255,255,255,.05); --hover-2:rgba(255,255,255,.09);
     --shadow-sm:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 14px rgba(0,0,0,.45); --shadow-lg:0 20px 56px rgba(0,0,0,.6);
-    /* QR chip — dark: light modules on dark chip (theme-inverted) */
     --qr-fg:#ededf0; --qr-bg:#161619;
     --qr-border:var(--line-strong); --qr-shadow:0 1px 2px rgba(0,0,0,.5),0 10px 30px rgba(0,0,0,.6);
   }
@@ -74,7 +72,8 @@
   .eyebrow { font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
   h1 { font-family:var(--serif); font-weight:500; font-size:clamp(30px,5vw,46px); line-height:1.06; letter-spacing:-.015em; margin:12px 0 0; }
   h1 em { font-style:italic; color:var(--accent); }
-  .lede { color:var(--fg-soft); font-size:15.5px; max-width:62ch; margin:14px 0 0; }
+  .lede { color:var(--fg-soft); font-size:15.5px; max-width:64ch; margin:14px 0 0; }
+  .lede code { font-family:var(--mono); font-size:13px; }
   .header { animation:fadeUp .6s cubic-bezier(.32,.72,0,1) both; }
 
   /* ── Gallery grid ─────────────────────────────── */
@@ -87,14 +86,12 @@
   }
   .card.feature { grid-column:1/-1; }
   .card .badge-no { position:absolute; top:14px; left:16px; font-family:var(--mono); font-size:11px; color:var(--muted); }
-  .card .port { position:absolute; top:13px; right:14px; font-size:10.5px; font-weight:600; letter-spacing:.02em;
-                padding:3px 8px; border-radius:999px; }
+  .card .port { position:absolute; top:13px; right:14px; font-size:10.5px; font-weight:600; letter-spacing:.02em; padding:3px 8px; border-radius:999px; }
   .port.full { color:var(--success); background:color-mix(in srgb, var(--success) 14%, transparent); }
-  .port.mid  { color:var(--accent);  background:var(--accent-soft); }
 
   .card .name { font-family:var(--serif); font-size:20px; font-weight:500; letter-spacing:-.01em; margin:20px 0 2px; text-align:center; }
   .card .name .en { font-family:var(--mono); font-size:11px; font-weight:500; color:var(--muted); display:block; letter-spacing:.02em; margin-top:3px; text-transform:uppercase; }
-  .card .desc { color:var(--fg-soft); font-size:13px; text-align:center; max-width:30ch; margin:8px 0 0; line-height:1.5; }
+  .card .desc { color:var(--fg-soft); font-size:13px; text-align:center; max-width:32ch; margin:8px 0 0; line-height:1.5; }
   .card .replay-hint { font-size:11px; color:var(--muted); margin-top:12px; display:flex; align-items:center; gap:5px; opacity:.8; }
   .card .replay-hint svg { width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .feature .name { font-size:24px; }
@@ -118,65 +115,58 @@
   .cube-wrap {
     position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
     width:34px; height:34px; display:grid; place-items:center;
-    perspective:240px;
   }
   .feature .cube-wrap { width:40px; height:40px; }
-  .glow {
-    position:absolute; inset:-40%; border-radius:50%; pointer-events:none; opacity:0;
-    background:radial-gradient(circle, color-mix(in srgb,var(--accent) 55%, transparent) 0%, transparent 68%);
-  }
-  .cube { width:100%; height:100%; overflow:visible; transform-style:preserve-3d; }
+  .cube { width:100%; height:100%; overflow:visible; transform-origin:50% 54%; }
   .cube .edge { fill:none; stroke:var(--qr-fg); stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
-  .cube .face { fill:none; opacity:0; }
-  [data-resolved="dark"] .cube .face.face-top   { fill:color-mix(in srgb,var(--accent) 42%, var(--qr-bg)); }
-  [data-resolved="dark"] .cube .face.face-left  { fill:color-mix(in srgb,var(--accent) 26%, var(--qr-bg)); }
-  [data-resolved="dark"] .cube .face.face-right { fill:color-mix(in srgb,var(--accent) 14%, var(--qr-bg)); }
-  .cube .face.face-top   { fill:color-mix(in srgb,var(--accent) 30%, var(--qr-bg)); }
-  .cube .face.face-left  { fill:color-mix(in srgb,var(--accent) 17%, var(--qr-bg)); }
-  .cube .face.face-right { fill:color-mix(in srgb,var(--accent) 8%,  var(--qr-bg)); }
+  /* sheen highlight layer — a coloured glint masked into a travelling band */
+  .cube .glint {
+    display:none; fill:none; stroke:var(--accent); stroke-width:2.3;
+    stroke-linecap:round; stroke-linejoin:round;
+    -webkit-mask-image:linear-gradient(115deg, transparent 38%, #000 47%, #000 53%, transparent 62%);
+            mask-image:linear-gradient(115deg, transparent 38%, #000 47%, #000 53%, transparent 62%);
+    -webkit-mask-size:260% 260%; mask-size:260% 260%;
+    -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
+    -webkit-mask-position:140% 0; mask-position:140% 0;
+  }
+  [data-anim="sheen"] .glint, [data-anim="feature"] .glint { display:inline; }
+  [data-anim="feature"] .glint { opacity:.62; }
 
   /* ════════ Keyframes ════════ */
   @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
   @keyframes cardUp { from { opacity:0; transform:translateY(16px) scale(.97); } to { opacity:1; transform:none; } }
   @keyframes draw   { to { stroke-dashoffset:0; } }
-  @keyframes idleFloat  { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-2.5px); } }
-  @keyframes breathe    { 0%,100% { transform:scale(1); } 50% { transform:scale(1.06); } }
-  @keyframes glowPulse  { 0%,100% { opacity:.0; transform:scale(.9); } 50% { opacity:.5; transform:scale(1.12); } }
-  @keyframes spin3d     { 0% { transform:rotateX(8deg) rotateY(-22deg); } 50% { transform:rotateX(8deg) rotateY(22deg); } 100% { transform:rotateX(8deg) rotateY(-22deg); } }
-  @keyframes faceFade   { from { opacity:0; } to { opacity:1; } }
-  @keyframes settle     { 0% { transform:scale(.86); } 70% { transform:scale(1.04); } 100% { transform:scale(1); } }
+  @keyframes idleFloat  { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-2px); } }
+  /* 等距轻摇 — 2D shear + width-scale faking an axial turn */
+  @keyframes rock   { 0%,100% { transform:rotate(-2.3deg) scaleX(.965); } 50% { transform:rotate(2.3deg) scaleX(1); } }
+  /* 光泽流过 — sweep the highlight band across the wire */
+  @keyframes sheen  { 0% { -webkit-mask-position:140% 0; mask-position:140% 0; } 100% { -webkit-mask-position:-40% 0; mask-position:-40% 0; } }
+  /* 墨重呼吸 — only the stroke weight inhales/exhales, geometry fixed */
+  @keyframes inkBreathe { 0%,100% { stroke-width:1.5; } 50% { stroke-width:2.05; } }
 
-  /* ── Variant 1 · DRAW-ON ── */
-  [data-anim="draw"] .edge { stroke-dasharray:64; stroke-dashoffset:64; }
-  [data-anim="draw"].run .edge-outer { animation:draw calc(.85s / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.05s / var(--as)); }
-  [data-anim="draw"].run .edge-inner { animation:draw calc(.6s / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.6s / var(--as)); }
+  /* base draw-in entrance (shared) */
+  [data-anim] .edge { stroke-dasharray:64; stroke-dashoffset:64; }
+  [data-anim].run .edge-outer { animation:draw calc(.85s / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.05s / var(--as)); }
+  [data-anim].run .edge-inner { animation:draw calc(.6s  / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.6s  / var(--as)); }
 
-  /* ── Variant 2 · BREATHE + FLOAT ── */
-  [data-anim="breathe"] .cube { animation:breathe calc(3.4s / var(--as)) ease-in-out infinite; }
-  [data-anim="breathe"] .cube-wrap { animation:idleFloat calc(3.4s / var(--as)) ease-in-out infinite; }
-  [data-anim="breathe"].run .edge { stroke-dasharray:64; stroke-dashoffset:64; animation:draw calc(.7s / var(--as)) ease-out forwards; }
+  /* ── 00 / baseline · DRAW only (no idle) ── */
+  /* nothing extra */
 
-  /* ── Variant 3 · ISOMETRIC TILT ── */
-  [data-anim="tilt"] .cube { animation:spin3d calc(6s / var(--as)) cubic-bezier(.45,0,.55,1) infinite; }
-  [data-anim="tilt"].run .edge { stroke-dasharray:64; stroke-dashoffset:64; animation:draw calc(.7s / var(--as)) ease-out forwards; }
+  /* ── 等距轻摇 ROCK ── */
+  [data-anim="rock"].run .cube      { animation:rock calc(4.6s / var(--as)) ease-in-out infinite calc(1.15s / var(--as)); }
+  [data-anim="rock"].run .cube-wrap { animation:idleFloat calc(4.6s / var(--as)) ease-in-out infinite calc(1.15s / var(--as)); }
 
-  /* ── Variant 4 · FACE-SHADE + GLOW ── */
-  [data-anim="faces"] .glow { animation:glowPulse calc(3.6s / var(--as)) ease-in-out infinite; }
-  [data-anim="faces"].run .face { animation:faceFade calc(.5s / var(--as)) ease-out forwards; }
-  [data-anim="faces"].run .face-top   { animation-delay:calc(.15s / var(--as)); }
-  [data-anim="faces"].run .face-left  { animation-delay:calc(.32s / var(--as)); }
-  [data-anim="faces"].run .face-right { animation-delay:calc(.49s / var(--as)); }
-  [data-anim="faces"] .face { opacity:0; }
-  [data-anim="faces"].run .face { opacity:1; }
-  [data-anim="faces"].run .edge { stroke-dasharray:64; stroke-dashoffset:64; animation:draw calc(.7s / var(--as)) ease-out forwards; }
+  /* ── 光泽流过 SHEEN ── */
+  [data-anim="sheen"].run .glint { animation:sheen calc(3.2s / var(--as)) ease-in-out infinite calc(1.1s / var(--as)); }
 
-  /* ── Feature · DRAW entrance → BREATHE idle ── */
-  [data-anim="feature"] .cube-wrap { animation:idleFloat calc(4s / var(--as)) ease-in-out infinite; }
-  [data-anim="feature"] .cube { animation:breathe calc(4s / var(--as)) ease-in-out infinite; }
-  [data-anim="feature"] .edge { stroke-dasharray:64; stroke-dashoffset:64; }
-  [data-anim="feature"].run .edge-outer { animation:draw calc(.9s / var(--as)) cubic-bezier(.5,0,.2,1) forwards; }
-  [data-anim="feature"].run .edge-inner { animation:draw calc(.6s / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.6s / var(--as)); }
-  [data-anim="feature"].run .glow { animation:glowPulse calc(2.4s / var(--as)) ease-in-out .9s 2; }
+  /* ── 墨重呼吸 INK ── (stack a 2nd anim so draw + weight-breathe coexist) */
+  [data-anim="ink"].run .edge-outer { animation:draw calc(.85s / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.05s / var(--as)), inkBreathe calc(3.8s / var(--as)) ease-in-out infinite calc(1.05s / var(--as)); }
+  [data-anim="ink"].run .edge-inner { animation:draw calc(.6s  / var(--as)) cubic-bezier(.5,0,.2,1) forwards calc(.6s  / var(--as)), inkBreathe calc(3.8s / var(--as)) ease-in-out infinite calc(1.05s / var(--as)); }
+
+  /* ── Feature · 绘制 → 等距轻摇 + 微光泽 ── */
+  [data-anim="feature"].run .cube      { animation:rock calc(5s / var(--as)) ease-in-out infinite calc(1.2s / var(--as)); }
+  [data-anim="feature"].run .cube-wrap { animation:idleFloat calc(5s / var(--as)) ease-in-out infinite calc(1.2s / var(--as)); }
+  [data-anim="feature"].run .glint     { animation:sheen calc(4.4s / var(--as)) ease-in-out infinite calc(1.4s / var(--as)); }
 
   /* paused state */
   body.paused *, body.paused *::before, body.paused *::after { animation-play-state:paused !important; }
@@ -186,7 +176,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
-    .edge { stroke-dashoffset:0 !important; } .face { opacity:1 !important; } .glow { opacity:.3 !important; }
+    .edge { stroke-dashoffset:0 !important; } .glint { display:none !important; }
   }
 </style>
 </head>
@@ -194,7 +184,7 @@
   <div class="bar">
     <div class="brand">
       <svg viewBox="0 0 24 24"><path d="M21 7.5 12 2 3 7.5v9L12 22l9-5.5z"/><path d="m3 7.5 9 5.5 9-5.5M12 22v-9"/></svg>
-      二维码 logo 动画
+      idle 动效对比
     </div>
     <div class="spacer"></div>
     <span class="ctl-label">主题</span>
@@ -216,51 +206,51 @@
 
   <div class="wrap">
     <div class="header">
-      <div class="eyebrow">Prototype · 动画评审</div>
-      <h1>会呼吸的<em>立方体</em>，<br>嵌在每一枚二维码中心</h1>
-      <p class="lede">四种 Notion 风格的中心 logo 微动效——克制、优雅、不抢扫码焦点。鼠标悬停任意二维码可重播进场动画。挑一个你最喜欢的，我再把它移植进真实的 <code style="font-family:var(--mono);font-size:13px">QrSvg</code>。</p>
+      <div class="eyebrow">Prototype · idle 动效对比</div>
+      <h1>入场已定为<em>绘制</em>。<br>立方体平时该怎么<em>呼吸</em>？</h1>
+      <p class="lede">进场动画锁定为「一笔笔画出」，这里只比三种 <strong>idle 循环</strong>——立方体画完之后、静置时的持续微动。三者都是纯 SVG+CSS、几乎不动几何、扫码零干扰，<strong>移植性满分</strong>。悬停任意二维码可重播「绘制 → idle」全过程。</p>
     </div>
 
     <div class="grid" id="grid">
-      <!-- feature card -->
+      <!-- feature: recommended combo -->
       <article class="card feature" data-anim="feature" style="--i:0">
         <span class="badge-no">★ 推荐组合</span>
         <span class="port full">移植性 · 满分</span>
         <div class="qr-box" data-qr></div>
-        <div class="name">绘制 → 呼吸<span class="en">draw-in, then breathe</span></div>
-        <p class="desc">进场时立方体一笔笔画出，随后转入持续的轻微呼吸与浮动。最贴近 Notion 的「内容缓缓显形」手感。</p>
+        <div class="name">绘制 → 等距轻摇 + 微光泽<span class="en">draw · rock + faint sheen</span></div>
+        <p class="desc">入场画出后，立方体轻轻摇晃透出体积感，偶有一道淡淡光泽掠过棱线。安静、有生命、像个真的小物件。</p>
         <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
       </article>
 
-      <article class="card" data-anim="draw" style="--i:1">
+      <article class="card" data-anim="baseline" style="--i:1">
+        <span class="badge-no">00</span><span class="port full">基准</span>
+        <div class="qr-box" data-qr></div>
+        <div class="name">仅绘制<span class="en">draw only</span></div>
+        <p class="desc">画完即静止，没有 idle。作为对照——看看「完全不动」是否反而最克制。</p>
+        <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
+      </article>
+
+      <article class="card" data-anim="rock" style="--i:2">
         <span class="badge-no">01</span><span class="port full">满分</span>
         <div class="qr-box" data-qr></div>
-        <div class="name">绘制组装<span class="en">draw-on</span></div>
-        <p class="desc">外框与内棱依次描边画出，收尾轻回弹。纯线条，零额外元素。</p>
+        <div class="name">等距轻摇<span class="en">isometric rock</span></div>
+        <p class="desc">极小幅度的错切 + 宽度微缩，伪装成立方体绕轴轻摇。有 3D 灵魂，却是稳的 2D。</p>
         <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
       </article>
 
-      <article class="card" data-anim="breathe" style="--i:2">
+      <article class="card" data-anim="sheen" style="--i:3">
         <span class="badge-no">02</span><span class="port full">满分</span>
         <div class="qr-box" data-qr></div>
-        <div class="name">呼吸悬浮<span class="en">breathe + float</span></div>
-        <p class="desc">立方体持续轻微缩放与上下浮动，安静而有生命感的 idle 循环。</p>
+        <div class="name">光泽流过<span class="en">sheen sweep</span></div>
+        <p class="desc">一道柔和高光每隔几秒沿棱线扫过，几何纹丝不动。最高级、扫码零干扰。</p>
         <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
       </article>
 
-      <article class="card" data-anim="tilt" style="--i:3">
-        <span class="badge-no">03</span><span class="port mid">移植性 · 中</span>
+      <article class="card" data-anim="ink" style="--i:4">
+        <span class="badge-no">03</span><span class="port full">满分</span>
         <div class="qr-box" data-qr></div>
-        <div class="name">等距翻面<span class="en">isometric tilt</span></div>
-        <p class="desc">缓慢的 3D 左右翻转，最有体积感。移植到 SVG 需注意 3D 兼容。</p>
-        <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
-      </article>
-
-      <article class="card" data-anim="faces" style="--i:4">
-        <span class="badge-no">04</span><span class="port mid">移植性 · 中</span>
-        <div class="qr-box" data-qr></div>
-        <div class="name">面着色 + 微光<span class="en">face-shade + glow</span></div>
-        <p class="desc">上 / 左 / 右三面错峰着色成实体立方，背后一圈柔光脉动。视觉最强，但改变线稿调性。</p>
+        <div class="name">墨重呼吸<span class="en">ink-weight breathe</span></div>
+        <p class="desc">只让描边粗细极缓起伏，像线条在轻轻吸气。形体完全不动，最安静。</p>
         <div class="replay-hint"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>悬停重播</div>
       </article>
     </div>
@@ -280,6 +270,8 @@
   const bit = (r, c) => MATRIX[r][c] === "1";
   const inFinder = (r, c) => (r < 7 && c < 7) || (r < 7 && c >= N - 7) || (r >= N - 7 && c < 7);
   const inLogo = (r, c) => Math.abs(r + 0.5 - MID) < HALF && Math.abs(c + 0.5 - MID) < HALF;
+  const CUBE_OUTER = "M21 7.5 12 2 3 7.5v9L12 22l9-5.5z";
+  const CUBE_INNER = "m3 7.5 9 5.5 9-5.5M12 22v-9";
 
   function el(name, attrs) {
     const e = document.createElementNS(NS, name);
@@ -307,36 +299,29 @@
     return svg;
   }
 
-  // Centre cube overlay (HTML wrapper + inline SVG so 3D/transform anims are easy).
+  // Centre cube overlay: base edges + a sheen "glint" copy (shown only for sheen/feature).
   function buildCube() {
     const wrap = document.createElement("div");
     wrap.className = "cube-wrap";
-    const glow = document.createElement("span"); glow.className = "glow"; wrap.appendChild(glow);
     const svg = el("svg", { class: "cube", viewBox: "0 0 24 24" });
-    const faces = el("g", { class: "cube-faces" });
-    faces.appendChild(el("polygon", { class: "face face-top",   points: "12,2 21,7.5 12,13 3,7.5" }));
-    faces.appendChild(el("polygon", { class: "face face-left",  points: "3,7.5 12,13 12,22 3,16.5" }));
-    faces.appendChild(el("polygon", { class: "face face-right", points: "21,7.5 12,13 12,22 21,16.5" }));
-    svg.appendChild(faces);
-    svg.appendChild(el("path", { class: "edge edge-outer", d: "M21 7.5 12 2 3 7.5v9L12 22l9-5.5z" }));
-    svg.appendChild(el("path", { class: "edge edge-inner", d: "m3 7.5 9 5.5 9-5.5M12 22v-9" }));
+    svg.appendChild(el("path", { class: "edge edge-outer", d: CUBE_OUTER }));
+    svg.appendChild(el("path", { class: "edge edge-inner", d: CUBE_INNER }));
+    svg.appendChild(el("path", { class: "glint glint-outer", d: CUBE_OUTER }));
+    svg.appendChild(el("path", { class: "glint glint-inner", d: CUBE_INNER }));
     wrap.appendChild(svg);
     return wrap;
   }
 
-  // Populate every .qr-box
   document.querySelectorAll("[data-qr]").forEach((box) => {
     box.appendChild(buildQR());
     box.appendChild(buildCube());
   });
 
-  // Trigger entrance animations (and allow replay by re-adding .run)
+  // Trigger entrance + idle (replay by re-adding .run)
   function replay(card) { card.classList.remove("run"); void card.offsetWidth; card.classList.add("run"); }
   const cards = [...document.querySelectorAll(".card")];
   function replayAll() { cards.forEach(replay); }
-  // initial play, staggered after the cards reveal
   cards.forEach((c, i) => setTimeout(() => replay(c), 350 + i * 120));
-  // hover replays that card's entrance
   cards.forEach((c) => c.addEventListener("mouseenter", () => replay(c)));
 
   // ── Controls ──
@@ -351,7 +336,6 @@
   }
   wireSeg("segTheme", (v) => v === "dark" ? root.setAttribute("data-resolved", "dark") : root.removeAttribute("data-resolved"));
   wireSeg("segSpeed", (v) => root.style.setProperty("--as", v));
-  // play/pause + replay share a seg but act as buttons
   document.getElementById("segPlay").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.v === "replay") { replayAll(); return; }
