@@ -6,6 +6,7 @@ import { join, dirname } from "node:path";
 // file is re-read from disk per request instead — see getCss().
 import APP_CSS from "../styles.css" with { type: "text" };
 import { ICON_192, ICON_512, ICON_180 } from "./icons.ts";
+import pkg from "../../../package.json" with { type: "json" };
 
 // Serves the browser WebUI at `/`. Core never imports this module: it is wired
 // into the server through startServer's `ui` option (see core/sync/server.ts),
@@ -163,11 +164,21 @@ async function getCss(): Promise<string> {
   return APP_CSS;
 }
 
+/** /webui.js with the package version stamped into the __MH_WEBUI_VERSION__
+ *  placeholder, so the data-blind PWA shell — which has no /api/version server
+ *  to ask — can still show its build version. Flows to every serve path (live
+ *  server, the static shell build via serveWebui, packaged dist, compiled
+ *  binary) the same way the SW version stamp does. */
+async function getJsStamped(): Promise<string> {
+  return (await getJs()).replaceAll("__MH_WEBUI_VERSION__", pkg.version);
+}
+
 /** /sw.js with its cache version stamped in: a hash of the current js+css, so
  *  any bundle change byte-diffs the worker (the browser's update trigger) and
- *  stale shell caches are dropped on activation. */
+ *  stale shell caches are dropped on activation. Hashing the *stamped* js means
+ *  a version-only bump (identical code) still busts the shell cache. */
 async function getSw(): Promise<string> {
-  const [raw, js, css] = await Promise.all([getSwRaw(), getJs(), getCss()]);
+  const [raw, js, css] = await Promise.all([getSwRaw(), getJsStamped(), getCss()]);
   const version = new Bun.CryptoHasher("sha256").update(js).update(css).digest("hex").slice(0, 16);
   return raw.replaceAll("__MH_SW_VERSION__", version);
 }
@@ -260,7 +271,7 @@ export async function serveWebui(req: Request): Promise<Response | null> {
     }
   }
   const script: Record<string, () => Promise<string>> = {
-    "/webui.js": getJs,
+    "/webui.js": getJsStamped,
     "/sw.js": getSw,
     "/db-worker.js": getDbWorker,
     "/mh-runtime.js": getRuntime,

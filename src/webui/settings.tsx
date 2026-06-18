@@ -20,7 +20,7 @@ import {
 } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
 import { cacheStats, clearCache, spoolPending, BLOB_QUOTA_BYTES } from "./data/blob-store.ts";
-import { cmpVer } from "./version.ts";
+import { cmpVer, WEBUI_VERSION } from "./version.ts";
 import {
   Modal,
   openModal,
@@ -2429,12 +2429,18 @@ function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => 
     }
   }
 
+  // PWA / bucket-only shell: no desktop bridge (appVer) and no server to answer
+  // /api/version (running) — fall back to the build version stamped into the
+  // bundle, so the footer is never empty. Fallback only: it stays hidden whenever
+  // App or Core is available (desktop, live server).
+  const webFallback = !appVer && !running && WEBUI_VERSION;
   return (
     <div class="set-footer">
       {appVer && <span>App <span class="ver-num">{appVer}</span></span>}
       {appVer && running && <span class="set-footer-sep">·</span>}
       {running && <span>Core <span class="ver-num">{running}</span></span>}
-      {update && (running || appVer) && <span class="set-footer-sep">·</span>}
+      {webFallback && <span class="ver-num">v{WEBUI_VERSION}</span>}
+      {update && (running || appVer || webFallback) && <span class="set-footer-sep">·</span>}
       {update}
     </div>
   );

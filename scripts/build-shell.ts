@@ -49,6 +49,12 @@ async function main() {
     const res = await serveWebui(new Request(`http://shell${p}`));
     if (!res || !res.ok) throw new Error(`build-shell: serveWebui failed for ${p} (${res?.status})`);
     const bytes = new Uint8Array(await res.arrayBuffer());
+    // The shell has no /api/version server; the settings footer shows the build
+    // version stamped into webui.js instead. If the placeholder ever survives
+    // (refactor broke the stamp), the footer would silently go blank — fail loud.
+    if (p === "/webui.js" && new TextDecoder().decode(bytes).includes("__MH_WEBUI_VERSION__")) {
+      throw new Error("build-shell: webui.js still has the unstamped __MH_WEBUI_VERSION__ placeholder");
+    }
     const dest = join(OUT, fileFor(p));
     await Bun.write(dest, bytes);
     bytesTotal += bytes.byteLength;
