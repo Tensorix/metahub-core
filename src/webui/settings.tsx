@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { S3Config } from "../core/sync/storage.ts";
 import { encodeEnroll } from "../core/sync/enroll.ts";
-import { Icon, CUBE_PATH } from "./icons.tsx";
+import { Icon, CUBE_OUTER, CUBE_INNER } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { api, currentToken, type Peer, type Grant, type S3Peer, type BlobCacheInfo } from "./api.ts";
 import {
@@ -1757,14 +1757,19 @@ function QrSvg({ data }: { data: string }) {
         {eye(n - 7, 0)}
         <rect x={mid - badge / 2} y={mid - badge / 2} width={badge} height={badge} rx={badge * 0.26} ry={badge * 0.26} fill="var(--qr-bg)" />
         <g
+          class="qr-cube"
           transform={`translate(${mid} ${mid}) scale(${s}) translate(-12 -12)`}
           fill="none"
           stroke="var(--qr-fg)"
           stroke-width={1.6}
           stroke-linejoin="round"
           stroke-linecap="round"
-          dangerouslySetInnerHTML={{ __html: CUBE_PATH }}
-        />
+        >
+          <path class="qr-cube-edge qr-cube-outer" pathLength={1} d={CUBE_OUTER} />
+          <path class="qr-cube-edge qr-cube-inner" pathLength={1} d={CUBE_INNER} />
+          <path class="qr-cube-glint" pathLength={1} d={CUBE_OUTER} />
+          <path class="qr-cube-glint" pathLength={1} d={CUBE_INNER} />
+        </g>
       </svg>
     </div>
   );

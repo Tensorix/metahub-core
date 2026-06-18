@@ -1397,6 +1397,26 @@
             border-color:var(--line-strong);
             box-shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 30px rgba(0,0,0,.6); }
 
+  /* Centre cube logo: draw the edges in on mount (outer then inner), then a slow
+     accent sheen sweeps along the wire. Stroke/mask only — geometry never moves,
+     so scanning is unaffected. Reuses the shared @keyframes draw. */
+  .qr-cube-edge  { stroke-dasharray:1; stroke-dashoffset:1;
+                   animation:draw .85s cubic-bezier(.5,0,.2,1) forwards .05s; }
+  .qr-cube-inner { animation-duration:.6s; animation-delay:.6s; }
+  .qr-cube-glint { stroke:var(--accent); stroke-width:2.3;
+    -webkit-mask-image:linear-gradient(115deg,transparent 38%,#000 47%,#000 53%,transparent 62%);
+            mask-image:linear-gradient(115deg,transparent 38%,#000 47%,#000 53%,transparent 62%);
+    -webkit-mask-size:260% 260%; mask-size:260% 260%;
+    -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
+    -webkit-mask-position:140% 0; mask-position:140% 0;
+    animation:qrSheen 3.2s ease-in-out infinite 1.1s; }
+  @keyframes qrSheen { from { -webkit-mask-position:140% 0; mask-position:140% 0; }
+                       to   { -webkit-mask-position:-40% 0; mask-position:-40% 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .qr-cube-edge { stroke-dashoffset:0 !important; animation:none !important; }
+    .qr-cube-glint { display:none !important; }
+  }
+
   /* Unified 添加设备 modal: tab strip, CLI command box, advanced-tab sections. */
   .add-tabs { display:flex; gap:4px; margin-bottom:14px; background:var(--surface-2); padding:4px; border-radius:9px; }
   .add-tab { flex:1; padding:6px 8px; border:none; background:transparent; color:var(--muted);
