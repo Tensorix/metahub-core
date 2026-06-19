@@ -40,6 +40,12 @@ export interface MetahubDesktop {
     setAlwaysOnTop: (on: boolean) => Promise<boolean>;
     hide: () => Promise<void>;
   };
+  /** Open the image preview in a frameless native window (vs the in-page lightbox
+   *  in a browser). The window flattens+re-uploads annotations itself and reports
+   *  the new /blob URL back over BroadcastChannel("mh-doc-image"). */
+  preview?: {
+    open: (p: { src: string; name?: string; blockId: string }) => Promise<void>;
+  };
 }
 
 declare global {

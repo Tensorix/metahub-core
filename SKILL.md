@@ -166,6 +166,28 @@ clobbered):
 3. `mh doc edit <ref> --old ... --new ... --if-match <version>`.
 4. On exit 5 (`stale`), re-read and retry from step 1.
 
+## Media & attachments (images / video / audio / files)
+
+Binary media lives as content-addressed **blobs**; a document body only carries a
+`/blob/<hash>` reference (the bytes move on demand and sync separately). Ingest a
+local file, then embed the URL it prints into a doc body.
+
+```bash
+mh blob add ./diagram.png          # store bytes → prints {hash,size,content_type,url,kind,markdown}
+mh blob add ./clip.mp4 --name Demo # video/audio are stored the same way
+mh blob get <hash> --out copy.png  # resolve bytes back to a file (local cache → peers → bucket)
+mh blob get <hash> > copy.png      # …or raw bytes to stdout (pipe-friendly)
+```
+
+Embed the printed `markdown` (or build it yourself) as its **own line/block** in a
+document body — the WebUI renders it as a media block:
+- image/video/audio → `![name](/blob/<hash>.<ext>)` (kind is inferred from the extension)
+- any other file → `[name](/blob/<hash>.<ext> "<bytes>")` (a download card)
+
+A blob is kept from garbage collection only once a live document references its
+`/blob/<hash>` — embed it promptly (an unreferenced blob is an orphan that
+`mh compact` / `mh cache gc` may remove).
+
 ## History & rollback (docs, records, columns)
 
 Every field write is kept in an append-only oplog, so full edit history is

@@ -25,7 +25,12 @@ export type BlockType =
   | "video"
   | "audio"
   | "file"
-  | "html";
+  | "html"
+  // Transient, in-memory only: a placeholder shown at the insertion point while a
+  // file uploads. Never parsed from Markdown and never serialized (shouldPersist
+  // false, renderBlock no-op) — it's replaced by the real media block on success
+  // or removed on failure. `name` holds the uploading filename.
+  | "uploading";
 
 export type ColAlign = "left" | "center" | "right" | null;
 
@@ -214,7 +219,7 @@ export function applyBlockDraft(b: Block, type: BlockType, draft: Partial<BlockD
     delete b.rows;
     delete b.align;
   }
-  if (isMediaType(type)) {
+  if (isMediaType(type) || type === "uploading") {
     b.src = draft.src ?? "";
     if (draft.name != null) b.name = draft.name;
     else delete b.name;
@@ -772,6 +777,8 @@ function renderBlock(block: Block, indent: number, number: number): string[] {
       const body = block.content.split("\n").map((line) => `${pad}${line}`);
       return [first, ...body, `${pad}\`\`\``];
     }
+    case "uploading":
+      return []; // transient placeholder — never serialized
     default:
       return block.content.split("\n").map((line) => `${pad}${escapeFenceLine(line)}`);
   }
@@ -810,6 +817,7 @@ function shouldPersist(block: Block): boolean {
   if (isListType(block.type)) return true;
   if (block.type === "code") return block.content.trim() !== "" || !!block.lang?.trim();
   if (block.type === "table") return (block.rows ?? []).some((r) => r.some((c) => c.trim() !== ""));
+  if (block.type === "uploading") return false; // transient — drop from saved Markdown
   if (isMediaType(block.type)) return !!block.src;
   if (block.type === "html") return block.content.trim() !== "";
   return block.content.trim() !== "";

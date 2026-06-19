@@ -26,6 +26,7 @@ import { SitesView } from "./sites.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
+import { ImagePreviewWindow } from "./media/image-preview-window.tsx";
 import { DocHistoryPanel, DbActivityPanel } from "./history.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
@@ -786,7 +787,12 @@ if (typeof window !== "undefined" && window.metahubDesktop) {
 // The desktop Quick Notes window loads this same bundle at `…/#quick`. Mount the
 // compact note view there — but only inside the desktop shell (guarded on the
 // preload bridge), so a browser hitting `/#quick` just gets the full app.
-if (location.hash === "#quick" && typeof window !== "undefined" && window.metahubDesktop) {
+// The desktop image-preview window loads this same bundle at `…/#preview?…`. It's
+// a standalone full-window viewer — never boot the sidebar/replica app there.
+if (location.hash.startsWith("#preview")) {
+  document.body.classList.add("preview-window");
+  render(<ImagePreviewWindow />, document.getElementById("app")!);
+} else if (location.hash === "#quick" && typeof window !== "undefined" && window.metahubDesktop) {
   document.body.classList.add("quicknote");
   render(<QuickNote />, document.getElementById("app")!);
 } else {

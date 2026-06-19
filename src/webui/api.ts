@@ -235,6 +235,62 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
   return fetch(path, { ...init, headers });
 }
 
+/** Low-level XHR POST of raw bytes — the one transport that reports UPLOAD
+ *  progress (fetch can't). Resolves { status, data } (data = parsed JSON or null). */
+function xhrPost(
+  path: string,
+  file: Blob,
+  token: string | null,
+  ct: string,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<{ status: number; data: any }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    if (token) xhr.setRequestHeader("authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("content-type", ct);
+    if (onProgress)
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total);
+      };
+    xhr.onload = () => {
+      let data: any = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* non-JSON body */
+      }
+      resolve({ status: xhr.status, data });
+    };
+    xhr.onerror = () => reject(new Error("network error"));
+    xhr.ontimeout = () => reject(new Error("timeout"));
+    xhr.send(file);
+  });
+}
+
+/** POST raw bytes with upload progress + the stored Bearer token; on 401, rotate
+ *  the token once and retry (mirrors authFetch). Returns the parsed JSON body, or
+ *  throws on HTTP/network error (the caller's offline-spool fallback handles it). */
+async function uploadBlobXHR(
+  path: string,
+  file: Blob,
+  ct: string,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<any> {
+  const t = storedToken();
+  let r = await xhrPost(path, file, t, ct, onProgress);
+  if (r.status === 401 && t) {
+    const renewed = await fetch(RENEW_PATH, { headers: { authorization: `Bearer ${t}` } }).catch(() => null);
+    const d = renewed?.ok ? ((await renewed.json().catch(() => null)) as { token?: string } | null) : null;
+    if (d?.token) {
+      saveToken(d.token);
+      r = await xhrPost(path, file, d.token, ct, onProgress);
+    }
+  }
+  if (r.status >= 200 && r.status < 300 && r.data && !r.data.error) return r.data;
+  throw new Error((r.data && r.data.error) || `${r.status}`);
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await authFetch(path, {
     method,
@@ -376,23 +432,23 @@ function blobUrlWithExt(hash: string, serverUrl: string, ct: string, filename: s
  *  can't reach the server, the bytes spool under the SAME hash the server would
  *  assign and the URL returns immediately (the SW serves from the spool); a later
  *  drain (online) pushes them to the server. */
-async function uploadDocBlobImpl(file: Blob): Promise<DocBlobUpload> {
+async function uploadDocBlobImpl(
+  file: Blob,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<DocBlobUpload> {
   const ct = file.type || "application/octet-stream";
   const filename = (file as File).name || "";
   try {
-    const res = await authFetch("/api/blob", { method: "POST", headers: { "content-type": ct }, body: file });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data && !(data as any).error) {
-      void drainBlobSpool(); // online again — flush anything stranded earlier
-      const d = data as DocBlobUpload;
-      return { ...d, url: blobUrlWithExt(d.hash, d.url, ct, filename) };
-    }
-    throw new Error((data && (data as any).error) || `${res.status} ${res.statusText}`);
+    const data = await uploadBlobXHR("/api/blob", file, ct, onProgress);
+    void drainBlobSpool(); // online again — flush anything stranded earlier
+    const d = data as DocBlobUpload;
+    return { ...d, url: blobUrlWithExt(d.hash, d.url, ct, filename) };
   } catch (e) {
     if (!(replicaActive() || isNoOrigin())) throw e;
     const buf = await file.arrayBuffer();
     const hash = await blobHash32(buf);
     await spoolPut(hash, buf, ct);
+    onProgress?.(buf.byteLength, buf.byteLength); // composed locally → instantly "done"
     return { hash, size: buf.byteLength, content_type: ct, url: blobUrlWithExt(hash, "", ct, filename) };
   }
 }

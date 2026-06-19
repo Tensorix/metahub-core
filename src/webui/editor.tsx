@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { api, ApiError, MAX_UPLOAD_BYTES } from "./api.ts";
 import { replicaActive, SYNCED_EVENT } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
-import { openMenu, MenuItem, MenuLabel, MenuSep, promptDialog, toast } from "./ui.tsx";
+import { openMenu, MenuItem, MenuLabel, MenuSep, promptDialog, toast, startUpload, updateUpload, finishUpload } from "./ui.tsx";
 import hljs from "highlight.js/lib/common";
 import { htmlToMarkdown } from "./html-md.ts";
 import {
@@ -25,7 +25,7 @@ import {
   mediaKindFromMime,
   shortcutFromInput,
 } from "./blocks.ts";
-import { ImageBlock, VideoBlock, AudioBlock, FileBlock } from "./media/media-blocks.tsx";
+import { ImageBlock, VideoBlock, AudioBlock, FileBlock, UploadingBlock } from "./media/media-blocks.tsx";
 import { HtmlBlock } from "./media/html-block.tsx";
 import { ImageLightbox } from "./media/image-lightbox.tsx";
 import {
@@ -572,93 +572,95 @@ export function DocView({
     requestAnimationFrame(() => focusBlock(caret.id, !afterBlock));
   };
 
-  /** Upload doc files → one void block each (image/video/audio/file), enforcing
-   *  the friendly per-kind size caps. Failures toast and are skipped. */
-  const uploadToBlocks = async (files: File[]): Promise<Block[]> => {
-    const out: Block[] = [];
+  /** Files within their per-kind size cap; the rest toast and are dropped. */
+  const withinCaps = (files: File[]): File[] => {
+    const ok: File[] = [];
     for (const f of files) {
-      const kind = mediaKindFromMime(f.type);
-      const cap = MAX_UPLOAD_BYTES[kind];
-      if (f.size > cap) {
-        toast(`${f.name || "文件"} 超过 ${Math.round(cap / 1024 / 1024)}MB 上限`);
-        continue;
-      }
-      try {
-        const up = await api.uploadDocBlob(f);
-        out.push(makeBlock(kind, { src: up.url, name: f.name || undefined, size: kind === "file" ? up.size : undefined }));
-      } catch (err) {
+      const cap = MAX_UPLOAD_BYTES[mediaKindFromMime(f.type)];
+      if (f.size > cap) toast(`${f.name || "文件"} 超过 ${Math.round(cap / 1024 / 1024)}MB 上限`);
+      else ok.push(f);
+    }
+    return ok;
+  };
+
+  /** Upload one file behind its in-document "uploading" placeholder: replace the
+   *  placeholder with the real media block on success, remove it on failure (which
+   *  also lingers in the tray with a retry that re-appends). Progress feeds the
+   *  tray. Operates on the live ref so a doc reload mid-upload can't write into a
+   *  detached array. */
+  const uploadInto = (file: File, placeholderId: string) => {
+    const tid = startUpload(file.name || "文件");
+    const kind = mediaKindFromMime(file.type);
+    api
+      .uploadDocBlob(file, (l, t) => updateUpload(tid, l, t))
+      .then((up) => {
+        const real = makeBlock(kind, { src: up.url, name: file.name || undefined, size: kind === "file" ? up.size : undefined });
+        const found = findBlock(blocksRef.current, placeholderId);
+        if (found) found.parent.splice(found.index, 1, real);
+        else blocksRef.current.push(real);
+        finishUpload(tid, true);
+      })
+      .catch((err) => {
+        removeBlockById(blocksRef.current, placeholderId);
+        finishUpload(tid, false, () => runUploads([file], { mode: "append" }));
         toast(`上传失败：${(err as Error).message}`);
-      }
-    }
-    return out;
+      })
+      .finally(() => { bump(); scheduleSave(); });
   };
 
-  /** Paste/drop files at the caret inside block `b`: split the line and drop the
-   *  uploaded void blocks between. */
-  const insertImages = async (b: Block, el: HTMLElement, files: File[]) => {
-    const found = findBlock(blocks, b.id);
-    if (!found) return;
-    const { before, after } = splitEditableAtCaret(el);
-    const made = await uploadToBlocks(files);
-    if (!made.length) return;
-    const insert: Block[] = [...made];
-    const afterBlock = after.trim() !== "" ? makeBlock("p", { content: after }) : null;
-    if (afterBlock) insert.push(afterBlock);
-    if (before.trim() === "" && !found.block.children?.length) {
-      found.parent.splice(found.index, 1, ...insert);
+  type UploadPlace =
+    | { mode: "caret"; block: Block; el: HTMLElement }
+    | { mode: "at"; targetId: string; where: "before" | "after" }
+    | { mode: "append" }
+    | { mode: "slot"; blockId: string };
+
+  /** Insert one "uploading" placeholder per file at `place`, then upload each
+   *  concurrently. The single entry point for paste / drop / slash-picker. */
+  const runUploads = (rawFiles: File[], place: UploadPlace) => {
+    const files = withinCaps(rawFiles);
+    if (!files.length) return;
+    const holders = files.map((f) => makeBlock("uploading", { name: f.name || undefined }));
+    if (place.mode === "caret") {
+      const found = findBlock(blocksRef.current, place.block.id);
+      if (!found) return;
+      const { before, after } = splitEditableAtCaret(place.el);
+      const insert: Block[] = [...holders];
+      if (after.trim() !== "") insert.push(makeBlock("p", { content: after }));
+      if (before.trim() === "" && !found.block.children?.length) found.parent.splice(found.index, 1, ...insert);
+      else { place.block.content = before; found.parent.splice(found.index + 1, 0, ...insert); }
+    } else if (place.mode === "at") {
+      const found = findBlock(blocksRef.current, place.targetId);
+      if (!found) return;
+      found.parent.splice(found.index + (place.where === "after" ? 1 : 0), 0, ...holders);
+    } else if (place.mode === "append") {
+      blocksRef.current.push(...holders);
     } else {
-      b.content = before;
-      found.parent.splice(found.index + 1, 0, ...insert);
+      const found = findBlock(blocksRef.current, place.blockId);
+      if (!found) blocksRef.current.push(...holders);
+      else if (found.block.type === "p" && !found.block.content.trim() && !found.block.children?.length)
+        found.parent.splice(found.index, 1, ...holders);
+      else found.parent.splice(found.index + 1, 0, ...holders);
     }
     bump();
     scheduleSave();
-    const caret = afterBlock ?? insert[insert.length - 1]!;
-    requestAnimationFrame(() => focusBlock(caret.id, !afterBlock));
+    files.forEach((f, i) => uploadInto(f, holders[i]!.id));
   };
 
-  /** Upload dropped files and insert the void blocks before/after `targetId`. */
-  const insertImagesAt = async (targetId: string, where: "before" | "after", files: File[]) => {
-    const made = await uploadToBlocks(files);
-    if (!made.length) return;
-    const found = findBlock(blocks, targetId);
-    if (!found) return;
-    found.parent.splice(found.index + (where === "after" ? 1 : 0), 0, ...made);
-    bump();
-    scheduleSave();
-    requestAnimationFrame(() => focusBlock(made[made.length - 1]!.id, false));
-  };
+  // Thin wrappers keep the paste/drop call sites unchanged.
+  const insertImages = (b: Block, el: HTMLElement, files: File[]) => runUploads(files, { mode: "caret", block: b, el });
+  const insertImagesAt = (targetId: string, where: "before" | "after", files: File[]) => runUploads(files, { mode: "at", targetId, where });
+  const appendImages = (files: File[]) => runUploads(files, { mode: "append" });
 
-  /** Upload dropped files and append them at the end (empty doc / drop past the
-   *  last block). */
-  const appendImages = async (files: File[]) => {
-    const made = await uploadToBlocks(files);
-    if (!made.length) return;
-    blocks.push(...made);
-    bump();
-    scheduleSave();
-    requestAnimationFrame(() => focusBlock(made[made.length - 1]!.id, false));
-  };
-
-  /** Open a native file picker for a slash-menu upload type, then replace the
-   *  (empty) slash block with the uploaded void block(s), or insert after it. */
+  /** Open a native file picker for a slash-menu upload type, then drop the
+   *  uploading placeholder(s) in place of (or after) the slash block. */
   const pickAndInsert = (kind: BlockType, blockId: string) => {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
     input.accept = kind === "image" ? "image/*" : kind === "video" ? "video/*" : kind === "audio" ? "audio/*" : "";
-    input.onchange = async () => {
+    input.onchange = () => {
       const files = Array.from(input.files ?? []);
-      if (!files.length) return;
-      const made = await uploadToBlocks(files);
-      if (!made.length) return;
-      const found = findBlock(blocks, blockId);
-      if (!found) blocks.push(...made);
-      else if (found.block.type === "p" && !found.block.content.trim() && !found.block.children?.length)
-        found.parent.splice(found.index, 1, ...made);
-      else found.parent.splice(found.index + 1, 0, ...made);
-      bump();
-      scheduleSave();
-      requestAnimationFrame(() => focusBlock(made[made.length - 1]!.id, false));
+      if (files.length) runUploads(files, { mode: "slot", blockId });
     };
     input.click();
   };
@@ -706,6 +708,40 @@ export function DocView({
       toast(`保存失败：${(err as Error).message}`);
     }
   };
+
+  /** Open the image preview. Desktop app → a frameless native window (the editor
+   *  gets the annotated result back over BroadcastChannel); browser → in-page
+   *  lightbox overlay. */
+  const openImagePreview = (b: Block) => {
+    const src = b.src ?? "";
+    if (typeof window !== "undefined" && window.metahubDesktop?.preview) {
+      void window.metahubDesktop.preview.open({ src, name: b.name, blockId: b.id });
+    } else {
+      setLightbox({ id: b.id, src, name: b.name });
+    }
+  };
+
+  // Receive "image replaced" from a desktop preview window (annotation flattened
+  // and re-uploaded there): update the block's src in the live doc. Use the ref so
+  // a doc reload between open and save can't write into a detached array.
+  useEffect(() => {
+    let ch: BroadcastChannel | null = null;
+    try {
+      ch = new BroadcastChannel("mh-doc-image");
+    } catch {
+      return;
+    }
+    ch.onmessage = (e) => {
+      const d = e.data as { action?: string; blockId?: string; url?: string } | null;
+      if (!d || d.action !== "replace" || !d.blockId || !d.url) return;
+      const found = findBlock(blocksRef.current, d.blockId);
+      if (!found) return;
+      found.block.src = d.url;
+      bump();
+      scheduleSave();
+    };
+    return () => ch?.close();
+  }, []);
 
   const slashMatches = slash
     ? BLOCK_MENU.filter((m) => (m.t + m.type + m.d).toLowerCase().includes(slash.query.toLowerCase()))
@@ -826,7 +862,8 @@ export function DocView({
     let changed = false;
     for (const id of topmostBlockIds(blocks, ids)) {
       const b = findBlock(blocks, id)?.block;
-      if (b && convertBlockType(blocks, id, type, { content: b.content })) changed = true;
+      if (!b || isUploadType(b.type) || b.type === "uploading") continue; // never convert media away (loses bytes)
+      if (convertBlockType(blocks, id, type, { content: b.content })) changed = true;
     }
     if (!changed) return;
     bump();
@@ -1167,18 +1204,27 @@ export function DocView({
     const ids = selectedIds;
     const multi = ids.length > 1 && ids.includes(b.id);
     const count = multi ? topmostBlockIds(blocks, ids).length : 1;
+    // A single media/file/uploading void block can't convert to another type —
+    // it has no text and converting would discard its bytes. Hide "转换为" for it
+    // (a mixed multi-selection keeps it, and convertSelectedBlocks skips the media
+    // members). html is content-based, so it stays convertible.
+    const showConvert = multi || (!isUploadType(b.type) && b.type !== "uploading");
     openMenu(e, (close) => (
       <>
-        <MenuLabel>{multi ? `转换为（${count} 个块）` : "转换为"}</MenuLabel>
-        {/* Upload blocks (image/video/audio/file) need a file picker, not a text
-            conversion — they're offered via the slash menu, not "turn into". */}
-        {BLOCK_MENU.filter((m) => m.type !== "divider" && !isUploadType(m.type) && (!multi || m.type !== "table")).map((m) => (
-          // Pass the current content explicitly: convert() resets content to the
-          // draft's (the slash menu relies on that to clear its "/query" text),
-          // so a bare convert() here would wipe the block's text.
-          <MenuItem key={m.type} icon={m.ic} label={m.t} checked={!multi && b.type === m.type} onClick={() => { multi ? convertSelectedBlocks(ids, m.type) : convert(b.id, m.type, { content: b.content }); close(); }} />
-        ))}
-        <MenuSep />
+        {showConvert && (
+          <>
+            <MenuLabel>{multi ? `转换为（${count} 个块）` : "转换为"}</MenuLabel>
+            {/* Upload blocks (image/video/audio/file) need a file picker, not a text
+                conversion — they're offered via the slash menu, not "turn into". */}
+            {BLOCK_MENU.filter((m) => m.type !== "divider" && !isUploadType(m.type) && (!multi || m.type !== "table")).map((m) => (
+              // Pass the current content explicitly: convert() resets content to the
+              // draft's (the slash menu relies on that to clear its "/query" text),
+              // so a bare convert() here would wipe the block's text.
+              <MenuItem key={m.type} icon={m.ic} label={m.t} checked={!multi && b.type === m.type} onClick={() => { multi ? convertSelectedBlocks(ids, m.type) : convert(b.id, m.type, { content: b.content }); close(); }} />
+            ))}
+            <MenuSep />
+          </>
+        )}
         <MenuItem icon="copy" label={multi ? "复制块组" : "复制块"} onClick={() => { if (multi) duplicateSelectedBlocks(ids); else { const found = findBlock(blocks, b.id); if (found) found.parent.splice(found.index + 1, 0, cloneBlock(b)); bump(); scheduleSave(); } close(); }} />
         <MenuItem icon="trash" label={multi ? "删除块组" : "删除块"} danger onClick={() => { if (multi) deleteSelectedBlocks(ids); else remove(b.id); close(); }} />
       </>
@@ -1334,7 +1380,7 @@ export function DocView({
         onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
         onVoidChange={(patch) => updateVoid(b.id, patch)}
         onVoidKey={(e) => onVoidKeyDown(e, b)}
-        onPreview={() => setLightbox({ id: b.id, src: b.src ?? "", name: b.name })}
+        onPreview={() => openImagePreview(b)}
         dragRef={dragRef}
         onReorder={(srcId, where) => {
           const ids = selectedIds;
@@ -1492,7 +1538,7 @@ export function DocView({
 
 /** File payloads from a paste (clipboardData.items) or a drop (dataTransfer.files):
  *  any file kind — image/video/audio render as media, everything else as a file
- *  card (kind decided per-file at upload time, see uploadToBlocks). */
+ *  card (kind decided per-file at upload time, see uploadInto). */
 function mediaFilesFrom(dt: DataTransfer | null | undefined): File[] {
   if (!dt) return [];
   const out: File[] = [];
@@ -1611,7 +1657,7 @@ function BlockRow({
           <hr />
         ) : block.type === "table" ? (
           <TableBlock block={block} renderKey={renderKey} onCellInput={onCellInput} onTableChange={onTableChange} />
-        ) : block.type === "image" || block.type === "video" || block.type === "audio" || block.type === "file" || block.type === "html" ? (
+        ) : block.type === "image" || block.type === "video" || block.type === "audio" || block.type === "file" || block.type === "html" || block.type === "uploading" ? (
           <div class="void-host" tabindex={0} onKeyDown={(e) => onVoidKey(e as KeyboardEvent)}>
             {block.type === "image" ? (
               <ImageBlock block={block} selected={selected} onResize={(w) => onVoidChange({ width: w })} onPreview={onPreview} />
@@ -1621,6 +1667,8 @@ function BlockRow({
               <AudioBlock block={block} />
             ) : block.type === "file" ? (
               <FileBlock block={block} />
+            ) : block.type === "uploading" ? (
+              <UploadingBlock block={block} />
             ) : (
               <HtmlBlock block={block} selected={selected} onChange={(c) => onVoidChange({ content: c })} />
             )}

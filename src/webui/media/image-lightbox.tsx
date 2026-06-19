@@ -1,7 +1,8 @@
 /** @jsxImportSource preact */
-// Fullscreen image preview: zoom (buttons + wheel, cursor-anchored) and pan
-// (drag). The "标注" button swaps in the ImageAnnotator; saving there hands a
-// flattened PNG back to onReplace (the editor uploads it and swaps the block src).
+// Image preview viewer: zoom (buttons + wheel, cursor-anchored) and pan (drag).
+// The "标注" button swaps in the ImageAnnotator; saving hands a flattened PNG to
+// onReplace. <ImageViewer> is shared by the in-page overlay (<ImageLightbox>, web)
+// and the frameless desktop preview window (ImagePreviewWindow).
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../icons.tsx";
 import { ImageAnnotator } from "./image-annotator.tsx";
@@ -9,16 +10,19 @@ import { ImageAnnotator } from "./image-annotator.tsx";
 const MIN = 0.2;
 const MAX = 8;
 
-export function ImageLightbox({
+export function ImageViewer({
   src,
   name,
   onClose,
   onReplace,
+  draggableBar,
 }: {
   src: string;
   name?: string;
   onClose: () => void;
   onReplace: (blob: Blob) => void;
+  /** In the frameless desktop window, make the toolbar a draggable region. */
+  draggableBar?: boolean;
 }) {
   const [scale, setScale] = useState(1);
   const [tx, setTx] = useState(0);
@@ -49,8 +53,7 @@ export function ImageLightbox({
     setScale((s) => {
       const ns = Math.max(MIN, Math.min(MAX, s * factor));
       const r = ns / s;
-      // keep the point under the cursor fixed while scaling
-      setTx((x) => cx - (cx - x) * r);
+      setTx((x) => cx - (cx - x) * r); // keep the point under the cursor fixed
       setTy((y) => cy - (cy - y) * r);
       return ns;
     });
@@ -73,8 +76,8 @@ export function ImageLightbox({
   }, []);
 
   return (
-    <div class="lightbox" onMouseDown={() => onClose()}>
-      <div class="lightbox-toolbar" onMouseDown={(e) => e.stopPropagation()}>
+    <>
+      <div class={"lightbox-toolbar" + (draggableBar ? " app-drag" : "")} onMouseDown={(e) => e.stopPropagation()}>
         {name && <span class="lightbox-name" title={name}>{name}</span>}
         <span class="lightbox-spacer" />
         {!editing && (
@@ -105,6 +108,16 @@ export function ImageLightbox({
           />
         </div>
       )}
+    </>
+  );
+}
+
+/** In-page overlay (browser / PWA): a dark scrim that closes on backdrop click,
+ *  wrapping the shared viewer. */
+export function ImageLightbox(props: { src: string; name?: string; onClose: () => void; onReplace: (blob: Blob) => void }) {
+  return (
+    <div class="lightbox" onMouseDown={() => props.onClose()}>
+      <ImageViewer {...props} />
     </div>
   );
 }

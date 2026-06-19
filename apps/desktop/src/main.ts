@@ -62,6 +62,7 @@ let serverPort = 0;
 let mainWin: BrowserWindow | null = null;
 let splashWin: BrowserWindow | null = null;
 let quickWin: BrowserWindow | null = null;
+let previewWin: BrowserWindow | null = null;
 let quickReady = false; // has the quick-note window painted at least once?
 let quickPendingShow = false; // reveal the quick-note window as soon as it paints
 let tray: Tray | null = null;
@@ -271,6 +272,48 @@ function createWindow(port: number): void {
     if (app.isPackaged) setTimeout(() => void maybeUpdateCore(), 3_000);
   });
   void win.loadURL(`http://127.0.0.1:${port}/`);
+}
+
+/**
+ * Open (or reuse) the frameless image-preview window. Loads the same WebUI at
+ * `…/#preview?…` so it's same-origin with the editor — it shares the auth token
+ * and blob bytes, flattens+uploads annotations itself, and posts the new /blob URL
+ * back to the editor over BroadcastChannel. No top bar on any platform.
+ */
+function openPreview(p: { src: string; name?: string; blockId: string }): void {
+  if (!serverPort) return;
+  const params = new URLSearchParams({ src: p.src, bid: p.blockId });
+  if (p.name) params.set("name", p.name);
+  const url = `http://127.0.0.1:${serverPort}/#preview?${params.toString()}`;
+  if (previewWin && !previewWin.isDestroyed()) {
+    void previewWin.loadURL(url);
+    previewWin.focus();
+    return;
+  }
+  const win = new BrowserWindow({
+    width: 1040,
+    height: 760,
+    minWidth: 480,
+    minHeight: 360,
+    title: p.name || "图片预览",
+    backgroundColor: "#0b0b10",
+    frame: false,
+    show: false,
+    webPreferences: {
+      preload: appFile("dist", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  previewWin = win;
+  win.on("closed", () => {
+    if (previewWin === win) previewWin = null;
+  });
+  win.once("ready-to-show", () => {
+    win.show();
+    win.focus();
+  });
+  void win.loadURL(url);
 }
 
 /**
@@ -532,6 +575,9 @@ function registerIpc(): void {
   ipcMain.handle("qn:hide", () => {
     if (quickWin && !quickWin.isDestroyed()) quickWin.hide();
   });
+
+  // Open the frameless image-preview window for a doc image (see openPreview).
+  ipcMain.handle("preview:open", (_e, p: { src: string; name?: string; blockId: string }) => openPreview(p));
 }
 
 // ---- helpers ---------------------------------------------------------------

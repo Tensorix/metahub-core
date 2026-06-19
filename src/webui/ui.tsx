@@ -41,6 +41,71 @@ export function toast(msg: string) {
   setTimeout(() => toastStore.set(toastStore.get().filter((t) => t.id !== id)), 2600);
 }
 
+// ---- upload progress tray --------------------------------------------------
+// A floating bottom-right list of in-flight uploads (every entry point — drop,
+// paste, slash picker, annotate save — registers here). Detailed % lives here;
+// the document shows only a lightweight skeleton block at the insertion point.
+export type UploadItem = { id: number; name: string; loaded: number; total: number; failed?: boolean; retry?: () => void };
+const uploadStore = makeStore<UploadItem[]>([]);
+let uploadSeq = 0;
+function patchUpload(id: number, patch: Partial<UploadItem>) {
+  uploadStore.set(uploadStore.get().map((u) => (u.id === id ? { ...u, ...patch } : u)));
+}
+function dropUpload(id: number) {
+  uploadStore.set(uploadStore.get().filter((u) => u.id !== id));
+}
+export function startUpload(name: string): number {
+  const id = ++uploadSeq;
+  uploadStore.set([...uploadStore.get(), { id, name, loaded: 0, total: 0 }]);
+  return id;
+}
+export function updateUpload(id: number, loaded: number, total: number) {
+  patchUpload(id, { loaded, total });
+}
+/** Mark an upload done. ok → fade out shortly; failed → linger (red) with a
+ *  retry button if `retry` is given, until the user retries or dismisses. */
+export function finishUpload(id: number, ok: boolean, retry?: () => void) {
+  if (ok) {
+    patchUpload(id, { loaded: 1, total: 1 });
+    setTimeout(() => dropUpload(id), 900);
+  } else {
+    patchUpload(id, { failed: true, retry });
+  }
+}
+
+function UploadTray() {
+  const items = uploadStore.use();
+  if (!items.length) return null;
+  return (
+    <div class="upload-tray">
+      {items.map((u) => {
+        const pct = u.failed ? null : u.total > 0 ? Math.min(100, Math.round((u.loaded / u.total) * 100)) : null;
+        return (
+          <div key={u.id} class={"upload-item" + (u.failed ? " failed" : "")}>
+            <span class="up-name" title={u.name}>{u.name}</span>
+            {u.failed ? (
+              <span class="up-fail">
+                <span>失败</span>
+                {u.retry && (
+                  <button class="up-retry" onClick={() => { u.retry?.(); dropUpload(u.id); }}>重试</button>
+                )}
+                <button class="up-x" title="移除" onClick={() => dropUpload(u.id)}><Icon name="x" cls="ico sm" /></button>
+              </span>
+            ) : (
+              <span class="up-prog">
+                <span class={"ver-bar" + (pct == null ? " indet" : "")}>
+                  <span class="ver-bar-fill" style={pct != null ? { width: `${pct}%` } : undefined} />
+                </span>
+                <span class="up-pct">{pct != null ? `${pct}%` : "…"}</span>
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---- menu / popover --------------------------------------------------------
 export type MenuAnchor = { x: number; y: number } | { rect: DOMRect } | MouseEvent;
 type MenuState = { render: (close: () => void) => ComponentChildren; anchor: MenuAnchor; minWidth?: number } | null;
@@ -300,6 +365,7 @@ export function UiHost() {
           </div>
         ))}
       </div>
+      <UploadTray />
     </>
   );
 }

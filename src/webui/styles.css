@@ -661,6 +661,46 @@
   .annot-canvas.tool-text { cursor:text; }
   .annot-canvas.tool-rect, .annot-canvas.tool-arrow { cursor:crosshair; }
 
+  /* ---- transient "uploading" placeholder + unavailable fallback ---- */
+  .ico.spin { animation:mh-spin .8s linear infinite; }
+  @keyframes mh-spin { to { transform:rotate(360deg); } }
+  .void-uploading, .void-unavailable {
+    display:flex; align-items:center; gap:12px; margin:2px 0; max-width:480px; padding:12px 14px;
+    border:1px solid var(--line-strong); border-radius:var(--radius); background:var(--surface); color:var(--fg-soft); }
+  .void-uploading { border-style:dashed; }
+  .void-uploading .vu-name, .void-unavailable .vu-name { font-weight:600; color:var(--fg); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .void-uploading .vu-sub, .void-unavailable .vu-sub { font-size:var(--fs-micro); color:var(--muted); }
+  .void-unavailable { border-color:var(--danger-soft); color:var(--danger); }
+  .void-unavailable .ico { color:var(--danger); flex:none; }
+  .void-unavailable .vu-meta { min-width:0; display:flex; flex-direction:column; gap:1px; }
+  .void-unavailable .vu-retry { margin-left:auto; display:inline-flex; align-items:center; gap:5px; flex:none;
+    padding:4px 10px; border-radius:6px; background:var(--bg); border:1px solid var(--line-strong); color:var(--fg); }
+  .void-unavailable .vu-retry:hover { background:var(--surface-2); }
+
+  /* ---- upload progress tray (bottom-right) ---- */
+  .upload-tray { position:fixed; bottom:20px; right:20px; z-index:111; display:flex; flex-direction:column; gap:8px; width:280px; max-width:calc(100vw - 32px); }
+  .upload-item { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:var(--radius);
+    background:var(--bg); border:1px solid var(--line); box-shadow:var(--shadow-md); animation:md-pop .18s ease both; }
+  .upload-item .up-name { flex:1; min-width:0; font-size:var(--fs-ui); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .upload-item .up-prog { display:flex; align-items:center; gap:8px; flex:none; }
+  .upload-item .up-pct { font-size:var(--fs-micro); color:var(--muted); font-variant-numeric:tabular-nums; min-width:30px; text-align:right; }
+  .upload-item.failed { border-color:var(--danger-soft); }
+  .upload-item .up-fail { display:flex; align-items:center; gap:6px; flex:none; color:var(--danger); font-size:var(--fs-micro); }
+  .upload-item .up-retry { padding:2px 8px; border-radius:5px; border:1px solid var(--line-strong); color:var(--fg); }
+  .upload-item .up-retry:hover { background:var(--surface-2); }
+  .upload-item .up-x { display:grid; place-items:center; width:22px; height:22px; border-radius:5px; color:var(--muted); }
+  .upload-item .up-x:hover { background:var(--hover-2); color:var(--fg); }
+  @media (max-width:560px) { .upload-tray { left:12px; right:12px; width:auto; bottom:calc(12px + env(safe-area-inset-bottom)); } }
+
+  /* ---- frameless desktop image-preview window ---- */
+  body.preview-window { background:#0b0b10; overflow:hidden; }
+  body.preview-window #app { height:100vh; height:100dvh; }
+  .lightbox.preview-win { position:fixed; inset:0; animation:none; }
+  /* In the frameless window the toolbar doubles as the OS drag region; its
+     buttons opt back out so they stay clickable. */
+  .lightbox-toolbar.app-drag { -webkit-app-region:drag; }
+  .lightbox-toolbar.app-drag button { -webkit-app-region:no-drag; }
+
   /* document table (GFM pipe table block) */
   .b-table .doc-table-wrap { flex:1; min-width:0; margin:4px 0; }
   .doc-table-scroll { overflow-x:auto; padding:2px 0; }

@@ -32,4 +32,7 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     setAlwaysOnTop: (on: boolean) => ipcRenderer.invoke("qn:set-always-on-top", on),
     hide: () => ipcRenderer.invoke("qn:hide"),
   },
+  preview: {
+    open: (p: { src: string; name?: string; blockId: string }) => ipcRenderer.invoke("preview:open", p),
+  },
 });
