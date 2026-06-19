@@ -263,3 +263,13 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 - 核心更新(§9)见 §9.4。
 - 依赖:`electron`、`electron-builder`(仅 `apps/desktop` 的 devDependency;不进 core/CLI 依赖图)。
 - 改动总结:**外壳本身 core 零业务改动**(纯复用 + 一个通用注入缝隙);快速笔记(§7)在接口侧加了**领域中立**的文档树能力(`parent_id` 透传 + `?parent=` 过滤),核心更新(§9)纯走桌面 IPC,core/CLI 仍不含任何更新或 quicknote 概念。
+
+## 12. 图片预览窗(独立原生窗 + popover vibrancy + 主题适配)(2026-06-19)
+
+文档里双击图片,桌面 app 弹**独立无标题栏原生窗**预览(浏览器/PWA 则用页内浮层灯箱)。复用 §7 快速笔记的「IPC + 独立 BrowserWindow」成例;预览窗与主窗同源(`http://127.0.0.1:<port>/#preview?src=&name=&bid=`),共享 localStorage token 与 blob 字节,**自行**上传标注结果,经同源 `BroadcastChannel("mh-doc-image")` 把新 `/blob` URL 回传主窗替换该块(主窗 `DocView` 订阅、改 `blocksRef.current` 的 `src`)。媒体区块本体见 07-webui §19。
+
+- **窗口(`main.ts` `openPreview`)**:复用单个 `previewWin`(已开则 `loadURL`+`focus`);mac 用 `titleBarStyle:"hiddenInset"` + `trafficLightPosition` + `vibrancy:"popover"` + `visualEffectState:"active"` + `backgroundColor:"#00000000"` → 半透明毛玻璃;非 mac 用 `frame:false` + 主题色不透明底(`nativeTheme.shouldUseDarkColors`)。
+- **关键坑(mac 透明)**:曾用 `frame:false`(全无边框),mac 上无 `transparent:true` 时内容层是不透明背衬,会把 vibrancy **整个挡死**(切任何材质都不透明);改回 `hiddenInset`(同 §7/§10)保留 NSVisualEffectView 背衬才透出。此外 `html` 默认刷不透明 `var(--bg)`(iOS Safari chrome 取色用),预览窗须 `html:has(body.preview-window){background:transparent}` 把 root 改回透明,否则同样挡死(与 `body.quicknote` 同理)。
+- **路由(`app.tsx`)**:`location.hash` 以 `#preview` 开头 → body 加 `preview-window`、只渲染 `ImagePreviewWindow`(复用共享 `ImageViewer`,不启 sidebar/replica)。
+- **主题适配(`styles.css` `body.preview-window`)**:`popover` 材质跟随系统外观,故叠色用 `color-mix(in srgb, var(--bg) 42%, transparent)`、控件用 `var(--fg)` → 浅色=浅磨砂+深控件、深色=深玻璃+浅控件,不再恒深。页内浮层灯箱(`.lightbox` 非 `.preview-win`)保持白字深底不变。
+- **涉及文件**:`apps/desktop/src/{main.ts,preload.ts}`(`preview.open` IPC + frameless/vibrancy 窗)、`src/webui/desktop.d.ts`、`src/webui/app.tsx`、`src/webui/media/{image-preview-window,image-lightbox}.tsx`、`src/webui/styles.css`。

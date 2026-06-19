@@ -117,3 +117,16 @@
 ## 7. 待办(下一步)
 - 真桶 R2/COS 端到端 + 真浏览器 e2e(replica 离线粘图→刷新仍在→恢复 drain→清缓存尊重 pin)。
 - 浏览器侧 pin 已具备底座(`setCachePinned`,LRU 跳过 `meta.pinned`),但尚无编辑器/Settings 入口(replica 的 Settings pin 走服务端 `api.pinBlob`,no-origin 无 server);如需 replica 端 pin UI 再补 worker op + 面板。
+
+## 8. 文档媒体扩展 + 上传护栏 + CLI blob 命令(2026-06-19)
+
+D6 的「文档插图」扩展为**五类块级媒体**(image/video/audio/file/html),字节仍一律 blob、引用仍是 doc_blocks markdown,**core/同步层零改动**(WebUI 侧设计见 07-webui §19):
+- video/audio 与 image 同走 `![name](/blob/<hash>.<ext>)`,种类由扩展名区分;file 走普通链接 `[name](/blob/.. "size")`;html 走 ` ```mh-html ` 围栏。GC 锚定不变(`referencedHashes` 扫 doc_blocks 文本里的 `/blob/<hash>`,html 内 `<img src=/blob/..>` 同样被锚)。
+- **content-type 正确性**:`sites-core.ts` `inferContentType` 的 MIME 表补 mp4/webm/mov/m4v/ogv、mp3/wav/ogg/m4a/aac/flac 及 zip/csv/doc(x)/xls(x) 等——`/blob/<hash>.mp4` 必须以 `video/mp4` serve,`<video>`/`<audio>` 才播(尤其 Safari 拒 octet-stream);`blob-routes.ts` `ext()` 反查同步补齐,使上传响应 URL 带正确后缀。
+- **上传大小护栏**:`POST /api/blob` 先读 `content-length` 超 `MAX_BLOB_UPLOAD_BYTES`(`config.ts`,默认 100MB,`METAHUB_MAX_BLOB_UPLOAD` 可调)即拒(在 `arrayBuffer()` 前,防大文件灌爆内存),读完再校验实际字节。WebUI 另有分级软上限(图 25 / 音视频 100 / 文件 100MB)。
+
+**CLI `mh blob`(`src/cli/commands/blob.ts`,新)** —— 让 CLI agent 与 WebUI 同样能给文档进/出料:
+- `mh blob add <file> [--name]`:读字节 → `putBlob` + `recordBlob`(ct 由扩展名 `inferContentType` 推断,pending=1)→ 打印 `{hash,size,content_type,url,kind,markdown}`,human 模式直接给可嵌入的 markdown 行(媒体 `![]()` / 文件 `[]() "size"`)。
+- `mh blob get <hash> [--out]`:`resolveBlob`(本地→peer→桶)→ 写文件或原始字节到 stdout(便于管道);未命中抛 `not_found`(exit 3)。
+- add 后的 blob 仅在被某文档引用 `/blob/<hash>` 后才免于 GC(`mh compact`/`mh cache gc`)——尽快嵌入(SKILL.md「Media & attachments」已说明)。
+- 单测:`src/cli/blob.test.ts`(spawn CLI,add→get 字节往返 + url/markdown/kind + not_found)。

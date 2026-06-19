@@ -693,9 +693,33 @@
   @media (max-width:560px) { .upload-tray { left:12px; right:12px; width:auto; bottom:calc(12px + env(safe-area-inset-bottom)); } }
 
   /* ---- frameless desktop image-preview window ---- */
-  body.preview-window { background:#0b0b10; overflow:hidden; }
+  /* The window follows the theme (light/dark), not a fixed dark: the tint uses
+     var(--bg) and the chrome var(--fg), so it reads right over either the light or
+     dark popover-vibrancy material (which itself follows the OS appearance). The
+     in-page overlay (.lightbox without .preview-win) keeps its white-on-dark look. */
+  body.preview-window { background:var(--bg); overflow:hidden; }
   body.preview-window #app { height:100vh; height:100dvh; }
   .lightbox.preview-win { position:fixed; inset:0; animation:none; }
+  /* Non-mac: a plain opaque themed window (no vibrancy). */
+  body.preview-window .lightbox.preview-win { background:var(--bg); backdrop-filter:none; }
+  /* html defaults to an opaque var(--bg) (for iOS Safari chrome tinting); left as
+     is it walls off the native vibrancy → an opaque window. Make the root
+     transparent in the preview window, exactly like html:has(body.quicknote). */
+  html:has(body.preview-window) { background:transparent; }
+  /* macOS: the native window is transparent with popover vibrancy behind it (see
+     openPreview). Let it show through — a theme-tinted veil (≈42%) over the blur,
+     no page-level backdrop blur (the OS already blurs). */
+  body.preview-window.desktop-mac { background:transparent; }
+  body.preview-window.desktop-mac .lightbox.preview-win { background:color-mix(in srgb, var(--bg) 42%, transparent); backdrop-filter:none; }
+  /* Chrome rides the theme-tinted glass → theme-aware (var(--fg)), readable on a
+     light or dark tint alike. */
+  body.preview-window .lightbox-toolbar { color:var(--fg); }
+  body.preview-window .lightbox-toolbar button,
+  body.preview-window .annot-tool { color:var(--fg); background:color-mix(in srgb, var(--fg) 10%, transparent); }
+  body.preview-window .lightbox-toolbar button:hover,
+  body.preview-window .annot-tool:hover { background:color-mix(in srgb, var(--fg) 20%, transparent); }
+  body.preview-window .annot-tool.on { color:var(--accent-fg); background:var(--accent); }
+  body.preview-window .annot-swatch { border-color:color-mix(in srgb, var(--fg) 45%, transparent); }
   /* In the frameless window the toolbar doubles as the OS drag region; its
      buttons opt back out so they stay clickable. */
   .lightbox-toolbar.app-drag { -webkit-app-region:drag; }

@@ -282,6 +282,7 @@ function createWindow(port: number): void {
  */
 function openPreview(p: { src: string; name?: string; blockId: string }): void {
   if (!serverPort) return;
+  const isMac = process.platform === "darwin";
   const params = new URLSearchParams({ src: p.src, bid: p.blockId });
   if (p.name) params.set("name", p.name);
   const url = `http://127.0.0.1:${serverPort}/#preview?${params.toString()}`;
@@ -296,9 +297,14 @@ function openPreview(p: { src: string; name?: string; blockId: string }): void {
     minWidth: 480,
     minHeight: 360,
     title: p.name || "图片预览",
-    backgroundColor: "#0b0b10",
-    frame: false,
+    frame: false, // no top bar on any platform
     show: false,
+    // macOS: translucent "popover" vibrancy behind a transparent window (the WebUI
+    // tints it for image contrast — see body.preview-window.desktop-mac). Other
+    // platforms get a plain opaque dark frameless window.
+    ...(isMac
+      ? { vibrancy: "popover" as const, visualEffectState: "active" as const, backgroundColor: "#00000000" }
+      : { backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff" }),
     webPreferences: {
       preload: appFile("dist", "preload.js"),
       contextIsolation: true,

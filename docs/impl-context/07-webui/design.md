@@ -367,3 +367,31 @@ v1（§7.1）即把「无移动端」列为缺口,v2 的「移动端抽屉」(�
 - 窄屏 / 移动端的目录:`@media (max-width:1100px)` 直接隐藏(留白不足以容纳),不做顶栏按钮唤出的浮层。
 - 目录拖拽、固定展开(pin)、折叠分组等交互;当前仅悬停展开。
 - h4+ 更深层级(数据模型仅 h1–h3)。
+
+## 19. v3.2 文档媒体区块(图片/视频/音频/文件/HTML)+ 上传体验(2026-06-19)
+
+把图片从「段落内联 markdown」升级为一组**块级 void 区块**,并补齐视频/音频/通用文件/HTML 嵌入与上传反馈。全部走现有 markdown 单一真相源往返,**core 零改动**(字节侧见 22-blob-sync §8;桌面预览窗见 12-desktop-app §12)。
+
+### 19.1 五个 void 区块 + 往返契约(`blocks.ts`)
+- `BlockType` 增 `image|video|audio|file|html`(均非 contentEditable,可点选/缩放/拖拽重排/Backspace 删)。**仅当整块内容就是单个引用时升级**,散文里的行内图片/链接仍按原 `inlineToHtml` 渲染——老文档无损。
+- 序列化:image/video/audio→`![name](/blob/hash.ext)`(种类由扩展名判,`mediaKindFromMime` 上传定 / `imageSyntaxKind` 解析定);图片宽度编进 `?w=320`(`serveBlob` 忽略 query、GC 正则仍认 hash);file→`[name](/blob/.. "size")`(独占整块的 `/blob` 普通链接才升级,普通超链接不动);html→保留围栏 ` ```mh-html `(`cleanLang` 连字符合法、不撞真实语言)。
+- html **沙箱 iframe** 渲染:`srcdoc` + `sandbox="allow-scripts allow-popups"` 不给 same-origin → 脚本在 null 源、碰不到 app 数据、内嵌 CSS 不污染编辑器;高度经 postMessage 自适应。
+
+### 19.2 灯箱 + 标注(`media/`)
+图片双击进灯箱(`ImageViewer`:滚轮/按钮缩放、拖拽平移);「标注」进 canvas 工具条(矩形/箭头/文字/取色/撤销)。保存=原图+标注合成导出 PNG → 重新上传 → 替换块 `src`(**扁平烧录**:标注不可再编辑,doc 仍是普通图片链接)。
+
+### 19.3 上传体验(`editor.tsx` `runUploads` + `ui.tsx` `UploadTray`)
+- 管线:**先在插入点同步插入 `uploading` 临时块(纯内存、`shouldPersist=false` 永不写 markdown)→ 并发上传 → 各自就地替换/移除**。
+- 进度:`api.uploadBlobXHR`(XHR `upload.onprogress`,复刻 authFetch 鉴权 + 401 renew)驱动右下 `UploadTray`(逐文件进度条,复用 `.ver-bar`)。
+- 失败:不留持久块 + 托盘红色可重试;**字节取不到**(跨端未同步/peer 离线/驱逐)时 image/video/audio 走 `onError` → `.void-unavailable` 占位 + 重试(remount key 触发按需 resolve)。
+- 大小:前端分级软预检(图 25 / 音视频 100 / 文件 100MB,`MAX_UPLOAD_BYTES`)+ 后端硬护栏(见 22-blob-sync §8)。
+
+### 19.4 其它
+- 媒体/文件/uploading 块**禁止「转换为」**(blockMenu 隐藏该区 + `convertSelectedBlocks` 跳过)——转文本会丢字节;html 仍可转(内容式)。
+- slash/`+` 菜单加 图片·视频·音频·文件(打开 `<input type=file>` 按种类设 accept)与 HTML 入口。
+
+### 19.5 涉及文件
+`src/webui/blocks.ts`、`editor.tsx`(BlockRow void 分支、`runUploads`、锁定、预览分支、`mh-doc-image` 广播监听)、`media/{media-blocks,html-block,image-lightbox,image-annotator,image-preview-window}.tsx`、`ui.tsx`(uploadStore/UploadTray)、`api.ts`(`uploadDocBlob`+`uploadBlobXHR`+`MAX_UPLOAD_BYTES`)、`icons.tsx`、`styles.css`;后端 `sites-core.ts`/`sync/blob-routes.ts`/`config.ts`(见 22-blob-sync §8)。
+
+### 19.6 暂不实现
+- 标注的矢量可再编辑(当前扁平烧录);视频/音频的缩放手柄;file 块的加载失败态。
