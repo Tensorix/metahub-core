@@ -28,6 +28,29 @@ export const CHANGE_SELECT = CHANGE_COLS.join(", ");
 // a module-level slot (set around each public mutator via grouped()) is enough.
 let currentTxn: string | null = null;
 
+// Optional node-id override for the next emits, same single-threaded-mutator
+// assumption as currentTxn above. Used by edit-share write handlers so a write
+// made through a public share is attributed to that share's synthetic "guest"
+// node (see core/shares.ts, sync/share-serve.ts) instead of this host node —
+// the edit then replicates to the owner's devices as a distinct author.
+let currentNodeOverride: string | null = null;
+
+/**
+ * Run `fn` with every emit stamped with `node` as its node_id (and HLC node
+ * segment) instead of the host node. INVARIANT: relies on core mutators being
+ * synchronous (set/clear around one synchronous call) — do not make the wrapped
+ * mutators async or the slot can leak across requests.
+ */
+export function withNodeId<T>(node: string | null, fn: () => T): T {
+  const prev = currentNodeOverride;
+  currentNodeOverride = node;
+  try {
+    return fn();
+  } finally {
+    currentNodeOverride = prev;
+  }
+}
+
 /**
  * Run `fn` with all emits stamped with one shared txn id. Nested calls keep the
  * outermost group (a revert that calls updateDocument is ONE revision). `label`
@@ -240,7 +263,7 @@ export function emit(
   col: string,
   value: unknown,
 ): Change {
-  const node = getNodeId(db);
+  const node = currentNodeOverride ?? getNodeId(db);
   const change: Change = {
     hlc: nextHlc(db, node),
     node_id: node,

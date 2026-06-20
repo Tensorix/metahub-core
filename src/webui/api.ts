@@ -157,6 +157,47 @@ export interface SiteFile {
   encoding: string; // "utf8" | "base64" | "blob"
 }
 
+// Public capability shares (server-shaped; see server/share-routes.ts).
+export interface ShareListItem {
+  slug: string;
+  kind: string;
+  target_id: string;
+  permission: string;
+  transport: "server" | "s3";
+  /** Where it's served: a server address or a bucket name. */
+  source: string;
+  sourceKind: "server" | "peer" | "bucket";
+  expiresAt: number | null;
+  hasPassword: boolean;
+  /** server: ready-to-copy link; s3: omitted (use renewShare to mint one). */
+  url?: string;
+}
+export interface CreateShareBody {
+  kind: "doc" | "database" | "site";
+  ref: string;
+  transport?: "server" | "s3";
+  permission?: "view" | "edit";
+  password?: string | null;
+  expiresMs?: number | null;
+  /** server: a peer url → create there; a base url → local served_base; omit → local. */
+  server?: string | null;
+  bucketUrl?: string | null;
+  viewerBase?: string;
+}
+export interface ShareCreateResult {
+  slug: string;
+  kind: string;
+  permission: string;
+  transport: "server" | "s3";
+  url: string;
+  expiresAt: number | null;
+  source: string;
+}
+export interface ShareTargetOpt {
+  url: string;
+  label: string;
+}
+
 /** Thrown by req(): carries the server's error `code` (see core/errors.ts) so
  *  callers dispatch on it (`"stale"` → conflict UI) instead of message text. */
 export class ApiError extends Error {
@@ -582,6 +623,15 @@ const httpApi = {
   uploadDocBlob: uploadDocBlobImpl,
   /** @deprecated use uploadDocBlob — kept for older call sites. */
   uploadDocImage: uploadDocBlobImpl,
+
+  // shares (public capability links)
+  listShareServers: () => req<ShareTargetOpt[]>("GET", "/api/share/servers"),
+  listShareBuckets: () => req<ShareTargetOpt[]>("GET", "/api/share/buckets"),
+  listShares: (opts: { target?: string } = {}) =>
+    req<ShareListItem[]>("GET", `/api/shares${opts.target ? `?target=${q(opts.target)}` : ""}`),
+  createShare: (b: CreateShareBody) => req<ShareCreateResult>("POST", "/api/share", b),
+  revokeShare: (slug: string) => req<{ ok: boolean }>("DELETE", `/api/share?slug=${q(slug)}`),
+  renewShare: (slug: string) => req<ShareCreateResult>("POST", `/api/share/renew?slug=${q(slug)}`),
 
   // blob cache (Settings storage panel)
   blobCache: () => req<BlobCacheInfo>("GET", "/api/blob-cache"),

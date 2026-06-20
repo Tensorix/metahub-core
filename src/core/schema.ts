@@ -94,6 +94,36 @@ CREATE TABLE IF NOT EXISTS pairing_codes (
   created_at INTEGER
 );
 
+-- Public capability links to a doc / database / site. Like peers and blob_cache
+-- this is node-local and deliberately ABSENT from crdt.ts's DOMAIN map, so it
+-- never enters the oplog and never syncs — a share is a property of the access
+-- point that minted it, not of the workspace. slug is the unguessable capability
+-- in the URL (/share/<slug>). transport selects how it's served: 'server' (the
+-- token-exempt /share endpoint on this node) or 's3' (a presigned static export
+-- under <prefix>/shares/<slug> in a bucket). permission 'edit' is server-only:
+-- a presigned static object can't accept writes. guest_node_id attributes every
+-- edit made through an edit-share to one synthetic node (see crdt.ts withNodeId).
+-- pw_hash/pw_salt: server path stores a PBKDF2 verifier; the s3 path is E2EE so
+-- only pw_salt travels (in the link) and decryption happens in the viewer.
+CREATE TABLE IF NOT EXISTS shares (
+  slug             TEXT PRIMARY KEY,
+  kind             TEXT NOT NULL,   -- 'doc' | 'database' | 'site'
+  target_id        TEXT NOT NULL,   -- documents.id / databases.id / sites.id
+  permission       TEXT NOT NULL,   -- 'view' | 'edit'
+  transport        TEXT NOT NULL,   -- 'server' | 's3'
+  pw_salt          TEXT,            -- base64; null = no password
+  pw_hash          TEXT,            -- base64 PBKDF2 verifier (server path only)
+  expires_at       INTEGER,         -- epoch ms; null = never
+  guest_node_id    TEXT,            -- synthetic node id for edit shares (null for view)
+  served_base      TEXT,            -- reachable base URL chosen at creation (link / source label)
+  s3_peer_url      TEXT,            -- vestigial (s3 shares live in the bucket, not here)
+  s3_object_prefix TEXT,            -- vestigial
+  s3_presign_exp   INTEGER,         -- vestigial
+  s3_key_b64       TEXT,            -- vestigial
+  created_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(target_id);
+
 CREATE TABLE IF NOT EXISTS databases (
   id          TEXT PRIMARY KEY,
   name        TEXT,

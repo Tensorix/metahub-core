@@ -128,6 +128,30 @@ function managedCorsRule(origins: string[]): string {
   );
 }
 
+/** SigV4 presigned GET cap: 7 days (604800s) is the protocol maximum. */
+export const MAX_PRESIGN_SECONDS = 604800;
+
+/**
+ * Build a presigned GET URL for one object (used by the object-storage share
+ * path — the recipient fetches the ciphertext directly from the bucket, no
+ * credential in the link). Addressing mirrors corsEndpoint (virtual-hosted vs
+ * path-style). `expiresSec` is clamped to the 7-day SigV4 maximum.
+ */
+export async function presignGet(config: S3Config, key: string, expiresSec: number): Promise<string> {
+  const aws = new AwsClient({
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    region: config.region || "auto",
+    service: "s3",
+  });
+  const origin = new URL(config.endpoint).origin;
+  const base = isVirtualHostedStyle(config) ? origin : `${origin}/${config.bucket}`;
+  const u = new URL(`${base}/${key.split("/").map(encodeURIComponent).join("/")}`);
+  u.searchParams.set("X-Amz-Expires", String(Math.min(Math.max(1, Math.floor(expiresSec)), MAX_PRESIGN_SECONDS)));
+  const signed = await aws.sign(u.toString(), { method: "GET", aws: { signQuery: true } });
+  return signed.url;
+}
+
 /** Read the bucket's current CORS config (raw XML), or null if none is set. */
 export async function getBucketCors(config: S3Config): Promise<string | null> {
   const { aws, url } = corsEndpoint(config);

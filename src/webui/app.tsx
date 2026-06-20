@@ -23,6 +23,7 @@ import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
 import { cmpVer } from "./version.ts";
 import { SitesView } from "./sites.tsx";
+import { openShareModal, openShareManager } from "./share-modal.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
@@ -307,11 +308,18 @@ function App() {
             .catch((err) => onError(String(err.message)));
         }} />
         {view.kind === "doc" && activeDoc && (
+          <MenuItem icon="link" label="通过设备分享…" onClick={() => { close(); openShareModal({ kind: "doc", ref: activeDoc.id, title: activeDoc.title }); }} />
+        )}
+        {view.kind === "db" && activeDb && (
+          <MenuItem icon="link" label="通过设备分享…" onClick={() => { close(); openShareModal({ kind: "database", ref: activeDb.id, title: activeDb.name }); }} />
+        )}
+        {view.kind === "doc" && activeDoc && (
           <MenuItem icon="download" label="导出 Markdown" onClick={() => { close(); exportDocMarkdown(activeDoc); }} />
         )}
         {view.kind === "db" && activeDb && (
           <MenuItem icon="download" label="导出 CSV" onClick={() => { close(); exportDbCsv(activeDb); }} />
         )}
+        <MenuItem icon="link" label="管理所有分享…" onClick={() => { close(); openShareManager(); }} />
       </>
     ));
   };

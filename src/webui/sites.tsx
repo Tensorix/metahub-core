@@ -1,6 +1,7 @@
 /** @jsxImportSource preact */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, type Site, type SiteFile } from "./api.ts";
+import { openShareModal } from "./share-modal.tsx";
 import { Icon } from "./icons.tsx";
 import {
   openMenu,
@@ -75,6 +76,14 @@ export function SitesView() {
           onClick={() => {
             close();
             copyText(siteUrl(s.name));
+          }}
+        />
+        <MenuItem
+          icon="link"
+          label="通过设备分享…"
+          onClick={() => {
+            close();
+            openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
           }}
         />
         <MenuItem

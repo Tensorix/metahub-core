@@ -121,6 +121,28 @@ export async function unwrapMasterKey(env: KeyEnvelope, passphrase: string): Pro
   }
 }
 
+/**
+ * Derive a raw 32-byte content key from a share password + salt (same PBKDF2
+ * parameters as the bucket KEK). Used by the object-storage share path: the
+ * exporter and the in-browser viewer both derive the identical key, so a wrong
+ * password simply fails the GCM tag on decrypt — no server-side verifier needed.
+ */
+export async function deriveShareKey(password: string, salt: Uint8Array): Promise<Uint8Array> {
+  const base = await crypto.subtle.importKey(
+    "raw",
+    ab(new TextEncoder().encode(password)),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: ab(salt), iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    base,
+    256,
+  );
+  return new Uint8Array(bits);
+}
+
 // ---- segment encryption --------------------------------------------------------
 
 async function importGcmKey(rawKey: Uint8Array): Promise<CryptoKey> {

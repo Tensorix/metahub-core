@@ -74,6 +74,13 @@ export function migrateRecords(db: DbDriver): void {
  * enabled/last_sync_at/last_success_at/last_status/last_error). Idempotent —
  * guarded per column, never drops the table so existing replication cursors survive.
  */
+/** Add `served_base` to a `shares` table created before the column existed
+ *  (idempotent). The vestigial s3_* columns are left as-is. */
+export function migrateShares(db: DbDriver): void {
+  if (!hasColumn(db, "shares", "served_base"))
+    db.exec("ALTER TABLE shares ADD COLUMN served_base TEXT");
+}
+
 export function migratePeers(db: DbDriver): void {
   const add: [string, string][] = [
     ["token", "TEXT"],
@@ -292,4 +299,5 @@ export function initSchema(db: DbDriver): void {
   migrateDocBlocks(db);
   migrateDocuments(db);
   migrateBlobCache(db);
+  migrateShares(db);
 }

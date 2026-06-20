@@ -145,10 +145,18 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       // credentials — see ./pairing.ts, acceptsSyncToken). /health and
       // /auth/token stay open (the latter must work with an expired token), and
       // the pairing handshake authenticates via its one-time code in-handler.
+      // Share management a paired peer may drive remotely (create on / list from /
+      // revoke on this node): authorized by the master token OR a pairing grant,
+      // like /sync. EXACT paths only — /api/share/servers|buckets|renew (peer/bucket
+      // inventory + re-presign) stay master-only via the else branch below.
+      const shareMgmt =
+        ((req.method === "POST" || req.method === "DELETE") && url.pathname === "/api/share") ||
+        (req.method === "GET" && url.pathname === "/api/shares");
       if (
         url.pathname === SYNC_PATH ||
         url.pathname.startsWith("/blob/") ||
-        url.pathname === "/api/blobs/has"
+        url.pathname === "/api/blobs/has" ||
+        shareMgmt
       ) {
         // /blob/<hash> byte transport (and /api/blobs/has presence probe) authorize
         // like /sync: the master token OR a per-peer grant (a paired peer fetching a
@@ -164,7 +172,11 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
           // icons, generic caching code), so they sit outside the token gate.
           url.pathname === "/manifest.webmanifest" ||
           url.pathname === "/sw.js" ||
-          url.pathname.startsWith("/icons/");
+          url.pathname.startsWith("/icons/") ||
+          // Public shares enforce their own per-share access control (slug +
+          // expiry + optional password) inside serveShare — never the master
+          // token. See ./share-serve.ts.
+          url.pathname.startsWith("/share/");
 
         // Token gate (no-op in --debug). A browser without a token gets the
         // unlock page; everything else gets 401. Once the unlock page sets the
@@ -213,6 +225,16 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       if (req.method === "GET" && url.pathname.startsWith("/blob/")) {
         const { serveBlob } = await import("./blob-routes.ts");
         const res = await serveBlob(req, ctx);
+        if (res) return res;
+      }
+
+      // Public capability shares at /share/<slug>... (any method — edit shares
+      // accept writes). Per-share access control lives in serveShare; responses
+      // are returned RAW (never withShim) so a public page never carries the
+      // master-token runtime. Lazy-imported like the other off-startup handlers.
+      if (url.pathname.startsWith("/share/")) {
+        const { serveShare } = await import("./share-serve.ts");
+        const res = await serveShare(req, ctx);
         if (res) return res;
       }
 

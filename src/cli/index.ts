@@ -11,6 +11,7 @@ import doc from "./commands/doc.ts";
 import edit from "./commands/edit.ts";
 import search from "./commands/search.ts";
 import site from "./commands/site.ts";
+import share from "./commands/share.ts";
 import token from "./commands/token.ts";
 import completion, { complete } from "./commands/completion.ts";
 import sync from "./commands/sync.ts";
@@ -60,6 +61,7 @@ const main = defineCommand({
     edit,
     search,
     site,
+    share,
     token,
     completion,
     __complete: complete,

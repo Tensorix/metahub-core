@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runSchema } from "./db.ts";
-import { emit, emitFields, ingest, changesSince, changesAfterSeq } from "./crdt.ts";
-import { nextHlc } from "./hlc.ts";
+import { emit, emitFields, ingest, changesSince, changesAfterSeq, withNodeId } from "./crdt.ts";
+import { nextHlc, parseHlc } from "./hlc.ts";
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -39,6 +39,22 @@ test("hlc is monotonic and totally ordered", () => {
     expect(h > prev).toBe(true);
     prev = h;
   }
+});
+
+test("withNodeId attributes emits to a guest node id, then restores the host", () => {
+  const db = makeNode("hosthost");
+  const ch = withNodeId("gguest01", () => emit(db, "documents", "doc_x", "title", "hi"));
+  expect(ch.node_id).toBe("gguest01");
+  // The HLC node segment carries the guest too (it's threaded through nextHlc).
+  expect(parseHlc(ch.hlc).node).toBe("gguest01");
+  const row = db
+    .query(
+      "SELECT node_id FROM crdt_changes WHERE dataset='documents' AND row_id='doc_x' AND col='title'",
+    )
+    .get() as { node_id: string };
+  expect(row.node_id).toBe("gguest01");
+  // Outside the override, emits use the host node again.
+  expect(emit(db, "documents", "doc_x", "title", "bye").node_id).toBe("hosthost");
 });
 
 test("two nodes converge after exchanging changes (incl. concurrent edit)", () => {

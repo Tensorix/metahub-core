@@ -1,0 +1,330 @@
+/** @jsxImportSource preact */
+// Share dialog: ① create a new share — pick the target (this server, a paired
+// peer server, or an attached object-storage bucket), permission (edit is
+// server-only), optional password + expiry; ② see & manage this object's
+// existing shares (copy / renew / revoke / open). Mounted imperatively
+// (openShareModal) so entry points are a one-liner from any menu.
+
+import { render } from "preact";
+import { useEffect, useState } from "preact/hooks";
+import { api, type ShareTargetOpt, type ShareListItem, type CreateShareBody } from "./api.ts";
+
+export interface ShareTarget {
+  kind: "doc" | "database" | "site";
+  ref: string; // the target's id (used as target_id)
+  title?: string;
+}
+
+export function openShareModal(target: ShareTarget): void {
+  injectStyle();
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const close = () => {
+    render(null, host);
+    host.remove();
+  };
+  render(<ShareModal target={target} onClose={close} />, host);
+}
+
+const EXPIRY: { label: string; ms: number | null }[] = [
+  { label: "永不过期", ms: null },
+  { label: "1 小时", ms: 3_600_000 },
+  { label: "24 小时", ms: 86_400_000 },
+  { label: "7 天", ms: 604_800_000 },
+  { label: "30 天", ms: 2_592_000_000 },
+];
+
+interface Opt {
+  label: string;
+  kind: "server" | "bucket";
+  url: string;
+}
+
+function copy(text: string) {
+  navigator.clipboard?.writeText(text).catch(() => undefined);
+}
+
+function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => void }) {
+  const [opts, setOpts] = useState<Opt[]>([{ label: `当前服务器 — ${location.origin}`, kind: "server", url: location.origin }]);
+  const [optIdx, setOptIdx] = useState(0);
+  const [permission, setPermission] = useState<"view" | "edit">("view");
+  const [password, setPassword] = useState("");
+  const [expiryIdx, setExpiryIdx] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [shares, setShares] = useState<ShareListItem[]>([]);
+  const [flash, setFlash] = useState("");
+
+  useEffect(() => {
+    Promise.all([api.listShareServers().catch(() => []), api.listShareBuckets().catch(() => [])]).then(
+      ([servers, buckets]: [ShareTargetOpt[], ShareTargetOpt[]]) => {
+        setOpts([
+          { label: `当前服务器 — ${location.origin}`, kind: "server", url: location.origin },
+          ...servers.map((s) => ({ label: `${s.label} — ${s.url}`, kind: "server" as const, url: s.url })),
+          ...buckets.map((b) => ({ label: `对象存储 — ${b.label}`, kind: "bucket" as const, url: b.url })),
+        ]);
+      },
+    );
+    refreshShares();
+  }, []);
+
+  function refreshShares() {
+    api.listShares({ target: target.ref }).then(setShares).catch(() => undefined);
+  }
+
+  const sel = opts[Math.min(optIdx, opts.length - 1)]!;
+  const s3 = sel.kind === "bucket";
+  const siteKind = target.kind === "site";
+  useEffect(() => {
+    if (s3 && permission === "edit") setPermission("view");
+  }, [s3]);
+  const expiryOpts = s3 ? EXPIRY.filter((e) => e.ms == null || e.ms <= 604_800_000) : EXPIRY;
+  const eIdx = Math.min(expiryIdx, expiryOpts.length - 1);
+
+  async function create() {
+    if (s3 && siteKind) {
+      setError("站点不支持对象存储分享，请选服务器。");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const body: CreateShareBody = {
+        kind: target.kind,
+        ref: target.ref,
+        transport: s3 ? "s3" : "server",
+        permission,
+        password: password || null,
+        expiresMs: expiryOpts[eIdx]?.ms ?? null,
+        server: s3 ? null : sel.url,
+        bucketUrl: s3 ? sel.url : null,
+      };
+      const r = await api.createShare(body);
+      copy(r.url);
+      setFlash(`已通过「${r.source}」创建，链接已复制`);
+      setPassword("");
+      refreshShares();
+    } catch (e) {
+      setError((e as Error).message || "创建失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="mhshare-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div class="mhshare-modal">
+        <div class="mhshare-head">
+          <h2>分享{target.title ? `：${target.title}` : ""}</h2>
+          <button class="mhshare-x" onClick={onClose} aria-label="关闭">
+            ✕
+          </button>
+        </div>
+
+        <div class="mhshare-body">
+          <div class="mhshare-section">新建分享</div>
+          <label class="mhshare-field">
+            <span>通过</span>
+            <select value={String(optIdx)} onChange={(e) => setOptIdx(Number((e.currentTarget as HTMLSelectElement).value))}>
+              {opts.map((o, i) => (
+                <option value={String(i)} disabled={o.kind === "bucket" && siteKind}>
+                  {o.label}
+                  {o.kind === "bucket" && siteKind ? "（站点不支持）" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="mhshare-field">
+            <span>权限</span>
+            <select value={permission} disabled={s3} onChange={(e) => setPermission((e.currentTarget as HTMLSelectElement).value as "view" | "edit")}>
+              <option value="view">只读</option>
+              <option value="edit">可编辑{s3 ? "（仅服务器）" : ""}</option>
+            </select>
+          </label>
+          <label class="mhshare-field">
+            <span>口令</span>
+            <input type="password" placeholder="可选" value={password} onInput={(e) => setPassword((e.currentTarget as HTMLInputElement).value)} />
+          </label>
+          <label class="mhshare-field">
+            <span>有效期</span>
+            <select value={String(eIdx)} onChange={(e) => setExpiryIdx(Number((e.currentTarget as HTMLSelectElement).value))}>
+              {expiryOpts.map((o, i) => (
+                <option value={String(i)}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+          {error && <p class="mhshare-err">{error}</p>}
+          {flash && <p class="mhshare-ok">{flash}</p>}
+          <div class="mhshare-foot">
+            <button onClick={onClose}>关闭</button>
+            <button class="mhshare-primary" disabled={busy} onClick={create}>
+              {busy ? "创建中…" : "创建并复制链接"}
+            </button>
+          </div>
+
+          <div class="mhshare-section">已有分享（{shares.length}）</div>
+          <ShareRows shares={shares} reload={refreshShares} onFlash={setFlash} onError={setError} empty="还没有分享这个对象。" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Reusable list of shares with copy / renew / revoke / open actions (per-target
+ *  in the share modal, and global in the manager). */
+function ShareRows({
+  shares,
+  reload,
+  onFlash,
+  onError,
+  empty,
+}: {
+  shares: ShareListItem[];
+  reload: () => void;
+  onFlash: (s: string) => void;
+  onError: (s: string) => void;
+  empty: string;
+}) {
+  async function copyShare(s: ShareListItem) {
+    if (s.url) {
+      copy(s.url);
+      onFlash("链接已复制");
+      return;
+    }
+    try {
+      const r = await api.renewShare(s.slug); // s3 link isn't stored — re-presign
+      copy(r.url);
+      onFlash("已重新生成并复制链接");
+      reload();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  }
+  async function revoke(s: ShareListItem) {
+    if (!confirm(`撤销这个分享？(${s.source})`)) return;
+    try {
+      await api.revokeShare(s.slug);
+      onFlash("已撤销");
+      reload();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  }
+  async function renew(s: ShareListItem) {
+    try {
+      const r = await api.renewShare(s.slug);
+      copy(r.url);
+      onFlash("已续期 7 天，新链接已复制");
+      reload();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  }
+  if (shares.length === 0) return <p class="mhshare-note">{empty}</p>;
+  return (
+    <ul class="mhshare-list">
+      {shares.map((s) => (
+        <li key={s.slug}>
+          <div class="mhshare-li-main">
+            <span class="mhshare-badge">{s.transport === "s3" ? "对象存储" : "服务器"}</span>
+            <span class="mhshare-src">{s.source}</span>
+            <span class="mhshare-meta">
+              {s.permission === "edit" ? "可编辑" : "只读"}
+              {s.hasPassword ? " · 🔒" : ""}
+              {s.expiresAt ? ` · 至 ${new Date(s.expiresAt).toLocaleString()}` : " · 永久"}
+            </span>
+          </div>
+          <div class="mhshare-li-actions">
+            <button onClick={() => copyShare(s)}>复制</button>
+            {s.transport === "s3" && <button onClick={() => renew(s)}>续期</button>}
+            {s.url && (
+              <a href={s.url} target="_blank" rel="noreferrer">
+                打开
+              </a>
+            )}
+            <button class="mhshare-danger" onClick={() => revoke(s)}>
+              撤销
+            </button>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Global share manager: list & manage every share this node can see. */
+export function openShareManager(): void {
+  injectStyle();
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const close = () => {
+    render(null, host);
+    host.remove();
+  };
+  render(<ShareManager onClose={close} />, host);
+}
+
+function ShareManager({ onClose }: { onClose: () => void }) {
+  const [shares, setShares] = useState<ShareListItem[]>([]);
+  const [flash, setFlash] = useState("");
+  const [error, setError] = useState("");
+  const reload = () => api.listShares().then(setShares).catch((e) => setError((e as Error).message));
+  useEffect(() => {
+    reload();
+  }, []);
+  return (
+    <div class="mhshare-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div class="mhshare-modal">
+        <div class="mhshare-head">
+          <h2>所有分享（{shares.length}）</h2>
+          <button class="mhshare-x" onClick={onClose} aria-label="关闭">
+            ✕
+          </button>
+        </div>
+        <div class="mhshare-body">
+          {error && <p class="mhshare-err">{error}</p>}
+          {flash && <p class="mhshare-ok">{flash}</p>}
+          <ShareRows shares={shares} reload={reload} onFlash={setFlash} onError={setError} empty="还没有任何分享。" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+let styled = false;
+function injectStyle() {
+  if (styled) return;
+  styled = true;
+  const css = `
+  .mhshare-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999}
+  .mhshare-modal{background:var(--mh-bg,#fff);color:var(--mh-fg,#1f2328);width:min(480px,94vw);max-height:88vh;overflow:auto;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC",sans-serif}
+  .mhshare-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--mh-line,#e5e7eb);position:sticky;top:0;background:inherit}
+  .mhshare-head h2{font-size:16px;margin:0}
+  .mhshare-x{background:none;border:0;font-size:16px;cursor:pointer;color:var(--mh-muted,#6e7781)}
+  .mhshare-body{padding:14px 18px;display:flex;flex-direction:column;gap:10px}
+  .mhshare-section{font-size:12px;font-weight:600;color:var(--mh-muted,#6e7781);text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+  .mhshare-field{display:flex;align-items:center;gap:12px}
+  .mhshare-field>span{width:48px;color:var(--mh-muted,#6e7781);flex:none}
+  .mhshare-field select,.mhshare-field input{flex:1;padding:8px;border:1px solid var(--mh-line,#d0d7de);border-radius:7px;background:var(--mh-card,#f6f8fa);color:inherit}
+  .mhshare-foot{display:flex;justify-content:flex-end;gap:8px;margin:4px 0 2px}
+  .mhshare-foot button{padding:8px 14px;border:1px solid var(--mh-line,#d0d7de);border-radius:7px;background:var(--mh-card,#f6f8fa);color:inherit;cursor:pointer}
+  .mhshare-primary{background:#0969da!important;color:#fff!important;border-color:#0969da!important}
+  .mhshare-primary:disabled{opacity:.6;cursor:default}
+  .mhshare-note{color:var(--mh-muted,#6e7781);font-size:13px;margin:2px 0}
+  .mhshare-err{color:#cf222e;font-size:13px;margin:0}
+  .mhshare-ok{color:#1a7f37;font-size:13px;margin:0}
+  .mhshare-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+  .mhshare-list li{border:1px solid var(--mh-line,#e5e7eb);border-radius:9px;padding:9px 11px;display:flex;flex-direction:column;gap:6px}
+  .mhshare-li-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mhshare-badge{font-size:11px;background:var(--mh-card,#f6f8fa);border:1px solid var(--mh-line,#e5e7eb);border-radius:999px;padding:1px 8px}
+  .mhshare-src{font-weight:600}
+  .mhshare-meta{color:var(--mh-muted,#6e7781);font-size:12px}
+  .mhshare-li-actions{display:flex;gap:6px;align-items:center}
+  .mhshare-li-actions button,.mhshare-li-actions a{font-size:13px;padding:4px 10px;border:1px solid var(--mh-line,#d0d7de);border-radius:6px;background:var(--mh-card,#f6f8fa);color:inherit;cursor:pointer;text-decoration:none}
+  .mhshare-danger{color:#cf222e!important}
+  @media (prefers-color-scheme: dark){.mhshare-modal{--mh-bg:#161b22;--mh-fg:#e6edf3;--mh-line:#30363d;--mh-muted:#8b949e;--mh-card:#0d1117}}
+  `;
+  const el = document.createElement("style");
+  el.textContent = css;
+  document.head.appendChild(el);
+}

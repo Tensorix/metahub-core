@@ -65,6 +65,7 @@ import {
 } from "../../core/blobs.ts";
 import type { DbDriver } from "../../core/driver.ts";
 import { getServerConfig } from "../../core/config.ts";
+import { shareRoutes } from "./share-routes.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
 // Read-only viewer + light editing for the browser UI. These routes wrap the
@@ -830,4 +831,5 @@ export const webuiRoutes: Route[] = [
       return { policy: readPolicy(db) };
     }),
   },
+  ...shareRoutes,
 ];
