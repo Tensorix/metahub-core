@@ -97,7 +97,16 @@ export function isNoOrigin(): boolean {
 // canonical hub lives, and how this client holds data. New code (and, over time,
 // the api/sw/app routing) should read this instead of re-deriving the axes.
 
+/** Which host process this client runs in — a third axis orthogonal to
+ *  dataHome/hold. "desktop" is the Electron renderer over a localhost sidecar
+ *  (the sidecar IS the data home, no separate OPFS copy); "cli" is reserved so
+ *  scopesFor() stays total (the CLI never renders UI). Replaces scattered
+ *  window.metahubDesktop sniffing as call sites migrate to clientMode(). */
+export type Surface = "web" | "desktop" | "cli";
+
 export interface ClientMode {
+  /** Which host process renders this client (browser tab vs desktop sidecar). */
+  surface: Surface;
   /** Where the hub this client talks to lives: a server (origin) vs this
    *  device's own local replica (no-origin, bucket-backed). */
   dataHome: "server" | "local";
@@ -110,6 +119,7 @@ export interface ClientMode {
 export function clientMode(): ClientMode {
   const noOrigin = isNoOrigin();
   return {
+    surface: typeof window !== "undefined" && window.metahubDesktop ? "desktop" : "web",
     dataHome: noOrigin ? "local" : "server",
     hold: noOrigin || replicaEnabled() ? "replica" : "window",
   };

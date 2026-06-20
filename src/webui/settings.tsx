@@ -16,12 +16,15 @@ import {
   resetReplica,
   requestSync,
   isNoOrigin,
+  clientMode,
   call as replicaCall,
 } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
 import { cacheStats, clearCache, spoolPending, BLOB_QUOTA_BYTES } from "./data/blob-store.ts";
 import { cmpVer, WEBUI_VERSION } from "./version.ts";
 import { openServerBlobManager, openLocalBlobManager } from "./blob-manager.tsx";
+import { scopesFor } from "./data/scopes.ts";
+import { ScopeSelector } from "./scope-selector.tsx";
 import {
   Modal,
   openModal,
@@ -222,12 +225,12 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
           <SyncStorage />
         </SetGroup>
 
-        {/* Blob cache (document images / large files). On a server-backed client
-            it lives on the data home (BlobCacheSettings, with anchors + presence
-            verify); a no-origin shell keeps its blobs in browser Cache Storage,
-            so it gets the local-only LocalCacheSettings instead. */}
+        {/* Blob cache (document images / large files). Which store the user is
+            managing falls out of scopesFor(clientMode()): a server-backed replica
+            sees BOTH its on-device bytes (default) and the cloud workspace ledger,
+            instead of the old isNoOrigin() fork that silently only ever showed one. */}
         <SetGroup id={SEC.storage} label="存储">
-          {isNoOrigin() ? <LocalCacheSettings /> : <BlobCacheSettings />}
+          <StoragePanel />
         </SetGroup>
 
         {/* HTTP pairing + issued grants only make sense against a server (origin). */}
@@ -245,6 +248,33 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
 }
 
 // ---- blob cache (document images / large files) ----------------------------
+
+/** The 存储 panel. A Notion-style scope picker on top (本机 / 云端工作区), then the
+ *  byte-management body for the selected scope. Replaces the old binary
+ *  `isNoOrigin() ? Local : Blob` fork (doc 19): the scope SET falls out of
+ *  scopesFor(clientMode()) with buckets filtered (a bucket is a backend of the
+ *  data home, not a byte-management scope). A server-backed replica now lands on
+ *  its own on-device bytes by default and can switch to the cloud ledger; single-
+ *  scope clients (thin / no-origin / desktop) just see a read-only scope pill. */
+function StoragePanel() {
+  const scopes = scopesFor(clientMode()).filter((s) => s.kind !== "bucket");
+  const [sel, setSel] = useState<string>(scopes[0]?.id ?? "server");
+  const active = scopes.find((s) => s.id === sel) ?? scopes[0]!;
+  const choice = scopes.length > 1;
+  return (
+    <>
+      <div class="set-block">
+        {choice && (
+          <div class="set-block-head">
+            <span class="set-block-title">管理哪里的存储</span>
+          </div>
+        )}
+        <ScopeSelector scopes={scopes} value={active.id} onChange={setSel} sub={choice} />
+      </div>
+      {active.kind === "local" ? <LocalCacheSettings /> : <BlobCacheSettings />}
+    </>
+  );
+}
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
