@@ -19,6 +19,7 @@ import { getNodeId } from "../../core/node.ts";
 import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
 import { changesAfterSeq } from "../../core/crdt.ts";
+import { referencedHashes } from "../../core/blobs-core.ts";
 import { syncWithPeer } from "../../core/sync/client.ts";
 import {
   addPeer,
@@ -737,6 +738,10 @@ const ops: Record<string, Op> = {
     }
     return null;
   },
+
+  // blob references (no-origin blob manager): every hash a live document or site
+  // still points at, so the popup can mark which locally-cached blobs are orphans.
+  blobRefs: (): string[] => [...referencedHashes(db!)],
 
   // sites management (offline / no-origin): portable read+write paths so the
   // browser replica lists, creates, edits and deletes sites with no server.

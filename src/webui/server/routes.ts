@@ -56,6 +56,10 @@ import {
   knownNodes,
   knownBuckets,
   clearCache,
+  clearBlobs,
+  deleteOrphanBlobs,
+  isClearable,
+  referencedHashes,
   reconcileCache,
   setFullNodes,
   setRedundancy,
@@ -325,6 +329,22 @@ const ClearResultSchema = z.object({
   freedBytes: z.number(),
   skipped: z.number(),
 });
+const GcResultSchema = z.object({
+  removed: z.number(),
+  freedBytes: z.number(),
+});
+const BlobRowSchema = z.object({
+  hash: z.string(),
+  size: z.number(),
+  contentType: z.string().nullable(),
+  lastAccess: z.number().nullable(),
+  pinned: z.boolean(),
+  pending: z.boolean().describe("Produced here, not yet flushed to an anchor — protected"),
+  clearable: z.boolean().describe("Safe to drop: durable on the designated full set"),
+  referenced: z.boolean().describe("A live document/site still points at it; !referenced = orphan"),
+});
+const BlobListSchema = z.array(BlobRowSchema);
+const HashListReq = z.object({ hashes: z.array(z.string()) });
 const SetBlobPolicyReq = z.object({
   full_nodes: z
     .array(z.string())
@@ -383,6 +403,25 @@ function blobCacheInfo(db: DbDriver, unreachable: string[] = []) {
     lastVerifiedAt: readBlobVerifiedAt(db),
     unreachableAnchors: unreachable,
   };
+}
+
+/** Per-blob detail for the Settings blob-manager popup: every cached blob with its
+ *  size/type/last-access plus the two computed flags the UI gates actions on —
+ *  `clearable` (safe to drop, durable elsewhere) and `referenced` (a live doc/site
+ *  points at it; the inverse is an orphan, eligible for true deletion). */
+function blobList(db: DbDriver) {
+  reconcileCache(db);
+  const refs = referencedHashes(db);
+  return cachedBlobs(db).map((b) => ({
+    hash: b.hash,
+    size: b.size,
+    contentType: b.content_type,
+    lastAccess: b.last_access,
+    pinned: !!b.pinned,
+    pending: !!b.pending,
+    clearable: isClearable(db, b.hash),
+    referenced: refs.has(b.hash),
+  }));
 }
 
 export const webuiRoutes: Route[] = [
@@ -815,6 +854,41 @@ export const webuiRoutes: Route[] = [
       if (!setPinned(db, body.hash, body.pinned))
         throw new MhError("not_found", `blob not in cache: ${body.hash}`);
       return { hash: body.hash, pinned: body.pinned };
+    }),
+  },
+  {
+    method: "GET",
+    path: "/api/blobs",
+    summary:
+      "Per-blob detail for the Settings blob manager: size, content type, last access, " +
+      "and the pinned/pending/clearable/referenced flags the popup sorts, filters and acts on.",
+    response: BlobListSchema,
+    handler: handle((_req, { db }) => blobList(db)),
+  },
+  {
+    method: "POST",
+    path: "/api/blobs/clear",
+    summary:
+      "Drop bytes for a chosen subset of clearable blobs (the reference stays; bytes re-download on demand). " +
+      "Pinned / non-clearable hashes are skipped. Returns bytes freed and skipped count.",
+    request: HashListReq,
+    response: ClearResultSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { hashes: string[] };
+      return clearBlobs(db, body.hashes ?? []);
+    }),
+  },
+  {
+    method: "POST",
+    path: "/api/blobs/delete",
+    summary:
+      "Permanently delete a chosen subset of ORPHAN blobs (not referenced by any live document/site). " +
+      "Still-referenced hashes are refused (skipped) so an in-use file is never removed. Returns bytes freed.",
+    request: HashListReq,
+    response: GcResultSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { hashes: string[] };
+      return deleteOrphanBlobs(db, body.hashes ?? []);
     }),
   },
   {

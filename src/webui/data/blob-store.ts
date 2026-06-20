@@ -151,13 +151,21 @@ interface MetaRow {
   size: number;
   accessed: number;
   pinned: number;
+  /** Content type, recorded on write (absent on rows cached before this field). */
+  content_type?: string;
 }
 
 const cacheKey = (hash: string) => `/blob/${hash}`;
 
-async function metaPut(hash: string, size: number): Promise<void> {
+async function metaPut(hash: string, size: number, contentType?: string): Promise<void> {
   const cur = await txn<MetaRow | undefined>(META, "readonly", (s) => s.get(hash));
-  const row: MetaRow = { hash, size, accessed: Date.now(), pinned: cur?.pinned ?? 0 };
+  const row: MetaRow = {
+    hash,
+    size,
+    accessed: Date.now(),
+    pinned: cur?.pinned ?? 0,
+    content_type: contentType ?? cur?.content_type,
+  };
   await txn(META, "readwrite", (s) => s.put(row));
 }
 
@@ -213,7 +221,7 @@ export async function cachePut(hash: string, bytes: ArrayBuffer, contentType: st
       headers: { "content-type": contentType, "cache-control": "public, max-age=31536000, immutable" },
     }),
   );
-  await metaPut(hash, bytes.byteLength);
+  await metaPut(hash, bytes.byteLength, contentType);
   await evictCache();
 }
 
@@ -261,4 +269,83 @@ export async function clearCache(): Promise<{ cleared: number; freedBytes: numbe
     freedBytes += r.size;
   }
   return { cleared, freedBytes };
+}
+
+// ---- per-blob manager (Settings storage → Blob 管理 popup) -------------------
+
+/** One cached/pending blob as the blob-manager popup sees it. `pending` entries are
+ *  the offline spool (the only copy, never evicted); everything else is a bounded
+ *  read-cache entry that re-downloads from the bucket on demand. */
+export interface LocalBlob {
+  hash: string;
+  size: number;
+  content_type: string | null;
+  accessed: number;
+  pinned: boolean;
+  pending: boolean;
+}
+
+/** Enumerate every blob this device holds: the bounded byte cache (LRU index) plus
+ *  the not-yet-uploaded spool. Content type comes from the index; for rows cached
+ *  before that was recorded it falls back to the stored Response header. */
+export async function listBlobs(): Promise<LocalBlob[]> {
+  const rows = (await txn<MetaRow[]>(META, "readonly", (s) => s.getAll())) ?? [];
+  const c = await caches.open(BLOB_CACHE);
+  const out: LocalBlob[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    let ct = r.content_type ?? null;
+    if (!ct) {
+      const hit = await c.match(cacheKey(r.hash));
+      ct = hit?.headers.get("content-type") ?? null;
+    }
+    out.push({
+      hash: r.hash,
+      size: r.size,
+      content_type: ct,
+      accessed: r.accessed,
+      pinned: !!r.pinned,
+      pending: false,
+    });
+    seen.add(r.hash);
+  }
+  for (const s of await spoolPending()) {
+    if (seen.has(s.hash)) continue;
+    out.push({
+      hash: s.hash,
+      size: s.bytes.byteLength,
+      content_type: s.content_type || null,
+      accessed: s.created,
+      pinned: false,
+      pending: true,
+    });
+  }
+  return out;
+}
+
+/** Evict a chosen subset of cached blobs (bytes re-fetch from the bucket on demand).
+ *  Skips pinned entries and anything not in the byte cache — pending spool bytes are
+ *  never in `META`, so the only offline copy is never touched. */
+export async function clearBlobs(hashes: string[]): Promise<{ cleared: number; freedBytes: number }> {
+  const c = await caches.open(BLOB_CACHE);
+  let cleared = 0;
+  let freedBytes = 0;
+  for (const hash of new Set(hashes)) {
+    const r = await txn<MetaRow | undefined>(META, "readonly", (s) => s.get(hash));
+    if (!r || r.pinned) continue;
+    await c.delete(cacheKey(hash));
+    await txn(META, "readwrite", (s) => s.delete(hash));
+    cleared++;
+    freedBytes += r.size;
+  }
+  return { cleared, freedBytes };
+}
+
+/** Remove a chosen subset of (orphan) blobs from this device. The bucket is the
+ *  durable home here and is never mutated from the client, so a no-origin "delete"
+ *  is the same local eviction as clearing — re-downloadable if it turns out to be
+ *  referenced after all. */
+export async function deleteBlobs(hashes: string[]): Promise<{ removed: number; freedBytes: number }> {
+  const { cleared, freedBytes } = await clearBlobs(hashes);
+  return { removed: cleared, freedBytes };
 }

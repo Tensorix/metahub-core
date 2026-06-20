@@ -380,3 +380,45 @@ export async function gcOrphans(db: DbDriver): Promise<GcResult> {
   }
   return { removed, freedBytes };
 }
+
+/** Clear a CHOSEN subset of cached blobs — the per-blob counterpart of
+ *  clearCache, for the Settings blob manager. Same safety floor: only a blob that
+ *  is unpinned AND isClearable (durable on the designated full set) has its bytes
+ *  dropped; everything else is left in place and counted as skipped. */
+export async function clearBlobs(db: DbDriver, hashes: string[]): Promise<ClearResult> {
+  reconcileCache(db);
+  const known = new Map(cachedBlobs(db).map((b) => [b.hash, b]));
+  let cleared = 0;
+  let freedBytes = 0;
+  let skipped = 0;
+  for (const hash of new Set(hashes)) {
+    const b = known.get(hash);
+    if (!b || b.pinned || !isClearable(db, hash)) {
+      skipped++;
+      continue;
+    }
+    freedBytes += await deleteBlob(hash);
+    forgetBlob(db, hash);
+    cleared++;
+  }
+  return { cleared, freedBytes, skipped };
+}
+
+/** Delete a CHOSEN subset of ORPHAN blobs — the per-blob counterpart of gcOrphans.
+ *  A hash is removed only when no live site_files / doc image still references it;
+ *  any still-referenced (or unknown) hash is skipped, so a blob a document points
+ *  at can never be deleted out from under it. */
+export async function deleteOrphanBlobs(db: DbDriver, hashes: string[]): Promise<GcResult> {
+  reconcileCache(db);
+  const known = new Set(cachedBlobs(db).map((b) => b.hash));
+  const referenced = referencedHashes(db);
+  let removed = 0;
+  let freedBytes = 0;
+  for (const hash of new Set(hashes)) {
+    if (!known.has(hash) || referenced.has(hash)) continue;
+    freedBytes += await deleteBlob(hash);
+    forgetBlob(db, hash);
+    removed++;
+  }
+  return { removed, freedBytes };
+}

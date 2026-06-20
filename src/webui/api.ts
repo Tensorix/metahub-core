@@ -431,6 +431,26 @@ export interface BlobClearResult {
   freedBytes: number;
   skipped: number;
 }
+/** Bytes reclaimed by an orphan delete (or local eviction in the no-origin shell). */
+export interface BlobDeleteResult {
+  removed: number;
+  freedBytes: number;
+}
+/** One cached blob as the Settings blob-manager popup sees it. Shared shape across
+ *  the server (/api/blobs) and no-origin (Cache Storage) sources. */
+export interface BlobRow {
+  hash: string;
+  size: number;
+  contentType: string | null;
+  lastAccess: number | null;
+  pinned: boolean;
+  /** Produced here, not yet flushed to a durable anchor — protected from clearing. */
+  pending: boolean;
+  /** Safe to drop locally: durable on the designated full set / re-fetchable. */
+  clearable: boolean;
+  /** A live document or site still references it; `!referenced` = orphan. */
+  referenced: boolean;
+}
 export interface BlobPolicyResult {
   policy: BlobPolicyInfo;
 }
@@ -643,6 +663,10 @@ const httpApi = {
     req<BlobPolicyResult>("POST", "/api/blob-policy", b),
   pinBlob: (hash: string, pinned: boolean) =>
     req<{ hash: string; pinned: boolean }>("POST", "/api/blob-cache/pin", { hash, pinned }),
+  // per-blob manager (Settings storage → Blob 管理 popup)
+  blobs: () => req<BlobRow[]>("GET", "/api/blobs"),
+  clearBlobs: (hashes: string[]) => req<BlobClearResult>("POST", "/api/blobs/clear", { hashes }),
+  deleteBlobs: (hashes: string[]) => req<BlobDeleteResult>("POST", "/api/blobs/delete", { hashes }),
 
   // version of the running core (sidecar)
   version: () => req<{ version: string }>("GET", "/api/version"),

@@ -21,6 +21,7 @@ import {
 import type { ReplicaStatus } from "./data/db-worker.ts";
 import { cacheStats, clearCache, spoolPending, BLOB_QUOTA_BYTES } from "./data/blob-store.ts";
 import { cmpVer, WEBUI_VERSION } from "./version.ts";
+import { openServerBlobManager, openLocalBlobManager } from "./blob-manager.tsx";
 import {
   Modal,
   openModal,
@@ -497,6 +498,10 @@ function BlobCacheSettings() {
               <Icon name="history" cls={"ico sm" + (verifying ? " spin" : "")} />
               {verifying ? "检查中…" : "重新检查"}
             </button>
+            <button class="btn btn-ghost blob-manage-btn" onClick={() => openServerBlobManager()}>
+              <Icon name="filter" cls="ico sm" />
+              Blob 管理
+            </button>
           </div>
           <div class="blob-verify-at">
             {verifying
@@ -815,6 +820,10 @@ function LocalCacheSettings() {
             >
               <Icon name="trash" cls="ico sm" />
               {hasFreeable ? `清理腾出 ${fmtBytes(clearable)}` : "无需清理"}
+            </button>
+            <button class="btn btn-ghost blob-manage-btn" onClick={() => openLocalBlobManager()}>
+              <Icon name="filter" cls="ico sm" />
+              Blob 管理
             </button>
           </div>
         </div>
