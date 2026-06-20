@@ -23,7 +23,8 @@ import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
 import { cmpVer } from "./version.ts";
 import { SitesView } from "./sites.tsx";
-import { openShareModal, openShareManager } from "./share-modal.tsx";
+import { openShareModal } from "./share-modal.tsx";
+import { ShareView } from "./shares-view.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
@@ -319,7 +320,6 @@ function App() {
         {view.kind === "db" && activeDb && (
           <MenuItem icon="download" label="导出 CSV" onClick={() => { close(); exportDbCsv(activeDb); }} />
         )}
-        <MenuItem icon="link" label="管理所有分享…" onClick={() => { close(); openShareManager(); }} />
       </>
     ));
   };
@@ -500,6 +500,7 @@ function App() {
             {view.kind === "search" && <span>搜索：“{view.q}”</span>}
             {view.kind === "settings" && <><span class="emoji"><Icon name="settings" cls="ico sm" /></span><span>设置</span></>}
             {view.kind === "sites" && <><span class="emoji"><Icon name="globe" cls="ico sm" /></span><span>站点管理</span></>}
+            {view.kind === "shares" && <><span class="emoji"><Icon name="link" cls="ico sm" /></span><span>分享</span></>}
           </div>
           {(view.kind === "doc" || view.kind === "db") && (
             <>
@@ -548,6 +549,7 @@ function App() {
           )}
           {view.kind === "settings" && <SettingsView onUpdatePending={setUpdatePending} />}
           {view.kind === "sites" && <SitesView />}
+          {view.kind === "shares" && <ShareView onNavigate={navigate} />}
         </div>
       </div>
 

@@ -40,6 +40,7 @@ const ShareListItemRes = z.object({
   slug: z.string(),
   kind: z.string(),
   target_id: z.string(),
+  title: z.string(),
   permission: z.string(),
   transport: z.string(),
   source: z.string(),

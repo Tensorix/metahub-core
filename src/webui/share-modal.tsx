@@ -15,6 +15,82 @@ export interface ShareTarget {
   title?: string;
 }
 
+/** Broadcast after any create/revoke/renew so the global view + in-context
+ *  "shared" badges (useSharedTargets) refresh — mirrors NAV_INVALIDATE. */
+export const SHARES_CHANGED = "mh-shares-changed";
+export function notifySharesChanged(): void {
+  document.dispatchEvent(new Event(SHARES_CHANGED));
+}
+
+/** The set of target ids that currently have at least one share — drives the
+ *  in-context "已分享" badges. One GET on mount, refreshed on SHARES_CHANGED. */
+export function useSharedTargets(): Set<string> {
+  const [ids, setIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .listShares()
+        .then((list) => alive && setIds(new Set(list.map((s) => s.target_id))))
+        .catch(() => undefined);
+    load();
+    document.addEventListener(SHARES_CHANGED, load);
+    return () => {
+      alive = false;
+      document.removeEventListener(SHARES_CHANGED, load);
+    };
+  }, []);
+  return ids;
+}
+
+/** Copy / renew / revoke handlers shared by the modal's ShareRows and the global
+ *  ShareView. Broadcasts SHARES_CHANGED + reloads after a mutation. */
+export function useShareActions(
+  reload: () => void,
+  onFlash: (s: string) => void,
+  onError: (s: string) => void,
+) {
+  const copyShare = async (s: ShareListItem) => {
+    if (s.url) {
+      copy(s.url);
+      onFlash("链接已复制");
+      return;
+    }
+    try {
+      const r = await api.renewShare(s.slug); // s3 link isn't stored — re-presign
+      copy(r.url);
+      onFlash("已重新生成并复制链接");
+      notifySharesChanged();
+      reload();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+  const revoke = async (s: ShareListItem) => {
+    if (!confirm(`撤销这个分享？(${s.source})`)) return;
+    try {
+      await api.revokeShare(s.slug);
+      onFlash("已撤销");
+      notifySharesChanged();
+      reload();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+  const renew = async (s: ShareListItem) => {
+    try {
+      const r = await api.renewShare(s.slug);
+      copy(r.url);
+      onFlash("已续期 7 天，新链接已复制");
+      notifySharesChanged();
+      reload();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+  return { copyShare, revoke, renew };
+}
+
 export function openShareModal(target: ShareTarget): void {
   injectStyle();
   const host = document.createElement("div");
@@ -103,6 +179,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
       copy(r.url);
       setFlash(`已通过「${r.source}」创建，链接已复制`);
       setPassword("");
+      notifySharesChanged();
       refreshShares();
     } catch (e) {
       setError((e as Error).message || "创建失败");
@@ -185,41 +262,7 @@ function ShareRows({
   onError: (s: string) => void;
   empty: string;
 }) {
-  async function copyShare(s: ShareListItem) {
-    if (s.url) {
-      copy(s.url);
-      onFlash("链接已复制");
-      return;
-    }
-    try {
-      const r = await api.renewShare(s.slug); // s3 link isn't stored — re-presign
-      copy(r.url);
-      onFlash("已重新生成并复制链接");
-      reload();
-    } catch (e) {
-      onError((e as Error).message);
-    }
-  }
-  async function revoke(s: ShareListItem) {
-    if (!confirm(`撤销这个分享？(${s.source})`)) return;
-    try {
-      await api.revokeShare(s.slug);
-      onFlash("已撤销");
-      reload();
-    } catch (e) {
-      onError((e as Error).message);
-    }
-  }
-  async function renew(s: ShareListItem) {
-    try {
-      const r = await api.renewShare(s.slug);
-      copy(r.url);
-      onFlash("已续期 7 天，新链接已复制");
-      reload();
-    } catch (e) {
-      onError((e as Error).message);
-    }
-  }
+  const { copyShare, revoke, renew } = useShareActions(reload, onFlash, onError);
   if (shares.length === 0) return <p class="mhshare-note">{empty}</p>;
   return (
     <ul class="mhshare-list">
@@ -249,45 +292,6 @@ function ShareRows({
         </li>
       ))}
     </ul>
-  );
-}
-
-/** Global share manager: list & manage every share this node can see. */
-export function openShareManager(): void {
-  injectStyle();
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const close = () => {
-    render(null, host);
-    host.remove();
-  };
-  render(<ShareManager onClose={close} />, host);
-}
-
-function ShareManager({ onClose }: { onClose: () => void }) {
-  const [shares, setShares] = useState<ShareListItem[]>([]);
-  const [flash, setFlash] = useState("");
-  const [error, setError] = useState("");
-  const reload = () => api.listShares().then(setShares).catch((e) => setError((e as Error).message));
-  useEffect(() => {
-    reload();
-  }, []);
-  return (
-    <div class="mhshare-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class="mhshare-modal">
-        <div class="mhshare-head">
-          <h2>所有分享（{shares.length}）</h2>
-          <button class="mhshare-x" onClick={onClose} aria-label="关闭">
-            ✕
-          </button>
-        </div>
-        <div class="mhshare-body">
-          {error && <p class="mhshare-err">{error}</p>}
-          {flash && <p class="mhshare-ok">{flash}</p>}
-          <ShareRows shares={shares} reload={reload} onFlash={setFlash} onError={setError} empty="还没有任何分享。" />
-        </div>
-      </div>
-    </div>
   );
 }
 

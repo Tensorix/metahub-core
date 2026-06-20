@@ -264,6 +264,14 @@ export function Sidebar(props: SidebarProps) {
           <Icon name="globe" cls="ico" />
         </button>
         <button
+          class={"sb-act" + (view.kind === "shares" ? " active" : "")}
+          title="分享"
+          aria-label="分享"
+          onClick={() => navigate({ kind: "shares" })}
+        >
+          <Icon name="link" cls="ico" />
+        </button>
+        <button
           class={"sb-act" + (view.kind === "settings" ? " active" : "")}
           title="设置"
           aria-label="设置"
@@ -356,6 +364,14 @@ export function Sidebar(props: SidebarProps) {
           onClick={() => navigate({ kind: "sites" })}
         >
           <Icon name="globe" cls="ico sm" />
+        </button>
+        <button
+          class={"sb-act" + (view.kind === "shares" ? " active" : "")}
+          title="分享"
+          aria-label="分享"
+          onClick={() => navigate({ kind: "shares" })}
+        >
+          <Icon name="link" cls="ico sm" />
         </button>
         {version && <span class="sbf-ver" title={`Metahub Core v${version}`}>v{version}</span>}
       </div>

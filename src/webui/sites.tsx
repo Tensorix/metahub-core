@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, type Site, type SiteFile } from "./api.ts";
-import { openShareModal } from "./share-modal.tsx";
+import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import { Icon } from "./icons.tsx";
 import {
   openMenu,
@@ -50,6 +50,7 @@ export function SitesView() {
   const [sites, setSites] = useState<Site[] | null>(null);
   const [peek, setPeek] = useState<Site | null>(null);
   const [preview, setPreview] = useState<Site | null>(null);
+  const shared = useSharedTargets();
 
   const reload = () =>
     api
@@ -172,6 +173,19 @@ export function SitesView() {
                     <div class="slug">{s.name}</div>
                     <div class={"ttl" + (s.title ? "" : " muted")}>{s.title || "未命名站点"}</div>
                   </div>
+                  {shared.has(s.id) && (
+                    <span
+                      class="share-badge"
+                      title="已分享 · 管理分享"
+                      style={{ marginLeft: "auto" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
+                      }}
+                    >
+                      <Icon name="link" />
+                    </span>
+                  )}
                 </div>
                 <button
                   class="site-addr"

@@ -162,6 +162,8 @@ export interface ShareListItem {
   slug: string;
   kind: string;
   target_id: string;
+  /** Human title of the shared object. */
+  title: string;
   permission: string;
   transport: "server" | "s3";
   /** Where it's served: a server address or a bucket name. */

@@ -10,6 +10,7 @@ import {
   type PropConfig,
 } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
+import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import {
   openMenu,
   closeMenu,
@@ -61,6 +62,7 @@ export function DatabaseView({
 }) {
   const [props, setProps] = useState<Prop[]>([]);
   const [records, setRecords] = useState<Rec[]>([]);
+  const shared = useSharedTargets();
   const [tab, setTab] = useState(0);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ id: string; desc: boolean } | null>(null);
@@ -440,6 +442,15 @@ export function DatabaseView({
             {db.name}
           </div>
         </div>
+        {shared.has(db.id) && (
+          <span
+            class="db-title-share"
+            title="已分享 · 管理分享"
+            onClick={() => openShareModal({ kind: "database", ref: db.id, title: db.name })}
+          >
+            <Icon name="link" />
+          </span>
+        )}
       </div>
 
       <div class="views">

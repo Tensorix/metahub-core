@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { api, ApiError, MAX_UPLOAD_BYTES } from "./api.ts";
 import { replicaActive, SYNCED_EVENT } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
+import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep, promptDialog, toast, startUpload, updateUpload, finishUpload } from "./ui.tsx";
 import hljs from "highlight.js/lib/common";
 import { htmlToMarkdown } from "./html-md.ts";
@@ -182,6 +183,7 @@ export function DocView({
   const sourceRef = useRef("");
   const sourceTaRef = useRef<HTMLTextAreaElement>(null);
   const titleRef = useRef("");
+  const sharedTargets = useSharedTargets();
   const [mode, setModeState] = useState<DocMode>("blocks");
   const [version, setVersion] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -1481,6 +1483,15 @@ export function DocView({
       <div class="doc-meta">
         <span><Icon name="file" cls="ico sm" />{countBlocks(blocks)} 个块</span>
         <span>实时同步</span>
+        {sharedTargets.has(docId) && (
+          <button
+            class="doc-shared"
+            title="已分享 · 管理分享"
+            onClick={() => openShareModal({ kind: "doc", ref: docId, title: titleRef.current })}
+          >
+            <Icon name="link" cls="ico sm" />已分享
+          </button>
+        )}
       </div>
 
       {mode === "source" ? (

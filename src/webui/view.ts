@@ -9,7 +9,8 @@ export type View =
   | { kind: "doc"; id: string }
   | { kind: "search"; q: string }
   | { kind: "settings" }
-  | { kind: "sites" };
+  | { kind: "sites" }
+  | { kind: "shares" };
 
 export type Navigate = (v: View, opts?: { replace?: boolean }) => void;
 
@@ -26,6 +27,7 @@ export function viewToHash(v: View): string {
     case "search": return `#/search?q=${encodeURIComponent(v.q)}`;
     case "settings": return "#/settings";
     case "sites": return "#/sites";
+    case "shares": return "#/shares";
     case "empty": return "#/";
   }
 }
@@ -45,6 +47,7 @@ export function parseHash(h: string): View {
     }
     if (kind === "settings") return { kind: "settings" };
     if (kind === "sites") return { kind: "sites" };
+    if (kind === "shares") return { kind: "shares" };
   } catch {
     // malformed percent-escape — treat as unrecognized
   }

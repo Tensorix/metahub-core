@@ -13,7 +13,9 @@ import type { DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
 import { randomSuffix } from "../ids.ts";
 import { resolveEntity } from "../resolve.ts";
-import { resolveSite } from "../sites.ts";
+import { resolveSite, getSite } from "../sites.ts";
+import { getDocument } from "../documents.ts";
+import { getDatabase } from "../databases.ts";
 import { listPeers, getPeer } from "./peers.ts";
 import {
   createShare,
@@ -73,6 +75,8 @@ export interface ShareListItem {
   slug: string;
   kind: string;
   target_id: string;
+  /** Human title of the shared object (for the management list). */
+  title: string;
   permission: string;
   transport: "server" | "s3";
   source: string;
@@ -81,6 +85,21 @@ export interface ShareListItem {
   hasPassword: boolean;
   /** server: ready-to-copy link; s3: omitted (use renew to mint a fresh one). */
   url?: string;
+}
+
+/** Best-effort human title of a shared target (falls back to the id). */
+function targetTitle(db: DbDriver, kind: string, id: string): string {
+  try {
+    if (kind === "doc") return getDocument(db, id)?.title || id;
+    if (kind === "database") return getDatabase(db, id)?.name || id;
+    if (kind === "site") {
+      const s = getSite(db, id);
+      return s?.title || s?.name || id;
+    }
+  } catch {
+    /* ignore — fall through to id */
+  }
+  return id;
 }
 
 function resolveTarget(db: DbDriver, kind: ShareKind, ref: string): { id: string; title: string } {
@@ -247,6 +266,7 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
       slug: r.slug,
       kind: r.kind,
       target_id: r.target_id,
+      title: targetTitle(db, r.kind, r.target_id),
       permission: r.permission,
       transport: "server",
       source: r.served_base || "本机服务器",
@@ -265,6 +285,7 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
         slug: m.slug,
         kind: m.kind,
         target_id: m.target_id,
+        title: m.title || m.target_id,
         permission: m.permission,
         transport: "s3",
         source: `桶 ${p.label ?? p.url}`,

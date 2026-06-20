@@ -934,6 +934,49 @@
   .site-empty .et { font-size:15px; color:var(--fg); margin-bottom:5px; font-weight:650; letter-spacing:-.01em; }
   .site-empty .ed { font-size:var(--fs-sm); margin-bottom:18px; max-width:42ch; line-height:1.55; }
 
+  /* ── 分享 (global ShareView) ──────────────────────────────────────────── */
+  .shares-page .db-head { align-items:flex-start; gap:16px; margin-bottom:18px; }
+  .shv-tools { margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .shv-seg { display:inline-flex; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:2px; }
+  .shv-seg-btn { padding:5px 11px; border-radius:calc(var(--radius-sm) - 2px); font-size:13px; color:var(--fg-soft); }
+  .shv-seg-btn.active { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
+  .shv-search { display:flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:5px 10px; color:var(--muted); }
+  .shv-search input { border:0; background:none; outline:none; color:var(--fg); font-size:13px; width:180px; }
+
+  .shv-list { display:flex; flex-direction:column; gap:8px; }
+  .shv-row { display:flex; align-items:center; gap:13px; padding:13px 15px; background:var(--bg); border:1px solid var(--line);
+    border-radius:var(--radius-lg); transition:border-color .12s, box-shadow .12s; }
+  .shv-row:hover { border-color:var(--line-strong); box-shadow:var(--shadow-sm); }
+  .shv-ico { width:38px; height:38px; flex:none; display:grid; place-items:center; border-radius:var(--radius-md, 10px);
+    background:var(--surface-2); color:var(--fg-soft); }
+  .shv-ico svg { width:19px; height:19px; }
+  .shv-ico.k-doc { color:var(--accent); background:var(--accent-soft); }
+  .shv-ico.k-site { color:#1a7f5a; }
+  .shv-main { flex:1; min-width:0; }
+  .shv-titleline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .shv-title { font-weight:600; color:var(--fg); letter-spacing:-.01em; max-width:34ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .shv-title:hover { color:var(--accent); }
+  .shv-pill { font-size:11px; line-height:1.6; padding:0 8px; border-radius:999px; border:1px solid var(--line-strong); color:var(--fg-soft); }
+  .shv-pill.t-s3 { background:var(--accent-soft); border-color:transparent; color:var(--accent); }
+  .shv-pill.p-edit { background:var(--danger-soft); border-color:transparent; color:var(--danger); }
+  .shv-lock { font-size:12px; }
+  .shv-meta { margin-top:3px; font-size:var(--fs-sm); color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .shv-exp.warn { color:var(--danger); }
+  .shv-exp.dead { text-decoration:line-through; }
+  .shv-actions { display:flex; align-items:center; gap:6px; flex:none; }
+  .shv-actions .btn { padding:5px 10px; font-size:12px; }
+  @media (max-width:640px){ .shv-row{ flex-wrap:wrap; } .shv-actions{ width:100%; justify-content:flex-end; } }
+
+  /* in-context "已分享" badge on docs / tables / site cards */
+  .share-badge { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:6px; color:var(--accent);
+    background:var(--accent-soft); flex:none; cursor:pointer; transition:filter .12s; }
+  .share-badge:hover { filter:brightness(.95); }
+  .share-badge svg { width:13px; height:13px; }
+  .doc-meta .doc-shared { display:inline-flex; align-items:center; gap:4px; color:var(--accent); cursor:pointer; }
+  .doc-meta .doc-shared:hover { text-decoration:underline; }
+  .db-title-share { display:inline-grid; place-items:center; width:24px; height:24px; border-radius:7px; color:var(--accent); background:var(--accent-soft); cursor:pointer; vertical-align:middle; margin-left:8px; }
+  .db-title-share svg { width:14px; height:14px; }
+
   /* site peek: access bar + file manager */
   .acc-link { display:flex; align-items:center; gap:6px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); padding:7px 8px 7px 11px; margin-bottom:16px; }
   .acc-link .url { flex:1; font-family:var(--mono); font-size:var(--fs-sm); color:var(--fg-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
