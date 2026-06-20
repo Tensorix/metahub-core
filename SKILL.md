@@ -1,11 +1,10 @@
 ---
 name: mh
 description: >-
-  Use the metahub CLI (`mh` / `metahub`) as an AI agent's durable local knowledge
-  base — typed tables (Notion-style rows/columns) for structured data and Markdown
-  documents for long-form knowledge, with a Read/Edit/Write-style editing interface.
-  Use this skill whenever you need to store, recall, search, or incrementally edit
-  the agent's working memory, or run the metahub sync server / WebUI / hosted sites.
+  Store, recall, search, and edit the agent's durable working memory via the metahub
+  CLI (`mh`) — Notion-style typed tables for structured data and Markdown documents
+  for long-form knowledge, with a Read/Edit/Write editing flow. Also runs the metahub
+  sync server, WebUI, and hosted sites.
 argument-hint: "[task — e.g. log today's progress to the Notes doc]"
 allowed-tools: Bash(mh:*), Bash(metahub:*)
 ---
