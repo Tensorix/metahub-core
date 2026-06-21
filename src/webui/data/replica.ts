@@ -62,7 +62,9 @@ export function replicaEnabled(): boolean {
 
 /** Route reads/writes locally only when the replica is running AND has
  *  completed at least one full sync — before that the local DB would show an
- *  empty (or stale-partial) hub, which is worse than staying online. */
+ *  empty (or stale-partial) hub, which is worse than staying online.
+ *  @internal A raw axis kept for the api/sw/app routing not yet migrated; new
+ *  feature code should read clientMode()/scopesFor() rather than this flag. */
 export function replicaActive(): boolean {
   return replicaEnabled() && flag(HYDRATED_KEY) && started && status.state !== "error";
 }
@@ -86,7 +88,10 @@ let originModeMemo: OriginMode | null = (() => {
 export function originMode(): OriginMode | null {
   return originModeMemo;
 }
-/** True when this shell has no metahub server behind it (bucket-only). */
+/** True when this shell has no metahub server behind it (bucket-only).
+ *  @internal A raw axis. New feature code should read clientMode()/scopesFor()
+ *  instead of branching on this directly — a single isNoOrigin() fork can't name
+ *  the server+replica cell and that's exactly how multi-end cases get missed. */
 export function isNoOrigin(): boolean {
   return originModeMemo === "none";
 }
@@ -396,7 +401,7 @@ export function ensurePwaRegistration(): void {
   // Desktop renderer is a pure window onto the local sidecar (its data home), so
   // it never needs the SW — and a stale mh_replica flag must not make it register
   // one. Treat it as not-a-replica regardless of clientMode().
-  if (window.metahubDesktop || clientMode().hold !== "replica") {
+  if (clientMode().surface === "desktop" || clientMode().hold !== "replica") {
     void teardownPwa(); // lightweight window / desktop → self-heal a stale SW
     return;
   }

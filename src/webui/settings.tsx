@@ -22,8 +22,8 @@ import {
 import type { ReplicaStatus } from "./data/db-worker.ts";
 import { cacheStats, clearCache, spoolPending, BLOB_QUOTA_BYTES } from "./data/blob-store.ts";
 import { cmpVer, WEBUI_VERSION } from "./version.ts";
-import { openServerBlobManager, openLocalBlobManager } from "./blob-manager.tsx";
-import { scopesFor } from "./data/scopes.ts";
+import { openBlobManager } from "./blob-manager.tsx";
+import { scopesFor, type Scope } from "./data/scopes.ts";
 import { ScopeSelector } from "./scope-selector.tsx";
 import {
   Modal,
@@ -41,7 +41,7 @@ import {
  *  (window vs replica, an OPFS replica, re-entering a bucket secret to direct-
  *  connect) doesn't apply. The 同步 section collapses to "connect a bucket so
  *  every device stays in sync"; device-to-device HTTP pairing (设备与授权) stays. */
-const isDesktop = () => typeof window !== "undefined" && !!window.metahubDesktop;
+const isDesktop = () => clientMode().surface === "desktop";
 
 const THEMES: { value: ThemeChoice; icon: string; name: string; desc: string }[] = [
   { value: "light", icon: "sun", name: "浅色", desc: "始终使用明亮界面" },
@@ -271,7 +271,7 @@ function StoragePanel() {
         )}
         <ScopeSelector scopes={scopes} value={active.id} onChange={setSel} sub={choice} />
       </div>
-      {active.kind === "local" ? <LocalCacheSettings /> : <BlobCacheSettings />}
+      {active.kind === "local" ? <LocalCacheSettings scope={active} /> : <BlobCacheSettings scope={active} />}
     </>
   );
 }
@@ -334,7 +334,7 @@ function useCountUp(target: number, ms = 600): number {
  * durably holds it — the reference stays, bytes re-download on demand. Server-
  * backed only (a no-origin replica keeps blobs in browser Cache Storage).
  */
-function BlobCacheSettings() {
+function BlobCacheSettings({ scope }: { scope: Scope }) {
   const [info, setInfo] = useState<BlobCacheInfo | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -528,7 +528,7 @@ function BlobCacheSettings() {
               <Icon name="history" cls={"ico sm" + (verifying ? " spin" : "")} />
               {verifying ? "检查中…" : "重新检查"}
             </button>
-            <button class="btn btn-ghost blob-manage-btn" onClick={() => openServerBlobManager()}>
+            <button class="btn btn-ghost blob-manage-btn" onClick={() => openBlobManager(scope)}>
               <Icon name="filter" cls="ico sm" />
               Blob 管理
             </button>
@@ -723,7 +723,7 @@ function BlobCacheSettings() {
  * NOT safe to drop are the pending spool (composed offline, not yet uploaded),
  * which `clearCache` never touches — surfaced here as a "待上传" caution instead.
  */
-function LocalCacheSettings() {
+function LocalCacheSettings({ scope }: { scope: Scope }) {
   const [stats, setStats] = useState<{ count: number; totalBytes: number; pinnedBytes: number } | null>(null);
   const [pending, setPending] = useState<{ count: number; bytes: number }>({ count: 0, bytes: 0 });
   const [usage, setUsage] = useState<number | null>(null);
@@ -851,7 +851,7 @@ function LocalCacheSettings() {
               <Icon name="trash" cls="ico sm" />
               {hasFreeable ? `清理腾出 ${fmtBytes(clearable)}` : "无需清理"}
             </button>
-            <button class="btn btn-ghost blob-manage-btn" onClick={() => openLocalBlobManager()}>
+            <button class="btn btn-ghost blob-manage-btn" onClick={() => openBlobManager(scope)}>
               <Icon name="filter" cls="ico sm" />
               Blob 管理
             </button>
@@ -2224,6 +2224,11 @@ function AddStorageModal({
         </>
       }
     >
+      <div class="set-hint" style={{ marginTop: 0, marginBottom: 12 }}>
+        {toServer
+          ? "连接后,云端工作区负责把整库同步到这个桶;这台设备和其他设备都从它同步。"
+          : "连接后,这台设备(本机)把整库同步到这个桶;新设备扫码加入即可一起用。"}
+      </div>
       <div class="field-label">存储服务商</div>
       <div class="provider-grid">
         {S3_PROVIDERS.map((p) => (

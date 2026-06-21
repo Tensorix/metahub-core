@@ -29,6 +29,7 @@ import {
   setCachePinned,
 } from "./data/blob-store.ts";
 import { call as replicaCall } from "./data/replica.ts";
+import type { Scope } from "./data/scopes.ts";
 
 // ---- data source -------------------------------------------------------------
 
@@ -45,8 +46,45 @@ export interface BlobSource {
   pin(hash: string, pinned: boolean): Promise<void>;
 }
 
-/** Server-backed source: BlobCacheSettings (desktop + server WebUI). */
-function serverSource(): BlobSource {
+/** Build the BlobSource adapter for a storage Scope (scopes.ts). One backend per
+ *  scope kind: "local" manages this device's byte cache (evict semantics — the
+ *  bucket original stays, an unpinned byte re-downloads); "server" manages the
+ *  data home's ledger (purge semantics). The blob-specific copy is intentionally
+ *  kept here, NOT read from scope.label/subtitle (those are the generic 本机/云端
+ *  workspace names the scope picker shows). StoragePanel filters buckets out, so
+ *  only local|server reach this; server is the fall-through default. */
+export function sourceForScope(scope: Scope): BlobSource {
+  if (scope.kind === "local") {
+    return {
+      title: "Blob 管理",
+      subtitle:
+        "已下载到这台设备的图片和大文件。清理只删本机副本，需要时从云端重新取回；桶里的原件始终不动。",
+      deleteSemantics: "evict",
+      list: async () => {
+        const [blobs, refs] = await Promise.all([
+          localListBlobs(),
+          replicaCall<string[]>("blobRefs").catch(() => [] as string[]),
+        ]);
+        const refSet = new Set(refs);
+        return blobs.map((b) => ({
+          hash: b.hash,
+          size: b.size,
+          contentType: b.content_type,
+          lastAccess: b.accessed,
+          pinned: b.pinned,
+          pending: b.pending,
+          // every unpinned, non-pending cached byte re-downloads on demand
+          clearable: !b.pinned && !b.pending,
+          referenced: refSet.has(b.hash),
+        }));
+      },
+      clear: (h) => localClearBlobs(h),
+      remove: (h) => localDeleteBlobs(h),
+      pin: async (h, p) => {
+        await setCachePinned(h, p);
+      },
+    };
+  }
   return {
     title: "Blob 管理",
     subtitle:
@@ -61,46 +99,8 @@ function serverSource(): BlobSource {
   };
 }
 
-/** No-origin source: blobs live in the browser byte cache; the bucket is the durable
- *  home and is never mutated from the client, so an unpinned cached byte is always
- *  re-downloadable (clearable) and a "delete" is just a local eviction. */
-function localSource(): BlobSource {
-  return {
-    title: "Blob 管理",
-    subtitle:
-      "已下载到这台设备的图片和大文件。清理只删本机副本，需要时从云端重新取回；桶里的原件始终不动。",
-    deleteSemantics: "evict",
-    list: async () => {
-      const [blobs, refs] = await Promise.all([
-        localListBlobs(),
-        replicaCall<string[]>("blobRefs").catch(() => [] as string[]),
-      ]);
-      const refSet = new Set(refs);
-      return blobs.map((b) => ({
-        hash: b.hash,
-        size: b.size,
-        contentType: b.content_type,
-        lastAccess: b.accessed,
-        pinned: b.pinned,
-        pending: b.pending,
-        // every unpinned, non-pending cached byte re-downloads on demand
-        clearable: !b.pinned && !b.pending,
-        referenced: refSet.has(b.hash),
-      }));
-    },
-    clear: (h) => localClearBlobs(h),
-    remove: (h) => localDeleteBlobs(h),
-    pin: async (h, p) => {
-      await setCachePinned(h, p);
-    },
-  };
-}
-
-export function openServerBlobManager(): void {
-  openModal(<BlobManager source={serverSource()} />);
-}
-export function openLocalBlobManager(): void {
-  openModal(<BlobManager source={localSource()} />);
+export function openBlobManager(scope: Scope): void {
+  openModal(<BlobManager source={sourceForScope(scope)} />);
 }
 
 // ---- helpers -----------------------------------------------------------------

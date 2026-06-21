@@ -8,6 +8,9 @@
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { api, type ShareTargetOpt, type ShareListItem, type CreateShareBody } from "./api.ts";
+import { buildShareTargets, shareTargetUrl } from "./data/share-targets.ts";
+import { onReplicaStatus } from "./data/replica.ts";
+import type { Scope } from "./data/scopes.ts";
 
 export interface ShareTarget {
   kind: "doc" | "database" | "site";
@@ -110,10 +113,30 @@ const EXPIRY: { label: string; ms: number | null }[] = [
   { label: "30 天", ms: 2_592_000_000 },
 ];
 
-interface Opt {
-  label: string;
-  kind: "server" | "bucket";
-  url: string;
+/** The ordered share targets as unified Scopes (current server default, then
+ *  peer servers, then attached buckets). Seeded synchronously so the picker has
+ *  a value before the async load; refreshed when a bucket is attached/detached
+ *  on this device (onReplicaStatus). The visible <select> stays native — it sits
+ *  inside the share overlay's own stacking context and keeps the per-option
+ *  "（站点不支持）" disabling that a popup menu can't express. */
+function useShareTargets(): Scope[] {
+  const [targets, setTargets] = useState<Scope[]>(() => buildShareTargets([], [], location.origin));
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      Promise.all([api.listShareServers().catch(() => []), api.listShareBuckets().catch(() => [])]).then(
+        ([servers, buckets]: [ShareTargetOpt[], ShareTargetOpt[]]) => {
+          if (alive) setTargets(buildShareTargets(servers, buckets, location.origin));
+        },
+      );
+    load();
+    const off = onReplicaStatus(() => load());
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+  return targets;
 }
 
 function copy(text: string) {
@@ -121,8 +144,8 @@ function copy(text: string) {
 }
 
 function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => void }) {
-  const [opts, setOpts] = useState<Opt[]>([{ label: `当前服务器 — ${location.origin}`, kind: "server", url: location.origin }]);
-  const [optIdx, setOptIdx] = useState(0);
+  const targets = useShareTargets();
+  const [selId, setSelId] = useState("server");
   const [permission, setPermission] = useState<"view" | "edit">("view");
   const [password, setPassword] = useState("");
   const [expiryIdx, setExpiryIdx] = useState(0);
@@ -132,15 +155,6 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
   const [flash, setFlash] = useState("");
 
   useEffect(() => {
-    Promise.all([api.listShareServers().catch(() => []), api.listShareBuckets().catch(() => [])]).then(
-      ([servers, buckets]: [ShareTargetOpt[], ShareTargetOpt[]]) => {
-        setOpts([
-          { label: `当前服务器 — ${location.origin}`, kind: "server", url: location.origin },
-          ...servers.map((s) => ({ label: `${s.label} — ${s.url}`, kind: "server" as const, url: s.url })),
-          ...buckets.map((b) => ({ label: `对象存储 — ${b.label}`, kind: "bucket" as const, url: b.url })),
-        ]);
-      },
-    );
     refreshShares();
   }, []);
 
@@ -148,7 +162,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     api.listShares({ target: target.ref }).then(setShares).catch(() => undefined);
   }
 
-  const sel = opts[Math.min(optIdx, opts.length - 1)]!;
+  const sel = targets.find((t) => t.id === selId) ?? targets[0]!;
   const s3 = sel.kind === "bucket";
   const siteKind = target.kind === "site";
   useEffect(() => {
@@ -172,8 +186,8 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
         permission,
         password: password || null,
         expiresMs: expiryOpts[eIdx]?.ms ?? null,
-        server: s3 ? null : sel.url,
-        bucketUrl: s3 ? sel.url : null,
+        server: s3 ? null : shareTargetUrl(sel, location.origin),
+        bucketUrl: s3 ? shareTargetUrl(sel, location.origin) : null,
       };
       const r = await api.createShare(body);
       copy(r.url);
@@ -202,11 +216,11 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
           <div class="mhshare-section">新建分享</div>
           <label class="mhshare-field">
             <span>通过</span>
-            <select value={String(optIdx)} onChange={(e) => setOptIdx(Number((e.currentTarget as HTMLSelectElement).value))}>
-              {opts.map((o, i) => (
-                <option value={String(i)} disabled={o.kind === "bucket" && siteKind}>
-                  {o.label}
-                  {o.kind === "bucket" && siteKind ? "（站点不支持）" : ""}
+            <select value={sel.id} onChange={(e) => setSelId((e.currentTarget as HTMLSelectElement).value)}>
+              {targets.map((t) => (
+                <option value={t.id} disabled={t.kind === "bucket" && siteKind}>
+                  {t.label} — {t.subtitle}
+                  {t.kind === "bucket" && siteKind ? "（站点不支持）" : ""}
                 </option>
               ))}
             </select>

@@ -6,6 +6,7 @@ import {
   resumeReplicaIfEnabled,
   replicaActive,
   replicaEnabled,
+  clientMode,
   detectOriginMode,
   ensurePwaRegistration,
   enableReplicaFromBucket,
@@ -129,7 +130,7 @@ function App() {
   // be redundant and (via api.ts's replicaActive() routing) shadow the sidecar's
   // on-disk DB. A leftover mh_replica flag from a prior version is ignored here.
   useEffect(() => {
-    if (typeof window !== "undefined" && window.metahubDesktop) return;
+    if (clientMode().surface === "desktop") return;
     resumeReplicaIfEnabled();
   }, []);
 
@@ -802,7 +803,7 @@ if (typeof window !== "undefined" && window.metahubDesktop) {
 if (location.hash.startsWith("#preview")) {
   document.body.classList.add("preview-window");
   render(<ImagePreviewWindow />, document.getElementById("app")!);
-} else if (location.hash === "#quick" && typeof window !== "undefined" && window.metahubDesktop) {
+} else if (location.hash === "#quick" && clientMode().surface === "desktop") {
   document.body.classList.add("quicknote");
   render(<QuickNote />, document.getElementById("app")!);
 } else {
