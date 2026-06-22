@@ -85,7 +85,12 @@ const cask = `cask "metahub-app" do
   desc "Local-first typed knowledge base with CRDT sync for AI agents (desktop app)"
   homepage "https://github.com/Tensorix/metahub-core"
 
-  app "Metahub.app"
+  # The bundle inside the dmg is "metahub-desktop.app": electron-builder 26 names
+  # the .app after executableName (set in electron-builder.yml to dodge the '@' in
+  # the scoped npm name), not productName. Copy that real name but install it as
+  # "Metahub.app" so the user-facing app — and the postflight/zap paths below —
+  # stay "Metahub.app".
+  app "metahub-desktop.app", target: "Metahub.app"
 
   # Unsigned, by design (open-source — no Apple Developer signing). macOS would
   # otherwise flag the freshly installed .app as "damaged" (the quarantine
