@@ -2140,6 +2140,28 @@ function TableBlock({
     if (cellSel) onCellSel(null);
   };
 
+  // Drag the bottom-right fill handle to grow/shrink the rectangle: the
+  // selection's top-left stays anchored and the focus follows the pointer (so
+  // dragging up/left shrinks, down/right grows). threshold:0 starts immediately.
+  const startHandleDrag = (e: PointerEvent) => {
+    if (!rect) return;
+    e.preventDefault();
+    e.stopPropagation(); // don't let the cell's startCellSelect clear the selection
+    const anchor = { r: rect.r0, c: rect.c0 };
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    getSelection()?.removeAllRanges();
+    startPointerDrag(e, {
+      threshold: 0,
+      onStart: () => document.body.classList.add("cell-selecting"),
+      onMove: (ev) => {
+        const td = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".doc-td") as HTMLElement | null;
+        if (!td || td.dataset.r == null) return;
+        onCellSel({ a: anchor, b: { r: Number(td.dataset.r), c: Number(td.dataset.c) } });
+      },
+      onEnd: () => document.body.classList.remove("cell-selecting"),
+    });
+  };
+
   const startResize = (e: PointerEvent, c: number) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2201,7 +2223,7 @@ function TableBlock({
                           onInput={(v) => onCellInput(r, c, v)}
                           onKeyDown={(e) => onCellKeyDown(e, r, c)}
                         />
-                        {handle && <div class="doc-cell-handle" />}
+                        {handle && <div class="doc-cell-handle" onPointerDown={(e) => startHandleDrag(e as PointerEvent)} />}
                         {r === 0 && (
                           <>
                             <button class="doc-col-menu" title="列选项" onMouseDown={(e) => colMenu(e as MouseEvent, c)}>
