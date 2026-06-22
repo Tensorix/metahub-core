@@ -494,6 +494,30 @@ export function DocView({
     if (b) focusBlock(b.id, atEnd);
   };
 
+  // Insert a fresh block at the very top of the body and focus it — the title's
+  // Enter drops the caret onto a new empty first line.
+  const insertTop = (type: BlockType = "p", draft: Partial<BlockDraft> = {}): Block => {
+    const b = makeBlock(type, draft);
+    blocks.unshift(b);
+    bump();
+    requestAnimationFrame(() => focusBlock(b.id));
+    scheduleSave();
+    return b;
+  };
+
+  // Focus the document title (the contentEditable above the body), caret at end.
+  const focusTitle = () => {
+    const el = document.querySelector(".doc-title") as HTMLElement | null;
+    if (!el) return;
+    el.focus();
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false); // caret to the end of the title
+    const s = getSelection();
+    s?.removeAllRanges();
+    s?.addRange(r);
+  };
+
   const convert = (id: string, type: BlockType, draft: Partial<BlockDraft> = {}) => {
     const b = findBlock(blocks, id)?.block;
     if (!b) return;
@@ -1070,8 +1094,11 @@ export function DocView({
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !hasExpandedSelection()) {
       const edge = caretLineEdge(el);
       if (e.key === "ArrowUp" && edge.first) {
+        e.preventDefault();
         const prev = previousBlock(blocks, b.id);
-        if (prev) { e.preventDefault(); focusInto(prev, true); return; }
+        if (prev) focusInto(prev, true); // no previous block → jump up to the title
+        else focusTitle();
+        return;
       } else if (e.key === "ArrowDown" && edge.last) {
         const next = nextBlock(blocks, b.id);
         if (next) { e.preventDefault(); focusInto(next); return; }
@@ -1212,8 +1239,10 @@ export function DocView({
         host && isCompactCodeHost(host) && host.children?.[0]?.id === b.id
           ? previousBlock(blocks, host.id)
           : previousBlock(blocks, b.id);
-      // focusInto dives into a prior compact code host's code child if needed.
-      focusInto(prev, true);
+      // focusInto dives into a prior compact code host's code child if needed;
+      // no previous block (code is the first line of the body) → jump to the title.
+      if (prev) focusInto(prev, true);
+      else focusTitle();
       return;
     }
     if (e.key === "Backspace" && value === "") {
@@ -1502,7 +1531,7 @@ export function DocView({
         class="doc-title"
         contentEditable
         onInput={(e) => { titleRef.current = (e.target as HTMLElement).textContent ?? ""; recordHistory("title"); scheduleSave(); }}
-        onKeyDown={(e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === "Enter") { e.preventDefault(); if (!blocks.length) insertAfter(null); else focusBlock(blocks[0]!.id); } }}
+        onKeyDown={(e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === "Enter") { e.preventDefault(); const first = blocks[0]; if (first && isBlankSpacer(first)) focusBlock(first.id); else insertTop("p"); } }}
         dangerouslySetInnerHTML={{ __html: titleRef.current }}
       />
       <div class="doc-meta">
