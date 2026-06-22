@@ -36,7 +36,7 @@ import {
 import { MAX_PRESIGN_SECONDS } from "./storage-s3-bun.ts";
 import type { S3Config } from "./storage.ts";
 
-const DEFAULT_SHARE_VIEWER = "https://metahub-share.pages.dev";
+const DEFAULT_SHARE_VIEWER = "https://share.mh.tensorix.org";
 const DEFAULT_S3_EXPIRY_SEC = MAX_PRESIGN_SECONDS;
 const PEER_LIST_TIMEOUT_MS = 4000;
 
