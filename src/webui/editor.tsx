@@ -53,7 +53,8 @@ import {
   topmostBlockIds,
 } from "./editor-ops.ts";
 import { escapeHtml, inlineToHtml, htmlToInline } from "./markdown.tsx";
-import { startColumnResize, markDropHalf, clearDropMarks } from "./pointer-drag.ts";
+import { startColumnResize, startPointerDrag, markDropHalf, clearDropMarks } from "./pointer-drag.ts";
+import { type CellSel, normRect, inRect, edgeShadow, selectionToTsv } from "./cell-select.ts";
 import { type FindOpts, collectMatches, findInText, applyHighlights, clearHighlights } from "./find.ts";
 
 export type DocMode = "blocks" | "source";
@@ -196,6 +197,13 @@ export function DocView({
   // contentEditable host and the browser can't span a native selection across
   // them. null = no block selection (normal single-block editing).
   const [sel, setSel] = useState<{ anchorId: string; focusId: string } | null>(null);
+  // Table cell range selection (box select inside one table block). Session-only,
+  // never serialized; at most one table is selecting at a time, so a single
+  // {blockId, sel} suffices. tableSelRef mirrors it for the capture-phase block
+  // key handler (which must bail when a cell selection owns the keyboard).
+  const [tableSel, setTableSel] = useState<{ blockId: string; sel: CellSel } | null>(null);
+  const tableSelRef = useRef(tableSel);
+  tableSelRef.current = tableSel;
   // Fullscreen image preview / annotator overlay (image void blocks).
   const [lightbox, setLightbox] = useState<{ id: string; src: string; name?: string } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -260,6 +268,7 @@ export function DocView({
     blocksRef.current = structuredClone(snap.blocks);
     titleRef.current = snap.title;
     setSel(null);
+    setTableSel(null);
     setVersion((v) => v + 1); // re-render without recording (bypasses bump)
     scheduleSave();
     if (snap.focusId) requestAnimationFrame(() => focusBlock(snap.focusId!, true));
@@ -919,6 +928,10 @@ export function DocView({
     if (mod && (e.key === "z" || e.key === "Z")) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
     if (mod && e.key === "y") { e.preventDefault(); redo(); return; }
 
+    // A table cell selection owns arrows / copy / delete — let its own handler
+    // (the tableSel keydown effect below) run instead of block-mode keys.
+    if (tableSelRef.current) return;
+
     if (!sel) return;
     const ids = selectedIds;
     if (!ids.length) return;
@@ -1049,6 +1062,99 @@ export function DocView({
     document.addEventListener("keydown", h, true);
     return () => document.removeEventListener("keydown", h, true);
   }, []);
+
+  // ---- table cell selection: keyboard + helpers ----
+  const cellEl = (blockId: string, r: number, c: number) =>
+    document.querySelector<HTMLElement>(`.block[data-bid="${blockId}"] .doc-td[data-r="${r}"][data-c="${c}"]`);
+
+  // Leave box-select and drop the caret into a cell for inline editing.
+  const enterCellEdit = (blockId: string, r: number, c: number) => {
+    setTableSel(null);
+    requestAnimationFrame(() => {
+      const el = cellEl(blockId, r, c);
+      if (!el) return;
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const s = getSelection();
+      s?.removeAllRanges();
+      s?.addRange(range);
+    });
+  };
+
+  // Brief accent flash on the table after a copy (restart the animation by
+  // toggling the class across a reflow).
+  const flashCopied = (blockId: string) => {
+    const tbl = document.querySelector<HTMLElement>(`.block[data-bid="${blockId}"] table.doc-table`);
+    if (!tbl) return;
+    tbl.classList.remove("copied");
+    void tbl.offsetWidth;
+    tbl.classList.add("copied");
+    setTimeout(() => tbl.classList.remove("copied"), 260);
+  };
+
+  // Arrows move/extend the selection, Cmd/Ctrl+C copies as TSV, Delete/Backspace
+  // clears the rect, Escape dismisses, Enter/F2 edits a single-cell selection.
+  // Mirrors the database grid's cell keyboard (table.tsx) but writes through the
+  // block's rows + bump()/scheduleSave() instead of the record API.
+  useEffect(() => {
+    if (!tableSel) return;
+    const onKey = (e: KeyboardEvent) => {
+      const ts = tableSelRef.current;
+      if (!ts) return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae?.isContentEditable || ae?.tagName === "INPUT" || ae?.tagName === "TEXTAREA") return;
+      const block = findBlock(blocksRef.current, ts.blockId)?.block;
+      const rows = block?.rows;
+      if (!rows) return;
+      const nrows = rows.length;
+      const ncols = rows[0]?.length ?? 0;
+      const rect = normRect(ts.sel);
+      const { r, c } = ts.sel.b;
+      const single = ts.sel.a.r === ts.sel.b.r && ts.sel.a.c === ts.sel.b.c;
+      const clamp = (n: number, hi: number) => Math.max(0, Math.min(hi, n));
+      const ARROWS: Record<string, [number, number]> = {
+        ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
+      };
+      if (e.key in ARROWS) {
+        e.preventDefault();
+        const [dr, dc] = ARROWS[e.key]!;
+        const b = { r: clamp(r + dr, nrows - 1), c: clamp(c + dc, ncols - 1) };
+        setTableSel({ blockId: ts.blockId, sel: e.shiftKey ? { a: ts.sel.a, b } : { a: b, b } });
+        requestAnimationFrame(() => cellEl(ts.blockId, b.r, b.c)?.scrollIntoView({ block: "nearest", inline: "nearest" }));
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        navigator.clipboard?.writeText(selectionToTsv(rows, rect)).catch(() => {});
+        flashCopied(ts.blockId);
+      } else if (e.key === "Escape") {
+        setTableSel(null);
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        block!.rows = rows.map((row, ri) => row.map((cell, ci) => (inRect(rect, ri, ci) ? "" : cell)));
+        bump();
+        scheduleSave();
+      } else if (single && (e.key === "Enter" || e.key === "F2")) {
+        e.preventDefault();
+        enterCellEdit(ts.blockId, r, c);
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [tableSel]);
+
+  // Dismiss the cell selection when the pointer goes down outside its table
+  // (clicking another block, or another table's cell — that table's own handler
+  // then starts a fresh selection on the bubble phase).
+  useEffect(() => {
+    if (!tableSel) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest?.(`.block[data-bid="${tableSel.blockId}"]`)) setTableSel(null);
+    };
+    addEventListener("pointerdown", onDown, true);
+    return () => removeEventListener("pointerdown", onDown, true);
+  }, [tableSel]);
 
   // Keep the keyboard-highlighted slash item visible: the menu (.pop) is an
   // overflow:auto container, so arrow-key navigation must scroll the selected
@@ -1439,6 +1545,8 @@ export function DocView({
           scheduleSave();
         }}
         onTableChange={() => { bump(); scheduleSave(); }}
+        cellSel={tableSel?.blockId === b.id ? tableSel.sel : null}
+        onCellSel={(s) => setTableSel(s ? { blockId: b.id, sel: s } : null)}
         onAdd={() => insertAfter(b.id)}
         onMenu={(e) => blockMenu(e, b)}
         onToggle={() => { b.checked = !b.checked; bump(); scheduleSave(); }}
@@ -1627,7 +1735,7 @@ function mediaFilesFrom(dt: DataTransfer | null | undefined): File[] {
 }
 
 function BlockRow({
-  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, onAdd, onMenu, onToggle, onVoidChange, onVoidKey, onPreview, dragRef, onReorder, children,
+  block, number, depth, renderKey, selected, onInput, onPaste, onLangInput, onKeyDown, onCodeInput, onCodeKeyDown, onCellInput, onTableChange, cellSel, onCellSel, onAdd, onMenu, onToggle, onVoidChange, onVoidKey, onPreview, dragRef, onReorder, children,
 }: {
   block: Block;
   number: number;
@@ -1642,6 +1750,8 @@ function BlockRow({
   onCodeKeyDown: (e: KeyboardEvent, ta: HTMLTextAreaElement) => void;
   onCellInput: (r: number, c: number, value: string) => void;
   onTableChange: () => void;
+  cellSel: CellSel | null;
+  onCellSel: (sel: CellSel | null) => void;
   onAdd: () => void;
   onMenu: (e: MouseEvent) => void;
   onToggle: () => void;
@@ -1728,7 +1838,7 @@ function BlockRow({
         {block.type === "divider" ? (
           <hr />
         ) : block.type === "table" ? (
-          <TableBlock block={block} renderKey={renderKey} onCellInput={onCellInput} onTableChange={onTableChange} />
+          <TableBlock block={block} renderKey={renderKey} onCellInput={onCellInput} onTableChange={onTableChange} cellSel={cellSel} onCellSel={onCellSel} />
         ) : block.type === "image" || block.type === "video" || block.type === "audio" || block.type === "file" || block.type === "html" || block.type === "uploading" ? (
           <div class="void-host" tabindex={0} onKeyDown={(e) => onVoidKey(e as KeyboardEvent)}>
             {block.type === "image" ? (
@@ -1894,17 +2004,20 @@ function CodeBlock({
 // onTableChange → bump(). Column widths are session-only: kept in a ref and
 // written straight onto the <col> elements, never serialized to Markdown.
 function TableBlock({
-  block, renderKey, onCellInput, onTableChange,
+  block, renderKey, onCellInput, onTableChange, cellSel, onCellSel,
 }: {
   block: Block;
   renderKey: number;
   onCellInput: (r: number, c: number, value: string) => void;
   onTableChange: () => void;
+  cellSel: CellSel | null;
+  onCellSel: (sel: CellSel | null) => void;
 }) {
   const rows = block.rows ?? [];
   const cols = rows[0]?.length ?? 0;
   const align = block.align ?? [];
   const tableRef = useRef<HTMLTableElement>(null);
+  const rect = cellSel ? normRect(cellSel) : null;
   const widths = useRef<number[]>([]);
   // Keep the session-only width array sized to the column count; new columns
   // inherit the default, existing widths are preserved across re-renders.
@@ -1978,6 +2091,55 @@ function TableBlock({
     }
   };
 
+  // Box-select cells. A plain pointer-down keeps the click intent (drop a caret
+  // to edit) and only promotes to a cell selection once the pointer crosses into
+  // a *different* cell — mirroring the editor's text→block drag promotion. Once
+  // promoted we blur the editable and drop the native range so the rectangle
+  // owns the keyboard. Shift+click extends from the existing anchor.
+  const startCellSelect = (e: PointerEvent, r: number, c: number) => {
+    if (e.button !== 0) return;
+    // Let the column menu / resizer / row-delete buttons handle their own clicks.
+    if ((e.target as HTMLElement).closest("button,a,.doc-col-resizer")) return;
+    const dropEdit = () => {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      getSelection()?.removeAllRanges();
+    };
+    if (e.shiftKey && cellSel) {
+      e.preventDefault();
+      dropEdit();
+      const anchor = cellSel.a;
+      onCellSel({ a: anchor, b: { r, c } });
+      startPointerDrag(e, {
+        onMove: (ev) => {
+          const td = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".doc-td") as HTMLElement | null;
+          if (!td || td.dataset.r == null) return;
+          onCellSel({ a: anchor, b: { r: Number(td.dataset.r), c: Number(td.dataset.c) } });
+        },
+      });
+      return;
+    }
+    const anchor = { r, c };
+    let promoted = false;
+    startPointerDrag(e, {
+      onMove: (ev) => {
+        const td = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".doc-td") as HTMLElement | null;
+        if (!td || td.dataset.r == null) return;
+        const tr = Number(td.dataset.r), tc = Number(td.dataset.c);
+        if (!promoted) {
+          if (tr === anchor.r && tc === anchor.c) return; // still in the anchor cell → keep editing intent
+          promoted = true;
+          dropEdit();
+          document.body.classList.add("cell-selecting");
+        }
+        onCellSel({ a: anchor, b: { r: tr, c: tc } });
+      },
+      onEnd: () => document.body.classList.remove("cell-selecting"),
+    });
+    // A pointer-down inside a cell dismisses a prior selection; if it turns into
+    // a drag the onMove above re-establishes one.
+    if (cellSel) onCellSel(null);
+  };
+
   const startResize = (e: PointerEvent, c: number) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2011,7 +2173,7 @@ function TableBlock({
       <div class="doc-table-scroll">
         <div class="doc-table-inner">
           <div class="doc-table-row">
-            <table ref={tableRef} class="doc-table">
+            <table ref={tableRef} class={"doc-table" + (rect ? " cells-active" : "")}>
               <colgroup>
                 {Array.from({ length: cols }, (_, c) => (
                   <col key={c} data-tcol={c} style={{ width: widths.current[c] }} />
@@ -2020,8 +2182,16 @@ function TableBlock({
               <tbody>
                 {rows.map((row, r) => (
                   <tr key={r}>
-                    {row.map((cell, c) => (
-                      <td key={c} class={r === 0 ? "doc-th" : undefined}>
+                    {row.map((cell, c) => {
+                      const inSel = rect != null && inRect(rect, r, c);
+                      const handle = rect != null && r === rect.r1 && c === rect.c1;
+                      return (
+                      <td
+                        key={c}
+                        class={(r === 0 ? "doc-th" : "") + (inSel ? " cellsel" : "")}
+                        style={rect ? { boxShadow: edgeShadow(rect, r, c) } : undefined}
+                        onPointerDown={(e) => startCellSelect(e as PointerEvent, r, c)}
+                      >
                         <TableCell
                           value={cell}
                           renderKey={renderKey}
@@ -2031,6 +2201,7 @@ function TableBlock({
                           onInput={(v) => onCellInput(r, c, v)}
                           onKeyDown={(e) => onCellKeyDown(e, r, c)}
                         />
+                        {handle && <div class="doc-cell-handle" />}
                         {r === 0 && (
                           <>
                             <button class="doc-col-menu" title="列选项" onMouseDown={(e) => colMenu(e as MouseEvent, c)}>
@@ -2045,7 +2216,8 @@ function TableBlock({
                           </button>
                         )}
                       </td>
-                    ))}
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>

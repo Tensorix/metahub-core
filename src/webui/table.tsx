@@ -35,6 +35,7 @@ import {
   createDragGhost,
   positionGhost,
 } from "./pointer-drag.ts";
+import { type CellPos, type CellSel, normRect, edgeShadow } from "./cell-select.ts";
 
 const VIEW_TABS: [string, string][] = [
   ["表格", "list"],
@@ -42,16 +43,6 @@ const VIEW_TABS: [string, string][] = [
   ["日历", "calendar"],
   ["时间轴", "timeline"],
 ];
-
-// ---- cell range selection ----
-type CellPos = { r: number; c: number }; // r = row index in sorted, c = column index in props
-type CellSel = { a: CellPos; b: CellPos }; // a = anchor, b = focus
-function normRect(s: CellSel) {
-  return {
-    r0: Math.min(s.a.r, s.b.r), r1: Math.max(s.a.r, s.b.r),
-    c0: Math.min(s.a.c, s.b.c), c1: Math.max(s.a.c, s.b.c),
-  };
-}
 
 export function DatabaseView({
   db,
@@ -590,15 +581,7 @@ export function DatabaseView({
                     </td>
                     {props.map((p, ci) => {
                       const inSel = cr != null && ri >= cr.r0 && ri <= cr.r1 && ci >= cr.c0 && ci <= cr.c1;
-                      let boxShadow: string | undefined;
-                      if (inSel && cr) {
-                        const parts: string[] = [];
-                        if (ri === cr.r0) parts.push("inset 0 2px 0 0 var(--accent)");
-                        if (ri === cr.r1) parts.push("inset 0 -2px 0 0 var(--accent)");
-                        if (ci === cr.c0) parts.push("inset 2px 0 0 0 var(--accent)");
-                        if (ci === cr.c1) parts.push("inset -2px 0 0 0 var(--accent)");
-                        boxShadow = parts.join(",") || undefined;
-                      }
+                      const boxShadow = cr ? edgeShadow(cr, ri, ci) : undefined;
                       return (
                         <td
                           key={p.id}
