@@ -1531,7 +1531,7 @@ export function DocView({
         class="doc-title"
         contentEditable
         onInput={(e) => { titleRef.current = (e.target as HTMLElement).textContent ?? ""; recordHistory("title"); scheduleSave(); }}
-        onKeyDown={(e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === "Enter") { e.preventDefault(); const first = blocks[0]; if (first && isBlankSpacer(first)) focusBlock(first.id); else insertTop("p"); } }}
+        onKeyDown={(e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === "Enter") { e.preventDefault(); const first = blocks[0]; if (first && isBlankSpacer(first)) focusBlock(first.id); else insertTop("p"); return; } if (e.key === "ArrowDown" && caretLineEdge(e.currentTarget as HTMLElement).last && blocks[0]) { e.preventDefault(); focusInto(blocks[0]); } }}
         dangerouslySetInnerHTML={{ __html: titleRef.current }}
       />
       <div class="doc-meta">
