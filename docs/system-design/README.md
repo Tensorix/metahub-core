@@ -20,6 +20,7 @@ Metahub 当前是一个基于 Bun + SQLite 的本地知识库 CLI,同时面向 A
 
 - [architecture.md](./architecture.md): 当前架构、模块边界、读写路径、同步和快照。
 - [data-model.md](./data-model.md): SQLite schema、CRDT oplog、记录 JSON 存储、文档 block 存储。
+- [webui-editor.md](./webui-editor.md): WebUI 文档编辑器前端块模型、Markdown 往返、渲染 DOM 结构与块间/标题导航（做 Markdown 渲染相关改动先看这里）。
 - [capabilities.md](./capabilities.md): 当前 CLI 和 core 已实现功能清单。
 - [usage-flows.md](./usage-flows.md): 当前已有能力下的记账、IM、文档、同步使用流程。
 - [gaps-and-priorities.md](./gaps-and-priorities.md): 和目标体验之间的差距及用户体验优先级。
@@ -41,4 +42,5 @@ Metahub 当前是一个基于 Bun + SQLite 的本地知识库 CLI,同时面向 A
 2. 改命令、输出、用户流程时更新 `capabilities.md` 和 `usage-flows.md`。
 3. 改模块边界、同步、快照、构建方式时更新 `architecture.md`。
 4. 完成或新增目标差距时更新 `gaps-and-priorities.md`。
+5. 改 WebUI 编辑器块模型、Markdown 往返、渲染结构或块间/标题导航时更新 `webui-editor.md`。
 
