@@ -1,0 +1,56 @@
+name: Deploy Share Viewer
+
+# 把对象存储分享查看器（只读、数据盲）发布到 Cloudflare Pages。
+#
+# 查看器 = mh share create --transport s3 生成的链接的静态渲染端：
+# 从链接 fragment（#m=<预签名 manifest>&k=<密钥>）拉取密文、浏览器内解密、渲染。
+# 不持有任何桶凭据，不需要 Service Worker，体积极小。
+# 通过 cfg_share_viewer_url 或 mh share create --viewer 指向此站。
+#
+# 触发：
+#   - 推送 share-v* tag（正式发布）
+#   - workflow_dispatch（Actions 页面手动点按，便于首次/临时发布）
+#
+# 需要的仓库 secrets（与 deploy-shell.yml 共用，无需额外添加）：
+#   - CLOUDFLARE_API_TOKEN  权限 = Account › Cloudflare Pages › Edit
+#   - CLOUDFLARE_ACCOUNT_ID  Cloudflare 仪表盘右下角的 Account ID
+#
+# 前置：Pages 项目须已存在（仪表盘建一次，或 `wrangler pages project create
+# metahub-share --production-branch=main`）。项目名见下方 --project-name。
+on:
+  push:
+    tags:
+      - "share-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-share-viewer
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & deploy share viewer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build share viewer
+        run: bun run build:share-viewer --out dist/share-viewer
+
+      # wrangler pages deploy：--branch=main 指向项目的生产分支 → 正式部署
+      # （不传时会用 tag 名当分支 → 落成 preview 部署，拿不到生产域名）。
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist/share-viewer --project-name=metahub-share --branch=main
