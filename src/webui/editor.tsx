@@ -485,6 +485,15 @@ export function DocView({
     return b;
   };
 
+  // Focus a navigation target, but a compact code host (an empty list item whose
+  // body IS a code block) has no caret line of its own — its code child stands in
+  // for it, so dive into that instead. Loops to handle a chain of such hosts.
+  const focusInto = (block: Block | null | undefined, atEnd = false) => {
+    let b = block;
+    while (b && isCompactCodeHost(b)) b = b.children?.[0] ?? null;
+    if (b) focusBlock(b.id, atEnd);
+  };
+
   const convert = (id: string, type: BlockType, draft: Partial<BlockDraft> = {}) => {
     const b = findBlock(blocks, id)?.block;
     if (!b) return;
@@ -1062,10 +1071,10 @@ export function DocView({
       const edge = caretLineEdge(el);
       if (e.key === "ArrowUp" && edge.first) {
         const prev = previousBlock(blocks, b.id);
-        if (prev) { e.preventDefault(); focusBlock(prev.id, true); return; }
+        if (prev) { e.preventDefault(); focusInto(prev, true); return; }
       } else if (e.key === "ArrowDown" && edge.last) {
         const next = nextBlock(blocks, b.id);
-        if (next) { e.preventDefault(); focusBlock(next.id); return; }
+        if (next) { e.preventDefault(); focusInto(next); return; }
       }
     }
     if (
@@ -1182,7 +1191,13 @@ export function DocView({
     if (e.key === "ArrowDown" && start === end && value.indexOf("\n", start) === -1) {
       e.preventDefault();
       const next = nextBlock(blocks, b.id);
-      if (next) focusBlock(next.id);
+      if (next) { focusInto(next); return; } // next may itself be a compact code host
+      // No next block: if this code block is a compact code host's body, the new
+      // paragraph must go *after the list item* at the top level — inserting after
+      // the code child would splice it into host.children, an orphan that the
+      // serializer drops. (The ↑ handler below does the symmetric host-skip.)
+      const host = findBlock(blocks, b.id)?.parentBlock;
+      if (host && isCompactCodeHost(host) && host.children?.[0]?.id === b.id) insertAfter(host.id, "p");
       else insertAfter(b.id, "p");
       return;
     }
@@ -1193,13 +1208,12 @@ export function DocView({
       // line of its own, so previousBlock() resolving to it would focus nothing —
       // skip it to the block above the list item, mirroring how ↓ exits below.
       const host = findBlock(blocks, b.id)?.parentBlock;
-      let prev =
+      const prev =
         host && isCompactCodeHost(host) && host.children?.[0]?.id === b.id
           ? previousBlock(blocks, host.id)
           : previousBlock(blocks, b.id);
-      // Landing on another compact code host? Dive into its code child instead.
-      if (prev && isCompactCodeHost(prev)) prev = prev.children![0]!;
-      if (prev) focusBlock(prev.id, true);
+      // focusInto dives into a prior compact code host's code child if needed.
+      focusInto(prev, true);
       return;
     }
     if (e.key === "Backspace" && value === "") {
