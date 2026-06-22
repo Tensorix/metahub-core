@@ -41,6 +41,7 @@ import {
   flattenBlocks,
   indentBlock,
   indentBlocks,
+  isCompactCodeHost,
   moveBlock,
   moveBlocks,
   nextBlock,
@@ -1187,7 +1188,17 @@ export function DocView({
     }
     if (e.key === "ArrowUp" && start === end && value.lastIndexOf("\n", start - 1) === -1) {
       e.preventDefault();
-      const prev = previousBlock(blocks, b.id);
+      // A code block can BE a list item's body (compact code host): an empty list
+      // item whose first child is this code block. The host renders no focusable
+      // line of its own, so previousBlock() resolving to it would focus nothing —
+      // skip it to the block above the list item, mirroring how ↓ exits below.
+      const host = findBlock(blocks, b.id)?.parentBlock;
+      let prev =
+        host && isCompactCodeHost(host) && host.children?.[0]?.id === b.id
+          ? previousBlock(blocks, host.id)
+          : previousBlock(blocks, b.id);
+      // Landing on another compact code host? Dive into its code child instead.
+      if (prev && isCompactCodeHost(prev)) prev = prev.children![0]!;
       if (prev) focusBlock(prev.id, true);
       return;
     }
@@ -1619,8 +1630,7 @@ function BlockRow({
       if (el.innerHTML !== html && htmlToInline(el.innerHTML) !== block.content) el.innerHTML = html;
     }
   }, [renderKey, block.type]);
-  const compactCodeHost =
-    isListType(block.type) && block.content.trim() === "" && block.children?.[0]?.type === "code";
+  const compactCodeHost = isCompactCodeHost(block);
   const cls =
     "block b-" +
     block.type +

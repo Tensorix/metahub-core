@@ -42,6 +42,17 @@ export function containsBlock(blocks: readonly Block[] | undefined, id: string):
   return false;
 }
 
+/** A list item that is really just a code block — empty text, code as its first
+ *  child. It renders no line of its own (the child code block stands in), so it
+ *  is transparent for vertical caret navigation. */
+export function isCompactCodeHost(block: Block): boolean {
+  return (
+    isListType(block.type) &&
+    block.content.trim() === "" &&
+    block.children?.[0]?.type === "code"
+  );
+}
+
 export function flattenBlocks(blocks: readonly Block[], out: Block[] = []): Block[] {
   for (const block of blocks) {
     out.push(block);
