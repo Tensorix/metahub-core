@@ -97,6 +97,14 @@ export function Sidebar(props: SidebarProps) {
     openMenu(e, (close) => (
       <>
         <MenuItem
+          icon="hash"
+          label="复制 ID"
+          onClick={() => {
+            close();
+            navigator.clipboard?.writeText(db.id).then(() => toast("已复制 ID"));
+          }}
+        />
+        <MenuItem
           icon="settings"
           label="重命名…"
           onClick={async () => {
@@ -138,6 +146,14 @@ export function Sidebar(props: SidebarProps) {
     openMenu(e, (close) => (
       <>
         <MenuItem icon="plus" label="新建子页" onClick={() => { close(); newDoc(d.id); }} />
+        <MenuItem
+          icon="hash"
+          label="复制 ID"
+          onClick={() => {
+            close();
+            navigator.clipboard?.writeText(d.id).then(() => toast("已复制 ID"));
+          }}
+        />
         <MenuItem
           icon="settings"
           label="重命名…"

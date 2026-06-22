@@ -430,6 +430,10 @@ function App() {
             setDocHistory(true);
           }} />
           <MenuSep />
+          <MenuItem icon="hash" label="复制 ID" onClick={() => {
+            close();
+            navigator.clipboard?.writeText(activeDoc.id).then(() => toast("已复制 ID"));
+          }} />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
             const title = await promptDialog({ title: "重命名文档", value: activeDoc.title });
@@ -456,6 +460,10 @@ function App() {
           }} />
           <MenuItem icon="history" label="最近动态" onClick={() => { close(); setDbActivity(true); }} />
           <MenuSep />
+          <MenuItem icon="hash" label="复制 ID" onClick={() => {
+            close();
+            navigator.clipboard?.writeText(activeDb.id).then(() => toast("已复制 ID"));
+          }} />
           <MenuItem icon="settings" label="重命名…" onClick={async () => {
             close();
             const name = await promptDialog({ title: "重命名数据库", value: activeDb.name });
