@@ -8,7 +8,7 @@ name: Deploy Share Viewer
 # 通过 cfg_share_viewer_url 或 mh share create --viewer 指向此站。
 #
 # 触发：
-#   - 推送 share-v* tag（正式发布）
+#   - 推送 v* core tag（正式发布，跟随 core release 自动部署）
 #   - workflow_dispatch（Actions 页面手动点按，便于首次/临时发布）
 #
 # 需要的仓库 secrets（与 deploy-shell.yml 共用，无需额外添加）：
@@ -20,7 +20,7 @@ name: Deploy Share Viewer
 on:
   push:
     tags:
-      - "share-v*"
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -36,6 +36,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag is on main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main; refusing to deploy."
+            exit 1
+          fi
 
       - uses: oven-sh/setup-bun@v2
         with:
