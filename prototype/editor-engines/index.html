@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Editor Engine Prototype</title>
+    <link rel="stylesheet" href="./shared.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">MD</span>
+          <div>
+            <h1>Editor Engine Prototype</h1>
+            <p>Markdown-only persistence spike</p>
+          </div>
+        </div>
+        <div class="engine-tabs" role="tablist" aria-label="Editor engine">
+          <button id="cm6-tab" class="engine-tab is-active" type="button" role="tab" aria-selected="true">
+            CM6 Block Markdown
+          </button>
+          <button id="pm-tab" class="engine-tab" type="button" role="tab" aria-selected="false">
+            ProseMirror Markdown
+          </button>
+        </div>
+        <div class="toolbar" aria-label="Prototype actions">
+          <button id="reset-button" class="icon-button" type="button" title="Reset sample document">Reset</button>
+          <button id="copy-button" class="icon-button" type="button" title="Copy Markdown">Copy</button>
+          <button id="theme-button" class="icon-button" type="button" title="Toggle light or dark theme">Theme</button>
+          <button id="syntax-button" class="icon-button" type="button" title="Show or hide Markdown syntax">Syntax</button>
+          <button id="self-test-button" class="primary-button" type="button">Run Self-Test</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="editor-pane" aria-label="Editor">
+          <div class="pane-header">
+            <span id="engine-title">CM6 Block Markdown</span>
+            <span id="engine-note">Single flat Markdown document with block UI decorations.</span>
+          </div>
+          <div id="editor-host" class="editor-host"></div>
+        </section>
+
+        <aside class="markdown-pane" aria-label="Markdown output">
+          <div class="pane-header">
+            <span>Markdown Output</span>
+            <span id="markdown-status">Ready</span>
+          </div>
+          <textarea id="markdown-output" class="markdown-output" spellcheck="false"></textarea>
+          <div id="roundtrip-panel" class="roundtrip-panel">
+            <div class="roundtrip-status">
+              <span id="roundtrip-label">Round-trip</span>
+              <span id="roundtrip-value">Not run</span>
+            </div>
+            <details>
+              <summary>Initial Markdown</summary>
+              <pre id="initial-markdown"></pre>
+            </details>
+          </div>
+        </aside>
+      </main>
+
+      <section class="checklist-pane" aria-label="Manual test checklist">
+        <div class="pane-header">
+          <span>Manual Checklist</span>
+          <span id="test-summary">Not run</span>
+        </div>
+        <div id="checklist" class="checklist"></div>
+        <div id="self-test-results" class="self-test-results" aria-live="polite"></div>
+      </section>
+    </div>
+
+    <script type="module" src="./shared.ts"></script>
+  </body>
+</html>
