@@ -29,6 +29,7 @@ class GutterPlugin implements PluginValue {
   private surface: HTMLElement; // hover surface — the whole .doc, so the left margin counts
   private line = 0; // hovered 1-based line, 0 = hidden
   private raf = 0;
+  private dropLine: HTMLElement | null = null; // reorder drop indicator
 
   constructor(readonly view: EditorView) {
     this.host = document.createElement("div");
@@ -54,6 +55,7 @@ class GutterPlugin implements PluginValue {
     this.surface.removeEventListener("mouseleave", this.onLeave);
     render(null, this.host);
     this.host.remove();
+    this.dropLine?.remove();
   }
 
   private onLeave = () => { if (this.line) { this.line = 0; this.schedule(); } };
@@ -104,40 +106,66 @@ class GutterPlugin implements PluginValue {
     ));
   }
 
-  // Pointer-drag reorder: move the source block's lines to before/after the block
-  // under the pointer at drop time.
+  /** A 2px accent line marking where a dragged block will drop, at viewport-y `y`. */
+  private showDrop(y: number) {
+    if (!this.dropLine) {
+      const d = document.createElement("div");
+      d.className = "cm-drop-line";
+      d.style.cssText =
+        "position:absolute;height:2px;background:var(--accent);border-radius:1px;pointer-events:none;z-index:25";
+      this.view.dom.appendChild(d);
+      this.dropLine = d;
+    }
+    const box = this.view.dom.getBoundingClientRect();
+    const content = this.view.contentDOM.getBoundingClientRect();
+    this.dropLine.style.left = `${content.left - box.left}px`;
+    this.dropLine.style.width = `${content.width}px`;
+    this.dropLine.style.top = `${y - box.top - 1}px`;
+    this.dropLine.style.display = "";
+  }
+  private hideDrop() {
+    if (this.dropLine) this.dropLine.style.display = "none";
+  }
+
+  // Pointer-drag reorder: move the source block before/after the block under the
+  // pointer (by pointer-Y vs that block's midpoint), with a live drop indicator.
   private startDrag(e: PointerEvent, src: Range) {
     e.preventDefault();
+    let target = 0;
+    let before = false;
     const move = (ev: PointerEvent) => {
       const pos = this.view.posAtCoords({ x: ev.clientX, y: ev.clientY });
-      if (pos != null) this.host.dataset.drop = String(this.view.state.doc.lineAt(pos).number);
+      if (pos == null) return this.hideDrop();
+      const line = this.view.state.doc.lineAt(pos).number;
+      if (line >= src.fromLine && line <= src.toLine) return this.hideDrop(); // over itself
+      const b = blockAt(this.view, line);
+      const top = this.view.coordsAtPos(b.from);
+      const bot = this.view.coordsAtPos(b.to);
+      if (!top || !bot) return this.hideDrop();
+      before = ev.clientY < (top.top + bot.bottom) / 2;
+      target = line;
+      this.showDrop(before ? top.top : bot.bottom);
     };
-    const up = (ev: PointerEvent) => {
+    const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      const pos = this.view.posAtCoords({ x: ev.clientX, y: ev.clientY });
-      delete this.host.dataset.drop;
-      if (pos == null) return;
-      const targetLine = this.view.state.doc.lineAt(pos).number;
-      if (targetLine >= src.fromLine && targetLine <= src.toLine) return; // dropped on itself
-      this.reorder(src, targetLine);
+      this.hideDrop();
+      if (target) this.reorder(src, target, before);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
 
-  private reorder(src: Range, targetLine: number) {
+  private reorder(src: Range, targetLine: number, before: boolean) {
     const doc = this.view.state.doc;
     const block = this.view.state.sliceDoc(src.from, src.to);
     const target = blockAt(this.view, targetLine);
-    // Delete the source (with its trailing newline), then insert before/after target.
-    const after = targetLine > src.toLine; // moving down → insert after target block
-    const changes = [] as { from: number; to: number; insert: string }[];
+    const changes: { from: number; to: number; insert: string }[] = [];
     const srcTo = src.to < doc.length ? src.to + 1 : src.to;
     const srcFrom = src.to >= doc.length && src.from > 0 ? src.from - 1 : src.from;
     changes.push({ from: srcFrom, to: srcTo, insert: "" });
-    const insertAt = after ? target.to : target.from;
-    changes.push({ from: insertAt, to: insertAt, insert: after ? "\n" + block : block + "\n" });
+    const insertAt = before ? target.from : target.to;
+    changes.push({ from: insertAt, to: insertAt, insert: before ? block + "\n" : "\n" + block });
     this.view.dispatch({ changes, userEvent: "move.reorder" });
   }
 

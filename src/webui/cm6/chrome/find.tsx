@@ -14,6 +14,10 @@ import { findInText, type FindOpts } from "../../find.ts";
 const MARK = Decoration.mark({ class: "cm-find" });
 const CUR = Decoration.mark({ class: "cm-find cm-find-cur" });
 
+// Compact toolbar buttons: the `.pop .item` defaults (width:100%) are for vertical
+// menus and would stretch each button across the bar.
+const FIND_BTN = { width: "28px", minWidth: "28px", justifyContent: "center", padding: "5px 0" };
+
 const findPlugin = ViewPlugin.fromClass(
   class {
     open = false;
@@ -97,11 +101,11 @@ const findPlugin = ViewPlugin.fromClass(
             }}
           />
           <span class="cm-find-count">{this.matches.length ? `${this.idx + 1}/${this.matches.length}` : "0/0"}</span>
-          <button class={"item" + (this.opts.caseSensitive ? " on" : "")} title="区分大小写" onClick={() => this.toggle("caseSensitive")}>Aa</button>
-          <button class={"item" + (this.opts.wholeWord ? " on" : "")} title="全词匹配" onClick={() => this.toggle("wholeWord")}>W</button>
-          <button class="item" title="上一个" onClick={() => this.step(-1)}><Icon name="chevronUp" cls="ico sm" /></button>
-          <button class="item" title="下一个" onClick={() => this.step(1)}><Icon name="chevronDown" cls="ico sm" /></button>
-          <button class="item" title="关闭" onClick={() => this.close()}><Icon name="x" cls="ico sm" /></button>
+          <button class={"item" + (this.opts.caseSensitive ? " on" : "")} style={FIND_BTN} title="区分大小写" onClick={() => this.toggle("caseSensitive")}>Aa</button>
+          <button class={"item" + (this.opts.wholeWord ? " on" : "")} style={FIND_BTN} title="全词匹配" onClick={() => this.toggle("wholeWord")}>W</button>
+          <button class="item" style={FIND_BTN} title="上一个" onClick={() => this.step(-1)}><Icon name="chevronUp" cls="ico sm" /></button>
+          <button class="item" style={FIND_BTN} title="下一个" onClick={() => this.step(1)}><Icon name="chevronDown" cls="ico sm" /></button>
+          <button class="item" style={FIND_BTN} title="关闭" onClick={() => this.close()}><Icon name="x" cls="ico sm" /></button>
         </>,
         this.bar,
       );

@@ -138,6 +138,17 @@ export function backspaceCommand(view: EditorView): boolean {
     });
     return true;
   }
+
+  // Backspace at the very start of the line right after a void (table/media/code)
+  // selects the whole void — the affordance to delete/move an atomic block the caret
+  // can't enter. A second Backspace then deletes the selection (default).
+  if (sel.head === line.from && line.number > 1) {
+    const v = docModel(view.state).voids.find((v) => v.to === line.from - 1);
+    if (v) {
+      view.dispatch({ selection: EditorSelection.range(v.from, v.to) });
+      return true;
+    }
+  }
   return false; // default deleteCharBackward (incl. merge with previous line)
 }
 

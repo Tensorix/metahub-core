@@ -58,11 +58,35 @@ export interface EditorOpts {
  *  the structure keymap. The derived model (docModelField) is NOT here — it stays
  *  always-on (baseExtensions) so chrome keeps working in source mode. voidField
  *  before the decoration plugins so block widgets win at shared offsets. */
+/** Todo shortcut: in a bullet item whose content-so-far is `[]` / `[ ]` / `[x]`,
+ *  typing the space turns the line into a canonical todo (`- [ ] ` / `- [x] `). The
+ *  scanner already recognizes `- [ ] `/`- [x] `, so this mainly rescues the empty
+ *  `[]` the user types. */
+function todoShortcut(view: EditorView, from: number, to: number, insert: string): boolean {
+  if (insert !== " " || from !== to || view.composing) return false;
+  const line = docModel(view.state).lines[view.state.doc.lineAt(from).number - 1];
+  if (!line || line.role !== "bullet" || from < line.contentFrom) return false;
+  const m = view.state.sliceDoc(line.contentFrom, from).match(/^\[([ xX]?)\]$/);
+  if (!m) return false;
+  const glyph = line.text[line.indentChars] ?? "-";
+  const indent = line.text.slice(0, line.indentChars);
+  const marker = `${indent}${glyph} [${m[1]!.toLowerCase() === "x" ? "x" : " "}] `;
+  const rest = view.state.sliceDoc(from, line.to);
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: marker + rest },
+    selection: { anchor: line.from + marker.length },
+    userEvent: "input",
+    scrollIntoView: true,
+  });
+  return true;
+}
+
 export function richLayer(opts: EditorOpts): Extension {
   return [
     voidField,
     blockDecorations,
     inlineDecorations,
+    EditorView.inputHandler.of(todoShortcut),
     EditorView.inputHandler.of(nestShortcut),
     structureKeymap(opts),
   ];

@@ -18,7 +18,7 @@ type Cmd = "bold" | "italic" | "code" | "strike" | "link";
 const BUTTONS: { cmd: Cmd; icon: string; title: string }[] = [
   { cmd: "bold", icon: "bold", title: "加粗" },
   { cmd: "italic", icon: "italic", title: "斜体" },
-  { cmd: "strike", icon: "strikethrough", title: "删除线" },
+  { cmd: "strike", icon: "strike", title: "删除线" },
   { cmd: "code", icon: "code", title: "行内代码" },
   { cmd: "link", icon: "link", title: "链接" },
 ];
@@ -88,14 +88,23 @@ export function formatBar(): Extension {
         render(
           <>
             {BUTTONS.map((btn) => (
-              <button key={btn.cmd} class="item" title={btn.title} onMouseDown={(e) => { e.preventDefault(); this.apply(btn.cmd); }}>
+              <button
+                key={btn.cmd}
+                class="item"
+                style={{ width: "34px", justifyContent: "center", padding: "7px 0" }}
+                title={btn.title}
+                onMouseDown={(e) => { e.preventDefault(); this.apply(btn.cmd); }}
+              >
                 <Icon name={btn.icon} cls="ico sm" />
               </button>
             ))}
           </>,
           el,
         );
+        // Compact horizontal toolbar (the .pop .item defaults are for vertical menus).
         el.style.display = "flex";
+        el.style.gap = "1px";
+        el.style.padding = "3px";
         const midX = (a.left + b.right) / 2;
         const top = Math.min(a.top, b.top);
         el.style.left = `${Math.max(8, Math.min(midX - el.offsetWidth / 2, innerWidth - el.offsetWidth - 8))}px`;

@@ -95,7 +95,10 @@ class TodoWidget extends WidgetType {
   }
 }
 
-/** Fixed marker-column width for list lines (the hanging-indent gutter). */
+/** Marker-column width for list lines (hanging-indent gutter). All three markers —
+ *  the bullet glyph, the checkbox, and the ordered `N. ` — sit in a 24px CENTERED
+ *  column (matching main's `.marker{width:24px;text-align:center}`) so their content
+ *  left-edges align and the marker→content gap is uniform and tight. */
 const GUTTER = 24;
 
 /** For an indented NON-list block line (nested under a list item), hide the literal
@@ -161,10 +164,26 @@ function buildLine(info: LineInfo, onLine: boolean, focused: boolean, sel0: bool
     // Flush-left marker at the nesting level, content + wrapped rows at +GUTTER
     // (hanging indent). No base indent at level 0 (that was the "auto-indent" bug).
     const nest = INDENT_STEP * info.level;
+    let style = `padding-left:${nest + GUTTER}px;text-indent:-${GUTTER}px`;
+    // Nested items get one subtle vertical guide per ancestor level (matching main's
+    // `.block-wrap.nested::before`), painted as stacked 1px background gradients that
+    // butt against adjacent rows into a continuous line. Guides sit ~11px into each
+    // indent step, i.e. under the parent marker.
+    if (info.level > 0) {
+      const imgs: string[] = [];
+      const sizes: string[] = [];
+      const positions: string[] = [];
+      for (let k = 0; k < info.level; k++) {
+        imgs.push("linear-gradient(var(--line),var(--line))");
+        sizes.push("1px 100%");
+        positions.push(`${INDENT_STEP * k + 11}px 0`);
+      }
+      style += `;background-image:${imgs.join(",")};background-size:${sizes.join(",")};background-position:${positions.join(",")};background-repeat:no-repeat`;
+    }
     out.push(
       Decoration.line({
         class: `cm-li cm-li-${role}`,
-        attributes: { style: `padding-left:${nest + GUTTER}px;text-indent:-${GUTTER}px` },
+        attributes: { style },
       }).range(info.from),
     );
     // Hide the literal leading whitespace (indent is shown via padding, not text).
@@ -175,11 +194,14 @@ function buildLine(info: LineInfo, onLine: boolean, focused: boolean, sel0: bool
       // renumber transaction filter, so display always equals the literal.
       out.push(Decoration.mark({ class: "cm-ol-num" }).range(info.markerFrom, info.contentFrom));
     } else if (role === "bullet") {
-      if (!onLine && info.contentFrom > info.markerFrom)
+      // Bullet glyph ALWAYS shows (even with the caret on the line) — it's a fixed
+      // marker, not editable text; you edit content, Backspace at the start removes it.
+      if (info.contentFrom > info.markerFrom)
         out.push(Decoration.replace({ widget: BULLET }).range(info.markerFrom, info.contentFrom));
     } else {
-      // todo: replace `- [ ] ` with a checkbox when the caret is away.
-      if (!onLine && info.contentFrom > info.markerFrom) {
+      // todo: the checkbox ALWAYS shows — the raw `- [ ] ` never becomes source while
+      // you edit; Backspace at the content start removes it.
+      if (info.contentFrom > info.markerFrom) {
         const bracket = info.text.indexOf("[", info.indentChars);
         const checkPos = bracket >= 0 ? info.from + bracket + 1 : info.markerFrom;
         out.push(

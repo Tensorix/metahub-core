@@ -11,7 +11,8 @@ export const editorTheme = EditorView.baseTheme({
   "&": {
     color: "var(--fg)",
     backgroundColor: "transparent",
-    fontSize: "16px",
+    // No font-size here: inherit from .cm-doc-body ← .doc ← body, which is the
+    // responsive base (14px desktop; 16px on mobile via the styles.css media query).
   },
   "&.cm-focused": { outline: "none" },
   // Document-flow scroll: the page scrolls, not an inner box (iOS invariant).
@@ -31,13 +32,14 @@ export const editorTheme = EditorView.baseTheme({
   // margin, so a margin would desync the height map and drift caret/selection.
   ".cm-void": { padding: "6px 0" },
 
-  // Headings — literal `# ` collapses when the caret is away (block-deco).
-  ".cm-h1": { fontSize: "1.8em", fontWeight: "700", lineHeight: "1.3", margin: "0" },
-  ".cm-h2": { fontSize: "1.5em", fontWeight: "700", lineHeight: "1.3" },
-  ".cm-h3": { fontSize: "1.25em", fontWeight: "600" },
-  ".cm-h4": { fontSize: "1.1em", fontWeight: "600" },
-  ".cm-h5": { fontSize: "1em", fontWeight: "600" },
-  ".cm-h6": { fontSize: "0.95em", fontWeight: "600", color: "var(--muted)" },
+  // Headings — absolute px (matching main's .b-hN), so they don't scale with the
+  // responsive body base. Literal `# ` collapses when the caret is away (block-deco).
+  ".cm-h1": { fontSize: "28px", fontWeight: "700", lineHeight: "1.3", margin: "0" },
+  ".cm-h2": { fontSize: "22px", fontWeight: "700", lineHeight: "1.3" },
+  ".cm-h3": { fontSize: "18px", fontWeight: "600" },
+  ".cm-h4": { fontSize: "16px", fontWeight: "600" },
+  ".cm-h5": { fontSize: "14px", fontWeight: "600" },
+  ".cm-h6": { fontSize: "13px", fontWeight: "600", color: "var(--muted)" },
 
   ".cm-quote": {
     borderLeft: "3px solid var(--line-strong, var(--line))",
@@ -54,17 +56,28 @@ export const editorTheme = EditorView.baseTheme({
     verticalAlign: "middle",
   },
 
-  // List lines — leading whitespace hidden, indent supplied by padding-left.
+  // List lines — leading whitespace hidden, indent supplied by padding-left. All
+  // three markers occupy a 24px CENTERED column (matching main's `.marker`): the
+  // bullet glyph, the ordered `N. `, and the 16px checkbox (centered via 4px side
+  // margins) — so bullet/numbered/todo content left-edges align with a uniform,
+  // tight gap. Fixed width (not min-width) keeps the ordered number centered like
+  // main; a wide 2–3 digit number fills/overflows the box but content stays anchored.
+  //
+  // `text-indent:0` on every marker is CRITICAL: `.cm-li` sets `text-indent:-24px`
+  // for the hanging indent, and an inline-block INHERITS that (it's a block
+  // container) — which would drag the ordered number's text 24px to the left, out of
+  // its box, defeating text-align:center and reopening the gap. Resetting it here
+  // keeps the -24px purely at the line level (positioning the marker box) while the
+  // marker's own text centers normally.
   ".cm-li": { position: "relative" },
-  // Bullet occupies the 24px marker gutter in-flow (the line's text-indent hangs the
-  // first row; no negative margin, else it would spill past the flush-left edge).
-  ".cm-bullet": { display: "inline-block", width: "24px", textAlign: "center", color: "var(--muted)" },
-  ".cm-ol-num": { color: "var(--muted)", fontVariantNumeric: "tabular-nums" },
+  ".cm-bullet": { display: "inline-block", width: "24px", textAlign: "center", textIndent: "0", color: "var(--muted)" },
+  ".cm-ol-num": { display: "inline-block", width: "24px", textAlign: "center", textIndent: "0", color: "var(--muted)", fontVariantNumeric: "tabular-nums" },
   ".cm-todo-box": {
     display: "inline-block",
     width: "16px",
     height: "16px",
-    marginRight: "6px",
+    margin: "0 4px",
+    textIndent: "0",
     verticalAlign: "-3px",
     border: "1.5px solid var(--line-strong, var(--muted))",
     borderRadius: "4px",

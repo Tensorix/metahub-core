@@ -69,7 +69,13 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
       menuEl: HTMLDivElement | null = null;
       raf = 0;
       readonly onKey = (e: KeyboardEvent) => this.handleKey(e);
-      readonly onScroll = () => this.active && this.renderMenu();
+      // Reposition on PAGE scroll only. Ignore scrolls originating inside the menu
+      // itself (its .pop is overflow:auto) — otherwise every wheel tick re-runs
+      // renderMenu and fights the internal scroll, so it never reaches the bottom.
+      readonly onScroll = (e?: Event) => {
+        if (e && this.menuEl && e.target instanceof Node && this.menuEl.contains(e.target)) return;
+        if (this.active) this.renderMenu();
+      };
 
       constructor(readonly view: EditorView) {
         view.dom.addEventListener("keydown", this.onKey, true);

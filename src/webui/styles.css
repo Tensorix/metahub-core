@@ -1489,6 +1489,9 @@
     .doc { padding:24px 18px calc(36vh + env(safe-area-inset-bottom)); }
     .doc-title { font-size:30px; }
     .doc .editable { font-size:16px; }
+    /* CM6 editor (single-document): its .cm-editor inherits from here, so the whole
+       body incl. table cells gets 16px on mobile — same iOS anti-zoom reason. */
+    .doc .cm-doc-body { font-size:16px; }
     /* 16px (not 14): a focused code textarea below 16px makes iOS auto-zoom. */
     .codeblock { --code-fs:16px; }
     .block .gutter { display:none; }
