@@ -59,7 +59,7 @@ export type MediaKind = "image" | "video" | "audio" | "file";
 
 /** Reserved code-fence info string for a rendered-HTML block. `cleanLang` keeps
  *  the hyphen, so it round-trips, and it can't collide with a real language id. */
-const HTML_FENCE = "mh-html";
+export const HTML_FENCE = "mh-html";
 
 const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "m4v", "ogv", "mkv", "ogg"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "opus", "oga", "weba"]);
@@ -125,7 +125,7 @@ function safeLabel(s: string): string {
 /** A line that is solely one embed → its void block draft, else null. Media use
  *  `![alt](url)` (kind by extension); file uses a `[name](/blob/..)` link so a
  *  plain standalone hyperlink stays a paragraph. */
-function matchMediaLine(line: string): BlockDraft | null {
+export function matchMediaLine(line: string): BlockDraft | null {
   const t = line.trim();
   let m = t.match(/^!\[([^\]]*)\]\(([^\s)]+)\)$/);
   if (m) {
@@ -144,7 +144,7 @@ function matchMediaLine(line: string): BlockDraft | null {
   return null;
 }
 
-function isMediaType(type: BlockType): boolean {
+export function isMediaType(type: BlockType): boolean {
   return type === "image" || type === "video" || type === "audio" || type === "file";
 }
 
@@ -158,7 +158,7 @@ export function genId(): string {
 const LIST_TYPES = new Set<BlockType>(["bullet", "numbered", "todo"]);
 const HEADING_TYPES = new Set<BlockType>(["h1", "h2", "h3", "h4", "h5", "h6"]);
 
-const RE = {
+export const RE = {
   fenceOpen: /^\s*(`{3,}|~{3,})\s*([^\s`]*)?.*$/,
   h: /^(#{1,6})\s+(.*)$/,
   todo: /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/,
@@ -168,7 +168,7 @@ const RE = {
   divider: /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/,
 };
 
-interface ListLine {
+export interface ListLine {
   indent: number;
   type: "bullet" | "numbered" | "todo";
   checked?: boolean;
@@ -176,7 +176,7 @@ interface ListLine {
   num?: number; // numbered only: the literal number the user wrote
 }
 
-interface Parsed {
+export interface Parsed {
   block: Block;
   next: number;
 }
@@ -590,7 +590,7 @@ const RE_DELIM_CELL = /^\s*:?-+:?\s*$/;
 
 /** True if a GFM table begins at line `i`: a pipe row immediately followed by a
  *  delimiter row (e.g. `| :--- | ---: |`). */
-function looksLikeTableAt(lines: string[], i: number, minIndent: number): boolean {
+export function looksLikeTableAt(lines: string[], i: number, minIndent: number): boolean {
   const head = lines[i];
   const delim = lines[i + 1];
   if (head == null || delim == null) return false;
@@ -604,7 +604,7 @@ function looksLikeTableAt(lines: string[], i: number, minIndent: number): boolea
 
 /** Split a table row into trimmed cells, honoring `\|` escapes and dropping the
  *  empty cells produced by the outer (leading/trailing) pipes. */
-function splitTableRow(line: string): string[] {
+export function splitTableRow(line: string): string[] {
   const cells: string[] = [];
   let cur = "";
   for (let i = 0; i < line.length; i++) {
@@ -627,7 +627,7 @@ function splitTableRow(line: string): string[] {
   return cells.map((c) => c.trim());
 }
 
-function alignFromDelim(cell: string): ColAlign {
+export function alignFromDelim(cell: string): ColAlign {
   const trimmed = cell.trim();
   const left = trimmed.startsWith(":");
   const right = trimmed.endsWith(":");
@@ -643,7 +643,7 @@ function padRow(cells: string[], cols: number): string[] {
   return out;
 }
 
-function parseTableBlock(lines: string[], start: number, minIndent: number): Parsed | null {
+export function parseTableBlock(lines: string[], start: number, minIndent: number): Parsed | null {
   if (!looksLikeTableAt(lines, start, minIndent)) return null;
   const header = splitTableRow(stripIndent(lines[start]!, minIndent));
   const cols = Math.max(1, header.length);
@@ -675,7 +675,7 @@ function delimCell(a: ColAlign): string {
   }
 }
 
-function renderTable(block: Block, indent: number): string[] {
+export function renderTable(block: Block, indent: number): string[] {
   const pad = " ".repeat(indent);
   const rows = block.rows ?? [];
   const cols = Math.max(1, ...rows.map((r) => r.length));
@@ -720,7 +720,7 @@ function startsLeafBlock(line: string, minIndent: number): boolean {
   return !!text.match(RE.fenceOpen) || !!text.match(RE.h) || RE.divider.test(text.trim()) || RE.quote.test(text);
 }
 
-function matchListLine(line: string, minIndent: number): ListLine | null {
+export function matchListLine(line: string, minIndent: number): ListLine | null {
   const indent = leadingIndent(line);
   if (indent < minIndent) return null;
   const text = stripIndent(line, indent);
@@ -826,7 +826,7 @@ function shouldPersist(block: Block): boolean {
   return block.content.trim() !== "";
 }
 
-function leadingIndent(line: string): number {
+export function leadingIndent(line: string): number {
   let indent = 0;
   for (const ch of line) {
     if (ch === " ") indent++;
@@ -836,7 +836,7 @@ function leadingIndent(line: string): number {
   return indent;
 }
 
-function stripIndent(line: string, columns: number): string {
+export function stripIndent(line: string, columns: number): string {
   let indent = 0;
   let i = 0;
   for (; i < line.length && indent < columns; i++) {
@@ -848,7 +848,7 @@ function stripIndent(line: string, columns: number): string {
   return line.slice(i);
 }
 
-function isFenceClose(line: string, char: string, len: number): boolean {
+export function isFenceClose(line: string, char: string, len: number): boolean {
   const trimmed = line.trim();
   if (!trimmed || trimmed[0] !== char) return false;
   for (const ch of trimmed) {
@@ -857,7 +857,7 @@ function isFenceClose(line: string, char: string, len: number): boolean {
   return trimmed.length >= len;
 }
 
-function cleanLang(lang: string): string {
+export function cleanLang(lang: string): string {
   return lang.trim().replace(/[^A-Za-z0-9_+.#-]/g, "");
 }
 
