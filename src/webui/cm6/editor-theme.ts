@@ -56,28 +56,34 @@ export const editorTheme = EditorView.baseTheme({
     verticalAlign: "middle",
   },
 
-  // List lines — leading whitespace hidden, indent supplied by padding-left. All
-  // three markers occupy a 24px CENTERED column (matching main's `.marker`): the
-  // bullet glyph, the ordered `N. `, and the 16px checkbox (centered via 4px side
-  // margins) — so bullet/numbered/todo content left-edges align with a uniform,
-  // tight gap. Fixed width (not min-width) keeps the ordered number centered like
+  // List lines — leading whitespace hidden, indent supplied by padding-left. Marker
+  // column = 26px to match main (24px centered `.marker` + 2px `.editable` padding):
+  // the bullet glyph and ordered `N. ` are a 24px centered box + 2px margin-right;
+  // the 16px checkbox sits in 4+16+6=26px (a bit more room on the content side). So
+  // bullet/numbered/todo content left-edges all land at 26px, with main's gaps
+  // (~10 / 9.5 / 6px). Fixed width (not min-width) keeps the number centered like
   // main; a wide 2–3 digit number fills/overflows the box but content stays anchored.
   //
-  // `text-indent:0` on every marker is CRITICAL: `.cm-li` sets `text-indent:-24px`
+  // `text-indent:0` on every marker is CRITICAL: `.cm-li` sets `text-indent:-26px`
   // for the hanging indent, and an inline-block INHERITS that (it's a block
-  // container) — which would drag the ordered number's text 24px to the left, out of
-  // its box, defeating text-align:center and reopening the gap. Resetting it here
-  // keeps the -24px purely at the line level (positioning the marker box) while the
+  // container) — which would drag the ordered number's text left, out of its box,
+  // defeating text-align:center and reopening the gap. Resetting it here keeps the
+  // negative indent purely at the line level (positioning the marker box) while the
   // marker's own text centers normally.
   ".cm-li": { position: "relative" },
-  ".cm-bullet": { display: "inline-block", width: "24px", textAlign: "center", textIndent: "0", color: "var(--muted)" },
-  ".cm-ol-num": { display: "inline-block", width: "24px", textAlign: "center", textIndent: "0", color: "var(--muted)", fontVariantNumeric: "tabular-nums" },
+  ".cm-bullet": { display: "inline-block", width: "24px", marginRight: "2px", textAlign: "center", textIndent: "0", color: "var(--muted)" },
+  ".cm-ol-num": { display: "inline-block", width: "24px", marginRight: "2px", textAlign: "center", textIndent: "0", color: "var(--muted)", fontVariantNumeric: "tabular-nums" },
+  // Todo marker: an outer wrapper spanning the full 26px column (its border-box is
+  // what the caret lands after — CM6 ignores margins for caret x, so a bare margin
+  // would glue the caret to the checkbox on an EMPTY item). The 16px checkbox sits
+  // at the left (4px in); the wrapper's empty right (~6px) is the checkbox→content
+  // gap, and the caret/first-char both land at 26px.
+  ".cm-todo": { display: "inline-block", width: "26px", textIndent: "0" },
   ".cm-todo-box": {
     display: "inline-block",
     width: "16px",
     height: "16px",
-    margin: "0 4px",
-    textIndent: "0",
+    marginLeft: "4px",
     verticalAlign: "-3px",
     border: "1.5px solid var(--line-strong, var(--muted))",
     borderRadius: "4px",

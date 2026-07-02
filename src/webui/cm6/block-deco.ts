@@ -75,6 +75,12 @@ class TodoWidget extends WidgetType {
     return other.checked === this.checked && other.checkPos === this.checkPos;
   }
   override toDOM(view: EditorView) {
+    // Wrapper spans the full marker column (its border-box is GUTTER-wide) so the
+    // caret — which CM6 draws at the widget's border edge, IGNORING margins — lands
+    // AFTER the trailing gap, not glued to the checkbox. The 16px box sits at its
+    // left; the empty right of the wrapper is the checkbox→content gap.
+    const wrap = document.createElement("span");
+    wrap.className = "cm-todo";
     const box = document.createElement("span");
     box.className = "cm-todo-box" + (this.checked ? " checked" : "");
     box.setAttribute("role", "checkbox");
@@ -88,18 +94,20 @@ class TodoWidget extends WidgetType {
         userEvent: "input",
       });
     });
-    return box;
+    wrap.appendChild(box);
+    return wrap;
   }
   override ignoreEvent() {
     return false;
   }
 }
 
-/** Marker-column width for list lines (hanging-indent gutter). All three markers —
- *  the bullet glyph, the checkbox, and the ordered `N. ` — sit in a 24px CENTERED
- *  column (matching main's `.marker{width:24px;text-align:center}`) so their content
- *  left-edges align and the marker→content gap is uniform and tight. */
-const GUTTER = 24;
+/** Marker-column width for list lines (hanging-indent gutter). Matches main's
+ *  content column: a 24px CENTERED marker (`.marker{width:24px;text-align:center}`)
+ *  plus 2px content padding (`.editable{padding-left:2px}`) = 26px. Each marker's
+ *  footprint is padded to 26 (bullet/num: 24 + 2px margin-right; checkbox: 4+16+6),
+ *  so all three content left-edges land at 26px with main's gaps (~10/9.5/6px). */
+const GUTTER = 26;
 
 /** For an indented NON-list block line (nested under a list item), hide the literal
  *  leading whitespace and return the px to indent it so its content aligns under the

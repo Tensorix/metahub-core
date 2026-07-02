@@ -145,7 +145,14 @@ function classifyLine(text: string, from: number): LineInfo {
   }
 
   // Lists via the shared grammar helper (todo / numbered / bullet) — no drift.
-  const ll = matchListLine(text, 0);
+  // BUT require a space after the marker to RENDER as a list: a bare `-` / `1.`
+  // (marker only, no trailing space) stays a paragraph while typing, only becoming
+  // a list once the space is typed (Notion/main rule). `matchListLine` itself stays
+  // lenient (shared block parser + defensive empty-item round-trip); this stricter
+  // gate is CM6-render-only. A `todo` marker always carries `[...]`, so the bare
+  // test never rejects it; `- `/`1. ` (with the space) are unaffected.
+  const bareMarker = /^([-*+]|\d+[.)])$/.test(stripped);
+  const ll = bareMarker ? null : matchListLine(text, 0);
   if (ll) {
     const contentFrom = to - ll.content.length;
     if (ll.type === "todo") return { ...base, role: "todo", contentFrom, checked: !!ll.checked };
@@ -156,7 +163,11 @@ function classifyLine(text: string, from: number): LineInfo {
     return { ...base, role: "bullet", contentFrom };
   }
 
-  const q = stripped.match(RE.quote);
+  // Quote likewise requires `> ` (a space/tab after `>`) — a bare `>` stays a
+  // paragraph until the space, matching the list rule and main's transform. Uses a
+  // local pattern (not the lenient shared RE.quote, which the main block parser
+  // still relies on for `>text`).
+  const q = stripped.match(/^>[ \t](.*)$/);
   if (q) {
     const content = q[1] ?? "";
     return { ...base, role: "quote", contentFrom: to - content.length };
