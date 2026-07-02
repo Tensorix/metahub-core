@@ -4,6 +4,10 @@
 // link). Every command is an ordinary text transaction — no execCommand. The bar
 // owns a `.pop` appended to document.body and positions it via the deferred coord
 // read (coordsAtPos is illegal during an update).
+//
+// Show timing matches the old editor: the bar appears only AFTER the selection
+// gesture completes (pointerup / keyup of Shift+Arrow), never while dragging.
+// update() only hides and scroll-follows an already-visible bar.
 
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
@@ -12,7 +16,7 @@ import type { Extension } from "@codemirror/state";
 import { EditorSelection } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
 import { docModel } from "../doc-model";
-import { deferCoords } from "../defer";
+import { deferCoords, cancelDeferred } from "../defer";
 
 type Cmd = "bold" | "italic" | "code" | "strike" | "link";
 const BUTTONS: { cmd: Cmd; icon: string; title: string }[] = [
@@ -35,17 +39,59 @@ export function formatBar(): Extension {
     class {
       el: HTMLDivElement | null = null;
       raf = 0;
-      constructor(readonly view: EditorView) {}
+      dragging = false;
+
+      onPointerDown = (e: PointerEvent) => {
+        if (e.button !== 0) return;
+        this.dragging = true;
+        this.hide();
+      };
+
+      onPointerUp = () => {
+        this.dragging = false;
+        if (!this.view.state.selection.main.empty) this.schedule();
+      };
+
+      onKeyUp = (e: KeyboardEvent) => {
+        if (this.view.composing) return;
+        // Selection gestures end on Shift release or arrow-key release. A plain
+        // arrow collapses the selection — paint() then hides, which is correct.
+        if (e.shiftKey || e.key.startsWith("Arrow")) this.schedule();
+      };
+
+      constructor(readonly view: EditorView) {
+        view.contentDOM.addEventListener("pointerdown", this.onPointerDown);
+        window.addEventListener("pointerup", this.onPointerUp);
+        // A release outside the window never fires pointerup — without this the
+        // `dragging` latch sticks and the bar can't show until the next click.
+        window.addEventListener("pointercancel", this.onPointerUp);
+        view.dom.addEventListener("keyup", this.onKeyUp);
+      }
+
+      schedule() {
+        if (this.raf) return;
+        this.raf = deferCoords(() => { this.raf = 0; this.paint(); });
+      }
 
       update(u: ViewUpdate) {
-        if (u.docChanged || u.selectionSet || u.focusChanged || u.viewportChanged || u.geometryChanged) {
-          if (this.raf) return;
-          this.raf = deferCoords(() => { this.raf = 0; this.paint(); });
+        // Hide-only: never show the bar from update(); showing happens on
+        // gesture completion (pointerup / keyup) instead.
+        const emptied = u.selectionSet && u.state.selection.main.empty;
+        if (u.docChanged || emptied || (u.focusChanged && !this.view.hasFocus)) {
+          if (this.raf) { cancelDeferred(this.raf); this.raf = 0; }
+          this.hide();
+          return;
         }
+        // Follow-only: reposition an already-visible bar on scroll/layout.
+        if (this.el && (u.viewportChanged || u.geometryChanged)) this.schedule();
       }
 
       destroy() {
-        if (this.raf) cancelAnimationFrame(this.raf);
+        this.view.contentDOM.removeEventListener("pointerdown", this.onPointerDown);
+        window.removeEventListener("pointerup", this.onPointerUp);
+        window.removeEventListener("pointercancel", this.onPointerUp);
+        this.view.dom.removeEventListener("keyup", this.onKeyUp);
+        if (this.raf) cancelDeferred(this.raf);
         this.hide();
       }
 
@@ -72,10 +118,12 @@ export function formatBar(): Extension {
       paint() {
         const view = this.view;
         const sel = view.state.selection.main;
-        if (sel.empty || !view.hasFocus || inVoid(view, sel.from, sel.to)) return this.hide();
-        const a = view.coordsAtPos(sel.from);
-        const b = view.coordsAtPos(sel.to);
-        if (!a || !b) return this.hide();
+        if (this.dragging || sel.empty || !view.hasFocus || inVoid(view, sel.from, sel.to)) return this.hide();
+        // Old-editor semantics: anchor to the first selection rect's top-left
+        // (the bar sits above the selection start), not the midpoint.
+        const head = Math.min(sel.from, sel.to);
+        const coords = view.coordsAtPos(head, 1);
+        if (!coords) return this.hide();
         if (!this.el) {
           const el = document.createElement("div");
           el.className = "pop cm-format-bar";
@@ -105,10 +153,8 @@ export function formatBar(): Extension {
         el.style.display = "flex";
         el.style.gap = "1px";
         el.style.padding = "3px";
-        const midX = (a.left + b.right) / 2;
-        const top = Math.min(a.top, b.top);
-        el.style.left = `${Math.max(8, Math.min(midX - el.offsetWidth / 2, innerWidth - el.offsetWidth - 8))}px`;
-        el.style.top = `${Math.max(8, top - el.offsetHeight - 6)}px`;
+        el.style.left = `${Math.max(8, Math.min(coords.left, innerWidth - el.offsetWidth - 8))}px`;
+        el.style.top = `${Math.max(8, coords.top - el.offsetHeight - 6)}px`;
         el.style.bottom = "";
       }
 

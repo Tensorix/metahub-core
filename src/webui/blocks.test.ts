@@ -196,15 +196,40 @@ test("deleting an item's marker leaves a plain paragraph gap", () => {
   ]);
 });
 
-test("a bare marker stripped of its trailing space still parses as an empty item", () => {
+test("a bare marker (no trailing space) is a paragraph, not a list item", () => {
+  // STRICT grammar: `-` / `1.` without the trailing space is the mid-typing
+  // state, a paragraph on every surface (editor render, save parser, share
+  // page). The serializer's empty-item form `- ` (marker + trailing space)
+  // still round-trips as an empty item.
   expect(blocksFromBody("- a\n-\n- b").map((b) => [b.type, b.content])).toEqual([
+    ["bullet", "a"],
+    ["p", "-"],
+    ["bullet", "b"],
+  ]);
+  expect(blocksFromBody("1.\n2. x").map((b) => b.type)).toEqual(["p", "numbered"]);
+  // `- ` with its trailing space is an empty item and round-trips losslessly
+  expect(blocksFromBody("- a\n- \n- b").map((b) => [b.type, b.content])).toEqual([
     ["bullet", "a"],
     ["bullet", ""],
     ["bullet", "b"],
   ]);
+  expect(bodyFromBlocks(blocksFromBody("- a\n- \n- b"))).toBe("- a\n- \n- b");
   // `---` is still a divider, `-foo` still a paragraph
   expect(blocksFromBody("---")[0]!.type).toBe("divider");
   expect(blocksFromBody("-foo")[0]!.type).toBe("p");
+});
+
+test("quote requires a space after '>' (bare '>' is an empty quote line)", () => {
+  // `>foo` is a paragraph on every surface; `> foo` and the serializer's bare
+  // `>` (empty quote line) are quotes. Parse-only change: bodies with `>foo`
+  // are never rewritten, they just render consistently as paragraphs now.
+  expect(textToBlock(">foo")).toMatchObject({ type: "p", content: ">foo" });
+  expect(blocksFromBody(">foo")[0]).toMatchObject({ type: "p", content: ">foo" });
+  expect(blocksFromBody(">")[0]).toMatchObject({ type: "quote", content: "" });
+  // an interior empty quote line round-trips through the bare `>` form
+  const body = "> a\n>\n> b";
+  expect(blocksFromBody(body)).toMatchObject([{ type: "quote", content: "a\n\nb" }]);
+  expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
 });
 
 test("empty list items survive at any nesting depth", () => {

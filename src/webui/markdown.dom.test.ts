@@ -17,6 +17,8 @@ test("htmlToInline maps semantic and legacy tags to markdown", () => {
   expect(htmlToInline("<i>i</i>")).toBe("*i*");
   expect(htmlToInline("<code>x</code>")).toBe("`x`");
   expect(htmlToInline('<a href="https://e.com">t</a>')).toBe("[t](https://e.com)");
+  expect(htmlToInline("<del>d</del>")).toBe("~~d~~");
+  expect(htmlToInline("<s>d</s>")).toBe("~~d~~"); // execCommand strikeThrough output
 });
 
 test("NBSP from contentEditable normalizes to a plain space", () => {
@@ -44,7 +46,9 @@ test("round-trip is a fixed point for live-DOM states", () => {
   const cases = [
     "plain text",
     "**bold** and *it* and `code`",
+    "~~strike~~ text",
     "literal *stars* typed as text",
+    "\\*escaped\\* stays literal",
     "[t](https://e.com) link",
     "line1\nline2",
     "trailing space ",

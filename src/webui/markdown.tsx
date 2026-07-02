@@ -1,8 +1,13 @@
 // Constrained inline markdown <-> HTML for the contenteditable block editor.
 // Grammar (inline only; block structure lives in blocks.ts):
-//   **bold**  *italic*  `code`  [text](url)
-// inlineToHtml renders a block's content for editing/display; htmlToInline reads
-// the edited contenteditable HTML back to markdown for serialization.
+//   **bold**/__bold__  *italic*/_italic_  ~~strike~~  `code`
+//   [text](url)  ![alt](url)
+// The grammar itself lives in inline-tokens.ts, shared with the CM6 editor and
+// the TOC — this file only maps tokens to/from HTML. inlineToHtml renders a
+// block's content for editing/display; htmlToInline reads the edited
+// contenteditable HTML back to markdown for serialization.
+
+import { tokenizeInline } from "./inline-tokens";
 
 export function escapeHtml(s: string): string {
   return s
@@ -12,37 +17,48 @@ export function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Private-use sentinels wrapping a code-span index; cannot occur in real input.
-const A = String.fromCharCode(0xe000);
-const B = String.fromCharCode(0xe001);
-const RESTORE = new RegExp(A + "(\\d+)" + B, "g");
+// Newlines inside a block (multi-line quotes, soft breaks) render as <br> —
+// the editable has no white-space:pre-wrap, so a raw "\n" would display
+// collapsed. walk() maps <br> back to "\n", keeping the round-trip symmetric.
+// Tokens never span a newline, so only plain segments need the mapping.
+function emitText(s: string): string {
+  return escapeHtml(s).replace(/\n/g, "<br>");
+}
 
-/** Markdown inline string -> HTML. Code spans are protected first. */
+/** Markdown inline string -> HTML, driven by the shared tokenizer (escape-aware,
+ *  single-level; code spans are opaque, images outrank links). */
 export function inlineToHtml(src: string): string {
-  const codes: string[] = [];
-  let s = src.replace(/`([^`]+)`/g, (_m, c) => {
-    codes.push(c);
-    return A + (codes.length - 1) + B;
-  });
-  s = escapeHtml(s);
-  // Images first — `![alt](url)` contains a `[alt](url)` the link rule would
-  // otherwise match. Doc images point at /blob/<hash>.<ext> (see blobs.ts).
-  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, alt, u) => {
-    const url = String(u).replace(/"/g, "&quot;");
-    return `<img src="${url}" alt="${alt}" class="doc-img" loading="lazy">`;
-  });
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, t, u) => {
-    const url = String(u).replace(/"/g, "&quot;");
-    return `<a href="${url}" target="_blank" rel="noreferrer">${t}</a>`;
-  });
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-  // Newlines inside a block (multi-line quotes, soft breaks) render as <br> —
-  // the editable has no white-space:pre-wrap, so a raw "\n" would display
-  // collapsed. walk() maps <br> back to "\n", keeping the round-trip symmetric.
-  s = s.replace(/\n/g, "<br>");
-  s = s.replace(RESTORE, (_m, i) => `<code>${escapeHtml(codes[+i] ?? "")}</code>`);
-  return s;
+  let out = "";
+  let pos = 0;
+  for (const t of tokenizeInline(src)) {
+    out += emitText(src.slice(pos, t.start));
+    pos = t.end;
+    const inner = src.slice(t.innerFrom, t.innerTo);
+    switch (t.kind) {
+      case "code":
+        out += `<code>${escapeHtml(inner)}</code>`;
+        break;
+      case "image": {
+        // Doc images point at /blob/<hash>.<ext> (see blobs.ts).
+        out += `<img src="${escapeHtml(t.url!)}" alt="${escapeHtml(t.alt ?? "")}" class="doc-img" loading="lazy">`;
+        break;
+      }
+      case "link":
+        out += `<a href="${escapeHtml(t.url!)}" target="_blank" rel="noreferrer">${escapeHtml(inner)}</a>`;
+        break;
+      case "strong":
+        out += `<strong>${escapeHtml(inner)}</strong>`;
+        break;
+      case "em":
+        out += `<em>${escapeHtml(inner)}</em>`;
+        break;
+      case "del":
+        out += `<del>${escapeHtml(inner)}</del>`;
+        break;
+    }
+  }
+  out += emitText(src.slice(pos));
+  return out;
 }
 
 /** ContentEditable HTML -> markdown inline string. */
@@ -74,6 +90,7 @@ function walk(node: Node): string {
     if (tag === "br") out += "\n";
     else if (tag === "strong" || tag === "b") out += inner ? `**${inner}**` : "";
     else if (tag === "em" || tag === "i") out += inner ? `*${inner}*` : "";
+    else if (tag === "del" || tag === "s" || tag === "strike") out += inner ? `~~${inner}~~` : "";
     else if (tag === "code") out += inner ? "`" + inner + "`" : "";
     else if (tag === "a") {
       const href = n.getAttribute("href") || "";

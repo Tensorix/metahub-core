@@ -1,69 +1,76 @@
 // Inline live-preview for the single-document editor.
 //
-// Renders `**bold**`, `*italic*` / `_italic_`, `` `code` ``, `~~strike~~` and
-// `[text](url)` by styling the inner content and COLLAPSING the delimiters — until
-// the caret enters the span, when the raw markers reappear so you edit real text
-// (the inline analogue of reveal-to-edit). Inline decorations may come from a
-// ViewPlugin (only block:true replace may not), so this layer is viewport-scoped
-// for performance and guarded against IME composition.
+// Renders `**bold**`/`__bold__`, `*italic*` / `_italic_`, `` `code` ``,
+// `~~strike~~`, `[text](url)` and inline `![alt](url)` images by styling the
+// inner content and COLLAPSING the delimiters — until the caret enters the
+// span, when the raw markers reappear so you edit real text (the inline
+// analogue of reveal-to-edit). Inline decorations may come from a ViewPlugin
+// (only block:true replace may not), so this layer is viewport-scoped for
+// performance and guarded against IME composition.
 //
-// It is deliberately single-level (no nested emphasis): matches are collected per
-// visible line and selected greedily left-to-right, so `code` protects its
-// interior and overlapping candidates are dropped. Void source lines (fenced
-// code/html) are skipped so their literal `**`/backticks stay literal.
+// The grammar itself lives in webui/inline-tokens.ts (shared with the table
+// HTML bridge and the TOC) — this file only maps tokens to decorations. It is
+// single-level (no nested emphasis) and escape-aware (`\*x\*` stays literal).
+// Void source lines (fenced code/html, block media, tables) are skipped so
+// their literal `**`/backticks stay literal.
+//
+// Links: the styled span carries data-href; clicking a collapsed link (or
+// Mod-clicking a revealed one) opens the URL, a plain click on a revealed link
+// just places the caret.
 
 import {
   Decoration,
+  EditorView,
   ViewPlugin,
+  WidgetType,
   type DecorationSet,
-  type EditorView,
   type ViewUpdate,
 } from "@codemirror/view";
-import type { Range, EditorSelection } from "@codemirror/state";
+import type { Extension, Range, EditorSelection } from "@codemirror/state";
 import { docModel } from "./doc-model";
+import { tokenizeInline, type InlineToken } from "../inline-tokens";
 
-interface Cand {
-  start: number; // line-local
-  end: number; // line-local (exclusive)
-  innerFrom: number; // line-local
-  innerTo: number; // line-local
-  cls: string;
-  rank: number; // lower wins on tie
-}
+const CLASS: Record<Exclude<InlineToken["kind"], "image">, string> = {
+  code: "cm-code",
+  strong: "cm-strong",
+  em: "cm-em",
+  del: "cm-del",
+  link: "cm-link",
+};
 
-/** Ordered so higher-priority (code) is preferred on a start-tie. */
-const PATTERNS: { re: RegExp; cls: string; delim: number; rank: number; link?: boolean }[] = [
-  { re: /`([^`\n]+)`/g, cls: "cm-code", delim: 1, rank: 0 },
-  { re: /\*\*([^*\n]+?)\*\*/g, cls: "cm-strong", delim: 2, rank: 1 },
-  { re: /__([^_\n]+?)__/g, cls: "cm-strong", delim: 2, rank: 1 },
-  { re: /~~([^~\n]+?)~~/g, cls: "cm-del", delim: 2, rank: 2 },
-  { re: /(?<![*\w])\*([^*\n]+?)\*(?!\*)/g, cls: "cm-em", delim: 1, rank: 3 },
-  { re: /(?<![_\w])_([^_\n]+?)_(?!_)/g, cls: "cm-em", delim: 1, rank: 3 },
-  { re: /\[([^\]\n]+)\]\(([^)\n]+)\)/g, cls: "cm-link", delim: 0, rank: 4, link: true },
-];
-
-function candidatesFor(text: string): Cand[] {
-  const cands: Cand[] = [];
-  for (const p of PATTERNS) {
-    p.re.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = p.re.exec(text))) {
-      const start = m.index;
-      const end = start + m[0].length;
-      let innerFrom: number, innerTo: number;
-      if (p.link) {
-        innerFrom = start + 1;
-        innerTo = start + 1 + m[1]!.length;
-      } else {
-        innerFrom = start + p.delim;
-        innerTo = end - p.delim;
-      }
-      if (innerTo <= innerFrom) continue;
-      cands.push({ start, end, innerFrom, innerTo, cls: p.cls, rank: p.rank });
-    }
+/** Collapsed inline `![alt](url)` — the whole token is replaced by the image. */
+class InlineImgWidget extends WidgetType {
+  constructor(
+    readonly url: string,
+    readonly alt: string,
+  ) {
+    super();
   }
-  cands.sort((a, b) => a.start - b.start || a.rank - b.rank || b.end - a.end);
-  return cands;
+
+  override eq(other: InlineImgWidget): boolean {
+    return other.url === this.url && other.alt === this.alt;
+  }
+
+  override toDOM(view: EditorView): HTMLElement {
+    const img = document.createElement("img");
+    img.className = "doc-img cm-inline-img";
+    img.src = this.url;
+    img.alt = this.alt;
+    img.loading = "lazy";
+    // styles.css scopes img.doc-img to .editable; keep the essentials inline.
+    img.style.maxWidth = "100%";
+    img.style.height = "auto";
+    img.style.borderRadius = "6px";
+    img.style.verticalAlign = "bottom";
+    img.onload = () => view.requestMeasure();
+    return img;
+  }
+
+  // Let the editor handle clicks: the selection lands on the token, which
+  // reveals the `![alt](url)` source for editing.
+  override ignoreEvent(): boolean {
+    return false;
+  }
 }
 
 /** Does the selection touch [from, to] (endpoints inclusive)? → reveal delimiters. */
@@ -86,19 +93,44 @@ function build(view: EditorView): DecorationSet {
       const text = line.text;
       if (!text) continue;
 
-      const cands = candidatesFor(text);
-      let cursor = 0;
-      for (const c of cands) {
-        if (c.start < cursor) continue; // overlaps a chosen span
-        cursor = c.end;
-        const absStart = line.from + c.start;
-        const absEnd = line.from + c.end;
-        const absInnerFrom = line.from + c.innerFrom;
-        const absInnerTo = line.from + c.innerTo;
-        out.push(Decoration.mark({ class: c.cls }).range(absInnerFrom, absInnerTo));
-        if (!touches(sel, absStart, absEnd)) {
+      for (const t of tokenizeInline(text)) {
+        const absStart = line.from + t.start;
+        const absEnd = line.from + t.end;
+        const absInnerFrom = line.from + t.innerFrom;
+        const absInnerTo = line.from + t.innerTo;
+        const revealed = touches(sel, absStart, absEnd);
+
+        if (t.kind === "image") {
+          if (!revealed) {
+            out.push(
+              Decoration.replace({ widget: new InlineImgWidget(t.url!, t.alt ?? "") }).range(absStart, absEnd),
+            );
+          } else {
+            // Revealed: full `![alt](url)` source with muted delimiters.
+            out.push(Decoration.mark({ class: "cm-md-mark" }).range(absStart, absInnerFrom));
+            if (absEnd > absInnerTo) out.push(Decoration.mark({ class: "cm-md-mark" }).range(absInnerTo, absEnd));
+          }
+          continue;
+        }
+
+        const mark =
+          t.kind === "link"
+            ? Decoration.mark({
+                class: CLASS.link,
+                attributes: revealed
+                  ? { "data-href": t.url!, "data-md-revealed": "1" }
+                  : { "data-href": t.url! },
+              })
+            : Decoration.mark({ class: CLASS[t.kind] });
+        out.push(mark.range(absInnerFrom, absInnerTo));
+        if (!revealed) {
           if (absInnerFrom > absStart) out.push(Decoration.replace({}).range(absStart, absInnerFrom));
           if (absEnd > absInnerTo) out.push(Decoration.replace({}).range(absInnerTo, absEnd));
+        } else {
+          // Revealed: the delimiters (`**`, `` ` ``, `~~`, `[`/`](url)`…) show as
+          // real text but muted, so the span stays readable while you edit it.
+          if (absInnerFrom > absStart) out.push(Decoration.mark({ class: "cm-md-mark" }).range(absStart, absInnerFrom));
+          if (absEnd > absInnerTo) out.push(Decoration.mark({ class: "cm-md-mark" }).range(absInnerTo, absEnd));
         }
       }
     }
@@ -106,7 +138,7 @@ function build(view: EditorView): DecorationSet {
   return Decoration.set(out, true);
 }
 
-export const inlineDecorations = ViewPlugin.fromClass(
+const inlinePlugin = ViewPlugin.fromClass(
   class {
     deco: DecorationSet;
     constructor(view: EditorView) {
@@ -119,3 +151,22 @@ export const inlineDecorations = ViewPlugin.fromClass(
   },
   { decorations: (v) => v.deco },
 );
+
+/** Open a collapsed link on click; a revealed link needs Mod (Cmd/Ctrl) so a
+ *  plain click can place the caret in the source text. */
+const linkClicks = EditorView.domEventHandlers({
+  mousedown(e, view) {
+    if (e.button !== 0) return false;
+    const el = (e.target as HTMLElement | null)?.closest?.("[data-href]");
+    if (!(el instanceof HTMLElement) || !view.dom.contains(el)) return false;
+    const mod = e.metaKey || e.ctrlKey;
+    if (el.hasAttribute("data-md-revealed") && !mod) return false; // caret placement
+    const href = el.getAttribute("data-href");
+    if (!href) return false;
+    e.preventDefault();
+    window.open(href, "_blank", "noopener");
+    return true;
+  },
+});
+
+export const inlineDecorations: Extension = [inlinePlugin, linkClicks];

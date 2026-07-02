@@ -41,3 +41,21 @@ test("a plain link still renders and is not turned into an image", () => {
   expect(html).toContain('<a href="http://x"');
   expect(html).not.toContain("<img");
 });
+
+// --- unified grammar (shared tokenizer) additions ---
+
+test("underscore and tilde variants render like the editor shows them", () => {
+  expect(inlineToHtml("__bold__")).toBe("<strong>bold</strong>");
+  expect(inlineToHtml("a _it_ b")).toBe("a <em>it</em> b");
+  expect(inlineToHtml("~~gone~~")).toBe("<del>gone</del>");
+});
+
+test("escaped delimiters stay literal text (backslash kept, v1)", () => {
+  expect(inlineToHtml("\\*not em\\*")).toBe("\\*not em\\*");
+  expect(inlineToHtml("\\`not code`")).toBe("\\`not code`");
+  expect(inlineToHtml("\\~~not del~~")).toBe("\\~~not del~~");
+});
+
+test("word-internal underscores are not emphasis", () => {
+  expect(inlineToHtml("snake_case_name")).toBe("snake_case_name");
+});

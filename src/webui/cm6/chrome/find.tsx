@@ -3,125 +3,168 @@
 // offset span, so matches paint as `Decoration.mark`s directly over the doc — no
 // DOM/Highlight-API gymnastics. A small bar (top-right) holds the term + options +
 // n/m + prev/next; Enter / Shift-Enter step, Esc closes. Reuses find.ts's matcher.
+//
+// State lives in a StateField driven by StateEffects: decorations are recomputed
+// inside the field's update (a pure function of the transaction), never by
+// dispatching from plugin update() — CM6 forbids reentrant dispatch there, and the
+// old ViewPlugin version crashed (and got deactivated) on the first doc change
+// while the bar was open. The bar itself is a render-only ViewPlugin.
 
 import { render } from "preact";
 import { Decoration, EditorView, ViewPlugin, keymap } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
-import type { Extension } from "@codemirror/state";
+import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
 import { findInText, type FindOpts } from "../../find.ts";
 
 const MARK = Decoration.mark({ class: "cm-find" });
 const CUR = Decoration.mark({ class: "cm-find cm-find-cur" });
 
+interface FindState {
+  term: string;
+  opts: FindOpts;
+  idx: number;
+  matches: Array<[number, number]>;
+  deco: DecorationSet;
+}
+
+const openFind = StateEffect.define<null>();
+const closeFind = StateEffect.define<null>();
+const setFind = StateEffect.define<{ term?: string; opts?: FindOpts }>();
+const stepFind = StateEffect.define<1 | -1>();
+
+function compute(doc: string, term: string, opts: FindOpts, idx: number): FindState {
+  const matches = term ? findInText(doc, term, opts) : [];
+  if (idx >= matches.length) idx = 0;
+  const ranges = matches.map(([f, t], i) => (i === idx ? CUR : MARK).range(f, t));
+  return { term, opts, idx, matches, deco: Decoration.set(ranges, true) };
+}
+
+export const findField = StateField.define<FindState | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(closeFind)) return null;
+      if (e.is(openFind)) {
+        value ??= { term: "", opts: { caseSensitive: false, wholeWord: false }, idx: 0, matches: [], deco: Decoration.none };
+      }
+      if (e.is(setFind) && value) {
+        value = compute(tr.state.doc.toString(), e.value.term ?? value.term, e.value.opts ?? value.opts, 0);
+      }
+      if (e.is(stepFind) && value && value.matches.length) {
+        const idx = (value.idx + e.value + value.matches.length) % value.matches.length;
+        value = compute(tr.state.doc.toString(), value.term, value.opts, idx);
+      }
+    }
+    if (value && tr.docChanged && !tr.effects.some((e) => e.is(setFind) || e.is(stepFind))) {
+      value = compute(tr.state.doc.toString(), value.term, value.opts, value.idx);
+    }
+    return value;
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v?.deco ?? Decoration.none),
+});
+
+/** Scroll the current match into view — called from event handlers only (a fresh
+ *  dispatch is legal there, not inside field/plugin update). */
+function scrollToCurrent(view: EditorView) {
+  const s = view.state.field(findField);
+  const m = s?.matches[s.idx];
+  if (m) view.dispatch({ effects: EditorView.scrollIntoView(m[0], { y: "center" }) });
+}
+
 // Compact toolbar buttons: the `.pop .item` defaults (width:100%) are for vertical
 // menus and would stretch each button across the bar.
 const FIND_BTN = { width: "28px", minWidth: "28px", justifyContent: "center", padding: "5px 0" };
 
-const findPlugin = ViewPlugin.fromClass(
+/** Render-only bar: mounts/unmounts on field presence, re-renders when the field
+ *  value changes. Never dispatches from update() — handlers do. */
+const findBar = ViewPlugin.fromClass(
   class {
-    open = false;
-    term = "";
-    opts: FindOpts = { caseSensitive: false, wholeWord: false };
-    matches: Array<[number, number]> = [];
-    idx = 0;
-    deco: DecorationSet = Decoration.none;
     bar: HTMLDivElement | null = null;
+    last: FindState | null = null;
 
     constructor(readonly view: EditorView) {}
 
     update(u: ViewUpdate) {
-      if (u.docChanged && this.open) this.recompute(false);
+      const s = u.state.field(findField);
+      if (s === this.last) return;
+      this.last = s;
+      if (s) this.draw(s);
+      else this.hide();
     }
 
-    destroy() { this.hideBar(); }
+    destroy() { this.hide(); }
 
-    show() {
-      this.open = true;
-      this.recompute(true);
-      this.drawBar();
-      requestAnimationFrame(() => this.bar?.querySelector("input")?.focus());
-    }
-
-    close() {
-      this.open = false;
-      this.term = "";
-      this.matches = [];
-      this.deco = Decoration.none;
-      this.hideBar();
-      this.view.dispatch({}); // repaint to clear decorations
-      this.view.focus();
-    }
-
-    setTerm(term: string) { this.term = term; this.idx = 0; this.recompute(true); this.drawBar(); }
-    toggle(k: keyof FindOpts) { this.opts = { ...this.opts, [k]: !this.opts[k] }; this.recompute(true); this.drawBar(); }
-
-    step(dir: 1 | -1) {
-      if (!this.matches.length) return;
-      this.idx = (this.idx + dir + this.matches.length) % this.matches.length;
-      this.scrollToCurrent();
-      this.recompute(false);
-      this.drawBar();
-    }
-
-    private recompute(resetScroll: boolean) {
-      this.matches = this.term ? findInText(this.view.state.doc.toString(), this.term, this.opts) : [];
-      if (this.idx >= this.matches.length) this.idx = 0;
-      const b = [] as Array<import("@codemirror/state").Range<Decoration>>;
-      this.matches.forEach(([f, t], i) => b.push((i === this.idx ? CUR : MARK).range(f, t)));
-      this.deco = Decoration.set(b, true);
-      this.view.dispatch({}); // trigger a decoration repaint
-      if (resetScroll) this.scrollToCurrent();
-    }
-
-    private scrollToCurrent() {
-      const m = this.matches[this.idx];
-      if (m) this.view.dispatch({ effects: EditorView.scrollIntoView(m[0], { y: "center" }) });
-    }
-
-    private drawBar() {
+    private draw(s: FindState) {
+      const view = this.view;
+      const firstDraw = !this.bar;
       if (!this.bar) {
         const el = document.createElement("div");
         el.className = "cm-find-bar pop";
-        el.style.cssText = "position:fixed;top:14px;right:18px;z-index:96;display:flex;align-items:center;gap:6px;padding:5px 8px";
         el.addEventListener("mousedown", (e) => { if ((e.target as HTMLElement).tagName !== "INPUT") e.preventDefault(); });
         document.body.appendChild(el);
         this.bar = el;
       }
+      const step = (dir: 1 | -1) => { view.dispatch({ effects: stepFind.of(dir) }); scrollToCurrent(view); };
+      const toggle = (k: keyof FindOpts) => {
+        const cur = view.state.field(findField);
+        if (!cur) return;
+        view.dispatch({ effects: setFind.of({ opts: { ...cur.opts, [k]: !cur.opts[k] } }) });
+        scrollToCurrent(view);
+      };
+      const close = () => { view.dispatch({ effects: closeFind.of(null) }); view.focus(); };
       render(
         <>
           <input
             class="cm-find-input"
             placeholder="查找…"
-            value={this.term}
-            onInput={(e) => this.setTerm((e.currentTarget as HTMLInputElement).value)}
+            value={s.term}
+            onInput={(e) => {
+              view.dispatch({ effects: setFind.of({ term: (e.currentTarget as HTMLInputElement).value }) });
+              scrollToCurrent(view);
+            }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); this.step(e.shiftKey ? -1 : 1); }
-              else if (e.key === "Escape") { e.preventDefault(); this.close(); }
+              if (e.key === "Enter") { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+              else if (e.key === "Escape") { e.preventDefault(); close(); }
             }}
           />
-          <span class="cm-find-count">{this.matches.length ? `${this.idx + 1}/${this.matches.length}` : "0/0"}</span>
-          <button class={"item" + (this.opts.caseSensitive ? " on" : "")} style={FIND_BTN} title="区分大小写" onClick={() => this.toggle("caseSensitive")}>Aa</button>
-          <button class={"item" + (this.opts.wholeWord ? " on" : "")} style={FIND_BTN} title="全词匹配" onClick={() => this.toggle("wholeWord")}>W</button>
-          <button class="item" style={FIND_BTN} title="上一个" onClick={() => this.step(-1)}><Icon name="chevronUp" cls="ico sm" /></button>
-          <button class="item" style={FIND_BTN} title="下一个" onClick={() => this.step(1)}><Icon name="chevronDown" cls="ico sm" /></button>
-          <button class="item" style={FIND_BTN} title="关闭" onClick={() => this.close()}><Icon name="x" cls="ico sm" /></button>
+          <span class="cm-find-count">{s.matches.length ? `${s.idx + 1}/${s.matches.length}` : "0/0"}</span>
+          <button class={"item" + (s.opts.caseSensitive ? " on" : "")} style={FIND_BTN} title="区分大小写" onClick={() => toggle("caseSensitive")}>Aa</button>
+          <button class={"item" + (s.opts.wholeWord ? " on" : "")} style={FIND_BTN} title="全词匹配" onClick={() => toggle("wholeWord")}>W</button>
+          <button class="item" style={FIND_BTN} title="上一个" onClick={() => step(-1)}><Icon name="chevronUp" cls="ico sm" /></button>
+          <button class="item" style={FIND_BTN} title="下一个" onClick={() => step(1)}><Icon name="chevronDown" cls="ico sm" /></button>
+          <button class="item" style={FIND_BTN} title="关闭" onClick={close}><Icon name="x" cls="ico sm" /></button>
         </>,
         this.bar,
       );
+      if (firstDraw) requestAnimationFrame(() => this.bar?.querySelector("input")?.focus());
     }
 
-    private hideBar() { if (this.bar) { render(null, this.bar); this.bar.remove(); this.bar = null; } }
+    private hide() { if (this.bar) { render(null, this.bar); this.bar.remove(); this.bar = null; } }
   },
-  { decorations: (v) => v.deco },
 );
 
 export function find(): Extension {
   return [
-    findPlugin,
+    findField,
+    findBar,
     keymap.of([
-      { key: "Mod-f", run: (view) => { view.plugin(findPlugin)?.show(); return true; } },
-      { key: "Escape", run: (view) => { const p = view.plugin(findPlugin); if (p?.open) { p.close(); return true; } return false; } },
+      {
+        key: "Mod-f",
+        run: (view) => {
+          view.dispatch({ effects: openFind.of(null) });
+          requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".cm-find-bar input")?.focus());
+          return true;
+        },
+      },
+      {
+        key: "Escape",
+        run: (view) => {
+          if (!view.state.field(findField)) return false;
+          view.dispatch({ effects: closeFind.of(null) });
+          return true;
+        },
+      },
     ]),
   ];
 }

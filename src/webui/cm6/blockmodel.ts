@@ -5,14 +5,22 @@
 // offset-indexed model that drives every decoration, void widget, and structure
 // key: `scanDoc(src)` walks the lines once and returns
 //   • `lines[]` — one entry per document line with its role + the char offsets a
-//     decoration needs (leading-indent range, marker range, content start), and
+//     decoration needs (leading-indent range, marker range, content start),
 //   • `voids[]`  — the source ranges of block-level embeds (fenced code / html,
-//     GFM tables, single-line media) with their parsed `Block` for the widget.
+//     GFM tables, single-line media) with their parsed `Block` for the widget, and
+//   • `headings[]` — the h1–h6 lines (offset + raw text) for TOC-style consumers.
 //
 // It reuses the line grammar from `blocks.ts` (the SAME predicates the save path
 // parses with) so the on-screen model can never drift from what a save/reload
-// produces. It is intentionally CM-free (operates on a string) so it is trivially
-// unit-testable; `region-field.ts` adapts a CM `Text` to it via `doc.toString()`.
+// produces. It is intentionally CM-free (operates on plain strings / a minimal
+// `LineSource`) so it is trivially unit-testable.
+//
+// `patchScan(prev, edits, src)` is the incremental sibling used on every
+// transaction: it re-runs the SAME scan, but only over the damaged line window
+// (widened so no fence/table construct straddles a window edge), and splices the
+// result into the previous model. Per-keystroke cost is proportional to the
+// damaged region plus cheap O(lines) passes (display numbers, headings) that do
+// no regex or parsing.
 //
 // Unlike `blocksFromBody`, this scanner is FLAT: indentation is literal document
 // text, not tree nesting. A nested list item is just a line with leading spaces;
@@ -27,6 +35,7 @@ import {
   isFenceClose,
   cleanLang,
   matchListLine,
+  matchQuoteLine,
   matchMediaLine,
   looksLikeTableAt,
   parseTableBlock,
@@ -78,6 +87,9 @@ export interface LineInfo {
   contentFrom: number;
   /** numbered: the literal number the user typed (kept as editable text). */
   num?: number;
+  /** numbered: the DISPLAY number (per-level run counter, see assignDisplayNums).
+   *  Presentation only — the source keeps its literal, possibly gapped, numbers. */
+  displayNum?: number;
   /** numbered: length of the literal digit run (for rewriting just the digits on a
    *  Tab-renumber; not `String(num).length`, so `01.` / `007.` map correctly). */
   numChars?: number;
@@ -103,9 +115,25 @@ export interface VoidRange {
   block: Block;
 }
 
+/** One h1–h6 line, extracted once per scan so consumers (TOC) never re-walk the
+ *  lines. `text` is the RAW heading source after the `#` marker (no inline-token
+ *  stripping — that stays in the consumer). */
+export interface DocHeading {
+  /** Line-start offset of the heading line (= its LineInfo.from). */
+  from: number;
+  /** 1–6. */
+  level: number;
+  /** Raw text after the marker (`line.text.slice(contentFrom - from)`). */
+  text: string;
+}
+
 export interface DocModel {
   lines: LineInfo[];
   voids: VoidRange[];
+  /** Document headings in order. `patchScan` REUSES the previous model's array
+   *  (by reference) when the headings are unchanged, so consumers can
+   *  short-circuit with a `===` check. */
+  headings: ReadonlyArray<DocHeading>;
 }
 
 /** Count of leading whitespace characters (space or tab). Distinct from
@@ -144,15 +172,13 @@ function classifyLine(text: string, from: number): LineInfo {
     return { ...base, role: (`h${h[1]!.length}` as LineRole), contentFrom: to - content.length };
   }
 
-  // Lists via the shared grammar helper (todo / numbered / bullet) — no drift.
-  // BUT require a space after the marker to RENDER as a list: a bare `-` / `1.`
-  // (marker only, no trailing space) stays a paragraph while typing, only becoming
-  // a list once the space is typed (Notion/main rule). `matchListLine` itself stays
-  // lenient (shared block parser + defensive empty-item round-trip); this stricter
-  // gate is CM6-render-only. A `todo` marker always carries `[...]`, so the bare
-  // test never rejects it; `- `/`1. ` (with the space) are unaffected.
-  const bareMarker = /^([-*+]|\d+[.)])$/.test(stripped);
-  const ll = bareMarker ? null : matchListLine(text, 0);
+  // Lists via the shared STRICT grammar (blocks.ts matchListLine) — the exact
+  // predicate the save parser uses, so the on-screen role can never disagree
+  // with what a save/reload (or the share page) produces. Strict = the marker
+  // needs trailing whitespace: a bare `-` / `1.` (mid-typing, before the space)
+  // and `-foo` / `2.foo` are paragraphs on every surface; `- ` / `1. ` (the
+  // serializer's empty-item form) are list items.
+  const ll = matchListLine(text, 0);
   if (ll) {
     const contentFrom = to - ll.content.length;
     if (ll.type === "todo") return { ...base, role: "todo", contentFrom, checked: !!ll.checked };
@@ -163,14 +189,12 @@ function classifyLine(text: string, from: number): LineInfo {
     return { ...base, role: "bullet", contentFrom };
   }
 
-  // Quote likewise requires `> ` (a space/tab after `>`) — a bare `>` stays a
-  // paragraph until the space, matching the list rule and main's transform. Uses a
-  // local pattern (not the lenient shared RE.quote, which the main block parser
-  // still relies on for `>text`).
-  const q = stripped.match(/^>[ \t](.*)$/);
-  if (q) {
-    const content = q[1] ?? "";
-    return { ...base, role: "quote", contentFrom: to - content.length };
+  // Quote via the same shared strict rule (blocks.ts matchQuoteLine): `> x` and
+  // a bare `>` (an empty quote line — what the serializer emits) are quotes;
+  // `>foo` is a paragraph. Single grammar source, no editor-local fork.
+  const q = matchQuoteLine(stripped);
+  if (q !== null) {
+    return { ...base, role: "quote", contentFrom: to - q.length };
   }
 
   return { ...base, role: "p", contentFrom: markerFrom };
@@ -194,29 +218,33 @@ function voidLine(number: number, from: number, to: number, text: string): LineI
   };
 }
 
-/**
- * Scan the whole document text into an offset-bearing block model. `src` must use
- * `\n` line breaks (the editor normalizes CRLF on load), so char offsets match CM
- * line offsets exactly. O(lines); safe to run on every doc change.
- */
-export function scanDoc(src: string): DocModel {
-  const arr = src.split("\n");
-  const froms: number[] = new Array(arr.length);
-  {
-    let off = 0;
-    for (let i = 0; i < arr.length; i++) {
-      froms[i] = off;
-      off += arr[i]!.length + 1; // + newline
-    }
-  }
+/** Line accessor shared by scanDoc (over a split string) and patchScan (over a
+ *  CM `Text` / test adapter). 1-based `n`; `to` excludes the trailing newline. */
+type LineGetter = (n: number) => { from: number; to: number; text: string };
 
+/**
+ * The ONE scan loop, shared by the full scan and the incremental rescan. Scans
+ * lines [start..end] (1-based, inclusive) through `line`. Multi-line constructs
+ * do not stop at `end`: a fence opener looks forward for its close and a table
+ * consumes rows up to `lineCount`; when a construct runs past `end`, `end` is
+ * raised to `growEnd(lastConsumedLine)` (≥ that line — patchScan uses this to
+ * also swallow any old void the construct ran into) and scanning continues.
+ * Returns exactly one LineInfo per consumed line, plus the voids and final end.
+ */
+function scanRegion(
+  line: LineGetter,
+  start: number,
+  end: number,
+  lineCount: number,
+  growEnd: (consumedTo: number) => number,
+): { lines: LineInfo[]; voids: VoidRange[]; end: number } {
   const lines: LineInfo[] = [];
   const voids: VoidRange[] = [];
 
-  let i = 0;
-  while (i < arr.length) {
-    const text = arr[i]!;
-    const from = froms[i]!;
+  let i = start;
+  while (i <= end) {
+    const cur = line(i);
+    const text = cur.text;
     const indentCols = leadingIndent(text);
     const stripped = stripIndent(text, indentCols);
 
@@ -228,39 +256,55 @@ export function scanDoc(src: string): DocModel {
       const ch = fence[1]![0]!;
       const len = fence[1]!.length;
       let close = -1;
-      for (let j = i + 1; j < arr.length; j++) {
-        if (isFenceClose(stripIndent(arr[j]!, indentCols), ch, len)) {
+      for (let j = i + 1; j <= lineCount; j++) {
+        if (isFenceClose(stripIndent(line(j).text, indentCols), ch, len)) {
           close = j;
           break;
         }
       }
       if (close >= 0) {
-        const source = arr.slice(i, close + 1).join("\n");
-        const draft = textToBlock(source);
+        const parts: string[] = [];
+        for (let m = i; m <= close; m++) parts.push(line(m).text);
+        const draft = textToBlock(parts.join("\n"));
         const block = makeBlock(draft.type, draft);
         const lang = cleanLang(fence[2] ?? "");
         const kind: VoidKind = lang === HTML_FENCE || draft.type === "html" ? "html" : "code";
-        const to = froms[close]! + arr[close]!.length;
-        voids.push({ from, to, fromLine: i + 1, toLine: close + 1, kind, block });
-        for (let m = i; m <= close; m++)
-          lines.push(voidLine(m + 1, froms[m]!, froms[m]! + arr[m]!.length, arr[m]!));
+        voids.push({ from: cur.from, to: line(close).to, fromLine: i, toLine: close, kind, block });
+        for (let m = i; m <= close; m++) {
+          const l = line(m);
+          lines.push(voidLine(m, l.from, l.to, l.text));
+        }
+        if (close > end) end = growEnd(close);
         i = close + 1;
         continue;
       }
       // unclosed → fall through to per-line classification (paragraph)
     }
 
-    // 2) GFM pipe table — header + delimiter row + body rows.
-    if (looksLikeTableAt(arr, i, indentCols)) {
-      const parsed = parseTableBlock(arr, i, indentCols);
-      if (parsed) {
-        const last = parsed.next - 1;
-        const to = froms[last]! + arr[last]!.length;
-        voids.push({ from, to, fromLine: i + 1, toLine: last + 1, kind: "table", block: parsed.block });
-        for (let m = i; m <= last; m++)
-          lines.push(voidLine(m + 1, froms[m]!, froms[m]! + arr[m]!.length, arr[m]!));
-        i = parsed.next;
-        continue;
+    // 2) GFM pipe table — header + delimiter row + body rows. The candidate-row
+    //    gather condition (non-blank AND contains "|") is a superset of what
+    //    parseTableBlock consumes, so it stops itself at the exact same row the
+    //    full-array form would.
+    if (i < lineCount && stripped.includes("|")) {
+      const tArr: string[] = [text, line(i + 1).text];
+      if (looksLikeTableAt(tArr, 0, indentCols)) {
+        for (let k = i + 2; k <= lineCount; k++) {
+          const t = line(k).text;
+          if (t.trim() === "" || !t.includes("|")) break;
+          tArr.push(t);
+        }
+        const parsed = parseTableBlock(tArr, 0, indentCols);
+        if (parsed) {
+          const last = i + parsed.next - 1;
+          voids.push({ from: cur.from, to: line(last).to, fromLine: i, toLine: last, kind: "table", block: parsed.block });
+          for (let m = i; m <= last; m++) {
+            const l = line(m);
+            lines.push(voidLine(m, l.from, l.to, l.text));
+          }
+          if (last > end) end = growEnd(last);
+          i = last + 1;
+          continue;
+        }
       }
     }
 
@@ -268,26 +312,342 @@ export function scanDoc(src: string): DocModel {
     const media = matchMediaLine(stripped);
     if (media) {
       const block = makeBlock(media.type, media);
-      const to = from + text.length;
-      voids.push({ from, to, fromLine: i + 1, toLine: i + 1, kind: media.type as VoidKind, block });
-      lines.push(voidLine(i + 1, from, to, text));
+      voids.push({ from: cur.from, to: cur.to, fromLine: i, toLine: i, kind: media.type as VoidKind, block });
+      lines.push(voidLine(i, cur.from, cur.to, text));
       i++;
       continue;
     }
 
     // 4) Prose / structural line.
-    const info = classifyLine(text, from);
-    info.number = i + 1;
+    const info = classifyLine(text, cur.from);
+    info.number = i;
     lines.push(info);
     i++;
   }
 
+  return { lines, voids, end };
+}
+
+/** Extract the h1–h6 lines. Cheap O(lines): a role check plus a slice of the
+ *  already-held line text — no regex, no doc access. */
+function extractHeadings(lines: LineInfo[]): DocHeading[] {
+  const out: DocHeading[] = [];
+  for (const l of lines) {
+    const r = l.role;
+    if (r.length === 2 && r.charCodeAt(0) === 104 /* "h" */) {
+      out.push({ from: l.from, level: r.charCodeAt(1) - 48, text: l.text.slice(l.contentFrom - l.from) });
+    }
+  }
+  return out;
+}
+
+function sameHeadings(a: DocHeading[], b: ReadonlyArray<DocHeading>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (x.from !== y.from || x.level !== y.level || x.text !== y.text) return false;
+  }
+  return true;
+}
+
+/**
+ * Scan the whole document text into an offset-bearing block model. `src` must use
+ * `\n` line breaks (the editor normalizes CRLF on load), so char offsets match CM
+ * line offsets exactly. O(lines); fine to run on load — per-keystroke updates go
+ * through `patchScan` instead.
+ */
+export function scanDoc(src: string): DocModel {
+  const arr = src.split("\n");
+  const froms: number[] = new Array(arr.length);
+  {
+    let off = 0;
+    for (let i = 0; i < arr.length; i++) {
+      froms[i] = off;
+      off += arr[i]!.length + 1; // + newline
+    }
+  }
+  const line: LineGetter = (n) => ({ from: froms[n - 1]!, to: froms[n - 1]! + arr[n - 1]!.length, text: arr[n - 1]! });
+  const region = scanRegion(line, 1, arr.length, arr.length, (n) => n);
+
   // Defensive: line count must equal document line count (every branch pushes
   // exactly one entry per consumed line). If it ever diverges, fall back to a
   // pure per-line classification so decorations still map 1:1 to lines.
-  return lines.length === arr.length
-    ? { lines, voids }
-    : { lines: fallbackLines(arr, froms), voids: [] };
+  const ok = region.lines.length === arr.length;
+  const lines = ok ? region.lines : fallbackLines(arr, froms);
+  const voids = ok ? region.voids : [];
+  assignDisplayNums(lines);
+  return { lines, voids, headings: extractHeadings(lines) };
+}
+
+// ---- incremental rescan --------------------------------------------------
+
+/** Minimal read view of the NEW document. A CM `Text` satisfies it structurally
+ *  (`{ lineCount: doc.lines, length: doc.length, line: (n) => doc.line(n) }`);
+ *  tests adapt a plain string. */
+export interface LineSource {
+  readonly lineCount: number;
+  line(n: number): { from: number; to: number; text: string };
+  readonly length: number;
+}
+
+/** One replaced span of a change set, in CM `ChangeSet.iterChanges` form:
+ *  [fromA, toA] in the OLD doc was replaced by [fromB, toB] in the NEW doc.
+ *  Spans must be ascending and non-overlapping (what iterChanges yields). */
+export interface Edit {
+  fromA: number;
+  toA: number;
+  fromB: number;
+  toB: number;
+}
+
+/** Times patchScan bailed to a full rescan (safety valve; test-visible so the
+ *  equivalence suite can assert the incremental path actually ran). */
+export let patchScanFallbacks = 0;
+
+function fullRescan(src: LineSource): DocModel {
+  patchScanFallbacks++;
+  const parts: string[] = [];
+  for (let n = 1; n <= src.lineCount; n++) parts.push(src.line(n).text);
+  return scanDoc(parts.join("\n"));
+}
+
+/** 1-based line number containing char offset `pos` (a line owns [from, to],
+ *  `to` = its newline position). Binary search over the model's lines. */
+function lineNumAt(lines: LineInfo[], pos: number): number {
+  let lo = 0;
+  let hi = lines.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (lines[mid]!.from <= pos) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
+}
+
+/**
+ * Incrementally update `prev` (the model of the OLD document) for `edits`
+ * (OLD→NEW change spans) against `src` (the NEW document). Produces the same
+ * model `scanDoc(newText)` would (block ids aside), but only re-parses a damage
+ * window around the edits:
+ *
+ *   1. take the edits' char hull in OLD space, widened over every old void it
+ *      touches (so a damaged fence/table is rescanned from its first line);
+ *   2. translate to a NEW-space line window [ls..le] — lines before the first
+ *      edit keep identical numbering, lines after the last shift by lineDelta;
+ *   3. widen: pull in adjacent pipe-bearing lines (a table can absorb its
+ *      neighbours) and never let a window edge rest inside an old void; if the
+ *      window contains a fence-ish line, extend up to the topmost unmatched
+ *      fence opener above (it may now pair with a close inside the window);
+ *   4. rescan [ls..le] with the SAME loop as scanDoc (fences/tables may consume
+ *      past le — le grows with them, swallowing any old void they run into);
+ *   5. splice: lines/voids before ls are reused by reference, the window is
+ *      replaced, lines/voids after le are shallow-copied with their offsets
+ *      shifted; then the cheap global passes (display numbers, headings) run
+ *      over the spliced array.
+ *
+ * Any post-splice inconsistency (count/length mismatch) falls back to a full
+ * scanDoc of the new text.
+ */
+export function patchScan(prev: DocModel, edits: Edit[], src: LineSource): DocModel {
+  if (edits.length === 0) return prev;
+  const prevLines = prev.lines;
+  const prevCount = prevLines.length;
+  if (prevCount === 0) return fullRescan(src);
+  const prevLen = prevLines[prevCount - 1]!.to;
+  const lineDelta = src.lineCount - prevCount;
+  const charDelta = src.length - prevLen;
+
+  // 1) Damage hull in OLD char space, widened over intersecting old voids
+  //    (endpoint-inclusive, matching voidAt). Voids are disjoint and sorted, so
+  //    one forward pass also handles downward chaining.
+  let startA = edits[0]!.fromA;
+  let endA = edits[edits.length - 1]!.toA;
+  for (const v of prev.voids) {
+    if (v.from <= endA && v.to >= startA) {
+      if (v.from < startA) startA = v.from;
+      if (v.to > endA) endA = v.to;
+    }
+  }
+  if (startA < 0 || endA > prevLen) return fullRescan(src);
+
+  // 2) NEW-space line window. Lines before the first edit are byte-identical
+  //    with identical numbering, so `ls` transfers from OLD space directly; the
+  //    window end sits at/after the last edit, so it shifts by lineDelta.
+  let ls = lineNumAt(prevLines, startA);
+  let le = lineNumAt(prevLines, endA) + lineDelta;
+  if (le < ls || le > src.lineCount) return fullRescan(src);
+
+  // Old-void line spans translated into NEW space. Above the window all voids
+  // keep identity numbering; below it they shift by lineDelta. Applying the
+  // wrong translation to a void on the other side can only over-widen (the
+  // window grows — never misclassifies), and each pass ends on a real void
+  // boundary, so a window edge never rests strictly inside a kept void.
+  const voidStartAtOrBefore = (n: number): number => {
+    let x = n;
+    for (let k = prev.voids.length - 1; k >= 0; k--) {
+      const v = prev.voids[k]!;
+      if (v.fromLine < x && v.toLine >= x) x = v.fromLine;
+    }
+    return x;
+  };
+  const voidEndAtOrAfter = (n: number): number => {
+    let x = n;
+    for (const v of prev.voids) {
+      const f = v.fromLine + lineDelta;
+      const t = v.toLine + lineDelta;
+      if (f <= x && t > x) x = t;
+    }
+    return x;
+  };
+
+  // 3) Widening fixpoint. Pipe-bearing neighbours can be absorbed into a table
+  //    that forms/extends inside the window; a window edge inside an old void
+  //    must swallow the void whole.
+  const widenUp = () => {
+    for (;;) {
+      let a = voidStartAtOrBefore(ls);
+      while (a > 1 && src.line(a - 1).text.includes("|")) a--;
+      a = voidStartAtOrBefore(a);
+      if (a === ls) return;
+      ls = a;
+    }
+  };
+  widenUp();
+  for (;;) {
+    let b = voidEndAtOrAfter(le);
+    while (b < src.lineCount && src.line(b + 1).text.includes("|")) b++;
+    b = voidEndAtOrAfter(b);
+    if (b === le) break;
+    le = b;
+  }
+
+  // 4) Fence pairing across the window top. A fence-ish line in the NEW window
+  //    can close a previously-UNMATCHED opener above it (an unmatched opener is
+  //    prose, so it is invisible to the void widening). Unmatched means no
+  //    matching close existed ANYWHERE below it in the old doc — so only new
+  //    window text can change its pairing, and only when the window contains a
+  //    fence-ish line at all. Rare (the user typed/removed a ``` line): scan the
+  //    prefix for the topmost non-void fence-ish line and rescan from there.
+  let fencish = false;
+  for (let n = ls; n <= le; n++) {
+    if (RE.fenceOpen.test(src.line(n).text)) {
+      fencish = true;
+      break;
+    }
+  }
+  if (fencish) {
+    for (let n = 1; n < ls; n++) {
+      const l = prevLines[n - 1]!;
+      if (l.role !== "void" && RE.fenceOpen.test(l.text)) {
+        ls = n;
+        widenUp();
+        break;
+      }
+    }
+  }
+
+  // 5) Rescan the window with the shared loop. When a fence/table consumes past
+  //    le, growEnd extends le over any old void the construct landed in, so the
+  //    remainder of that void is rescanned too instead of dangling.
+  const region = scanRegion((n) => src.line(n), ls, le, src.lineCount, voidEndAtOrAfter);
+  le = region.end;
+  const leA = le - lineDelta; // last damaged line in OLD numbering
+
+  // 6) Splice lines: prefix reused by reference (offsets/numbering untouched;
+  //    assignDisplayNums rewrites their displayNum with identical values —
+  //    the forward pass is prefix-deterministic), suffix shallow-copied with
+  //    every absolute offset shifted (from/to/markerFrom/contentFrom).
+  const lines: LineInfo[] = prevLines.slice(0, ls - 1);
+  for (const l of region.lines) lines.push(l);
+  for (let k = leA; k < prevCount; k++) {
+    const l = prevLines[k]!;
+    lines.push({
+      ...l,
+      number: l.number + lineDelta,
+      from: l.from + charDelta,
+      to: l.to + charDelta,
+      markerFrom: l.markerFrom + charDelta,
+      contentFrom: l.contentFrom + charDelta,
+    });
+  }
+  if (lines.length !== src.lineCount || lines[lines.length - 1]!.to !== src.length) {
+    return fullRescan(src);
+  }
+
+  // Same 3-way splice for voids (window voids were re-created by the rescan;
+  // no kept void straddles a window edge — see widening).
+  const voids: VoidRange[] = [];
+  for (const v of prev.voids) {
+    if (v.toLine >= ls) break;
+    voids.push(v);
+  }
+  for (const v of region.voids) voids.push(v);
+  for (const v of prev.voids) {
+    if (v.fromLine > leA) {
+      voids.push({
+        ...v,
+        from: v.from + charDelta,
+        to: v.to + charDelta,
+        fromLine: v.fromLine + lineDelta,
+        toLine: v.toLine + lineDelta,
+      });
+    }
+  }
+
+  // Global cheap passes: display numbers are run/context dependent (a window
+  // edit can renumber the whole suffix) and headings feed the === contract.
+  assignDisplayNums(lines);
+  const headings = extractHeadings(lines);
+  return {
+    lines,
+    voids,
+    headings: sameHeadings(headings, prev.headings) ? prev.headings : headings,
+  };
+}
+
+/**
+ * Assign ordered-list DISPLAY numbers (`LineInfo.displayNum`) in one forward
+ * pass. Presentation only: the source keeps its literal — possibly gapped —
+ * numbers and is NEVER globally rewritten. Per nesting level, a "run" of
+ * numbered lines counts up from its FIRST item's literal number (start
+ * semantics), mirroring what the save path persists (blocks.ts
+ * normalizeNumbering keeps only the run head's `start`; computeListNumbers
+ * re-sequences the rest), so display always equals the next save's numbers.
+ *
+ * Run boundaries, per line role at level L (= floor(indent / 2), computed for
+ * every line from its indentation):
+ *   • "blank" — transparent: never breaks any run (matches the serializer,
+ *     where a blank spacer between items keeps the run going);
+ *   • "numbered" — continues/starts the level-L run; ends runs DEEPER than L
+ *     (levels > L: their parent item's subtree is over) but leaves L and
+ *     shallower alive;
+ *   • anything else (bullet/todo/quote/heading/paragraph/divider/void) — a
+ *     same-level sibling or a new block: breaks runs at its own level and
+ *     deeper (>= L), but an INDENTED line is a child of some outer item, so
+ *     runs shallower than L survive it (e.g. a continuation paragraph under
+ *     item 2 doesn't reset the top-level count).
+ */
+export function assignDisplayNums(lines: LineInfo[]): void {
+  // counters[level] = the live numbered run at that nesting level (holes ok).
+  const counters: ({ n: number } | undefined)[] = [];
+  for (const line of lines) {
+    if (line.role === "blank") continue;
+    const level = line.level;
+    if (line.role === "numbered") {
+      if (counters.length > level + 1) counters.length = level + 1;
+      const run = counters[level];
+      if (run) {
+        line.displayNum = ++run.n;
+      } else {
+        const start = Math.max(1, line.num ?? 1); // run head keeps its literal start
+        counters[level] = { n: start };
+        line.displayNum = start;
+      }
+    } else if (counters.length > level) {
+      counters.length = level;
+    }
+  }
 }
 
 /** Last-resort per-line classification with no void detection (see scanDoc tail). */

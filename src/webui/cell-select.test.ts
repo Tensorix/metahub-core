@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { normRect, inRect, edgeShadow, selectionToTsv, type CellSel } from "./cell-select.ts";
+import { normRect, inRect, edgeShadow, selectionToTsv, moveCellSel, clearRect, type CellSel } from "./cell-select.ts";
 
 const sel = (ar: number, ac: number, br: number, bc: number): CellSel => ({ a: { r: ar, c: ac }, b: { r: br, c: bc } });
 
@@ -65,4 +65,49 @@ test("selectionToTsv emits a rectangular slice tab/newline separated, verbatim",
 test("selectionToTsv fills missing cells with empty strings", () => {
   const rows = [["a"], ["b", "c"]]; // ragged rows
   expect(selectionToTsv(rows, normRect(sel(0, 0, 1, 1)))).toBe("a\t\nb\tc");
+});
+
+test("moveCellSel: plain arrow collapses to the target cell", () => {
+  expect(moveCellSel(sel(1, 1, 1, 1), "ArrowRight", false, 3, 3)).toEqual(sel(1, 2, 1, 2));
+  expect(moveCellSel(sel(1, 1, 1, 1), "ArrowDown", false, 3, 3)).toEqual(sel(2, 1, 2, 1));
+  // a multi-cell rect collapses onto the moved focus, dropping the anchor
+  expect(moveCellSel(sel(0, 0, 2, 2), "ArrowUp", false, 3, 3)).toEqual(sel(1, 2, 1, 2));
+});
+
+test("moveCellSel: shift extends by moving only the focus corner", () => {
+  expect(moveCellSel(sel(0, 0, 1, 1), "ArrowDown", true, 3, 3)).toEqual(sel(0, 0, 2, 1));
+  expect(moveCellSel(sel(2, 2, 1, 1), "ArrowLeft", true, 3, 3)).toEqual(sel(2, 2, 1, 0));
+});
+
+test("moveCellSel clamps to the grid on every edge", () => {
+  expect(moveCellSel(sel(0, 0, 0, 0), "ArrowUp", false, 3, 3)).toEqual(sel(0, 0, 0, 0));
+  expect(moveCellSel(sel(0, 0, 0, 0), "ArrowLeft", true, 3, 3)).toEqual(sel(0, 0, 0, 0));
+  expect(moveCellSel(sel(2, 2, 2, 2), "ArrowDown", false, 3, 3)).toEqual(sel(2, 2, 2, 2));
+  expect(moveCellSel(sel(0, 0, 2, 2), "ArrowRight", true, 3, 3)).toEqual(sel(0, 0, 2, 2));
+});
+
+test("moveCellSel returns null for non-arrow keys and degenerate grids", () => {
+  expect(moveCellSel(sel(0, 0, 0, 0), "Enter", false, 3, 3)).toBeNull();
+  expect(moveCellSel(sel(0, 0, 0, 0), "c", false, 3, 3)).toBeNull();
+  expect(moveCellSel(sel(0, 0, 0, 0), "ArrowDown", false, 0, 0)).toBeNull();
+});
+
+test("clearRect blanks the rect and leaves everything else untouched", () => {
+  const rows = [
+    ["h1", "h2", "h3"],
+    ["a", "b", "c"],
+    ["d", "e", "f"],
+  ];
+  const next = clearRect(rows, normRect(sel(1, 1, 2, 2)));
+  expect(next).toEqual([
+    ["h1", "h2", "h3"],
+    ["a", "", ""],
+    ["d", "", ""],
+  ]);
+  // pure: the input grid is not mutated
+  expect(rows[1]).toEqual(["a", "b", "c"]);
+});
+
+test("clearRect on a single-cell rect clears exactly one cell", () => {
+  expect(clearRect([["a", "b"]], normRect(sel(0, 1, 0, 1)))).toEqual([["a", ""]]);
 });

@@ -35,6 +35,29 @@ export function edgeShadow(rect: CellRect, r: number, c: number): string | undef
   return parts.join(",") || undefined;
 }
 
+// Arrow-key step for a cell selection over an nrows×ncols grid: the focus
+// corner moves one cell (clamped to the grid); Shift keeps the anchor (extend),
+// a plain arrow collapses to the target cell. Returns null for non-arrow keys
+// so callers can fall through to other bindings.
+export function moveCellSel(
+  sel: CellSel, key: string, shift: boolean, nrows: number, ncols: number,
+): CellSel | null {
+  const ARROWS: Record<string, [number, number]> = {
+    ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
+  };
+  const d = ARROWS[key];
+  if (!d || nrows < 1 || ncols < 1) return null;
+  const clamp = (n: number, hi: number) => Math.max(0, Math.min(hi, n));
+  const b = { r: clamp(sel.b.r + d[0], nrows - 1), c: clamp(sel.b.c + d[1], ncols - 1) };
+  return shift ? { a: sel.a, b } : { a: b, b };
+}
+
+// Blank out every cell inside the rect (returns a new row-major grid; rows and
+// cells outside the rect are carried over untouched).
+export function clearRect(rows: string[][], rect: CellRect): string[][] {
+  return rows.map((row, r) => row.map((cell, c) => (inRect(rect, r, c) ? "" : cell)));
+}
+
 // Serialize a rectangular slice of a row-major grid into TSV (tab between
 // columns, newline between rows) — pastes back into spreadsheets as a table.
 // Cells are emitted verbatim; out-of-range indices yield empty strings.

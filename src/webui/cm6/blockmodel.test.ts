@@ -60,7 +60,7 @@ test("numbered literal number is preserved (not renumbered)", () => {
   expect(m.lines[1]!.num).toBe(6);
 });
 
-test("bare list markers round-trip (empty item)", () => {
+test("empty-item markers (`- `, `1. `) are list items; bare `-`/`1.` are paragraphs", () => {
   const src = "- \n1. ";
   const m = scanDoc(src);
   checkOffsets(src, m);
@@ -68,6 +68,10 @@ test("bare list markers round-trip (empty item)", () => {
   expect(m.lines[1]!.role).toBe("numbered");
   // content is empty; contentFrom sits at line end
   expect(m.lines[0]!.contentFrom).toBe(m.lines[0]!.to);
+  // strict shared grammar: no trailing space → paragraph (mid-typing state)
+  expect(scanDoc("-").lines[0]!.role).toBe("p");
+  expect(scanDoc("1.").lines[0]!.role).toBe("p");
+  expect(scanDoc("-foo").lines[0]!.role).toBe("p");
 });
 
 test("nested list indent → level + indentChars", () => {
@@ -204,10 +208,56 @@ test("empty document", () => {
 });
 
 test("numbered lines keep their literal number + track digit width", () => {
-  // Numbers are literal source (no auto display-renumber); numChars drives the
+  // Numbers are literal source (never globally rewritten); numChars drives the
   // Tab-time digit rewrite, so it tracks the actual digit run.
   const m = scanDoc("9. a\n10. b\n  2. c");
   expect(m.lines.map((l) => l.num)).toEqual([9, 10, 2]);
   expect(m.lines[0]!.numChars).toBe(1);
   expect(m.lines[1]!.numChars).toBe(2);
+});
+
+// ---- ordered-list display numbers (assignDisplayNums, render-layer only) ----
+
+function nums(src: string): (number | undefined)[] {
+  return scanDoc(src).lines.map((l) => l.displayNum);
+}
+
+test("displayNum: repeated '1.' counts up 1, 2, 3", () => {
+  expect(nums("1. a\n1. b\n1. c")).toEqual([1, 2, 3]);
+});
+
+test("displayNum: a run starts at its head's literal number", () => {
+  expect(nums("5. a\n9. b")).toEqual([5, 6]);
+});
+
+test("displayNum: blank lines are transparent (run continues)", () => {
+  expect(nums("1. a\n\n2. b")).toEqual([1, undefined, 2]);
+});
+
+test("displayNum: nested run counts independently; outer run survives children", () => {
+  expect(nums("1. a\n  1. x\n  5. y\n2. b")).toEqual([1, 1, 2, 2]);
+});
+
+test("displayNum: a top-level paragraph breaks the run", () => {
+  expect(nums("1. a\npara\n1. b")).toEqual([1, undefined, 1]);
+});
+
+test("displayNum: a same-level bullet breaks the run", () => {
+  expect(nums("1. a\n- x\n1. b")).toEqual([1, undefined, 1]);
+  // the next run's head keeps its literal start (matches the save semantics:
+  // normalizeNumbering keeps an explicit start on a run head)
+  expect(nums("1. a\n- x\n2. b")).toEqual([1, undefined, 2]);
+});
+
+test("displayNum: a deeper run restarts after leaving and re-entering", () => {
+  expect(nums("1. a\n  1. x\n2. b\n  1. y")).toEqual([1, 1, 2, 1]);
+});
+
+test("displayNum: an indented continuation paragraph keeps the outer run alive", () => {
+  // level-1 paragraph under item 1 only breaks runs at level >= 1
+  expect(nums("1. a\n  child para\n2. b")).toEqual([1, undefined, 2]);
+});
+
+test("displayNum: a void block (fence) breaks same-level runs", () => {
+  expect(nums("1. a\n```\nx\n```\n1. b")).toEqual([1, undefined, undefined, undefined, 1]);
 });

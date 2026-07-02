@@ -10,18 +10,31 @@ import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
-import { openMenu, MenuItem } from "../../ui.tsx";
+import { openMenu, MenuItem, MenuLabel, MenuSep } from "../../ui.tsx";
+import { BLOCK_MENU } from "../../blocks.ts";
 import { docModel } from "../doc-model";
+import { deferCoords } from "../defer";
+import { blockAt, rangeForSelection, lineSpanRange, duplicateRange, type BlockRange as Range } from "../block-range";
+import { turnInto, type TargetType } from "../convert";
 
-interface Range { fromLine: number; toLine: number; from: number; to: number; }
+// "转换为" targets, in menu order; labels/icons come from the shared BLOCK_MENU
+// (same strings/icons as the slash menu and the old editor's grip menu).
+const CONVERT_TYPES: TargetType[] = ["p", "h1", "h2", "h3", "quote", "bullet", "numbered", "todo", "code"];
+const CONVERT_ITEMS = CONVERT_TYPES.map((t) => {
+  const m = BLOCK_MENU.find((m) => m.type === t)!;
+  return { type: t, ic: m.ic, t: m.t };
+});
 
-/** The line span of the block at 1-based line `n` (a void spans multiple lines). */
-function blockAt(view: EditorView, n: number): Range {
-  const v = docModel(view.state).voids.find((v) => n >= v.fromLine && n <= v.toLine);
-  const doc = view.state.doc;
-  if (v) return { fromLine: v.fromLine, toLine: v.toLine, from: doc.line(v.fromLine).from, to: doc.line(v.toLine).to };
-  const line = doc.line(n);
-  return { fromLine: n, toLine: n, from: line.from, to: line.to };
+/** The block's current type as a convert target (for the menu checkmark). */
+function currentType(view: EditorView, line: number): TargetType | null {
+  const model = docModel(view.state);
+  const info = model.lines[line - 1];
+  if (!info) return null;
+  if (info.role === "void") {
+    const v = model.voids.find((v) => line >= v.fromLine && line <= v.toLine);
+    return v && (v.kind === "code" || v.kind === "html") ? "code" : null;
+  }
+  return (CONVERT_TYPES as string[]).includes(info.role) ? (info.role as TargetType) : null;
 }
 
 class GutterPlugin implements PluginValue {
@@ -77,17 +90,12 @@ class GutterPlugin implements PluginValue {
 
   private schedule() {
     if (this.raf) return;
-    this.raf = requestAnimationFrame(() => { this.raf = 0; this.paint(); });
+    this.raf = deferCoords(() => { this.raf = 0; this.paint(); });
   }
 
   private insertBelow(range: Range) {
     this.view.dispatch({ changes: { from: range.to, insert: "\n" }, selection: { anchor: range.to + 1 }, scrollIntoView: true });
     this.view.focus();
-  }
-
-  private duplicate(range: Range) {
-    const text = this.view.state.sliceDoc(range.from, range.to);
-    this.view.dispatch({ changes: { from: range.to, insert: "\n" + text } });
   }
 
   private remove(range: Range) {
@@ -98,10 +106,41 @@ class GutterPlugin implements PluginValue {
   }
 
   private menu(e: MouseEvent, range: Range) {
+    const view = this.view;
+    const model = docModel(view.state);
+    // Multi-line mode: the main selection is non-empty AND covers the gripped
+    // block → the menu acts on the selection's whole line range (snapped to
+    // void boundaries), like the old editor's block-group menu.
+    const sel = rangeForSelection(view);
+    const multi = !!sel && sel.fromLine <= range.fromLine && sel.toLine >= range.toLine && sel.toLine > sel.fromLine;
+    const target = multi ? lineSpanRange(view, sel!.fromLine, sel!.toLine) : range;
+    const count = target.toLine - target.fromLine + 1;
+    // A media/table void has no text to convert (lossy) → hide "转换为" for it.
+    // A fenced code/html void can still unwrap to prose → offer just 正文.
+    const v = model.voids.find((v) => range.fromLine >= v.fromLine && range.fromLine <= v.toLine);
+    const textVoid = !!v && (v.kind === "code" || v.kind === "html");
+    const showConvert = multi || !v || textVoid;
+    const items = !multi && textVoid ? CONVERT_ITEMS.filter((m) => m.type === "p") : CONVERT_ITEMS;
+    const current = multi ? null : currentType(view, range.fromLine);
     openMenu(e, (close) => (
       <>
-        <MenuItem icon="copy" label="复制块" onClick={() => { this.duplicate(range); close(); }} />
-        <MenuItem icon="trash" label="删除块" danger onClick={() => { this.remove(range); close(); }} />
+        {showConvert && (
+          <>
+            <MenuLabel>{multi ? `转换为（${count} 行）` : "转换为"}</MenuLabel>
+            {items.map((m) => (
+              <MenuItem
+                key={m.type}
+                icon={m.ic}
+                label={m.t}
+                checked={current === m.type}
+                onClick={() => { turnInto(view, target.fromLine, target.toLine, m.type); close(); }}
+              />
+            ))}
+            <MenuSep />
+          </>
+        )}
+        <MenuItem icon="copy" label={multi ? "复制块组" : "复制块"} onClick={() => { duplicateRange(view, target); close(); }} />
+        <MenuItem icon="trash" label={multi ? "删除块组" : "删除块"} danger onClick={() => { this.remove(target); close(); }} />
       </>
     ));
   }
@@ -129,31 +168,43 @@ class GutterPlugin implements PluginValue {
 
   // Pointer-drag reorder: move the source block before/after the block under the
   // pointer (by pointer-Y vs that block's midpoint), with a live drop indicator.
+  // Invariant: `target` is non-zero exactly while the indicator is visible, so a
+  // release with no indicator (dragged back over the source, or off-content) is a
+  // no-op instead of replaying the last valid hover position.
   private startDrag(e: PointerEvent, src: Range) {
     e.preventDefault();
     let target = 0;
     let before = false;
+    const clear = () => { target = 0; this.hideDrop(); };
     const move = (ev: PointerEvent) => {
       const pos = this.view.posAtCoords({ x: ev.clientX, y: ev.clientY });
-      if (pos == null) return this.hideDrop();
+      if (pos == null) return clear();
       const line = this.view.state.doc.lineAt(pos).number;
-      if (line >= src.fromLine && line <= src.toLine) return this.hideDrop(); // over itself
+      if (line >= src.fromLine && line <= src.toLine) return clear(); // over itself
       const b = blockAt(this.view, line);
       const top = this.view.coordsAtPos(b.from);
       const bot = this.view.coordsAtPos(b.to);
-      if (!top || !bot) return this.hideDrop();
+      if (!top || !bot) return clear();
       before = ev.clientY < (top.top + bot.bottom) / 2;
       target = line;
       this.showDrop(before ? top.top : bot.bottom);
     };
-    const up = () => {
+    const finish = (drop: boolean) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      this.hideDrop();
-      if (target) this.reorder(src, target, before);
+      window.removeEventListener("pointercancel", cancel);
+      const t = target;
+      const b = before;
+      clear();
+      // Re-validate against the current doc: a remote merge during the drag can
+      // shorten the document under us.
+      if (drop && t && t <= this.view.state.doc.lines) this.reorder(src, t, b);
     };
+    const up = () => finish(true);
+    const cancel = () => finish(false);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
   }
 
   private reorder(src: Range, targetLine: number, before: boolean) {

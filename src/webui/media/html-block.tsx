@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Block } from "../blocks.ts";
 import { Icon } from "../icons.tsx";
+import { CodeEditorBody } from "./code-block.tsx";
 
 const REPORTER = `<script>(function(){function r(){try{parent.postMessage({__mhHtmlHeight:document.documentElement.scrollHeight},'*')}catch(e){}}try{new ResizeObserver(r).observe(document.documentElement)}catch(e){}addEventListener('load',r);setTimeout(r,60);setTimeout(r,400)})();<\/script>`;
 
@@ -61,15 +62,15 @@ export function HtmlBlock({
         </button>
       </div>
       {editing ? (
-        <textarea
-          ref={taRef}
-          class="html-source code-input"
-          spellcheck={false}
-          placeholder="<!-- 在此粘贴 / 编写 HTML，将沙箱渲染 -->"
-          value={block.content}
-          onMouseDown={(e) => e.stopPropagation()}
-          onInput={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
-        />
+        <div class="codeblock" onMouseDown={(e) => e.stopPropagation()}>
+          <CodeEditorBody
+            code={block.content}
+            lang="html"
+            placeholder="<!-- 在此粘贴 / 编写 HTML，将沙箱渲染 -->"
+            taRef={taRef}
+            onInput={onChange}
+          />
+        </div>
       ) : block.content.trim() ? (
         <iframe
           ref={frameRef}

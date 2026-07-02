@@ -1,10 +1,11 @@
 /** @jsxImportSource preact */
-// Slash command menu. Typing "/" at the start of an otherwise-empty line opens a
+// Slash command menu. Typing "/" at the start of an otherwise-empty line — or at
+// the content start of an otherwise-empty list/quote/todo item — opens a
 // caret-anchored block-type picker; typing filters, Arrow keys move, Enter/click
 // selects, Esc or deleting the "/" closes. Selecting a type rewrites the "/query"
-// line as the chosen block's canonical Markdown, so the scanner re-derives the
-// block on the next change (no conversion handoff). Upload/embed types hand off to
-// the host via `onUpload`.
+// line as the chosen block's canonical Markdown (on a marker line the marker is
+// replaced, indent kept), so the scanner re-derives the block on the next change
+// (no conversion handoff). Upload/embed types hand off to the host via `onUpload`.
 //
 // The menu owns its overlay (a `.pop` appended to document.body) and intercepts the
 // nav keys with a CAPTURE-phase keydown listener on view.dom, which preempts the
@@ -13,11 +14,12 @@
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
-import type { Extension } from "@codemirror/state";
+import type { Extension, EditorState, Line } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
 import { MenuLabel } from "../../ui.tsx";
 import { BLOCK_MENU, type BlockType } from "../../blocks.ts";
 import { docModel } from "../doc-model";
+import type { LineInfo, LineRole } from "../blockmodel";
 import { deferCoords } from "../defer";
 
 export interface SlashDeps {
@@ -27,7 +29,35 @@ export interface SlashDeps {
 }
 
 const SLASH_RE = /^(\s*)\/(\S*)$/;
+/** Same shape, but matched against a marker line's CONTENT (after `- ` / `> ` /
+ *  `- [ ] ` / `1. `): the slash must be the first content character. */
+const CONTENT_SLASH_RE = /^\/(\S*)$/;
+/** Marker-bearing roles where "/" triggers on the content, not the whole line. */
+const MARKER_ROLES: ReadonlySet<LineRole> = new Set(["bullet", "numbered", "todo", "quote"]);
+/** Types whose insertion spans several lines and must be indented to nest under a
+ *  list item instead of breaking the list. */
+const MULTILINE_TYPES: ReadonlySet<BlockType> = new Set(["code", "html", "table"]);
 const MENU_WIDTH = 264;
+
+/** Find an open "/query" on `line`, or null. On a list/quote line the trigger is
+ *  the content after the marker (anchor = `contentFrom`); on p/blank lines the
+ *  whole line must be whitespace + "/query" (anchor = after the indent). Void
+ *  lines never trigger. */
+function slashAt(
+  state: EditorState,
+  line: Line,
+): { slashFrom: number; query: string; info: LineInfo | undefined } | null {
+  const info = docModel(state).lines[line.number - 1];
+  if (info && info.role === "void") return null;
+  if (info && MARKER_ROLES.has(info.role)) {
+    const m = CONTENT_SLASH_RE.exec(state.sliceDoc(info.contentFrom, line.to));
+    if (!m) return null;
+    return { slashFrom: info.contentFrom, query: m[1]!, info };
+  }
+  const m = SLASH_RE.exec(line.text);
+  if (!m) return null;
+  return { slashFrom: line.from + m[1]!.length, query: m[2]!, info };
+}
 
 function matchesFor(query: string) {
   const q = query.toLowerCase();
@@ -109,13 +139,9 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
         const sel = this.view.state.selection.main;
         if (!sel.empty) return null;
         const line = this.view.state.doc.lineAt(sel.head);
-        const m = SLASH_RE.exec(line.text);
-        if (!m) return null;
-        const slashFrom = line.from + m[1]!.length;
-        if (sel.head <= slashFrom) return null;
-        const info = docModel(this.view.state).lines[line.number - 1];
-        if (info && info.role === "void") return null;
-        return { slashFrom, query: m[2]! };
+        const found = slashAt(this.view.state, line);
+        if (!found || sel.head <= found.slashFrom) return null;
+        return found;
       }
 
       handleKey(e: KeyboardEvent) {
@@ -137,18 +163,36 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
       }
 
       select(type: BlockType) {
-        const line = this.view.state.doc.lineAt(this.view.state.selection.main.head);
-        const m = SLASH_RE.exec(line.text);
+        const state = this.view.state;
+        const line = state.doc.lineAt(state.selection.main.head);
+        const found = slashAt(state, line);
         this.close();
-        if (!m) return;
-        const { insert, caret } = blockInsertion(type, line.from);
+        if (!found) return;
+        const info = found.info;
+        // On a marker line the chosen type REPLACES the marker (old editor's
+        // convert semantics): rewrite from `markerFrom`, keeping the indent.
+        const onMarker = info !== undefined && MARKER_ROLES.has(info.role);
+        const from = onMarker ? info.markerFrom : line.from;
+        let { insert, caret } = blockInsertion(type, from);
         if (insert === null) {
-          this.view.dispatch({ changes: { from: line.from, to: line.to, insert: "" }, selection: { anchor: line.from } });
+          this.view.dispatch({ changes: { from, to: line.to, insert: "" }, selection: { anchor: from } });
           this.view.focus();
-          deps.onUpload?.(type, this.view, line.from);
+          deps.onUpload?.(type, this.view, from);
           return;
         }
-        this.view.dispatch({ changes: { from: line.from, to: line.to, insert }, selection: { anchor: caret }, scrollIntoView: true });
+        let changeFrom = from;
+        if (onMarker && MULTILINE_TYPES.has(type)) {
+          // A fence/table can't live on a list marker line: replace the whole
+          // line and indent every inserted line two columns past the item's
+          // indent, so the block parses as the list item's child.
+          const prefix = state.sliceDoc(line.from, info.markerFrom) + "  ";
+          const rel = caret - from; // caret offset inside `insert`
+          const newlinesBeforeCaret = (insert.slice(0, rel).match(/\n/g) ?? []).length;
+          insert = insert.split("\n").map((l) => prefix + l).join("\n");
+          changeFrom = line.from;
+          caret = line.from + rel + prefix.length * (newlinesBeforeCaret + 1);
+        }
+        this.view.dispatch({ changes: { from: changeFrom, to: line.to, insert }, selection: { anchor: caret }, scrollIntoView: true });
         this.view.focus();
       }
 

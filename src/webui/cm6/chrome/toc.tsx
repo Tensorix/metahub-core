@@ -10,28 +10,20 @@ import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { docModel } from "../doc-model";
+import type { DocHeading } from "../blockmodel";
+import { deferCoords } from "../defer";
+import { stripInlineTokens } from "../../inline-tokens";
 
 interface Heading { from: number; level: number; text: string; }
 
-function stripInline(s: string): string {
-  return s
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/(\*|_)([^*_]+)\1/g, "$2")
-    .replace(/~~([^~]+)~~/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .trim();
-}
-
+/** Display headings from the model's pre-extracted raw headings (no line walk;
+ *  only the inline-token strip runs here). */
 function collect(view: EditorView): Heading[] {
-  const out: Heading[] = [];
-  for (const l of docModel(view.state).lines) {
-    if (/^h[1-6]$/.test(l.role)) {
-      const raw = view.state.doc.sliceString(l.contentFrom, l.to);
-      out.push({ from: l.from, level: Number(l.role.slice(1)), text: stripInline(raw) || "无标题" });
-    }
-  }
-  return out;
+  return docModel(view.state).headings.map((h) => ({
+    from: h.from,
+    level: h.level,
+    text: stripInlineTokens(h.text).trim() || "无标题",
+  }));
 }
 
 const keyOf = (hs: Heading[]) => hs.map((h) => `${h.from}:${h.level}:${h.text}`).join("\n");
@@ -39,6 +31,7 @@ const keyOf = (hs: Heading[]) => hs.map((h) => `${h.from}:${h.level}:${h.text}`)
 class TocPlugin implements PluginValue {
   private host: HTMLElement;
   private headings: Heading[];
+  private raw: ReadonlyArray<DocHeading>;
   private key: string;
   private active = 0;
   private raf = 0;
@@ -49,21 +42,28 @@ class TocPlugin implements PluginValue {
     this.host.className = "doc-toc";
     this.host.setAttribute("aria-label", "文档目录");
     view.dom.appendChild(this.host);
+    this.raw = docModel(view.state).headings;
     this.headings = collect(view);
     this.key = keyOf(this.headings);
     this.draw();
     window.addEventListener("scroll", this.onScroll, { capture: true, passive: true });
-    requestAnimationFrame(() => this.recompute());
+    deferCoords(() => this.recompute());
   }
 
   update(u: ViewUpdate) {
     if (u.docChanged) {
-      const next = collect(u.view);
-      const key = keyOf(next);
-      if (key !== this.key) {
-        this.key = key; this.headings = next;
-        if (this.active >= next.length) this.active = Math.max(0, next.length - 1);
-        this.draw();
+      // patchScan reuses the headings array (by reference) when nothing heading-
+      // related changed — the common keystroke path skips collect() entirely.
+      const raw = docModel(u.view.state).headings;
+      if (raw !== this.raw) {
+        this.raw = raw;
+        const next = collect(u.view);
+        const key = keyOf(next);
+        if (key !== this.key) {
+          this.key = key; this.headings = next;
+          if (this.active >= next.length) this.active = Math.max(0, next.length - 1);
+          this.draw();
+        }
       }
       this.schedule();
     } else if (u.viewportChanged || u.geometryChanged) {
@@ -83,7 +83,7 @@ class TocPlugin implements PluginValue {
 
   private schedule() {
     if (this.raf) return;
-    this.raf = requestAnimationFrame(() => { this.raf = 0; this.recompute(); });
+    this.raf = deferCoords(() => { this.raf = 0; this.recompute(); });
   }
 
   private recompute() {

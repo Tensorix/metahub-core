@@ -2,12 +2,14 @@
 //
 // Puts the derived-model field, the cursor-aware decoration plugins, and the
 // structure keymap behind a Compartment so "source mode" can drop them (leaving a
-// plain Markdown text editor) without rebuilding the view. drawSelection +
-// dropCursor are required — the native contentEditable caret disappears amid block
-// decorations. history() gives native undo/redo (all structure ops are ordinary
-// text transactions, so it covers everything the old custom Snap did).
+// plain Markdown text editor) without rebuilding the view. Native selection/caret
+// (no drawSelection): they follow color-scheme automatically in dark mode and add
+// no compositing layers; runtime-verified that the native caret stays visible on
+// decorated lines (list markers, headings, lines adjacent to void widgets).
+// history() gives native undo/redo (all structure ops are ordinary text
+// transactions, so it covers everything the old custom Snap did).
 
-import { EditorView, drawSelection, dropCursor, keymap } from "@codemirror/view";
+import { EditorView, dropCursor, keymap } from "@codemirror/view";
 import { Compartment, type Extension } from "@codemirror/state";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { docModelField, docModel } from "./doc-model";
@@ -15,6 +17,7 @@ import { voidField } from "./voids/void-field";
 import { blockDecorations } from "./block-deco";
 import { inlineDecorations } from "./inline";
 import { structureKeymap } from "./keymap";
+import { renumberFilter } from "./structure";
 import { editorTheme } from "./editor-theme";
 import { shortcutFromInput, isHeadingType } from "../blocks";
 
@@ -48,6 +51,15 @@ function nestShortcut(view: EditorView, from: number, to: number, insert: string
 /** Toggles the rich WYSIWYG layer (decorations + structure keys) on/off; off =
  *  source mode (plain Markdown). */
 export const richCompartment = new Compartment();
+
+/** Pixels of viewport top the fixed .topbar covers, plus breathing room — CM must
+ *  scroll targets below it (TOC jumps, find matches, typing near the top). Replaces
+ *  the old `.block { scroll-margin-top:60px }`. Measured live so it tracks the
+ *  responsive topbar height + safe-area insets. */
+function topbarClearance(): number {
+  if (typeof document === "undefined") return 60;
+  return (document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 52) + 8;
+}
 
 export interface EditorOpts {
   /** ArrowUp on the first visual row hands focus to the title. */
@@ -88,6 +100,9 @@ export function richLayer(opts: EditorOpts): Extension {
     inlineDecorations,
     EditorView.inputHandler.of(todoShortcut),
     EditorView.inputHandler.of(nestShortcut),
+    // Local edits converge ordered-list literals to the displayed numbers
+    // (rich mode only — source mode edits raw Markdown untouched).
+    renumberFilter(),
     structureKeymap(opts),
   ];
 }
@@ -98,9 +113,9 @@ export function baseExtensions(opts: EditorOpts): Extension[] {
   return [
     docModelField, // always on — chrome + voidField read it, even in source mode
     history(),
-    drawSelection(),
     dropCursor(),
     EditorView.lineWrapping,
+    EditorView.scrollMargins.of(() => ({ top: topbarClearance(), bottom: 8 })),
     editorTheme,
     richCompartment.of(richLayer(opts)),
     // Structure keymap (inside the compartment) is Prec.highest and runs first;

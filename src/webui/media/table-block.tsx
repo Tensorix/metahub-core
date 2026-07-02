@@ -13,6 +13,22 @@ import { inlineToHtml, htmlToInline } from "../markdown.tsx";
 import { startColumnResize, startPointerDrag } from "../pointer-drag.ts";
 import { type CellSel, normRect, inRect, edgeShadow } from "../cell-select.ts";
 
+// Focus the contentEditable cell at (r, c) under `root` and drop the caret at
+// its end. Shared by the in-table Tab/Enter navigation and the cell-rectangle
+// keyboard layer's Enter/F2 "start editing" (void-field.tsx TableHost).
+export function focusCellEnd(root: ParentNode, r: number, c: number): boolean {
+  const el = root.querySelector<HTMLElement>(`.doc-td[data-r="${r}"][data-c="${c}"]`);
+  if (!el) return false;
+  el.focus();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  const s = getSelection();
+  s?.removeAllRanges();
+  s?.addRange(range);
+  return true;
+}
+
 export function TableBlock({
   block, renderKey, onCellInput, onTableChange, cellSel, onCellSel,
 }: {
@@ -65,18 +81,8 @@ export function TableBlock({
   };
 
   // Move focus by (dr, dc) within this table; returns false if out of bounds.
-  const focusCell = (r: number, c: number): boolean => {
-    const el = tableRef.current?.querySelector<HTMLElement>(`.doc-td[data-r="${r}"][data-c="${c}"]`);
-    if (!el) return false;
-    el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    const s = getSelection();
-    s?.removeAllRanges();
-    s?.addRange(range);
-    return true;
-  };
+  const focusCell = (r: number, c: number): boolean =>
+    tableRef.current ? focusCellEnd(tableRef.current, r, c) : false;
 
   const onCellKeyDown = (e: KeyboardEvent, r: number, c: number) => {
     if (e.isComposing || e.keyCode === 229) return; // IME: Enter/Tab confirm the candidate, not the cell

@@ -144,7 +144,7 @@ export function matchMediaLine(line: string): BlockDraft | null {
   return null;
 }
 
-export function isMediaType(type: BlockType): boolean {
+function isMediaType(type: BlockType): boolean {
   return type === "image" || type === "video" || type === "audio" || type === "file";
 }
 
@@ -158,15 +158,35 @@ export function genId(): string {
 const LIST_TYPES = new Set<BlockType>(["bullet", "numbered", "todo"]);
 const HEADING_TYPES = new Set<BlockType>(["h1", "h2", "h3", "h4", "h5", "h6"]);
 
+// This RE table (with matchListLine / matchQuoteLine below) is the SINGLE
+// grammar source for every surface: the CM6 editor render (cm6/blockmodel.ts),
+// this save/load parser, and the share page (core/sync/share-render.ts) all
+// classify lines through it, so the same text can never render as different
+// block types on different surfaces.
+//
+// STRICT quote rule: `> foo` and a bare `>` (an empty quote line — exactly what
+// the serializer emits for it) are quotes; `>foo` (no space after `>`) is a
+// paragraph. The content group is therefore optional: undefined for a bare `>`
+// (treat as ""). Compatibility: this is a parse-only change — existing bodies
+// are never rewritten; a `>foo` line (rare, CLI/import-authored) now renders as
+// a paragraph on ALL surfaces consistently instead of forking between them.
 export const RE = {
   fenceOpen: /^\s*(`{3,}|~{3,})\s*([^\s`]*)?.*$/,
   h: /^(#{1,6})\s+(.*)$/,
   todo: /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/,
   bullet: /^\s*[-*+]\s+(.*)$/,
   numbered: /^\s*(\d+)[.)]\s+(.*)$/,
-  quote: /^>\s?(.*)$/,
+  quote: /^>(?:[ \t](.*))?$/,
   divider: /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/,
 };
+
+/** The single quote-line predicate for all consumers: quote content of `text`
+ *  ("" for a bare `>`), or null if the line is not a quote line. `text` must
+ *  already be indent-stripped. */
+export function matchQuoteLine(text: string): string | null {
+  const m = text.match(RE.quote);
+  return m ? (m[1] ?? "") : null;
+}
 
 export interface ListLine {
   indent: number;
@@ -278,10 +298,10 @@ export function textToBlock(text: string): BlockDraft {
     return { type: "todo", content: m[2]!, checked: m[1]!.toLowerCase() === "x" };
   if ((m = firstLine.match(RE.numbered))) return { type: "numbered", content: m[2]!, start: parseInt(m[1]!, 10) };
   if ((m = firstLine.match(RE.bullet))) return { type: "bullet", content: m[1]! };
-  if (RE.quote.test(firstLine)) {
+  if (matchQuoteLine(firstLine) !== null) {
     const content = text
       .split("\n")
-      .map((l) => l.replace(/^\s*/, "").match(RE.quote)?.[1] ?? l)
+      .map((l) => matchQuoteLine(l.replace(/^\s*/, "")) ?? l)
       .join("\n");
     return { type: "quote", content };
   }
@@ -529,7 +549,7 @@ function parseLeafBlock(lines: string[], start: number, minIndent: number): Pars
     };
   }
 
-  if (RE.quote.test(first)) return parseQuoteBlock(lines, start, minIndent);
+  if (matchQuoteLine(first) !== null) return parseQuoteBlock(lines, start, minIndent);
   // A line that is solely one embed becomes its own void block; anything else
   // (incl. an image with trailing prose) falls through to the paragraph parser
   // and renders inline as before.
@@ -578,9 +598,9 @@ function parseQuoteBlock(lines: string[], start: number, minIndent: number): Par
   for (; i < lines.length; i++) {
     const raw = lines[i]!;
     if (raw.trim() === "" || leadingIndent(raw) < minIndent) break;
-    const quote = stripIndent(raw, minIndent).match(RE.quote);
-    if (!quote) break;
-    content.push(quote[1] ?? "");
+    const quote = matchQuoteLine(stripIndent(raw, minIndent));
+    if (quote === null) break;
+    content.push(quote);
   }
   return { block: { id: genId(), type: "quote", content: content.join("\n") }, next: i };
 }
@@ -604,7 +624,7 @@ export function looksLikeTableAt(lines: string[], i: number, minIndent: number):
 
 /** Split a table row into trimmed cells, honoring `\|` escapes and dropping the
  *  empty cells produced by the outer (leading/trailing) pipes. */
-export function splitTableRow(line: string): string[] {
+function splitTableRow(line: string): string[] {
   const cells: string[] = [];
   let cur = "";
   for (let i = 0; i < line.length; i++) {
@@ -627,7 +647,7 @@ export function splitTableRow(line: string): string[] {
   return cells.map((c) => c.trim());
 }
 
-export function alignFromDelim(cell: string): ColAlign {
+function alignFromDelim(cell: string): ColAlign {
   const trimmed = cell.trim();
   const left = trimmed.startsWith(":");
   const right = trimmed.endsWith(":");
@@ -675,7 +695,7 @@ function delimCell(a: ColAlign): string {
   }
 }
 
-export function renderTable(block: Block, indent: number): string[] {
+function renderTable(block: Block, indent: number): string[] {
   const pad = " ".repeat(indent);
   const rows = block.rows ?? [];
   const cols = Math.max(1, ...rows.map((r) => r.length));
@@ -717,7 +737,7 @@ function parseParagraph(lines: string[], start: number, minIndent: number): Pars
 function startsLeafBlock(line: string, minIndent: number): boolean {
   if (matchListLine(line, minIndent)) return true;
   const text = stripIndent(line, minIndent);
-  return !!text.match(RE.fenceOpen) || !!text.match(RE.h) || RE.divider.test(text.trim()) || RE.quote.test(text);
+  return !!text.match(RE.fenceOpen) || !!text.match(RE.h) || RE.divider.test(text.trim()) || matchQuoteLine(text) !== null;
 }
 
 export function matchListLine(line: string, minIndent: number): ListLine | null {
@@ -735,14 +755,18 @@ export function matchListLine(line: string, minIndent: number): ListLine | null 
     };
   }
 
-  // Trailing content is optional so a bare marker (`-`, `2.`) round-trips as an
-  // empty list item even if its trailing space was stripped. `-foo`/`2.foo` (no
-  // space) still fall through to a paragraph, and `---` to a divider.
-  m = text.match(/^(\d+)[.)](?:\s+(.*))?$/);
-  if (m) return { indent, type: "numbered", content: m[2] ?? "", num: parseInt(m[1]!, 10) };
+  // STRICT: the marker needs trailing whitespace to be a list item. An empty
+  // item serializes as `- ` / `2. ` (marker + trailing space, empty content) and
+  // parses back as one — core's parseDocBlocks keeps line content verbatim, so
+  // the trailing space survives sync. A BARE `-` / `2.` (no space, the state
+  // mid-typing before the space) is a paragraph, `-foo`/`2.foo` are paragraphs,
+  // `---` is a divider. This is the same rule the CM6 render uses, so what you
+  // see while typing is exactly what a save/reload/share produces.
+  m = text.match(/^(\d+)[.)][ \t]+(.*)$/);
+  if (m) return { indent, type: "numbered", content: m[2]!, num: parseInt(m[1]!, 10) };
 
-  m = text.match(/^[-*+](?:\s+(.*))?$/);
-  if (m) return { indent, type: "bullet", content: m[1] ?? "" };
+  m = text.match(/^[-*+][ \t]+(.*)$/);
+  if (m) return { indent, type: "bullet", content: m[1]! };
 
   return null;
 }

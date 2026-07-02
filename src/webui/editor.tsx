@@ -6,6 +6,9 @@ import { Icon } from "./icons.tsx";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import { toast } from "./ui.tsx";
 import { CmDocBody, type CmHandle } from "./cm6/CmDocBody.tsx";
+import { docModel } from "./cm6/doc-model.ts";
+import { blockToText, type Block } from "./blocks.ts";
+import { ImageLightbox } from "./media/image-lightbox.tsx";
 
 export type DocMode = "blocks" | "source";
 
@@ -48,6 +51,73 @@ export function DocView({
   // snapshot = getDoc() and remote merges push via setDoc().
   const cmRef = useRef<CmHandle | null>(null);
   const docRootRef = useRef<HTMLDivElement>(null);
+  // In-page image lightbox (browser / PWA; the desktop app uses a native window).
+  const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null);
+
+  /** Rewrite the image void whose block.src === `token` to point at `url`
+   *  (annotation write-back). CM6 block ids are ephemeral, so the src string is
+   *  the routing token; the FIRST matching void wins when the same image is
+   *  embedded twice. Serializes via blockToText (flush-left) and re-applies the
+   *  line's leading indent so a nested image stays under its list item. */
+  const replaceImageSrc = (token: string, url: string) => {
+    const view = cmRef.current?.view;
+    if (!view || !token || !url) return;
+    for (const v of docModel(view.state).voids) {
+      if (v.kind !== "image" || v.block.src !== token) continue;
+      const b = structuredClone(v.block);
+      b.src = url; // keep width/name
+      const ws = /^[ \t]*/.exec(view.state.doc.lineAt(v.from).text)![0]!;
+      let md = blockToText(b);
+      if (ws) md = md.split("\n").map((l) => ws + l).join("\n");
+      view.dispatch({ changes: { from: v.from, to: v.to, insert: md }, userEvent: "input.writeback" });
+      return;
+    }
+  };
+
+  /** Replace an image's bytes with an annotated PNG (browser lightbox path):
+   *  upload the flattened blob, then point the void at the new /blob URL. */
+  const replaceAnnotated = async (token: string, blob: Blob) => {
+    try {
+      const up = await api.uploadDocBlob(new File([blob], "annotated.png", { type: "image/png" }));
+      replaceImageSrc(token, up.url);
+      // Keep annotating the (now current) image: the lightbox follows the new src.
+      setLightbox((lb) => (lb && lb.src === token ? { ...lb, src: up.url } : lb));
+    } catch (err) {
+      toast(`保存失败：${(err as Error).message}`);
+    }
+  };
+
+  /** Open the image preview. Desktop app → a frameless native window (the editor
+   *  gets the annotated result back over BroadcastChannel); browser → in-page
+   *  lightbox overlay. */
+  const openImagePreview = (b: Block) => {
+    const src = b.src ?? "";
+    if (typeof window !== "undefined" && window.metahubDesktop?.preview) {
+      // Protocol shape unchanged from the block editor: `blockId` routes the
+      // annotated replacement back. CM6 block ids are ephemeral, so pass the
+      // src string as the token and match on block.src when it comes back.
+      void window.metahubDesktop.preview.open({ src, name: b.name, blockId: src });
+    } else {
+      setLightbox({ src, name: b.name });
+    }
+  };
+
+  // Receive "image replaced" from a desktop preview window (annotation flattened
+  // and re-uploaded there): rewrite the matching image void in the live doc.
+  useEffect(() => {
+    let ch: BroadcastChannel | null = null;
+    try {
+      ch = new BroadcastChannel("mh-doc-image");
+    } catch {
+      return;
+    }
+    ch.onmessage = (e) => {
+      const d = e.data as { action?: string; blockId?: string; url?: string } | null;
+      if (!d || d.action !== "replace" || !d.blockId || !d.url) return;
+      replaceImageSrc(d.blockId, d.url);
+    };
+    return () => ch?.close();
+  }, []);
 
   const loadDoc = () => {
     setLoading(true);
@@ -251,6 +321,15 @@ export function DocView({
           onReady={(h) => { cmRef.current = h; }}
           onExitTop={focusTitle}
           onError={onError}
+          onPreviewImage={openImagePreview}
+        />
+      )}
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          name={lightbox.name}
+          onClose={() => setLightbox(null)}
+          onReplace={(blob) => void replaceAnnotated(lightbox.src, blob)}
         />
       )}
     </div>

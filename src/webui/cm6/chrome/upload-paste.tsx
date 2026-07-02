@@ -2,16 +2,22 @@
 //
 // A paste/drop carrying files uploads each via the content-addressed pipeline
 // (api.uploadDocBlob — only the hash syncs) and inserts the block-level Markdown on
-// its own line so the scanner promotes it to a void embed. A paste carrying HTML
-// (and no files) is converted to Markdown. `uploadFilesAt` / `pickAndUpload` are
-// exported so the slash menu reuses the exact same pipeline via a file picker.
+// its own line so the scanner promotes it to a void embed. While a file is in
+// flight it shows as a widget decoration (uploadField) — NOT document text — so
+// the autosave/sync chain never sees a placeholder; detailed progress lives in
+// the global upload tray (ui.tsx startUpload/updateUpload/finishUpload, with
+// retry on failure). A paste carrying HTML (and no files) is converted to
+// Markdown. `uploadFilesAt` / `pickAndUpload` are exported so the slash menu
+// reuses the exact same pipeline via a file picker.
 
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { api, MAX_UPLOAD_BYTES } from "../../api.ts";
 import { blockToText, mediaKindFromMime, type Block } from "../../blocks.ts";
 import { htmlToMarkdown } from "../../html-md.ts";
+import { startUpload, updateUpload, finishUpload, toast } from "../../ui.tsx";
 import { docModel } from "../doc-model";
+import { addUpload, removeUpload, uploadField, beginUpload, endUpload } from "./upload-field";
 
 export interface UploadDeps {
   onError?: (message: string) => void;
@@ -33,74 +39,81 @@ function mediaFilesFrom(dt: DataTransfer | null | undefined): File[] {
   return out;
 }
 
-function placeholderLine(name: string, token: string): string {
-  const safe = (name || "文件").replace(/[\r\n]+/g, " ").trim() || "文件";
-  return `⏳ 正在上传 ${safe}… <!--mh-up:${token}-->`;
+function safeName(name: string): string {
+  return (name || "文件").replace(/[\r\n]+/g, " ").trim() || "文件";
 }
 
 function tryDispatch(view: EditorView, spec: Parameters<EditorView["dispatch"]>[0]): void {
   try { view.dispatch(spec); } catch { /* view gone */ }
 }
 
-function locate(view: EditorView, token: string): { from: number; to: number } | null {
-  const idx = view.state.doc.toString().indexOf(`mh-up:${token}`);
-  if (idx < 0) return null;
-  const line = view.state.doc.lineAt(idx);
-  return { from: line.from, to: line.to };
+/** The pending entry for `token`, at its CURRENT (remapped) position — null once
+ *  removed or when the view/state is gone (doc switched away mid-upload). */
+function pendingFor(view: EditorView, token: string): { pos: number } | null {
+  try {
+    return view.state.field(uploadField, false)?.find((u) => u.token === token) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function withinCap(file: File, onError?: (m: string) => void): boolean {
   const cap = MAX_UPLOAD_BYTES[mediaKindFromMime(file.type)];
   if (file.size > cap) {
-    onError?.(`${file.name || "文件"} 超过 ${Math.round(cap / 1024 / 1024)}MB 上限`);
+    const msg = `${file.name || "文件"} 超过 ${Math.round(cap / 1024 / 1024)}MB 上限`;
+    toast(msg);
+    onError?.(msg);
     return false;
   }
   return true;
 }
 
-/** Insert one placeholder line per file at `pos`, upload each concurrently, and
- *  write the resulting embed Markdown over its placeholder. */
+/** Show one uploading widget per file at `pos` (a decoration — the document is
+ *  untouched until the upload finishes), upload each concurrently with tray
+ *  progress, and insert the embed Markdown at the widget's remapped position on
+ *  success. Failure removes the widget and lingers in the tray with a retry that
+ *  re-appends at the end of the doc. */
 export function uploadFilesAt(view: EditorView, pos: number, files: File[], onError?: (m: string) => void): void {
   files = files.filter((f) => withinCap(f, onError));
   if (!files.length) return;
 
-  // A drop can land inside a void's raw source; nudge past it.
+  // A drop can land inside a void's raw source; nudge past it. Then anchor at the
+  // end of the line so the block widget renders after it (side: 1).
   const enclosing = docModel(view.state).voids.find((v) => pos > v.from && pos < v.to);
   if (enclosing) pos = enclosing.to;
+  pos = view.state.doc.lineAt(pos).to;
 
   const tokens = files.map(() => newToken());
-  const body = files.map((f, i) => placeholderLine(f.name, tokens[i]!)).join("\n");
-  const line = view.state.doc.lineAt(pos);
-  const before = view.state.sliceDoc(line.from, pos);
-  const after = view.state.sliceDoc(pos, line.to);
-
-  let from: number, to: number, insert: string;
-  if (before.trim() === "" && after.trim() === "") {
-    from = line.from; to = line.to; insert = body;
-  } else {
-    from = pos; to = pos; insert = (before.length ? "\n" : "") + body + (after.length ? "\n" : "");
-  }
-  tryDispatch(view, { changes: { from, to, insert }, selection: { anchor: from + insert.length } });
+  tryDispatch(view, {
+    effects: files.map((f, i) => addUpload.of({ token: tokens[i]!, name: safeName(f.name), pos })),
+  });
 
   files.forEach((file, i) => {
     const token = tokens[i]!;
-    api.uploadDocBlob(file)
+    const tid = startUpload(file.name || "文件");
+    beginUpload();
+    api.uploadDocBlob(file, (loaded, total) => updateUpload(tid, loaded, total))
       .then((up) => {
+        finishUpload(tid, true);
+        const entry = pendingFor(view, token);
+        if (!entry) return; // widget gone (doc closed / view rebuilt) — bytes are saved, nothing to insert
         const kind = mediaKindFromMime(file.type);
         const block: Block = { id: `up-${token}`, type: kind, content: "", src: up.url, name: file.name || undefined, size: kind === "file" ? up.size : undefined };
-        const l = locate(view, token);
-        if (l) tryDispatch(view, { changes: { from: l.from, to: l.to, insert: blockToText(block) } });
+        // Replace an empty anchor line, or start a fresh line after a non-empty one.
+        const line = view.state.doc.lineAt(entry.pos);
+        const change = line.text.trim() === ""
+          ? { from: line.from, to: line.to, insert: blockToText(block) }
+          : { from: line.to, to: line.to, insert: "\n" + blockToText(block) };
+        tryDispatch(view, { changes: change, effects: removeUpload.of(token) });
       })
       .catch((err: unknown) => {
-        const l = locate(view, token);
-        if (l) {
-          const docLen = view.state.doc.length;
-          let f = l.from, t = l.to;
-          if (t < docLen) t += 1; else if (f > 0) f -= 1;
-          tryDispatch(view, { changes: { from: f, to: t, insert: "" } });
-        }
+        tryDispatch(view, { effects: removeUpload.of(token) });
+        finishUpload(tid, false, () => {
+          try { uploadFilesAt(view, view.state.doc.length, [file], onError); } catch { /* view gone */ }
+        });
         onError?.(`上传失败：${err instanceof Error ? err.message : String(err)}`);
-      });
+      })
+      .finally(() => endUpload());
   });
 }
 

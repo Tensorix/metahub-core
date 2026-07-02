@@ -1,12 +1,12 @@
-// The single coordinate-read chokepoint for all editor chrome.
+// The coordinate-read chokepoint for editor chrome.
 //
 // Reading the editor layout (`coordsAtPos` / `posAtCoords` / `scrollDOM` rects)
-// during CM6's update or measure phase throws "Reading the editor layout isn't
-// allowed during an update", and `view.requestMeasure` ALSO throws (readMeasured)
-// when the read is what schedules it. The only reliable way to read coords after
-// a transaction settles is `requestAnimationFrame`. Every chrome module (slash
-// menu, format bar, TOC scroll-spy, gutter, find) routes its coord reads through
-// here so the rule is enforced in exactly one place.
+// during CM6's update phase throws "Reading the editor layout isn't allowed
+// during an update" (and a `view.requestMeasure` whose read re-enters layout can
+// throw the same way). The reliable way to read coords after a transaction
+// settles is `requestAnimationFrame`, which is what this wraps. Used by the
+// slash menu, format bar, hover gutter, and TOC scroll-spy for their post-update
+// coordinate reads.
 
 /** Run `cb` on the next animation frame (after the current update settles).
  *  Returns the frame handle so callers can cancel on teardown. */
