@@ -14,7 +14,7 @@
 import { EditorSelection, type ChangeSpec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { docModel } from "./doc-model";
-import { voidAt, type LineInfo, type DocModel } from "./blockmodel";
+import { hiddenIndentChars, voidAt, type LineInfo, type DocModel } from "./blockmodel";
 import { focusCodeVoid } from "./voids/void-field";
 import { RE, leadingIndent } from "../blocks";
 
@@ -197,7 +197,35 @@ export function enterCommand(view: EditorView): boolean {
   return true;
 }
 
+/** Re-level a single ordered item by one nesting step — the one moment we
+ *  (re)generate its number: set it to the correct value for its NEW nesting
+ *  level, in the same transaction. Only this moved item is touched — siblings /
+ *  user-set / out-of-order numbers are left alone (no global renumber). Column
+ *  math (line.indent), not char math. Shared by Tab/Shift-Tab (reindent) and
+ *  Backspace-at-hidden-indent, so the ordinal regenerates identically on both. */
+function relevelNumbered(view: EditorView, line: LineInfo, delta: 1 | -1): boolean {
+  const { state } = view;
+  const newIndentCols = delta > 0 ? line.indent + 2 : Math.max(0, line.indent - 2);
+  if (newIndentCols === line.indent) return true; // already flush-left, can't outdent
+  const newLevel = Math.floor(newIndentCols / 2);
+  const num = correctNumberAtLevel(docModel(state), line.number, newLevel);
+  const oldMarker = line.text.slice(line.indentChars, line.contentFrom - line.from); // "3. " / "3) "
+  const tail = oldMarker.slice(line.numChars ?? String(line.num ?? 1).length); // ". " / ") "
+  const prefix = " ".repeat(newIndentCols) + num + tail;
+  const head = state.selection.main.head;
+  const newHead =
+    head >= line.contentFrom ? head + (prefix.length - (line.contentFrom - line.from)) : line.from + prefix.length;
+  view.dispatch({
+    changes: { from: line.from, to: line.contentFrom, insert: prefix },
+    selection: { anchor: newHead },
+    userEvent: delta > 0 ? "input.indent" : "delete.dedent",
+    scrollIntoView: true,
+  });
+  return true;
+}
+
 /** Backspace: at the caret-after-marker position, strip the marker (→ paragraph);
+ *  at the first visible char of a fully-hidden indent, outdent one level;
  *  otherwise let the default character/line delete run. */
 export function backspaceCommand(view: EditorView): boolean {
   if (view.composing) return false; // IME: Backspace edits the candidate
@@ -222,6 +250,31 @@ export function backspaceCommand(view: EditorView): boolean {
       changes: { from: line.from, to: line.contentFrom, insert: "" },
       selection: { anchor: line.from },
       userEvent: "delete",
+    });
+    return true;
+  }
+
+  // Caret at the first visible char of an indented line whose entire indent is
+  // hidden behind the 24px column grid (canonical level*2 columns): Backspace
+  // steps out one level instead of eating one invisible space. Numbered items
+  // re-level through the same path as Shift-Tab so their ordinal regenerates.
+  // A visible odd remainder space falls through: default Backspace deletes it.
+  if (
+    sel.head === line.markerFrom &&
+    line.indentChars > 0 &&
+    line.role !== "void" &&
+    line.role !== "bullet" &&
+    line.role !== "todo" &&
+    line.role !== "blank" &&
+    hiddenIndentChars(line) === line.indentChars
+  ) {
+    if (line.role === "numbered") return relevelNumbered(view, line, -1);
+    const ws = " ".repeat(Math.max(0, (line.level - 1) * 2));
+    view.dispatch({
+      changes: { from: line.from, to: line.from + line.indentChars, insert: ws },
+      selection: { anchor: line.from + ws.length },
+      userEvent: "delete.dedent",
+      scrollIntoView: true,
     });
     return true;
   }
@@ -294,29 +347,33 @@ function reindent(view: EditorView, delta: 1 | -1): boolean {
     return true;
   }
 
-  // Re-leveling a single ordered item is the one moment we (re)generate its number:
-  // set it to the correct value for its NEW nesting level, in the same transaction.
-  // Only this moved item is touched — siblings / user-set / out-of-order numbers are
-  // left alone (no global renumber). Column math (line.indent), not char math.
-  if (single && caretLine.role === "numbered") {
-    const line = caretLine;
-    const newIndentCols = delta > 0 ? line.indent + 2 : Math.max(0, line.indent - 2);
-    if (newIndentCols === line.indent) return true; // already flush-left, can't outdent
-    const newLevel = Math.floor(newIndentCols / 2);
-    const num = correctNumberAtLevel(docModel(state), line.number, newLevel);
-    const oldMarker = line.text.slice(line.indentChars, line.contentFrom - line.from); // "3. " / "3) "
-    const tail = oldMarker.slice(line.numChars ?? String(line.num ?? 1).length); // ". " / ") "
-    const prefix = " ".repeat(newIndentCols) + num + tail;
+  // Empty selection on a non-list, non-void line, Shift-Tab: the symmetric
+  // single-caret outdent. Normalize-then-outdent: an odd indent first snaps to
+  // its canonical level*2 columns, then steps down a level. Flush-left consumes
+  // the key. Void lines fall through to the multi-line loop (strip 1-2 leading
+  // spaces = normal code dedent).
+  if (delta < 0 && single && !caretIsList && caretLine.role !== "void") {
+    const cols =
+      caretLine.indent > caretLine.level * 2
+        ? caretLine.level * 2
+        : Math.max(0, (caretLine.level - 1) * 2);
+    if (cols === caretLine.indent) return true; // flush-left: nothing to outdent
+    const ws = " ".repeat(cols);
     const head = state.selection.main.head;
-    const newHead =
-      head >= line.contentFrom ? head + (prefix.length - (line.contentFrom - line.from)) : line.from + prefix.length;
+    const shrink = caretLine.indentChars - ws.length;
     view.dispatch({
-      changes: { from: line.from, to: line.contentFrom, insert: prefix },
-      selection: { anchor: newHead },
-      userEvent: delta > 0 ? "input.indent" : "delete.dedent",
+      changes: { from: caretLine.from, to: caretLine.from + caretLine.indentChars, insert: ws },
+      selection: { anchor: Math.max(caretLine.from + ws.length, head - shrink) },
+      userEvent: "delete.dedent",
       scrollIntoView: true,
     });
     return true;
+  }
+
+  // Re-leveling a single ordered item is the one moment we (re)generate its
+  // number — see relevelNumbered (shared with Backspace-at-hidden-indent).
+  if (single && caretLine.role === "numbered") {
+    return relevelNumbered(view, caretLine, delta);
   }
 
   for (const r of ranges) {

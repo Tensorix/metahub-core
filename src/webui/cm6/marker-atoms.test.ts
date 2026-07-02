@@ -1,7 +1,9 @@
-// markerAtomsField: atomic ranges cover the hidden indent+marker of CONSTANT
-// markers (bullet, todo) ONLY — numbered ordinals are ordinary editable text
-// (literal numbers are authoritative), and heading/quote keep caret-driven
-// reveal, so neither may be atomic.
+// markerAtomsField: atomic ranges cover (a) the hidden indent+marker of
+// CONSTANT markers (bullet, todo) and (b) the renderer-hidden indent prefix of
+// every other indented non-void line (hiddenIndentChars). Numbered ordinals
+// stay ordinary editable text (literal numbers are authoritative), and
+// heading/quote markers keep caret-driven reveal, so those are never atomic —
+// only the invisible indent in front of them is.
 import { test, expect } from "bun:test";
 import { EditorState } from "@codemirror/state";
 import { docModelField } from "./doc-model";
@@ -27,6 +29,38 @@ test("bullet and todo markers are atomic, indent included", () => {
 
 test("numbered, heading, quote, and prose lines are NOT atomic", () => {
   expect(spans("1. a\n# h\n> q\npara")).toEqual([]);
+});
+
+test("an indented paragraph's hidden indent is atomic", () => {
+  expect(spans("  para")).toEqual([[0, 2]]);
+});
+
+test("a nested numbered item's hidden indent is atomic, digits excluded", () => {
+  expect(spans("  1. a")).toEqual([[0, 2]]); // [from, markerFrom) only
+});
+
+test("indented heading, quote, and blank lines get hidden-indent atoms", () => {
+  // Line starts: "  ## t" @0, "  > q" @7, "  " @13.
+  expect(spans("  ## t\n  > q\n  ")).toEqual([
+    [0, 2],
+    [7, 9],
+    [13, 15],
+  ]);
+});
+
+test("a tab indent hides by COLUMN width: one tab char covers 4 columns", () => {
+  // "\tpara": indent 4 cols → level 2 → hide target 4 cols = 1 tab char.
+  expect(spans("\tpara")).toEqual([[0, 1]]);
+});
+
+test("an odd remainder space stays visible (non-atomic)", () => {
+  // 3 spaces: level 1 → 2 chars hidden, the 3rd space is literal text.
+  expect(spans("   para")).toEqual([[0, 2]]);
+});
+
+test("indent beyond MAX_NEST stays visible", () => {
+  // 20 spaces = level 10 → hide caps at MAX_NEST(8)*2 = 16 chars.
+  expect(spans(" ".repeat(20) + "para")).toEqual([[0, 16]]);
 });
 
 test("the set tracks document changes", () => {

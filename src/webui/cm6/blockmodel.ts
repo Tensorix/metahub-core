@@ -143,6 +143,26 @@ function leadingWsChars(text: string): number {
   return n;
 }
 
+/** Deepest nesting level with dedicated rendering (per-level CSS classes,
+ *  hidden-indent math). Deeper indentation renders its whitespace literally. */
+export const MAX_NEST = 8;
+
+/** Leading whitespace chars covering `min(level, MAX_NEST) * 2` indent columns
+ *  (tab = 4 columns). This is the exact prefix the renderer hides behind the
+ *  24px column grid and the atom the caret jumps over — both sides must use
+ *  this one function so they can't drift. An odd remainder space (or anything
+ *  past MAX_NEST) is NOT counted: it stays visible as literal text. */
+export function hiddenIndentChars(info: LineInfo): number {
+  const target = Math.min(info.level, MAX_NEST) * 2;
+  let cols = 0;
+  let n = 0;
+  while (n < info.indentChars && cols < target) {
+    cols += info.text[n] === "\t" ? 4 : 1;
+    n++;
+  }
+  return n;
+}
+
 /** Classify one non-void line. `text` is the raw line; `from` its start offset. */
 function classifyLine(text: string, from: number): LineInfo {
   const indentChars = leadingWsChars(text);

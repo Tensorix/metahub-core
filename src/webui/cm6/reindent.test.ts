@@ -116,3 +116,32 @@ test("multi-line Shift-Tab shrinks a tabbed indent by two columns", () => {
   outdentCommand(v);
   expect(v.state.doc.toString()).toBe("a\n  b");
 });
+
+test("single-caret Shift-Tab outdents a paragraph one level per press", () => {
+  const doc = "    para";
+  const v = mkView(doc, doc.length);
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("  para");
+  outdentCommand(v);
+  expect(v.state.doc.toString()).toBe("para");
+});
+
+test("single-caret Shift-Tab on an odd indent normalizes first", () => {
+  const doc = "   para"; // 3 spaces: level 1 with a visible remainder
+  const v = mkView(doc, doc.length);
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("  para"); // snapped to canonical level 1
+});
+
+test("single-caret Shift-Tab at flush-left consumes the key, doc unchanged", () => {
+  const v = mkView("para", 2);
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("para");
+});
+
+test("single-caret Shift-Tab outdents an indented blank line", () => {
+  const doc = "a\n    ";
+  const v = mkView(doc, doc.length);
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("a\n  ");
+});

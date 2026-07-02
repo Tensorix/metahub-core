@@ -48,26 +48,29 @@ function nestRules(): Record<string, Record<string, string>> {
   };
   for (let n = 1; n <= MAX_NEST; n++) {
     rules[`.cm-nest-${n}`] = { "--nest": `${n * INDENT_STEP}px` };
-    // One subtle vertical guide per ancestor level (old `.block-wrap.nested::before`
-    // was inset top:2px;bottom:2px — hence the 2px y-offset and calc(100% - 4px)
-    // height), painted as stacked 1px background gradients ~11px into each indent
-    // step, i.e. under the parent marker. Guides draw on list lines only (matching
-    // the old :has(> .block.b-bullet, …) filter, so nested prose/code under an item
-    // doesn't stack a thicket of lines).
+    // One subtle DASHED vertical guide per ancestor level (old
+    // `.block-wrap.nested::before` was inset top:2px;bottom:2px — hence the 2px
+    // y-offset and calc(100% - 4px) height), painted as stacked 1px background
+    // gradients ~11px into each indent step, i.e. under the parent marker.
+    // Guides draw on EVERY indented line — list items and nested/free indented
+    // prose alike — so a paragraph staircase shows guides too, and they line up
+    // at the same x as list guides.
     const imgs: string[] = [];
     const sizes: string[] = [];
     const positions: string[] = [];
     for (let j = 0; j < n; j++) {
-      imgs.push("linear-gradient(var(--line), var(--line))");
+      imgs.push("repeating-linear-gradient(to bottom, var(--line) 0 3px, transparent 3px 7px)");
       sizes.push("1px calc(100% - 4px)");
       positions.push(`${INDENT_STEP * j + 11}px 2px`);
     }
-    rules[`.cm-li.cm-nest-${n}`] = {
+    const guide = {
       backgroundImage: imgs.join(","),
       backgroundSize: sizes.join(","),
       backgroundPosition: positions.join(","),
       backgroundRepeat: "no-repeat",
     };
+    rules[`.cm-li.cm-nest-${n}`] = guide;
+    rules[`.cm-nested.cm-nest-${n}`] = guide;
   }
   return rules;
 }
@@ -165,7 +168,7 @@ export const editorTheme = EditorView.baseTheme({
   // Checked todo line: content muted + struck (old `.b-done .editable`).
   ".cm-li-done": { color: "var(--muted)", textDecoration: "line-through" },
 
-  // Empty line placeholders (slash hint + typed-block kind hints). The overlay
+  // Empty-block placeholder (the single unified slash hint). The overlay
   // inherits the line's padding so the hint text aligns with the content column on
   // padded lines (headings, quotes, list items); text-indent resets .cm-li's
   // hanging indent so the hint doesn't shift into the marker column.
@@ -176,9 +179,9 @@ export const editorTheme = EditorView.baseTheme({
     inset: "0",
     padding: "inherit",
     boxSizing: "border-box",
-    // --ph-ind: set by block-deco on whitespace-only lines so the hint starts at
-    // the caret (after the invisible indent), not underneath it.
-    textIndent: "var(--ph-ind, 0)",
+    // Reset .cm-li's inherited -26px hanging indent so hints on empty list
+    // items don't shift into the marker column.
+    textIndent: "0",
     color: "var(--muted)",
     pointerEvents: "none",
     whiteSpace: "nowrap",

@@ -30,24 +30,9 @@ import {
 } from "@codemirror/view";
 import type { Range } from "@codemirror/state";
 import { docModel } from "./doc-model";
-import type { LineInfo } from "./blockmodel";
+import { MAX_NEST, hiddenIndentChars, type LineInfo } from "./blockmodel";
 
 export const PLACEHOLDER = '输入文本，"/" 唤出命令';
-
-/** Kind hints for empty TYPED blocks (old editor's KIND_HINTS): shown even
- *  unfocused, so an empty heading/quote reads as what it is. */
-const KIND_HINTS: Record<string, string> = {
-  h1: "标题 1",
-  h2: "标题 2",
-  h3: "标题 3",
-  h4: "标题 4",
-  h5: "标题 5",
-  h6: "标题 6",
-  quote: "引用",
-};
-
-/** Deepest nesting level with its own `.cm-nest-N` theme rule (editor-theme.ts). */
-const MAX_NEST = 8;
 
 // Marker widgets carry a `sel` flag: native ::selection cannot paint replaced
 // widgets, so a drag-select/select-all left unpainted holes in the marker
@@ -162,36 +147,20 @@ function nestCls(info: LineInfo): string {
   return n > 0 ? ` cm-nest-${n}` : "";
 }
 
-/** For an indented NON-list block line that is a LIST CHILD (a continuation under
- *  a list item — `child` comes from the rolling context in build()), hide the
- *  leading whitespace that makes up FULL 2-column nesting levels and return the
- *  alignment classes, so the child sits under its parent's content column. A
- *  leftover odd space (level math floors) stays visible as ordinary text.
- *
- *  A FREE indented line (no list item above) gets NO treatment at all: its
- *  leading spaces render literally, at character width. Mapping free indent to
- *  the 24px nesting column made typing two spaces at a paragraph start visibly
- *  JUMP to tab width — the column alignment is for list structure only. */
-function nestPad(info: LineInfo, out: Range<Decoration>[], child: boolean): string {
-  if (child && info.indentChars > 0) {
+/** For ANY indented non-list block line (heading/quote/divider/paragraph), hide
+ *  the leading whitespace that makes up FULL 2-column nesting levels and return
+ *  the alignment classes: every indented line sits on the 24px column grid. Two
+ *  source spaces = one visual level — the markdown source stays authoritative,
+ *  and the dashed indent guides (editor-theme.ts) make the snap legible. An odd
+ *  remainder space (level math floors) or indentation beyond MAX_NEST is NOT
+ *  hidden: it stays visible as literal text. */
+function nestPad(info: LineInfo, out: Range<Decoration>[]): string {
+  if (info.indentChars > 0) {
     const hide = hiddenIndentChars(info);
     if (hide > 0) out.push(Decoration.replace({}).range(info.from, info.from + hide));
     if (info.level > 0) return ` cm-nested${nestCls(info)}`;
   }
   return "";
-}
-
-/** How many leading whitespace CHARS cover the line's `level * 2` indent columns
- *  (a `\t` is 4 columns). Chars beyond that are the visible remainder. */
-function hiddenIndentChars(info: LineInfo): number {
-  const target = info.level * 2;
-  let cols = 0;
-  let n = 0;
-  while (n < info.indentChars && cols < target) {
-    cols += info.text[n] === "\t" ? 4 : 1;
-    n++;
-  }
-  return n;
 }
 
 /** Lines the selection touches — candidates for marker reveal. */
@@ -242,27 +211,26 @@ function buildLine(
   onLine: boolean,
   focused: boolean,
   sel0: boolean,
-  child: boolean,
   out: Range<Decoration>[],
 ) {
   const role = info.role;
   if (role === "void") return; // Phase 2 widgets / Phase 1 raw source
 
-  // Non-list block roles (heading / quote / divider / paragraph): when nested under
-  // a list item (indented, `child` from build()'s rolling context), hide the leading
-  // indent and pad so the child aligns with its parent's content. Free-standing
-  // indented lines keep their literal spaces; top-level (level 0) is unchanged.
+  // Non-list block roles (heading / quote / divider / paragraph): any indented
+  // line has its full-level leading indent hidden and pads onto the 24px column
+  // grid (nestPad); top-level (level 0) is unchanged.
   const isHeading = role.charCodeAt(0) === 104 /* 'h' */ && role.length === 2;
   if (isHeading || role === "quote") {
     // Reveal the marker only when the selection is IN the marker region — not
     // merely on the line — so clicking into the text never shifts it. Revealed
     // marker text renders muted (cm-md-mark), like inline delimiters.
     const revealed = focused && onLine && inMarker(view, info);
-    // Kind hint (old KIND_HINTS): an empty typed block announces itself even
-    // unfocused; suppressed while the raw marker is showing to avoid overlap.
+    // Unified placeholder: shown only with the focused caret on the empty line
+    // (the old "announces itself even unfocused" kind-hint rule is deliberately
+    // gone); still suppressed while the raw marker shows to avoid overlap.
     const empty = info.contentFrom === info.to;
-    const hint = empty && !revealed ? KIND_HINTS[role] : undefined;
-    out.push(lineDeco(info.from, isHeading ? `cm-h${role[1]}${nestPad(info, out, child)}` : `cm-quote${nestPad(info, out, child)}`, hint));
+    const hint = focused && onLine && sel0 && empty && !revealed ? PLACEHOLDER : undefined;
+    out.push(lineDeco(info.from, isHeading ? `cm-h${role[1]}${nestPad(info, out)}` : `cm-quote${nestPad(info, out)}`, hint));
     if (info.contentFrom > info.markerFrom) {
       if (revealed) out.push(Decoration.mark({ class: "cm-md-mark" }).range(info.markerFrom, info.contentFrom));
       else out.push(Decoration.replace({}).range(info.markerFrom, info.contentFrom));
@@ -271,7 +239,7 @@ function buildLine(
   }
 
   if (role === "divider") {
-    out.push(lineDeco(info.from, `cm-divider${nestPad(info, out, child)}`));
+    out.push(lineDeco(info.from, `cm-divider${nestPad(info, out)}`));
     if (!onLine && info.to > info.from)
       out.push(Decoration.replace({ widget: HR }).range(info.from, info.to));
     return;
@@ -284,13 +252,10 @@ function buildLine(
     // (that was the "auto-indent" bug). Checked todos strike through (cm-li-done).
     const done = role === "todo" && !!info.checked;
     // Empty item hint (focused caret on the line only — idle empty items stay
-    // blank, matching the old editor's subtle feel).
+    // blank, matching the old editor's subtle feel). Same unified PLACEHOLDER
+    // as every other empty block.
     const hint =
-      focused && onLine && sel0 && info.contentFrom === info.to
-        ? role === "todo"
-          ? "待办"
-          : "列表"
-        : undefined;
+      focused && onLine && sel0 && info.contentFrom === info.to ? PLACEHOLDER : undefined;
     out.push(
       lineDeco(info.from, `cm-li cm-li-${role}${done ? " cm-li-done" : ""}${nestCls(info)}`, hint),
     );
@@ -349,44 +314,26 @@ function buildLine(
   }
 
   if (role === "blank") {
-    // Placeholder + slash hint only on the focused, collapsed caret line. On a
-    // whitespace-only line (a Tab-indented empty block, or the residue Backspace
-    // clears in one stroke) the hint shifts right past the invisible indent —
-    // painting it at the line start would put it UNDER the caret.
+    // Indented blank line: sits on the 24px column grid like every other
+    // indented line (hidden indent + guides via cm-nested/cm-nest-N) and NEVER
+    // shows a placeholder — the hint belongs to level-0 empty lines only.
+    if (info.indentChars > 0) {
+      const cls = nestPad(info, out);
+      if (cls) out.push(lineDeco(info.from, cls.trimStart()));
+      return;
+    }
+    // Level-0 blank: placeholder + slash hint only on the focused, collapsed
+    // caret line.
     if (focused && onLine && sel0) {
-      const attrs: Record<string, string> = { "data-ph": PLACEHOLDER };
-      if (info.indentChars > 0) attrs.style = `--ph-ind:${info.indentChars}ch`;
-      out.push(Decoration.line({ class: "cm-ph-line", attributes: attrs }).range(info.from));
+      out.push(Decoration.line({ class: "cm-ph-line", attributes: { "data-ph": PLACEHOLDER } }).range(info.from));
     }
     return;
   }
-  // role "p": inline marks are the inline plugin's job. Only a NESTED (indented)
-  // paragraph — a continuation line under a list item — needs alignment; hide its
-  // leading indent and class it to the parent's content column.
-  const cls = nestPad(info, out, child);
+  // role "p": inline marks are the inline plugin's job. An indented paragraph
+  // snaps onto the 24px column grid; hide its full-level leading indent and
+  // class it to the matching nest column.
+  const cls = nestPad(info, out);
   if (cls) out.push(lineDeco(info.from, cls.trimStart()));
-}
-
-function isItemRole(info: LineInfo): boolean {
-  return info.role === "bullet" || info.role === "numbered" || info.role === "todo";
-}
-
-/** Shallowest list-item level in force ABOVE line index `idx` (into model.lines),
- *  or -1 when no list context reaches it. Scans upward, accumulating item levels,
- *  and stops at the first level-0 non-blank line — a top-level block is a wall no
- *  list context crosses. Bounded: a pathological fully-indented run gives up after
- *  400 lines and uses what it saw (rendering-only, self-corrects on scroll). */
-function ctxAbove(model: ReturnType<typeof docModel>, idx: number): number {
-  let min = -1;
-  for (let j = idx - 1; j >= 0 && idx - j <= 400; j--) {
-    const li = model.lines[j];
-    if (!li || li.role === "blank") continue;
-    if (isItemRole(li)) {
-      min = min < 0 ? li.level : Math.min(min, li.level);
-      if (li.level === 0) break;
-    } else if (li.level === 0) break;
-  }
-  return min;
 }
 
 function build(view: EditorView): DecorationSet {
@@ -397,23 +344,13 @@ function build(view: EditorView): DecorationSet {
   const out: Range<Decoration>[] = [];
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
-    // Rolling list context (see ctxAbove): decides whether an indented non-list
-    // line is a CHILD under a list item (column-aligned) or free-standing prose
-    // (literal leading spaces). Blank lines keep the context; a level-0 non-list
-    // line resets it.
-    let ctx = ctxAbove(model, view.state.doc.lineAt(from).number - 1);
     while (pos <= to) {
       const line = view.state.doc.lineAt(pos);
       const info = model.lines[line.number - 1];
       // Reveal a line's raw markers only when the editor is focused AND the caret
       // is on it; an unfocused document reads cleanly with every marker collapsed.
       if (info) {
-        const child = !isItemRole(info) && ctx >= 0 && info.level > ctx;
-        buildLine(view, info, focused && active.has(line.number), focused, sel0, child, out);
-        if (info.role !== "blank") {
-          if (isItemRole(info)) ctx = ctx < 0 ? info.level : Math.min(ctx, info.level);
-          else if (info.level === 0) ctx = -1;
-        }
+        buildLine(view, info, focused && active.has(line.number), focused, sel0, out);
       }
       pos = line.to + 1;
     }
