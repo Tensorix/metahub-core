@@ -100,3 +100,27 @@ test("deleteDatabase soft-deletes and clears the current pointer", () => {
   // deleting again is a no-op
   expect(deleteDatabase(db, d.id)).toBe(false);
 });
+
+test("meta is a generic replicated JSON register (round-trip, clear, duplicate)", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  expect(d.meta).toBeNull();
+
+  const set = updateDatabase(db, d.id, { meta: { collapsed: true, tag: "site" } });
+  expect(set.meta).toEqual({ collapsed: true, tag: "site" });
+  expect(getDatabase(db, d.id)!.meta).toEqual({ collapsed: true, tag: "site" });
+
+  // whole-object register: an update replaces, callers merge beforehand
+  const replaced = updateDatabase(db, d.id, { meta: { collapsed: false } });
+  expect(replaced.meta).toEqual({ collapsed: false });
+
+  // a duplicate carries the source's meta
+  const dup = duplicateDatabase(db, d.id, { name: "Copy" });
+  expect(dup.meta).toEqual({ collapsed: false });
+
+  const cleared = updateDatabase(db, d.id, { meta: null });
+  expect(cleared.meta).toBeNull();
+
+  // non-object meta is rejected
+  expect(() => updateDatabase(db, d.id, { meta: [1] as unknown as Record<string, unknown> })).toThrow();
+});

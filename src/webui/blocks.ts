@@ -164,28 +164,31 @@ const HEADING_TYPES = new Set<BlockType>(["h1", "h2", "h3", "h4", "h5", "h6"]);
 // classify lines through it, so the same text can never render as different
 // block types on different surfaces.
 //
-// STRICT quote rule: `> foo` and a bare `>` (an empty quote line — exactly what
-// the serializer emits for it) are quotes; `>foo` (no space after `>`) is a
-// paragraph. The content group is therefore optional: undefined for a bare `>`
-// (treat as ""). Compatibility: this is a parse-only change — existing bodies
-// are never rewritten; a `>foo` line (rare, CLI/import-authored) now renders as
-// a paragraph on ALL surfaces consistently instead of forking between them.
+// STRICT quote rule: every marker — quote included — needs trailing whitespace,
+// so nothing renders as a block until the user commits with the space. `> foo`
+// and `> ` (an empty quote line, exactly what the serializer emits) are quotes;
+// a bare `>` (mid-typing, before the space) and `>foo` are paragraphs. Same for
+// todo: `- [ ] x` / `- [ ] ` are todos, `- [ ]` with nothing after the bracket
+// is still a bullet whose content is `[ ]`. Compatibility: parse-only change —
+// existing bodies are never rewritten; historical bare-`>` empty quote lines
+// (from the pre-strict serializer) now render as paragraphs on ALL surfaces
+// consistently instead of forking between them.
 export const RE = {
   fenceOpen: /^\s*(`{3,}|~{3,})\s*([^\s`]*)?.*$/,
   h: /^(#{1,6})\s+(.*)$/,
-  todo: /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/,
+  todo: /^\s*[-*+]\s+\[([ xX])\][ \t](.*)$/,
   bullet: /^\s*[-*+]\s+(.*)$/,
   numbered: /^\s*(\d+)[.)]\s+(.*)$/,
-  quote: /^>(?:[ \t](.*))?$/,
+  quote: /^>[ \t](.*)$/,
   divider: /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/,
 };
 
 /** The single quote-line predicate for all consumers: quote content of `text`
- *  ("" for a bare `>`), or null if the line is not a quote line. `text` must
- *  already be indent-stripped. */
+ *  ("" for the serializer's empty form `> `), or null if the line is not a
+ *  quote line. `text` must already be indent-stripped. */
 export function matchQuoteLine(text: string): string | null {
   const m = text.match(RE.quote);
-  return m ? (m[1] ?? "") : null;
+  return m ? m[1]! : null;
 }
 
 export interface ListLine {
@@ -745,7 +748,9 @@ export function matchListLine(line: string, minIndent: number): ListLine | null 
   if (indent < minIndent) return null;
   const text = stripIndent(line, indent);
 
-  let m = text.match(/^[-*+]\s+\[([ xX])\]\s*(.*)$/);
+  // STRICT like RE.todo: whitespace after `]` required — `- [ ] x` / `- [ ] `
+  // are todos, a bare `- [ ]` (mid-typing) is a bullet whose content is `[ ]`.
+  let m = text.match(/^[-*+]\s+\[([ xX])\][ \t](.*)$/);
   if (m) {
     return {
       indent,
@@ -781,7 +786,9 @@ function renderBlock(block: Block, indent: number, number: number): string[] {
     case "todo":
       return renderListBlock(block, indent, number);
     case "quote":
-      return block.content.split("\n").map((line) => `${pad}>${line ? ` ${line}` : ""}`);
+      // `> ` even for an empty line — the strict grammar needs the space after
+      // `>` (a bare `>` is a mid-typing paragraph, not an empty quote line).
+      return block.content.split("\n").map((line) => `${pad}> ${line}`);
     case "code": {
       const first = `${pad}\`\`\`${block.lang ? cleanLang(block.lang) : ""}`;
       const body = block.content.split("\n").map((line) => `${pad}${line}`);

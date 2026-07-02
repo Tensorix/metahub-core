@@ -90,6 +90,10 @@ export const editorTheme = EditorView.baseTheme({
     padding: "0",
     caretColor: "var(--fg)",
   },
+  // A selected void (accent ring) has no faithful DOM-selection representation,
+  // so the browser paints a fallback caret at an unrelated spot — hide it; the
+  // ring is the selection visual (class set by voidField's contentAttributes).
+  ".cm-content.cm-void-selected": { caretColor: "transparent" },
   // Native drag-drop indicator (dropCursor()) — CM's default is black.
   ".cm-dropCursor": { borderLeft: "1.5px solid var(--accent)" },
   // Old block box: .block 1px + .editable 3px vertical, 2px horizontal. Empty line
@@ -145,34 +149,18 @@ export const editorTheme = EditorView.baseTheme({
   // at the left (4px in); the wrapper's empty right (~6px) is the checkbox→content
   // gap, and the caret/first-char both land at 26px.
   ".cm-todo": { display: "inline-block", width: "26px", textIndent: "0" },
+  // Native checkbox, styled exactly like main's `.b-todo .marker input`
+  // (15×15 + accent-color) — the OS paints the check, so checked state matches
+  // the old editor. Vertical: main flex-centered a 15px box in the 22.4px text
+  // row (~3.7px top offset); a -3px baseline shift lands closest for an inline
+  // input.
   ".cm-todo-box": {
-    display: "inline-block",
-    width: "16px",
-    height: "16px",
-    marginLeft: "4px",
-    // Calibrated to the 14px/1.6 line box: old flex-centered a 16px box in the
-    // 22.4px text row → 3.2px top offset; -3.5px baseline shift lands closest.
-    verticalAlign: "-3.5px",
-    border: "1.5px solid var(--line-strong, var(--muted))",
-    borderRadius: "4px",
+    width: "15px",
+    height: "15px",
+    margin: "0 0 0 4px",
+    verticalAlign: "-3px",
+    accentColor: "var(--accent)",
     cursor: "pointer",
-    boxSizing: "border-box",
-  },
-  ".cm-todo-box.checked": {
-    background: "var(--accent)",
-    borderColor: "var(--accent)",
-    position: "relative",
-  },
-  ".cm-todo-box.checked::after": {
-    content: '""',
-    position: "absolute",
-    left: "4px",
-    top: "1px",
-    width: "4px",
-    height: "8px",
-    border: "solid var(--accent-fg)",
-    borderWidth: "0 2px 2px 0",
-    transform: "rotate(45deg)",
   },
   // Checked todo line: content muted + struck (old `.b-done .editable`).
   ".cm-li-done": { color: "var(--muted)", textDecoration: "line-through" },
@@ -188,7 +176,9 @@ export const editorTheme = EditorView.baseTheme({
     inset: "0",
     padding: "inherit",
     boxSizing: "border-box",
-    textIndent: "0",
+    // --ph-ind: set by block-deco on whitespace-only lines so the hint starts at
+    // the caret (after the invisible indent), not underneath it.
+    textIndent: "var(--ph-ind, 0)",
     color: "var(--muted)",
     pointerEvents: "none",
     whiteSpace: "nowrap",

@@ -12,6 +12,7 @@ import { baseExtensions, richCompartment, richLayer } from "./editor-view";
 import { slashMenu } from "./chrome/slash-menu";
 import { uploadPaste, pickAndUpload } from "./chrome/upload-paste";
 import { uploadField, stripStaleUploadLines } from "./chrome/upload-field";
+import { healLegacyTodoLines } from "./heal";
 import { formatBar } from "./chrome/format-bar";
 import { docToc } from "./chrome/toc";
 import { blockGutter } from "./chrome/gutter";
@@ -46,9 +47,11 @@ export interface CmDocBodyProps {
 const acceptFor = (type: BlockType): string =>
   type === "image" ? "image/*" : type === "video" ? "video/*" : type === "audio" ? "audio/*" : "*/*";
 
-// stripStaleUploadLines heals docs the old upload pipeline polluted with literal
-// placeholder lines (idempotent; applies on load and on every remote setDoc).
-const norm = (s: string) => stripStaleUploadLines(s.replace(/\r\n?/g, "\n"));
+// Boundary healing (idempotent; applies on load and on every remote setDoc):
+// stripStaleUploadLines drops the old upload pipeline's literal placeholder
+// lines, healLegacyTodoLines restores the trailing space on pre-strict-grammar
+// empty todos (`- [ ]` → `- [ ] `) so they render as todos, not `• [ ]`.
+const norm = (s: string) => healLegacyTodoLines(stripStaleUploadLines(s.replace(/\r\n?/g, "\n")));
 
 /** Replace the whole doc with a minimal single-range change so CM maps the caret
  *  through it (positions outside the changed middle are preserved). */

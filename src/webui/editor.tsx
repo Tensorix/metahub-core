@@ -6,6 +6,7 @@ import { Icon } from "./icons.tsx";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import { toast } from "./ui.tsx";
 import { CmDocBody, type CmHandle } from "./cm6/CmDocBody.tsx";
+import { handleClickBelow } from "./cm6/click-below.ts";
 import { docModel } from "./cm6/doc-model.ts";
 import { blockToText, type Block } from "./blocks.ts";
 import { ImageLightbox } from "./media/image-lightbox.tsx";
@@ -277,7 +278,17 @@ export function DocView({
     cmRef.current?.focus();
   };
   return (
-    <div ref={docRootRef} class={"doc" + (mode === "source" ? " source-mode" : "")}>
+    <div
+      ref={docRootRef}
+      class={"doc" + (mode === "source" ? " source-mode" : "")}
+      // Clicking the column's empty bottom padding (below the editor) drops the
+      // caret on a trailing empty paragraph — see cm6/click-below.ts. Handler
+      // lives on the .doc column (not document) so other UI is untouched.
+      onMouseDown={(e) => {
+        const v = cmRef.current?.view;
+        if (v) handleClickBelow(v, e);
+      }}
+    >
       {conflict && (
         <div class="doc-conflict" role="alert">
           <span class="doc-conflict-msg">文档已被其他端修改，自动保存已暂停。</span>

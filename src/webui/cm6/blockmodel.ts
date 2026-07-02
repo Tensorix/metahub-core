@@ -189,8 +189,9 @@ function classifyLine(text: string, from: number): LineInfo {
   }
 
   // Quote via the same shared strict rule (blocks.ts matchQuoteLine): `> x` and
-  // a bare `>` (an empty quote line — what the serializer emits) are quotes;
-  // `>foo` is a paragraph. Single grammar source, no editor-local fork.
+  // `> ` (an empty quote line — what the serializer emits) are quotes; a bare
+  // `>` (mid-typing, before the space commits it) and `>foo` are paragraphs.
+  // Single grammar source, no editor-local fork.
   const q = matchQuoteLine(stripped);
   if (q !== null) {
     return { ...base, role: "quote", contentFrom: to - q.length };

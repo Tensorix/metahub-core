@@ -520,7 +520,7 @@ const httpApi = {
   // databases
   listDatabases: () => req<Db[]>("GET", "/api/databases"),
   createDatabase: (b: { name: string; icon?: string }) => req<Db>("POST", "/api/databases", b),
-  updateDatabase: (id: string, b: { name?: string; icon?: string | null }) =>
+  updateDatabase: (id: string, b: { name?: string; icon?: string | null; meta?: Record<string, unknown> | null }) =>
     req<Db>("PATCH", `/api/database?id=${q(id)}`, b),
   duplicateDatabase: (id: string, b?: { name?: string; icon?: string }) =>
     req<Db>("POST", `/api/database/duplicate?id=${q(id)}`, b ?? {}),

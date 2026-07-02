@@ -119,6 +119,20 @@
   .sb-section-head .add { opacity:0; padding:3px; border-radius:5px; color:var(--muted); transition:opacity .12s; }
   .sb-section:hover .add { opacity:1; }
   .sb-section-head .add:hover { background:var(--hover-2); color:var(--fg); }
+  /* Section fold toggle: the whole label is the hit target; the chevron rotates
+     to point down while the section is open. */
+  .sec-fold { display:flex; align-items:center; gap:2px; font:inherit; letter-spacing:inherit;
+    text-transform:inherit; color:inherit; padding:0; margin-left:-4px; border-radius:5px; cursor:pointer; }
+  .sec-fold:hover { color:var(--fg); }
+  .sec-fold .chev, .sb-subfold .chev { transition:transform .12s; }
+  .sec-fold .chev.open, .sb-subfold .chev.open { transform:rotate(90deg); }
+  /* Collapsed-databases group: a quiet tail row inside the 数据库 section for
+     tables flagged meta.collapsed (site-facing / rarely browsed). */
+  .sb-subfold { display:flex; align-items:center; gap:2px; width:100%; text-align:left;
+    padding:4px 6px; margin-top:2px; border-radius:var(--radius-sm);
+    color:var(--muted); font-size:var(--fs-micro); cursor:pointer; }
+  .sb-subfold:hover { background:var(--hover-2); color:var(--fg-soft); }
+  .navitem.dim { opacity:.62; }
   .navitem { display:flex; align-items:center; gap:3px; width:100%; text-align:left; padding:5px 6px; margin-bottom:2px; border-radius:var(--radius-sm);
     color:var(--fg-soft); font-size:var(--fs-ui); position:relative; white-space:nowrap; transition:background .1s; }
   .navitem:hover { background:var(--hover-2); }
@@ -575,6 +589,24 @@
      `.block.selected .void-block` treatment. Code draws its own via .ci-selected. */
   .cm-void.selected .void-block { box-shadow:0 0 0 2px var(--accent); }
   .cm-void.selected table.doc-table { box-shadow:0 0 0 2px var(--accent), var(--shadow-sm); }
+
+  /* Editor text selection: one accent tint for BOTH the native ::selection and
+     .cm-mk-sel, the class block-deco puts on marker widgets (bullet / ordered
+     number / checkbox) whose marker range the selection covers. Native selection
+     cannot paint replaced widgets, which left holes in the marker column during
+     drag-select / select-all; unifying the two colors makes the line read as one
+     continuous highlight (and tracks the theme in dark mode). */
+  .cm-content ::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+  .cm-content .cm-mk-sel { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+  /* bullet/number boxes are 24px + 2px margin-right; the margin can't take a
+     background, so a same-color shadow fills the seam up to the content column */
+  .cm-content .cm-bullet.cm-mk-sel, .cm-content .cm-ol-num.cm-mk-sel {
+    box-shadow: 2px 0 0 color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  /* the glyph/number text inside a painted marker also sits in the DOM selection;
+     without this it gets the ::selection tint ON TOP of the span background and
+     reads darker than the rest of the line */
+  .cm-content .cm-mk-sel::selection, .cm-content .cm-mk-sel ::selection { background: transparent; }
 
   /* ---- block-level void embeds: image / video / audio / file / html ---- */
   .void-image { position:relative; display:inline-block; max-width:100%; border-radius:8px; line-height:0; }
@@ -1498,7 +1530,10 @@
   /* Quick Notes window (desktop, loaded at #quick). A transparent body lets the
      macOS vibrancy blur show through; a translucent panel keeps text readable.
      The top bar is the window drag region; its buttons opt back out. */
-  body.quicknote { background:transparent; }
+  /* --pop-top-inset: editor popups (slash menu) clamp their upward growth below
+     this line, so they never cover the drag bar / macOS traffic lights (bar =
+     26px actions + 2×4px padding). */
+  body.quicknote { background:transparent; --pop-top-inset:38px; }
   /* html carries an opaque bg for the iOS 26 Safari toolbar tint; the vibrancy
      window needs the root transparent again or the blur is walled off. */
   html:has(body.quicknote) { background:transparent; }
@@ -1525,6 +1560,18 @@
   /* The CM6 hover gutter never fits the compact window: quick notes offer no
      block insert/drag handles (Enter / slash commands cover insertion). */
   body.quicknote .cm-gutter-layer { display:none; }
+  /* A native checkbox paints an opaque white box when unchecked, which breaks
+     the window's vibrancy blur. Draw a custom box so the unchecked background
+     stays transparent; checked falls back to the accent fill + checkmark.
+     (Same treatment main gave `.b-todo .marker input`.) */
+  body.quicknote .cm-todo-box {
+    appearance:none; -webkit-appearance:none; box-sizing:border-box;
+    border:1.5px solid color-mix(in srgb, var(--fg-soft) 55%, transparent);
+    border-radius:4px; background:transparent; }
+  body.quicknote .cm-todo-box:checked {
+    border-color:var(--accent);
+    background:var(--accent) center/10px no-repeat
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5L20 7'/%3E%3C/svg%3E"); }
   /* Compact menus inside the quick-note window only (dropdown + slash command
      share .pop/.item/.lico with the main app; scope under body.quicknote so the
      main app keeps its roomier density). */

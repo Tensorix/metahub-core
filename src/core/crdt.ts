@@ -80,7 +80,7 @@ export function grouped<A extends unknown[], R>(
 const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
   databases: {
     table: "databases",
-    cols: new Set(["name", "icon", "created_hlc", "__deleted"]),
+    cols: new Set(["name", "icon", "meta", "created_hlc", "__deleted"]),
   },
   properties: {
     table: "properties",

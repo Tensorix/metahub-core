@@ -214,8 +214,14 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
         const coords = this.view.coordsAtPos(active.slashFrom);
         if (!coords) { el.style.display = "none"; return; }
         const M = 8, GAP = 6;
+        // --pop-top-inset: extra top clearance a surface can demand (the desktop
+        // quick-note window sets it to its drag bar's height so an upward menu
+        // can't cover the bar / macOS traffic lights).
+        const topInset = parseFloat(getComputedStyle(document.body).getPropertyValue("--pop-top-inset")) || 0;
         const spaceBelow = innerHeight - coords.bottom - M;
-        const spaceAbove = coords.top - M;
+        // GAP is part of the upward budget: the menu bottom sits at coords.top -
+        // GAP, so without it the top edge would land GAP px above the inset line.
+        const spaceAbove = coords.top - GAP - Math.max(M, topInset);
         const below = spaceBelow >= 240 || spaceBelow >= spaceAbove;
         const left = Math.max(M, Math.min(coords.left, innerWidth - MENU_WIDTH - M));
         const maxHeight = Math.round(Math.min(below ? spaceBelow : spaceAbove, innerHeight * 0.7));

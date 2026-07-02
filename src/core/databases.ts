@@ -10,12 +10,21 @@ export interface DatabaseRow {
   id: string;
   name: string;
   icon: string | null;
+  /** Generic replicated metadata (one LWW register). Domain-neutral by design:
+   *  consumers own their keys (e.g. the WebUI sidebar's `collapsed` flag). */
+  meta: Record<string, unknown> | null;
   created_hlc: string;
 }
 
-export const DATABASE_COLS = ["id", "name", "icon", "created_hlc"] as const;
+// SQL returns meta as a JSON string; rows are parsed into DatabaseRow after.
+export const DATABASE_COLS = ["id", "name", "icon", "meta", "created_hlc"] as const;
 const _databaseCols: ColumnsOf<DatabaseRow, typeof DATABASE_COLS> = DATABASE_COLS;
 const DATABASE_SELECT = DATABASE_COLS.join(", ");
+
+function rowOut(r: (Omit<DatabaseRow, "meta"> & { meta: string | null }) | null): DatabaseRow | null {
+  if (!r) return null;
+  return { ...r, meta: r.meta === null ? null : JSON.parse(r.meta) };
+}
 
 export const createDatabase = grouped(function createDatabase(
   db: DbDriver,
@@ -31,11 +40,17 @@ export const createDatabase = grouped(function createDatabase(
 export const updateDatabase = grouped(function updateDatabase(
   db: DbDriver,
   id: string,
-  fields: { name?: string; icon?: string | null },
+  fields: { name?: string; icon?: string | null; meta?: Record<string, unknown> | null },
 ): DatabaseRow {
   if (!getDatabase(db, id)) throw new MhError("not_found", `no such database: ${id}`);
   if (fields.name !== undefined) emit(db, "databases", id, "name", fields.name);
   if (fields.icon !== undefined) emit(db, "databases", id, "icon", fields.icon);
+  // Whole-object LWW register: callers merge into the current meta themselves.
+  if (fields.meta !== undefined) {
+    if (fields.meta !== null && (typeof fields.meta !== "object" || Array.isArray(fields.meta)))
+      throw new MhError("invalid_input", "meta must be a JSON object or null");
+    emit(db, "databases", id, "meta", fields.meta);
+  }
   return getDatabase(db, id)!;
 });
 
@@ -59,6 +74,7 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
     name: opts.name ?? src.name,
     icon: (opts.icon ?? src.icon) ?? undefined,
   });
+  if (src.meta !== null) emit(db, "databases", dup.id, "meta", src.meta);
   const propIdMap = new Map<string, string>();
   for (const p of listProperties(db, id)) {
     const config: PropertyConfig | undefined =
@@ -78,15 +94,18 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
 });
 
 export function getDatabase(db: DbDriver, id: string): DatabaseRow | null {
-  return db
-    .query(`SELECT ${DATABASE_SELECT} FROM databases WHERE id = ? AND __deleted = 0`)
-    .get(id) as DatabaseRow | null;
+  return rowOut(
+    db
+      .query(`SELECT ${DATABASE_SELECT} FROM databases WHERE id = ? AND __deleted = 0`)
+      .get(id) as (Omit<DatabaseRow, "meta"> & { meta: string | null }) | null,
+  );
 }
 
 export function listDatabases(db: DbDriver): DatabaseRow[] {
-  return db
+  const rows = db
     .query(`SELECT ${DATABASE_SELECT} FROM databases WHERE __deleted = 0 ORDER BY created_hlc`)
-    .all() as DatabaseRow[];
+    .all() as (Omit<DatabaseRow, "meta"> & { meta: string | null })[];
+  return rows.map((r) => rowOut(r)!);
 }
 
 export const deleteDatabase = grouped(function deleteDatabase(db: DbDriver, id: string): boolean {

@@ -42,6 +42,7 @@ import { voidAt, type VoidKind, type VoidRange } from "../blockmodel";
 import { blockToText, leadingIndent, stripIndent, type Block } from "../../blocks";
 import { ImageBlock, VideoBlock, AudioBlock, FileBlock } from "../../media/media-blocks";
 import { CodeIsland } from "../../media/code-block";
+import { tabEdit, newlineEdit, applyTaEdit } from "../../media/code-edit";
 import { TableBlock, focusCellEnd } from "../../media/table-block";
 import { type CellSel, normRect, moveCellSel, clearRect, selectionToTsv } from "../../cell-select";
 
@@ -250,9 +251,9 @@ function CodeHost({
 
   const doCommit = () => commit(view, host, bRef.current!);
 
-  // Textarea keydown: structural keys the island owns. Enter is deliberately
-  // absent — inside a code block Enter ONLY inserts a newline, never exits;
-  // exit is ArrowDown on the last line or Backspace on an empty block.
+  // Textarea keydown: structural keys the island owns. Inside a code block
+  // Enter ONLY inserts a newline (with auto-indent), never exits; exit is
+  // ArrowDown on the last line or Backspace on an empty block.
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.isComposing) return;
     const ta = e.currentTarget as HTMLTextAreaElement;
@@ -284,10 +285,18 @@ function CodeHost({
     }
     if (mod) return; // copy/paste/select-all etc.: textarea defaults
 
+    // Tab/Enter must never reach CM (Tab would move focus, Enter has block
+    // semantics outside); both edits go through applyTaEdit so the change rides
+    // the island's normal repaint/commit write-back and undo stays in CM.
     if (e.key === "Tab") {
       e.preventDefault();
-      ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end");
-      ta.dispatchEvent(new Event("input", { bubbles: true })); // repaint + commit
+      const ed = tabEdit(ta.value, ta.selectionStart, ta.selectionEnd, e.shiftKey);
+      if (ed) applyTaEdit(ta, ed);
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyTaEdit(ta, newlineEdit(ta.value, ta.selectionStart, ta.selectionEnd));
       return;
     }
     if (e.key === "Escape") {
@@ -548,6 +557,12 @@ interface VoidState {
    *  doc change (anything but our own `input.writeback`) intersects the void —
    *  the widget's eq() then fails and the island rebuilds from document truth. */
   gens: Map<number, number>;
+  /** Some void is covered by a selection range. A range over an atomic widget has
+   *  no faithful DOM representation, so the browser falls back to a collapsed
+   *  caret painted somewhere unrelated (we use the native caret — no
+   *  drawSelection); while a void is selected the accent ring IS the selection
+   *  visual and the stray caret gets hidden (cm-void-selected → caret-color). */
+  anySelected: boolean;
 }
 
 function buildVoids(state: EditorState, gens: Map<number, number>): VoidState {
@@ -555,16 +570,18 @@ function buildVoids(state: EditorState, gens: Map<number, number>): VoidState {
   const sel = state.selection;
   const deco = new RangeSetBuilder<Decoration>();
   const atomic = new RangeSetBuilder<Decoration>();
+  let anySelected = false;
   for (const v of model.voids) {
     const touched = sel.ranges.some((r) => r.from <= v.to && r.to >= v.from);
     if (v.kind === "html" && touched) continue; // reveal raw source (html only)
     const source = state.doc.sliceString(v.from, v.to);
     const selected = sel.ranges.some((r) => r.from <= v.from && r.to >= v.to);
+    if (selected) anySelected = true;
     const gen = gens.get(v.from) ?? 0;
     deco.add(v.from, v.to, Decoration.replace({ block: true, widget: new VoidWidget(v.kind, source, v.block, selected, gen) }));
     if (ATOMIC.has(v.kind)) atomic.add(v.from, v.to, atomicMark);
   }
-  return { deco: deco.finish(), atomic: atomic.finish(), gens };
+  return { deco: deco.finish(), atomic: atomic.finish(), gens, anySelected };
 }
 
 /** Carry gens across a transaction: remap keys through the change set, then bump
@@ -595,5 +612,7 @@ export const voidField = StateField.define<VoidState>({
   provide: (f) => [
     EditorView.decorations.from(f, (v) => v.deco),
     EditorView.atomicRanges.of((view) => view.state.field(f).atomic),
+    // Hide the stray native caret while a void is selected (see VoidState).
+    EditorView.contentAttributes.from(f, (v) => ({ class: v.anySelected ? "cm-void-selected" : "" })),
   ],
 });

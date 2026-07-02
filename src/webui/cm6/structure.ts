@@ -226,6 +226,19 @@ export function backspaceCommand(view: EditorView): boolean {
     return true;
   }
 
+  // Whitespace-only line (the residue after Backspace walks through an indented
+  // marker char by char): the leading whitespace is nesting indent, not ordinary
+  // text — it's never visible as characters — so delete the whole run at once
+  // instead of leaving the caret hovering after invisible spaces.
+  if (line.role === "blank" && sel.head > line.from) {
+    view.dispatch({
+      changes: { from: line.from, to: sel.head, insert: "" },
+      selection: { anchor: line.from },
+      userEvent: "delete",
+    });
+    return true;
+  }
+
   // Backspace at the very start of the line right after a void (table/media/code)
   // selects the whole void — the affordance to delete/move an atomic block the caret
   // can't enter. A second Backspace then deletes the selection (default).
@@ -240,10 +253,9 @@ export function backspaceCommand(view: EditorView): boolean {
 }
 
 /** Indent (delta = +1) or outdent (delta = -1) every line the selection covers, by
- *  one nesting level (2 columns). Tab NEVER inserts literal spaces at the caret:
- *  on a single non-list line it either nests the line under the list item above
- *  (continuation) or does nothing — the old editor never indented prose — but the
- *  key is always consumed so focus can't leak out of the editor. Lines whose
+ *  one nesting level (2 columns). Tab NEVER inserts literal spaces at the caret
+ *  (except revealed void source): it rewrites the line's leading whitespace, and
+ *  the key is always consumed so focus can't leak out of the editor. Lines whose
  *  leading whitespace contains literal tabs are normalized to spaces by COLUMN
  *  width (a `\t` is 4 columns but 1 char — char-based math used to jump levels). */
 function reindent(view: EditorView, delta: 1 | -1): boolean {
@@ -259,29 +271,18 @@ function reindent(view: EditorView, delta: 1 | -1): boolean {
     caretLine.role === "bullet" || caretLine.role === "numbered" || caretLine.role === "todo";
 
   // Empty selection on a non-list line. Revealed void source (html) keeps real
-  // space insertion (code-style indent); a blank line is a no-op; any other block
-  // line (paragraph/heading/quote/divider) indents as a CONTINUATION under the
-  // list context above — capped one level below a list item, at the same level as
-  // a sibling continuation — or not at all when there is no list above.
+  // space insertion (code-style indent); any other block line — EMPTY lines
+  // included (Tab on an empty block indents it; the placeholder shifts along) —
+  // indents freely by one nesting level per press, no list-context requirement
+  // and no cap (the old editor never indented prose, but that was overruled:
+  // Tab must always have a visible effect). The whole leading run is rewritten,
+  // so odd spaces and tabs normalize to the canonical 2-space-per-level form.
   if (delta > 0 && single && !caretIsList) {
     if (caretLine.role === "void") {
       view.dispatch(state.replaceSelection("  "));
       return true;
     }
-    if (caretLine.role === "blank") return true;
-    const model = docModel(state);
-    let prev: LineInfo | undefined;
-    for (let i = caretLine.number - 2; i >= 0; i--) {
-      const li = model.lines[i]!;
-      if (li.role === "blank") continue;
-      prev = li;
-      break;
-    }
-    const prevIsItem = prev && (prev.role === "bullet" || prev.role === "numbered" || prev.role === "todo");
-    const cap = !prev ? 0 : prevIsItem ? prev.level + 1 : prev.level;
-    const target = Math.min(caretLine.level + 1, cap);
-    if (target <= caretLine.level) return true; // no list context / already at cap
-    const ws = " ".repeat(target * 2);
+    const ws = " ".repeat((caretLine.level + 1) * 2);
     const head = state.selection.main.head;
     const grow = ws.length - caretLine.indentChars;
     view.dispatch({
@@ -366,6 +367,36 @@ export function smartHome(view: EditorView): boolean {
   );
   view.dispatch({ selection: next, userEvent: "select" });
   return true;
+}
+
+/** Arrow keys while a void is SELECTED (the CM selection is exactly the void's
+ *  range — the accent-ring state a click produces): move the caret to the line
+ *  after (dir 1: Down/Right) or before (dir -1: Up/Left) the void. The default
+ *  motions strand the caret on the void's atomic edge, where nothing visible can
+ *  render. When the void is the document's first/last block there IS no such
+ *  line, so create one — the caret must land somewhere editable. */
+export function makeVoidExit(dir: 1 | -1) {
+  return function voidExit(view: EditorView): boolean {
+    const sel = view.state.selection.main;
+    if (sel.empty) return false;
+    const v = docModel(view.state).voids.find((v) => v.from === sel.from && v.to === sel.to);
+    if (!v) return false;
+    const doc = view.state.doc;
+    if (dir === 1) {
+      if (v.to >= doc.length)
+        view.dispatch({
+          changes: { from: doc.length, insert: "\n" },
+          selection: { anchor: doc.length + 1 },
+          userEvent: "input",
+        });
+      else view.dispatch({ selection: { anchor: doc.lineAt(v.to + 1).from }, userEvent: "select" });
+    } else {
+      if (v.from <= 0)
+        view.dispatch({ changes: { from: 0, insert: "\n" }, selection: { anchor: 0 }, userEvent: "input" });
+      else view.dispatch({ selection: { anchor: doc.lineAt(v.from - 1).to }, userEvent: "select" });
+    }
+    return true;
+  };
 }
 
 /** ArrowDown with the caret on the last visual row of the line just above a code

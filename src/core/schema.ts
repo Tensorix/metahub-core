@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS databases (
   id          TEXT PRIMARY KEY,
   name        TEXT,
   icon        TEXT,
+  meta        TEXT,               -- JSON: generic replicated metadata (e.g. UI flags), one LWW register
   created_hlc TEXT,
   __deleted   INTEGER NOT NULL DEFAULT 0
 );

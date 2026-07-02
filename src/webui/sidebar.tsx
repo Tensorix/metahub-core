@@ -33,6 +33,24 @@ interface SidebarProps {
 
 let dragId: string | null = null;
 
+// Sidebar section fold state — a purely local UI preference (per device, never
+// replicated). Keys: "db" / "docs" (true = folded) and "dbHidden" (true = the
+// collapsed-databases group is OPEN; it defaults to closed, unlike sections).
+const SEC_KEY = "mh.sb.sections";
+function loadSec(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(SEC_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+/** The replicated per-database fold flag (meta.collapsed): tucks site-facing /
+ *  rarely-browsed tables into the section's tail "已折叠" group. */
+function isDbCollapsed(db: Db): boolean {
+  return db.meta?.collapsed === true;
+}
+
 // For the search shortcut badge only (navigator.platform is deprecated but
 // remains the fallback where userAgentData hasn't shipped).
 const IS_MAC = /mac/i.test(
@@ -65,6 +83,17 @@ export function Sidebar(props: SidebarProps) {
     const next = new Set(expanded);
     next.has(id) ? next.delete(id) : next.add(id);
     setExpanded(next);
+  };
+
+  const [sec, setSec] = useState<Record<string, boolean>>(loadSec);
+  const toggleSec = (key: string) => {
+    const next = { ...sec, [key]: !sec[key] };
+    setSec(next);
+    try {
+      localStorage.setItem(SEC_KEY, JSON.stringify(next));
+    } catch {
+      /* private mode: fold state just doesn't persist */
+    }
   };
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => props.onError(String(e.message)));
@@ -116,6 +145,19 @@ export function Sidebar(props: SidebarProps) {
               });
           }}
         />
+        <MenuItem
+          icon={isDbCollapsed(db) ? "chevronDown" : "chevron"}
+          label={isDbCollapsed(db) ? "移出折叠组" : "折叠此数据库"}
+          onClick={() => {
+            close();
+            // meta is a whole-object register — merge the current value in.
+            guard(async () => {
+              await api.updateDatabase(db.id, {
+                meta: { ...(db.meta ?? {}), collapsed: !isDbCollapsed(db) },
+              });
+            });
+          }}
+        />
         <MenuSep />
         <MenuItem
           icon="trash"
@@ -139,6 +181,22 @@ export function Sidebar(props: SidebarProps) {
       </>
     ));
   };
+
+  const dbItem = (db: Db, dim = false) => (
+    <div
+      key={db.id}
+      class={"navitem" + (dim ? " dim" : "") + (view.kind === "db" && view.id === db.id ? " active" : "")}
+      onClick={() => navigate({ kind: "db", id: db.id })}
+    >
+      <span class="emoji">{db.icon || "🗂️"}</span>
+      <span class="label">{db.name}</span>
+      <span class="acts">
+        <button title="更多" onClick={(e) => dbMenu(e, db)}>
+          <Icon name="dots" cls="ico sm" />
+        </button>
+      </span>
+    </div>
+  );
 
   const docMenu = (e: MouseEvent, d: DocSummary) => {
     e.stopPropagation();
@@ -322,7 +380,10 @@ export function Sidebar(props: SidebarProps) {
       <div class="sb-scroll">
         <div class="sb-section">
           <div class="sb-section-head">
-            <span>数据库</span>
+            <button class="sec-fold" onClick={() => toggleSec("db")} aria-expanded={!sec.db}>
+              <Icon name="chevron" cls={"ico sm chev" + (sec.db ? "" : " open")} />
+              <span>数据库</span>
+            </button>
             <button
               class="add"
               title="新建数据库"
@@ -331,33 +392,39 @@ export function Sidebar(props: SidebarProps) {
               <Icon name="plus" cls="ico sm" />
             </button>
           </div>
-          {props.databases.map((db) => (
-            <div
-              key={db.id}
-              class={"navitem" + (view.kind === "db" && view.id === db.id ? " active" : "")}
-              onClick={() => navigate({ kind: "db", id: db.id })}
-            >
-              <span class="emoji">{db.icon || "🗂️"}</span>
-              <span class="label">{db.name}</span>
-              <span class="acts">
-                <button title="更多" onClick={(e) => dbMenu(e, db)}>
-                  <Icon name="dots" cls="ico sm" />
-                </button>
-              </span>
-            </div>
-          ))}
-          {props.databases.length === 0 && <div class="navitem muted">暂无</div>}
+          {!sec.db && (
+            <>
+              {props.databases.filter((db) => !isDbCollapsed(db)).map((db) => dbItem(db))}
+              {props.databases.length === 0 && <div class="navitem muted">暂无</div>}
+              {props.databases.some(isDbCollapsed) && (
+                <>
+                  <button class="sb-subfold" onClick={() => toggleSec("dbHidden")} aria-expanded={!!sec.dbHidden}>
+                    <Icon name="chevron" cls={"ico sm chev" + (sec.dbHidden ? " open" : "")} />
+                    <span>已折叠 · {props.databases.filter(isDbCollapsed).length}</span>
+                  </button>
+                  {sec.dbHidden && props.databases.filter(isDbCollapsed).map((db) => dbItem(db, true))}
+                </>
+              )}
+            </>
+          )}
         </div>
 
         <div class="sb-section">
           <div class="sb-section-head">
-            <span>文档</span>
+            <button class="sec-fold" onClick={() => toggleSec("docs")} aria-expanded={!sec.docs}>
+              <Icon name="chevron" cls={"ico sm chev" + (sec.docs ? "" : " open")} />
+              <span>文档</span>
+            </button>
             <button class="add" title="新建文档" onClick={() => newDoc(null)}>
               <Icon name="plus" cls="ico sm" />
             </button>
           </div>
-          {renderTree(null)}
-          {props.docs.length === 0 && <div class="navitem muted">暂无</div>}
+          {!sec.docs && (
+            <>
+              {renderTree(null)}
+              {props.docs.length === 0 && <div class="navitem muted">暂无</div>}
+            </>
+          )}
         </div>
       </div>
 

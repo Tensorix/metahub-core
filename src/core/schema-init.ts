@@ -288,10 +288,20 @@ export function migrateStoragePeerUrls(db: DbDriver): void {
   tx();
 }
 
+/**
+ * Add the generic `meta` JSON column to a legacy `databases` table.
+ * Idempotent — guarded by hasColumn; existing rows stay NULL (no metadata).
+ */
+export function migrateDatabases(db: DbDriver): void {
+  if (!hasColumn(db, "databases", "meta"))
+    db.exec("ALTER TABLE databases ADD COLUMN meta TEXT");
+}
+
 /** Bring a freshly opened (or legacy) database to the current schema. */
 export function initSchema(db: DbDriver): void {
   runSchema(db);
   migrateOplog(db);
+  migrateDatabases(db);
   migrateCrdtChangesSeq(db);
   migrateRecords(db);
   migratePeers(db);

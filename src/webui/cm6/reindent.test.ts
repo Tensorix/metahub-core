@@ -1,6 +1,7 @@
-// Tab / Shift-Tab semantics (structure.ts reindent): a blank line is a no-op, a
-// paragraph indents ONLY as a list continuation (old-editor parity: prose never
-// indents on its own), revealed void source keeps real space insertion, and any
+// Tab / Shift-Tab semantics (structure.ts reindent): a blank line is a no-op, any
+// other block line (paragraph/heading/quote) indents FREELY by one level per press
+// (no list-context requirement, no cap — the old editor's prose-never-indents rule
+// was overruled), revealed void source keeps real space insertion, and any
 // leading whitespace containing literal tabs is normalized to spaces by COLUMN
 // width. Headless: reindent only touches view.{composing,state,dispatch}, so a
 // three-member stub stands in for EditorView.
@@ -39,22 +40,25 @@ function mkView(doc: string, anchor: number, head = anchor) {
   } as unknown as EditorView;
 }
 
-test("Tab on a blank line is a no-op (key consumed, nothing inserted)", () => {
+test("Tab on an empty line indents it (empty blocks are indentable)", () => {
   const v = mkView("a\n\nb", 2);
   expect(indentCommand(v)).toBe(true);
-  expect(v.state.doc.toString()).toBe("a\n\nb");
-});
-
-test("Tab on a whitespace-only line is a no-op", () => {
-  const v = mkView("a\n  \nb", 3);
-  expect(indentCommand(v)).toBe(true);
   expect(v.state.doc.toString()).toBe("a\n  \nb");
+  expect(v.state.selection.main.head).toBe(4); // caret after the indent
 });
 
-test("Tab on a paragraph with no list above is a no-op", () => {
+test("Tab on a whitespace-only line adds another level", () => {
+  const v = mkView("a\n  \nb", 4);
+  expect(indentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("a\n    \nb");
+});
+
+test("Tab indents a free-standing paragraph by one level per press", () => {
   const v = mkView("para one\npara two", 10);
   expect(indentCommand(v)).toBe(true);
-  expect(v.state.doc.toString()).toBe("para one\npara two");
+  expect(v.state.doc.toString()).toBe("para one\n  para two");
+  indentCommand(v);
+  expect(v.state.doc.toString()).toBe("para one\n    para two"); // no cap
 });
 
 test("Tab nests a paragraph under the list item above as a continuation", () => {
@@ -65,19 +69,11 @@ test("Tab nests a paragraph under the list item above as a continuation", () => 
   expect(v.state.selection.main.head).toBe(v.state.doc.length); // caret rides along
 });
 
-test("continuation depth caps one level below the item — a second Tab is a no-op", () => {
-  const v = mkView("- item\n  tail", 13);
-  indentCommand(v);
-  expect(v.state.doc.toString()).toBe("- item\n  tail");
-});
-
-test("after a sibling continuation the cap is the sibling's level, not one deeper", () => {
-  const doc = "- item\n  one\ntwo";
+test("indenting rewrites an odd leading space to the level's canonical form", () => {
+  const doc = " para"; // 1 space: level 0 with a visible remainder
   const v = mkView(doc, doc.length);
   indentCommand(v);
-  expect(v.state.doc.toString()).toBe("- item\n  one\n  two");
-  indentCommand(v);
-  expect(v.state.doc.toString()).toBe("- item\n  one\n  two"); // capped at the sibling
+  expect(v.state.doc.toString()).toBe("  para"); // level 1, remainder absorbed
 });
 
 test("a heading nests under a list item like any continuation", () => {

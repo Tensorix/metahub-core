@@ -126,14 +126,14 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
     }
 
     // Blockquote: consecutive quote lines. Strict rule shared with the editor
-    // grammar (webui blocks.ts RE.quote): `>` must be followed by a space/tab —
-    // or be the whole line (an empty quote line, which the editor's serializer
-    // emits) — to count; `>foo` is a paragraph on every surface.
-    if (/^\s*>(?:[ \t]|$)/.test(line)) {
+    // grammar (webui blocks.ts RE.quote): `>` must be followed by a space/tab
+    // to count — the serializer emits `> ` even for an empty quote line, and a
+    // bare `>` or `>foo` is a paragraph on every surface.
+    if (/^\s*>[ \t]/.test(line)) {
       flushPara();
       const q: string[] = [];
-      while (i < lines.length && /^\s*>(?:[ \t]|$)/.test(lines[i]!)) {
-        q.push(lines[i]!.replace(/^\s*>[ \t]?/, ""));
+      while (i < lines.length && /^\s*>[ \t]/.test(lines[i]!)) {
+        q.push(lines[i]!.replace(/^\s*>[ \t]/, ""));
         i++;
       }
       out.push(`<blockquote>${renderMarkdown(q.join("\n"), opts)}</blockquote>`);

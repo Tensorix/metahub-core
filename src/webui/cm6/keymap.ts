@@ -11,6 +11,7 @@ import {
   outdentCommand,
   smartHome,
   makeExitTop,
+  makeVoidExit,
   arrowIntoCodeBelow,
   arrowIntoCodeAbove,
 } from "./structure";
@@ -31,6 +32,14 @@ export function structureKeymap(opts: { onExitTop?: () => void } = {}): Extensio
       // vertical motion would otherwise skip over the whole block.
       { key: "ArrowUp", run: arrowIntoCodeAbove },
       { key: "ArrowDown", run: arrowIntoCodeBelow },
+      // A SELECTED void (accent ring): arrows step off it to the adjacent line —
+      // the default motions strand the caret on the void's atomic edge. These
+      // fire only on a selection exactly covering a void, so they never compete
+      // with the empty-caret bindings above.
+      { key: "ArrowUp", run: makeVoidExit(-1) },
+      { key: "ArrowLeft", run: makeVoidExit(-1) },
+      { key: "ArrowDown", run: makeVoidExit(1) },
+      { key: "ArrowRight", run: makeVoidExit(1) },
       // Duplicate the block at the caret (or the selection's line range). Lives
       // in the rich layer's keymap on purpose: source mode keeps the browser
       // default for Mod-d.

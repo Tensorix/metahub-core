@@ -6,10 +6,10 @@
 // the share page, and on other devices. Each sample pins the agreed
 // classification on all three surfaces so any re-fork fails loudly.
 //
-// Strict semantics (approved): a list marker needs trailing whitespace
-// (`- `/`1. ` empty items included; bare `-`/`1.` are the mid-typing paragraph
-// state), and `>` needs a following space/tab or must be the whole line (the
-// serializer's empty quote line); `>foo` is a paragraph.
+// Strict semantics (approved): EVERY marker needs trailing whitespace — nothing
+// renders as a block until the space commits it. `- `/`1. `/`> ` (empty items,
+// the serializer's own output) are blocks; bare `-`/`1.`/`>` are the mid-typing
+// paragraph state; `-foo`/`1.foo`/`>foo` are paragraphs.
 
 import { test, expect } from "bun:test";
 import { scanDoc } from "./blockmodel";
@@ -21,7 +21,8 @@ type Kind = "quote" | "bullet" | "numbered" | "p";
 const CASES: [line: string, kind: Kind][] = [
   ["> x", "quote"],
   [">x", "p"],
-  [">", "quote"], // empty quote line — the serializer's own output
+  [">", "p"], // bare marker (mid-typing) — paragraph everywhere
+  ["> ", "quote"], // empty quote line: marker + trailing space (serializer form)
   ["- x", "bullet"],
   ["-x", "p"],
   ["-", "p"], // bare marker (mid-typing) — paragraph everywhere

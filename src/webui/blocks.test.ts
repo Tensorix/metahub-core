@@ -219,17 +219,28 @@ test("a bare marker (no trailing space) is a paragraph, not a list item", () => 
   expect(blocksFromBody("-foo")[0]!.type).toBe("p");
 });
 
-test("quote requires a space after '>' (bare '>' is an empty quote line)", () => {
-  // `>foo` is a paragraph on every surface; `> foo` and the serializer's bare
-  // `>` (empty quote line) are quotes. Parse-only change: bodies with `>foo`
-  // are never rewritten, they just render consistently as paragraphs now.
+test("quote requires a space after '>' (bare '>' is a mid-typing paragraph)", () => {
+  // `>foo` and a bare `>` are paragraphs on every surface; `> foo` and the
+  // serializer's `> ` (empty quote line, marker + trailing space) are quotes.
+  // Parse-only change: bodies with `>foo`/`>` are never rewritten, they just
+  // render consistently as paragraphs now.
   expect(textToBlock(">foo")).toMatchObject({ type: "p", content: ">foo" });
   expect(blocksFromBody(">foo")[0]).toMatchObject({ type: "p", content: ">foo" });
-  expect(blocksFromBody(">")[0]).toMatchObject({ type: "quote", content: "" });
-  // an interior empty quote line round-trips through the bare `>` form
-  const body = "> a\n>\n> b";
+  expect(blocksFromBody(">")[0]).toMatchObject({ type: "p", content: ">" });
+  expect(blocksFromBody("> ")[0]).toMatchObject({ type: "quote", content: "" });
+  // an interior empty quote line round-trips through the `> ` form
+  const body = "> a\n> \n> b";
   expect(blocksFromBody(body)).toMatchObject([{ type: "quote", content: "a\n\nb" }]);
   expect(bodyFromBlocks(blocksFromBody(body))).toBe(body);
+});
+
+test("todo requires whitespace after ']' (bare '- [ ]' stays a bullet)", () => {
+  expect(textToBlock("- [ ]")).toMatchObject({ type: "bullet", content: "[ ]" });
+  expect(blocksFromBody("- [ ]")[0]).toMatchObject({ type: "bullet", content: "[ ]" });
+  expect(blocksFromBody("- [ ] ")[0]).toMatchObject({ type: "todo", content: "", checked: false });
+  expect(blocksFromBody("- [x] done")[0]).toMatchObject({ type: "todo", content: "done", checked: true });
+  // an empty todo round-trips through the `- [ ] ` form
+  expect(bodyFromBlocks(blocksFromBody("- [ ] "))).toBe("- [ ] ");
 });
 
 test("empty list items survive at any nesting depth", () => {
