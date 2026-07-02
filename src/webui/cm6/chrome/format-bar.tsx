@@ -150,9 +150,11 @@ export function formatBar(): Extension {
           el,
         );
         // Compact horizontal toolbar (the .pop .item defaults are for vertical menus).
+        // minWidth 0 overrides .pop's min-width:232px — the bar hugs its buttons.
         el.style.display = "flex";
         el.style.gap = "1px";
         el.style.padding = "3px";
+        el.style.minWidth = "0";
         el.style.left = `${Math.max(8, Math.min(coords.left, innerWidth - el.offsetWidth - 8))}px`;
         el.style.top = `${Math.max(8, coords.top - el.offsetHeight - 6)}px`;
         el.style.bottom = "";

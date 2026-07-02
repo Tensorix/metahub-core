@@ -164,13 +164,19 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
     if (ul || ol) {
       flushPara();
       const ordered = !!ol;
-      const items: string[] = [];
-      const re = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*+]\s+/;
+      // Ordered items carry their LITERAL number as `value` — the editor treats
+      // source numbers as authoritative (1,1,7 renders as 1,1,7), so the share
+      // page must not let the browser renumber sequentially.
+      const items: { text: string; value?: number }[] = [];
+      const re = ordered ? /^\s*(\d+)[.)]\s+/ : /^\s*[-*+]\s+/;
       while (i < lines.length && re.test(lines[i]!)) {
-        items.push(lines[i]!.replace(re, ""));
+        const m = lines[i]!.match(re)!;
+        items.push({ text: lines[i]!.replace(re, ""), value: ordered ? Number(m[1]) : undefined });
         i++;
       }
-      const lis = items.map((t) => `<li>${renderInline(t, opts)}</li>`).join("");
+      const lis = items
+        .map((it) => `<li${it.value !== undefined ? ` value="${it.value}"` : ""}>${renderInline(it.text, opts)}</li>`)
+        .join("");
       out.push(ordered ? `<ol>${lis}</ol>` : `<ul>${lis}</ul>`);
       continue;
     }

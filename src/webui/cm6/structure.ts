@@ -11,12 +11,12 @@
 // Line roles/offsets come from `docModel(state)` (blockmodel.ts), so behavior can
 // never drift from what the scanner — and therefore a save/reload — produces.
 
-import { EditorSelection, EditorState, type ChangeSpec, type Extension } from "@codemirror/state";
+import { EditorSelection, type ChangeSpec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { docModel } from "./doc-model";
 import { voidAt, type LineInfo, type DocModel } from "./blockmodel";
 import { focusCodeVoid } from "./voids/void-field";
-import { RE } from "../blocks";
+import { RE, leadingIndent } from "../blocks";
 
 /** The scanned model line covering `pos` (line numbers are 1-based and dense). */
 function lineAt(view: EditorView, pos: number): LineInfo {
@@ -30,111 +30,28 @@ function indentPrefix(line: LineInfo): string {
 }
 
 /** The marker to write for the NEXT item continuing this list line. Numbered
- *  advances from the DISPLAY number (the run-correct value), so Enter writes the
- *  right literal even when this line's own literal has drifted; the renumber
- *  filter then converges the rest of the run. Bullet/todo keep the leading glyph
- *  the user used. */
+ *  advances from this line's LITERAL number — literal numbers are authoritative;
+ *  the editor generates numbers only at creation time (here, Tab, convert) and
+ *  never rewrites existing ones. Bullet/todo keep the leading glyph the user used. */
 function nextMarker(line: LineInfo): string {
   const glyph = line.text[line.indentChars] ?? "-";
-  if (line.role === "numbered") return `${(line.displayNum ?? line.num ?? 1) + 1}. `;
+  if (line.role === "numbered") return `${(line.num ?? 1) + 1}. `;
   if (line.role === "todo") return `${glyph} [ ] `;
   return `${glyph} `;
 }
 
 /** The correct ordered number for a line placed at `newLevel`: continue the previous
- *  sibling's run there (+1), or 1 if it's the first item at that level (a shallower
- *  ancestor or a non-numbered sibling precedes it). Blank lines are transparent. */
+ *  sibling's LITERAL number there (+1), or 1 if it's the first item at that level (a
+ *  shallower ancestor or a non-numbered sibling precedes it). Blanks are transparent. */
 function correctNumberAtLevel(model: DocModel, lineNumber: number, newLevel: number): number {
   for (let i = lineNumber - 2; i >= 0; i--) {
     const li = model.lines[i];
     if (!li || li.role === "blank") continue;
     if (li.level > newLevel) continue; // deeper sub-list — skip over it
     if (li.level < newLevel) return 1; // reached an ancestor → first child at newLevel
-    return li.role === "numbered" ? (li.displayNum ?? li.num ?? 0) + 1 : 1; // same level: continue run or break
+    return li.role === "numbered" ? (li.num ?? 0) + 1 : 1; // same level: continue run or break
   }
   return 1;
-}
-
-// ---- ordered-list literal convergence -------------------------------------
-//
-// Numbering stance: there is no GLOBAL renumber (loading or merging a document
-// never rewrites it), but a LOCAL user edit that touches a list cluster converges
-// that cluster's literal numbers to the computed display numbers in the same
-// transaction — one history event, one undo. This mirrors what the old editor's
-// save-path `normalizeNumbering` achieved and keeps "what you see" equal to
-// "what is stored": without it the literals drift (Enter writes num+1 into a
-// stale run, paste/delete reorder items) and revealing the marker under the
-// caret would show a different number than the widget just displayed.
-
-/** Roles that keep a list cluster going when expanding the damage window. A blank
- *  line is transparent (runs continue across it — see assignDisplayNums), and any
- *  indented line is potentially a child of an item above. */
-function listish(li: LineInfo): boolean {
-  return li.role === "bullet" || li.role === "numbered" || li.role === "todo" || li.level > 0;
-}
-
-/** Transaction filter: after any local user edit, rewrite the literal digits of
- *  numbered lines in the touched list cluster(s) to their displayNum. Excluded:
- *  remote merges / programmatic setDoc (no userEvent), undo/redo (history must
- *  replay verbatim), island write-backs, and IME composition steps. The line
- *  whose marker region holds the selection is left alone — never fight the
- *  caret while the user is hand-editing a number (it converges on the next
- *  edit elsewhere). Idempotent: the appended fixes make literal == displayNum,
- *  so the re-run filter finds nothing and the transaction settles. */
-export function renumberFilter(): Extension {
-  return EditorState.transactionFilter.of((tr) => {
-    if (!tr.docChanged) return tr;
-    if (!(tr.isUserEvent("input") || tr.isUserEvent("delete") || tr.isUserEvent("move"))) return tr;
-    if (tr.isUserEvent("input.writeback") || tr.isUserEvent("input.type.compose")) return tr;
-
-    const model = docModel(tr.state);
-    const lines = model.lines;
-    if (!lines.length) return tr;
-
-    // Damaged line span in the NEW doc.
-    let lo = Infinity;
-    let hi = -1;
-    tr.changes.iterChanges((_fa, _ta, fb, tb) => {
-      lo = Math.min(lo, tr.newDoc.lineAt(Math.min(fb, tr.newDoc.length)).number);
-      hi = Math.max(hi, tr.newDoc.lineAt(Math.min(tb, tr.newDoc.length)).number);
-    });
-    if (hi < 0) return tr;
-
-    // Expand to the enclosing list cluster: walk outward over listish lines,
-    // skipping blanks only when another listish line continues beyond them
-    // (a blank followed by top-level prose ends the cluster).
-    const extend = (n: number, dir: -1 | 1): number => {
-      let edge = n;
-      let probe = n + dir;
-      while (probe >= 1 && probe <= lines.length) {
-        const li = lines[probe - 1]!;
-        if (li.role === "blank") {
-          probe += dir;
-          continue; // transparent — include only if a listish line lies beyond
-        }
-        if (!listish(li)) break;
-        edge = probe;
-        probe += dir;
-      }
-      return edge;
-    };
-    lo = extend(lo, -1);
-    hi = extend(hi, 1);
-
-    const sel = tr.newSelection;
-    const fixes: ChangeSpec[] = [];
-    for (let n = lo; n <= hi; n++) {
-      const li = lines[n - 1]!;
-      if (li.role !== "numbered" || li.num === undefined || li.displayNum === undefined) continue;
-      if (li.num === li.displayNum) continue;
-      // Selection inside this marker region → the user may be editing the number.
-      const caretInMarker = sel.ranges.some((r) => r.from < li.contentFrom && r.to >= li.markerFrom);
-      if (caretInMarker) continue;
-      const digits = li.numChars ?? String(li.num).length;
-      fixes.push({ from: li.markerFrom, to: li.markerFrom + digits, insert: String(li.displayNum) });
-    }
-    return fixes.length ? [tr, { changes: fixes, sequential: true }] : tr;
-  });
 }
 
 /** The change a fence opener typed as a list item's / quote's content expands to
@@ -248,6 +165,14 @@ export function enterCommand(view: EditorView): boolean {
   const isQuote = line.role === "quote";
   if (!isList && !isQuote) return false;
 
+  // Enter with the caret inside the marker (only reachable on numbered lines —
+  // the ordinal is editable text): jump to the content start instead of splitting
+  // the marker in half ("1\n2. . item").
+  if (sel.head < line.contentFrom) {
+    view.dispatch({ selection: { anchor: line.contentFrom }, userEvent: "select" });
+    return true;
+  }
+
   const empty = line.contentFrom >= line.to; // nothing after the marker
   if (empty) {
     // Enter on an empty item exits the construct: strip indent + marker, leaving a
@@ -283,9 +208,12 @@ export function backspaceCommand(view: EditorView): boolean {
   // Caret sits right after a block marker (`# `, `- `, `1. `, `- [ ] `, `> `) →
   // remove indent + marker so the line becomes a plain paragraph. Only when there
   // actually IS a marker (contentFrom past the line start).
+  // NOT numbered: the ordinal is ordinary, user-editable text — Backspace at the
+  // content start walks into it char by char (space → separator → digits; with
+  // the digits gone the line is a paragraph again). Only the constant markers
+  // (bullet glyph, checkbox, `> `, `# `) strip as a unit.
   const marked =
     line.role === "bullet" ||
-    line.role === "numbered" ||
     line.role === "todo" ||
     line.role === "quote" ||
     line.role.startsWith("h");
@@ -312,8 +240,12 @@ export function backspaceCommand(view: EditorView): boolean {
 }
 
 /** Indent (delta = +1) or outdent (delta = -1) every line the selection covers, by
- *  two spaces. With an empty selection on a non-list, non-void indent inserts two
- *  spaces at the caret instead (so Tab never leaks focus out of the editor). */
+ *  one nesting level (2 columns). Tab NEVER inserts literal spaces at the caret:
+ *  on a single non-list line it either nests the line under the list item above
+ *  (continuation) or does nothing — the old editor never indented prose — but the
+ *  key is always consumed so focus can't leak out of the editor. Lines whose
+ *  leading whitespace contains literal tabs are normalized to spaces by COLUMN
+ *  width (a `\t` is 4 columns but 1 char — char-based math used to jump levels). */
 function reindent(view: EditorView, delta: 1 | -1): boolean {
   if (view.composing) return false; // IME: leave the composition session alone
   const { state } = view;
@@ -326,26 +258,54 @@ function reindent(view: EditorView, delta: 1 | -1): boolean {
   const caretIsList =
     caretLine.role === "bullet" || caretLine.role === "numbered" || caretLine.role === "todo";
 
-  // Empty selection on a non-list line: Tab inserts spaces at the caret (code
-  // indent / plain paragraph), rather than shifting the whole line.
-  if (delta > 0 && single && !caretIsList && caretLine.role !== "quote") {
-    view.dispatch(state.replaceSelection("  "));
+  // Empty selection on a non-list line. Revealed void source (html) keeps real
+  // space insertion (code-style indent); a blank line is a no-op; any other block
+  // line (paragraph/heading/quote/divider) indents as a CONTINUATION under the
+  // list context above — capped one level below a list item, at the same level as
+  // a sibling continuation — or not at all when there is no list above.
+  if (delta > 0 && single && !caretIsList) {
+    if (caretLine.role === "void") {
+      view.dispatch(state.replaceSelection("  "));
+      return true;
+    }
+    if (caretLine.role === "blank") return true;
+    const model = docModel(state);
+    let prev: LineInfo | undefined;
+    for (let i = caretLine.number - 2; i >= 0; i--) {
+      const li = model.lines[i]!;
+      if (li.role === "blank") continue;
+      prev = li;
+      break;
+    }
+    const prevIsItem = prev && (prev.role === "bullet" || prev.role === "numbered" || prev.role === "todo");
+    const cap = !prev ? 0 : prevIsItem ? prev.level + 1 : prev.level;
+    const target = Math.min(caretLine.level + 1, cap);
+    if (target <= caretLine.level) return true; // no list context / already at cap
+    const ws = " ".repeat(target * 2);
+    const head = state.selection.main.head;
+    const grow = ws.length - caretLine.indentChars;
+    view.dispatch({
+      changes: { from: caretLine.from, to: caretLine.from + caretLine.indentChars, insert: ws },
+      selection: { anchor: Math.max(caretLine.from + ws.length, head + grow) },
+      userEvent: "input.indent",
+      scrollIntoView: true,
+    });
     return true;
   }
 
   // Re-leveling a single ordered item is the one moment we (re)generate its number:
   // set it to the correct value for its NEW nesting level, in the same transaction.
   // Only this moved item is touched — siblings / user-set / out-of-order numbers are
-  // left alone (no global renumber).
+  // left alone (no global renumber). Column math (line.indent), not char math.
   if (single && caretLine.role === "numbered") {
     const line = caretLine;
-    const newIndentChars = delta > 0 ? line.indentChars + 2 : Math.max(0, line.indentChars - 2);
-    if (newIndentChars === line.indentChars) return true; // already flush-left, can't outdent
-    const newLevel = Math.floor(newIndentChars / 2);
+    const newIndentCols = delta > 0 ? line.indent + 2 : Math.max(0, line.indent - 2);
+    if (newIndentCols === line.indent) return true; // already flush-left, can't outdent
+    const newLevel = Math.floor(newIndentCols / 2);
     const num = correctNumberAtLevel(docModel(state), line.number, newLevel);
     const oldMarker = line.text.slice(line.indentChars, line.contentFrom - line.from); // "3. " / "3) "
     const tail = oldMarker.slice(line.numChars ?? String(line.num ?? 1).length); // ". " / ") "
-    const prefix = " ".repeat(newIndentChars) + num + tail;
+    const prefix = " ".repeat(newIndentCols) + num + tail;
     const head = state.selection.main.head;
     const newHead =
       head >= line.contentFrom ? head + (prefix.length - (line.contentFrom - line.from)) : line.from + prefix.length;
@@ -365,7 +325,12 @@ function reindent(view: EditorView, delta: 1 | -1): boolean {
       if (seen.has(n)) continue;
       seen.add(n);
       const line = state.doc.line(n);
-      if (delta > 0) {
+      const ws = /^[ \t]*/.exec(line.text)![0];
+      if (ws.includes("\t")) {
+        // Normalize a tabbed indent to spaces at the shifted COLUMN width.
+        const cols = Math.max(0, leadingIndent(line.text) + delta * 2);
+        changes.push({ from: line.from, to: line.from + ws.length, insert: " ".repeat(cols) });
+      } else if (delta > 0) {
         changes.push({ from: line.from, insert: "  " });
       } else {
         const strip = /^ {1,2}/.exec(line.text);

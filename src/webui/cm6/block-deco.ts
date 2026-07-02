@@ -5,8 +5,8 @@
 // model: headings get a size class and their `# ` collapses, quotes get a rule and
 // their `> ` collapses, dividers render as a horizontal rule, list lines get their
 // leading whitespace hidden + a per-level padding indent, bullets show a glyph,
-// ordered items show their COMPUTED display number (assignDisplayNums; the
-// source keeps its literal numbers), and todos show a clickable checkbox.
+// ordered items show their LITERAL number (the source is authoritative; the
+// editor never renumbers existing items), and todos show a clickable checkbox.
 // Everything is CURSOR-AWARE: when the caret is on a line its
 // raw markers reappear so you edit real text, exactly like reveal-to-edit for
 // voids.
@@ -117,7 +117,7 @@ class TodoWidget extends WidgetType {
 
 class OlNumWidget extends WidgetType {
   constructor(
-    readonly num: number,
+    readonly num: number, // the LITERAL source number — display always equals source
     readonly sep: string, // the literal "." or ")" from the source marker
   ) {
     super();
@@ -246,23 +246,29 @@ function buildLine(
     if (info.indentChars > 0) out.push(Decoration.replace({}).range(info.from, info.from + info.indentChars));
 
     if (role === "numbered") {
-      // The number ALWAYS shows as scanDoc's computed displayNum (per-level run
-      // counters; the run head's literal is the start) — a fixed marker exactly
-      // like the bullet glyph and the todo checkbox below, never revealed as
-      // source text. Revealing the literal was tried and rejected: any selection
-      // touching the marker (clicking the number, dragging across lines,
-      // select-all) flipped a drifted literal into view — "the data changes when
-      // selected". Source literals converge to the display via the renumber
-      // filter (structure.ts) on local edits; a run's start is edited in source
-      // mode (the old editor had no rich-mode affordance for it either).
+      // The number shows the LITERAL source value — literal numbers are
+      // authoritative and the editor never renumbers existing items (new numbers
+      // are generated only on creation: Enter continuation, slash, Tab, convert).
+      // Display == source, so revealing can never flip a value. Reveal is
+      // caret-driven and NARROW: only an empty caret inside the marker region
+      // (Backspace/ArrowLeft past contentFrom) shows the raw text for editing;
+      // drag-select/select-all keep the widget — the value is identical either
+      // way, this just avoids style churn.
       if (info.contentFrom > info.markerFrom) {
-        const marker = info.text.slice(info.markerFrom - info.from, info.contentFrom - info.from);
-        const sep = marker.includes(")") ? ")" : ".";
-        out.push(
-          Decoration.replace({
-            widget: new OlNumWidget(info.displayNum ?? info.num ?? 1, sep),
-          }).range(info.markerFrom, info.contentFrom),
-        );
+        const sel = view.state.selection.main;
+        const caretInMarker =
+          focused && sel0 && sel.head >= info.markerFrom && sel.head < info.contentFrom;
+        if (caretInMarker) {
+          out.push(Decoration.mark({ class: "cm-md-mark" }).range(info.markerFrom, info.contentFrom));
+        } else {
+          const marker = info.text.slice(info.markerFrom - info.from, info.contentFrom - info.from);
+          const sep = marker.includes(")") ? ")" : ".";
+          out.push(
+            Decoration.replace({
+              widget: new OlNumWidget(info.num ?? 1, sep),
+            }).range(info.markerFrom, info.contentFrom),
+          );
+        }
       }
     } else if (role === "bullet") {
       // Bullet glyph ALWAYS shows (even with the caret on the line) — it's a fixed

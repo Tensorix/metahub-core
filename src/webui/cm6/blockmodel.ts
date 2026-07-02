@@ -85,11 +85,10 @@ export interface LineInfo {
   /** Offset where the line's editable content begins, after any marker
    *  (`# `, `- `, `1. `, `- [ ] `, `> `). The Smart-Home / marker-hide target. */
   contentFrom: number;
-  /** numbered: the literal number the user typed (kept as editable text). */
+  /** numbered: the literal number the user typed. Authoritative — it is what
+   *  displays, what the user edits as plain text, and what saves; the editor
+   *  generates numbers only when CREATING items (Enter/Tab/convert). */
   num?: number;
-  /** numbered: the DISPLAY number (per-level run counter, see assignDisplayNums).
-   *  Presentation only — the source keeps its literal, possibly gapped, numbers. */
-  displayNum?: number;
   /** numbered: length of the literal digit run (for rewriting just the digits on a
    *  Tab-renumber; not `String(num).length`, so `01.` / `007.` map correctly). */
   numChars?: number;
@@ -376,7 +375,6 @@ export function scanDoc(src: string): DocModel {
   const ok = region.lines.length === arr.length;
   const lines = ok ? region.lines : fallbackLines(arr, froms);
   const voids = ok ? region.voids : [];
-  assignDisplayNums(lines);
   return { lines, voids, headings: extractHeadings(lines) };
 }
 
@@ -554,10 +552,9 @@ export function patchScan(prev: DocModel, edits: Edit[], src: LineSource): DocMo
   le = region.end;
   const leA = le - lineDelta; // last damaged line in OLD numbering
 
-  // 6) Splice lines: prefix reused by reference (offsets/numbering untouched;
-  //    assignDisplayNums rewrites their displayNum with identical values —
-  //    the forward pass is prefix-deterministic), suffix shallow-copied with
-  //    every absolute offset shifted (from/to/markerFrom/contentFrom).
+  // 6) Splice lines: prefix reused by reference (offsets/numbering untouched),
+  //    suffix shallow-copied with every absolute offset shifted
+  //    (from/to/markerFrom/contentFrom).
   const lines: LineInfo[] = prevLines.slice(0, ls - 1);
   for (const l of region.lines) lines.push(l);
   for (let k = leA; k < prevCount; k++) {
@@ -595,9 +592,7 @@ export function patchScan(prev: DocModel, edits: Edit[], src: LineSource): DocMo
     }
   }
 
-  // Global cheap passes: display numbers are run/context dependent (a window
-  // edit can renumber the whole suffix) and headings feed the === contract.
-  assignDisplayNums(lines);
+  // Global cheap pass: headings feed the === contract.
   const headings = extractHeadings(lines);
   return {
     lines,
@@ -606,49 +601,6 @@ export function patchScan(prev: DocModel, edits: Edit[], src: LineSource): DocMo
   };
 }
 
-/**
- * Assign ordered-list DISPLAY numbers (`LineInfo.displayNum`) in one forward
- * pass. Presentation only: the source keeps its literal — possibly gapped —
- * numbers and is NEVER globally rewritten. Per nesting level, a "run" of
- * numbered lines counts up from its FIRST item's literal number (start
- * semantics), mirroring what the save path persists (blocks.ts
- * normalizeNumbering keeps only the run head's `start`; computeListNumbers
- * re-sequences the rest), so display always equals the next save's numbers.
- *
- * Run boundaries, per line role at level L (= floor(indent / 2), computed for
- * every line from its indentation):
- *   • "blank" — transparent: never breaks any run (matches the serializer,
- *     where a blank spacer between items keeps the run going);
- *   • "numbered" — continues/starts the level-L run; ends runs DEEPER than L
- *     (levels > L: their parent item's subtree is over) but leaves L and
- *     shallower alive;
- *   • anything else (bullet/todo/quote/heading/paragraph/divider/void) — a
- *     same-level sibling or a new block: breaks runs at its own level and
- *     deeper (>= L), but an INDENTED line is a child of some outer item, so
- *     runs shallower than L survive it (e.g. a continuation paragraph under
- *     item 2 doesn't reset the top-level count).
- */
-export function assignDisplayNums(lines: LineInfo[]): void {
-  // counters[level] = the live numbered run at that nesting level (holes ok).
-  const counters: ({ n: number } | undefined)[] = [];
-  for (const line of lines) {
-    if (line.role === "blank") continue;
-    const level = line.level;
-    if (line.role === "numbered") {
-      if (counters.length > level + 1) counters.length = level + 1;
-      const run = counters[level];
-      if (run) {
-        line.displayNum = ++run.n;
-      } else {
-        const start = Math.max(1, line.num ?? 1); // run head keeps its literal start
-        counters[level] = { n: start };
-        line.displayNum = start;
-      }
-    } else if (counters.length > level) {
-      counters.length = level;
-    }
-  }
-}
 
 /** Last-resort per-line classification with no void detection (see scanDoc tail). */
 function fallbackLines(arr: string[], froms: number[]): LineInfo[] {

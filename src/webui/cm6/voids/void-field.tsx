@@ -438,7 +438,9 @@ class VoidWidget extends WidgetType {
 
   override toDOM(view: EditorView): HTMLElement {
     const host = document.createElement("div");
-    host.className = "cm-void cm-void-" + this.kind;
+    // .selected drives the whole-block accent ring (styles.css); eq() compares
+    // `selected`, so a selection change rebuilds the widget with the right class.
+    host.className = "cm-void cm-void-" + this.kind + (this.selected ? " selected" : "");
     host.contentEditable = "false";
     if (MEDIA.has(this.kind)) {
       // Click-to-select: ignoreEvent() leaves interior events to us, so without

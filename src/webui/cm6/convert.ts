@@ -55,15 +55,16 @@ function prefixEnd(line: LineInfo): number {
 }
 
 /** Starting number for the FIRST converted line at nesting level `level`:
- *  continue from the preceding same-level numbered sibling, else 1. Mirrors
- *  `assignDisplayNums` run semantics — blanks and deeper lines are transparent,
- *  any same-or-shallower non-numbered line breaks the run. */
+ *  continue from the preceding same-level numbered sibling's LITERAL number,
+ *  else 1 — creation-time generation only; existing numbers are never rewritten.
+ *  Blanks and deeper lines are transparent, any same-or-shallower non-numbered
+ *  line breaks the run. */
 function numberedStart(lines: LineInfo[], lineNo: number, level: number): number {
   for (let i = lineNo - 2; i >= 0; i--) {
     const l = lines[i]!;
     if (l.role === "blank") continue;
     if (l.level > level) continue; // a child of some outer item — transparent
-    if (l.role === "numbered" && l.level === level) return (l.displayNum ?? l.num ?? 1) + 1;
+    if (l.role === "numbered" && l.level === level) return (l.num ?? 1) + 1;
     return 1; // same-or-shallower non-sibling breaks the run
   }
   return 1;

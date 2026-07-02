@@ -17,7 +17,7 @@ import { voidField } from "./voids/void-field";
 import { blockDecorations } from "./block-deco";
 import { inlineDecorations } from "./inline";
 import { structureKeymap } from "./keymap";
-import { renumberFilter } from "./structure";
+import { markerAtomsField } from "./marker-atoms";
 import { editorTheme } from "./editor-theme";
 import { shortcutFromInput, isHeadingType } from "../blocks";
 
@@ -100,9 +100,10 @@ export function richLayer(opts: EditorOpts): Extension {
     inlineDecorations,
     EditorView.inputHandler.of(todoShortcut),
     EditorView.inputHandler.of(nestShortcut),
-    // Local edits converge ordered-list literals to the displayed numbers
-    // (rich mode only — source mode edits raw Markdown untouched).
-    renumberFilter(),
+    // Constant markers (bullet glyph, todo checkbox) are atomic — the caret
+    // skips their hidden text. Numbered markers are NOT: the ordinal is
+    // ordinary editable text (literal numbers are authoritative).
+    markerAtomsField,
     structureKeymap(opts),
   ];
 }
