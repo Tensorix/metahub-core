@@ -72,10 +72,6 @@ function scrollToCurrent(view: EditorView) {
   if (m) view.dispatch({ effects: EditorView.scrollIntoView(m[0], { y: "center" }) });
 }
 
-// Compact toolbar buttons: the `.pop .item` defaults (width:100%) are for vertical
-// menus and would stretch each button across the bar.
-const FIND_BTN = { width: "28px", minWidth: "28px", justifyContent: "center", padding: "5px 0" };
-
 /** Render-only bar: mounts/unmounts on field presence, re-renders when the field
  *  value changes. Never dispatches from update() — handlers do. */
 const findBar = ViewPlugin.fromClass(
@@ -100,7 +96,8 @@ const findBar = ViewPlugin.fromClass(
       const firstDraw = !this.bar;
       if (!this.bar) {
         const el = document.createElement("div");
-        el.className = "cm-find-bar pop";
+        el.className = "find-bar";
+        el.setAttribute("role", "search");
         el.addEventListener("mousedown", (e) => { if ((e.target as HTMLElement).tagName !== "INPUT") e.preventDefault(); });
         document.body.appendChild(el);
         this.bar = el;
@@ -115,9 +112,10 @@ const findBar = ViewPlugin.fromClass(
       const close = () => { view.dispatch({ effects: closeFind.of(null) }); view.focus(); };
       render(
         <>
+          <Icon name="search" cls="ico sm find-ico" />
           <input
-            class="cm-find-input"
-            placeholder="查找…"
+            type="text"
+            placeholder="在文档中查找"
             value={s.term}
             onInput={(e) => {
               view.dispatch({ effects: setFind.of({ term: (e.currentTarget as HTMLInputElement).value }) });
@@ -128,12 +126,18 @@ const findBar = ViewPlugin.fromClass(
               else if (e.key === "Escape") { e.preventDefault(); close(); }
             }}
           />
-          <span class="cm-find-count">{s.matches.length ? `${s.idx + 1}/${s.matches.length}` : "0/0"}</span>
-          <button class={"item" + (s.opts.caseSensitive ? " on" : "")} style={FIND_BTN} title="区分大小写" onClick={() => toggle("caseSensitive")}>Aa</button>
-          <button class={"item" + (s.opts.wholeWord ? " on" : "")} style={FIND_BTN} title="全词匹配" onClick={() => toggle("wholeWord")}>W</button>
-          <button class="item" style={FIND_BTN} title="上一个" onClick={() => step(-1)}><Icon name="chevronUp" cls="ico sm" /></button>
-          <button class="item" style={FIND_BTN} title="下一个" onClick={() => step(1)}><Icon name="chevronDown" cls="ico sm" /></button>
-          <button class="item" style={FIND_BTN} title="关闭" onClick={close}><Icon name="x" cls="ico sm" /></button>
+          <span class="find-count">{s.matches.length ? `${s.idx + 1} / ${s.matches.length}` : (s.term ? "无结果" : "")}</span>
+          <button class={"find-opt" + (s.opts.caseSensitive ? " on" : "")} title="区分大小写" onClick={() => toggle("caseSensitive")}>Aa</button>
+          <button class={"find-opt" + (s.opts.wholeWord ? " on" : "")} title="全词匹配" onClick={() => toggle("wholeWord")}>全词</button>
+          <button class="find-nav" title="上一个 (Shift+Enter)" disabled={!s.matches.length} onClick={() => step(-1)}>
+            <Icon name="chevronDown" cls="ico sm find-prev" />
+          </button>
+          <button class="find-nav" title="下一个 (Enter)" disabled={!s.matches.length} onClick={() => step(1)}>
+            <Icon name="chevronDown" cls="ico sm" />
+          </button>
+          <button class="find-nav find-close" title="关闭 (Esc)" onClick={close}>
+            <Icon name="x" cls="ico sm" />
+          </button>
         </>,
         this.bar,
       );
@@ -153,7 +157,7 @@ export function find(): Extension {
         key: "Mod-f",
         run: (view) => {
           view.dispatch({ effects: openFind.of(null) });
-          requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".cm-find-bar input")?.focus());
+          requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".find-bar input")?.focus());
           return true;
         },
       },

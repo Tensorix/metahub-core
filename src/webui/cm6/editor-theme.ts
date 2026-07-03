@@ -205,18 +205,11 @@ export const editorTheme = EditorView.baseTheme({
   ".cm-md-mark": { color: "var(--muted)" },
 
   // Find highlights — same accent tones the old ::highlight(mh-find-*) rules used.
+  // The find BAR itself mounts on document.body — outside the editor root, so
+  // EditorView.theme rules can never reach it. Its styles live in styles.css
+  // (.find-bar family, shared design with main). Don't add bar rules here.
   ".cm-find": { background: "color-mix(in srgb, var(--accent) 26%, transparent)", borderRadius: "2px" },
   ".cm-find-cur": { background: "var(--accent)", color: "var(--accent-fg)" },
-  ".cm-find-bar input": {
-    border: "1px solid var(--line)",
-    borderRadius: "6px",
-    padding: "3px 8px",
-    background: "var(--bg)",
-    color: "var(--fg)",
-    outline: "none",
-    minWidth: "160px",
-  },
-  ".cm-find-count": { color: "var(--muted)", fontSize: "12px", minWidth: "38px", textAlign: "center" },
 
   // Hover gutter buttons.
   ".cm-g-btn": {
