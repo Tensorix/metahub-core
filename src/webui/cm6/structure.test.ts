@@ -144,3 +144,58 @@ describe("fenceContinuation round-trip", () => {
     expect(blocks[0]!.lang).toBe("js");
   });
 });
+
+// ---- enterDocTop: title → body entry point ----
+// Stub view (same pattern as click-below.test.ts): enterDocTop only touches
+// view.state / view.dispatch / view.focus.
+import { EditorState } from "@codemirror/state";
+import type { EditorView } from "@codemirror/view";
+import { docModelField } from "./doc-model";
+import { enterDocTop } from "./structure";
+
+function stubView(doc: string) {
+  let state = EditorState.create({ doc, extensions: [docModelField] });
+  const view = {
+    get state() { return state; },
+    dispatch(spec: Parameters<EditorView["dispatch"]>[0]) { state = state.update(spec as never).state; },
+    focus() {},
+  } as unknown as EditorView;
+  return { view, current: () => state };
+}
+
+describe("enterDocTop", () => {
+  test("prose first block: caret to 0, doc untouched", () => {
+    const { view, current } = stubView("hello\nworld");
+    enterDocTop(view);
+    expect(current().doc.toString()).toBe("hello\nworld");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("empty doc: caret to 0, no change", () => {
+    const { view, current } = stubView("");
+    enterDocTop(view);
+    expect(current().doc.toString()).toBe("");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("leading image void: a fresh line opens above, void source intact", () => {
+    const { view, current } = stubView("![a](blob:x.png)\ntail");
+    enterDocTop(view);
+    expect(current().doc.toString()).toBe("\n![a](blob:x.png)\ntail");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("leading code fence: same fresh-line entry, fence not corrupted", () => {
+    const { view, current } = stubView("```js\nx()\n```");
+    enterDocTop(view);
+    expect(current().doc.toString()).toBe("\n```js\nx()\n```");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("leading table: fresh line above the header row", () => {
+    const { view, current } = stubView("| a |\n| --- |\n| 1 |");
+    enterDocTop(view);
+    expect(current().doc.toString()).toBe("\n| a |\n| --- |\n| 1 |");
+    expect(current().selection.main.head).toBe(0);
+  });
+});

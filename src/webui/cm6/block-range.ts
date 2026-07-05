@@ -7,6 +7,7 @@
 
 import type { EditorView } from "@codemirror/view";
 import { docModel } from "./doc-model";
+import { isListRole } from "./blockmodel";
 
 export interface BlockRange {
   fromLine: number;
@@ -64,12 +65,14 @@ export function duplicateBlock(view: EditorView): boolean {
 
 /** The block at the caret extended to its subtree: for a list item, following
  *  lines with deeper indentation (its children in the flat model); blanks between
- *  them are transparent but a trailing blank is not included. */
-function blockSpanWithChildren(view: EditorView, n: number): BlockRange {
+ *  them are transparent but a trailing blank is not included. Used by Mod-a
+ *  staged select AND by the gutter's move/duplicate/delete — a parent list item
+ *  travels with its children (the old editor's block-tree semantics). */
+export function blockSpanWithChildren(view: EditorView, n: number): BlockRange {
   const base = blockAt(view, n);
   const lines = docModel(view.state).lines;
   const info = lines[base.fromLine - 1];
-  if (!info || !(info.role === "bullet" || info.role === "numbered" || info.role === "todo")) return base;
+  if (!info || !isListRole(info.role)) return base;
   let toLine = base.toLine;
   for (let i = base.toLine; i < lines.length; i++) {
     const l = lines[i]!;

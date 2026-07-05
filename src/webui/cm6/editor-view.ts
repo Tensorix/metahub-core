@@ -13,7 +13,8 @@ import { EditorView, dropCursor, keymap } from "@codemirror/view";
 import { Compartment, type Extension } from "@codemirror/state";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { docModelField, docModel } from "./doc-model";
-import { voidField } from "./voids/void-field";
+import { isListRole } from "./blockmodel";
+import { voidField, clampVoidSelection } from "./voids/void-field";
 import { blockDecorations } from "./block-deco";
 import { inlineDecorations } from "./inline";
 import { structureKeymap } from "./keymap";
@@ -31,12 +32,14 @@ function nestShortcut(view: EditorView, from: number, to: number, insert: string
   if (insert !== " " || from !== to || view.composing) return false;
   const line = docModel(view.state).lines[view.state.doc.lineAt(from).number - 1];
   if (!line) return false;
-  const isList = line.role === "bullet" || line.role === "numbered" || line.role === "todo";
+  const isList = isListRole(line.role);
   if (!isList || from < line.contentFrom) return false;
   const before = view.state.sliceDoc(line.contentFrom, from);
   const sc = shortcutFromInput(before + " ", " ");
   if (!sc || (sc.type !== "quote" && !isHeadingType(sc.type))) return false;
-  const childIndent = " ".repeat(line.indentChars + 2); // one nesting level = 2 spaces
+  // COLUMNS, not chars (a tab counts 4 columns): same rule as fenceContinuation,
+  // otherwise a tab-indented item nests its child SHALLOWER than itself.
+  const childIndent = " ".repeat(line.indent + 2);
   const marker = before + " ";
   const rest = view.state.sliceDoc(from, line.to);
   view.dispatch({
@@ -54,11 +57,26 @@ export const richCompartment = new Compartment();
 
 /** Pixels of viewport top the fixed .topbar covers, plus breathing room — CM must
  *  scroll targets below it (TOC jumps, find matches, typing near the top). Replaces
- *  the old `.block { scroll-margin-top:60px }`. Measured live so it tracks the
- *  responsive topbar height + safe-area insets. */
+ *  the old `.block { scroll-margin-top:60px }`.
+ *
+ *  CACHED: CM consults scrollMargins during every measure cycle (each scrolled
+ *  frame), and a document-wide querySelector + getBoundingClientRect per frame
+ *  is pure waste for a value that only changes with layout. The cache
+ *  invalidates on window resize / orientation change (what actually moves the
+ *  responsive topbar height + safe-area insets) and re-resolves the element
+ *  lazily so late-mounted topbars are picked up. */
+let topbarCache = -1;
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  const invalidate = () => { topbarCache = -1; };
+  window.addEventListener("resize", invalidate);
+  window.addEventListener("orientationchange", invalidate);
+}
 function topbarClearance(): number {
   if (typeof document === "undefined") return 60;
-  return (document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 52) + 8;
+  if (topbarCache < 0) {
+    topbarCache = (document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 52) + 8;
+  }
+  return topbarCache;
 }
 
 export interface EditorOpts {
@@ -96,6 +114,7 @@ function todoShortcut(view: EditorView, from: number, to: number, insert: string
 export function richLayer(opts: EditorOpts): Extension {
   return [
     voidField,
+    clampVoidSelection, // dispatched selections must respect atomic voids too
     blockDecorations,
     inlineDecorations,
     EditorView.inputHandler.of(todoShortcut),
@@ -116,6 +135,16 @@ export function baseExtensions(opts: EditorOpts): Extension[] {
     history(),
     dropCursor(),
     EditorView.lineWrapping,
+    // CM6's contentDOM defaults disable the browser's text niceties
+    // (spellcheck="false", autocorrect/autocapitalize "off") — right for source
+    // code, wrong for a prose editor. The old contentEditable blocks had them
+    // all on by default; restore them (desktop red squiggles, iOS autocorrect
+    // and sentence capitalization).
+    EditorView.contentAttributes.of({
+      spellcheck: "true",
+      autocorrect: "on",
+      autocapitalize: "sentences",
+    }),
     EditorView.scrollMargins.of(() => ({ top: topbarClearance(), bottom: 8 })),
     editorTheme,
     richCompartment.of(richLayer(opts)),

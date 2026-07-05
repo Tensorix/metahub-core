@@ -20,6 +20,8 @@ import { MenuLabel } from "../../ui.tsx";
 import { BLOCK_MENU, type BlockType } from "../../blocks.ts";
 import { docModel } from "../doc-model";
 import type { LineInfo, LineRole } from "../blockmodel";
+import { focusNewCodeVoid } from "../structure";
+import { imeGhost } from "../../keys.ts";
 import { deferCoords } from "../defer";
 
 export interface SlashDeps {
@@ -146,6 +148,11 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
 
       handleKey(e: KeyboardEvent) {
         if (!this.active) return;
+        // IME composition keys (candidate confirm/navigation) are NOT menu
+        // input: without this guard, a pinyin user pressing Enter to commit a
+        // candidate inserts a block instead of their text (the old editor had
+        // the same guard at the top of its onKeyDown).
+        if (imeGhost(e)) return;
         if (e.key === "Escape") { this.close(); e.preventDefault(); e.stopPropagation(); return; }
         const matches = matchesFor(this.active.query);
         if (!matches.length) return;
@@ -194,6 +201,11 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
         }
         this.view.dispatch({ changes: { from: changeFrom, to: line.to, insert }, selection: { anchor: caret }, scrollIntoView: true });
         this.view.focus();
+        // The inserted fence is an atomic void: the dispatched caret sits inside
+        // the replaced range where nothing renders. Hand focus to the island's
+        // textarea as soon as its widget mounts (same handoff as enterCommand's
+        // fence paths). html is reveal-to-edit (non-atomic) — no handoff needed.
+        if (type === "code") focusNewCodeVoid(this.view, caret);
       }
 
       renderMenu() {

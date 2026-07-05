@@ -14,7 +14,7 @@ import { openMenu, MenuItem, MenuLabel, MenuSep } from "../../ui.tsx";
 import { BLOCK_MENU } from "../../blocks.ts";
 import { docModel } from "../doc-model";
 import { deferCoords } from "../defer";
-import { blockAt, rangeForSelection, lineSpanRange, duplicateRange, type BlockRange as Range } from "../block-range";
+import { blockAt, blockSpanWithChildren, rangeForSelection, lineSpanRange, duplicateRange, type BlockRange as Range } from "../block-range";
 import { turnInto, type TargetType } from "../convert";
 
 // "转换为" targets, in menu order; labels/icons come from the shared BLOCK_MENU
@@ -115,6 +115,10 @@ class GutterPlugin implements PluginValue {
     const multi = !!sel && sel.fromLine <= range.fromLine && sel.toLine >= range.toLine && sel.toLine > sel.fromLine;
     const target = multi ? lineSpanRange(view, sel!.fromLine, sel!.toLine) : range;
     const count = target.toLine - target.fromLine + 1;
+    // 复制/删除 act on the block's whole subtree (a parent list item carries its
+    // indented children — the old block-tree semantics); 转换为 stays on the
+    // single line, converting children along with the parent would be wrong.
+    const moveTarget = multi ? target : blockSpanWithChildren(view, range.fromLine);
     // A media/table void has no text to convert (lossy) → hide "转换为" for it.
     // A fenced code/html void can still unwrap to prose → offer just 正文.
     const v = model.voids.find((v) => range.fromLine >= v.fromLine && range.fromLine <= v.toLine);
@@ -139,8 +143,8 @@ class GutterPlugin implements PluginValue {
             <MenuSep />
           </>
         )}
-        <MenuItem icon="copy" label={multi ? "复制块组" : "复制块"} onClick={() => { duplicateRange(view, target); close(); }} />
-        <MenuItem icon="trash" label={multi ? "删除块组" : "删除块"} danger onClick={() => { this.remove(target); close(); }} />
+        <MenuItem icon="copy" label={multi ? "复制块组" : "复制块"} onClick={() => { duplicateRange(view, moveTarget); close(); }} />
+        <MenuItem icon="trash" label={multi ? "删除块组" : "删除块"} danger onClick={() => { this.remove(moveTarget); close(); }} />
       </>
     ));
   }
@@ -235,7 +239,8 @@ class GutterPlugin implements PluginValue {
         <button
           class="cm-g-btn cm-g-grip"
           title="拖动重排 / 点击菜单"
-          onPointerDown={(e) => this.startDrag(e as PointerEvent, range)}
+          // Drag moves the whole subtree (children travel with a parent item).
+          onPointerDown={(e) => this.startDrag(e as PointerEvent, blockSpanWithChildren(this.view, this.line))}
           onClick={(e) => this.menu(e as MouseEvent, range)}
         >
           <Icon name="grip" cls="ico sm" />

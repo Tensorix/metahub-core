@@ -2,10 +2,27 @@
 // string ops (no DOM, no node:* — usable both server-side in serveShare and in
 // the static Cloudflare-Pages viewer that decrypts an s3 bundle in the browser).
 //
-// This is a deliberately small block renderer covering the document model
-// (headings, lists, code fences, quotes, rules, pipe tables, paragraphs with
-// inline bold/italic/code/link/image). It is NOT a full CommonMark engine — the
-// editor's own block model is the source of truth; this just presents it.
+// This is a deliberately small block renderer covering the document model — it
+// is NOT a CommonMark engine. Every classification goes through the shared
+// grammar (core/md/grammar.ts) and the shared inline tokenizer (core/md/
+// inline.ts), the same predicates the editor scan and the save parser use, so
+// the same bytes can never render as different blocks on different surfaces
+// (pinned by webui/cm6/grammar-parity.test.ts). Legacy marker forms heal at
+// this read boundary too (core/md/heal.ts).
+
+import {
+  RE,
+  HTML_FENCE,
+  cleanLang,
+  isFenceClose,
+  looksLikeTableAt,
+  matchListLine,
+  matchQuoteLine,
+  splitTableRow,
+  stripIndent,
+} from "../md/grammar.ts";
+import { tokenizeInline } from "../md/inline.ts";
+import { healLegacyMarkdown } from "../md/heal.ts";
 
 export function escapeHtml(s: string): string {
   return s
@@ -20,31 +37,40 @@ export interface RenderOpts {
   rewriteBlob?: (url: string) => string;
 }
 
-// Private-use sentinels wrapping a protected code-span index (mirrors markdown.tsx).
-const A = String.fromCharCode(0xe000);
-const B = String.fromCharCode(0xe001);
-const RESTORE = new RegExp(A + "(\\d+)" + B, "g");
-
-/** Inline Markdown → HTML: `code`, **bold**, *italic*, [link](url), ![img](url). */
+/** Inline Markdown → HTML: a pure function of the shared tokenizer. Gaps are
+ *  escaped text; each token maps to one tag shape (the parity test's oracle
+ *  mirrors this table exactly). */
 export function renderInline(src: string, opts: RenderOpts = {}): string {
-  const codes: string[] = [];
-  let s = src.replace(/`([^`]+)`/g, (_m, c) => {
-    codes.push(c);
-    return A + (codes.length - 1) + B;
-  });
-  s = escapeHtml(s);
-  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, alt, u) => {
-    const url = rewrite(String(u), opts).replace(/"/g, "&quot;");
-    return `<img src="${url}" alt="${escapeHtml(String(alt))}" loading="lazy">`;
-  });
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, t, u) => {
-    const url = rewrite(String(u), opts).replace(/"/g, "&quot;");
-    return `<a href="${url}" target="_blank" rel="noreferrer noopener">${t}</a>`;
-  });
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-  s = s.replace(RESTORE, (_m, i) => `<code>${escapeHtml(codes[+i] ?? "")}</code>`);
-  return s;
+  const tokens = tokenizeInline(src);
+  let out = "";
+  let pos = 0;
+  for (const t of tokens) {
+    out += escapeHtml(src.slice(pos, t.start));
+    const inner = src.slice(t.innerFrom, t.innerTo);
+    const url = rewrite(t.url ?? "", opts).replace(/"/g, "&quot;");
+    switch (t.kind) {
+      case "code":
+        out += `<code>${escapeHtml(inner)}</code>`;
+        break;
+      case "strong":
+        out += `<strong>${escapeHtml(inner)}</strong>`;
+        break;
+      case "em":
+        out += `<em>${escapeHtml(inner)}</em>`;
+        break;
+      case "del":
+        out += `<del>${escapeHtml(inner)}</del>`;
+        break;
+      case "link":
+        out += `<a href="${url}" target="_blank" rel="noreferrer noopener">${escapeHtml(inner)}</a>`;
+        break;
+      case "image":
+        out += `<img src="${url}" alt="${escapeHtml(t.alt ?? "")}" loading="lazy">`;
+        break;
+    }
+    pos = t.end;
+  }
+  return out + escapeHtml(src.slice(pos));
 }
 
 function rewrite(url: string, opts: RenderOpts): string {
@@ -52,11 +78,10 @@ function rewrite(url: string, opts: RenderOpts): string {
   return url;
 }
 
-const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
-
 /** Render a markdown body to an HTML string (block-level). */
 export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
-  const lines = (md ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const healed = healLegacyMarkdown((md ?? "").replace(/\r\n?/g, "\n"));
+  const lines = healed.split("\n");
   const out: string[] = [];
   let i = 0;
   let para: string[] = [];
@@ -70,35 +95,38 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
   while (i < lines.length) {
     const line = lines[i]!;
 
-    // Fenced code block (``` or ~~~). Info string `mh-html` renders as a
-    // sandboxed iframe; everything else as <pre><code>.
-    const fence = line.match(FENCE);
+    // Fenced code block (``` or ~~~). Editor semantics via the shared rules:
+    // the closer must repeat the opener's character at least as many times
+    // (isFenceClose), and an UNCLOSED opener is prose, not code-to-EOF — so the
+    // fence branch only fires when a closer exists.
+    const fence = line.match(RE.fenceOpen);
     if (fence) {
-      flushPara();
-      const marker = fence[1]![0];
-      const info = (fence[2] ?? "").trim();
-      const body: string[] = [];
-      i++;
-      while (i < lines.length) {
-        const m = lines[i]!.match(/^\s*(`{3,}|~{3,})\s*$/);
-        if (m && m[1]![0] === marker) {
-          i++;
+      const marker = fence[1]![0]!;
+      const len = fence[1]!.length;
+      let close = -1;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (isFenceClose(lines[j]!, marker, len)) {
+          close = j;
           break;
         }
-        body.push(lines[i]!);
-        i++;
       }
-      if (info === "mh-html") {
-        out.push(
-          `<iframe class="mh-embed" sandbox="allow-scripts allow-popups" srcdoc="${escapeHtml(
-            body.join("\n"),
-          )}"></iframe>`,
-        );
-      } else {
-        const cls = info ? ` class="language-${escapeHtml(info)}"` : "";
-        out.push(`<pre><code${cls}>${escapeHtml(body.join("\n"))}</code></pre>`);
+      if (close !== -1) {
+        flushPara();
+        const info = cleanLang(fence[2] ?? "");
+        const body = lines.slice(i + 1, close);
+        i = close + 1;
+        if (info === HTML_FENCE) {
+          out.push(
+            `<iframe class="mh-embed" sandbox="allow-scripts allow-popups" srcdoc="${escapeHtml(
+              body.join("\n"),
+            )}"></iframe>`,
+          );
+        } else {
+          const cls = info ? ` class="language-${escapeHtml(info)}"` : "";
+          out.push(`<pre><code${cls}>${escapeHtml(body.join("\n"))}</code></pre>`);
+        }
+        continue;
       }
-      continue;
     }
 
     if (line.trim() === "") {
@@ -108,7 +136,7 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
     }
 
     // ATX heading.
-    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    const h = line.match(RE.h);
     if (h) {
       flushPara();
       const level = h[1]!.length;
@@ -117,37 +145,39 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
       continue;
     }
 
-    // Horizontal rule.
-    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+    // Horizontal rule. Strict (shared RE.divider): no interior spaces —
+    // "- - -" is a bullet whose content is "- -", exactly like the editor.
+    if (RE.divider.test(line)) {
       flushPara();
       out.push("<hr>");
       i++;
       continue;
     }
 
-    // Blockquote: consecutive quote lines. Strict rule shared with the editor
-    // grammar (webui blocks.ts RE.quote): `>` must be followed by a space/tab
-    // to count — the serializer emits `> ` even for an empty quote line, and a
-    // bare `>` or `>foo` is a paragraph on every surface.
-    if (/^\s*>[ \t]/.test(line)) {
+    // Blockquote: consecutive quote lines through the shared predicate
+    // (`>` + space/tab; a bare `>` or `>foo` is a paragraph on every surface).
+    if (matchQuoteLine(stripLead(line)) !== null) {
       flushPara();
       const q: string[] = [];
-      while (i < lines.length && /^\s*>[ \t]/.test(lines[i]!)) {
-        q.push(lines[i]!.replace(/^\s*>[ \t]/, ""));
+      while (i < lines.length) {
+        const content = matchQuoteLine(stripLead(lines[i]!));
+        if (content === null) break;
+        q.push(content);
         i++;
       }
       out.push(`<blockquote>${renderMarkdown(q.join("\n"), opts)}</blockquote>`);
       continue;
     }
 
-    // Pipe table: a header row followed by a |---|---| separator.
-    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]!) && lines[i + 1]!.includes("-")) {
+    // Pipe table: shared strict check — header row + delimiter row whose every
+    // cell matches `:?-+:?` (the editor rejects anything looser, so must we).
+    if (looksLikeTableAt(lines, i, 0)) {
       flushPara();
       const rows: string[][] = [];
-      const head = splitRow(line);
-      i += 2; // skip header + separator
+      const head = splitTableRow(stripLead(lines[i]!));
+      i += 2; // skip header + delimiter
       while (i < lines.length && lines[i]!.includes("|") && lines[i]!.trim() !== "") {
-        rows.push(splitRow(lines[i]!));
+        rows.push(splitTableRow(stripLead(lines[i]!)));
         i++;
       }
       const th = head.map((c) => `<th>${renderInline(c, opts)}</th>`).join("");
@@ -158,26 +188,31 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
       continue;
     }
 
-    // Unordered / ordered list: consecutive matching item lines.
-    const ul = line.match(/^\s*[-*+]\s+/);
-    const ol = line.match(/^\s*\d+[.)]\s+/);
-    if (ul || ol) {
+    // List run: consecutive lines the shared list predicate accepts, split
+    // whenever orderedness flips (a bullet run and a numbered run are separate
+    // lists). Todos render as real checkboxes; ordered items carry their
+    // LITERAL number as `value` — the editor treats source numbers as
+    // authoritative, so the share page must not let the browser renumber.
+    const first = matchListLine(line, 0);
+    if (first) {
       flushPara();
-      const ordered = !!ol;
-      // Ordered items carry their LITERAL number as `value` — the editor treats
-      // source numbers as authoritative (1,1,7 renders as 1,1,7), so the share
-      // page must not let the browser renumber sequentially.
-      const items: { text: string; value?: number }[] = [];
-      const re = ordered ? /^\s*(\d+)[.)]\s+/ : /^\s*[-*+]\s+/;
-      while (i < lines.length && re.test(lines[i]!)) {
-        const m = lines[i]!.match(re)!;
-        items.push({ text: lines[i]!.replace(re, ""), value: ordered ? Number(m[1]) : undefined });
+      const ordered = first.type === "numbered";
+      const lis: string[] = [];
+      while (i < lines.length) {
+        const it = matchListLine(lines[i]!, 0);
+        if (!it || (it.type === "numbered") !== ordered) break;
+        if (it.type === "todo") {
+          lis.push(
+            `<li class="todo"><input type="checkbox" disabled${it.checked ? " checked" : ""}> ${renderInline(it.content, opts)}</li>`,
+          );
+        } else if (it.type === "numbered" && it.num !== undefined) {
+          lis.push(`<li value="${it.num}">${renderInline(it.content, opts)}</li>`);
+        } else {
+          lis.push(`<li>${renderInline(it.content, opts)}</li>`);
+        }
         i++;
       }
-      const lis = items
-        .map((it) => `<li${it.value !== undefined ? ` value="${it.value}"` : ""}>${renderInline(it.text, opts)}</li>`)
-        .join("");
-      out.push(ordered ? `<ol>${lis}</ol>` : `<ul>${lis}</ul>`);
+      out.push(ordered ? `<ol>${lis.join("")}</ol>` : `<ul>${lis.join("")}</ul>`);
       continue;
     }
 
@@ -196,9 +231,8 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
   return out.join("\n");
 }
 
-function splitRow(line: string): string[] {
-  let s = line.trim();
-  if (s.startsWith("|")) s = s.slice(1);
-  if (s.endsWith("|")) s = s.slice(0, -1);
-  return s.split("|").map((c) => c.trim());
+/** Strip leading whitespace (indent) — quote/table cells tolerate nesting
+ *  indent on the share page like the editor render does. */
+function stripLead(line: string): string {
+  return stripIndent(line, Number.MAX_SAFE_INTEGER);
 }

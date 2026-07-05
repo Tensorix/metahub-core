@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { scanDoc, voidAt, insideVoid, type DocModel } from "./blockmodel";
+import { scanDoc, voidAt, voidInterior, type DocModel } from "./blockmodel";
 
 /** Assert every line's offsets are self-consistent and match the source slice. */
 function checkOffsets(src: string, model: DocModel) {
@@ -168,13 +168,14 @@ test("single-line media embeds are voids", () => {
   expect(m.lines.map((l) => l.role)).toEqual(["void", "void", "p"]);
 });
 
-test("voidAt / insideVoid endpoints inclusive", () => {
+test("voidAt endpoints inclusive; voidInterior strict", () => {
   const src = "```\ncode\n```";
   const m = scanDoc(src);
   const v = m.voids[0]!;
   expect(voidAt(m, v.from)).toBe(v);
   expect(voidAt(m, v.to)).toBe(v);
-  expect(insideVoid(m, v.from + 1)).toBe(true);
+  expect(voidInterior(m, v.from + 1)?.from).toBe(v.from);
+  expect(voidInterior(m, v.from)).toBeNull();
   // one past the end is the newline into the next block → not inside
   expect(voidAt(m, v.to + 1)).toBeNull();
 });

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, NAV_INVALIDATE, type DocSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { DocView, type DocViewHandle } from "../editor.tsx";
+import { imeGhost } from "../keys.ts";
 import {
   UiHost,
   openMenu,
@@ -124,10 +125,15 @@ export function QuickNote() {
   }, [qn]);
 
   // Esc hides the window (it stays alive in the background for instant reopen).
+  // Only an UNCONSUMED Escape: the editor has its own Escape meanings (close
+  // find bar, exit code island, dismiss table selection — all consumeKey/
+  // preventDefault theirs), and an IME candidate-cancel Escape belongs to the
+  // composition, not to us.
   useEffect(() => {
     if (!qn) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") void qn.hide();
+      if (e.key !== "Escape" || e.defaultPrevented || imeGhost(e)) return;
+      void qn.hide();
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);

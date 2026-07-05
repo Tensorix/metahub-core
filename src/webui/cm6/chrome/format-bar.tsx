@@ -15,6 +15,8 @@ import type { ViewUpdate } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { EditorSelection } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
+import { promptDialog } from "../../ui.tsx";
+import { tokenizeInline, type InlineToken } from "../../inline-tokens.ts";
 import { docModel } from "../doc-model";
 import { deferCoords, cancelDeferred } from "../defer";
 
@@ -28,6 +30,13 @@ const BUTTONS: { cmd: Cmd; icon: string; title: string }[] = [
 ];
 
 const WRAP: Record<Exclude<Cmd, "link">, string> = { bold: "**", italic: "*", code: "`", strike: "~~" };
+/** Command → the inline-token kind it toggles (grammar-true unwrap detection). */
+const KIND: Record<Exclude<Cmd, "link">, InlineToken["kind"]> = {
+  bold: "strong",
+  italic: "em",
+  code: "code",
+  strike: "del",
+};
 
 /** True if the selection lies entirely inside a void's source range (skip the bar). */
 function inVoid(view: EditorView, from: number, to: number): boolean {
@@ -95,15 +104,49 @@ export function formatBar(): Extension {
         this.hide();
       }
 
-      apply(cmd: Cmd) {
+      async apply(cmd: Cmd) {
         const view = this.view;
+        if (cmd === "link") {
+          // URL dialog (old-editor behavior): a link with an empty target is
+          // dead markup the user then has to hand-edit. Selection survives the
+          // modal — CM keeps state while unfocused.
+          const url = (await promptDialog({ title: "插入链接", label: "链接地址", placeholder: "https://…" }))?.trim();
+          if (!url) { view.focus(); return; }
+          const changes = view.state.changeByRange((r) => {
+            const text = view.state.sliceDoc(r.from, r.to);
+            const insert = `[${text}](${url})`;
+            return {
+              changes: { from: r.from, to: r.to, insert },
+              range: EditorSelection.range(r.from + 1, r.from + 1 + text.length),
+            };
+          });
+          view.dispatch(changes, { userEvent: "input.format", scrollIntoView: true });
+          view.focus();
+          return;
+        }
         const changes = view.state.changeByRange((r) => {
-          const text = view.state.sliceDoc(r.from, r.to);
-          if (cmd === "link") {
-            const insert = `[${text}]()`;
-            const caret = r.from + text.length + 3; // inside the ()
-            return { changes: { from: r.from, to: r.to, insert }, range: EditorSelection.cursor(caret) };
+          // TOGGLE, not blind wrap: if the selection sits in (or equals) an
+          // existing token of this kind on its line, remove that token's
+          // delimiters — clicking B on bold text un-bolds instead of piling up
+          // `****text****`. Detection goes through the shared tokenizer, so it
+          // can never disagree with what actually renders.
+          const line = view.state.doc.lineAt(r.from);
+          if (r.to <= line.to) {
+            const t = tokenizeInline(line.text).find(
+              (t) =>
+                t.kind === KIND[cmd] &&
+                ((line.from + t.innerFrom <= r.from && r.to <= line.from + t.innerTo) ||
+                  (line.from + t.start === r.from && line.from + t.end === r.to)),
+            );
+            if (t) {
+              const inner = line.text.slice(t.innerFrom, t.innerTo);
+              return {
+                changes: { from: line.from + t.start, to: line.from + t.end, insert: inner },
+                range: EditorSelection.range(line.from + t.start, line.from + t.start + inner.length),
+              };
+            }
           }
+          const text = view.state.sliceDoc(r.from, r.to);
           const w = WRAP[cmd];
           const insert = `${w}${text}${w}`;
           return {
@@ -141,7 +184,7 @@ export function formatBar(): Extension {
                 class="item"
                 style={{ width: "34px", justifyContent: "center", padding: "7px 0" }}
                 title={btn.title}
-                onMouseDown={(e) => { e.preventDefault(); this.apply(btn.cmd); }}
+                onMouseDown={(e) => { e.preventDefault(); void this.apply(btn.cmd); }}
               >
                 <Icon name={btn.icon} cls="ico sm" />
               </button>

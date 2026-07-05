@@ -13,6 +13,8 @@
 
 import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
 import { StateEffect, StateField, type EditorState } from "@codemirror/state";
+import { docModel } from "../doc-model";
+import { voidAt } from "../blockmodel";
 
 export interface PendingUpload {
   /** Opaque per-file id minted by upload-paste; keys removal + widget identity. */
@@ -73,6 +75,18 @@ export function pendingUploads(state: EditorState): PendingUpload[] {
   return state.field(uploadField);
 }
 
+/** Resolve where an embed may be inserted relative to `pos`: nudged past any
+ *  void whose source range TOUCHES it (voidAt is endpoint-inclusive, so a drop
+ *  resolving to exactly v.from — the widget's top edge — is nudged too, instead
+ *  of anchoring inside the fence / table header), then to the end of that line
+ *  so a block widget/embed lands after it. Pure; used for the drop anchor and
+ *  re-checked at upload completion (a void can form around a remapped anchor
+ *  while the upload is in flight). */
+export function embedAnchor(state: EditorState, pos: number): number {
+  const v = voidAt(docModel(state), pos);
+  return state.doc.lineAt(v ? v.to : pos).to;
+}
+
 /** Remove whole lines carrying the old pipeline's persisted placeholder marker
  *  (`<!--mh-up:token-->`). Docs saved while that bug was live still contain the
  *  junk lines; piping loads/remote merges through this heals them. The marker is
@@ -99,10 +113,6 @@ export function beginUpload(): void {
 
 export function endUpload(): void {
   inFlight = Math.max(0, inFlight - 1);
-}
-
-export function uploadsInFlight(): number {
-  return inFlight;
 }
 
 // Registered once at module load; guarded so headless (test) imports stay clean.

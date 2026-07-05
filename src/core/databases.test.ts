@@ -111,12 +111,18 @@ test("meta is a generic replicated JSON register (round-trip, clear, duplicate)"
   expect(getDatabase(db, d.id)!.meta).toEqual({ collapsed: true, tag: "site" });
 
   // whole-object register: an update replaces, callers merge beforehand
-  const replaced = updateDatabase(db, d.id, { meta: { collapsed: false } });
-  expect(replaced.meta).toEqual({ collapsed: false });
+  const replaced = updateDatabase(db, d.id, { meta: { collapsed: true, tag: "site" } });
+  expect(replaced.meta).toEqual({ collapsed: true, tag: "site" });
 
-  // a duplicate carries the source's meta
+  // a duplicate carries the source's meta MINUS `collapsed`: a copy of a folded
+  // database must not be born hidden in the sidebar's collapsed group
   const dup = duplicateDatabase(db, d.id, { name: "Copy" });
-  expect(dup.meta).toEqual({ collapsed: false });
+  expect(dup.meta).toEqual({ tag: "site" });
+
+  // collapsed-only meta → the copy gets no meta at all
+  const solo = createDatabase(db, { name: "Solo" });
+  updateDatabase(db, solo.id, { meta: { collapsed: true } });
+  expect(duplicateDatabase(db, solo.id, { name: "Solo Copy" }).meta).toBeNull();
 
   const cleared = updateDatabase(db, d.id, { meta: null });
   expect(cleared.meta).toBeNull();

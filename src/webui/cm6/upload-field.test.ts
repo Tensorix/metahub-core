@@ -104,3 +104,43 @@ test("strip: untouched doc returned as-is, multi-line integrity preserved", () =
   const doc = "a\n\nb\n- list\n\n```\ncode\n```\n";
   expect(stripStaleUploadLines(doc)).toBe(doc);
 });
+
+// ---- embedAnchor: drop/completion insertion anchor vs voids ----
+import { docModelField, docModel } from "./doc-model";
+import { embedAnchor } from "./chrome/upload-field";
+
+const VOID_DOC = "para\n```js\ncode\n```\ntail";
+
+function anchorState() {
+  return EditorState.create({ doc: VOID_DOC, extensions: [docModelField] });
+}
+
+function codeVoid(state: EditorState) {
+  const v = docModel(state).voids[0];
+  if (!v) throw new Error("fixture has no void");
+  return v;
+}
+
+test("embedAnchor: plain prose position anchors at its line end", () => {
+  const state = anchorState();
+  expect(embedAnchor(state, 2)).toBe(4); // "para" line end
+});
+
+test("embedAnchor: drop exactly at v.from (widget top edge) nudges past the void", () => {
+  const state = anchorState();
+  const v = codeVoid(state);
+  expect(embedAnchor(state, v.from)).toBe(v.to); // NOT the ```js line end
+});
+
+test("embedAnchor: interior and v.to both resolve to the void end", () => {
+  const state = anchorState();
+  const v = codeVoid(state);
+  expect(embedAnchor(state, v.from + 3)).toBe(v.to);
+  expect(embedAnchor(state, v.to)).toBe(v.to);
+});
+
+test("embedAnchor: table header edge does not split header from delimiter row", () => {
+  const state = EditorState.create({ doc: "| a |\n| --- |\n| 1 |", extensions: [docModelField] });
+  const v = codeVoid(state); // first (only) void: the table
+  expect(embedAnchor(state, v.from)).toBe(v.to);
+});

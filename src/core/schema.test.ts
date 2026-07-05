@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { initSchema, migrateOplog, migrateCrdtChangesSeq } from "./schema-init.ts";
+import { initSchema, migrateOplog, migrateCrdtChangesSeq, migrateDatabases } from "./schema-init.ts";
 import { runSchema } from "./db.ts";
 import { emit, changesAfterSeq, CHANGE_COLS } from "./crdt.ts";
 import { DATABASE_COLS } from "./databases.ts";
@@ -91,4 +91,40 @@ test("changesAfterSeq returns every Change column", () => {
   for (const col of CHANGE_COLS) {
     expect(col in change, `Change.${col} missing from changesAfterSeq row`).toBe(true);
   }
+});
+
+// Upgrade re-materialization: an OLD binary that pulled `databases/meta`
+// changes stored them in crdt_changes but never materialized (unknown column)
+// and advanced its pull cursor past them. Adding the column must backfill each
+// database's meta from the WINNING (max-HLC) oplog change — otherwise the
+// value is stranded in the oplog forever.
+test("migrateDatabases backfills meta from already-pulled oplog changes", () => {
+  const legacy = new Database(":memory:");
+  runSchema(legacy);
+  // Simulate the pre-meta table: rebuild `databases` without the column.
+  legacy.exec(`
+    DROP TABLE databases;
+    CREATE TABLE databases (
+      id TEXT PRIMARY KEY, name TEXT, icon TEXT, created_hlc TEXT, __deleted INTEGER
+    );
+    INSERT INTO databases (id, name) VALUES ('db_1', 'A'), ('db_2', 'B');
+  `);
+  // Changes an old binary pulled and skipped (two revisions for db_1 — the
+  // max-HLC one must win; none for db_2).
+  const ins = legacy.query(
+    "INSERT INTO crdt_changes (hlc, node_id, dataset, row_id, col, value) VALUES (?, 'peer', 'databases', ?, 'meta', ?)",
+  );
+  ins.run("0002-aaaa", "db_1", JSON.stringify({ collapsed: true }));
+  ins.run("0005-aaaa", "db_1", JSON.stringify({ collapsed: false, tag: "site" }));
+
+  migrateDatabases(legacy);
+
+  const rows = legacy.query("SELECT id, meta FROM databases ORDER BY id").all() as { id: string; meta: string | null }[];
+  expect(JSON.parse(rows[0]!.meta!)).toEqual({ collapsed: false, tag: "site" });
+  expect(rows[1]!.meta).toBeNull();
+
+  // Idempotent: a second run (column now present) is a no-op.
+  legacy.query("UPDATE databases SET meta = NULL WHERE id = 'db_1'").run();
+  migrateDatabases(legacy);
+  expect((legacy.query("SELECT meta FROM databases WHERE id = 'db_1'").get() as { meta: string | null }).meta).toBeNull();
 });

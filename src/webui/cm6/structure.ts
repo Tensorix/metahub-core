@@ -14,7 +14,7 @@
 import { EditorSelection, type ChangeSpec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { docModel } from "./doc-model";
-import { hiddenIndentChars, voidAt, type LineInfo, type DocModel } from "./blockmodel";
+import { hiddenIndentChars, voidAt, correctNumberAtLevel, isListRole, type LineInfo, type DocModel } from "./blockmodel";
 import { focusCodeVoid } from "./voids/void-field";
 import { RE, leadingIndent } from "../blocks";
 
@@ -35,24 +35,16 @@ function indentPrefix(line: LineInfo): string {
  *  never rewrites existing ones. Bullet/todo keep the leading glyph the user used. */
 function nextMarker(line: LineInfo): string {
   const glyph = line.text[line.indentChars] ?? "-";
-  if (line.role === "numbered") return `${(line.num ?? 1) + 1}. `;
+  if (line.role === "numbered") {
+    // Keep this line's separator style: `3) item` continues as `4) `, not `4. `
+    // (the grammar accepts both; reindent preserves the tail the same way).
+    const sep = /^\d+([.)])/.exec(line.text.slice(line.indentChars))?.[1] ?? ".";
+    return `${(line.num ?? 1) + 1}${sep} `;
+  }
   if (line.role === "todo") return `${glyph} [ ] `;
   return `${glyph} `;
 }
 
-/** The correct ordered number for a line placed at `newLevel`: continue the previous
- *  sibling's LITERAL number there (+1), or 1 if it's the first item at that level (a
- *  shallower ancestor or a non-numbered sibling precedes it). Blanks are transparent. */
-function correctNumberAtLevel(model: DocModel, lineNumber: number, newLevel: number): number {
-  for (let i = lineNumber - 2; i >= 0; i--) {
-    const li = model.lines[i];
-    if (!li || li.role === "blank") continue;
-    if (li.level > newLevel) continue; // deeper sub-list — skip over it
-    if (li.level < newLevel) return 1; // reached an ancestor → first child at newLevel
-    return li.role === "numbered" ? (li.num ?? 0) + 1 : 1; // same level: continue run or break
-  }
-  return 1;
-}
 
 /** The change a fence opener typed as a list item's / quote's content expands to
  *  on Enter. Pure (no EditorView) so it is unit-testable:
@@ -69,7 +61,7 @@ export function fenceContinuation(
   line: LineInfo,
   lineText: string = line.text,
 ): { insertFrom: number; insertTo: number; insert: string; caretOffset: number } | null {
-  const isList = line.role === "bullet" || line.role === "numbered" || line.role === "todo";
+  const isList = isListRole(line.role);
   const isQuote = line.role === "quote";
   if (!isList && !isQuote) return null;
   const content = lineText.slice(line.contentFrom - line.from);
@@ -100,12 +92,38 @@ export function fenceContinuation(
 }
 
 /** After a fence-completing dispatch, the new code range is an atomic void whose
- *  widget appears on the next DOM update — focus its island then. */
-function focusNewCodeVoid(view: EditorView, pos: number) {
+ *  widget appears on the next DOM update — focus its island then. One retry:
+ *  CM can materialize the widget a frame late (large doc, pending scroll), and
+ *  focusCodeVoid silently no-ops when the island isn't mounted yet. */
+export function focusNewCodeVoid(view: EditorView, pos: number, attempt = 0) {
   requestAnimationFrame(() => {
     const v = voidAt(docModel(view.state), Math.min(pos, view.state.doc.length));
-    if (v && v.kind === "code") focusCodeVoid(view, v, "start");
+    if (!v || v.kind !== "code") return;
+    focusCodeVoid(view, v, "start");
+    if (attempt === 0 && !document.activeElement?.closest?.(".cm-void-code"))
+      focusNewCodeVoid(view, pos, 1);
   });
+}
+
+/** Title → body: put the caret at the top of the document. When the FIRST block
+ *  is a void (image/table/code/…), position 0 is the first offset of its source
+ *  line — a dispatched selection lands there editable (atomicRanges only guards
+ *  motion) and typing would corrupt the void. Open a fresh line above instead
+ *  (the old editor's insertTop('p') semantics; same move as CodeHost's
+ *  ArrowUp-at-doc-start). */
+export function enterDocTop(view: EditorView) {
+  const v = voidAt(docModel(view.state), 0);
+  if (v && v.from === 0) {
+    view.dispatch({
+      changes: { from: 0, insert: "\n" },
+      selection: { anchor: 0 },
+      userEvent: "input",
+      scrollIntoView: true,
+    });
+  } else {
+    view.dispatch({ selection: { anchor: 0 }, scrollIntoView: true });
+  }
+  view.focus();
 }
 
 /** Enter: continue a list/quote, exit an empty item, split at the caret; else let
@@ -161,13 +179,26 @@ export function enterCommand(view: EditorView): boolean {
   if (line.role === "void" || line.role === "p" || line.role === "blank" || line.role.startsWith("h") || line.role === "divider")
     return false;
 
-  const isList = line.role === "bullet" || line.role === "numbered" || line.role === "todo";
+  const isList = isListRole(line.role);
   const isQuote = line.role === "quote";
   if (!isList && !isQuote) return false;
 
-  // Enter with the caret inside the marker (only reachable on numbered lines —
-  // the ordinal is editable text): jump to the content start instead of splitting
-  // the marker in half ("1\n2. . item").
+  // Caret before the content start. Two distinct positions get here:
+  //   • the very line start — a legal caret stop on ANY marked line (ArrowLeft
+  //     past the atomic marker, smartHome's second press): Enter pushes the
+  //     item down by opening an empty line above (the old editor's
+  //     split-at-item-start), caret staying with the item;
+  //   • strictly inside a numbered marker (the ordinal is editable text): jump
+  //     to the content start instead of splitting the marker ("1\n2. . item").
+  if (sel.head === line.from) {
+    view.dispatch({
+      changes: { from: line.from, insert: "\n" },
+      selection: { anchor: line.from + 1 },
+      userEvent: "input",
+      scrollIntoView: true,
+    });
+    return true;
+  }
   if (sel.head < line.contentFrom) {
     view.dispatch({ selection: { anchor: line.contentFrom }, userEvent: "select" });
     return true;
@@ -208,7 +239,7 @@ function relevelNumbered(view: EditorView, line: LineInfo, delta: 1 | -1): boole
   const newIndentCols = delta > 0 ? line.indent + 2 : Math.max(0, line.indent - 2);
   if (newIndentCols === line.indent) return true; // already flush-left, can't outdent
   const newLevel = Math.floor(newIndentCols / 2);
-  const num = correctNumberAtLevel(docModel(state), line.number, newLevel);
+  const num = correctNumberAtLevel(docModel(state).lines, line.number, newLevel);
   const oldMarker = line.text.slice(line.indentChars, line.contentFrom - line.from); // "3. " / "3) "
   const tail = oldMarker.slice(line.numChars ?? String(line.num ?? 1).length); // ". " / ") "
   const prefix = " ".repeat(newIndentCols) + num + tail;
@@ -321,7 +352,7 @@ function reindent(view: EditorView, delta: 1 | -1): boolean {
   const single = state.selection.main.empty && ranges.length === 1;
   const caretLine = lineAt(view, state.selection.main.head);
   const caretIsList =
-    caretLine.role === "bullet" || caretLine.role === "numbered" || caretLine.role === "todo";
+    isListRole(caretLine.role);
 
   // Empty selection on a non-list line. Revealed void source (html) keeps real
   // space insertion (code-style indent); any other block line — EMPTY lines
@@ -456,39 +487,34 @@ export function makeVoidExit(dir: 1 | -1) {
   };
 }
 
-/** ArrowDown with the caret on the last visual row of the line just above a code
- *  void → enter the island (textarea caret at start). Code voids are atomic, so
- *  without this the default motion would skip the whole block. */
-export function arrowIntoCodeBelow(view: EditorView): boolean {
-  const sel = view.state.selection.main;
-  if (!sel.empty) return false;
-  const line = view.state.doc.lineAt(sel.head);
-  if (line.to >= view.state.doc.length) return false;
-  const v = docModel(view.state).voids.find((v) => v.kind === "code" && v.from === line.to + 1);
-  if (!v) return false;
-  // Wrapped line: only fire from its LAST visual row (otherwise move within it).
-  const head = view.coordsAtPos(sel.head);
-  const end = view.coordsAtPos(line.to);
-  if (head && end && head.top < end.top - 1) return false;
-  focusCodeVoid(view, v, "start");
-  return true;
+/** Arrow into an adjacent code island: dir 1 = ArrowDown into the code void
+ *  starting on the next line (textarea caret at start), dir -1 = ArrowUp into
+ *  the void ending on the previous line (caret at end). Code voids are atomic,
+ *  so without this the default motion would skip the whole block. One factory
+ *  instead of two hand-mirrored functions — the wrapped-line guard (the ±1px
+ *  visual-row fudge) can never be fixed in one direction and missed in the
+ *  other (same pattern as makeVoidExit). */
+function makeArrowIntoCode(dir: 1 | -1) {
+  return (view: EditorView): boolean => {
+    const sel = view.state.selection.main;
+    if (!sel.empty) return false;
+    const line = view.state.doc.lineAt(sel.head);
+    if (dir === 1 ? line.to >= view.state.doc.length : line.from === 0) return false;
+    const v = docModel(view.state).voids.find(
+      (v) => v.kind === "code" && (dir === 1 ? v.from === line.to + 1 : v.to === line.from - 1),
+    );
+    if (!v) return false;
+    // Wrapped line: only fire from the edge visual row facing the void
+    // (otherwise the arrow moves within the wrapped line).
+    const head = view.coordsAtPos(sel.head);
+    const edge = view.coordsAtPos(dir === 1 ? line.to : line.from);
+    if (head && edge && (dir === 1 ? head.top < edge.top - 1 : head.top > edge.top + 1)) return false;
+    focusCodeVoid(view, v, dir === 1 ? "start" : "end");
+    return true;
+  };
 }
-
-/** ArrowUp with the caret on the first visual row of the line just below a code
- *  void → enter the island (textarea caret at end). */
-export function arrowIntoCodeAbove(view: EditorView): boolean {
-  const sel = view.state.selection.main;
-  if (!sel.empty) return false;
-  const line = view.state.doc.lineAt(sel.head);
-  if (line.from === 0) return false;
-  const v = docModel(view.state).voids.find((v) => v.kind === "code" && v.to === line.from - 1);
-  if (!v) return false;
-  const head = view.coordsAtPos(sel.head);
-  const start = view.coordsAtPos(line.from);
-  if (head && start && head.top > start.top + 1) return false; // not on the first visual row
-  focusCodeVoid(view, v, "end");
-  return true;
-}
+export const arrowIntoCodeBelow = makeArrowIntoCode(1);
+export const arrowIntoCodeAbove = makeArrowIntoCode(-1);
 
 /** ArrowUp on the first visual row of the document → hand off to the title. Uses
  *  live coords (allowed here: keymap commands run outside the update/measure

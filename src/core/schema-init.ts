@@ -290,11 +290,29 @@ export function migrateStoragePeerUrls(db: DbDriver): void {
 
 /**
  * Add the generic `meta` JSON column to a legacy `databases` table.
- * Idempotent — guarded by hasColumn; existing rows stay NULL (no metadata).
+ * Idempotent — guarded by hasColumn.
+ *
+ * Re-materialization: an OLD binary that pulled `databases/meta` changes from
+ * newer peers stored them in crdt_changes (applyChange inserts before the
+ * column check) but skipped materialization (unknown column, forward-compat)
+ * and advanced the pull cursor past them — they would never replay on their
+ * own. When the column is first added, backfill each database's meta from its
+ * WINNING oplog change (max HLC — the same LWW rule applyChange uses), so an
+ * upgrade sees the state its peers already agreed on.
  */
 export function migrateDatabases(db: DbDriver): void {
-  if (!hasColumn(db, "databases", "meta"))
-    db.exec("ALTER TABLE databases ADD COLUMN meta TEXT");
+  if (hasColumn(db, "databases", "meta")) return;
+  db.exec("ALTER TABLE databases ADD COLUMN meta TEXT");
+  db.exec(`
+    UPDATE databases SET meta = (
+      SELECT c.value FROM crdt_changes c
+      WHERE c.dataset = 'databases' AND c.col = 'meta' AND c.row_id = databases.id
+      ORDER BY c.hlc DESC LIMIT 1
+    )
+    WHERE id IN (
+      SELECT DISTINCT row_id FROM crdt_changes WHERE dataset = 'databases' AND col = 'meta'
+    )
+  `);
 }
 
 /** Bring a freshly opened (or legacy) database to the current schema. */

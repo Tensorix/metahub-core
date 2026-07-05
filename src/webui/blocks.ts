@@ -57,9 +57,7 @@ export interface Block {
  *  a block-level widget only when the block's whole text is the embed. */
 export type MediaKind = "image" | "video" | "audio" | "file";
 
-/** Reserved code-fence info string for a rendered-HTML block. `cleanLang` keeps
- *  the hyphen, so it round-trips, and it can't collide with a real language id. */
-export const HTML_FENCE = "mh-html";
+// HTML_FENCE moved to ../core/md/grammar.ts (re-exported below).
 
 const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "m4v", "ogv", "mkv", "ogg"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "opus", "oga", "weba"]);
@@ -158,46 +156,35 @@ export function genId(): string {
 const LIST_TYPES = new Set<BlockType>(["bullet", "numbered", "todo"]);
 const HEADING_TYPES = new Set<BlockType>(["h1", "h2", "h3", "h4", "h5", "h6"]);
 
-// This RE table (with matchListLine / matchQuoteLine below) is the SINGLE
-// grammar source for every surface: the CM6 editor render (cm6/blockmodel.ts),
-// this save/load parser, and the share page (core/sync/share-render.ts) all
-// classify lines through it, so the same text can never render as different
-// block types on different surfaces.
-//
-// STRICT quote rule: every marker — quote included — needs trailing whitespace,
-// so nothing renders as a block until the user commits with the space. `> foo`
-// and `> ` (an empty quote line, exactly what the serializer emits) are quotes;
-// a bare `>` (mid-typing, before the space) and `>foo` are paragraphs. Same for
-// todo: `- [ ] x` / `- [ ] ` are todos, `- [ ]` with nothing after the bracket
-// is still a bullet whose content is `[ ]`. Compatibility: parse-only change —
-// existing bodies are never rewritten; historical bare-`>` empty quote lines
-// (from the pre-strict serializer) now render as paragraphs on ALL surfaces
-// consistently instead of forking between them.
-export const RE = {
-  fenceOpen: /^\s*(`{3,}|~{3,})\s*([^\s`]*)?.*$/,
-  h: /^(#{1,6})\s+(.*)$/,
-  todo: /^\s*[-*+]\s+\[([ xX])\][ \t](.*)$/,
-  bullet: /^\s*[-*+]\s+(.*)$/,
-  numbered: /^\s*(\d+)[.)]\s+(.*)$/,
-  quote: /^>[ \t](.*)$/,
-  divider: /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/,
-};
-
-/** The single quote-line predicate for all consumers: quote content of `text`
- *  ("" for the serializer's empty form `> `), or null if the line is not a
- *  quote line. `text` must already be indent-stripped. */
-export function matchQuoteLine(text: string): string | null {
-  const m = text.match(RE.quote);
-  return m ? m[1]! : null;
-}
-
-export interface ListLine {
-  indent: number;
-  type: "bullet" | "numbered" | "todo";
-  checked?: boolean;
-  content: string;
-  num?: number; // numbered only: the literal number the user wrote
-}
+// The line grammar (RE table, matchListLine/matchQuoteLine, indent/fence/table
+// helpers) moved to core (../core/md/grammar.ts) so the share renderer parses
+// through the exact same predicates. Re-exported here so the many webui
+// consumers (cm6/blockmodel.ts etc.) keep their import paths.
+export {
+  RE,
+  HTML_FENCE,
+  matchQuoteLine,
+  matchListLine,
+  leadingIndent,
+  stripIndent,
+  isFenceClose,
+  cleanLang,
+  looksLikeTableAt,
+  splitTableRow,
+  type ListLine,
+} from "../core/md/grammar.ts";
+import {
+  RE,
+  HTML_FENCE,
+  matchQuoteLine,
+  matchListLine,
+  leadingIndent,
+  stripIndent,
+  isFenceClose,
+  cleanLang,
+  looksLikeTableAt,
+  splitTableRow,
+} from "../core/md/grammar.ts";
 
 export interface Parsed {
   block: Block;
@@ -326,7 +313,13 @@ export function blocksToText(selection: readonly Block[]): string {
     .join("\n");
 }
 
-/** Body Markdown -> editor block tree. */
+/** Body Markdown -> editor block tree.
+ *
+ *  Deliberately NO healLegacyMarkdown here: `- [ ]` is ambiguous between a
+ *  legacy empty todo (at-rest) and a bullet the user is typing RIGHT NOW, and
+ *  this parser serves live editor text (convert/export paths) where the
+ *  mid-typing reading must win. At-rest bodies reach the block tree through
+ *  the editor load (CmDocBody norm) or the share renderer — both heal. */
 export function blocksFromBody(body: string | null | undefined): Block[] {
   const normalized = (body ?? "").replace(/\r\n?/g, "\n");
   const lines = normalized ? normalized.split("\n") : [];
@@ -609,46 +602,7 @@ function parseQuoteBlock(lines: string[], start: number, minIndent: number): Par
 }
 
 // ---- GFM pipe tables ----
-const RE_DELIM_CELL = /^\s*:?-+:?\s*$/;
-
-/** True if a GFM table begins at line `i`: a pipe row immediately followed by a
- *  delimiter row (e.g. `| :--- | ---: |`). */
-export function looksLikeTableAt(lines: string[], i: number, minIndent: number): boolean {
-  const head = lines[i];
-  const delim = lines[i + 1];
-  if (head == null || delim == null) return false;
-  if (leadingIndent(head) < minIndent || leadingIndent(delim) < minIndent) return false;
-  const headText = stripIndent(head, minIndent);
-  const delimText = stripIndent(delim, minIndent);
-  if (!headText.includes("|") || !delimText.includes("|")) return false;
-  const cells = splitTableRow(delimText);
-  return cells.length > 0 && cells.every((c) => RE_DELIM_CELL.test(c));
-}
-
-/** Split a table row into trimmed cells, honoring `\|` escapes and dropping the
- *  empty cells produced by the outer (leading/trailing) pipes. */
-function splitTableRow(line: string): string[] {
-  const cells: string[] = [];
-  let cur = "";
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
-    if (ch === "\\" && line[i + 1] === "|") {
-      cur += "|";
-      i++;
-      continue;
-    }
-    if (ch === "|") {
-      cells.push(cur);
-      cur = "";
-      continue;
-    }
-    cur += ch;
-  }
-  cells.push(cur);
-  if (cells.length && cells[0]!.trim() === "") cells.shift();
-  if (cells.length && cells[cells.length - 1]!.trim() === "") cells.pop();
-  return cells.map((c) => c.trim());
-}
+// looksLikeTableAt / splitTableRow / RE_DELIM_CELL moved to ../core/md/grammar.ts.
 
 function alignFromDelim(cell: string): ColAlign {
   const trimmed = cell.trim();
@@ -743,38 +697,7 @@ function startsLeafBlock(line: string, minIndent: number): boolean {
   return !!text.match(RE.fenceOpen) || !!text.match(RE.h) || RE.divider.test(text.trim()) || matchQuoteLine(text) !== null;
 }
 
-export function matchListLine(line: string, minIndent: number): ListLine | null {
-  const indent = leadingIndent(line);
-  if (indent < minIndent) return null;
-  const text = stripIndent(line, indent);
-
-  // STRICT like RE.todo: whitespace after `]` required — `- [ ] x` / `- [ ] `
-  // are todos, a bare `- [ ]` (mid-typing) is a bullet whose content is `[ ]`.
-  let m = text.match(/^[-*+]\s+\[([ xX])\][ \t](.*)$/);
-  if (m) {
-    return {
-      indent,
-      type: "todo",
-      checked: m[1]!.toLowerCase() === "x",
-      content: m[2]!,
-    };
-  }
-
-  // STRICT: the marker needs trailing whitespace to be a list item. An empty
-  // item serializes as `- ` / `2. ` (marker + trailing space, empty content) and
-  // parses back as one — core's parseDocBlocks keeps line content verbatim, so
-  // the trailing space survives sync. A BARE `-` / `2.` (no space, the state
-  // mid-typing before the space) is a paragraph, `-foo`/`2.foo` are paragraphs,
-  // `---` is a divider. This is the same rule the CM6 render uses, so what you
-  // see while typing is exactly what a save/reload/share produces.
-  m = text.match(/^(\d+)[.)][ \t]+(.*)$/);
-  if (m) return { indent, type: "numbered", content: m[2]!, num: parseInt(m[1]!, 10) };
-
-  m = text.match(/^[-*+][ \t]+(.*)$/);
-  if (m) return { indent, type: "bullet", content: m[1]! };
-
-  return null;
-}
+// matchListLine moved to ../core/md/grammar.ts (re-exported above).
 
 function renderBlock(block: Block, indent: number, number: number): string[] {
   const pad = " ".repeat(indent);
@@ -857,40 +780,8 @@ function shouldPersist(block: Block): boolean {
   return block.content.trim() !== "";
 }
 
-export function leadingIndent(line: string): number {
-  let indent = 0;
-  for (const ch of line) {
-    if (ch === " ") indent++;
-    else if (ch === "\t") indent += 4;
-    else break;
-  }
-  return indent;
-}
-
-export function stripIndent(line: string, columns: number): string {
-  let indent = 0;
-  let i = 0;
-  for (; i < line.length && indent < columns; i++) {
-    const ch = line[i]!;
-    if (ch === " ") indent++;
-    else if (ch === "\t") indent += 4;
-    else break;
-  }
-  return line.slice(i);
-}
-
-export function isFenceClose(line: string, char: string, len: number): boolean {
-  const trimmed = line.trim();
-  if (!trimmed || trimmed[0] !== char) return false;
-  for (const ch of trimmed) {
-    if (ch !== char) return false;
-  }
-  return trimmed.length >= len;
-}
-
-export function cleanLang(lang: string): string {
-  return lang.trim().replace(/[^A-Za-z0-9_+.#-]/g, "");
-}
+// leadingIndent / stripIndent / isFenceClose / cleanLang moved to
+// ../core/md/grammar.ts (re-exported above).
 
 /** Languages offered in the code block's language dropdown. Values are
  *  highlight.js language ids (also accepted by cleanLang for round-trip). */

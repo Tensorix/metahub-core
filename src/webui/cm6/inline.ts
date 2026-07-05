@@ -78,7 +78,14 @@ function touches(sel: EditorSelection, from: number, to: number): boolean {
   return sel.ranges.some((r) => r.from <= to && r.to >= from);
 }
 
-function build(view: EditorView): DecorationSet {
+/** Per-line token cache. Tokens are a pure function of the line TEXT, but the
+ *  plugin rebuilds on every selectionSet (the reveal state changes) — without
+ *  this, holding an arrow key re-tokenized every visible line ~30×/s for
+ *  output identical except one span's reveal flag. Keyed by line number,
+ *  validated by text; rebuilt maps drop lines that left the viewport. */
+type TokenCache = Map<number, { text: string; tokens: InlineToken[] }>;
+
+function build(view: EditorView, cache: TokenCache, next: TokenCache): DecorationSet {
   const model = docModel(view.state);
   const sel = view.state.selection;
   const out: Range<Decoration>[] = [];
@@ -93,7 +100,11 @@ function build(view: EditorView): DecorationSet {
       const text = line.text;
       if (!text) continue;
 
-      for (const t of tokenizeInline(text)) {
+      const hit = cache.get(line.number);
+      const tokens = hit && hit.text === text ? hit.tokens : tokenizeInline(text);
+      next.set(line.number, { text, tokens });
+
+      for (const t of tokens) {
         const absStart = line.from + t.start;
         const absEnd = line.from + t.end;
         const absInnerFrom = line.from + t.innerFrom;
@@ -141,12 +152,19 @@ function build(view: EditorView): DecorationSet {
 const inlinePlugin = ViewPlugin.fromClass(
   class {
     deco: DecorationSet;
+    cache: TokenCache = new Map();
     constructor(view: EditorView) {
-      this.deco = build(view);
+      this.deco = this.run(view);
     }
     update(u: ViewUpdate) {
       if (u.view.composing) return; // never churn decorations mid-IME
-      if (u.docChanged || u.selectionSet || u.viewportChanged) this.deco = build(u.view);
+      if (u.docChanged || u.selectionSet || u.viewportChanged) this.deco = this.run(u.view);
+    }
+    private run(view: EditorView): DecorationSet {
+      const next: TokenCache = new Map();
+      const deco = build(view, this.cache, next);
+      this.cache = next;
+      return deco;
     }
   },
   { decorations: (v) => v.deco },

@@ -11,7 +11,7 @@
 // the thin view wrapper the gutter menu calls.
 
 import type { EditorView } from "@codemirror/view";
-import type { LineInfo, VoidRange } from "./blockmodel";
+import { correctNumberAtLevel, type LineInfo, type VoidRange } from "./blockmodel";
 import { docModel } from "./doc-model";
 
 /** Types a block can be turned into. `divider` only applies to a single line;
@@ -52,22 +52,6 @@ type Slice = (from: number, to: number) => string;
  *  dashes as text), so the prefix runs to the line end. */
 function prefixEnd(line: LineInfo): number {
   return line.role === "divider" ? line.to : line.contentFrom;
-}
-
-/** Starting number for the FIRST converted line at nesting level `level`:
- *  continue from the preceding same-level numbered sibling's LITERAL number,
- *  else 1 — creation-time generation only; existing numbers are never rewritten.
- *  Blanks and deeper lines are transparent, any same-or-shallower non-numbered
- *  line breaks the run. */
-function numberedStart(lines: LineInfo[], lineNo: number, level: number): number {
-  for (let i = lineNo - 2; i >= 0; i--) {
-    const l = lines[i]!;
-    if (l.role === "blank") continue;
-    if (l.level > level) continue; // a child of some outer item — transparent
-    if (l.role === "numbered" && l.level === level) return (l.num ?? 1) + 1;
-    return 1; // same-or-shallower non-sibling breaks the run
-  }
-  return 1;
 }
 
 /** The void containing 1-based line `n`, if any. */
@@ -141,7 +125,9 @@ export function turnIntoChanges(
       const level = line.level;
       for (const k of [...counters.keys()]) if (k > level) counters.delete(k); // deeper runs end
       const prev = counters.get(level);
-      const num = prev != null ? prev + 1 : numberedStart(lines, n, level);
+      // Same seeding rule as Tab-relevel (structure.ts) — one continuation
+      // semantics for ordered lists no matter which gesture creates the item.
+      const num = prev != null ? prev + 1 : correctNumberAtLevel(lines, n, level);
       counters.set(level, num);
       prefix = `${num}. `;
     } else {

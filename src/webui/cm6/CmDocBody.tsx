@@ -12,7 +12,10 @@ import { baseExtensions, richCompartment, richLayer } from "./editor-view";
 import { slashMenu } from "./chrome/slash-menu";
 import { uploadPaste, pickAndUpload } from "./chrome/upload-paste";
 import { uploadField, stripStaleUploadLines } from "./chrome/upload-field";
-import { healLegacyTodoLines } from "./heal";
+import { copyRich } from "./chrome/copy-rich";
+import { previewAnchorField } from "./chrome/preview-anchor";
+import { minimalReplace } from "./min-diff";
+import { healLegacyMarkdown } from "../../core/md/heal";
 import { formatBar } from "./chrome/format-bar";
 import { docToc } from "./chrome/toc";
 import { blockGutter } from "./chrome/gutter";
@@ -49,21 +52,16 @@ const acceptFor = (type: BlockType): string =>
 
 // Boundary healing (idempotent; applies on load and on every remote setDoc):
 // stripStaleUploadLines drops the old upload pipeline's literal placeholder
-// lines, healLegacyTodoLines restores the trailing space on pre-strict-grammar
-// empty todos (`- [ ]` → `- [ ] `) so they render as todos, not `• [ ]`.
-const norm = (s: string) => healLegacyTodoLines(stripStaleUploadLines(s.replace(/\r\n?/g, "\n")));
+// lines, healLegacyMarkdown (core/md/heal — the same repair blocksFromBody and
+// the share renderer apply) restores pre-strict-grammar forms: empty todos
+// `- [ ]` → `- [ ] `, and bare-`>` quote gaps → `> `.
+const norm = (s: string) => healLegacyMarkdown(stripStaleUploadLines(s.replace(/\r\n?/g, "\n")));
 
 /** Replace the whole doc with a minimal single-range change so CM maps the caret
  *  through it (positions outside the changed middle are preserved). */
 function replaceDoc(view: EditorView, next: string) {
-  const cur = view.state.doc.toString();
-  if (cur === next) return;
-  const max = Math.min(cur.length, next.length);
-  let p = 0;
-  while (p < max && cur.charCodeAt(p) === next.charCodeAt(p)) p++;
-  let s = 0;
-  while (s < max - p && cur.charCodeAt(cur.length - 1 - s) === next.charCodeAt(next.length - 1 - s)) s++;
-  view.dispatch({ changes: { from: p, to: cur.length - s, insert: next.slice(p, next.length - s) } });
+  const change = minimalReplace(view.state.doc.toString(), next);
+  if (change) view.dispatch({ changes: change });
 }
 
 export function CmDocBody(props: CmDocBodyProps) {
@@ -99,7 +97,9 @@ export function CmDocBody(props: CmDocBodyProps) {
             onUpload: (type, v, pos) => pickAndUpload(v, pos, acceptFor(type), (m) => onErrorRef.current?.(m)),
           }),
           uploadPaste({ onError: (m) => onErrorRef.current?.(m) }),
+          copyRich(), // text/html flavor via the shared share renderer
           uploadField, // always on (outside richCompartment): pending uploads must survive source mode
+          previewAnchorField, // which image void the preview window has open (annotation routing)
           voidDeps.of({ onPreviewImage: (b) => onPreviewImageRef.current?.(b) }),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) onChangeRef.current?.();

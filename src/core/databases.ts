@@ -46,6 +46,11 @@ export const updateDatabase = grouped(function updateDatabase(
   if (fields.name !== undefined) emit(db, "databases", id, "name", fields.name);
   if (fields.icon !== undefined) emit(db, "databases", id, "icon", fields.icon);
   // Whole-object LWW register: callers merge into the current meta themselves.
+  // TODO(meta-per-key): BEFORE a second meta key ships, switch to per-key
+  // emits (one register per key). With one whole-object register, two writers
+  // of DIFFERENT keys (offline devices, racing tabs) each emit a full object
+  // missing the other's key, and LWW silently drops one — a structural lost
+  // update the caller-side merge cannot prevent.
   if (fields.meta !== undefined) {
     if (fields.meta !== null && (typeof fields.meta !== "object" || Array.isArray(fields.meta)))
       throw new MhError("invalid_input", "meta must be a JSON object or null");
@@ -74,7 +79,13 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
     name: opts.name ?? src.name,
     icon: (opts.icon ?? src.icon) ?? undefined,
   });
-  if (src.meta !== null) emit(db, "databases", dup.id, "meta", src.meta);
+  // Copy meta minus `collapsed`: a duplicate of a folded database must not be
+  // born hidden inside the sidebar's collapsed tail group (which defaults to
+  // closed) — the user just created it and expects to see it.
+  if (src.meta !== null) {
+    const { collapsed: _hidden, ...meta } = src.meta as Record<string, unknown>;
+    if (Object.keys(meta).length) emit(db, "databases", dup.id, "meta", meta);
+  }
   const propIdMap = new Map<string, string>();
   for (const p of listProperties(db, id)) {
     const config: PropertyConfig | undefined =

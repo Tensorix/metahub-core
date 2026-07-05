@@ -8,6 +8,10 @@ import { toast } from "./ui.tsx";
 import { CmDocBody, type CmHandle } from "./cm6/CmDocBody.tsx";
 import { handleClickBelow } from "./cm6/click-below.ts";
 import { docModel } from "./cm6/doc-model.ts";
+import { enterDocTop } from "./cm6/structure.ts";
+import { mediaFilesFrom, uploadFilesAt } from "./cm6/chrome/upload-paste.tsx";
+import { openDocFind } from "./cm6/chrome/find.tsx";
+import { previewAnchor, setPreviewAnchor } from "./cm6/chrome/preview-anchor.ts";
 import { blockToText, type Block } from "./blocks.ts";
 import { ImageLightbox } from "./media/image-lightbox.tsx";
 
@@ -55,24 +59,31 @@ export function DocView({
   // In-page image lightbox (browser / PWA; the desktop app uses a native window).
   const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null);
 
-  /** Rewrite the image void whose block.src === `token` to point at `url`
+  /** Rewrite the image void the user opened in the preview to point at `url`
    *  (annotation write-back). CM6 block ids are ephemeral, so the src string is
-   *  the routing token; the FIRST matching void wins when the same image is
-   *  embedded twice. Serializes via blockToText (flush-left) and re-applies the
-   *  line's leading indent so a nested image stays under its list item. */
+   *  the routing token — ambiguous when the same image is embedded twice. The
+   *  previewAnchor field remembers the OPENED void's position (remapped through
+   *  edits), so among same-src candidates the one nearest the anchor wins; the
+   *  src match remains the correctness gate. Serializes via blockToText
+   *  (flush-left) and re-applies the line's leading indent so a nested image
+   *  stays under its list item. */
   const replaceImageSrc = (token: string, url: string) => {
     const view = cmRef.current?.view;
     if (!view || !token || !url) return;
-    for (const v of docModel(view.state).voids) {
-      if (v.kind !== "image" || v.block.src !== token) continue;
-      const b = structuredClone(v.block);
-      b.src = url; // keep width/name
-      const ws = /^[ \t]*/.exec(view.state.doc.lineAt(v.from).text)![0]!;
-      let md = blockToText(b);
-      if (ws) md = md.split("\n").map((l) => ws + l).join("\n");
-      view.dispatch({ changes: { from: v.from, to: v.to, insert: md }, userEvent: "input.writeback" });
-      return;
-    }
+    const candidates = docModel(view.state).voids.filter(
+      (v) => v.kind === "image" && v.block.src === token,
+    );
+    if (!candidates.length) return;
+    const anchor = previewAnchor(view.state);
+    const v = anchor && anchor.token === token
+      ? candidates.reduce((a, b) => (Math.abs(a.from - anchor.pos) <= Math.abs(b.from - anchor.pos) ? a : b))
+      : candidates[0]!;
+    const b = structuredClone(v.block);
+    b.src = url; // keep width/name
+    const ws = /^[ \t]*/.exec(view.state.doc.lineAt(v.from).text)![0]!;
+    let md = blockToText(b);
+    if (ws) md = md.split("\n").map((l) => ws + l).join("\n");
+    view.dispatch({ changes: { from: v.from, to: v.to, insert: md }, userEvent: "input.writeback" });
   };
 
   /** Replace an image's bytes with an annotated PNG (browser lightbox path):
@@ -93,6 +104,14 @@ export function DocView({
    *  lightbox overlay. */
   const openImagePreview = (b: Block) => {
     const src = b.src ?? "";
+    // Pin WHICH embed was opened (block identity first, src as fallback) so the
+    // annotated result routes back to this one even with duplicate embeds.
+    const view = cmRef.current?.view;
+    if (view) {
+      const voids = docModel(view.state).voids;
+      const opened = voids.find((v) => v.block === b) ?? voids.find((v) => v.kind === "image" && v.block.src === src);
+      if (opened) view.dispatch({ effects: setPreviewAnchor.of({ token: src, pos: opened.from }) });
+    }
     if (typeof window !== "undefined" && window.metahubDesktop?.preview) {
       // Protocol shape unchanged from the block editor: `blockId` routes the
       // annotated replacement back. CM6 block ids are ephemeral, so pass the
@@ -257,6 +276,26 @@ export function DocView({
     return () => onHandle?.(null);
   }, [onHandle, mode]);
 
+  // Window-level Cmd/Ctrl+F fallback: CM's own Mod-f binding only fires while
+  // contentDOM has focus. With focus in the title, a code-island textarea, a
+  // table cell, or nowhere, the browser's native find would run instead — and it
+  // cannot search CM's unrendered (viewport-virtualized) lines. When CM handled
+  // the key its keymap preventDefaulted, so the defaultPrevented check keeps the
+  // two paths from double-firing. Modals own the keyboard while open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== "f") return;
+      if (e.defaultPrevented) return;
+      if (document.querySelector(".lightbox, .modal-scrim.open")) return;
+      const v = cmRef.current?.view;
+      if (!v || !v.dom.isConnected) return;
+      e.preventDefault();
+      openDocFind(v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Focus the document title (the contentEditable above the body), caret at end.
   const focusTitle = () => {
     const el = document.querySelector(".doc-title") as HTMLElement | null;
@@ -273,9 +312,11 @@ export function DocView({
   if (loading) return <div class="empty">加载中…</div>;
 
   // Move the caret to the very start of the body and focus it (title → body).
+  // enterDocTop opens a fresh line first when the doc starts with a void, so the
+  // caret never lands editable on a fence/table/media source line.
   const enterBody = () => {
-    cmRef.current?.view?.dispatch({ selection: { anchor: 0 } });
-    cmRef.current?.focus();
+    const v = cmRef.current?.view;
+    if (v) enterDocTop(v);
   };
   return (
     <div
@@ -287,6 +328,25 @@ export function DocView({
       onMouseDown={(e) => {
         const v = cmRef.current?.view;
         if (v) handleClickBelow(v, e);
+      }}
+      // File-drop safety net for everywhere CM's own drop handler doesn't cover
+      // (title, meta row, the empty padding below a short document): without a
+      // dragover preventDefault the browser NAVIGATES to the dropped file,
+      // tearing down the editor and any edits in the save-debounce window. Drops
+      // CM already handled arrive here with defaultPrevented set — skip those.
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types.includes("Files")) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(e) => {
+        if (e.defaultPrevented) return; // CM's drop handler already took it
+        const v = cmRef.current?.view;
+        const files = mediaFilesFrom(e.dataTransfer);
+        if (!v || !files.length) return;
+        e.preventDefault();
+        uploadFilesAt(v, v.state.doc.length, files, onError); // append at doc end
       }}
     >
       {conflict && (

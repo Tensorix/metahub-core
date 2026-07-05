@@ -13,7 +13,8 @@ GlobalRegistrator.register();
 import { afterAll, test, expect } from "bun:test";
 import { EditorState } from "@codemirror/state";
 import { docModelField, docModel } from "./doc-model";
-import { voidField } from "./voids/void-field";
+import { voidInterior } from "./blockmodel";
+import { voidField, clampVoidSelection } from "./voids/void-field";
 
 afterAll(() => GlobalRegistrator.unregister());
 
@@ -76,4 +77,62 @@ test("undo-style non-writeback events bump like any external change", () => {
   });
   const v2 = tableVoid(tr.state);
   expect(tr.state.field(voidField).gens.get(v2.from)).toBe(1);
+});
+
+// ---- void boundary contract: voidInterior + clampVoidSelection ----
+// atomicRanges only constrains cursor MOTION; a dispatched selection can land
+// anywhere. clampVoidSelection is the invariant that no selection endpoint sits
+// strictly inside an ATOMIC void's source (edges are legal caret stops).
+
+const CODE_DOC = "para\n```js\ncode line\n```\ntail";
+const HTML_DOC = "para\n```mh-html\n<b>x</b>\n```\ntail";
+
+function clampState(doc: string) {
+  return EditorState.create({ doc, extensions: [docModelField, clampVoidSelection] });
+}
+
+function onlyVoid(state: EditorState) {
+  const v = docModel(state).voids[0];
+  if (!v) throw new Error("fixture has no void");
+  return v;
+}
+
+test("voidInterior: strict interior only, endpoints excluded", () => {
+  const state = clampState(CODE_DOC);
+  const v = onlyVoid(state);
+  expect(voidInterior(docModel(state), v.from)).toBeNull();
+  expect(voidInterior(docModel(state), v.to)).toBeNull();
+  expect(voidInterior(docModel(state), v.from + 1)?.from).toBe(v.from);
+});
+
+test("clamp: dispatched caret inside an atomic void snaps to the nearest edge", () => {
+  const state = clampState(CODE_DOC);
+  const v = onlyVoid(state);
+  const near = state.update({ selection: { anchor: v.from + 2 } }).state;
+  expect(near.selection.main.head).toBe(v.from);
+  const far = state.update({ selection: { anchor: v.to - 1 } }).state;
+  expect(far.selection.main.head).toBe(v.to);
+});
+
+test("clamp: void edges are legal caret stops, untouched", () => {
+  const state = clampState(CODE_DOC);
+  const v = onlyVoid(state);
+  expect(state.update({ selection: { anchor: v.from } }).state.selection.main.head).toBe(v.from);
+  expect(state.update({ selection: { anchor: v.to } }).state.selection.main.head).toBe(v.to);
+});
+
+test("clamp: html voids are reveal-to-edit (non-atomic) — interior selection allowed", () => {
+  const state = clampState(HTML_DOC);
+  const v = onlyVoid(state);
+  expect(v.kind).toBe("html");
+  const anchor = v.from + 12; // inside the html source
+  expect(state.update({ selection: { anchor } }).state.selection.main.head).toBe(anchor);
+});
+
+test("clamp: non-empty range endpoints snap without collapsing the range", () => {
+  const state = clampState(CODE_DOC);
+  const v = onlyVoid(state);
+  const next = state.update({ selection: { anchor: 0, head: v.from + 2 } }).state;
+  expect(next.selection.main.anchor).toBe(0);
+  expect(next.selection.main.head).toBe(v.from);
 });

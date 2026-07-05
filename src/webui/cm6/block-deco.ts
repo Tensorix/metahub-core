@@ -30,7 +30,7 @@ import {
 } from "@codemirror/view";
 import type { Range } from "@codemirror/state";
 import { docModel } from "./doc-model";
-import { MAX_NEST, hiddenIndentChars, type LineInfo } from "./blockmodel";
+import { MAX_NEST, hiddenIndentChars, isListRole, type LineInfo } from "./blockmodel";
 
 export const PLACEHOLDER = '输入文本，"/" 唤出命令';
 
@@ -245,7 +245,7 @@ function buildLine(
     return;
   }
 
-  if (role === "bullet" || role === "numbered" || role === "todo") {
+  if (isListRole(role)) {
     // Flush-left marker at the nesting level, content + wrapped rows at +26px
     // (hanging indent; pixel math + per-level indent guides live in
     // editor-theme.ts under .cm-li/.cm-nest-N). No base indent at level 0

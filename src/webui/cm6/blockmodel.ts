@@ -63,6 +63,13 @@ export type LineRole =
   | "quote"
   | "void";
 
+/** List-item roles — THE predicate for "is this line a list item". Every
+ *  consumer (Enter continuation, nest shortcuts, decorations, subtree ranges)
+ *  shares it, so adding a list-like role can't produce half-updated behavior. */
+export function isListRole(role: LineRole): boolean {
+  return role === "bullet" || role === "numbered" || role === "todo";
+}
+
 export interface LineInfo {
   /** 1-based line number (matches CM `Text.line(n).number`). */
   number: number;
@@ -133,6 +140,12 @@ export interface DocModel {
    *  (by reference) when the headings are unchanged, so consumers can
    *  short-circuit with a `===` check. */
   headings: ReadonlyArray<DocHeading>;
+  /** Sorted 1-based numbers of NON-void fence-ish lines (unmatched fence
+   *  openers rendered as prose). patchScan's fence-pairing step needs "the
+   *  topmost prose opener above the window"; without this index that step
+   *  regex-scanned the whole document prefix on every keystroke inside a code
+   *  block. Maintained by the same 3-way splice as `lines`. */
+  proseFences: ReadonlyArray<number>;
 }
 
 /** Count of leading whitespace characters (space or tab). Distinct from
@@ -361,6 +374,20 @@ function extractHeadings(lines: LineInfo[]): DocHeading[] {
   return out;
 }
 
+/** Non-void fence-ish line: cheap first-char prefilter (` / ~ after the
+ *  indent), then the real regex. Used for full scans AND per-window slices. */
+function isProseFence(l: LineInfo): boolean {
+  if (l.role === "void") return false;
+  const c = l.text.charCodeAt(l.indentChars);
+  return (c === 96 /* ` */ || c === 126 /* ~ */) && RE.fenceOpen.test(l.text);
+}
+
+function extractProseFences(lines: LineInfo[]): number[] {
+  const out: number[] = [];
+  for (const l of lines) if (isProseFence(l)) out.push(l.number);
+  return out;
+}
+
 function sameHeadings(a: DocHeading[], b: ReadonlyArray<DocHeading>): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -396,7 +423,7 @@ export function scanDoc(src: string): DocModel {
   const ok = region.lines.length === arr.length;
   const lines = ok ? region.lines : fallbackLines(arr, froms);
   const voids = ok ? region.voids : [];
-  return { lines, voids, headings: extractHeadings(lines) };
+  return { lines, voids, headings: extractHeadings(lines), proseFences: extractProseFences(lines) };
 }
 
 // ---- incremental rescan --------------------------------------------------
@@ -546,8 +573,10 @@ export function patchScan(prev: DocModel, edits: Edit[], src: LineSource): DocMo
   //    prose, so it is invisible to the void widening). Unmatched means no
   //    matching close existed ANYWHERE below it in the old doc — so only new
   //    window text can change its pairing, and only when the window contains a
-  //    fence-ish line at all. Rare (the user typed/removed a ``` line): scan the
-  //    prefix for the topmost non-void fence-ish line and rescan from there.
+  //    fence-ish line at all. The topmost prose opener comes from the model's
+  //    proseFences index (sorted; entries above the window kept identical OLD
+  //    numbering) — NOT a whole-prefix regex scan, which made every keystroke
+  //    inside a code block O(doc).
   let fencish = false;
   for (let n = ls; n <= le; n++) {
     if (RE.fenceOpen.test(src.line(n).text)) {
@@ -555,15 +584,9 @@ export function patchScan(prev: DocModel, edits: Edit[], src: LineSource): DocMo
       break;
     }
   }
-  if (fencish) {
-    for (let n = 1; n < ls; n++) {
-      const l = prevLines[n - 1]!;
-      if (l.role !== "void" && RE.fenceOpen.test(l.text)) {
-        ls = n;
-        widenUp();
-        break;
-      }
-    }
+  if (fencish && prev.proseFences.length && prev.proseFences[0]! < ls) {
+    ls = prev.proseFences[0]!;
+    widenUp();
   }
 
   // 5) Rescan the window with the shared loop. When a fence/table consumes past
@@ -613,12 +636,24 @@ export function patchScan(prev: DocModel, edits: Edit[], src: LineSource): DocMo
     }
   }
 
+  // proseFences: same 3-way splice as lines — prefix entries (< ls) reuse OLD
+  // numbering (identical there), window entries recomputed from the rescan,
+  // suffix entries shift by lineDelta.
+  const proseFences: number[] = [];
+  for (const n of prev.proseFences) {
+    if (n >= ls) break;
+    proseFences.push(n);
+  }
+  for (const l of region.lines) if (isProseFence(l)) proseFences.push(l.number);
+  for (const n of prev.proseFences) if (n > leA) proseFences.push(n + lineDelta);
+
   // Global cheap pass: headings feed the === contract.
   const headings = extractHeadings(lines);
   return {
     lines,
     voids,
     headings: sameHeadings(headings, prev.headings) ? prev.headings : headings,
+    proseFences,
   };
 }
 
@@ -632,15 +667,40 @@ function fallbackLines(arr: string[], froms: number[]): LineInfo[] {
   });
 }
 
-/** Find the void whose source range contains (or touches) `pos`, or null. Used by
- *  the reveal predicate and by structure keys that must treat a void as a unit. */
+
+/** The correct ordered number for a line placed at `newLevel`: continue the
+ *  previous sibling's LITERAL number there (+1), or 1 if it's the first item at
+ *  that level (a shallower ancestor or a non-numbered sibling precedes it).
+ *  Blanks are transparent. ONE continuation rule for every gesture: Enter
+ *  (structure.ts), Tab-relevel (structure.ts) and turn-into (convert.ts) all
+ *  seed ordered numbers through this. */
+export function correctNumberAtLevel(lines: readonly LineInfo[], lineNumber: number, newLevel: number): number {
+  for (let i = lineNumber - 2; i >= 0; i--) {
+    const li = lines[i];
+    if (!li || li.role === "blank") continue;
+    if (li.level > newLevel) continue; // deeper sub-list — skip over it
+    if (li.level < newLevel) return 1; // reached an ancestor → first child at newLevel
+    return li.role === "numbered" ? (li.num ?? 0) + 1 : 1; // same level: continue run or break
+  }
+  return 1;
+}
+
+/** Find the void whose source range contains (or touches) `pos`, or null.
+ *  TOUCH-INCLUSIVE on both endpoints (`v.from <= pos <= v.to`): a caret sitting
+ *  at a void's edge counts. That is what the reveal predicate and structure keys
+ *  want — but it also means adjacent voids (v2.from == v1.to + 1) both answer
+ *  for the boundary region, so code that WRITES through the result must locate
+ *  the void by identity (widget → range), never by a position guess. */
 export function voidAt(model: DocModel, pos: number): VoidRange | null {
   for (const v of model.voids) if (pos >= v.from && pos <= v.to) return v;
   return null;
 }
 
-/** True if the offset lies within any void's source range (endpoints inclusive).
- *  The inline tokenizer uses this to leave code/html source literal. */
-export function insideVoid(model: DocModel, pos: number): boolean {
-  return voidAt(model, pos) !== null;
+/** The void whose source range STRICTLY contains `pos` (`v.from < pos < v.to`) —
+ *  "a caret here would be editing raw void source". Edges are legal caret stops
+ *  (atomicRanges), so this is the predicate for clamping selections out. */
+export function voidInterior(model: DocModel, pos: number): VoidRange | null {
+  for (const v of model.voids) if (pos > v.from && pos < v.to) return v;
+  return null;
 }
+

@@ -15,7 +15,8 @@ import { Decoration, EditorView, ViewPlugin, keymap } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
-import { findInText, type FindOpts } from "../../find.ts";
+import { consumeKey } from "../../keys.ts";
+import { findInText, collectMatches, applyHighlights, clearHighlights, type FindOpts } from "../../find.ts";
 
 const MARK = Decoration.mark({ class: "cm-find" });
 const CUR = Decoration.mark({ class: "cm-find cm-find-cur" });
@@ -28,16 +29,67 @@ interface FindState {
   deco: DecorationSet;
 }
 
-const openFind = StateEffect.define<null>();
+export const openFind = StateEffect.define<null>();
 const closeFind = StateEffect.define<null>();
-const setFind = StateEffect.define<{ term?: string; opts?: FindOpts }>();
+export const setFind = StateEffect.define<{ term?: string; opts?: FindOpts }>();
 const stepFind = StateEffect.define<1 | -1>();
 
 function compute(doc: string, term: string, opts: FindOpts, idx: number): FindState {
   const matches = term ? findInText(doc, term, opts) : [];
+  return withMatches(term, opts, idx, matches);
+}
+
+function withMatches(term: string, opts: FindOpts, idx: number, matches: Array<[number, number]>): FindState {
   if (idx >= matches.length) idx = 0;
   const ranges = matches.map(([f, t], i) => (i === idx ? CUR : MARK).range(f, t));
   return { term, opts, idx, matches, deco: Decoration.set(ranges, true) };
+}
+
+/** Recompute after a doc change WITHOUT re-searching the whole document (the
+ *  old full `doc.toString()` + rescan ran synchronously inside dispatch on
+ *  every keystroke while the bar was open). Matches clear of the edit are
+ *  mapped through the changes; only a window around the damage — padded by the
+ *  term length plus one wholeWord boundary char — is re-searched. */
+export function remapMatches(prev: FindState, tr: import("@codemirror/state").Transaction): FindState {
+  const { term, opts } = prev;
+  if (!term) return withMatches(term, opts, prev.idx, []);
+  let lo = Infinity;
+  let hi = -1;
+  tr.changes.iterChanges((_fA, _tA, fB, tB) => {
+    if (fB < lo) lo = fB;
+    if (tB > hi) hi = tB;
+  });
+  if (hi < 0) return prev;
+  const doc = tr.state.doc;
+  // A match is damage-affected iff it intersects [lo-1, hi+1] (±1: an edit can
+  // flip a wholeWord verdict via the boundary char). Everything else survives
+  // by position mapping.
+  const zoneFrom = lo - 1;
+  const zoneTo = hi + 1;
+  const matches: Array<[number, number]> = [];
+  for (const [s, e] of prev.matches) {
+    const ns = tr.changes.mapPos(s, 1);
+    const ne = tr.changes.mapPos(e, -1);
+    if (ne - ns !== e - s) continue; // clipped/deleted by the edit
+    if (ns <= zoneTo && ne >= zoneFrom) continue; // affected → rediscovered below
+    matches.push([ns, ne]);
+  }
+  // Re-search a slice that fully contains every affected match plus the
+  // context chars wholeWord needs at both ends.
+  const ctxFrom = Math.max(0, lo - term.length - 2);
+  const ctxTo = Math.min(doc.length, hi + term.length + 2);
+  const slice = doc.sliceString(ctxFrom, ctxTo);
+  for (const [s, e] of findInText(slice, term, opts)) {
+    const as = ctxFrom + s;
+    const ae = ctxFrom + e;
+    // Slice-edge matches: only trust wholeWord verdicts with real context
+    // inside the slice (doc edges excepted — there the slice edge IS the doc
+    // edge, so out-of-bounds counts as a boundary either way).
+    if (opts.wholeWord && ((as === ctxFrom && ctxFrom > 0) || (ae === ctxTo && ctxTo < doc.length))) continue;
+    if (as <= zoneTo && ae >= zoneFrom) matches.push([as, ae]);
+  }
+  matches.sort((a, b) => a[0] - b[0]);
+  return withMatches(term, opts, prev.idx, matches);
 }
 
 export const findField = StateField.define<FindState | null>({
@@ -57,7 +109,7 @@ export const findField = StateField.define<FindState | null>({
       }
     }
     if (value && tr.docChanged && !tr.effects.some((e) => e.is(setFind) || e.is(stepFind))) {
-      value = compute(tr.state.doc.toString(), value.term, value.opts, value.idx);
+      value = remapMatches(value, tr);
     }
     return value;
   },
@@ -78,18 +130,44 @@ const findBar = ViewPlugin.fromClass(
   class {
     bar: HTMLDivElement | null = null;
     last: FindState | null = null;
+    islandRaf = 0;
 
     constructor(readonly view: EditorView) {}
 
     update(u: ViewUpdate) {
       const s = u.state.field(findField);
+      // Matches inside void widgets (code mirror, table cells) are swallowed by
+      // the block replace decoration — paint them with the CSS Custom Highlight
+      // API over the rendered widget DOM instead (find.ts, the old editor's
+      // mechanism). Repaint whenever the field, the doc, or the set of mounted
+      // widgets (viewport) changes.
+      if (s?.term && (s !== this.last || u.docChanged || u.viewportChanged || u.geometryChanged)) {
+        this.scheduleIslands(s);
+      } else if (!s?.term && this.last?.term) {
+        this.scheduleIslands(null);
+      }
       if (s === this.last) return;
       this.last = s;
       if (s) this.draw(s);
       else this.hide();
     }
 
-    destroy() { this.hide(); }
+    destroy() {
+      this.hide();
+      if (this.islandRaf) cancelAnimationFrame(this.islandRaf);
+      clearHighlights();
+    }
+
+    /** Deferred (rAF): widget DOM mounts after the CM update finishes, and DOM
+     *  walking is illegal inside update() anyway. */
+    private scheduleIslands(s: FindState | null) {
+      if (this.islandRaf) cancelAnimationFrame(this.islandRaf);
+      this.islandRaf = requestAnimationFrame(() => {
+        this.islandRaf = 0;
+        if (!s?.term) return clearHighlights();
+        applyHighlights(collectMatches(this.view.contentDOM, s.term, s.opts), null);
+      });
+    }
 
     private draw(s: FindState) {
       const view = this.view;
@@ -122,8 +200,10 @@ const findBar = ViewPlugin.fromClass(
               scrollToCurrent(view);
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
-              else if (e.key === "Escape") { e.preventDefault(); close(); }
+              // consumeKey (not bare preventDefault): the quicknote window hides
+              // on any unconsumed bubbled Escape.
+              if (e.key === "Enter") { consumeKey(e); step(e.shiftKey ? -1 : 1); }
+              else if (e.key === "Escape") { consumeKey(e); close(); }
             }}
           />
           <span class="find-count">{s.matches.length ? `${s.idx + 1} / ${s.matches.length}` : (s.term ? "无结果" : "")}</span>
@@ -148,6 +228,15 @@ const findBar = ViewPlugin.fromClass(
   },
 );
 
+/** Open the in-document find bar and focus its input. Exported so the window-
+ *  level Cmd+F fallback (editor.tsx) can open it when CM doesn't have focus —
+ *  the CM keymap alone only fires with focus in contentDOM, and browser-native
+ *  find is useless against CM's viewport-only rendering. */
+export function openDocFind(view: EditorView): void {
+  view.dispatch({ effects: openFind.of(null) });
+  requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".find-bar input")?.focus());
+}
+
 export function find(): Extension {
   return [
     findField,
@@ -156,8 +245,7 @@ export function find(): Extension {
       {
         key: "Mod-f",
         run: (view) => {
-          view.dispatch({ effects: openFind.of(null) });
-          requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".find-bar input")?.focus());
+          openDocFind(view);
           return true;
         },
       },

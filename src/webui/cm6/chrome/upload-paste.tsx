@@ -16,8 +16,7 @@ import { api, MAX_UPLOAD_BYTES } from "../../api.ts";
 import { blockToText, mediaKindFromMime, type Block } from "../../blocks.ts";
 import { htmlToMarkdown } from "../../html-md.ts";
 import { startUpload, updateUpload, finishUpload, toast } from "../../ui.tsx";
-import { docModel } from "../doc-model";
-import { addUpload, removeUpload, uploadField, beginUpload, endUpload } from "./upload-field";
+import { addUpload, removeUpload, uploadField, beginUpload, endUpload, embedAnchor } from "./upload-field";
 
 export interface UploadDeps {
   onError?: (message: string) => void;
@@ -28,7 +27,7 @@ function newToken(): string {
   return `${Date.now().toString(36)}-${(seq++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function mediaFilesFrom(dt: DataTransfer | null | undefined): File[] {
+export function mediaFilesFrom(dt: DataTransfer | null | undefined): File[] {
   if (!dt) return [];
   const out: File[] = [];
   if (dt.items) for (let i = 0; i < dt.items.length; i++) {
@@ -77,11 +76,10 @@ export function uploadFilesAt(view: EditorView, pos: number, files: File[], onEr
   files = files.filter((f) => withinCap(f, onError));
   if (!files.length) return;
 
-  // A drop can land inside a void's raw source; nudge past it. Then anchor at the
-  // end of the line so the block widget renders after it (side: 1).
-  const enclosing = docModel(view.state).voids.find((v) => pos > v.from && pos < v.to);
-  if (enclosing) pos = enclosing.to;
-  pos = view.state.doc.lineAt(pos).to;
+  // A drop can land in a void's source range — including exactly v.from (the
+  // widget's top edge). embedAnchor nudges past the void and anchors at line
+  // end so the block widget renders after it (side: 1).
+  pos = embedAnchor(view.state, pos);
 
   const tokens = files.map(() => newToken());
   tryDispatch(view, {
@@ -99,8 +97,11 @@ export function uploadFilesAt(view: EditorView, pos: number, files: File[], onEr
         if (!entry) return; // widget gone (doc closed / view rebuilt) — bytes are saved, nothing to insert
         const kind = mediaKindFromMime(file.type);
         const block: Block = { id: `up-${token}`, type: kind, content: "", src: up.url, name: file.name || undefined, size: kind === "file" ? up.size : undefined };
+        // The anchor was remapped through every edit during the upload — a void
+        // can have FORMED around it in the meantime (user typed a fence/table
+        // there). Re-anchor past it before inserting.
         // Replace an empty anchor line, or start a fresh line after a non-empty one.
-        const line = view.state.doc.lineAt(entry.pos);
+        const line = view.state.doc.lineAt(embedAnchor(view.state, entry.pos));
         const change = line.text.trim() === ""
           ? { from: line.from, to: line.to, insert: blockToText(block) }
           : { from: line.to, to: line.to, insert: "\n" + blockToText(block) };
@@ -142,9 +143,19 @@ export function uploadPaste(deps: UploadDeps = {}): Extension {
         uploadFilesAt(view, view.state.selection.main.head, files, deps.onError);
         return true;
       }
-      // No files: convert pasted HTML to Markdown (plain text falls through to CM).
+      // No files: convert pasted HTML to Markdown (plain text falls through to
+      // CM). Our OWN copy flavor (copy-rich.ts tags it data-mh-md) skips the
+      // conversion — the plain flavor is the original Markdown, lossless.
       const html = event.clipboardData?.getData("text/html");
       if (html) {
+        if (html.includes("data-mh-md")) {
+          const md = event.clipboardData?.getData("text/plain") ?? "";
+          if (md) {
+            event.preventDefault();
+            view.dispatch(view.state.replaceSelection(md.replace(/\r\n?/g, "\n")));
+            return true;
+          }
+        }
         event.preventDefault();
         view.dispatch(view.state.replaceSelection(htmlToMarkdown(html).replace(/\r\n?/g, "\n")));
         return true;

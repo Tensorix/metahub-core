@@ -64,6 +64,7 @@ function strip(m: DocModel) {
     lines: m.lines,
     voids: m.voids.map((v) => ({ ...v, block: { ...v.block, id: "" } })),
     headings: m.headings,
+    proseFences: m.proseFences,
   };
 }
 

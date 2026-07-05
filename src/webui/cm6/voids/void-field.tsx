@@ -35,11 +35,13 @@ import {
   WidgetType,
   type DecorationSet,
 } from "@codemirror/view";
-import { StateField, RangeSetBuilder, Facet, type EditorState, type RangeSet } from "@codemirror/state";
+import { StateField, RangeSetBuilder, Facet, EditorState, EditorSelection, type RangeSet } from "@codemirror/state";
 import { undo, redo } from "@codemirror/commands";
 import { docModel } from "../doc-model";
-import { voidAt, type VoidKind, type VoidRange } from "../blockmodel";
+import { voidAt, voidInterior, type VoidKind, type VoidRange } from "../blockmodel";
 import { blockToText, leadingIndent, stripIndent, type Block } from "../../blocks";
+import { consumeKey } from "../../keys";
+import { minimalReplace } from "../min-diff";
 import { ImageBlock, VideoBlock, AudioBlock, FileBlock } from "../../media/media-blocks";
 import { CodeIsland } from "../../media/code-block";
 import { tabEdit, newlineEdit, applyTaEdit } from "../../media/code-edit";
@@ -65,12 +67,28 @@ function htmlSrcdoc(html: string): string {
 }
 
 /** Resolve the void currently under `host` (positions shift as the user types, so
- *  this must run fresh at commit/keystroke time, never be cached). */
+ *  this must run fresh at commit/keystroke time, never be cached).
+ *
+ *  Resolution is BY WIDGET IDENTITY: walk the field's decoration set (CM remaps
+ *  it through every transaction, so ranges are always current) and match the
+ *  widget whose adopted DOM is `host`. A position-based lookup (posAtDOM +
+ *  voidAt) is one off-by-one away from answering the PREVIOUS void when two
+ *  voids sit on adjacent lines — and commit() writes through this result, so a
+ *  wrong answer overwrites the wrong block. No positional fallback: an
+ *  unmatched host returns null and the caller no-ops. */
 function voidUnder(view: EditorView, host: HTMLElement): VoidRange | null {
-  if (!host.isConnected) return null; // detached widget: posAtDOM would hit the wrong void
-  const from = view.posAtDOM(host);
-  const model = docModel(view.state);
-  return voidAt(model, from) ?? voidAt(model, from + 1);
+  if (!host.isConnected) return null;
+  let found: VoidRange | null = null;
+  const field = view.state.field(voidField, false);
+  if (!field) return null;
+  field.deco.between(0, view.state.doc.length, (from, _to, deco) => {
+    const w = (deco.spec as { widget?: VoidWidget }).widget;
+    if (w && w.dom === host) {
+      found = voidAt(docModel(view.state), from);
+      return false;
+    }
+  });
+  return found;
 }
 
 /** Leading whitespace of the void's opening line — the nesting indent that
@@ -90,8 +108,11 @@ function commit(view: EditorView, host: HTMLElement, block: Block) {
   let md = blockToText(block);
   const ws = voidIndent(view, v);
   if (ws) md = md.split("\n").map((l) => ws + l).join("\n");
-  if (md === view.state.sliceDoc(v.from, v.to)) return;
-  view.dispatch({ changes: { from: v.from, to: v.to, insert: md }, userEvent: "input.writeback" });
+  // Minimal replace, not whole-range: a keystroke in a 1000-line code island
+  // must put ~1 char in history/changeset, not the full block twice.
+  const change = minimalReplace(view.state.sliceDoc(v.from, v.to), md, v.from);
+  if (!change) return;
+  view.dispatch({ changes: change, userEvent: "input.writeback" });
 }
 
 /** Focus the code island hosting void `v` and put the textarea caret at its start
@@ -146,6 +167,17 @@ function TableHost({ view, host, initial }: { view: EditorView; host: HTMLElemen
       const rows = bRef.current.rows ?? [];
       const nrows = rows.length, ncols = rows[0]?.length ?? 0;
       if (!nrows || !ncols) return;
+      // Undo/redo: focus sits on document.body while a rectangle is active (the
+      // cell blur is load-bearing for this keyboard layer), so CM's historyKeymap
+      // never sees Cmd+Z — route it to CM history here. clearRect's commit is one
+      // ordinary transaction, so this makes rect-delete undoable in place.
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y")) {
+        consumeKey(e);
+        (e.key.toLowerCase() === "y" || e.shiftKey ? redo : undo)(view);
+        view.focus(); // the undo bumps this void's gen → widget rebuilds; next Cmd+Z goes to CM
+        return;
+      }
       const moved = moveCellSel(cellSel, e.key, e.shiftKey, nrows, ncols);
       if (moved) {
         e.preventDefault();
@@ -169,7 +201,13 @@ function TableHost({ view, host, initial }: { view: EditorView; host: HTMLElemen
         setRk((k) => k + 1);
         commit(view, host, bRef.current); // one synchronous transaction = one undo step
       } else if (e.key === "Escape") {
+        consumeKey(e); // unsealed, this Escape would also hide the quicknote window
         setCellSel(null);
+        // Land the selection on the void and refocus CM so a follow-up plain
+        // Cmd+Z routes to history normally (mirrors the code island's Escape).
+        const v = voidUnder(view, host);
+        if (v) view.dispatch({ selection: { anchor: v.from, head: v.to } });
+        view.focus();
       } else if (
         (e.key === "Enter" || e.key === "F2") &&
         cellSel.a.r === cellSel.b.r && cellSel.a.c === cellSel.b.c
@@ -300,7 +338,7 @@ function CodeHost({
       return;
     }
     if (e.key === "Escape") {
-      e.preventDefault();
+      consumeKey(e); // seal: quicknote hides on any unconsumed bubbled Escape
       const v = voidUnder(view, host);
       if (!v) return;
       view.focus();
@@ -442,7 +480,16 @@ class VoidWidget extends WidgetType {
       other.dom ??= this.dom;
       return true;
     }
-    return other.source === this.source && other.selected === this.selected;
+    const same = other.source === this.source && other.selected === this.selected;
+    if (same) {
+      // CM adopts the NEW instance while keeping the OLD one's DOM. Carry the
+      // dom pointer across here too, or the adopted widget answers dom === null
+      // and voidUnder (widget-identity lookup) can't find it — a media resize /
+      // table click after any unfocused rebuild would silently no-op.
+      this.dom ??= other.dom;
+      other.dom ??= this.dom;
+    }
+    return same;
   }
 
   override toDOM(view: EditorView): HTMLElement {
@@ -565,6 +612,25 @@ interface VoidState {
   anySelected: boolean;
 }
 
+/** True when no void's touched/selected status differs between two selections —
+ *  the common caret-move case, where rebuilding every widget (full source
+ *  sliceString + fresh VoidWidget per void, discarded by eq()) is pure waste. */
+function voidSelUnchanged(
+  model: ReturnType<typeof docModel>,
+  a: EditorState["selection"],
+  b: EditorState["selection"],
+): boolean {
+  for (const v of model.voids) {
+    const tA = a.ranges.some((r) => r.from <= v.to && r.to >= v.from);
+    const tB = b.ranges.some((r) => r.from <= v.to && r.to >= v.from);
+    if (tA !== tB) return false;
+    const sA = a.ranges.some((r) => r.from <= v.from && r.to >= v.to);
+    const sB = b.ranges.some((r) => r.from <= v.from && r.to >= v.to);
+    if (sA !== sB) return false;
+  }
+  return true;
+}
+
 function buildVoids(state: EditorState, gens: Map<number, number>): VoidState {
   const model = docModel(state);
   const sel = state.selection;
@@ -606,8 +672,14 @@ export const voidField = StateField.define<VoidState>({
   create: (state) => buildVoids(state, new Map()),
   update: (value, tr) => {
     if (!tr.docChanged && !tr.selection) return value;
-    const gens = tr.docChanged ? nextGens(value.gens, tr) : value.gens;
-    return buildVoids(tr.state, gens);
+    if (!tr.docChanged) {
+      // Selection-only (arrow keys, clicks): rebuild only when some void's
+      // touched/selected status actually flipped.
+      const model = docModel(tr.state);
+      if (voidSelUnchanged(model, tr.startState.selection, tr.state.selection)) return value;
+      return buildVoids(tr.state, value.gens);
+    }
+    return buildVoids(tr.state, nextGens(value.gens, tr));
   },
   provide: (f) => [
     EditorView.decorations.from(f, (v) => v.deco),
@@ -615,4 +687,32 @@ export const voidField = StateField.define<VoidState>({
     // Hide the stray native caret while a void is selected (see VoidState).
     EditorView.contentAttributes.from(f, (v) => ({ class: v.anySelected ? "cm-void-selected" : "" })),
   ],
+});
+
+/** Keep the selection out of ATOMIC voids' source interiors. atomicRanges only
+ *  constrains cursor-motion commands — a programmatic dispatch (title → body,
+ *  remote-merge caret remap in replaceDoc, any future chrome) can still drop the
+ *  caret strictly inside a fence/table/media source line, where typing corrupts
+ *  the void. This filter is the invariant: any selection endpoint landing
+ *  strictly inside an atomic void snaps to the nearest edge (edges are legal
+ *  caret stops). Registered in richLayer, NOT baseExtensions — source mode
+ *  legitimately edits raw fence interiors. */
+export const clampVoidSelection = EditorState.transactionFilter.of((tr) => {
+  if (!tr.selection && !tr.docChanged) return tr;
+  const model = docModel(tr.state);
+  if (!model.voids.length) return tr;
+  let moved = false;
+  const clamp = (pos: number) => {
+    const v = voidInterior(model, pos);
+    if (!v || !ATOMIC.has(v.kind)) return pos;
+    moved = true;
+    return pos - v.from <= v.to - pos ? v.from : v.to;
+  };
+  const ranges = tr.newSelection.ranges.map((r) =>
+    r.empty
+      ? EditorSelection.cursor(clamp(r.head))
+      : EditorSelection.range(clamp(r.anchor), clamp(r.head)),
+  );
+  if (!moved) return tr;
+  return [tr, { selection: EditorSelection.create(ranges, tr.newSelection.mainIndex), sequential: true }];
 });

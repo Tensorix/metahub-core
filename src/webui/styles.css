@@ -489,9 +489,6 @@
   .doc-conflict { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 14px; margin-bottom:16px; border:1px solid var(--danger); border-radius:var(--radius-sm); background:var(--danger-soft); font-size:13px; }
   .doc-conflict-msg { color:var(--danger); font-weight:600; flex:1; min-width:180px; }
   .doc.source-mode { min-height:100%; }
-  .doc-source { display:block; width:100%; min-height:calc(100vh - 210px); min-height:calc(100dvh - 210px); resize:none; border:0;
-    background:transparent; color:var(--fg); outline:none; overflow:hidden; padding:3px 2px 36vh;
-    font-family:var(--ui); font-size:15px; line-height:1.7; tab-size:2; }
   /* floating table of contents: a column of indented tick marks in the right
      gutter that expands to a labelled list on hover (Notion / Vercel-docs style).
      Fixed to the viewport so it never disturbs the centred .doc column. */
@@ -646,7 +643,6 @@
     color:var(--fg-soft); font-size:var(--fs-micro); transition:background .12s; }
   .void-html .html-toggle:hover { background:var(--hover-2); color:var(--fg); }
   .void-html .html-toggle.on { background:var(--accent-soft); color:var(--accent); }
-  .void-html .html-source { width:100%; min-height:120px; padding:12px; border:0; background:var(--bg); resize:vertical; }
   .void-html .html-frame { display:block; width:100%; border:0; background:var(--bg); }
   .void-html .html-empty { padding:24px; text-align:center; color:var(--muted); cursor:text; font-size:var(--fs-ui); }
 
@@ -747,7 +743,6 @@
   .lightbox-toolbar.app-drag button { -webkit-app-region:no-drag; }
 
   /* document table (GFM pipe table block) */
-  .b-table .doc-table-wrap { flex:1; min-width:0; margin:4px 0; }
   .doc-table-scroll { overflow-x:auto; padding:2px 0; }
   .doc-table-inner { width:max-content; }
   .doc-table-row { display:flex; align-items:stretch; }
@@ -1270,7 +1265,12 @@
   .ico.flip { transform:scaleX(-1); }
 
   /* ---- find in document (Ctrl-F, CM6 bar) ---- */
-  /* Match highlights are CM6 Decoration.marks (.cm-find/.cm-find-cur, editor-theme.ts). */
+  /* Match highlights are CM6 Decoration.marks (.cm-find/.cm-find-cur, editor-theme.ts).
+     Matches INSIDE void widgets (code mirror, table cells) can't be mark
+     decorations — the block replace widget swallows them — so those paint via
+     the CSS Custom Highlight API (find.ts collectMatches/applyHighlights). */
+  ::highlight(mh-find-all) { background: color-mix(in srgb, var(--accent) 26%, transparent); border-radius: 2px; }
+  ::highlight(mh-find-current) { background: var(--accent); color: var(--accent-fg); }
   .find-bar {
     position:fixed; top:58px; right:18px; z-index:96;   /* below the ~50px topbar */
     display:flex; align-items:center; gap:4px;
@@ -1522,7 +1522,7 @@
   @media (pointer: coarse) {
     /* iOS Safari auto-zooms the page when a focused field is below 16px; the
        class selectors out-specify the element-level sizes set on these. */
-    input, textarea, .text-input, .doc-source, input.inlineedit { font-size:16px; }
+    input, textarea, .text-input, input.inlineedit { font-size:16px; }
     .navitem .acts button { width:34px; height:34px; }
     .iconbtn { width:40px; height:40px; }
     .btn { padding:9px 14px; min-height:40px; }
