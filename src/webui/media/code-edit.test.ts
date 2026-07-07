@@ -4,7 +4,7 @@
 // since a wrong selection after indent is exactly the caret-jump bug class the
 // island exists to avoid.
 import { test, expect } from "bun:test";
-import { tabEdit, newlineEdit, type TaEdit } from "./code-edit";
+import { formatTaEdit, tabEdit, newlineEdit, type TaEdit } from "./code-edit";
 
 function apply(value: string, ed: TaEdit): { text: string; selStart: number; selEnd: number } {
   return {
@@ -158,4 +158,25 @@ test("Enter at position 0 does not misread the line start", () => {
   const r = apply(v, newlineEdit(v, 0, 0));
   expect(r.text).toBe("\n\nfoo");
   expect(r.selStart).toBe(1);
+});
+
+// ---- formatTaEdit (whole-content 格式化 replacement) ----
+
+test("formatTaEdit replaces the whole value and collapses the caret", () => {
+  const v = "a={b:1}";
+  const r = apply(v, formatTaEdit(v, "a = { b: 1 }", 4)!);
+  expect(r.text).toBe("a = { b: 1 }");
+  expect(r.selStart).toBe(4);
+  expect(r.selEnd).toBe(4);
+});
+
+test("formatTaEdit returns null when nothing changed", () => {
+  expect(formatTaEdit("same", "same", 2)).toBeNull();
+});
+
+test("formatTaEdit clamps an out-of-range caret", () => {
+  const ed = formatTaEdit("longer text", "ab", 99)!;
+  expect(ed.selStart).toBe(2);
+  const neg = formatTaEdit("x", "yz", -3)!;
+  expect(neg.selStart).toBe(0);
 });

@@ -6,6 +6,7 @@ import { join, dirname } from "node:path";
 // file is re-read from disk per request instead — see getCss().
 import APP_CSS from "../styles.css" with { type: "text" };
 import { ICON_192, ICON_512, ICON_180 } from "./icons.ts";
+import { FMT_PROVIDERS, type FmtProvider } from "../fmt/manifest.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
 // Serves the browser WebUI at `/`. Core never imports this module: it is wired
@@ -64,8 +65,19 @@ const injected: Record<string, string | null> = {
   dbWorker: null,
   runtime: null,
   sdk: null,
+  // fmt_<id> keys for the lazy 格式化 provider bundles are added below from
+  // the manifest, so bundleGetter serves them through the same three-way path.
 };
 let injectedWasm: ArrayBuffer | null = null;
+/** Embedded 格式化 wasm sidecars, keyed by serve route (fmt/manifest.ts). */
+const injectedFmtWasm: Record<string, ArrayBuffer> = {};
+
+/** Normalize to a whole ArrayBuffer (what Response accepts under every lib). */
+function toArrayBuffer(w: Uint8Array): ArrayBuffer {
+  return w.byteOffset === 0 && w.byteLength === w.buffer.byteLength
+    ? (w.buffer as ArrayBuffer)
+    : (w.slice().buffer as ArrayBuffer);
+}
 
 export function setWebuiBundle(bundle: {
   js: string;
@@ -74,18 +86,24 @@ export function setWebuiBundle(bundle: {
   runtime: string;
   sdk: string;
   wasm: Uint8Array;
+  /** Lazy 格式化 provider assets keyed by serve route (fmt/manifest.ts).
+   *  Optional so embedders built before a provider existed keep working — a
+   *  missing asset 500s only when that language's 格式化 is actually used. */
+  fmt?: Record<string, string>;
+  fmtWasm?: Record<string, Uint8Array>;
 }): void {
   injected.js = bundle.js;
   injected.sw = bundle.sw;
   injected.dbWorker = bundle.dbWorker;
   injected.runtime = bundle.runtime;
   injected.sdk = bundle.sdk;
-  // Normalize to a whole ArrayBuffer (what Response accepts under every lib).
-  const w = bundle.wasm;
-  injectedWasm =
-    w.byteOffset === 0 && w.byteLength === w.buffer.byteLength
-      ? (w.buffer as ArrayBuffer)
-      : (w.slice().buffer as ArrayBuffer);
+  injectedWasm = toArrayBuffer(bundle.wasm);
+  for (const p of FMT_PROVIDERS) {
+    const js = bundle.fmt?.[p.js];
+    if (js != null) injected[`fmt_${p.id}`] = js;
+    const w = p.wasm && bundle.fmtWasm?.[p.wasm.route];
+    if (p.wasm && w) injectedFmtWasm[p.wasm.route] = toArrayBuffer(w);
+  }
 }
 
 /** Newest mtime across the browser-bundle sources (src/webui/**.ts[x]).
@@ -151,6 +169,37 @@ function bundleGetter(opts: {
 
 const getJs = bundleGetter({ key: "js", entry: "../app.tsx", dist: "webui.js" });
 const getSwRaw = bundleGetter({ key: "sw", entry: "../sw.ts", dist: "sw.js" });
+
+// Lazy 格式化 provider bundles: one getter per manifest entry (fmt/manifest.ts
+// is the single source of truth shared with the build and the static shell).
+// webui.js only references these routes through a runtime variable, so nothing
+// here is ever inlined into the main bundle.
+const fmtJs: Record<string, () => Promise<string>> = {};
+for (const p of FMT_PROVIDERS) {
+  injected[`fmt_${p.id}`] = null;
+  fmtJs[p.js] = bundleGetter({ key: `fmt_${p.id}`, entry: `../${p.entry}`, dist: p.js.slice(1) });
+}
+const fmtWasmByRoute: Record<string, FmtProvider> = Object.fromEntries(
+  FMT_PROVIDERS.filter((p) => p.wasm).map((p) => [p.wasm!.route, p]),
+);
+
+/** 格式化 wasm sidecar bytes: same three-way strategy as sqlite3.wasm. */
+async function getFmtWasm(p: FmtProvider): Promise<ArrayBuffer> {
+  const w = p.wasm!;
+  const embedded = injectedFmtWasm[w.route];
+  if (embedded != null) return embedded;
+  const path = RUNNING_FROM_SOURCE
+    ? join(
+        dirname(Bun.resolveSync(w.pkg, fileURLToPath(new URL(".", import.meta.url)))),
+        w.file,
+      )
+    : fileURLToPath(new URL(`.${w.route}`, import.meta.url));
+  const f = Bun.file(path);
+  if (!(await f.exists())) {
+    throw new Error(`${w.route} missing at ${path} — run \`bun install\` / \`bun run build\``);
+  }
+  return f.arrayBuffer();
+}
 const getDbWorker = bundleGetter({ key: "dbWorker", entry: "../data/db-worker.ts", dist: "db-worker.js" });
 const getRuntime = bundleGetter({ key: "runtime", entry: "../runtime.ts", dist: "mh-runtime.js" });
 const getSdk = bundleGetter({ key: "sdk", entry: "../../sdk/client.ts", dist: "metahub-sdk.js", extraDirs: ["../../sdk"] });
@@ -270,12 +319,26 @@ export async function serveWebui(req: Request): Promise<Response | null> {
       return new Response(`sqlite3.wasm unavailable: ${e}`, { status: 500 });
     }
   }
+  const fmtWasmProvider = fmtWasmByRoute[pathname];
+  if (fmtWasmProvider) {
+    try {
+      return new Response(await getFmtWasm(fmtWasmProvider), {
+        // Immutable within a dependency version (like sqlite3.wasm); the SW
+        // keeps it cache-first in the versioned shell cache after first use.
+        headers: { "content-type": "application/wasm", "cache-control": "public, max-age=86400" },
+      });
+    } catch (e) {
+      console.error(`[webui] failed to serve ${pathname} —`, e);
+      return new Response(`${pathname} unavailable: ${e}`, { status: 500 });
+    }
+  }
   const script: Record<string, () => Promise<string>> = {
     "/webui.js": getJsStamped,
     "/sw.js": getSw,
     "/db-worker.js": getDbWorker,
     "/mh-runtime.js": getRuntime,
     "/metahub-sdk.js": getSdk,
+    ...fmtJs,
   };
   const getter = script[pathname];
   if (getter) {

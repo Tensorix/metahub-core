@@ -505,6 +505,25 @@ sw.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Lazy 格式化 provider assets (/webui-fmt*.js|.wasm, fmt/manifest.ts).
+  // Deliberately NOT in SHELL_PATHS — that list drives the install-time warm,
+  // and nobody should pre-download formatter engines they may never use.
+  // Cache-first: immutable within a version, and living in the versioned
+  // SHELL_CACHE means an app update drops them with the rest of the shell.
+  if (url.pathname.startsWith("/webui-fmt")) {
+    event.respondWith(
+      (async () => {
+        const cache = await swCaches.open(SHELL_CACHE);
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        const res = await fetch(req);
+        if (cacheable(res)) await cache.put(req, res.clone());
+        return res;
+      })(),
+    );
+    return;
+  }
+
   if (url.pathname === "/sqlite3.wasm") {
     event.respondWith(
       (async () => {

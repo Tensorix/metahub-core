@@ -46,7 +46,11 @@ export async function smokeWebui(binaryPath: string): Promise<void> {
 
     // Offline-replica surface: the DB worker, its wasm, the injected page
     // runtime, and the sites SDK must all serve from the embedded bundles.
-    for (const p of ["/db-worker.js", "/sqlite3.wasm", "/mh-runtime.js", "/metahub-sdk.js"]) {
+    // Plus the lazy 格式化 provider assets (src/webui/fmt/manifest.ts) — the
+    // exact same "embedded or 500" failure mode as webui.js itself.
+    const { FMT_PROVIDERS } = await import("../src/webui/fmt/manifest.ts");
+    const fmtPaths = FMT_PROVIDERS.flatMap((p) => [p.js, ...(p.wasm ? [p.wasm.route] : [])]);
+    for (const p of ["/db-worker.js", "/sqlite3.wasm", "/mh-runtime.js", "/metahub-sdk.js", ...fmtPaths]) {
       const r = await fetch(`http://127.0.0.1:${port}${p}`);
       if (r.status !== 200) throw new Error(`${p} → ${r.status} (expected 200): ${await r.text()}`);
       const len = (await r.arrayBuffer()).byteLength;

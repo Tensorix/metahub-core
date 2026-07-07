@@ -22,7 +22,24 @@ import sdkBundle from "../../dist/metahub-sdk.js" with { type: "text" };
 // `file` loader: the wasm is embedded in the compiled binary and the import
 // resolves to a readable virtual path at runtime.
 import wasmPath from "../../dist/sqlite3.wasm" with { type: "file" };
+// Lazy 格式化 provider assets (routes in src/webui/fmt/manifest.ts). Import
+// attributes must be literals, so these are enumerated by hand — adding a
+// provider means adding its line(s) here.
+import fmtCore from "../../dist/webui-fmt.js" with { type: "text" };
+import fmtRuff from "../../dist/webui-fmt-ruff.js" with { type: "text" };
+import fmtGofmt from "../../dist/webui-fmt-gofmt.js" with { type: "text" };
+import fmtClang from "../../dist/webui-fmt-clang.js" with { type: "text" };
+import fmtLua from "../../dist/webui-fmt-lua.js" with { type: "text" };
+import fmtTaplo from "../../dist/webui-fmt-taplo.js" with { type: "text" };
+import fmtSh from "../../dist/webui-fmt-sh.js" with { type: "text" };
+import fmtRuffWasm from "../../dist/webui-fmt-ruff.wasm" with { type: "file" };
+import fmtGofmtWasm from "../../dist/webui-fmt-gofmt.wasm" with { type: "file" };
+import fmtClangWasm from "../../dist/webui-fmt-clang.wasm" with { type: "file" };
+import fmtLuaWasm from "../../dist/webui-fmt-lua.wasm" with { type: "file" };
+import fmtTaploWasm from "../../dist/webui-fmt-taplo.wasm" with { type: "file" };
 import { setWebuiBundle } from "../webui/server/assets.ts";
+
+const bytes = async (p: string) => new Uint8Array(await Bun.file(p).arrayBuffer());
 
 setWebuiBundle({
   js: webuiBundle,
@@ -30,6 +47,22 @@ setWebuiBundle({
   dbWorker: dbWorkerBundle,
   runtime: runtimeBundle,
   sdk: sdkBundle,
-  wasm: new Uint8Array(await Bun.file(wasmPath).arrayBuffer()),
+  wasm: await bytes(wasmPath),
+  fmt: {
+    "/webui-fmt.js": fmtCore,
+    "/webui-fmt-ruff.js": fmtRuff,
+    "/webui-fmt-gofmt.js": fmtGofmt,
+    "/webui-fmt-clang.js": fmtClang,
+    "/webui-fmt-lua.js": fmtLua,
+    "/webui-fmt-taplo.js": fmtTaplo,
+    "/webui-fmt-sh.js": fmtSh,
+  },
+  fmtWasm: {
+    "/webui-fmt-ruff.wasm": await bytes(fmtRuffWasm),
+    "/webui-fmt-gofmt.wasm": await bytes(fmtGofmtWasm),
+    "/webui-fmt-clang.wasm": await bytes(fmtClangWasm),
+    "/webui-fmt-lua.wasm": await bytes(fmtLuaWasm),
+    "/webui-fmt-taplo.wasm": await bytes(fmtTaploWasm),
+  },
 });
 await import("./index.ts");

@@ -80,6 +80,47 @@ const wasmSrc = join(
 );
 await Bun.write(`${outdir}/sqlite3.wasm`, Bun.file(wasmSrc));
 
+// Lazy 格式化 provider bundles + wasm sidecars (src/webui/fmt/manifest.ts is
+// the single source of truth). webui.js references these routes only through a
+// runtime-variable dynamic import (fmt/load.ts), so they never get inlined —
+// the marker assertions below fail the build loudly if that ever regresses.
+const { FMT_PROVIDERS } = await import("../src/webui/fmt/manifest.ts");
+for (const p of FMT_PROVIDERS) {
+  const r = await Bun.build({
+    entrypoints: [`src/webui/${p.entry}`],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: p.js.slice(1),
+  });
+  if (!r.success) {
+    console.error(r.logs);
+    throw new Error(`${p.js} build failed`);
+  }
+  if (p.wasm) {
+    const src = join(dirname(Bun.resolveSync(p.wasm.pkg, import.meta.dir)), p.wasm.file);
+    await Bun.write(`${outdir}${p.wasm.route}`, Bun.file(src));
+  }
+}
+
+const webuiJs = await Bun.file(`${outdir}/webui.js`).text();
+if (!webuiJs.includes("/webui-fmt.js")) {
+  throw new Error("webui.js lost the fmt provider routes (fmt/load.ts lazy import)");
+}
+for (const p of FMT_PROVIDERS) {
+  const marker = `mh-fmt-${p.id}`;
+  if (webuiJs.includes(marker)) {
+    throw new Error(`${p.js} got inlined into webui.js — the lazy import regressed`);
+  }
+  if (!(await Bun.file(`${outdir}${p.js}`).text()).includes(marker)) {
+    throw new Error(`${p.js.slice(1)} is missing its "${marker}" marker`);
+  }
+  const kb = ((await Bun.file(`${outdir}${p.js}`).size) / 1024).toFixed(0);
+  const wasmKb = p.wasm ? ` + wasm ${((await Bun.file(`${outdir}${p.wasm.route}`).size) / 1024).toFixed(0)}KB` : "";
+  console.log(`  fmt ${p.id}: ${kb}KB${wasmKb}`);
+}
+
 const cliResult = await Bun.build({
   entrypoints: ["src/cli/index.ts"],
   outdir,

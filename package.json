@@ -52,8 +52,17 @@
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.10.2",
+    "@prettier/plugin-php": "^0.25.0",
     "@types/bun": "latest",
     "@types/turndown": "^5.0.6",
+    "@wasm-fmt/clang-format": "^22.1.8",
+    "@wasm-fmt/gofmt": "^0.7.3",
+    "@wasm-fmt/lua_fmt": "^0.3.3",
+    "@wasm-fmt/ruff_fmt": "^0.15.20",
+    "@wasm-fmt/taplo_fmt": "^0.2.5",
+    "mvdan-sh": "^0.10.1",
+    "prettier": "^3.6",
+    "sql-formatter": "^15",
     "typescript": "^5"
   }
 }

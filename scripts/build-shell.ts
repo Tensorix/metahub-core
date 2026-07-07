@@ -12,12 +12,14 @@
 
 import { join, dirname } from "node:path";
 import { serveWebui } from "../src/webui/server/assets.ts";
+import { FMT_PROVIDERS } from "../src/webui/fmt/manifest.ts";
 
 const outArg = process.argv.indexOf("--out");
 const OUT = outArg >= 0 ? process.argv[outArg + 1]! : "dist/shell";
 
 // Same asset surface the server serves at runtime. "/" → index.html; the rest
-// keep their path as the filename.
+// keep their path as the filename. The 格式化 provider assets ride along so
+// data-blind hosts have the files when a first format click fetches them.
 const PATHS = [
   "/",
   "/webui.css",
@@ -31,6 +33,7 @@ const PATHS = [
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/icon-180.png",
+  ...FMT_PROVIDERS.flatMap((p) => [p.js, ...(p.wasm ? [p.wasm.route] : [])]),
 ];
 
 const fileFor = (p: string) => (p === "/" ? "index.html" : p.slice(1));
@@ -41,7 +44,10 @@ const fileFor = (p: string) => (p === "/" ? "index.html" : p.slice(1));
 // the SPA rule, but detectOriginMode checks the response *body* (not status), so
 // the HTML still reads as "not a metahub server" → no-origin.
 const REDIRECTS = `/*  /index.html  200\n`;
-const HEADERS = `/sw.js\n  Service-Worker-Allowed: /\n/sqlite3.wasm\n  Content-Type: application/wasm\n`;
+const HEADERS = `/sw.js\n  Service-Worker-Allowed: /\n/sqlite3.wasm\n  Content-Type: application/wasm\n` +
+  FMT_PROVIDERS.filter((p) => p.wasm)
+    .map((p) => `${p.wasm!.route}\n  Content-Type: application/wasm\n`)
+    .join("");
 
 async function main() {
   let bytesTotal = 0;

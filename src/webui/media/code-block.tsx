@@ -9,8 +9,11 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import hljs from "highlight.js/lib/common";
 import { COMMON_LANGS } from "../blocks.ts";
+import { formatCode } from "../fmt/format.ts";
+import { canFormat } from "../fmt/lang-map.ts";
 import { Icon } from "../icons.tsx";
 import { escapeHtml } from "../markdown.tsx";
+import { applyTaEdit, formatTaEdit } from "./code-edit.ts";
 
 /** Highlight code to HTML for the overlay layer. Falls back to escaped text. */
 export function highlightCode(code: string, lang?: string): string {
@@ -147,13 +150,58 @@ export function CodeIsland({
   const langVal = lang ?? "";
   const langKnown = COMMON_LANGS.some((l) => l.id === langVal);
 
+  // 格式化 button state: transient ok/err flashes mirror the copy button.
+  const [fmtState, setFmtState] = useState<"idle" | "busy" | "ok" | "err">("idle");
+  const fmtErr = useRef("");
+  const fmtTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const flashFmt = (s: "ok" | "err") => {
+    setFmtState(s);
+    clearTimeout(fmtTimer.current);
+    fmtTimer.current = setTimeout(() => setFmtState("idle"), s === "err" ? 2400 : 1400);
+  };
+  useEffect(() => () => clearTimeout(fmtTimer.current), []);
+
+  const runFormat = async () => {
+    const ta = localTa.current;
+    if (!ta || fmtState === "busy" || !canFormat(langVal)) return;
+    const value = ta.value;
+    const cursor = ta.selectionStart ?? value.length;
+    setFmtState("busy");
+    try {
+      const r = await formatCode(value, langVal, cursor);
+      // In-flight race: the user typed (or the island rebuilt) while a lazy
+      // engine was loading — the result describes stale text, drop it.
+      if (localTa.current !== ta || ta.value !== value) { setFmtState("idle"); return; }
+      const ed = r && formatTaEdit(value, r.text, r.cursor);
+      if (ed) applyTaEdit(ta, ed); // rides onInput → commit: one undo step
+      flashFmt("ok");
+    } catch (e) {
+      fmtErr.current = String((e as Error)?.message ?? e).split("\n")[0]!;
+      flashFmt("err");
+    }
+  };
+
+  // Shift-Alt-F (VS Code muscle memory). e.code, not e.key: on macOS the
+  // combo's e.key is "Ï". Intercepted here so CodeHost needs no changes.
+  const keyDown = (e: KeyboardEvent) => {
+    if (
+      !e.isComposing && e.altKey && e.shiftKey && !e.metaKey && !e.ctrlKey &&
+      e.code === "KeyF" && canFormat(langVal)
+    ) {
+      e.preventDefault();
+      void runFormat();
+      return;
+    }
+    onKeyDown?.(e);
+  };
+
   return (
     <div class={"codeblock" + (selected ? " ci-selected" : "")}>
       <CodeEditorBody
         code={code}
         lang={langVal || undefined}
         onInput={onInput}
-        onKeyDown={onKeyDown}
+        onKeyDown={keyDown}
         taRef={mergedRef}
         onCompositionStart={onCompositionStart}
         onCompositionEnd={onCompositionEnd}
@@ -169,6 +217,20 @@ export function CodeIsland({
           </select>
           <Icon name="chevronDown" cls="ico sm" />
         </span>
+        {canFormat(langVal) && (
+          <button
+            class={"code-fmt" + (fmtState === "ok" ? " ok" : fmtState === "err" ? " err" : "")}
+            title={fmtState === "err" ? fmtErr.current : "格式化代码 (Shift+Alt+F)"}
+            onMouseDown={(e) => e.preventDefault() /* keep textarea focus/caret */}
+            onClick={() => void runFormat()}
+          >
+            <Icon name={fmtState === "ok" ? "check" : "wand"} cls="ico sm" />
+            {fmtState === "busy" ? "格式化中…"
+              : fmtState === "ok" ? "已格式化"
+              : fmtState === "err" ? "失败"
+              : "格式化"}
+          </button>
+        )}
         <button
           class={"code-copy" + (copied ? " ok" : "")}
           title="复制代码"

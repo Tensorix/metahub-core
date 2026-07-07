@@ -31,6 +31,7 @@ const PATHS: Record<string, string> = {
   fileText: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
   database: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>',
   table: '<rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/>',
+  wand: '<path d="m3 21 9.5-9.5M15 4V2m0 14v-2M8 9h2m10 0h2m-4.6 2.4 1.4 1.4m-1.4-7.2L18.4 4m-7.2 1.4L9.6 4"/>',
   alignLeft: '<path d="M4 6h16M4 12h10M4 18h13"/>',
   alignCenter: '<path d="M4 6h16M7 12h10M5 18h14"/>',
   alignRight: '<path d="M4 6h16M10 12h10M7 18h13"/>',

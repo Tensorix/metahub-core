@@ -96,6 +96,17 @@ export function newlineEdit(value: string, selStart: number, selEnd: number): Ta
   return { from: selStart, to: selEnd, insert, selStart: caret, selEnd: caret };
 }
 
+/**
+ * Whole-content replacement from a 格式化 result: one TaEdit spanning the full
+ * value, caret collapsed at the engine's mapped cursor (clamped). Null when
+ * nothing changed, so callers skip the write-back and CM history stays clean.
+ */
+export function formatTaEdit(value: string, formatted: string, caret: number): TaEdit | null {
+  if (formatted === value) return null;
+  const at = Math.max(0, Math.min(caret, formatted.length));
+  return { from: 0, to: value.length, insert: formatted, selStart: at, selEnd: at };
+}
+
 /** Apply a TaEdit through the island's normal write-back path: setRangeText
  *  keeps the browser from touching focus/scroll, and the synthetic "input"
  *  event drives the same repaint + commit as real typing (undo stays in CM). */
