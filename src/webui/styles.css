@@ -1016,7 +1016,7 @@
   .shv-search { display:flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:5px 10px; color:var(--muted); }
   .shv-search input { border:0; background:none; outline:none; color:var(--fg); font-size:13px; width:180px; }
 
-  .shv-list { display:flex; flex-direction:column; gap:8px; }
+  .shv-list { display:flex; flex-direction:column; gap:8px; list-style:none; padding:0; margin:0; }
   .shv-row { display:flex; align-items:center; gap:13px; padding:13px 15px; background:var(--bg); border:1px solid var(--line);
     border-radius:var(--radius-lg); transition:border-color .12s, box-shadow .12s; }
   .shv-row:hover { border-color:var(--line-strong); box-shadow:var(--shadow-sm); }
@@ -1559,6 +1559,8 @@
     .find-bar { top:calc(49px + env(safe-area-inset-top) + 8px); }
     /* narrower handle gutter on phones; .db left padding must be ≥ --grip-gutter */
     .db { padding:16px 14px 90px 24px; }
+    /* pages reusing .db without row grips don't need the left gutter — keep padding symmetric */
+    .shares-page.db { padding-left:14px; }
     .gridhost { --grip-gutter:24px; }
     .peek { width:100%; }
     /* history drawer: the side-by-side list/preview doesn't fit a phone — stack. */
