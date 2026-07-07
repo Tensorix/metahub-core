@@ -77,3 +77,16 @@ export function monthMatrix(y: number, m: number): Date[][] {
   }
   return weeks;
 }
+
+/** Relative "time ago" label for a timestamp (ms epoch, ISO string, or Date):
+ *  刚刚 / n 分钟前 / n 小时前 / n 天前, then a local date beyond 30 days.
+ *  Shared by version history and the doc-meta sync stamp. */
+export function timeAgo(t: number | string | Date): string {
+  const at = t instanceof Date ? t.getTime() : typeof t === "number" ? t : new Date(t).getTime();
+  const ms = Date.now() - at;
+  if (ms < 60_000) return "刚刚";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)} 分钟前`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)} 小时前`;
+  if (ms < 30 * 86_400_000) return `${Math.floor(ms / 86_400_000)} 天前`;
+  return new Date(at).toLocaleDateString();
+}

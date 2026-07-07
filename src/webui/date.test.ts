@@ -7,6 +7,7 @@ import {
   daysBetween,
   monthMatrix,
   startOfWeekMon,
+  timeAgo,
 } from "./date.ts";
 
 test("parseDate handles YYYY-MM-DD and empty", () => {
@@ -64,4 +65,16 @@ test("monthMatrix covers the whole month in Monday-first whole weeks", () => {
   const flat = weeks.flat().map(toISO);
   expect(flat).toContain("2026-06-01");
   expect(flat).toContain("2026-06-30");
+});
+
+test("timeAgo buckets ms / ISO / Date inputs", () => {
+  const now = Date.now();
+  expect(timeAgo(now - 5_000)).toBe("刚刚");
+  expect(timeAgo(now - 5 * 60_000)).toBe("5 分钟前");
+  expect(timeAgo(now - 3 * 3_600_000)).toBe("3 小时前");
+  expect(timeAgo(now - 2 * 86_400_000)).toBe("2 天前");
+  expect(timeAgo(new Date(now - 90_000).toISOString())).toBe("1 分钟前");
+  expect(timeAgo(new Date(now - 30_000))).toBe("刚刚");
+  // Beyond 30 days: falls back to a locale date string.
+  expect(timeAgo(now - 40 * 86_400_000)).toBe(new Date(now - 40 * 86_400_000).toLocaleDateString());
 });

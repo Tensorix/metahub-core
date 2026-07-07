@@ -15,6 +15,7 @@ import {
   type RevisionKind,
 } from "./api.ts";
 import { Icon } from "./icons.tsx";
+import { timeAgo } from "./date.ts";
 import { confirmDialog, toast, useDrawerTransition } from "./ui.tsx";
 
 // Version history UI. Reads the oplog-backed /api/*/history endpoints; restore
@@ -22,15 +23,6 @@ import { confirmDialog, toast, useDrawerTransition } from "./ui.tsx";
 // so nothing here ever rewrites history.
 
 const KIND_LABEL: Record<RevisionKind, string> = { user: "", repair: "修复", revert: "回滚" };
-
-function timeAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 60_000) return "刚刚";
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)} 分钟前`;
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)} 小时前`;
-  if (ms < 30 * 86_400_000) return `${Math.floor(ms / 86_400_000)} 天前`;
-  return new Date(iso).toLocaleDateString();
-}
 
 /** node_id -> display name ("本设备" / pairing label / short id). */
 function useNodeNames(): (id: string) => string {

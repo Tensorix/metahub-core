@@ -1,7 +1,9 @@
 /** @jsxImportSource preact */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, ApiError } from "./api.ts";
-import { replicaActive, SYNCED_EVENT } from "./data/replica.ts";
+import { clientMode, onReplicaStatus, replicaActive, replicaStatus, SYNCED_EVENT } from "./data/replica.ts";
+import type { ReplicaStatus } from "./data/db-worker.ts";
+import { timeAgo } from "./date.ts";
 import { Icon } from "./icons.tsx";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import { toast } from "./ui.tsx";
@@ -372,7 +374,7 @@ export function DocView({
         dangerouslySetInnerHTML={{ __html: titleRef.current }}
       />
       <div class="doc-meta">
-        <span>实时同步</span>
+        <SyncStamp />
         {sharedTargets.has(docId) && (
           <button
             class="doc-shared"
@@ -405,6 +407,51 @@ export function DocView({
       )}
     </div>
   );
+}
+
+// doc-meta sync stamp: the last successful sync time for this client's data
+// home. Replica clients (browser local-first / no-origin) read the worker's
+// push status; window clients (desktop sidecar, browser over a server) show
+// the server's own peer/bucket sync times. With no sync source configured we
+// keep the old "实时同步" label — accurate for a plain server window.
+function SyncStamp() {
+  const [st, setSt] = useState<{ at: number | null; error: string | null }>({ at: null, error: null });
+  const [, setTick] = useState(0); // re-render so the relative label keeps walking
+  useEffect(() => {
+    const tick = setInterval(() => setTick((n) => n + 1), 30_000);
+    const offs: Array<() => void> = [() => clearInterval(tick)];
+    if (clientMode().hold === "replica") {
+      const apply = (s: ReplicaStatus) => {
+        const ls = s.lastSync;
+        if (!ls) return;
+        setSt(ls.ok ? { at: ls.at, error: null } : { at: null, error: ls.error ?? "未知错误" });
+      };
+      apply(replicaStatus());
+      offs.push(onReplicaStatus(apply));
+    } else {
+      let dead = false;
+      const pull = async () => {
+        const [peers, s3] = await Promise.all([
+          api.listPeers().catch(() => []),
+          api.listServerS3Peers().catch(() => []),
+        ]);
+        if (dead) return;
+        const at = Math.max(
+          0,
+          ...peers.filter((p) => p.enabled).map((p) => p.last_success_at ?? 0),
+          ...s3.filter((p) => p.enabled).map((p) => p.lastSyncAt ?? 0),
+        );
+        if (at) setSt({ at, error: null });
+      };
+      void pull();
+      const poll = setInterval(() => void pull(), 60_000);
+      offs.push(() => { dead = true; clearInterval(poll); });
+    }
+    return () => offs.forEach((f) => f());
+  }, []);
+  if (st.error) return <span title={st.error}>同步失败</span>;
+  if (st.at) return <span title={new Date(st.at).toLocaleString()}>上次同步 {timeAgo(st.at)}</span>;
+  return <span>实时同步</span>;
 }
 
 // Is the collapsed caret on the first / last visual line of `el`? Compares the
