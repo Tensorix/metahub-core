@@ -5,13 +5,18 @@
 // CodeBlock hosts. Structural ops (add/del row & col, alignment) go through
 // onTableChange → bump(). Column widths are session-only: kept in a ref and
 // written straight onto the <col> elements, never serialized to Markdown.
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { Block, ColAlign } from "../blocks.ts";
 import { Icon } from "../icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "../ui.tsx";
 import { inlineToHtml, htmlToInline } from "../markdown.tsx";
 import { startColumnResize, startPointerDrag } from "../pointer-drag.ts";
 import { type CellSel, normRect, inRect, edgeShadow } from "../cell-select.ts";
+
+// Touch (no hover): row/col ops live in the focused cell's ⋯ menu instead of
+// hover affordances. Evaluated once — a device's pointer class doesn't change
+// mid-session, and gating the render (not just CSS) keeps desktop DOM-free.
+const COARSE = typeof matchMedia !== "undefined" && matchMedia("(hover: none)").matches;
 
 // Focus the contentEditable cell at (r, c) under `root` and drop the caret at
 // its end. Shared by the in-table Tab/Enter navigation and the cell-rectangle
@@ -73,6 +78,45 @@ export function TableBlock({
     block.rows = rows.filter((_, i) => i !== r);
     onTableChange();
   };
+  const insertRow = (at: number) => {
+    if (at < 1) return; // never above the header
+    const n = [...rows];
+    n.splice(at, 0, new Array(cols).fill(""));
+    block.rows = n;
+    onTableChange();
+  };
+  const duplicateRow = (r: number) => {
+    const n = [...rows];
+    n.splice(r + 1, 0, [...(rows[r] ?? [])]);
+    block.rows = n;
+    onTableChange();
+  };
+  const duplicateCol = (c: number) => {
+    block.rows = rows.map((row) => { const n = [...row]; n.splice(c + 1, 0, row[c] ?? ""); return n; });
+    const a = Array.from({ length: cols }, (_, i) => align[i] ?? null);
+    a.splice(c + 1, 0, align[c] ?? null);
+    block.align = a;
+    onTableChange();
+  };
+  const moveRow = (r: number, dir: -1 | 1) => {
+    const to = r + dir;
+    if (r < 1 || to < 1 || to >= rows.length) return; // header pinned
+    const n = [...rows];
+    const [row] = n.splice(r, 1);
+    n.splice(to, 0, row!);
+    block.rows = n;
+    onTableChange();
+  };
+  const moveCol = (c: number, dir: -1 | 1) => {
+    const to = c + dir;
+    if (to < 0 || to >= cols) return;
+    block.rows = rows.map((row) => { const n = [...row]; const [v] = n.splice(c, 1); n.splice(to, 0, v ?? ""); return n; });
+    const a = Array.from({ length: cols }, (_, i) => align[i] ?? null);
+    const [av] = a.splice(c, 1);
+    a.splice(to, 0, av ?? null);
+    block.align = a;
+    onTableChange();
+  };
   const setAlign = (c: number, a: ColAlign) => {
     const next = Array.from({ length: cols }, (_, i) => align[i] ?? null);
     next[c] = a;
@@ -113,6 +157,9 @@ export function TableBlock({
   // promoted we blur the editable and drop the native range so the rectangle
   // owns the keyboard. Shift+click extends from the existing anchor.
   const startCellSelect = (e: PointerEvent, r: number, c: number) => {
+    // Touch drags scroll (or long-press selects text) natively; box-select is
+    // mouse-only — the OSK has no Delete/⌘C to drive a rectangle anyway.
+    if (e.pointerType === "touch") return;
     if (e.button !== 0) return;
     // Let the column menu / resizer / row-delete buttons handle their own clicks.
     if ((e.target as HTMLElement).closest("button,a,.doc-col-resizer")) return;
@@ -189,25 +236,102 @@ export function TableBlock({
     });
   };
 
+  // Shared menu fragments: the th chevron (desktop), the gutter row handle
+  // (desktop) and the focused cell's ⋯ (touch) all compose from these. r/c are
+  // captured when the menu opens, so later focus/hover changes can't retarget
+  // an open menu. Items that would be silent no-ops simply don't render.
+  const colMenuItems = (c: number, close: () => void) => (
+    <>
+      <MenuLabel>对齐方式</MenuLabel>
+      <MenuItem icon="alignLeft" label="左对齐" checked={(align[c] ?? null) === null || align[c] === "left"} onClick={() => { setAlign(c, "left"); close(); }} />
+      <MenuItem icon="alignCenter" label="居中" checked={align[c] === "center"} onClick={() => { setAlign(c, "center"); close(); }} />
+      <MenuItem icon="alignRight" label="右对齐" checked={align[c] === "right"} onClick={() => { setAlign(c, "right"); close(); }} />
+      <MenuSep />
+      <MenuItem icon="plus" label="在左侧插入列" onClick={() => { insertCol(c); close(); }} />
+      <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => { insertCol(c + 1); close(); }} />
+      <MenuItem icon="copy" label="复制列" onClick={() => { duplicateCol(c); close(); }} />
+      {cols > 1 && <MenuItem icon="trash" label="删除列" danger onClick={() => { deleteCol(c); close(); }} />}
+    </>
+  );
+  const rowMenuItems = (r: number, close: () => void) => (
+    <>
+      {r >= 1 && <MenuItem icon="plus" label="在上方插入行" onClick={() => { insertRow(r); close(); }} />}
+      <MenuItem icon="cornerUpRight" label="在下方插入行" onClick={() => { insertRow(r + 1); close(); }} />
+      {r > 0 && <MenuItem icon="copy" label="复制行" onClick={() => { duplicateRow(r); close(); }} />}
+      {r > 0 && rows.length > 2 && <MenuItem icon="trash" label="删除行" danger onClick={() => { deleteRow(r); close(); }} />}
+    </>
+  );
+  // Touch has no drag-reorder (and never will get the desktop hover drags), so
+  // the aggregated menu is the only way to rearrange — desktop menus skip these.
+  const moveMenuItems = (r: number, c: number, close: () => void) => (
+    <>
+      {r > 1 && <MenuItem icon="arrowUp" label="上移行" onClick={() => { moveRow(r, -1); close(); }} />}
+      {r >= 1 && r < rows.length - 1 && <MenuItem icon="chevronDown" label="下移行" onClick={() => { moveRow(r, 1); close(); }} />}
+      {c > 0 && <MenuItem icon="arrowLeft" label="左移列" onClick={() => { moveCol(c, -1); close(); }} />}
+      {c < cols - 1 && <MenuItem icon="chevron" label="右移列" onClick={() => { moveCol(c, 1); close(); }} />}
+    </>
+  );
+
   const colMenu = (e: MouseEvent, c: number) => {
     e.preventDefault();
     e.stopPropagation();
+    openMenu(e, (close) => colMenuItems(c, close));
+  };
+
+  // Touch: the focused cell's ⋯ aggregates column + row + reorder ops (hover
+  // affordances are unreachable). Deliberately NO preventDefault — the cell
+  // must blur so the iOS keyboard collapses before the fixed-bottom action
+  // sheet (.pop.sheet) opens, or the sheet would sit behind the OSK. This is
+  // the opposite of colMenu's preventDefault, which keeps desktop cell focus.
+  const cellMenu = (e: PointerEvent, r: number, c: number) => {
+    e.stopPropagation();
     openMenu(e, (close) => (
       <>
-        <MenuLabel>对齐方式</MenuLabel>
-        <MenuItem icon="alignLeft" label="左对齐" checked={(align[c] ?? null) === null || align[c] === "left"} onClick={() => { setAlign(c, "left"); close(); }} />
-        <MenuItem icon="alignCenter" label="居中" checked={align[c] === "center"} onClick={() => { setAlign(c, "center"); close(); }} />
-        <MenuItem icon="alignRight" label="右对齐" checked={align[c] === "right"} onClick={() => { setAlign(c, "right"); close(); }} />
+        {colMenuItems(c, close)}
         <MenuSep />
-        <MenuItem icon="plus" label="在左侧插入列" onClick={() => { insertCol(c); close(); }} />
-        <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => { insertCol(c + 1); close(); }} />
-        <MenuItem icon="trash" label="删除列" danger onClick={() => { deleteCol(c); close(); }} />
+        {rowMenuItems(r, close)}
+        <MenuSep />
+        {moveMenuItems(r, c, close)}
       </>
     ));
   };
 
+  // Desktop row handle: a single floating grip in the left gutter tracks the
+  // hovered row (same idiom as the grid's rowgrip-ext / trackGripAt). It lives
+  // on .doc-table-wrap OUTSIDE .doc-table-scroll so overflow-x can't clip it,
+  // and off the cell text entirely (the old .doc-row-del sat on top of the
+  // first cell's text). Data rows only: the block gutter's +/grip pins at the
+  // table's top edge — the header row's y — so r ≥ 1 also avoids that overlap.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [grip, setGrip] = useState<{ r: number; top: number } | null>(null);
+  useEffect(() => setGrip(null), [renderKey]); // row heights may have changed
+  const trackRow = (e: MouseEvent) => {
+    const wrap = wrapRef.current;
+    const tr = (e.target as HTMLElement).closest?.("tr");
+    if (!wrap || !tr || !wrap.contains(tr)) return;
+    const td = tr.querySelector<HTMLElement>(".doc-td");
+    const r = td ? Number(td.dataset.r) : NaN;
+    if (!Number.isFinite(r) || r < 1) { setGrip(null); return; }
+    const top = Math.round(tr.getBoundingClientRect().top - wrap.getBoundingClientRect().top) + 5;
+    setGrip((g) => (g && g.r === r && g.top === top ? g : { r, top }));
+  };
+
   return (
-    <div class="doc-table-wrap">
+    <div class="doc-table-wrap" ref={wrapRef} onMouseMove={trackRow} onMouseLeave={() => setGrip(null)}>
+      {grip && (
+        <button
+          class="doc-row-handle"
+          style={{ top: grip.top }}
+          title="行选项"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openMenu(e as MouseEvent, (close) => rowMenuItems(grip.r, close));
+          }}
+        >
+          <Icon name="grip" cls="ico sm" />
+        </button>
+      )}
       <div class="doc-table-scroll">
         <div class="doc-table-inner">
           <div class="doc-table-row">
@@ -248,9 +372,9 @@ export function TableBlock({
                             <div class="doc-col-resizer" onPointerDown={(e) => startResize(e as PointerEvent, c)} />
                           </>
                         )}
-                        {c === 0 && r > 0 && rows.length > 2 && (
-                          <button class="doc-row-del" title="删除行" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); deleteRow(r); }}>
-                            <Icon name="trash" cls="ico sm" />
+                        {COARSE && (
+                          <button class="doc-cell-menu" title="单元格选项" onPointerDown={(e) => cellMenu(e as PointerEvent, r, c)}>
+                            <Icon name="dots" cls="ico sm" />
                           </button>
                         )}
                       </td>

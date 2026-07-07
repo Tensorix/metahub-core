@@ -793,8 +793,11 @@
      min-width:auto floor (intrinsic sizing ignores overflow) and pushes the
      whole page wider than the viewport on narrow screens. With the intrinsic
      loop broken, .doc-table-wrap resolves to the doc column width and the
-     scroll box below finally gets to scroll. */
-  .doc-table-wrap { contain:inline-size; }
+     scroll box below finally gets to scroll. container-type additionally
+     unlocks cqw for the sticky add-row bar (old engines fall back to contain);
+     position:relative anchors the gutter row handle explicitly rather than
+     leaning on container-type's implied containing block. */
+  .doc-table-wrap { position:relative; contain:inline-size; container-type:inline-size; }
   .doc-table-scroll { overflow-x:auto; padding:2px 0; }
   .doc-table-inner { width:max-content; }
   .doc-table-row { display:flex; align-items:stretch; }
@@ -817,18 +820,44 @@
   .doc-th:hover .doc-col-menu { opacity:1; }
   .doc-col-menu:hover { background:var(--hover-2); color:var(--fg); }
   .doc-col-resizer { position:absolute; top:0; right:-4px; width:7px; height:100%; cursor:col-resize; z-index:3; touch-action:none; }
-  /* per-row delete: small handle floating at the first cell on row hover */
-  .doc-row-del { position:absolute; top:3px; left:2px; width:18px; height:18px; display:grid; place-items:center;
-    color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:5px; box-shadow:var(--shadow-sm);
-    opacity:0; transition:opacity .12s; }
-  table.doc-table tr:hover .doc-row-del { opacity:1; }
-  .doc-row-del:hover { background:var(--danger-soft); color:var(--danger); border-color:var(--danger-soft); }
+  /* row handle (desktop): a single grip floating in the left gutter, tracked
+     onto the hovered data row by JS (table-block.tsx trackRow). It lives on
+     .doc-table-wrap outside .doc-table-scroll so overflow-x can't clip it, and
+     never covers cell text (its predecessor .doc-row-del sat on the first
+     cell's content). Header row gets none — the block gutter's +/grip pins at
+     the table's top edge, that same y. */
+  .doc-row-handle { position:absolute; left:-26px; width:18px; height:24px; display:grid; place-items:center;
+    color:var(--muted); border-radius:5px; cursor:pointer; animation:gripFade .12s ease both; }
+  .doc-row-handle:hover { background:var(--hover-2); color:var(--fg); }
+  /* bridge the gap between the handle and the table's left edge, so crossing
+     it doesn't mouseleave the wrap and dismiss the handle mid-flight */
+  .doc-row-handle::after { content:""; position:absolute; inset:-2px -8px; }
+  /* focused-cell ⋯ (touch only — rendered only on coarse pointers): lives in
+     the 22px right padding strip every cell already reserves for the header
+     chevron, so it never covers text. Shown via :focus-within — no JS focus
+     tracking, no re-render while typing. */
+  .doc-cell-menu { position:absolute; top:4px; right:4px; width:18px; height:18px; display:grid; place-items:center;
+    color:var(--muted); border-radius:4px; opacity:0; pointer-events:none; transition:opacity .12s; }
+  table.doc-table td:focus-within .doc-cell-menu { opacity:1; pointer-events:auto; }
+  .doc-cell-menu::after { content:""; position:absolute; inset:-6px; }
   /* add-column (right edge) and add-row (bottom edge) buttons */
   .doc-table-addcol { width:22px; margin-left:4px; flex:none; display:grid; place-items:center; color:var(--muted);
-    border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s; }
-  .doc-table-addrow { width:100%; height:22px; margin-top:4px; display:grid; place-items:center; color:var(--muted);
-    border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s; }
+    border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s,opacity .12s; }
+  /* sticky + 100cqw (the wrap is the container): on a wide table the bar pins
+     to the scrollport at any horizontal offset; narrow tables never hit the
+     max-width and keep their table-wide bar. Engines without cqw just ignore
+     the cap and fall back to scrolling with the table. */
+  .doc-table-addrow { width:100%; max-width:100cqw; position:sticky; left:0; height:22px; margin-top:4px; display:grid; place-items:center; color:var(--muted);
+    border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s,opacity .12s; }
   .doc-table-addcol:hover, .doc-table-addrow:hover { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+  /* Notion-style: the add bars only materialize while the pointer or keyboard
+     focus is on the table — opacity-only, so nothing shifts. Touch devices fall
+     outside this block and keep them always visible (no hover to reveal with). */
+  @media (hover:hover) and (pointer:fine) {
+    .doc-table-addrow, .doc-table-addcol { opacity:0; }
+    .doc-table-wrap:hover :is(.doc-table-addrow, .doc-table-addcol),
+    .doc-table-wrap:focus-within :is(.doc-table-addrow, .doc-table-addcol) { opacity:1; }
+  }
   /* cell range selection (box select): soft fill per cell; the accent rectangle
      outline is drawn via inline inset box-shadow on the edge cells (see
      cell-select.ts edgeShadow). While selecting, suppress the caret + native
@@ -1619,9 +1648,12 @@
   @media (hover: none) {
     .code-tools { opacity:1; transform:none; pointer-events:auto; }
     .rowactions { opacity:1; pointer-events:auto; }
-    .doc-th .doc-col-menu, .cal-add, .filerow .facts,
+    .cal-add, .filerow .facts,
     .navitem .acts { opacity:1; }
-    table.doc-table .doc-row-del { opacity:1; }
+    /* doc-table hover affordances are unreachable AND sticky-hover haunted on
+       touch (a tap "hovers" the row/th until the next tap) — hide them outright;
+       the focused cell's ⋯ menu (.doc-cell-menu) carries all row/col ops. */
+    .doc-col-menu, .doc-row-handle { display:none; }
     .selcell input { opacity:1; }
     .tl-item .tl-h { opacity:1; }
     /* Neutralize the stickiest tap-residue tints (a tap "hovers" until the
@@ -1633,6 +1665,7 @@
     .filerow:hover { background:none; }
     .cal-day:hover { background:none; }
     .cal-day.dim:hover { background:var(--surface); }
+    .doc-table-addcol:hover, .doc-table-addrow:hover { background:var(--surface); color:var(--muted); border-color:var(--line-strong); }
   }
 
   /* Quick Notes window (desktop, loaded at #quick). A transparent body lets the
