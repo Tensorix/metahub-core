@@ -802,7 +802,7 @@
      leaning on container-type's implied containing block. */
   .doc-table-wrap { position:relative; contain:inline-size; container-type:inline-size; }
   .doc-table-scroll { overflow-x:auto; padding:2px 0; }
-  .doc-table-inner { width:max-content; }
+  .doc-table-inner { position:relative; width:max-content; } /* anchors the drag outline / drop lines so they track horizontal scroll */
   .doc-table-row { display:flex; align-items:stretch; }
   table.doc-table { border-collapse:separate; border-spacing:0; table-layout:fixed; width:max-content;
     border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; box-shadow:var(--shadow-sm); }
@@ -829,32 +829,40 @@
   .doc-td b, .doc-td strong { font-weight:700; }
   .doc-td code { font-family:var(--mono); background:var(--surface-2); padding:1px 5px; border-radius:4px; font-size:.9em; }
   .doc-td a { color:var(--accent); }
-  /* header cell: column menu + resize handle */
-  .doc-col-menu { position:absolute; top:4px; right:4px; width:18px; height:18px; display:grid; place-items:center;
-    color:var(--muted); border-radius:4px; opacity:0; transition:opacity .12s,background .12s; }
-  .doc-th:hover .doc-col-menu { opacity:1; }
-  .doc-col-menu:hover { background:var(--hover-2); color:var(--fg); }
   .doc-col-resizer { position:absolute; top:0; right:-4px; width:7px; height:100%; cursor:col-resize; z-index:3; touch-action:none; }
-  /* row handle (desktop): a single grip floating in the left gutter, tracked
-     onto the hovered data row by JS (table-block.tsx trackRow). It lives on
-     .doc-table-wrap outside .doc-table-scroll so overflow-x can't clip it, and
-     never covers cell text (its predecessor .doc-row-del sat on the first
-     cell's content). Header row gets none — the block gutter's +/grip pins at
-     the table's top edge, that same y. */
-  .doc-row-handle { position:absolute; left:-26px; width:18px; height:24px; display:grid; place-items:center;
-    color:var(--muted); border-radius:5px; cursor:pointer; animation:gripFade .12s ease both; }
-  .doc-row-handle:hover { background:var(--hover-2); color:var(--fg); }
-  /* bridge the gap between the handle and the table's left edge, so crossing
-     it doesn't mouseleave the wrap and dismiss the handle mid-flight */
-  .doc-row-handle::after { content:""; position:absolute; inset:-2px -8px; }
-  /* focused-cell ⋯ (touch only — rendered only on coarse pointers): lives in
-     the 22px right padding strip every cell already reserves for the header
-     chevron, so it never covers text. Shown via :focus-within — no JS focus
-     tracking, no re-render while typing. */
-  .doc-cell-menu { position:absolute; top:4px; right:4px; width:18px; height:18px; display:grid; place-items:center;
-    color:var(--muted); border-radius:4px; opacity:0; pointer-events:none; transition:opacity .12s; }
-  table.doc-table td:focus-within .doc-cell-menu { opacity:1; pointer-events:auto; }
-  .doc-cell-menu::after { content:""; position:absolute; inset:-6px; }
+  /* Row/column pill handles (Notion-style): one per axis, tracked onto the
+     active cell (hovered on desktop, focused on touch) by JS. They live on
+     .doc-table-wrap OUTSIDE .doc-table-scroll so overflow-x can't clip them,
+     straddling the table's left/top border — never on cell text. Resting =
+     quiet grey pill; pressed/dragging (.grab) = accent pill with light dots
+     plus the source outline + drop line below. touch-action:none so a finger
+     drag on the handle reorders instead of scrolling. Data rows only get a
+     row pill (the block gutter's +/grip pins at the header row's y). */
+  .doc-row-handle, .doc-col-handle { position:absolute; display:grid; place-items:center; z-index:7;
+    color:var(--muted); background:var(--bg); border:1px solid var(--line); box-shadow:var(--shadow-sm);
+    cursor:grab; touch-action:none; animation:gripFade .12s ease both;
+    transition:background .12s,color .12s,border-color .12s; }
+  .doc-row-handle { left:-8px; width:15px; height:28px; border-radius:8px; }
+  .doc-col-handle { top:-6px; width:28px; height:15px; border-radius:8px; transform:translateX(-50%); }
+  .doc-row-handle svg, .doc-col-handle svg { width:13px; height:13px; }
+  .doc-row-handle:hover, .doc-col-handle:hover { background:var(--surface); color:var(--fg); }
+  .doc-row-handle.grab, .doc-col-handle.grab { background:var(--accent); color:var(--accent-fg,#fff);
+    border-color:var(--accent); cursor:grabbing; }
+  .doc-row-handle::after { content:""; position:absolute; inset:-4px; }
+  .doc-col-handle::after { content:""; position:absolute; inset:-4px; }
+  /* drag-reorder overlays (inside .doc-table-inner, so they scroll with the
+     table): accent outline on the source row/column, 2px line at the drop
+     boundary (grid .rowdrop's cousin) */
+  .doc-drag-outline { position:absolute; border:2px solid var(--accent); border-radius:6px;
+    pointer-events:none; z-index:6; box-sizing:border-box; }
+  .doc-rowdrop { position:absolute; height:2px; margin-top:-1px; background:var(--accent); border-radius:1px; pointer-events:none; z-index:6; }
+  .doc-coldrop { position:absolute; width:2px; margin-left:-1px; background:var(--accent); border-radius:1px; pointer-events:none; z-index:6; }
+  /* touch selection action bar: the OSK has no Delete/⌘C, so the cell
+     rectangle gets on-screen verbs; sits on the wrap layer above the selection */
+  .doc-sel-bar { position:absolute; z-index:8; display:flex; gap:2px; padding:3px;
+    background:var(--accent); border-radius:9px; box-shadow:var(--shadow-sm); animation:gripFade .12s ease both; }
+  .doc-sel-bar button { color:var(--accent-fg,#fff); font-size:13px; line-height:1; padding:5px 9px; border-radius:6px; }
+  .doc-sel-bar button:active { background:color-mix(in srgb, #000 18%, transparent); }
   /* add-column (right edge) and add-row (bottom edge) buttons */
   .doc-table-addcol { width:22px; margin-left:4px; flex:none; display:grid; place-items:center; color:var(--muted);
     border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s,opacity .12s; }
@@ -865,13 +873,14 @@
   .doc-table-addrow { width:100%; max-width:100cqw; position:sticky; left:0; height:22px; margin-top:4px; display:grid; place-items:center; color:var(--muted);
     border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s,opacity .12s; }
   .doc-table-addcol:hover, .doc-table-addrow:hover { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
-  /* Notion-style: the add bars only materialize while the pointer or keyboard
-     focus is on the table — opacity-only, so nothing shifts. Touch devices fall
-     outside this block and keep them always visible (no hover to reveal with). */
+  /* Notion-style: the add bars only materialize while the table is active —
+     hover or keyboard focus on desktop, an editing (focused) cell on touch.
+     Opacity-only so nothing shifts; pointer-events gates off the invisible
+     bars (a touch tap must not hit a bar it can't see). */
+  .doc-table-addrow, .doc-table-addcol { opacity:0; pointer-events:none; }
+  .doc-table-wrap:focus-within :is(.doc-table-addrow, .doc-table-addcol) { opacity:1; pointer-events:auto; }
   @media (hover:hover) and (pointer:fine) {
-    .doc-table-addrow, .doc-table-addcol { opacity:0; }
-    .doc-table-wrap:hover :is(.doc-table-addrow, .doc-table-addcol),
-    .doc-table-wrap:focus-within :is(.doc-table-addrow, .doc-table-addcol) { opacity:1; }
+    .doc-table-wrap:hover :is(.doc-table-addrow, .doc-table-addcol) { opacity:1; pointer-events:auto; }
   }
   /* cell range selection (box select): soft fill per cell; the accent rectangle
      outline is drawn via inline inset box-shadow on the edge cells (see
@@ -1658,6 +1667,10 @@
     .pop .item { padding:11px 10px; }
     /* Column/sidebar resize handles: 7px is a mouse affordance, not a finger's. */
     .col-resizer, .doc-col-resizer, .sb-resizer { width:16px; right:-8px; }
+    /* cell-rectangle corner handle: big enough to grab with a finger (it is the
+       only way to grow a touch selection — pan gestures stay scrolls) */
+    .doc-cell-handle { width:12px; height:12px; right:-6px; bottom:-6px; }
+    .doc-cell-handle::after { inset:-10px; }
   }
 
   /* No hover available (touch): controls that only materialize on :hover are
@@ -1668,10 +1681,9 @@
     .rowactions { opacity:1; pointer-events:auto; }
     .cal-add, .filerow .facts,
     .navitem .acts { opacity:1; }
-    /* doc-table hover affordances are unreachable AND sticky-hover haunted on
-       touch (a tap "hovers" the row/th until the next tap) — hide them outright;
-       the focused cell's ⋯ menu (.doc-cell-menu) carries all row/col ops. */
-    .doc-col-menu, .doc-row-handle { display:none; }
+    /* the pill handles survive on touch (focus-driven, not hover-driven), but
+       sticky tap-hover must not tint them */
+    .doc-row-handle:hover, .doc-col-handle:hover { background:var(--bg); color:var(--muted); }
     .selcell input { opacity:1; }
     .tl-item .tl-h { opacity:1; }
     /* Neutralize the stickiest tap-residue tints (a tap "hovers" until the

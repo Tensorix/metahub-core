@@ -20,6 +20,7 @@ const PATHS: Record<string, string> = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/>',
   dots: '<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   grip: '<circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none"/>',
+  gripH: '<circle cx="6" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="18" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="6" cy="15" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="15" r="1.3" fill="currentColor" stroke="none"/><circle cx="18" cy="15" r="1.3" fill="currentColor" stroke="none"/>',
   trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/>',
   filter: '<path d="M3 5h18l-7 8v6l-4-2v-4z"/>',
   sort: '<path d="M7 3v14M7 17l-3-3M7 17l3-3M17 21V7M17 7l-3 3M17 7l3 3"/>',

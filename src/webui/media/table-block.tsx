@@ -15,11 +15,12 @@ import { Icon } from "../icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "../ui.tsx";
 import { inlineToHtml, htmlToInline } from "../markdown.tsx";
 import { startColumnResize, startPointerDrag } from "../pointer-drag.ts";
-import { type CellSel, normRect, inRect, edgeShadow } from "../cell-select.ts";
+import { type CellSel, normRect, inRect, edgeShadow, clearRect, selectionToTsv } from "../cell-select.ts";
 
-// Touch (no hover): row/col ops live in the focused cell's ⋯ menu instead of
-// hover affordances. Evaluated once — a device's pointer class doesn't change
-// mid-session, and gating the render (not just CSS) keeps desktop DOM-free.
+// Touch (no hover): the active cell is the focused one (focusin) instead of
+// the hovered one, step-move menu items back up drag-reorder, and the cell
+// rectangle gets an on-screen action bar. Evaluated once — a device's pointer
+// class doesn't change mid-session.
 const COARSE = typeof matchMedia !== "undefined" && matchMedia("(hover: none)").matches;
 
 // Focus the contentEditable cell at (r, c) under `root` and drop the caret at
@@ -103,23 +104,32 @@ export function TableBlock({
     block.align = a;
     onTableChange();
   };
-  const moveRow = (r: number, dir: -1 | 1) => {
-    const to = r + dir;
-    if (r < 1 || to < 1 || to >= rows.length) return; // header pinned
+  // Move to an arbitrary boundary: `to` is an insertion index in the pre-splice
+  // array ("insert before rows[to]"), so to===from and to===from+1 are no-ops.
+  // One call = one onTableChange = one undo step — drag drops and the menu's
+  // step moves both land here.
+  const moveRowTo = (from: number, to: number) => {
+    if (from < 1 || to < 1 || to > rows.length || to === from || to === from + 1) return; // header pinned
     const n = [...rows];
-    const [row] = n.splice(r, 1);
-    n.splice(to, 0, row!);
+    const [row] = n.splice(from, 1);
+    n.splice(to > from ? to - 1 : to, 0, row!);
     block.rows = n;
     onTableChange();
   };
-  const moveCol = (c: number, dir: -1 | 1) => {
-    const to = c + dir;
-    if (to < 0 || to >= cols) return;
-    block.rows = rows.map((row) => { const n = [...row]; const [v] = n.splice(c, 1); n.splice(to, 0, v ?? ""); return n; });
+  const moveColTo = (from: number, to: number) => {
+    if (to < 0 || to > cols || to === from || to === from + 1) return;
+    const dst = to > from ? to - 1 : to;
+    block.rows = rows.map((row) => { const n = [...row]; const [v] = n.splice(from, 1); n.splice(dst, 0, v ?? ""); return n; });
     const a = Array.from({ length: cols }, (_, i) => align[i] ?? null);
-    const [av] = a.splice(c, 1);
-    a.splice(to, 0, av ?? null);
+    const [av] = a.splice(from, 1);
+    a.splice(dst, 0, av ?? null);
     block.align = a;
+    if (manual) { // session column widths are positional — travel with the column
+      const w = [...widths.current];
+      const [wv] = w.splice(from, 1);
+      w.splice(dst, 0, wv ?? 160);
+      widths.current = w;
+    }
     onTableChange();
   };
   const setAlign = (c: number, a: ColAlign) => {
@@ -162,16 +172,55 @@ export function TableBlock({
   // promoted we blur the editable and drop the native range so the rectangle
   // owns the keyboard. Shift+click extends from the existing anchor.
   const startCellSelect = (e: PointerEvent, r: number, c: number) => {
-    // Touch drags scroll (or long-press selects text) natively; box-select is
-    // mouse-only — the OSK has no Delete/⌘C to drive a rectangle anyway.
-    if (e.pointerType === "touch") return;
-    if (e.button !== 0) return;
-    // Let the column menu / resizer / row-delete buttons handle their own clicks.
+    // Let the handles / resizer / add buttons run their own pointer logic.
     if ((e.target as HTMLElement).closest("button,a,.doc-col-resizer")) return;
     const dropEdit = () => {
       (document.activeElement as HTMLElement | null)?.blur?.();
       getSelection()?.removeAllRanges();
     };
+    // Touch: a drag must stay a scroll (and box-select drags would fight it),
+    // so selection enters spreadsheet-style instead — a ~350ms long-press
+    // selects the cell; the fill handle (touch-action:none) then grows the
+    // rectangle. The timer fires BEFORE iOS's own long-press text selection,
+    // and dropEdit() clears whatever native selection got started; the
+    // one-shot click squelch keeps the release tap from refocusing the cell.
+    if (e.pointerType === "touch") {
+      if (cellSel) onCellSel(null); // a tap dismisses a prior rectangle (mirrors the mouse path below)
+      const x = e.clientX, y = e.clientY, pid = e.pointerId;
+      let fired = false;
+      const stop = () => {
+        clearTimeout(timer);
+        removeEventListener("pointermove", onMove);
+        removeEventListener("pointerup", onUp);
+        removeEventListener("pointercancel", onUp);
+      };
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pid || fired) return;
+        if (Math.hypot(ev.clientX - x, ev.clientY - y) > 6) stop(); // it's a scroll — stand down
+      };
+      const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== pid) return;
+        stop();
+        if (!fired) return;
+        // Swallow only the click synthesized from THIS release (it would
+        // refocus the cell and pop the OSK over the fresh selection); disarm
+        // right after so the next real tap — e.g. the action bar — lands.
+        const squelch = (ce: MouseEvent) => { ce.preventDefault(); ce.stopPropagation(); disarm(); };
+        const disarm = () => removeEventListener("click", squelch, true);
+        addEventListener("click", squelch, true);
+        setTimeout(disarm, 400);
+      };
+      const timer = setTimeout(() => {
+        fired = true; // hold the listeners: the release tap still needs squelching
+        dropEdit();
+        onCellSel({ a: { r, c }, b: { r, c } });
+      }, 350);
+      addEventListener("pointermove", onMove);
+      addEventListener("pointerup", onUp);
+      addEventListener("pointercancel", onUp);
+      return;
+    }
+    if (e.button !== 0) return;
     if (e.shiftKey && cellSel) {
       e.preventDefault();
       dropEdit();
@@ -257,10 +306,11 @@ export function TableBlock({
     });
   };
 
-  // Shared menu fragments: the th chevron (desktop), the gutter row handle
-  // (desktop) and the focused cell's ⋯ (touch) all compose from these. r/c are
-  // captured when the menu opens, so later focus/hover changes can't retarget
-  // an open menu. Items that would be silent no-ops simply don't render.
+  // Shared menu fragments: the row and column pill handles open these (click =
+  // menu, drag = reorder). r/c are captured when the menu opens, so later
+  // focus/hover changes can't retarget an open menu. Items that would be
+  // silent no-ops simply don't render. The step-move items are the touch
+  // fallback for drag-reorder, so they render on coarse pointers only.
   const colMenuItems = (c: number, close: () => void) => (
     <>
       <MenuLabel>对齐方式</MenuLabel>
@@ -271,6 +321,8 @@ export function TableBlock({
       <MenuItem icon="plus" label="在左侧插入列" onClick={() => { insertCol(c); close(); }} />
       <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => { insertCol(c + 1); close(); }} />
       <MenuItem icon="copy" label="复制列" onClick={() => { duplicateCol(c); close(); }} />
+      {COARSE && c > 0 && <MenuItem icon="arrowLeft" label="左移列" onClick={() => { moveColTo(c, c - 1); close(); }} />}
+      {COARSE && c < cols - 1 && <MenuItem icon="chevron" label="右移列" onClick={() => { moveColTo(c, c + 2); close(); }} />}
       {cols > 1 && <MenuItem icon="trash" label="删除列" danger onClick={() => { deleteCol(c); close(); }} />}
     </>
   );
@@ -279,82 +331,223 @@ export function TableBlock({
       {r >= 1 && <MenuItem icon="plus" label="在上方插入行" onClick={() => { insertRow(r); close(); }} />}
       <MenuItem icon="cornerUpRight" label="在下方插入行" onClick={() => { insertRow(r + 1); close(); }} />
       {r > 0 && <MenuItem icon="copy" label="复制行" onClick={() => { duplicateRow(r); close(); }} />}
+      {COARSE && r > 1 && <MenuItem icon="arrowUp" label="上移行" onClick={() => { moveRowTo(r, r - 1); close(); }} />}
+      {COARSE && r >= 1 && r < rows.length - 1 && <MenuItem icon="chevronDown" label="下移行" onClick={() => { moveRowTo(r, r + 2); close(); }} />}
       {r > 0 && rows.length > 2 && <MenuItem icon="trash" label="删除行" danger onClick={() => { deleteRow(r); close(); }} />}
     </>
   );
-  // Touch has no drag-reorder (and never will get the desktop hover drags), so
-  // the aggregated menu is the only way to rearrange — desktop menus skip these.
-  const moveMenuItems = (r: number, c: number, close: () => void) => (
-    <>
-      {r > 1 && <MenuItem icon="arrowUp" label="上移行" onClick={() => { moveRow(r, -1); close(); }} />}
-      {r >= 1 && r < rows.length - 1 && <MenuItem icon="chevronDown" label="下移行" onClick={() => { moveRow(r, 1); close(); }} />}
-      {c > 0 && <MenuItem icon="arrowLeft" label="左移列" onClick={() => { moveCol(c, -1); close(); }} />}
-      {c < cols - 1 && <MenuItem icon="chevron" label="右移列" onClick={() => { moveCol(c, 1); close(); }} />}
-    </>
-  );
 
-  const colMenu = (e: MouseEvent, c: number) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openMenu(e, (close) => colMenuItems(c, close));
-  };
-
-  // Touch: the focused cell's ⋯ aggregates column + row + reorder ops (hover
-  // affordances are unreachable). Deliberately NO preventDefault — the cell
-  // must blur so the iOS keyboard collapses before the fixed-bottom action
-  // sheet (.pop.sheet) opens, or the sheet would sit behind the OSK. This is
-  // the opposite of colMenu's preventDefault, which keeps desktop cell focus.
-  const cellMenu = (e: PointerEvent, r: number, c: number) => {
-    e.stopPropagation();
-    openMenu(e, (close) => (
-      <>
-        {colMenuItems(c, close)}
-        <MenuSep />
-        {rowMenuItems(r, close)}
-        <MenuSep />
-        {moveMenuItems(r, c, close)}
-      </>
-    ));
-  };
-
-  // Desktop row handle: a single floating grip in the left gutter tracks the
-  // hovered row (same idiom as the grid's rowgrip-ext / trackGripAt). It lives
-  // on .doc-table-wrap OUTSIDE .doc-table-scroll so overflow-x can't clip it,
-  // and off the cell text entirely (the old .doc-row-del sat on top of the
-  // first cell's text). Data rows only: the block gutter's +/grip pins at the
-  // table's top edge — the header row's y — so r ≥ 1 also avoids that overlap.
+  // ---- active cell + pill handles ------------------------------------------
+  // One "active cell" drives both handles: the hovered cell on desktop
+  // (mousemove), the focused cell on touch (focusin — no hover there). The row
+  // pill straddles the row's left border, the column pill the column's top
+  // border, both on the wrap layer OUTSIDE .doc-table-scroll so overflow-x
+  // can't clip them. Data rows only get a row pill (the block gutter's +/grip
+  // pins at the table's top edge — the header row's y). The column pill's x
+  // follows horizontal scroll (onScroll re-measures) and hides once the
+  // column's center leaves the scrollport.
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [grip, setGrip] = useState<{ r: number; top: number } | null>(null);
-  useEffect(() => setGrip(null), [renderKey]); // row heights may have changed
-  const trackRow = (e: MouseEvent) => {
-    const wrap = wrapRef.current;
-    const tr = (e.target as HTMLElement).closest?.("tr");
-    if (!wrap || !tr || !wrap.contains(tr)) return;
-    const td = tr.querySelector<HTMLElement>(".doc-td");
-    const r = td ? Number(td.dataset.r) : NaN;
-    if (!Number.isFinite(r) || r < 1) { setGrip(null); return; }
-    const top = Math.round(tr.getBoundingClientRect().top - wrap.getBoundingClientRect().top) + 5;
-    setGrip((g) => (g && g.r === r && g.top === top ? g : { r, top }));
+  const innerRef = useRef<HTMLDivElement>(null);
+  type Active = { r: number; c: number; rowTop: number; colX: number; colOn: boolean };
+  const [active, setActive] = useState<Active | null>(null);
+  useEffect(() => setActive(null), [renderKey]); // geometry may have changed
+  const measureActive = (r: number, c: number): Active | null => {
+    const wrap = wrapRef.current, table = tableRef.current;
+    const tr = table?.tBodies[0]?.rows[r], td = tr?.cells[c];
+    if (!wrap || !tr || !td) return null;
+    const wr = wrap.getBoundingClientRect();
+    const trr = tr.getBoundingClientRect();
+    const tdr = td.getBoundingClientRect();
+    const rowTop = Math.round(trr.top - wr.top + (trr.height - 28) / 2);
+    const colX = Math.round(tdr.left + tdr.width / 2 - wr.left);
+    return { r, c, rowTop, colX, colOn: colX >= 10 && colX <= wr.width - 10 };
+  };
+  const retrack = (r: number, c: number) =>
+    setActive((prev) => {
+      const a = measureActive(r, c);
+      return prev && a && prev.r === a.r && prev.c === a.c && prev.rowTop === a.rowTop && prev.colX === a.colX && prev.colOn === a.colOn ? prev : a;
+    });
+  const trackCell = (e: MouseEvent) => {
+    if (document.body.classList.contains("table-dragging")) return; // grid idiom: no retarget mid-drag
+    const td = (e.target as HTMLElement).closest?.(".doc-td") as HTMLElement | null;
+    if (!td || td.dataset.r == null || !wrapRef.current?.contains(td)) return;
+    retrack(Number(td.dataset.r), Number(td.dataset.c));
+  };
+  // Touch: the focused cell is the active cell. contentEditable cells are
+  // uncontrolled (innerHTML untouched while renderKey is stable), so the
+  // re-render this triggers cannot disturb the caret.
+  useEffect(() => {
+    if (!COARSE) return;
+    const table = tableRef.current;
+    if (!table) return;
+    const onFocusIn = (e: FocusEvent) => {
+      const td = (e.target as HTMLElement).closest?.(".doc-td") as HTMLElement | null;
+      if (td?.dataset.r != null) retrack(Number(td.dataset.r), Number(td.dataset.c));
+    };
+    const onFocusOut = () => {
+      requestAnimationFrame(() => {
+        const ae = document.activeElement as HTMLElement | null;
+        if (!table.contains(ae) && !ae?.closest?.(".doc-row-handle,.doc-col-handle")) setActive(null);
+      });
+    };
+    table.addEventListener("focusin", onFocusIn);
+    table.addEventListener("focusout", onFocusOut);
+    return () => {
+      table.removeEventListener("focusin", onFocusIn);
+      table.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
+
+  // ---- drag-reorder (rows and columns; grid startRowDrag idiom) -------------
+  // Handle pointerdown → startPointerDrag: a released click (never crossed the
+  // 4px threshold) opens the menu, a real drag reorders. During the drag the
+  // pill follows the pointer along its axis, the source row/column wears an
+  // accent outline, and a 2px accent line marks the drop boundary. Geometry is
+  // re-queried from the DOM every move (no snapshot — page scroll can't stale
+  // it). Overlays live in .doc-table-inner so they track horizontal scroll.
+  type Drag = {
+    kind: "row" | "col"; src: number; on: boolean; pos: number;
+    outline: { left: number; top: number; width: number; height: number } | null;
+    line: number | null;
+  };
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const startReorder = (e: PointerEvent, kind: "row" | "col", src: number) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    e.preventDefault(); // keeps the cell focused (touch: also stops the scroll gesture; CSS touch-action:none backs this up)
+    e.stopPropagation();
+    const wrap = wrapRef.current, inner = innerRef.current, table = tableRef.current;
+    if (!wrap || !inner || !table) return;
+    const pos0 = kind === "row" ? (active?.rowTop ?? 0) : (active?.colX ?? 0);
+    let bound: number | null = null;
+    setDrag({ kind, src, on: false, pos: pos0, outline: null, line: null });
+    startPointerDrag(e, {
+      onStart: () => document.body.classList.add("table-dragging"),
+      onMove: (ev) => {
+        const wr = wrap.getBoundingClientRect();
+        const ir = inner.getBoundingClientRect();
+        const tb = table.getBoundingClientRect();
+        const body = table.tBodies[0]!;
+        let outline: Drag["outline"], pos: number, line: number | null = null;
+        if (kind === "row") {
+          const trs = Array.from(body.rows);
+          const sr = trs[src]!.getBoundingClientRect();
+          outline = { left: tb.left - ir.left, top: sr.top - ir.top, width: tb.width, height: sr.height };
+          pos = Math.round(Math.min(Math.max(ev.clientY, trs[1]!.getBoundingClientRect().top), tb.bottom) - wr.top - 14);
+          let t = rows.length;
+          for (let i = 1; i < trs.length; i++) {
+            const rr = trs[i]!.getBoundingClientRect();
+            if (ev.clientY < rr.top + rr.height / 2) { t = i; break; }
+          }
+          bound = t === src || t === src + 1 ? null : t;
+          if (bound != null) {
+            const edge = bound === rows.length ? trs[trs.length - 1]!.getBoundingClientRect().bottom : trs[bound]!.getBoundingClientRect().top;
+            line = Math.round(edge - ir.top);
+          }
+        } else {
+          const tds = Array.from(body.rows[0]!.cells);
+          const sc = tds[src]!.getBoundingClientRect();
+          outline = { left: sc.left - ir.left, top: tb.top - ir.top, width: sc.width, height: tb.height };
+          const lo = Math.max(tb.left, wr.left), hi = Math.min(tb.right, wr.right);
+          pos = Math.round(Math.min(Math.max(ev.clientX, lo + 10), hi - 10) - wr.left);
+          let t = cols;
+          for (let i = 0; i < tds.length; i++) {
+            const cr = tds[i]!.getBoundingClientRect();
+            if (ev.clientX < cr.left + cr.width / 2) { t = i; break; }
+          }
+          bound = t === src || t === src + 1 ? null : t;
+          if (bound != null) {
+            const edge = bound === cols ? tds[tds.length - 1]!.getBoundingClientRect().right : tds[bound]!.getBoundingClientRect().left;
+            line = Math.round(edge - ir.left);
+          }
+        }
+        setDrag({ kind, src, on: true, pos, outline, line });
+      },
+      onEnd: (_ev, dragged) => {
+        document.body.classList.remove("table-dragging");
+        setDrag(null);
+        if (!dragged) {
+          openMenu(e, (close) => (kind === "row" ? rowMenuItems(src, close) : colMenuItems(src, close)));
+          return;
+        }
+        if (bound != null) (kind === "row" ? moveRowTo : moveColTo)(src, bound);
+      },
+    });
+  };
+
+  const rowHandleTop = drag ? (drag.kind === "row" ? drag.pos : null) : active && active.r >= 1 ? active.rowTop : null;
+  const colHandleLeft = drag ? (drag.kind === "col" ? drag.pos : null) : active && active.colOn ? active.colX : null;
+
+  // Touch selection action bar — the OSK has no Delete/⌘C, so the rectangle
+  // needs on-screen verbs. Lives on the wrap layer (no vertical clipping)
+  // just above the selection, clamped into the scrollport; re-measured per
+  // render (the onScroll tick below keeps it glued under horizontal scroll).
+  const [, setScrollTick] = useState(0);
+  const selBarPos = (): { left: number; top: number } | null => {
+    if (!COARSE || !rect) return null;
+    const wrap = wrapRef.current, body = tableRef.current?.tBodies[0];
+    const a = body?.rows[rect.r0]?.cells[rect.c0], b = body?.rows[rect.r1]?.cells[rect.c1];
+    if (!wrap || !a || !b) return null;
+    const wr = wrap.getBoundingClientRect();
+    const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+    return {
+      left: Math.round(Math.min(Math.max((ar.left + br.right) / 2 - wr.left - 66, 4), wr.width - 136)),
+      top: Math.round(Math.max(ar.top - wr.top - 38, -34)),
+    };
+  };
+  const selBar = selBarPos();
+  const copyFlash = () => {
+    const tbl = tableRef.current;
+    if (!tbl) return;
+    tbl.classList.remove("copied");
+    void tbl.offsetWidth;
+    tbl.classList.add("copied");
+    setTimeout(() => tbl.classList.remove("copied"), 260);
   };
 
   return (
-    <div class="doc-table-wrap" ref={wrapRef} onMouseMove={trackRow} onMouseLeave={() => setGrip(null)}>
-      {grip && (
+    <div
+      class="doc-table-wrap"
+      ref={wrapRef}
+      onMouseMove={trackCell}
+      onMouseLeave={() => { if (!document.body.classList.contains("table-dragging")) setActive(null); }}
+    >
+      {rowHandleTop != null && (
         <button
-          class="doc-row-handle"
-          style={{ top: grip.top }}
+          class={"doc-row-handle" + (drag?.kind === "row" ? " grab" : "")}
+          style={{ top: rowHandleTop }}
           title="行选项"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openMenu(e as MouseEvent, (close) => rowMenuItems(grip.r, close));
-          }}
+          onPointerDown={(e) => { if (drag == null && active) startReorder(e as PointerEvent, "row", active.r); }}
         >
           <Icon name="grip" cls="ico sm" />
         </button>
       )}
-      <div class="doc-table-scroll">
-        <div class="doc-table-inner">
+      {colHandleLeft != null && (
+        <button
+          class={"doc-col-handle" + (drag?.kind === "col" ? " grab" : "")}
+          style={{ left: colHandleLeft }}
+          title="列选项"
+          onPointerDown={(e) => { if (drag == null && active) startReorder(e as PointerEvent, "col", active.c); }}
+        >
+          <Icon name="gripH" cls="ico sm" />
+        </button>
+      )}
+      {selBar && rect && (
+        <div class="doc-sel-bar" style={{ left: selBar.left, top: selBar.top }}>
+          <button onClick={() => { navigator.clipboard?.writeText(selectionToTsv(rows, rect)).catch(() => {}); copyFlash(); }}>复制</button>
+          <button onClick={() => { block.rows = clearRect(rows, rect); onTableChange(); onCellSel(null); }}>清空</button>
+          <button onClick={() => onCellSel(null)}>✕</button>
+        </div>
+      )}
+      <div class="doc-table-scroll" onScroll={() => { setScrollTick((t) => t + 1); setActive((a) => (a ? measureActive(a.r, a.c) : a)); }}>
+        <div class="doc-table-inner" ref={innerRef}>
+          {drag?.on && drag.outline && (
+            <>
+              <div class="doc-drag-outline" style={{ left: drag.outline.left, top: drag.outline.top, width: drag.outline.width, height: drag.outline.height }} />
+              {drag.line != null && (drag.kind === "row"
+                ? <div class="doc-rowdrop" style={{ top: drag.line, left: drag.outline.left, width: drag.outline.width }} />
+                : <div class="doc-coldrop" style={{ left: drag.line, top: drag.outline.top, height: drag.outline.height }} />)}
+            </>
+          )}
           <div class="doc-table-row">
             <table ref={tableRef} class={"doc-table" + (manual ? "" : " autofit") + (rect ? " cells-active" : "")}>
               <colgroup>
@@ -385,19 +578,7 @@ export function TableBlock({
                           onKeyDown={(e) => onCellKeyDown(e, r, c)}
                         />
                         {handle && <div class="doc-cell-handle" onPointerDown={(e) => startHandleDrag(e as PointerEvent)} />}
-                        {r === 0 && (
-                          <>
-                            <button class="doc-col-menu" title="列选项" onMouseDown={(e) => colMenu(e as MouseEvent, c)}>
-                              <Icon name="chevronDown" cls="ico sm" />
-                            </button>
-                            <div class="doc-col-resizer" onPointerDown={(e) => startResize(e as PointerEvent, c)} />
-                          </>
-                        )}
-                        {COARSE && (
-                          <button class="doc-cell-menu" title="单元格选项" onPointerDown={(e) => cellMenu(e as PointerEvent, r, c)}>
-                            <Icon name="dots" cls="ico sm" />
-                          </button>
-                        )}
+                        {r === 0 && <div class="doc-col-resizer" onPointerDown={(e) => startResize(e as PointerEvent, c)} />}
                       </td>
                       );
                     })}
