@@ -34,11 +34,13 @@ export function ImageViewer({
   const reset = () => { setScale(1); setTx(0); setTy(0); };
 
   useEffect(() => {
+    // While editing, the annotator owns the keyboard (Esc, undo/redo).
+    if (editing) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.stopPropagation(); editing ? setEditing(false) : onClose(); }
-      else if ((e.key === "+" || e.key === "=") && !editing) setScale((s) => Math.min(MAX, s * 1.2));
-      else if (e.key === "-" && !editing) setScale((s) => Math.max(MIN, s / 1.2));
-      else if (e.key === "0" && !editing) reset();
+      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+      else if (e.key === "+" || e.key === "=") setScale((s) => Math.min(MAX, s * 1.2));
+      else if (e.key === "-") setScale((s) => Math.max(MIN, s / 1.2));
+      else if (e.key === "0") reset();
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
@@ -75,39 +77,46 @@ export function ImageViewer({
     return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
   }, []);
 
+  if (editing) {
+    // The annotator renders the single toolbar row itself (filename · tools ·
+    // colors · undo/redo · cancel/save · close) — no second chrome row.
+    return (
+      <ImageAnnotator
+        src={src}
+        name={name}
+        draggableBar={draggableBar}
+        onCancel={() => setEditing(false)}
+        onClose={onClose}
+        onSave={(b) => { onReplace(b); setEditing(false); }}
+      />
+    );
+  }
+
   return (
     <>
       <div class={"lightbox-toolbar" + (draggableBar ? " app-drag" : "")} onMouseDown={(e) => e.stopPropagation()}>
         {name && <span class="lightbox-name" title={name}>{name}</span>}
         <span class="lightbox-spacer" />
-        {!editing && (
-          <>
-            <button title="缩小" onClick={() => setScale((s) => Math.max(MIN, s / 1.2))}><Icon name="zoomOut" cls="ico sm" /></button>
-            <button class="lightbox-pct" title="重置" onClick={reset}>{Math.round(scale * 100)}%</button>
-            <button title="放大" onClick={() => setScale((s) => Math.min(MAX, s * 1.2))}><Icon name="zoomIn" cls="ico sm" /></button>
-            <button title="标注 / 编辑" onClick={() => { reset(); setEditing(true); }}><Icon name="pencil" cls="ico sm" /></button>
-          </>
-        )}
-        <button title="关闭" onClick={() => (editing ? setEditing(false) : onClose())}><Icon name="x" cls="ico sm" /></button>
+        <button title="缩小" onClick={() => setScale((s) => Math.max(MIN, s / 1.2))}><Icon name="zoomOut" /></button>
+        <button class="lightbox-pct" title="重置" onClick={reset}>{Math.round(scale * 100)}%</button>
+        <button title="放大" onClick={() => setScale((s) => Math.min(MAX, s * 1.2))}><Icon name="zoomIn" /></button>
+        <button title="标注 / 编辑" onClick={() => { reset(); setEditing(true); }}><Icon name="pencil" /></button>
+        <button title="关闭" onClick={onClose}><Icon name="x" /></button>
       </div>
 
-      {editing ? (
-        <ImageAnnotator src={src} onCancel={() => setEditing(false)} onSave={(b) => { onReplace(b); setEditing(false); }} />
-      ) : (
-        <div
-          ref={stageRef}
-          class="lightbox-stage"
-          onMouseDown={(e) => { e.stopPropagation(); onDown(e as MouseEvent); }}
-          onWheel={(e) => onWheel(e as WheelEvent)}
-        >
-          <img
-            src={src}
-            alt={name ?? ""}
-            draggable={false}
-            style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})`, cursor: scale > 1 ? "grab" : "default" }}
-          />
-        </div>
-      )}
+      <div
+        ref={stageRef}
+        class="lightbox-stage"
+        onMouseDown={(e) => { e.stopPropagation(); onDown(e as MouseEvent); }}
+        onWheel={(e) => onWheel(e as WheelEvent)}
+      >
+        <img
+          src={src}
+          alt={name ?? ""}
+          draggable={false}
+          style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})`, cursor: scale > 1 ? "grab" : "default" }}
+        />
+      </div>
     </>
   );
 }

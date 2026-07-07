@@ -674,30 +674,47 @@
   .lightbox-toolbar { flex:none; display:flex; align-items:center; gap:6px; padding:10px 14px; color:#fff; }
   .lightbox-toolbar .lightbox-name { font-size:var(--fs-ui); opacity:.85; max-width:40vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .lightbox-toolbar .lightbox-spacer { flex:1; }
-  .lightbox-toolbar button { width:34px; height:34px; display:grid; place-items:center; border-radius:8px; color:#fff;
+  .lightbox-toolbar > button { width:34px; height:34px; display:grid; place-items:center; border-radius:8px; color:#fff;
     background:rgba(255,255,255,.08); transition:background .12s; }
-  .lightbox-toolbar button:hover { background:rgba(255,255,255,.2); }
+  .lightbox-toolbar > button:hover { background:rgba(255,255,255,.2); }
   .lightbox-toolbar .lightbox-pct { width:auto; min-width:52px; font-size:var(--fs-micro); font-variant-numeric:tabular-nums; }
+  .lightbox-toolbar .ico { width:16px; height:16px; stroke-width:2; }
   .lightbox-stage { flex:1; min-height:0; overflow:hidden; display:grid; place-items:center; }
   .lightbox-stage img { max-width:94vw; max-height:100%; will-change:transform; -webkit-user-drag:none; user-select:none; }
 
   /* ---- image annotator ---- */
   .annot { flex:1; min-height:0; display:flex; flex-direction:column; }
-  .annot-toolbar { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:8px 14px; }
-  .annot-tools, .annot-colors, .annot-actions { display:flex; align-items:center; gap:6px; }
-  .annot-actions { margin-left:auto; }
-  .annot-tool { width:34px; height:34px; display:grid; place-items:center; border-radius:8px; color:#fff; background:rgba(255,255,255,.08); transition:background .12s; }
-  .annot-tool:hover { background:rgba(255,255,255,.2); }
-  .annot-tool.on { background:var(--accent); color:var(--accent-fg); }
-  .annot-tool:disabled { opacity:.4; cursor:default; }
-  .annot-swatch { width:22px; height:22px; border-radius:50%; border:2px solid rgba(255,255,255,.5); transition:transform .1s; }
-  .annot-swatch.on { transform:scale(1.18); border-color:#fff; box-shadow:0 0 0 2px var(--accent); }
+  /* Single-row chrome: filename · segmented tools · colors · undo/redo ·
+     cancel/save · close. Wraps only as a narrow-window fallback. */
+  .annot-bar { flex-wrap:wrap; row-gap:6px; }
+  .annot-seg { display:flex; align-items:center; gap:2px; padding:2px; border-radius:9px; background:rgba(255,255,255,.1); }
+  .annot-seg-btn { width:30px; height:26px; display:grid; place-items:center; border-radius:7px;
+    color:rgba(255,255,255,.72); transition:background .12s, color .12s; }
+  .annot-seg-btn:hover { color:#fff; background:rgba(255,255,255,.12); }
+  .annot-seg-btn.on { background:#fff; color:#1c1c26; box-shadow:0 1px 2px rgba(0,0,0,.3); }
+  .annot-div { flex:none; width:1px; height:18px; margin:0 5px; background:rgba(255,255,255,.18); }
+  .annot-colors { display:flex; align-items:center; gap:8px; padding:0 2px; }
+  .annot-swatch { width:15px; height:15px; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(255,255,255,.3);
+    transition:transform .12s, box-shadow .12s; }
+  .annot-swatch:hover { transform:scale(1.18); }
+  .annot-swatch.on { box-shadow:inset 0 0 0 1px rgba(255,255,255,.3), 0 0 0 2px rgba(12,12,18,.9), 0 0 0 3.5px rgba(255,255,255,.92); }
+  .annot-bar .annot-icon-btn { width:30px; height:30px; display:grid; place-items:center; border-radius:7px;
+    color:rgba(255,255,255,.85); background:none; transition:background .12s; }
+  .annot-bar .annot-icon-btn:hover { background:rgba(255,255,255,.14); }
+  .annot-bar .annot-icon-btn:disabled { opacity:.35; cursor:default; background:none; }
+  .annot-actions { display:flex; align-items:center; gap:8px; margin:0 2px 0 4px; }
   .annot-stage { flex:1; min-height:0; overflow:auto; display:grid; place-items:center; padding:8px 14px 18px; }
   .annot-img-wrap { position:relative; line-height:0; }
   .annot-img-wrap img { display:block; max-width:90vw; max-height:78vh; width:auto; height:auto; -webkit-user-drag:none; user-select:none; }
-  .annot-canvas { position:absolute; inset:0; width:100%; height:100%; }
+  .annot-canvas { position:absolute; inset:0; width:100%; height:100%; touch-action:none; }
   .annot-canvas.tool-text { cursor:text; }
   .annot-canvas.tool-rect, .annot-canvas.tool-arrow { cursor:crosshair; }
+  /* Inline text overlay: WYSIWYG twin of the flattened canvas text (same font,
+     line-height and halo), plus an accent ring so the edit region reads. */
+  .annot-text-input { position:absolute; z-index:2; min-width:60px; padding:2px 4px; margin:0; border:0; outline:none;
+    resize:none; overflow:hidden; white-space:pre; background:transparent; border-radius:4px; caret-color:currentColor;
+    font:600 20px/1.3 system-ui, -apple-system, sans-serif; text-shadow:0 1px 2px rgba(0,0,0,.55);
+    box-shadow:0 0 0 1.5px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
 
   /* ---- transient "uploading" placeholder + unavailable fallback ---- */
   .ico.spin { animation:mh-spin .8s linear infinite; }
@@ -752,12 +769,19 @@
   /* Chrome rides the theme-tinted glass → theme-aware (var(--fg)), readable on a
      light or dark tint alike. */
   body.preview-window .lightbox-toolbar { color:var(--fg); }
-  body.preview-window .lightbox-toolbar button,
-  body.preview-window .annot-tool { color:var(--fg); background:color-mix(in srgb, var(--fg) 10%, transparent); }
-  body.preview-window .lightbox-toolbar button:hover,
-  body.preview-window .annot-tool:hover { background:color-mix(in srgb, var(--fg) 20%, transparent); }
-  body.preview-window .annot-tool.on { color:var(--accent-fg); background:var(--accent); }
-  body.preview-window .annot-swatch { border-color:color-mix(in srgb, var(--fg) 45%, transparent); }
+  body.preview-window .lightbox-toolbar > button { color:var(--fg); background:color-mix(in srgb, var(--fg) 10%, transparent); }
+  body.preview-window .lightbox-toolbar > button:hover { background:color-mix(in srgb, var(--fg) 20%, transparent); }
+  body.preview-window .annot-seg { background:color-mix(in srgb, var(--fg) 8%, transparent); }
+  body.preview-window .annot-seg-btn { color:color-mix(in srgb, var(--fg) 65%, transparent); }
+  body.preview-window .annot-seg-btn:hover { color:var(--fg); background:color-mix(in srgb, var(--fg) 10%, transparent); }
+  body.preview-window .annot-seg-btn.on { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
+  body.preview-window .annot-div { background:color-mix(in srgb, var(--fg) 15%, transparent); }
+  body.preview-window .annot-swatch { box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 25%, transparent); }
+  body.preview-window .annot-swatch.on { box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 25%, transparent),
+    0 0 0 2px var(--bg), 0 0 0 3.5px color-mix(in srgb, var(--fg) 78%, transparent); }
+  body.preview-window .annot-bar .annot-icon-btn { color:var(--fg); background:none; }
+  body.preview-window .annot-bar .annot-icon-btn:hover { background:color-mix(in srgb, var(--fg) 12%, transparent); }
+  body.preview-window .annot-bar .annot-icon-btn:disabled { background:none; }
   /* In the frameless window the toolbar doubles as the OS drag region; its
      buttons opt back out so they stay clickable. */
   .lightbox-toolbar.app-drag { -webkit-app-region:drag; }

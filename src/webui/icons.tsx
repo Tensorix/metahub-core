@@ -79,12 +79,13 @@ const PATHS: Record<string, string> = {
   htmlTag: '<path d="m9 8-4 4 4 4M15 8l4 4-4 4"/>',
   zoomIn: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2M11 8.5v5M8.5 11h5"/>',
   zoomOut: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2M8.5 11h5"/>',
-  square: '<rect x="4" y="4" width="16" height="16" rx="1.5"/>',
-  arrowUpRight: '<path d="M7 17 17 7M8 7h9v9"/>',
-  type: '<path d="M4 7V5h16v2M9 19h6M12 5v14"/>',
+  annotRect: '<rect x="3.5" y="6" width="17" height="12" rx="2.5"/>',
+  annotArrow: '<path d="M6 18 18 6M9.5 6H18v8.5"/>',
+  annotText: '<path d="M5 7V5h14v2M12 5v14M9.5 19h5"/>',
   maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>',
   pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a4 4 0 0 1 0 8h-2"/>',
+  redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9a4 4 0 0 0 0 8h2"/>',
 };
 
 export function Icon({ name, cls = "ico" }: { name: string; cls?: string }) {
