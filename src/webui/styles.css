@@ -806,6 +806,18 @@
   .doc-table-row { display:flex; align-items:stretch; }
   table.doc-table { border-collapse:separate; border-spacing:0; table-layout:fixed; width:max-content;
     border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; box-shadow:var(--shadow-sm); }
+  /* Default (no manual widths yet): browser auto table layout sizes columns by
+     content, capped to the wrap (cqw works despite the max-content .doc-table-inner;
+     26px keeps the add-col button inside) so it wraps instead of scrolling. The
+     first resizer drag freezes measured widths and drops this class (table-block.tsx). */
+  table.doc-table.autofit { table-layout:auto; width:auto; max-width:calc(100cqw - 26px); }
+  table.doc-table.autofit .doc-td { min-width:48px; } /* empty columns don't collapse */
+  /* Code tokens are atomic: raising the column's min-content makes the auto
+     algorithm shed width into wrappable prose columns instead of breaking
+     `file-names.md` at hyphens; an over-long token falls back to the scroll
+     box. Autofit only — in manual fixed layout nowrap can't grow the column,
+     it would overflow the cell. */
+  table.doc-table.autofit .doc-td code { white-space:nowrap; }
   table.doc-table td { position:relative; vertical-align:top; padding:0;
     border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
   table.doc-table tr td:last-child { border-right:0; }

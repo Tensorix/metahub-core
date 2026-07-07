@@ -5,6 +5,10 @@
 // CodeBlock hosts. Structural ops (add/del row & col, alignment) go through
 // onTableChange → bump(). Column widths are session-only: kept in a ref and
 // written straight onto the <col> elements, never serialized to Markdown.
+// Until the user drags a resizer the table is in autofit mode — no <col>
+// widths, browser auto table layout sizes columns by content (capped to the
+// wrap, see .doc-table.autofit) — and the first drag freezes the measured
+// widths into the ref and switches to the fixed-layout manual mode below.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Block, ColAlign } from "../blocks.ts";
 import { Icon } from "../icons.tsx";
@@ -50,9 +54,10 @@ export function TableBlock({
   const tableRef = useRef<HTMLTableElement>(null);
   const rect = cellSel ? normRect(cellSel) : null;
   const widths = useRef<number[]>([]);
-  // Keep the session-only width array sized to the column count; new columns
-  // inherit the default, existing widths are preserved across re-renders.
-  if (widths.current.length !== cols) {
+  const [manual, setManual] = useState(false);
+  // Manual mode only: keep the session-only width array sized to the column
+  // count; new columns inherit the default, existing widths survive re-renders.
+  if (manual && widths.current.length !== cols) {
     widths.current = Array.from({ length: cols }, (_, c) => widths.current[c] ?? 160);
   }
 
@@ -228,8 +233,24 @@ export function TableBlock({
   const startResize = (e: PointerEvent, c: number) => {
     e.preventDefault();
     e.stopPropagation();
+    const table = tableRef.current;
+    if (!table) return;
+    if (!manual) {
+      // First drag: freeze the auto layout's measured widths so the drag has a
+      // stable fixed-layout baseline. All synchronous DOM writes (widths onto
+      // the <col>s, drop the autofit class) so the drag origin doesn't jump;
+      // setManual just makes the next render agree with the DOM.
+      const cells = table.tBodies[0]?.rows[0]?.cells;
+      if (!cells) return;
+      widths.current = Array.from({ length: cols }, (_, i) => cells[i]?.offsetWidth ?? 160);
+      table.querySelectorAll<HTMLElement>("col[data-tcol]").forEach((col, i) => {
+        col.style.width = (widths.current[i] ?? 160) + "px";
+      });
+      table.classList.remove("autofit");
+      setManual(true);
+    }
     startColumnResize(e, {
-      col: tableRef.current?.querySelector<HTMLElement>(`col[data-tcol="${c}"]`) ?? null,
+      col: table.querySelector<HTMLElement>(`col[data-tcol="${c}"]`),
       startWidth: widths.current[c] ?? 160,
       min: 60,
       onDone: (w) => { widths.current[c] = w; },
@@ -335,10 +356,10 @@ export function TableBlock({
       <div class="doc-table-scroll">
         <div class="doc-table-inner">
           <div class="doc-table-row">
-            <table ref={tableRef} class={"doc-table" + (rect ? " cells-active" : "")}>
+            <table ref={tableRef} class={"doc-table" + (manual ? "" : " autofit") + (rect ? " cells-active" : "")}>
               <colgroup>
                 {Array.from({ length: cols }, (_, c) => (
-                  <col key={c} data-tcol={c} style={{ width: widths.current[c] }} />
+                  <col key={c} data-tcol={c} style={manual ? { width: widths.current[c] } : undefined} />
                 ))}
               </colgroup>
               <tbody>
