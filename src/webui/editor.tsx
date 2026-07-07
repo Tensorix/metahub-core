@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { api, ApiError } from "./api.ts";
 import { clientMode, onReplicaStatus, replicaActive, replicaStatus, SYNCED_EVENT } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
-import { timeAgo } from "./date.ts";
+import { sameDay } from "./date.ts";
 import { Icon } from "./icons.tsx";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import { toast } from "./ui.tsx";
@@ -450,8 +450,17 @@ function SyncStamp() {
     return () => offs.forEach((f) => f());
   }, []);
   if (st.error) return <span title={st.error}>同步失败</span>;
-  if (st.at) return <span title={new Date(st.at).toLocaleString()}>上次同步 {timeAgo(st.at)}</span>;
+  if (st.at) return <span title={new Date(st.at).toLocaleString()}>上次同步 {fmtSyncStamp(st.at)}</span>;
   return <span>实时同步</span>;
+}
+
+// Absolute clock time, not "n minutes ago": auto-sync runs every ~30s, so a
+// relative label would sit on "刚刚" forever and carry no information. A time
+// that visibly ticks with each sync round does; older stamps gain the date.
+function fmtSyncStamp(at: number): string {
+  const d = new Date(at);
+  const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay(d, new Date()) ? hm : `${d.toLocaleDateString()} ${hm}`;
 }
 
 // Is the collapsed caret on the first / last visual line of `el`? Compares the
