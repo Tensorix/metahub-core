@@ -52,6 +52,7 @@ COMMANDS
   setup
     init                              Create ~/.metahub (SQLite db + cache dir)
     init --claude                     Install the /mh skill into ~/.claude (Claude Code)
+    init --codex                      Install the $mh skill into ~/.codex (Codex)
   databases
     db create <name> [--icon]         Create a database (table)
     db list | get <ref> | delete <ref>
@@ -136,6 +137,7 @@ const EXAMPLES: Record<string, string[]> = {
   init: [
     "mh init",
     "mh init --claude   # install the /mh skill into ~/.claude (Claude Code)",
+    "mh init --codex    # install the $mh skill into ~/.codex (Codex)",
     "METAHUB_HOME=/tmp/mh mh init   # use an alternate home",
   ],
   "db create": ['mh db create "Tasks"', 'mh db create "Notes" --icon 📓'],

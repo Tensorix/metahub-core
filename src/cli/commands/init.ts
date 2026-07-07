@@ -3,7 +3,7 @@ import { openMetahub } from "../../core/db.ts";
 import { getNodeId } from "../../core/node.ts";
 import { metahubHome, cacheDir } from "../../core/paths.ts";
 import { print } from "../output.ts";
-import { scaffoldClaudeSkill } from "../claude-skill.ts";
+import { scaffoldClaudeSkill, scaffoldCodexSkill } from "../agent-skill.ts";
 
 export default defineCommand({
   meta: {
@@ -16,16 +16,60 @@ export default defineCommand({
       description:
         "Install a Claude Code /mh skill into ~/.claude (does not touch ~/.metahub)",
     },
+    codex: {
+      type: "boolean",
+      description:
+        "Install a Codex $mh skill into ~/.codex (does not touch ~/.metahub)",
+    },
   },
   async run({ args }) {
-    // `--claude` is a standalone installer for the Claude Code integration; it
-    // writes only into ~/.claude and never creates ~/.metahub (plain `mh init`
-    // owns that), so short-circuit before opening the database.
-    if (args.claude) {
-      const r = await scaffoldClaudeSkill();
-      print({ changed: r.changed, skill: r.path }, () =>
-        (r.changed ? `Installed ${r.path}` : `Up to date: ${r.path}`) +
-        "\nUse /mh in Claude Code (any project).",
+    // Agent integration installers write only into their respective agent config
+    // dirs and never create ~/.metahub (plain `mh init` owns that), so
+    // short-circuit before opening the database.
+    if (args.claude || args.codex) {
+      const claude = args.claude ? await scaffoldClaudeSkill() : null;
+      const codex = args.codex ? await scaffoldCodexSkill() : null;
+
+      if (claude && !codex) {
+        print({ changed: claude.changed, skill: claude.path }, () =>
+          (claude.changed ? `Installed ${claude.path}` : `Up to date: ${claude.path}`) +
+          "\nUse /mh in Claude Code (any project).",
+        );
+        return;
+      }
+
+      if (codex && !claude) {
+        print(
+          { changed: codex.changed, skill: codex.path, metadata: codex.metadataPath },
+          () =>
+            (codex.changed ? `Installed ${codex.path}` : `Up to date: ${codex.path}`) +
+            "\nUse $mh in Codex (restart Codex if it was already running).",
+        );
+        return;
+      }
+
+      print(
+        {
+          changed: !!claude?.changed || !!codex?.changed,
+          claude: claude ? { changed: claude.changed, skill: claude.path } : null,
+          codex: codex ? { changed: codex.changed, skill: codex.path, metadata: codex.metadataPath } : null,
+        },
+        () => {
+          const lines: string[] = [];
+          if (claude) {
+            lines.push(
+              (claude.changed ? `Installed ${claude.path}` : `Up to date: ${claude.path}`) +
+              "\nUse /mh in Claude Code (any project).",
+            );
+          }
+          if (codex) {
+            lines.push(
+              (codex.changed ? `Installed ${codex.path}` : `Up to date: ${codex.path}`) +
+              "\nUse $mh in Codex (restart Codex if it was already running).",
+            );
+          }
+          return lines.join("\n");
+        },
       );
       return;
     }

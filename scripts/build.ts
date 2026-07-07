@@ -97,11 +97,11 @@ if (!cliResult.success) {
 const cliPath = `${outdir}/cli.js`;
 const cliContent = await Bun.file(cliPath).text();
 
-// `mh init --claude` ships the repo-root SKILL.md embedded as a text import
-// (src/cli/claude-skill.ts). If the bundler ever stops inlining it, the install
-// would silently write an empty skill — so fail the build loudly instead.
+// `mh init --claude` / `mh init --codex` ship the repo-root SKILL.md embedded as
+// a text import (src/cli/agent-skill.ts). If the bundler ever stops inlining it,
+// the installers would silently write an empty skill — so fail the build loudly.
 if (!cliContent.includes("durable, syncable working memory")) {
-  throw new Error("cli.js is missing the embedded SKILL.md body (mh init --claude)");
+  throw new Error("cli.js is missing the embedded SKILL.md body (mh init agent skills)");
 }
 
 await Bun.write(cliPath, `#!/usr/bin/env bun\n${cliContent}`);
