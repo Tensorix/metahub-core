@@ -11,7 +11,7 @@
 
 import { EditorView, dropCursor, keymap } from "@codemirror/view";
 import { Compartment, type Extension } from "@codemirror/state";
-import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
+import { history, historyKeymap, defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { docModelField, docModel } from "./doc-model";
 import { isListRole } from "./blockmodel";
 import { voidField, clampVoidSelection } from "./voids/void-field";
@@ -125,6 +125,13 @@ export function richLayer(opts: EditorOpts): Extension {
     markerAtomsField,
     structureKeymap(opts),
   ];
+}
+
+/** What replaces the rich layer in source mode: a plain-editor Tab binding
+ *  (insert \t at caret / indent selection). defaultKeymap deliberately leaves
+ *  Tab unbound, so without this the browser steals it for focus navigation. */
+export function sourceLayer(): Extension {
+  return keymap.of([indentWithTab]);
 }
 
 /** The always-on baseline plus the toggleable rich layer. Callers append their own

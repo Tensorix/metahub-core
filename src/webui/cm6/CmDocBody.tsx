@@ -8,7 +8,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
-import { baseExtensions, richCompartment, richLayer } from "./editor-view";
+import { baseExtensions, richCompartment, richLayer, sourceLayer } from "./editor-view";
 import { slashMenu } from "./chrome/slash-menu";
 import { uploadPaste, pickAndUpload } from "./chrome/upload-paste";
 import { uploadField, stripStaleUploadLines } from "./chrome/upload-field";
@@ -108,7 +108,7 @@ export function CmDocBody(props: CmDocBodyProps) {
       }),
     });
     viewRef.current = view;
-    if (props.source) view.dispatch({ effects: richCompartment.reconfigure([]) });
+    if (props.source) view.dispatch({ effects: richCompartment.reconfigure(sourceLayer()) });
 
     const handle: CmHandle = {
       // In-widget edits (table cells, code lang) commit synchronously, so the doc
@@ -117,7 +117,7 @@ export function CmDocBody(props: CmDocBodyProps) {
       setDoc: (md) => replaceDoc(view, norm(md)),
       focus: () => view.focus(),
       setSource: (on) =>
-        view.dispatch({ effects: richCompartment.reconfigure(on ? [] : richLayer(opts)) }),
+        view.dispatch({ effects: richCompartment.reconfigure(on ? sourceLayer() : richLayer(opts)) }),
       get view() {
         return view;
       },
