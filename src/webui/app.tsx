@@ -266,6 +266,17 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         if (saveHotkeyRef.current?.()) e.preventDefault();
       }
+      // ⌘/ / Ctrl+/ — toggle the doc's source ⇄ blocks view (the "code mode"
+      // menu item's shortcut). docHandleRef is non-null only in a doc view, so
+      // this no-ops elsewhere; getMode() keeps it fresh past this empty-dep
+      // effect's closure.
+      if ((e.metaKey || e.ctrlKey) && e.key === "/") {
+        const h = docHandleRef.current;
+        if (h) {
+          e.preventDefault();
+          h.setMode(h.getMode() === "source" ? "blocks" : "source");
+        }
+      }
     };
     window.addEventListener("keydown", on);
     return () => window.removeEventListener("keydown", on);
@@ -424,7 +435,7 @@ function App() {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
         <>
-          <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} checked={docMode === "source"} onClick={() => {
+          <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} kbd={isMac ? "⌘/" : "Ctrl /"} checked={docMode === "source"} onClick={() => {
             close();
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
           }} />

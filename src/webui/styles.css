@@ -1247,6 +1247,9 @@
   .pop .item .meta { flex:1; min-width:0; }
   .pop .item .t { font-size:var(--fs-ui); } .pop .item .d { font-size:var(--fs-xs); color:var(--muted); display:block; }
   .pop .item .chk { color:var(--accent); margin-left:auto; }
+  /* shortcut badge, mirrors .sb-search kbd; margin-left:auto pins it right (and
+     a trailing .chk, whose own auto then collapses, rides the gap beside it) */
+  .pop .item kbd { margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--muted); border:1px solid var(--line-strong); border-radius:4px; padding:1px 4px; }
   .pop .item.danger { color:var(--danger); } .pop .item.danger .lico { color:var(--danger); }
   .pop .sep { height:1px; background:var(--line); margin:5px 4px; }
   .pop .typegrid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:2px 2px 4px; }
@@ -1571,7 +1574,7 @@
     .navitem { padding:9px 8px; font-size:16px; }
     .navitem .emoji { font-size:18px; }
     .navitem .tw { width:26px; height:26px; }
-    .sb-search kbd { display:none; }  /* no hardware keyboard, no shortcut hint */
+    .sb-search kbd, .pop .item kbd { display:none; }  /* no hardware keyboard, no shortcut hint */
     /* Search box is hidden until the header search button reveals it; it then
        slides+fades down in. Desktop base (.sb-search{display:flex}) is untouched,
        so search stays always-on there. reduced-motion is handled globally. */

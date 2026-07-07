@@ -170,6 +170,7 @@ export function MenuItem({
   icon,
   label,
   sublabel,
+  kbd,
   danger,
   checked,
   onClick,
@@ -177,6 +178,7 @@ export function MenuItem({
   icon?: string;
   label: ComponentChildren;
   sublabel?: string;
+  kbd?: string;
   danger?: boolean;
   checked?: boolean;
   onClick: () => void;
@@ -192,6 +194,7 @@ export function MenuItem({
         <span class="t">{label}</span>
         {sublabel && <span class="d">{sublabel}</span>}
       </span>
+      {kbd && <kbd>{kbd}</kbd>}
       {checked && (
         <span class="chk">
           <Icon name="check" cls="ico sm" />
