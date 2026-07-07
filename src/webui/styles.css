@@ -787,7 +787,14 @@
   .lightbox-toolbar.app-drag { -webkit-app-region:drag; }
   .lightbox-toolbar.app-drag button { -webkit-app-region:no-drag; }
 
-  /* document table (GFM pipe table block) */
+  /* document table (GFM pipe table block). contain:inline-size zeroes the
+     widget's intrinsic-width contribution — otherwise the inner
+     width:max-content propagates through overflow-x:auto into .cm-content's
+     min-width:auto floor (intrinsic sizing ignores overflow) and pushes the
+     whole page wider than the viewport on narrow screens. With the intrinsic
+     loop broken, .doc-table-wrap resolves to the doc column width and the
+     scroll box below finally gets to scroll. */
+  .doc-table-wrap { contain:inline-size; }
   .doc-table-scroll { overflow-x:auto; padding:2px 0; }
   .doc-table-inner { width:max-content; }
   .doc-table-row { display:flex; align-items:stretch; }
