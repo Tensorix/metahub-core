@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type PropType, type PropConfig } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
@@ -33,17 +33,30 @@ interface SidebarProps {
 
 let dragId: string | null = null;
 
-// Sidebar section fold state — a purely local UI preference (per device, never
-// replicated). Keys: "db" / "docs" (true = folded) and "dbHidden" (true = the
-// collapsed-databases group is OPEN; it defaults to closed, unlike sections).
+// Sidebar list state — a purely local UI preference (per device, never
+// replicated). Keys: "tab" (which list the sidebar shows: docs | db; defaults
+// to docs) and "dbHidden" (true = the collapsed-databases group is OPEN; it
+// defaults to closed). Legacy "db"/"docs" fold booleans may linger in old
+// storage; they're simply ignored.
 const SEC_KEY = "mh.sb.sections";
-function loadSec(): Record<string, boolean> {
+type SbTab = "docs" | "db";
+interface SecState {
+  tab?: SbTab;
+  dbHidden?: boolean;
+}
+function loadSec(): SecState {
   try {
     return JSON.parse(localStorage.getItem(SEC_KEY) || "{}");
   } catch {
     return {};
   }
 }
+
+// The two sidebar lists, in tab order (docs first — it's the primary surface).
+const TABS: { key: SbTab; icon: string; label: string }[] = [
+  { key: "docs", icon: "fileText", label: "文档" },
+  { key: "db", icon: "table", label: "数据表" },
+];
 
 /** The replicated per-database fold flag (meta.collapsed): tucks site-facing /
  *  rarely-browsed tables into the section's tail "已折叠" group. */
@@ -85,16 +98,68 @@ export function Sidebar(props: SidebarProps) {
     setExpanded(next);
   };
 
-  const [sec, setSec] = useState<Record<string, boolean>>(loadSec);
-  const toggleSec = (key: string) => {
-    const next = { ...sec, [key]: !sec[key] };
+  const [sec, setSec] = useState<SecState>(loadSec);
+  const patchSec = (patch: Partial<SecState>) => {
+    const next = { ...sec, ...patch };
     setSec(next);
     try {
       localStorage.setItem(SEC_KEY, JSON.stringify(next));
     } catch {
-      /* private mode: fold state just doesn't persist */
+      /* private mode: list state just doesn't persist */
     }
   };
+
+  // Which list the sidebar shows. Switching remounts the pane (key={tab}) with
+  // a direction-aware slide; the ref gate keeps the very first render still.
+  const tab = sec.tab ?? "docs";
+  const paneDir = useRef<"r" | "l">("r");
+  const paneAnim = useRef(false);
+  const setTab = (t: SbTab) => {
+    if (t === tab) return;
+    paneDir.current = t === "db" ? "r" : "l";
+    paneAnim.current = true;
+    patchSec({ tab: t });
+  };
+
+  // Follow navigation: opening a doc (search result, backlink, history) should
+  // reveal it in the list. Manual tab switches don't change the view, so they
+  // never get yanked back. The id dep matters — doc→doc back/forward must
+  // retrigger even though kind stays "doc".
+  useEffect(() => {
+    if (view.kind === "doc") setTab("docs");
+    else if (view.kind === "db") setTab("db");
+  }, [view.kind, "id" in view ? view.id : ""]);
+
+  // Sliding pill under the active tab. The label expands via a CSS 0fr→1fr
+  // grid transition, so a one-shot measurement would capture a mid-flight
+  // width; instead a ResizeObserver keeps retargeting the indicator's
+  // transition while the button grows — it chases the label open, Notion-style.
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const indReady = useRef(false);
+  useLayoutEffect(() => {
+    const wrap = tabsRef.current;
+    const ind = wrap?.querySelector<HTMLElement>(".sb-tab-ind");
+    if (!wrap || !ind) return;
+    const move = () => {
+      const btn = wrap.querySelector<HTMLElement>(".sb-tab.on");
+      if (!btn) return;
+      ind.style.transform = `translateX(${btn.offsetLeft}px)`;
+      ind.style.width = `${btn.offsetWidth}px`;
+    };
+    if (indReady.current) move();
+    else {
+      // First paint: place the pill without a slide-in from x=0.
+      ind.style.transition = "none";
+      move();
+      requestAnimationFrame(() => {
+        ind.style.transition = "";
+        indReady.current = true;
+      });
+    }
+    const ro = new ResizeObserver(move);
+    wrap.querySelectorAll(".sb-tab").forEach((b) => ro.observe(b));
+    return () => ro.disconnect();
+  }, [tab]);
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => props.onError(String(e.message)));
 
@@ -359,6 +424,35 @@ export function Sidebar(props: SidebarProps) {
         </button>
       </div>
 
+      {/* List switcher (Notion-style): active tab = icon+label pill, inactive
+          = icon only. The + creates whatever the active tab holds. */}
+      <div class="sb-tabs" role="tablist" ref={tabsRef}>
+        <span class="sb-tab-ind" aria-hidden="true" />
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            class={"sb-tab" + (tab === t.key ? " on" : "")}
+            title={t.label}
+            onClick={() => setTab(t.key)}
+          >
+            <Icon name={t.icon} cls="ico sm" />
+            <span class="tab-label"><span>{t.label}</span></span>
+          </button>
+        ))}
+        <button
+          class="add"
+          title={tab === "docs" ? "新建文档" : "新建数据库"}
+          onClick={() =>
+            tab === "docs"
+              ? newDoc(null)
+              : openCreateDb((id) => navigate({ kind: "db", id }), props.onError)}
+        >
+          <Icon name="plus" cls="ico sm" />
+        </button>
+      </div>
+
       <div class={"sb-search" + (searchOpen ? " open" : "")} onClick={(e) => (e.currentTarget.querySelector("input") as HTMLInputElement)?.focus()}>
         <Icon name="search" cls="ico sm" />
         <input
@@ -378,51 +472,28 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <div class="sb-scroll">
-        <div class="sb-section">
-          <div class="sb-section-head">
-            <button class="sec-fold" onClick={() => toggleSec("db")} aria-expanded={!sec.db}>
-              <Icon name="chevron" cls={"ico sm chev" + (sec.db ? "" : " open")} />
-              <span>数据库</span>
-            </button>
-            <button
-              class="add"
-              title="新建数据库"
-              onClick={() => openCreateDb((id) => navigate({ kind: "db", id }), props.onError)}
-            >
-              <Icon name="plus" cls="ico sm" />
-            </button>
-          </div>
-          {!sec.db && (
+        <div
+          key={tab}
+          class={"sb-pane" + (paneAnim.current ? (paneDir.current === "r" ? " in-r" : " in-l") : "")}
+        >
+          {tab === "docs" ? (
+            <>
+              {renderTree(null)}
+              {props.docs.length === 0 && <div class="navitem muted">暂无文档</div>}
+            </>
+          ) : (
             <>
               {props.databases.filter((db) => !isDbCollapsed(db)).map((db) => dbItem(db))}
-              {props.databases.length === 0 && <div class="navitem muted">暂无</div>}
+              {props.databases.length === 0 && <div class="navitem muted">暂无数据表</div>}
               {props.databases.some(isDbCollapsed) && (
                 <>
-                  <button class="sb-subfold" onClick={() => toggleSec("dbHidden")} aria-expanded={!!sec.dbHidden}>
+                  <button class="sb-subfold" onClick={() => patchSec({ dbHidden: !sec.dbHidden })} aria-expanded={!!sec.dbHidden}>
                     <Icon name="chevron" cls={"ico sm chev" + (sec.dbHidden ? " open" : "")} />
                     <span>已折叠 · {props.databases.filter(isDbCollapsed).length}</span>
                   </button>
                   {sec.dbHidden && props.databases.filter(isDbCollapsed).map((db) => dbItem(db, true))}
                 </>
               )}
-            </>
-          )}
-        </div>
-
-        <div class="sb-section">
-          <div class="sb-section-head">
-            <button class="sec-fold" onClick={() => toggleSec("docs")} aria-expanded={!sec.docs}>
-              <Icon name="chevron" cls={"ico sm chev" + (sec.docs ? "" : " open")} />
-              <span>文档</span>
-            </button>
-            <button class="add" title="新建文档" onClick={() => newDoc(null)}>
-              <Icon name="plus" cls="ico sm" />
-            </button>
-          </div>
-          {!sec.docs && (
-            <>
-              {renderTree(null)}
-              {props.docs.length === 0 && <div class="navitem muted">暂无</div>}
             </>
           )}
         </div>
