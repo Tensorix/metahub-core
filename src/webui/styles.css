@@ -559,7 +559,8 @@
     padding:2px; border-radius:7px; border:1px solid var(--line); box-shadow:var(--shadow-sm);
     background:color-mix(in srgb,var(--code-bg) 82%,transparent); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
     opacity:0; transform:translateY(3px); pointer-events:none; transition:opacity .12s,transform .12s; }
-  .codeblock:hover .code-tools, .code-tools:focus-within { opacity:1; transform:none; pointer-events:auto; }
+  .codeblock:hover .code-tools, .code-tools:focus-within,
+  .cm-void-code:focus-within .code-tools { opacity:1; transform:none; pointer-events:auto; }
   .code-lang { position:relative; display:inline-flex; align-items:center; }
   .code-lang select { appearance:none; -webkit-appearance:none; border:0; outline:none; background:none; cursor:pointer;
     font-family:var(--mono); font-size:10.5px; font-weight:500; color:var(--fg-soft); padding:3px 17px 3px 7px; border-radius:5px; }
@@ -595,14 +596,11 @@
   .hljs-emphasis { font-style:italic; }
   .hljs-strong { font-weight:700; }
 
-  /* CodeIsland (CM6 void widget): literal fence rows are always in the DOM but
-     only show while the island holds focus, so the reading state matches the old
-     read-only display. .ci-selected marks the island when the CM selection spans
-     the whole void (Escape from inside / Backspace from the line below). */
-  .cm-void-code .ci-fence { display:none; }
-  .cm-void-code:focus-within .ci-fence { display:flex; align-items:center; gap:6px;
-    font-family:var(--mono); font-size:11px; color:var(--muted); padding:2px 12px; }
-  .cm-void-code .ci-fence .code-lang select { font-size:11px; color:var(--muted); }
+  /* CodeIsland (CM6 void widget): the tools pill (lang + copy) is the only
+     focus-state chrome — an absolute overlay, so revealing it never changes the
+     block's height (no layout shift on click). .ci-selected marks the island
+     when the CM selection spans the whole void (Escape from inside / Backspace
+     from the line below). */
   .cm-void-code .codeblock.ci-selected { box-shadow:0 0 0 2px var(--accent); }
 
   /* Whole-void selected (the CM selection spans the block — click-to-select on

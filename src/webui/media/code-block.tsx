@@ -2,9 +2,9 @@
 // The code island for the CM6 void widget: a fenced code block that stays a
 // rendered, highlighted component even while being edited. Editing uses the
 // classic transparent-textarea-over-hljs-mirror technique (CodeEditorBody); the
-// island adds literal ``` fence rows (visible only while focused, via the
-// .ci-fence CSS) so the user always sees "this is a fenced block" without the
-// widget ever degrading to raw source text.
+// language picker and copy button live in the absolutely-positioned bottom-right
+// tools pill (hover/focus-revealed), so the block's height never changes and the
+// widget never degrades to raw source text.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import hljs from "highlight.js/lib/common";
@@ -115,11 +115,10 @@ export function CodeEditorBody({
 }
 
 /**
- * The always-editable code block widget: top fence row (literal ``` + language
- * picker) + CodeEditorBody + bottom fence row, plus the copy button in the
- * hover tools area. The fence rows live in the DOM permanently but only show
- * while the island has focus (`.cm-void-code:focus-within .ci-fence`), so the
- * reading state looks exactly like the old read-only display.
+ * The always-editable code block widget: CodeEditorBody plus the language
+ * picker + copy button in the bottom-right tools pill. The pill is an absolute
+ * overlay revealed on hover and while the island has focus, so showing it never
+ * changes the block's height (no layout shift when clicking into the code).
  */
 export function CodeIsland({
   code, lang, selected, onInput, onLang, onKeyDown, taRef,
@@ -150,8 +149,16 @@ export function CodeIsland({
 
   return (
     <div class={"codeblock" + (selected ? " ci-selected" : "")}>
-      <div class="ci-fence ci-fence-top">
-        <span class="ci-ticks">```</span>
+      <CodeEditorBody
+        code={code}
+        lang={langVal || undefined}
+        onInput={onInput}
+        onKeyDown={onKeyDown}
+        taRef={mergedRef}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
+      />
+      <div class="code-tools">
         <span class="code-lang">
           <select
             value={langVal}
@@ -162,20 +169,6 @@ export function CodeIsland({
           </select>
           <Icon name="chevronDown" cls="ico sm" />
         </span>
-      </div>
-      <CodeEditorBody
-        code={code}
-        lang={langVal || undefined}
-        onInput={onInput}
-        onKeyDown={onKeyDown}
-        taRef={mergedRef}
-        onCompositionStart={onCompositionStart}
-        onCompositionEnd={onCompositionEnd}
-      />
-      <div class="ci-fence ci-fence-bottom">
-        <span class="ci-ticks">```</span>
-      </div>
-      <div class="code-tools">
         <button
           class={"code-copy" + (copied ? " ok" : "")}
           title="复制代码"
