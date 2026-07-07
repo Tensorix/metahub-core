@@ -38,7 +38,7 @@ import {
 import { StateField, RangeSetBuilder, Facet, EditorState, EditorSelection, type RangeSet } from "@codemirror/state";
 import { undo, redo } from "@codemirror/commands";
 import { docModel } from "../doc-model";
-import { voidAt, voidInterior, type VoidKind, type VoidRange } from "../blockmodel";
+import { MAX_NEST, voidAt, voidInterior, type VoidKind, type VoidRange } from "../blockmodel";
 import { blockToText, leadingIndent, stripIndent, type Block } from "../../blocks";
 import { consumeKey } from "../../keys";
 import { minimalReplace } from "../min-diff";
@@ -456,6 +456,9 @@ class VoidWidget extends WidgetType {
     readonly block: Block,
     readonly selected: boolean,
     readonly gen: number,
+    /** Nesting level of the void's opening line (capped at MAX_NEST) — the widget
+     *  pads onto the same 24px column grid as prose lines (cm-nested/cm-nest-N). */
+    readonly level: number,
   ) {
     super();
   }
@@ -466,6 +469,10 @@ class VoidWidget extends WidgetType {
 
   override eq(other: VoidWidget): boolean {
     if (other.kind !== this.kind) return false;
+    // Indent is part of `source` (it starts at the line start), but the level
+    // check must not depend on that: the focus special-case below skips the
+    // source comparison, and a stale nest class would misalign the island.
+    if (other.level !== this.level) return false;
     // Generation gates the focus special-case: an external change (remote merge,
     // undo/redo) intersecting the void bumps gen, so the island is torn down and
     // rebuilt from document truth even while focused. Data beats caret.
@@ -496,7 +503,14 @@ class VoidWidget extends WidgetType {
     const host = document.createElement("div");
     // .selected drives the whole-block accent ring (styles.css); eq() compares
     // `selected`, so a selection change rebuilds the widget with the right class.
-    host.className = "cm-void cm-void-" + this.kind + (this.selected ? " selected" : "");
+    // cm-nested/cm-nest-N reuse the prose 24px-grid padding + dashed guides for
+    // an indented void. (A revealed html void shows its raw source lines with
+    // literal leading whitespace instead — acceptable: reveal is a source view.)
+    host.className =
+      "cm-void cm-void-" +
+      this.kind +
+      (this.selected ? " selected" : "") +
+      (this.level > 0 ? ` cm-nested cm-nest-${this.level}` : "");
     host.contentEditable = "false";
     if (MEDIA.has(this.kind)) {
       // Click-to-select: ignoreEvent() leaves interior events to us, so without
@@ -644,7 +658,11 @@ function buildVoids(state: EditorState, gens: Map<number, number>): VoidState {
     const selected = sel.ranges.some((r) => r.from <= v.from && r.to >= v.to);
     if (selected) anySelected = true;
     const gen = gens.get(v.from) ?? 0;
-    deco.add(v.from, v.to, Decoration.replace({ block: true, widget: new VoidWidget(v.kind, source, v.block, selected, gen) }));
+    // Whole-block visual indent: the opening line's nesting level (its leading
+    // whitespace is inside the replaced range, so the widget is the only thing
+    // that can show it).
+    const level = Math.min(model.lines[v.fromLine - 1]!.level, MAX_NEST);
+    deco.add(v.from, v.to, Decoration.replace({ block: true, widget: new VoidWidget(v.kind, source, v.block, selected, gen, level) }));
     if (ATOMIC.has(v.kind)) atomic.add(v.from, v.to, atomicMark);
   }
   return { deco: deco.finish(), atomic: atomic.finish(), gens, anySelected };
@@ -654,7 +672,12 @@ function buildVoids(state: EditorState, gens: Map<number, number>): VoidState {
  *  every void an external (non-writeback) change intersects. */
 function nextGens(prev: Map<number, number>, tr: import("@codemirror/state").Transaction): Map<number, number> {
   const mapped = new Map<number, number>();
-  for (const [from, gen] of prev) mapped.set(tr.changes.mapPos(from, 1), gen);
+  // assoc -1: a void's `from` is always a line start, and an insertion exactly
+  // there (whole-block indent, undo, remote merge) must keep the key ON the line
+  // start — assoc 1 would map it past the inserted text, orphaning the gen while
+  // the bump loop restarts a fresh counter at the real `from` (a focused island
+  // could then keep stale DOM when old and restarted gens collide).
+  for (const [from, gen] of prev) mapped.set(tr.changes.mapPos(from, -1), gen);
   if (!tr.isUserEvent("input.writeback")) {
     const model = docModel(tr.state);
     const hits: Array<[number, number]> = [];

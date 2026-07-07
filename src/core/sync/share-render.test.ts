@@ -5,6 +5,11 @@
 import { test, expect } from "bun:test";
 import { renderMarkdown } from "./share-render";
 
+test("an indented heading is still a heading (classification is indent-blind)", () => {
+  expect(renderMarkdown("  # x")).toBe("<h1>x</h1>");
+  expect(renderMarkdown("    ## y")).toBe("<h2>y</h2>");
+});
+
 test("ordered items keep their literal numbers via <li value>", () => {
   expect(renderMarkdown("1. a\n1. b\n7. c")).toBe(
     '<ol><li value="1">a</li><li value="1">b</li><li value="7">c</li></ol>',

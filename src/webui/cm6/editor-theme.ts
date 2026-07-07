@@ -37,6 +37,10 @@ function nestRules(): Record<string, Record<string, string>> {
     // item): aligned to the parent item's content column; +2px is the base
     // horizontal line padding it overrides.
     ".cm-nested": { paddingLeft: "calc(var(--nest, 0px) + 2px)" },
+    // An indented void widget: same grid, but `.cm-void`'s `padding: 3px 0`
+    // shorthand zeroes padding-left at equal specificity — this two-class rule
+    // wins on specificity, not on rule order, so the theme can't silently break.
+    ".cm-void.cm-nested": { paddingLeft: "calc(var(--nest, 0px) + 2px)" },
     // Quote: 16px between the 3px rule and the text (old:
     // `.b-quote .editable { padding-left:16px }`), shifted by the nest column.
     ".cm-quote": {

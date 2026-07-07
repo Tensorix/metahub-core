@@ -1,9 +1,11 @@
 /** @jsxImportSource preact */
 // Left hover gutter: a "+" (insert an empty line below the block) and a grip
 // (drag to reorder the block, click for a menu). Renders a small overlay pinned to
-// the left of the hovered block's first line. A "block" is a single line, or the
-// whole line-span of a void. Reorder moves that line span with one text transaction
-// (native undo covers it). All coord reads go through the deferred path.
+// the left of the hovered block's first line. A "block" is a single line, the
+// whole line-span of a void, or a quote's whole contiguous run (blockAt) — so
+// hover/drag/duplicate/delete/convert all act on the same unit Tab steps.
+// Reorder moves that line span with one text transaction (native undo covers
+// it). All coord reads go through the deferred path.
 
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
@@ -117,7 +119,9 @@ class GutterPlugin implements PluginValue {
     const count = target.toLine - target.fromLine + 1;
     // 复制/删除 act on the block's whole subtree (a parent list item carries its
     // indented children — the old block-tree semantics); 转换为 stays on the
-    // single line, converting children along with the parent would be wrong.
+    // block itself — a single line, or a quote's whole run (blockAt), where a
+    // whole-run conversion is the block semantics — converting children along
+    // with a parent list item would be wrong.
     const moveTarget = multi ? target : blockSpanWithChildren(view, range.fromLine);
     // A media/table void has no text to convert (lossy) → hide "转换为" for it.
     // A fenced code/html void can still unwrap to prose → offer just 正文.

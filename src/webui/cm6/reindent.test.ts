@@ -145,3 +145,110 @@ test("single-caret Shift-Tab outdents an indented blank line", () => {
   expect(outdentCommand(v)).toBe(true);
   expect(v.state.doc.toString()).toBe("a\n  ");
 });
+
+// ---- whole-run stepping: a multi-line quote indents/outdents as ONE block ----
+
+test("Tab on a quote line steps the whole contiguous run", () => {
+  const doc = "> a\n> b\n> c\ntail";
+  const v = mkView(doc, doc.indexOf("b")); // caret on the middle line
+  expect(indentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("  > a\n  > b\n  > c\ntail");
+});
+
+test("Shift-Tab on a quote line steps the whole run back", () => {
+  const doc = "  > a\n  > b\ntail";
+  const v = mkView(doc, doc.indexOf("a"));
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("> a\n> b\ntail");
+});
+
+test("a quote run is bounded by blanks, other roles, and other levels", () => {
+  const doc = "> up\n\n> a\n  > deeper\n> b\npara";
+  const v = mkView(doc, doc.indexOf("a"));
+  indentCommand(v);
+  // only the caret's level-0 run ("> a") moves — the blank-separated "> up",
+  // the deeper line, and "> b" (a different run once "a" moved) stay put…
+  expect(v.state.doc.toString()).toBe("> up\n\n  > a\n  > deeper\n> b\npara");
+});
+
+test("Tab normalizes odd indents across the run while stepping", () => {
+  const doc = "> a\n > b"; // second line: odd 1-space (still level 0)
+  const v = mkView(doc, 2);
+  indentCommand(v);
+  expect(v.state.doc.toString()).toBe("  > a\n  > b");
+});
+
+test("Shift-Tab on an odd-indent quote run snaps to canonical first", () => {
+  const doc = "   > a\n   > b"; // 3 spaces: level 1 + remainder
+  const v = mkView(doc, doc.indexOf("a"));
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("  > a\n  > b"); // snapped, not stepped
+  outdentCommand(v);
+  expect(v.state.doc.toString()).toBe("> a\n> b");
+});
+
+test("Shift-Tab on a flush-left quote run consumes the key, doc unchanged", () => {
+  const doc = "> a\n> b";
+  const v = mkView(doc, 2);
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe(doc);
+});
+
+test("caret rides along when its quote run steps", () => {
+  const doc = "> a\n> b";
+  const at = doc.indexOf("b") + 1; // end of second line
+  const v = mkView(doc, at);
+  indentCommand(v);
+  expect(v.state.selection.main.head).toBe(v.state.doc.length); // still after "b"
+});
+
+// ---- whole-void stepping: a void indents/outdents as ONE block ----
+
+test("Tab on a selected void indents every source line uniformly", () => {
+  const doc = "```js\ncode\n  deep\n```";
+  const v = mkView(doc, 0, doc.length);
+  expect(indentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("  ```js\n  code\n    deep\n  ```");
+  // exact-cover selection stays pinned to the void span (accent ring survives)
+  expect(v.state.selection.main.from).toBe(0);
+  expect(v.state.selection.main.to).toBe(v.state.doc.length);
+});
+
+test("Shift-Tab on a selected void strips the block indent, never the code's own", () => {
+  const doc = "  ```js\n  code\n    deep\n  ```";
+  const v = mkView(doc, 0, doc.length);
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("```js\ncode\n  deep\n```");
+  expect(v.state.selection.main.from).toBe(0);
+  expect(v.state.selection.main.to).toBe(v.state.doc.length);
+});
+
+test("Shift-Tab on a flush-left void is a whole-void no-op (key consumed)", () => {
+  const doc = "```\n  indented code\n```";
+  const v = mkView(doc, 0, doc.length);
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe(doc); // interior indent untouched
+});
+
+test("stepping a void never rewrites the code's literal tabs", () => {
+  const doc = "```\n\tcode\n```";
+  const v = mkView(doc, 0, doc.length);
+  indentCommand(v);
+  expect(v.state.doc.toString()).toBe("  ```\n  \tcode\n  ```");
+  outdentCommand(v);
+  expect(v.state.doc.toString()).toBe("```\n\tcode\n```");
+});
+
+test("Mod-A-style selection over prose + void steps the void as one block", () => {
+  const doc = "para\n```\n\tx\n```\ntail";
+  const v = mkView(doc, 0, doc.length);
+  indentCommand(v);
+  expect(v.state.doc.toString()).toBe("  para\n  ```\n  \tx\n  ```\n  tail");
+});
+
+test("Shift-Tab inside revealed html source keeps the per-line code dedent", () => {
+  const doc = "```mh-html\n  <b>x</b>\n```";
+  const v = mkView(doc, doc.indexOf("<b>")); // caret inside the source line
+  expect(outdentCommand(v)).toBe(true);
+  expect(v.state.doc.toString()).toBe("```mh-html\n<b>x</b>\n```"); // only that line
+});

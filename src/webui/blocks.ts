@@ -51,6 +51,13 @@ export interface Block {
   name?: string; // image/video/audio/file only: alt / display filename
   width?: number; // image only: rendered width in px (round-trips as a ?w= query)
   size?: number; // file only: byte size (round-trips in the link title)
+  /** Non-list blocks only: extra nesting levels (2 indent columns each) beyond the
+   *  containing list item — a free-standing indented heading/quote/code/table/media
+   *  keeps its 24px-grid level through a blocks round-trip. INVARIANT: only the
+   *  blocksFromBody parse path sets this. textToBlock and the editor void pipeline
+   *  must never — the void commit() already re-prefixes the source indent, so a
+   *  block-side indent would double-pad and walk the block rightward on every edit. */
+  indent?: number;
 }
 
 /** Embeds carried by the `![](url)` / `[](url)` / ```mh-html grammar — promoted to
@@ -237,6 +244,10 @@ export function applyBlockDraft(b: Block, type: BlockType, draft: Partial<BlockD
     delete b.rows;
     delete b.align;
   }
+  // Free-standing indent is a non-list concept (list nesting lives in children);
+  // conversions must not leak a stale level into the new type's serialization.
+  if (!isListType(type) && draft.indent && draft.indent > 0) b.indent = draft.indent;
+  else delete b.indent;
   if (isMediaType(type) || type === "uploading") {
     b.src = draft.src ?? "";
     if (draft.name != null) b.name = draft.name;
@@ -493,10 +504,7 @@ function parseContainer(
       for (let k = 1; k < blankRun; k++) blocks.push({ id: genId(), type: "p", content: "" });
     blankRun = 0;
 
-    const parsed =
-      parseListItem(lines, i, minIndent) ??
-      parseTableBlock(lines, i, minIndent) ??
-      parseLeafBlock(lines, i, minIndent);
+    const parsed = parseListItem(lines, i, minIndent) ?? parseLeafBlock(lines, i, minIndent);
     blocks.push(parsed.block);
     i = parsed.next;
   }
@@ -522,36 +530,55 @@ function parseListItem(lines: string[], start: number, minIndent: number): Parse
 }
 
 function parseLeafBlock(lines: string[], start: number, minIndent: number): Parsed {
-  const first = stripIndent(lines[start]!, minIndent);
+  // Classify on the line's OWN indentation, like the CM6 scan's classifyLine:
+  // whole 2-column levels beyond the container become the block's `indent`, so
+  // `  # x` is an indented heading on every surface, not a paragraph. An odd
+  // remainder column is canonicalized away (level math floors, matching the
+  // renderer's hidden-indent rule). Sub-parsers run at the deepened base so an
+  // indented fence/quote/table gets clean content instead of leaked whitespace.
+  const extra = Math.max(0, leadingIndent(lines[start]!) - minIndent);
+  const indent = Math.floor(extra / 2);
+  const base = minIndent + extra;
+  const withIndent = (p: Parsed): Parsed => {
+    if (indent > 0 && !isListType(p.block.type)) p.block.indent = indent;
+    return p;
+  };
+
+  // Table before fence/heading — preserves the pre-existing precedence from
+  // parseContainer's old parseListItem ?? parseTableBlock ?? parseLeafBlock chain.
+  const table = parseTableBlock(lines, start, base);
+  if (table) return withIndent(table);
+
+  const first = stripIndent(lines[start]!, base);
   const fence = first.match(RE.fenceOpen);
   if (fence) {
-    const code = parseCodeBlock(lines, start, minIndent, fence);
-    if (code) return code;
+    const code = parseCodeBlock(lines, start, base, fence);
+    if (code) return withIndent(code);
   }
 
   if (RE.divider.test(first.trim())) {
-    return { block: { id: genId(), type: "divider", content: "" }, next: start + 1 };
+    return withIndent({ block: { id: genId(), type: "divider", content: "" }, next: start + 1 });
   }
 
   const heading = first.match(RE.h);
   if (heading) {
-    return {
+    return withIndent({
       block: {
         id: genId(),
         type: `h${heading[1]!.length}` as BlockType,
         content: heading[2]!,
       },
       next: start + 1,
-    };
+    });
   }
 
-  if (matchQuoteLine(first) !== null) return parseQuoteBlock(lines, start, minIndent);
+  if (matchQuoteLine(first) !== null) return withIndent(parseQuoteBlock(lines, start, base));
   // A line that is solely one embed becomes its own void block; anything else
   // (incl. an image with trailing prose) falls through to the paragraph parser
   // and renders inline as before.
   const media = matchMediaLine(first);
-  if (media) return { block: { id: genId(), ...media }, next: start + 1 };
-  return parseParagraph(lines, start, minIndent);
+  if (media) return withIndent({ block: { id: genId(), ...media }, next: start + 1 });
+  return withIndent(parseParagraph(lines, start, base));
 }
 
 function parseCodeBlock(
@@ -693,13 +720,17 @@ function parseParagraph(lines: string[], start: number, minIndent: number): Pars
 
 function startsLeafBlock(line: string, minIndent: number): boolean {
   if (matchListLine(line, minIndent)) return true;
-  const text = stripIndent(line, minIndent);
+  // Strip the line's FULL indent (not just minIndent) — classifyLine does, so a
+  // deeper-indented heading/quote mid-paragraph must break the paragraph here
+  // exactly like it starts its own block on screen.
+  const text = stripIndent(line, Number.MAX_SAFE_INTEGER);
   return !!text.match(RE.fenceOpen) || !!text.match(RE.h) || RE.divider.test(text.trim()) || matchQuoteLine(text) !== null;
 }
 
 // matchListLine moved to ../core/md/grammar.ts (re-exported above).
 
 function renderBlock(block: Block, indent: number, number: number): string[] {
+  indent += 2 * (block.indent ?? 0); // free-standing level on top of the container's
   const pad = " ".repeat(indent);
   if (isHeadingType(block.type))
     return [`${pad}${"#".repeat(Number(block.type.slice(1)))} ${block.content}`];

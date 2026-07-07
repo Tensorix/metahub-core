@@ -7,7 +7,7 @@
 
 import type { EditorView } from "@codemirror/view";
 import { docModel } from "./doc-model";
-import { isListRole } from "./blockmodel";
+import { isListRole, quoteRunAt } from "./blockmodel";
 
 export interface BlockRange {
   fromLine: number;
@@ -16,11 +16,19 @@ export interface BlockRange {
   to: number;
 }
 
-/** The line span of the block at 1-based line `n` (a void spans multiple lines). */
+/** The line span of the block at 1-based line `n`. Multi-line blocks answer with
+ *  their whole span: a void with all its source lines, a quote with its whole
+ *  contiguous same-level run — so Mod-a/Mod-d/gutter and Tab stepping agree on
+ *  what "the block" is. */
 export function blockAt(view: EditorView, n: number): BlockRange {
-  const v = docModel(view.state).voids.find((v) => n >= v.fromLine && n <= v.toLine);
+  const model = docModel(view.state);
+  const v = model.voids.find((v) => n >= v.fromLine && n <= v.toLine);
   const doc = view.state.doc;
   if (v) return { fromLine: v.fromLine, toLine: v.toLine, from: doc.line(v.fromLine).from, to: doc.line(v.toLine).to };
+  if (model.lines[n - 1]?.role === "quote") {
+    const run = quoteRunAt(model.lines, n);
+    return { fromLine: run.fromLine, toLine: run.toLine, from: doc.line(run.fromLine).from, to: doc.line(run.toLine).to };
+  }
   const line = doc.line(n);
   return { fromLine: n, toLine: n, from: line.from, to: line.to };
 }

@@ -696,6 +696,23 @@ export function voidAt(model: DocModel, pos: number): VoidRange | null {
   return null;
 }
 
+/** The contiguous SAME-LEVEL quote run containing 1-based line `n` (which must
+ *  be a quote line). A blank line, a different nesting level, or any other role
+ *  breaks the run. This is the editor's block unit for quotes — a multi-line
+ *  quote is ONE block, so whole-block operations (Tab stepping, Mod-a / gutter
+ *  ranges) must cover the whole run, mirroring how a void spans all its source
+ *  lines. Grouping is by LEVEL, not raw columns: an odd-indent line still sits
+ *  on the same 24px column visually, and the Tab normalize step heals it. */
+export function quoteRunAt(lines: readonly LineInfo[], n: number): { fromLine: number; toLine: number } {
+  const level = lines[n - 1]!.level;
+  const inRun = (l: LineInfo | undefined) => !!l && l.role === "quote" && l.level === level;
+  let fromLine = n;
+  let toLine = n;
+  while (inRun(lines[fromLine - 2])) fromLine--;
+  while (inRun(lines[toLine])) toLine++;
+  return { fromLine, toLine };
+}
+
 /** The void whose source range STRICTLY contains `pos` (`v.from < pos < v.to`) —
  *  "a caret here would be editing raw void source". Edges are legal caret stops
  *  (atomicRanges), so this is the predicate for clamping selections out. */

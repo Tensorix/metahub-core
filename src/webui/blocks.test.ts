@@ -83,6 +83,42 @@ test("body round-trips through blocks and stays stable on re-parse", () => {
   );
 });
 
+test("free-standing indent classifies and round-trips on non-list blocks", () => {
+  const body = "  # h\n\n  > q1\n  > q2\n\n    ```js\n    x()\n    ```\n\n  text";
+  const blocks = blocksFromBody(body);
+  expect(blocks.map((b) => [b.type, b.indent])).toEqual([
+    ["h1", 1],
+    ["quote", 1],
+    ["code", 2],
+    ["p", 1],
+  ]);
+  expect(blocks[1]!.content).toBe("q1\nq2"); // quote marker + indent both stripped
+  expect(blocks[2]!.content).toBe("x()"); // fence indent must not leak into code
+  const out = bodyFromBlocks(blocks);
+  expect(out).toBe(body); // canonical input → byte-stable round-trip
+  expect(bodyFromBlocks(blocksFromBody(out))).toBe(out); // fixpoint
+});
+
+test("odd indent floors to whole levels (canonicalized, like the renderer)", () => {
+  const blocks = blocksFromBody("   # h");
+  expect(blocks[0]!.type).toBe("h1");
+  expect(blocks[0]!.indent).toBe(1);
+  expect(bodyFromBlocks(blocks)).toBe("  # h");
+});
+
+test("an indented heading mid-paragraph starts its own block (matches the editor)", () => {
+  const blocks = blocksFromBody("text\n  # h");
+  expect(blocks.map((b) => b.type)).toEqual(["p", "h1"]);
+});
+
+test("indent under a list item still nests as children (unchanged semantics)", () => {
+  const body = "- item\n\n  > nested quote";
+  const blocks = blocksFromBody(body);
+  expect(blocks[0]!.type).toBe("bullet");
+  expect(blocks[0]!.children?.map((c) => [c.type, c.indent])).toEqual([["quote", undefined]]);
+  expect(bodyFromBlocks(blocks)).toBe(body);
+});
+
 test("interior empty paragraphs persist as blank lines on serialize", () => {
   const blocks = [
     { id: "1", type: "p" as const, content: "keep" },

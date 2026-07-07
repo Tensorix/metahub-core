@@ -12,9 +12,10 @@
 // the serializer's own output) are blocks; bare `-`/`1.`/`>` are the mid-typing
 // paragraph state; `-foo`/`1.foo`/`>foo` are paragraphs.
 //
-// KNOWN (pre-existing, out of scope here): an INDENTED top-level quote
-// ("  > x") is quote in scanDoc but p in blocksFromBody — the editor-internal
-// fork predates this suite; no indented-quote case is pinned below.
+// INDENT: classification is indent-blind on every surface — a line keeps its
+// role at any leading indent (2 columns = 1 nesting level, the 24px grid). The
+// indented cases below pin that three-way: scanDoc strips per line, the save
+// parser records Block.indent, share strips before classifying.
 
 import { test, expect } from "bun:test";
 import { scanDoc } from "./blockmodel";
@@ -56,6 +57,11 @@ const CASES: [line: string, kind: Kind][] = [
   ["***", "divider"],
   ["___", "divider"],
   ["- - -", "bullet"],
+  // indented lines keep their role on every surface (free-standing nesting)
+  ["  # x", "h1"],
+  ["  > x", "quote"],
+  ["  - x", "bullet"],
+  ["  ---", "divider"],
 ];
 
 /** Opening tag renderMarkdown must emit for each kind. */
@@ -130,6 +136,25 @@ test("parity: fence close must be at least the opener's length", () => {
   const html = renderMarkdown(doc);
   expect(html.match(/<pre/g)?.length ?? 0).toBe(1);
   expect(html).toContain("```"); // the short closer is code CONTENT
+});
+
+test("parity: an INDENTED fence is code on all surfaces, content stays clean", () => {
+  const doc = "  ```js\n  x()\n  ```";
+  expect(scanDoc(doc).voids[0]?.kind).toBe("code");
+  const b = blocksFromBody(doc)[0]!;
+  expect(b.type).toBe("code");
+  expect(b.indent).toBe(1);
+  expect(b.content).toBe("x()"); // fence indent must not leak into the code
+  expect(renderMarkdown(doc)).toContain('<pre><code class="language-js">');
+});
+
+test("parity: an INDENTED table is a table on all surfaces", () => {
+  const doc = "  | a |\n  | --- |\n  | 1 |";
+  expect(scanDoc(doc).voids[0]?.kind).toBe("table");
+  const b = blocksFromBody(doc)[0]!;
+  expect(b.type).toBe("table");
+  expect(b.indent).toBe(1);
+  expect(renderMarkdown(doc)).toContain("<table>");
 });
 
 test("parity: mh-html fence renders as sandboxed iframe on share", () => {

@@ -14,7 +14,7 @@
 import { EditorSelection, type ChangeSpec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { docModel } from "./doc-model";
-import { hiddenIndentChars, voidAt, correctNumberAtLevel, isListRole, type LineInfo, type DocModel } from "./blockmodel";
+import { hiddenIndentChars, voidAt, quoteRunAt, correctNumberAtLevel, isListRole, type LineInfo, type DocModel } from "./blockmodel";
 import { focusCodeVoid } from "./voids/void-field";
 import { RE, leadingIndent } from "../blocks";
 
@@ -354,6 +354,41 @@ function reindent(view: EditorView, delta: 1 | -1): boolean {
   const caretIsList =
     isListRole(caretLine.role);
 
+  // A quote is a MULTI-LINE block (a contiguous same-level `> ` run): the caret
+  // line steps together with its whole run, or Tab would tear one quote into
+  // two half-indented blocks. Must run before the generic single-caret branches
+  // below (a quote is `!caretIsList` and would be caught there line-wise). Same
+  // normalize semantics as those branches: every run line snaps to the caret
+  // level's canonical target — odd indents and tabbed prefixes heal in passing.
+  if (single && caretLine.role === "quote") {
+    const target =
+      delta > 0
+        ? (caretLine.level + 1) * 2
+        : caretLine.indent > caretLine.level * 2
+          ? caretLine.level * 2
+          : Math.max(0, (caretLine.level - 1) * 2);
+    if (target === caretLine.indent) return true; // flush-left outdent: consume
+    const model = docModel(state);
+    const run = quoteRunAt(model.lines, state.doc.lineAt(state.selection.main.head).number);
+    const ws = " ".repeat(target);
+    for (let n = run.fromLine; n <= run.toLine; n++) {
+      const line = model.lines[n - 1]!;
+      if (line.indentChars === ws.length && !line.text.slice(0, ws.length).includes("\t")) continue;
+      changes.push({ from: line.from, to: line.from + line.indentChars, insert: ws });
+    }
+    if (!changes.length) return true;
+    const cs = state.changes(changes);
+    const head = state.selection.main.head;
+    const contentStart = cs.mapPos(caretLine.from, -1) + ws.length;
+    view.dispatch({
+      changes,
+      selection: { anchor: Math.max(contentStart, cs.mapPos(head, 1)) },
+      userEvent: delta > 0 ? "input.indent" : "delete.dedent",
+      scrollIntoView: true,
+    });
+    return true;
+  }
+
   // Empty selection on a non-list line. Revealed void source (html) keeps real
   // space insertion (code-style indent); any other block line — EMPTY lines
   // included (Tab on an empty block indents it; the placeholder shifts along) —
@@ -407,11 +442,38 @@ function reindent(view: EditorView, delta: 1 | -1): boolean {
     return relevelNumbered(view, caretLine, delta);
   }
 
+  const model = docModel(state);
   for (const r of ranges) {
     const first = state.doc.lineAt(r.from).number;
     const last = state.doc.lineAt(r.to).number;
     for (let n = first; n <= last; n++) {
       if (seen.has(n)) continue;
+      const v = voidAt(model, state.doc.line(n).from);
+      // A void steps as ONE block, keyed off its OPENING line: every source
+      // line shifts by the same amount, so the interior's RELATIVE indentation
+      // (code!) is never rewritten. Only literal leading SPACES are touched —
+      // a tab inside a code block is content, never normalized. Shift-Tab on a
+      // flush-left void is a whole-void no-op (the key is still consumed).
+      // Exception: a caret/partial range INSIDE a revealed html void is source
+      // editing — those lines keep the per-line code-style dedent/indent below;
+      // atomic voids can't be entered, so any touch means the block gesture.
+      if (v && (v.kind !== "html" || (r.from <= v.from && r.to >= v.to))) {
+        for (let m = v.fromLine; m <= v.toLine; m++) seen.add(m);
+        const openSpaces = /^ */.exec(state.doc.line(v.fromLine).text)![0].length;
+        if (delta > 0) {
+          for (let m = v.fromLine; m <= v.toLine; m++)
+            changes.push({ from: state.doc.line(m).from, insert: "  " });
+        } else {
+          const strip = Math.min(2, openSpaces);
+          for (let m = v.fromLine; strip > 0 && m <= v.toLine; m++) {
+            const line = state.doc.line(m);
+            const take = Math.min(strip, /^ */.exec(line.text)![0].length);
+            if (take > 0) changes.push({ from: line.from, to: line.from + take, insert: "" });
+          }
+        }
+        n = v.toLine;
+        continue;
+      }
       seen.add(n);
       const line = state.doc.line(n);
       const ws = /^[ \t]*/.exec(line.text)![0];
@@ -428,7 +490,19 @@ function reindent(view: EditorView, delta: 1 | -1): boolean {
     }
   }
   if (!changes.length) return true; // nothing to outdent, but consume the key
-  view.dispatch({ changes, userEvent: delta > 0 ? "input.indent" : "delete.dedent" });
+  const main = state.selection.main;
+  // A selection exactly covering one void (the accent-ring state) must still
+  // cover it afterwards: CM maps an anchor AT an insertion point to AFTER the
+  // inserted text, which would break the ring and makeVoidExit's exact match —
+  // pin both endpoints to the (mapped) void span instead.
+  const cover =
+    ranges.length === 1 ? model.voids.find((v) => v.from === main.from && v.to === main.to) : undefined;
+  let selection: { anchor: number; head: number } | undefined;
+  if (cover) {
+    const cs = state.changes(changes);
+    selection = { anchor: cs.mapPos(cover.from, -1), head: cs.mapPos(cover.to, 1) };
+  }
+  view.dispatch({ changes, selection, userEvent: delta > 0 ? "input.indent" : "delete.dedent" });
   return true;
 }
 

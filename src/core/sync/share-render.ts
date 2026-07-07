@@ -135,8 +135,10 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
       continue;
     }
 
-    // ATX heading.
-    const h = line.match(RE.h);
+    // ATX heading. Strip nesting indent first (RE.h is anchored flush-left by
+    // contract): an indented `  # x` is a heading in the editor scan, so it must
+    // be one here and in rich copy too.
+    const h = stripLead(line).match(RE.h);
     if (h) {
       flushPara();
       const level = h[1]!.length;

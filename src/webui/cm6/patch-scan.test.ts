@@ -206,6 +206,20 @@ test("one transaction with multiple ranges", () => {
   ]);
 });
 
+test("whole-void indent step (insert at every source line start) ≡ full rescan", () => {
+  // The reindent Tab shape over an indented void: one transaction, one 2-space
+  // insertion per source line, void stays a void one level deeper.
+  const doc = "para\n  ```js\n  x()\n  ```\ntail";
+  const lineStart = (n: number) => doc.split("\n").slice(0, n).join("\n").length + (n ? 1 : 0);
+  checkPatch(doc, [1, 2, 3].map((n) => ({ from: lineStart(n), to: lineStart(n), insert: "  " })));
+});
+
+test("whole-void outdent step (delete leading spaces per line) ≡ full rescan", () => {
+  const doc = "para\n  | a |\n  | --- |\n  | 1 |\ntail";
+  const lineStart = (n: number) => doc.split("\n").slice(0, n).join("\n").length + (n ? 1 : 0);
+  checkPatch(doc, [1, 2, 3].map((n) => ({ from: lineStart(n), to: lineStart(n) + 2, insert: "" })));
+});
+
 test("empty document + growth from empty", () => {
   checkPatch("", [{ from: 0, to: 0, insert: "hello" }]);
   checkPatch("", [{ from: 0, to: 0, insert: "# h\n\n```\nc\n```" }]);
@@ -269,6 +283,8 @@ const VOCAB = [
   "---",
   "```",
   "```js",
+  "  ```",
+  "  ```ts",
   "~~~",
   "const x = 1",
   "| a | b |",
@@ -276,6 +292,8 @@ const VOCAB = [
   "| 1 | 2 |",
   "text with | pipe",
   "  | c | d |",
+  "  | --- |",
+  "  > nested quote",
   "![img](/blob/pic.png?w=300)",
   "[doc.pdf](/blob/doc.pdf \"12\")",
 ];

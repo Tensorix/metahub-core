@@ -68,6 +68,25 @@ test("change outside the void does not bump; existing gens remap through edits",
   expect(tr2.state.field(voidField).gens.get(vAfter2.from)).toBe(1);
 });
 
+test("insertion exactly at a void's from keeps the gen key on the line start", () => {
+  const state = mkState();
+  const v = tableVoid(state);
+  // Edit inside → gen 1.
+  const tr1 = state.update({ changes: { from: v.from + 2, to: v.from + 3, insert: "X" } });
+  const v1 = tableVoid(tr1.state);
+  // Whole-block indent shape: insert at every source line start (reindent's
+  // uniform step — the delimiter row must shift with the header or the table
+  // stops parsing). assoc -1 keeps the key AT the opening line start, so the
+  // bump continues the counter (1 → 2) instead of restarting a fresh one at 1
+  // while the old entry drifts off.
+  const lineStarts = [];
+  for (let n = v1.fromLine; n <= v1.toLine; n++) lineStarts.push(tr1.state.doc.line(n).from);
+  const tr2 = tr1.state.update({ changes: lineStarts.map((from) => ({ from, insert: "  " })) });
+  const v2 = tableVoid(tr2.state);
+  expect(v2.from).toBe(v1.from); // still starts at the same line start
+  expect(tr2.state.field(voidField).gens.get(v2.from)).toBe(2);
+});
+
 test("undo-style non-writeback events bump like any external change", () => {
   const state = mkState();
   const v = tableVoid(state);
@@ -77,6 +96,36 @@ test("undo-style non-writeback events bump like any external change", () => {
   });
   const v2 = tableVoid(tr.state);
   expect(tr.state.field(voidField).gens.get(v2.from)).toBe(1);
+});
+
+// ---- whole-block visual indent: the widget carries the opening line's level ----
+
+test("an indented void's widget carries its nesting level; flush-left is 0", () => {
+  const indented = EditorState.create({
+    doc: "  | a |\n  | --- |\n  | 1 |",
+    extensions: [docModelField, voidField],
+  });
+  const flush = mkState();
+  const widgetOf = (s: EditorState) => {
+    const it = s.field(voidField).deco.iter();
+    if (!it.value) throw new Error("no void deco");
+    return it.value.spec.widget as { level: number };
+  };
+  expect(widgetOf(indented).level).toBe(1);
+  expect(widgetOf(flush).level).toBe(0);
+});
+
+test("indenting a void's source lines re-levels its widget", () => {
+  const state = EditorState.create({
+    doc: "| a |\n| --- |\n| 1 |",
+    extensions: [docModelField, voidField],
+  });
+  const v = tableVoid(state);
+  const lines = [];
+  for (let n = v.fromLine; n <= v.toLine; n++) lines.push(state.doc.line(n).from);
+  const tr = state.update({ changes: lines.map((from) => ({ from, insert: "  " })) });
+  const it = tr.state.field(voidField).deco.iter();
+  expect((it.value!.spec.widget as { level: number }).level).toBe(1);
 });
 
 // ---- void boundary contract: voidInterior + clampVoidSelection ----
