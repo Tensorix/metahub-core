@@ -510,6 +510,9 @@
   .doc-conflict { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 14px; margin-bottom:16px; border:1px solid var(--danger); border-radius:var(--radius-sm); background:var(--danger-soft); font-size:13px; }
   .doc-conflict-msg { color:var(--danger); font-weight:600; flex:1; min-width:180px; }
   .doc.source-mode { min-height:100%; }
+  /* wide mode (⋯ menu): lift the column cap; the 60px side padding stays as the
+     reading gutter and keeps the fixed .doc-toc ticks off the text. */
+  .doc.wide-mode { max-width:none; }
   /* floating table of contents: a column of indented tick marks in the right
      gutter that expands to a labelled list on hover (Notion / Vercel-docs style).
      Fixed to the viewport so it never disturbs the centred .doc column. */

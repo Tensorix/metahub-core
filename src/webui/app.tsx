@@ -74,6 +74,7 @@ function App() {
   const [sbCollapsed, setSbCollapsed] = useState(false);
   const [sbWidth, setSbWidth] = useState(268);
   const [docMode, setDocMode] = useState<DocMode>("blocks");
+  const [docWide, setDocWide] = useState(false);
   // Deep links can name a db before the nav lists arrive (or a bogus id);
   // distinguishes "still loading" from "genuinely not found" below.
   const [navReady, setNavReady] = useState(false);
@@ -224,6 +225,7 @@ function App() {
   useEffect(() => {
     setDocMode("blocks");
     setDocHistory(false);
+    setDocWide(!!activeDocId && localStorage.getItem(`mh.doc-wide.${activeDocId}`) === "1");
   }, [activeDocId]);
 
   useEffect(() => {
@@ -405,6 +407,19 @@ function App() {
     return true; // doc/db view → swallow the browser "save page" regardless
   };
 
+  // Wide mode lifts the 740px column cap (.doc.wide-mode). Remembered
+  // per-document but device-local: documents carry no UI metadata in core,
+  // so localStorage is the store.
+  const toggleDocWide = () => {
+    if (!activeDocId) return;
+    const next = !docWide;
+    setDocWide(next);
+    try {
+      if (next) localStorage.setItem(`mh.doc-wide.${activeDocId}`, "1");
+      else localStorage.removeItem(`mh.doc-wide.${activeDocId}`);
+    } catch { /* private mode: the toggle just doesn't persist */ }
+  };
+
   const moreMenu = (e: MouseEvent) => {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
@@ -412,6 +427,10 @@ function App() {
           <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} checked={docMode === "source"} onClick={() => {
             close();
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
+          }} />
+          <MenuItem icon="maximize" label="宽屏模式" checked={docWide} onClick={() => {
+            close();
+            toggleDocWide();
           }} />
           <MenuItem icon="copy" label="创建副本" onClick={async () => {
             close();
@@ -548,6 +567,7 @@ function App() {
             <DocView
               key={view.id}
               docId={view.id}
+              wide={docWide}
               onError={onError}
               onModeChange={setDocMode}
               onHandle={registerDocHandle}

@@ -30,11 +30,13 @@ export interface DocViewHandle {
 
 export function DocView({
   docId,
+  wide,
   onError,
   onModeChange,
   onHandle,
 }: {
   docId: string;
+  wide?: boolean;
   onError: (m: string) => void;
   onModeChange?: (mode: DocMode) => void;
   onHandle?: (handle: DocViewHandle | null) => void;
@@ -323,7 +325,7 @@ export function DocView({
   return (
     <div
       ref={docRootRef}
-      class={"doc" + (mode === "source" ? " source-mode" : "")}
+      class={"doc" + (mode === "source" ? " source-mode" : "") + (wide ? " wide-mode" : "")}
       // Clicking the column's empty bottom padding (below the editor) drops the
       // caret on a trailing empty paragraph — see cm6/click-below.ts. Handler
       // lives on the .doc column (not document) so other UI is untouched.
