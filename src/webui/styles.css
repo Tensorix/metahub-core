@@ -814,7 +814,8 @@
      algorithm shed width into wrappable prose columns instead of breaking
      `file-names.md` at hyphens; an over-long token falls back to the scroll
      box. Autofit only — in manual fixed layout nowrap can't grow the column,
-     it would overflow the cell. */
+     it would overflow the cell. Phones relax this (see the 560px block):
+     there the atom IS the cap, and it crushes prose columns to their floor. */
   table.doc-table.autofit .doc-td code { white-space:nowrap; }
   table.doc-table td { position:relative; vertical-align:top; padding:0;
     border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
@@ -1616,6 +1617,12 @@
     /* CM6 hover gutter: no hover on touch, and -52px overlays would overflow
        the tight mobile margins — hide. */
     .cm-gutter-layer { display:none; }
+    /* Autofit tables: on phones the atomic code span IS the width cap — one
+       long `file-name.md` becomes the column's min-content, eats the whole
+       100cqw budget and crushes prose columns to their 48px floor. Let code
+       wrap at its natural break points (hyphens/slashes) instead; wider
+       layouts keep the atomic-code tradeoff (see the autofit rules). */
+    table.doc-table.autofit .doc-td code { white-space:pre-wrap; overflow-wrap:normal; word-break:normal; }
     /* Find bar clears the taller mobile topbar (49px min + notch inset). */
     .find-bar { top:calc(49px + env(safe-area-inset-top) + 8px); }
     /* narrower handle gutter on phones; .db left padding must be ≥ --grip-gutter */
