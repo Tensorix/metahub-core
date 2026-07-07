@@ -88,6 +88,7 @@ const PATHS: Record<string, string> = {
   pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a4 4 0 0 1 0 8h-2"/>',
   redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9a4 4 0 0 0 0 8h2"/>',
+  camera: '<path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.6l1.2-1.7a1 1 0 0 1 .8-.4h3.8a1 1 0 0 1 .8.4L15.9 6h1.6A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.4"/>',
 };
 
 export function Icon({ name, cls = "ico" }: { name: string; cls?: string }) {

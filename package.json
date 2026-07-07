@@ -43,6 +43,7 @@
     "aws4fetch": "^1.0.20",
     "citty": "^0.1.6",
     "highlight.js": "^11.11.1",
+    "jsqr": "^1.4.0",
     "preact": "^10.29.2",
     "qrcode-generator": "^2.0.4",
     "turndown": "^7.2.4",

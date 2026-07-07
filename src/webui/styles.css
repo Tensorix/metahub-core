@@ -1774,6 +1774,44 @@
   .enroll-err { color:var(--danger); font-size:13px; margin-top:12px; }
   .enroll-go { width:100%; justify-content:center; margin-top:18px; }
   .enroll-hint { font-size:12px; margin-top:14px; line-height:1.5; }
+  .enroll-card { animation:enroll-in .35s ease both; }
+  @keyframes enroll-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+
+  /* Scan-first enroll: square viewfinder (corner frame + sweeping accent beam)
+     over the live camera feed. The chip stays black in both themes — the feed
+     brings its own colors; accent carries the beam and the success flash. */
+  .enroll-scan { position:relative; aspect-ratio:1/1; margin:2px 0 12px; border-radius:16px; overflow:hidden; background:#0b0b0e; }
+  .enroll-scan video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .enroll-scan::after { content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none; box-shadow:inset 0 0 44px rgba(0,0,0,.35); }
+  .enroll-scan-frame { position:absolute; inset:0; width:100%; height:100%; fill:none; stroke:rgba(255,255,255,.92); stroke-width:2.5; stroke-linecap:round; pointer-events:none; }
+  .enroll-scan-beam { position:absolute; left:9%; right:9%; top:12%; height:2px; border-radius:2px; pointer-events:none; opacity:.85;
+    background:linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation:enroll-beam 2.4s ease-in-out infinite alternate; }
+  @keyframes enroll-beam { to { top:86%; } }
+  .enroll-scan.hit .enroll-scan-frame { stroke:var(--accent); }
+  .enroll-scan.hit::after { animation:enroll-hit .38s ease-out; }
+  @keyframes enroll-hit { from { box-shadow:inset 0 0 0 3px var(--accent), inset 0 0 60px rgba(0,0,0,.2); } to { box-shadow:inset 0 0 44px rgba(0,0,0,.35); } }
+  .enroll-scan-wait { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,.45); }
+  .enroll-scan-waitico { width:30px; height:30px; animation:enroll-wait 1.6s ease-in-out infinite; }
+  @keyframes enroll-wait { 0%,100% { opacity:.4; } 50% { opacity:.9; } }
+  .enroll-cam-err { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:20px; text-align:center; color:rgba(255,255,255,.9); font-size:13px; }
+  .enroll-cam-err .muted { color:rgba(255,255,255,.55); font-size:12px; }
+  .enroll-cam-errico { width:26px; height:26px; opacity:.7; }
+  .enroll-cam-err .btn { margin-top:8px; }
+  .enroll-paste { width:100%; font-size:13px; }
+  .enroll-switch { display:flex; justify-content:center; align-items:center; gap:10px; margin-top:14px; }
+  .enroll-switch-dot { color:var(--muted); }
+  .enroll-link { background:none; border:0; padding:0; font:inherit; font-size:13px; color:var(--accent); cursor:pointer; }
+  .enroll-link:hover { text-decoration:underline; }
+  /* Unlock step: compact bucket summary chip above the passphrase field. */
+  .enroll-bucket-card { display:flex; align-items:center; gap:10px; padding:12px 14px; margin:2px 0 14px; border:1px solid var(--line); border-radius:12px; background:var(--bg); }
+  .enroll-bucket-ico { width:18px; height:18px; color:var(--muted); }
+  .enroll-bucket-meta { flex:1; min-width:0; }
+  .enroll-bucket-name { font-weight:600; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .enroll-bucket-host { font-family:var(--mono); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .enroll-bucket-badge { display:inline-flex; align-items:center; gap:4px; flex:none; font-size:11px; color:var(--accent); padding:3px 8px; border-radius:999px;
+    border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+  .enroll-bucket-badge .ico { width:12px; height:12px; }
 
   /* Enroll QR (settings → 同步存储 → 在手机上打开). The QR inverts with the
      theme: light = dark modules on a light chip, dark = light modules on a dark
