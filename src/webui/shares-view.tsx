@@ -127,7 +127,8 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
                   <div class="shv-meta">
                     经 {s.source}
                     <span class={"shv-exp" + (exp.warn ? " warn" : "") + (exp.dead ? " dead" : "")}>
-                      · {exp.text}
+                      {" · "}
+                      {exp.text}
                     </span>
                   </div>
                 </div>

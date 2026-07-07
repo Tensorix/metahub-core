@@ -1038,7 +1038,25 @@
   .shv-exp.dead { text-decoration:line-through; }
   .shv-actions { display:flex; align-items:center; gap:6px; flex:none; }
   .shv-actions .btn { padding:5px 10px; font-size:12px; }
-  @media (max-width:640px){ .shv-row{ flex-wrap:wrap; } .shv-actions{ width:100%; justify-content:flex-end; } }
+  @media (max-width:640px){
+    /* head stacks: title/desc full row, then segmented tabs, then search */
+    .shares-page .db-head { flex-direction:column; align-items:stretch; gap:12px; }
+    .shv-tools { margin-left:0; width:100%; }
+    .shv-seg { display:flex; width:100%; }
+    .shv-seg-btn { flex:1; text-align:center; }
+    .shv-search { flex:1; }
+    .shv-search input { width:100%; flex:1; }
+
+    /* cards: title clamps to two lines, meta wraps naturally */
+    .shv-row { flex-wrap:wrap; }
+    .shv-title { max-width:100%; white-space:normal; display:-webkit-box;
+      -webkit-line-clamp:2; -webkit-box-orient:vertical; text-align:left; }
+    .shv-meta { white-space:normal; overflow:visible; text-overflow:clip; }
+
+    /* actions: full row of evenly stretched touch targets */
+    .shv-actions { width:100%; }
+    .shv-actions .btn { flex:1; justify-content:center; padding:7px 10px; }
+  }
 
   /* in-context "已分享" badge on docs / tables / site cards */
   .share-badge { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:6px; color:var(--accent);
