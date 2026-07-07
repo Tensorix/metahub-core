@@ -118,7 +118,15 @@ async function upgradeClipboard(md: string, urls: string[]): Promise<void> {
     if (raw) {
       try {
         const png = await toPng(raw);
-        if (png) flavors["image/png"] = png;
+        if (png) {
+          // A lone image ships as {markdown, binary} WITHOUT text/html: targets
+          // that prefer html (Notion, chat boxes) would take the html flavor and
+          // then strip its data: URI image, pasting nothing. With no html flavor
+          // they fall through to image/png and upload the actual pixels; our own
+          // paste still round-trips via text/plain.
+          delete flavors["text/html"];
+          flavors["image/png"] = png;
+        }
       } catch {
         /* undecodable — ship without the binary flavor */
       }
