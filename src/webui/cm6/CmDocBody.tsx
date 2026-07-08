@@ -18,6 +18,7 @@ import { minimalReplace } from "./min-diff";
 import { healLegacyMarkdown } from "../../core/md/heal";
 import { formatBar } from "./chrome/format-bar";
 import { docToc } from "./chrome/toc";
+import { wordCount } from "./chrome/word-count";
 import { blockGutter } from "./chrome/gutter";
 import { find } from "./chrome/find";
 import { voidDeps } from "./voids/void-field";
@@ -90,6 +91,7 @@ export function CmDocBody(props: CmDocBodyProps) {
           // Chrome (always on; reads the always-on docModelField so it survives
           // source mode). The slash menu's upload types open a native file picker.
           docToc(),
+          wordCount(),
           blockGutter(),
           formatBar(),
           find(),

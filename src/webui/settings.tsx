@@ -6,6 +6,7 @@ import type { S3Config } from "../core/sync/storage.ts";
 import { encodeEnroll } from "../core/sync/enroll.ts";
 import { Icon, CUBE_OUTER, CUBE_INNER } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
+import { getWordCountEnabled, setWordCountEnabled } from "./wordcount.ts";
 import { api, currentToken, type Peer, type Grant, type S3Peer, type BlobCacheInfo } from "./api.ts";
 import {
   replicaEnabled,
@@ -175,10 +176,16 @@ function SettingsRail({ sections }: { sections: { id: string; label: string; ico
 
 export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void } = {}) {
   const [theme, setThemeState] = useState<ThemeChoice>(getTheme());
+  const [wordCount, setWordCountState] = useState<boolean>(getWordCountEnabled());
 
   const pick = (t: ThemeChoice) => {
     setTheme(t);
     setThemeState(t);
+  };
+
+  const toggleWordCount = (on: boolean) => {
+    setWordCountEnabled(on);
+    setWordCountState(on);
   };
 
   const visibleSections = SECTIONS.filter((s) => s.show());
@@ -209,6 +216,18 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
                 </button>
               ))}
             </div>
+          </div>
+          <div class="set-block">
+            <div class="set-block-head"><span class="set-block-title">字数统计</span></div>
+            <div class="set-block-desc">在文档右下角显示字数，悬停查看字符数与预计阅读时间。</div>
+            <label class="set-check-row">
+              <input
+                type="checkbox"
+                checked={wordCount}
+                onChange={(e) => toggleWordCount((e.currentTarget as HTMLInputElement).checked)}
+              />
+              <span>显示字数统计</span>
+            </label>
           </div>
         </SetGroup>
 

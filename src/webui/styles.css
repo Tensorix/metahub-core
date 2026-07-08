@@ -551,6 +551,28 @@
   /* not enough room for the gutter → hide entirely (also covers mobile) */
   @media (max-width:1100px) { .doc-toc { display:none; } }
 
+  /* floating word count: a small pill in the bottom-right gutter (fixed to the
+     viewport, aligned with .doc-toc's right edge). Collapsed it shows only the
+     字数; hover reveals the char count + reading estimate. Purely client-side. */
+  .doc-wc { position:fixed; right:18px; bottom:calc(14px + env(safe-area-inset-bottom)); z-index:40;
+    display:flex; flex-direction:column; align-items:flex-end; gap:4px;
+    padding:5px 11px; border:1px solid var(--line); border-radius:999px; background:var(--bg);
+    color:var(--muted); font-size:var(--fs-sm); line-height:1.2; user-select:none; pointer-events:auto;
+    box-shadow:var(--shadow-sm); opacity:.62;
+    transition:opacity .18s ease, border-radius .2s ease, background .18s ease, box-shadow .2s ease, color .18s ease; }
+  .doc-wc:hover { opacity:1; border-radius:var(--radius); background:var(--surface); border-color:var(--line-strong);
+    box-shadow:var(--shadow-md); color:var(--fg-soft); }
+  .doc-wc-num { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .doc-wc.sel .doc-wc-num { color:var(--accent); font-weight:550; }
+  /* detail rows: collapsed to zero height until hover, then a two-line read-out */
+  .doc-wc-detail { display:flex; flex-direction:column; align-items:flex-end; gap:2px;
+    max-height:0; overflow:hidden; opacity:0; font-size:12px; color:var(--muted);
+    transition:max-height .2s ease, opacity .18s ease; }
+  .doc-wc-detail span { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .doc-wc:hover .doc-wc-detail { max-height:40px; opacity:1; }
+  /* quick-note mini window has no room for it */
+  .qn-body .doc-wc { display:none; }
+
   /* code block: transparent textarea over a highlight.js mirror */
   .codeblock { position:relative; --code-fs:12.5px; --code-lh:1.55; --code-pad:8px; margin:2px 0;
     background:var(--code-bg); border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:var(--shadow-sm); }
