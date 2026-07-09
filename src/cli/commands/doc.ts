@@ -7,12 +7,14 @@ import {
   getDocument,
   updateDocument,
   editDocument,
+  editDocumentBatch,
   appendDocument,
   prependDocument,
   duplicateDocument,
   deleteDocument,
   documentVersion,
   type DocumentSummary,
+  type EditPair,
 } from "../../core/documents.ts";
 import {
   listDocumentRevisions,
@@ -20,9 +22,9 @@ import {
   revertDocument,
   type DocRevision,
 } from "../../core/history.ts";
-import { resolveValue } from "../input.ts";
+import { resolveValue, resolveJson } from "../input.ts";
 import { resolveRef } from "../../core/resolve.ts";
-import { errorCode } from "../../core/errors.ts";
+import { errorCode, MhError } from "../../core/errors.ts";
 import { idKind } from "../../core/ids.ts";
 import { print, table, guard } from "../output.ts";
 import { FRESH_ARGS, freshDb } from "../fresh.ts";
@@ -184,24 +186,61 @@ const read = defineCommand({
   }),
 });
 
+/** Validate a decoded `--edits` payload into EditPair[] (shape only; the core
+ *  handles anchor semantics). Throws invalid_input so guard maps it to exit 2. */
+function parseEditPairs(raw: unknown): EditPair[] {
+  if (!Array.isArray(raw) || raw.length === 0)
+    throw new MhError("invalid_input", "--edits must be a non-empty JSON array");
+  return raw.map((e, i) => {
+    if (typeof e !== "object" || e === null)
+      throw new MhError("invalid_input", `--edits[${i}] must be an object`);
+    const { old, new: repl, replaceAll } = e as Record<string, unknown>;
+    if (typeof old !== "string" || old === "")
+      throw new MhError("invalid_input", `--edits[${i}].old must be a non-empty string`);
+    if (repl !== undefined && typeof repl !== "string")
+      throw new MhError("invalid_input", `--edits[${i}].new must be a string`);
+    if (replaceAll !== undefined && typeof replaceAll !== "boolean")
+      throw new MhError("invalid_input", `--edits[${i}].replaceAll must be a boolean`);
+    return { old, new: repl as string | undefined, replaceAll: replaceAll as boolean | undefined };
+  });
+}
+
 const edit = defineCommand({
   meta: {
     name: "edit",
     description:
-      "Anchored find/replace; --old must match exactly once unless --replace-all",
+      "Anchored find/replace; --old must match exactly once unless --replace-all. --edits applies a JSON batch of pairs atomically",
   },
   args: {
     id: { type: "positional", required: true, description: "Document ref (id/prefix/title)" },
-    old: { type: "string", required: true, description: "Exact text to find (@file/@- ok)" },
+    old: { type: "string", description: "Exact text to find (@file/@- ok)" },
     new: { type: "string", description: "Replacement text (@file/@- ok)" },
     "replace-all": { type: "boolean", description: "Replace every occurrence" },
+    edits: {
+      type: "string",
+      description: 'Batch JSON: [{"old","new"?,"replaceAll"?}], applied in order (@file/@- ok)',
+    },
     "if-match": { type: "string", description: "Version from `doc read`; reject if changed" },
   },
   run: guard(async (args) => {
     const db = openMetahub();
+    const id = docId(db, args.id);
+
+    // Batch: one atomic, single-versioned pass over N pairs. Mutually exclusive
+    // with the single-pair flags so intent is never ambiguous.
+    if (args.edits != null) {
+      if (args.old != null || args.new != null || args["replace-all"])
+        throw new MhError("invalid_input", "use --old/--new/--replace-all or --edits, not both");
+      const edits = parseEditPairs(await resolveJson(args.edits));
+      const r = editDocumentBatch(db, id, { edits, ifMatch: args["if-match"] });
+      print(r, () => `edited ${r.id} (${r.replaced} replaced across ${edits.length} edit(s))`);
+      return;
+    }
+
+    if (args.old == null) throw new MhError("invalid_input", "need --old or --edits");
     const oldText = await resolveValue(args.old);
     const newText = (await resolveValue(args.new)) ?? "";
-    const r = editDocument(db, docId(db, args.id), {
+    const r = editDocument(db, id, {
       old: oldText!,
       new: newText,
       replaceAll: args["replace-all"],

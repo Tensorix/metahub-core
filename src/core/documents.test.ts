@@ -8,6 +8,7 @@ import {
   updateDocument,
   moveDocument,
   editDocument,
+  editDocumentBatch,
   appendDocument,
   prependDocument,
   duplicateDocument,
@@ -15,6 +16,7 @@ import {
   listDocuments,
   backfillDocumentOrderKeys,
 } from "./documents.ts";
+import { listDocumentRevisions } from "./history.ts";
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -127,6 +129,91 @@ test("--if-match rejects a stale edit", () => {
   const v = documentVersion(db, doc.id);
   editDocument(db, doc.id, { old: "hello", new: "hi" }); // bumps version
   expect(() => editDocument(db, doc.id, { old: "hi", new: "yo", ifMatch: v })).toThrow(/stale/);
+});
+
+test("editDocumentBatch applies several pairs as one atomic, single-versioned pass", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "alpha\n\ndone done\n\nomega" });
+  const revsBefore = listDocumentRevisions(db, doc.id).length;
+
+  const r = editDocumentBatch(db, doc.id, {
+    edits: [
+      { old: "alpha", new: "ALPHA" },
+      { old: "omega", new: "OMEGA" },
+      { old: "done", new: "x", replaceAll: true },
+    ],
+  });
+  expect(r.changed).toBe(true);
+  expect(r.replaced).toBe(4); // 1 + 1 + 2
+  expect(getDocument(db, doc.id)!.body).toBe("ALPHA\n\nx x\n\nOMEGA");
+  // One grouped txn → exactly one new revision, one version bump.
+  expect(listDocumentRevisions(db, doc.id).length).toBe(revsBefore + 1);
+});
+
+test("editDocumentBatch folds pairs left-to-right (a later old can match an earlier new)", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "one" });
+  editDocumentBatch(db, doc.id, {
+    edits: [
+      { old: "one", new: "two" },
+      { old: "two", new: "three" },
+    ],
+  });
+  expect(getDocument(db, doc.id)!.body).toBe("three");
+});
+
+test("editDocumentBatch is atomic: a failing pair leaves the document untouched", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "foo\n\nfoo\n\nbar" });
+  const before = getDocument(db, doc.id)!.body;
+  const v = documentVersion(db, doc.id);
+
+  // Second pair's anchor is missing → whole batch aborts, first pair not applied.
+  expect(() =>
+    editDocumentBatch(db, doc.id, {
+      edits: [
+        { old: "bar", new: "BAR" },
+        { old: "zzz", new: "x" },
+      ],
+    }),
+  ).toThrow(/edit\[1\]: anchor not found/);
+  // Ambiguous pair (multiple matches, no replaceAll) also aborts the batch.
+  expect(() =>
+    editDocumentBatch(db, doc.id, { edits: [{ old: "foo", new: "x" }] }),
+  ).toThrow(/edit\[0\]: 2 matches/);
+
+  expect(getDocument(db, doc.id)!.body).toBe(before);
+  expect(documentVersion(db, doc.id)).toBe(v); // no emit ⇒ version unchanged
+});
+
+test("editDocumentBatch honors --if-match", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "hello" });
+  const v = documentVersion(db, doc.id);
+  editDocument(db, doc.id, { old: "hello", new: "hi" }); // bumps version
+  expect(() =>
+    editDocumentBatch(db, doc.id, { edits: [{ old: "hi", new: "yo" }], ifMatch: v }),
+  ).toThrow(/stale/);
+});
+
+test("editDocumentBatch leaves code fences and tables byte-identical when editing around them", () => {
+  const db = makeNode("aaaa");
+  const fence = "```js\nconst done = 1;\n```";
+  const tableMd = "| a | b |\n| - | - |\n| 1 | 2 |";
+  const body = ["intro", fence, tableMd, "outro"].join("\n\n");
+  const doc = createDocument(db, { title: "T", body });
+  expect(getDocument(db, doc.id)!.body).toBe(body); // create round-trips them
+
+  editDocumentBatch(db, doc.id, {
+    edits: [
+      { old: "intro", new: "INTRO" },
+      { old: "outro", new: "OUTRO" },
+    ],
+  });
+  // The typed/void-ish blocks are untouched; the doc round-trips losslessly.
+  expect(getDocument(db, doc.id)!.body).toBe(
+    ["INTRO", fence, tableMd, "OUTRO"].join("\n\n"),
+  );
 });
 
 test("edit that introduces a block break splits into blocks", () => {

@@ -453,6 +453,60 @@ export const editDocument = grouped(function editDocument(
   return { id, changed: newBody !== body, replaced: opts.replaceAll ? count : 1, version: documentVersion(db, id) };
 });
 
+/** One anchored find/replace within a batch; `new`/`replaceAll` default like the single-pair form. */
+export interface EditPair {
+  old: string;
+  new?: string;
+  replaceAll?: boolean;
+}
+
+/**
+ * Apply several anchored find/replaces in one atomic, single-versioned pass —
+ * the batch form of {@link editDocument}. Pairs fold left-to-right over the
+ * evolving body (a later `old` can match an earlier `new`), every pair is
+ * validated before anything is written, and the whole batch commits as one
+ * grouped txn (one revision, one version bump). Any failing pair (empty/missing/
+ * ambiguous anchor) aborts the batch with the document untouched. `ifMatch` is
+ * checked once up front, so callers need only a single `doc read` for N deltas.
+ */
+export const editDocumentBatch = grouped(function editDocumentBatch(
+  db: DbDriver,
+  id: string,
+  opts: { edits: EditPair[]; ifMatch?: string },
+): EditDocResult {
+  if (!getDocument(db, id)) throw new MhError("not_found", `no such document: ${id}`);
+  if (opts.edits.length === 0) throw new MhError("invalid_input", "no edits given");
+  if (opts.ifMatch !== undefined && documentVersion(db, id) !== opts.ifMatch)
+    throw new MhError("stale", `stale: document changed since ${opts.ifMatch}; re-read first`);
+
+  ensureBlocks(db, id);
+  const orig = serializeDocBlocks(
+    liveBlocks(db, id).map((b) => ({ text: b.text, blankAfter: b.blank_after })),
+  );
+
+  // Validate + fold every pair over the evolving string first; any throw here
+  // happens before the single reconcileBody below, so a bad pair leaves the doc
+  // untouched (no emit) — atomicity without a rollback.
+  let body = orig;
+  let total = 0;
+  opts.edits.forEach((e, i) => {
+    if (e.old === "") throw new MhError("invalid_input", `edit[${i}]: old must not be empty`);
+    const count = countOccurrences(body, e.old);
+    if (count === 0) throw new MhError("invalid_input", `edit[${i}]: anchor not found: no match for old`);
+    if (count > 1 && !e.replaceAll)
+      throw new MhError(
+        "ambiguous",
+        `edit[${i}]: ${count} matches for old; add surrounding context or set replaceAll`,
+      );
+    const repl = e.new ?? "";
+    body = e.replaceAll ? body.replaceAll(e.old, repl) : body.replace(e.old, repl);
+    total += e.replaceAll ? count : 1;
+  });
+
+  if (body !== orig) reconcileBody(db, id, body);
+  return { id, changed: body !== orig, replaced: total, version: documentVersion(db, id) };
+});
+
 export const appendDocument = grouped(function appendDocument(
   db: DbDriver,
   id: string,

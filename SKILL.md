@@ -146,6 +146,18 @@ mh doc edit <ref> --old "old text" --new "new text"
 mh doc edit <ref> --old "TODO" --new "DONE" --replace-all
 mh doc edit <ref> --old "..." --new "..." --if-match <version-from-read>
 
+# EDIT (batch): apply several pairs in ONE atomic call — prefer this for many
+#   scattered deltas. One --if-match check, one revision, no re-read between edits.
+#   Pairs fold in order (a later "old" can match an earlier "new"); if ANY pair's
+#   anchor is missing/ambiguous the whole batch aborts and the doc is untouched.
+mh doc edit <ref> --if-match <version> --edits @- <<'JSON'
+[{"old":"(draft)","new":""},
+ {"old":"status: todo","new":"status: done"},
+ {"old":"FIXME","new":"FIXED","replaceAll":true}]
+JSON
+# Keep anchors in prose. Don't let --old/--new (or a batch pair) cut into the
+# interior of a table, code fence, or media block, or the block won't round-trip.
+
 # WRITE more: add blocks at the tail or head
 mh doc append  <ref> --body "a new paragraph"
 mh doc prepend <ref> --body "## Summary"
@@ -161,8 +173,11 @@ Required agent loop for revising a document (treat `--if-match` as mandatory —
 without it a concurrent edit from another session/the WebUI is silently
 clobbered):
 1. `mh doc read <ref>` → capture `body` and `version`.
-2. Compute a minimal `--old`/`--new` pair (unique anchor text).
-3. `mh doc edit <ref> --old ... --new ... --if-match <version>`.
+2. Compute the minimal `--old`/`--new` pair(s) (unique anchor text). Revising
+   several spots at once? Collect them into one `--edits` batch instead of
+   editing serially — the version bumps on the whole doc after any edit, so
+   serial `--if-match` edits force a re-read between each.
+3. `mh doc edit <ref> --old ... --new ... --if-match <version>` (or `--edits`).
 4. On exit 5 (`stale`), re-read and retry from step 1.
 
 ## Media & attachments (images / video / audio / files)
