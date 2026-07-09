@@ -241,6 +241,23 @@
   .set-block-title { font-size:14px; font-weight:650; color:var(--fg); letter-spacing:-.005em; }
   .set-block-desc { color:var(--fg-soft); font-size:var(--fs-sm); line-height:1.55; margin-bottom:14px; max-width:56ch; }
   .set-block-desc:last-child { margin-bottom:0; }
+  /* title+desc on the left, a control (e.g. a switch) pinned right — used for
+     single boolean settings where a whole card of chrome would be overkill */
+  .set-toggle-row { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+  .set-toggle-text { min-width:0; }
+  .set-toggle-text .set-block-head { margin-bottom:4px; }
+  .set-toggle-text .set-block-desc { margin-bottom:0; }
+  /* iOS-style switch: a hidden checkbox drives a sliding track+thumb */
+  .set-switch { position:relative; flex:none; display:inline-flex; align-items:center; cursor:pointer; }
+  .set-switch input { position:absolute; width:1px; height:1px; opacity:0; margin:0; }
+  .set-switch-track { display:inline-flex; align-items:center; width:40px; height:23px; padding:0 2px;
+    border-radius:999px; background:var(--line-strong); transition:background .2s ease; }
+  .set-switch-thumb { width:19px; height:19px; border-radius:50%; background:#fff;
+    box-shadow:0 1px 3px rgba(20,20,40,.28); transition:transform .2s cubic-bezier(.4,0,.2,1); }
+  .set-switch input:checked + .set-switch-track { background:var(--accent); }
+  .set-switch input:checked + .set-switch-track .set-switch-thumb { transform:translateX(17px); }
+  .set-switch:hover .set-switch-track { filter:brightness(.97); }
+  .set-switch input:focus-visible + .set-switch-track { outline:2px solid var(--accent); outline-offset:2px; }
   /* two-fact meta line under a block title (who publishes · where creds live) —
      answers the questions hiding under "is this bucket for server or browser?" */
   .set-meta { display:flex; flex-wrap:wrap; gap:8px 16px; margin:0 0 12px; }
@@ -552,24 +569,27 @@
   @media (max-width:1100px) { .doc-toc { display:none; } }
 
   /* floating word count: a small pill in the bottom-right gutter (fixed to the
-     viewport, aligned with .doc-toc's right edge). Collapsed it shows only the
-     字数; hover reveals the char count + reading estimate. Purely client-side. */
-  .doc-wc { position:fixed; right:18px; bottom:calc(14px + env(safe-area-inset-bottom)); z-index:40;
-    display:flex; flex-direction:column; align-items:flex-end; gap:4px;
-    padding:5px 11px; border:1px solid var(--line); border-radius:999px; background:var(--bg);
-    color:var(--muted); font-size:var(--fs-sm); line-height:1.2; user-select:none; pointer-events:auto;
-    box-shadow:var(--shadow-sm); opacity:.62;
-    transition:opacity .18s ease, border-radius .2s ease, background .18s ease, box-shadow .2s ease, color .18s ease; }
-  .doc-wc:hover { opacity:1; border-radius:var(--radius); background:var(--surface); border-color:var(--line-strong);
-    box-shadow:var(--shadow-md); color:var(--fg-soft); }
-  .doc-wc-num { font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .doc-wc.sel .doc-wc-num { color:var(--accent); font-weight:550; }
-  /* detail rows: collapsed to zero height until hover, then a two-line read-out */
-  .doc-wc-detail { display:flex; flex-direction:column; align-items:flex-end; gap:2px;
-    max-height:0; overflow:hidden; opacity:0; font-size:12px; color:var(--muted);
-    transition:max-height .2s ease, opacity .18s ease; }
-  .doc-wc-detail span { font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .doc-wc:hover .doc-wc-detail { max-height:40px; opacity:1; }
+     viewport, aligned with .doc-toc's right edge). The pill hugs the 字数; hover
+     floats a little popover above it with the char count + reading estimate. The
+     detail lives OUT of flow (absolute) so its wider text never stretches the
+     pill — the count stays centred. Purely client-side. */
+  .doc-wc { position:fixed; right:18px; bottom:calc(16px + env(safe-area-inset-bottom)); z-index:40;
+    user-select:none; }
+  .doc-wc-num { display:block; padding:6px 15px; border:1px solid var(--line); border-radius:999px;
+    background:var(--bg); color:var(--muted); font-size:var(--fs-sm); line-height:1.2; text-align:center;
+    font-variant-numeric:tabular-nums; white-space:nowrap; box-shadow:var(--shadow-sm); opacity:.66; cursor:default;
+    transition:opacity .18s ease, color .18s ease, border-color .18s ease, box-shadow .2s ease, background .18s ease; }
+  .doc-wc:hover .doc-wc-num { opacity:1; color:var(--fg-soft); border-color:var(--line-strong); box-shadow:var(--shadow-md); }
+  .doc-wc.sel .doc-wc-num { opacity:1; color:var(--accent); border-color:var(--accent); font-weight:550; }
+  /* hover popover: floats above the pill, right-aligned to it, out of flow */
+  .doc-wc-detail { position:absolute; right:0; bottom:calc(100% + 8px);
+    display:flex; flex-direction:column; align-items:flex-end; gap:3px; white-space:nowrap;
+    padding:8px 12px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface);
+    box-shadow:var(--shadow-md); font-size:12px; color:var(--fg-soft);
+    opacity:0; transform:translateY(4px); pointer-events:none;
+    transition:opacity .18s ease, transform .18s ease; }
+  .doc-wc:hover .doc-wc-detail { opacity:1; transform:translateY(0); }
+  .doc-wc-detail span { font-variant-numeric:tabular-nums; }
   /* quick-note mini window has no room for it */
   .qn-body .doc-wc { display:none; }
 

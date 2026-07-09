@@ -218,16 +218,20 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
             </div>
           </div>
           <div class="set-block">
-            <div class="set-block-head"><span class="set-block-title">字数统计</span></div>
-            <div class="set-block-desc">在文档右下角显示字数，悬停查看字符数与预计阅读时间。</div>
-            <label class="set-check-row">
-              <input
-                type="checkbox"
-                checked={wordCount}
-                onChange={(e) => toggleWordCount((e.currentTarget as HTMLInputElement).checked)}
-              />
-              <span>显示字数统计</span>
-            </label>
+            <div class="set-toggle-row">
+              <div class="set-toggle-text">
+                <div class="set-block-head"><span class="set-block-title">字数统计</span></div>
+                <div class="set-block-desc">在文档右下角显示字数，悬停查看字符数与预计阅读时间。</div>
+              </div>
+              <label class="set-switch">
+                <input
+                  type="checkbox"
+                  checked={wordCount}
+                  onChange={(e) => toggleWordCount((e.currentTarget as HTMLInputElement).checked)}
+                />
+                <span class="set-switch-track"><span class="set-switch-thumb" /></span>
+              </label>
+            </div>
           </div>
         </SetGroup>
 
