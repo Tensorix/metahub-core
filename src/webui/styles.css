@@ -1810,8 +1810,11 @@
   .qn-set-main { flex:1; min-width:0; }
   .qn-set-name { font-weight:600; }
   .qn-set-desc { color:var(--muted); font-size:13px; margin-top:2px; }
-  .qn-shortcut { min-width:140px; justify-content:center; font-family:var(--mono); }
+  .qn-shortcut { min-width:140px; justify-content:center; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; }
   .qn-shortcut.capturing { outline:2px solid var(--accent); color:var(--accent); }
+  .qn-keys { display:inline-flex; align-items:center; gap:6px; }
+  .qn-key { line-height:1; }
+  .qn-key.sym { font-size:1.15em; line-height:1; }  /* ⌘ ⇧ glyphs render smaller — bump to match letters */
 
   /* No-origin bootstrap: enroll screen + hydration splash (data-blind shell). */
   .enroll-splash { min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; }

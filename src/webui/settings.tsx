@@ -2533,15 +2533,24 @@ function toAccelerator(e: KeyboardEvent): string | null {
   return parts.join("+");
 }
 
-/** Show an accelerator the way users read it, per platform. */
+/** Mac modifier glyphs — rendered a touch larger so they sit level with letters. */
+const MOD_GLYPHS = new Set(["⌘", "⌥", "⇧", "⌃"]);
+
+/** Split an accelerator into per-key display tokens, per platform. */
+function shortcutTokens(accel: string): string[] {
+  const mac = typeof window !== "undefined" && window.metahubDesktop?.platform === "darwin";
+  return accel.split("+").map((p) =>
+    p === "CommandOrControl" ? (mac ? "⌘" : "Ctrl")
+    : p === "Alt" ? (mac ? "⌥" : "Alt")
+    : p === "Shift" ? (mac ? "⇧" : "Shift")
+    : p,
+  );
+}
+
+/** Show an accelerator the way users read it, per platform (string form, for toasts). */
 function prettyShortcut(accel: string): string {
   const mac = typeof window !== "undefined" && window.metahubDesktop?.platform === "darwin";
-  return accel
-    .replace("CommandOrControl", mac ? "⌘" : "Ctrl")
-    .replace("Alt", mac ? "⌥" : "Alt")
-    .replace("Shift", mac ? "⇧" : "Shift")
-    .split("+")
-    .join(mac ? " " : "+");
+  return shortcutTokens(accel).join(mac ? " " : "+");
 }
 
 function QuickNotesSettings() {
@@ -2609,7 +2618,13 @@ function QuickNotesSettings() {
           onBlur={() => setCapturing(false)}
           onKeyDown={capturing ? onCaptureKey : undefined}
         >
-          {capturing ? "按下组合键…" : prettyShortcut(shortcut)}
+          {capturing ? "按下组合键…" : (
+            <span class="qn-keys">
+              {shortcutTokens(shortcut).map((k) => (
+                <span class={"qn-key" + (MOD_GLYPHS.has(k) ? " sym" : "")}>{k}</span>
+              ))}
+            </span>
+          )}
         </button>
         {shortcut !== DEFAULT_SHORTCUT && (
           <button class="btn btn-ghost" title="重置默认" onClick={() => void applyShortcut(DEFAULT_SHORTCUT)}>
