@@ -1293,7 +1293,7 @@
   .hist-restore { margin-top:8px; align-self:flex-start; }
 
   /* menu / popover */
-  .menu-layer { position:fixed; inset:0; z-index:90; }
+  .menu-layer { position:fixed; inset:0; z-index:115; }
   .pop { position:fixed; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-lg);
     padding:6px; min-width:232px; max-height:70vh; overflow:auto; animation:pop .12s ease; }
   @keyframes pop { from { opacity:0; transform:translateY(-4px); } }
