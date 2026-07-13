@@ -1773,8 +1773,13 @@
   .qn-actions { display:flex; gap:2px; -webkit-app-region:no-drag; }
   .qn-actions .iconbtn { width:26px; height:26px; }
   .qn-actions .iconbtn.active { color:var(--accent); background:var(--hover-2); }
-  .qn-body { flex:1; overflow:auto; -webkit-app-region:no-drag; }
-  .qn-body .doc { max-width:none; margin:0; padding:14px 22px 30vh; }
+  /* Reserve the classic-scrollbar gutter (custom ::-webkit-scrollbar disables
+     overlay scrollbars, so it takes 10px of layout) on BOTH edges up front:
+     the editor width never changes when the doc grows past one screen — no
+     reflow flicker, and the left/right insets stay symmetric. The doc's 12px
+     horizontal padding + 10px gutter = the 22px visual margin as before. */
+  .qn-body { flex:1; overflow:auto; scrollbar-gutter:stable both-edges; -webkit-app-region:no-drag; }
+  .qn-body .doc { max-width:none; margin:0; padding:14px 12px 30vh; }
   .qn-body .doc-title { font-size:24px; margin-bottom:2px; }
   .qn-body .doc-meta { display:none; }
   /* The CM6 hover gutter never fits the compact window: quick notes offer no
