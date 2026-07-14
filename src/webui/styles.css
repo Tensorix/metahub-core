@@ -655,6 +655,13 @@
   /* Whole-void selected (the CM selection spans the block — click-to-select on
      media, Backspace-from-below, select-all): 2px accent ring, the old editor's
      `.block.selected .void-block` treatment. Code draws its own via .ci-selected. */
+  /* Same intrinsic-width firewall the doc table needed (see .doc-table-wrap):
+     a void widget's max-content — e.g. a file card whose nowrap filename caps
+     at 480px — must not propagate into .cm-content and push the whole editor
+     wider than a narrow window (quick notes), shoving the card's right edge
+     offscreen. Contained, the host resolves to the line width and the card's
+     own min-width:0 + ellipsis finally get to run. */
+  .cm-void { contain:inline-size; }
   .cm-void.selected .void-block { box-shadow:0 0 0 2px var(--accent); }
   .cm-void.selected table.doc-table { box-shadow:0 0 0 2px var(--accent), var(--shadow-sm); }
 
