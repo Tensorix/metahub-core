@@ -30,6 +30,7 @@
     "build:shell": "bun run scripts/build-shell.ts",
     "build:share-viewer": "bun run scripts/build-share-viewer.ts",
     "build:binaries": "bun run scripts/compile-binaries.ts",
+    "build:binaries:host": "HOST_ONLY=1 bun run scripts/compile-binaries.ts",
     "prepublishOnly": "bun run build",
     "test": "bun test",
     "release": "bun run scripts/tag-release.ts"

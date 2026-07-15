@@ -7,7 +7,7 @@ import { hostBunTarget, verifyBinaryVersion } from "./verify-binary-version.ts";
 import { smokeWebui } from "./smoke-webui.ts";
 import { smokeSkill } from "./smoke-skill.ts";
 
-const targets = [
+const allTargets = [
   "bun-darwin-arm64",
   "bun-darwin-x64",
   "bun-linux-x64",
@@ -28,6 +28,10 @@ if (!existsSync("dist/webui.js")) {
 }
 
 const host = hostBunTarget();
+// HOST_ONLY=1 → compile just the runner's native target. Same compile + smoke
+// (version / WebUI serve / skill embed) as the full set, minus the cross-compiled
+// artifacts — the fast per-push CI gate (see .github/workflows/ci.yml).
+const targets = process.env.HOST_ONLY === "1" ? ([host] as const) : allTargets;
 for (const target of targets) {
   const platform = target.replace(/^bun-/, "");
   const ext = platform.startsWith("windows") ? ".exe" : "";

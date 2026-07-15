@@ -1,0 +1,83 @@
+name: CI
+
+# 每次 push（所有分支）和每个 PR 都跑。目的：在打 tag 发版之前，就把
+# release.yml 里会用到的构建/编译/冒烟链路先走一遍，别等到打 tag 那一刻才炸。
+#
+# 分两档控成本：
+#   - checks        : 每次 push/PR 都跑。快（缓存命中约十几秒）——test + 打包 +
+#                     宿主单平台 compile + 三个冒烟（版本自洽 / WebUI 能 serve / skill 内嵌）。
+#   - release-dryrun: 只在 main 分支（push 到 main 或 PR→main）跑。慢（几分钟）——
+#                     6 平台交叉编译 + 全平台 sidecars + npm 打包，全部只验证、不上传。
+#
+# 真正的发布（创建 Release、上传产物、发 npm/Homebrew）仍由 tag 触发的 release.yml 负责。
+on:
+  push:
+    branches: ["**"] # 匹配所有分支，但不匹配 tag —— tag 交给 release.yml，避免重复跑
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true # 新提交顶掉同分支上还在跑的旧 run，省额度
+
+jobs:
+  # ── 快档：每次 push/PR ────────────────────────────────────────────────
+  checks:
+    name: Fast checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # bun 全局包缓存：key 绑 bun.lock，依赖没变则 install 秒回；
+      # 变了则 restore-keys 退回上一版缓存做部分复用，不会真·全冷装。
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+      - run: bun test
+
+      # 打包 dist（webui bundle / sw / lib）——test 不覆盖打包这一步。
+      - run: bun run build
+
+      # 宿主单平台 compile + 三个冒烟：verifyBinaryVersion（tag/版本自洽守卫）、
+      # smokeWebui（编译出的二进制真能 serve WebUI，防 500 回归）、smokeSkill（/mh skill 内嵌）。
+      - name: Host binary + smoke
+        run: bun run build:binaries:host
+
+  # ── 慢档：只在 main（push 到 main 或 PR→main）作为合并门禁 ──────────────
+  release-dryrun:
+    name: Release dry-run (all platforms, no upload)
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      # 6 平台交叉编译（含宿主目标的三个冒烟）——release.yml 的 cli job 同款，只是不上传。
+      - name: Cross-compile all CLI binaries
+        run: bun run build:binaries
+
+      # 全平台 core sidecars（桌面自动更新的下载源）——release.yml 的 sidecars job 同款，只是不上传。
+      - name: Build all sidecars
+        env:
+          SIDECAR_ALL: "1"
+        run: bun run apps/desktop/scripts/build-sidecars.ts
+
+      # npm 打包校验（files/内容），不发布。
+      - name: npm pack dry-run
+        run: bun publish --dry-run
