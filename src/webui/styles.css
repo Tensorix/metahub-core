@@ -614,8 +614,11 @@
     padding:2px; border-radius:7px; border:1px solid var(--line); box-shadow:var(--shadow-sm);
     background:color-mix(in srgb,var(--code-bg) 82%,transparent); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
     opacity:0; transform:translateY(3px); pointer-events:none; transition:opacity .12s,transform .12s; }
-  .codeblock:hover .code-tools, .code-tools:focus-within,
-  .cm-void-code:focus-within .code-tools { opacity:1; transform:none; pointer-events:auto; }
+  .codeblock:hover .code-tools, .code-tools:focus-within { opacity:1; transform:none; pointer-events:auto; }
+  /* hidden while editing (textarea focused) or whole-block selected — the pill would cover the
+     bottom-right of the editing area; keep it if focus is on the pill itself (lang dropdown open) */
+  .cm-void-code:focus-within .code-tools:not(:focus-within),
+  .codeblock.ci-selected .code-tools:not(:focus-within) { opacity:0; transform:translateY(3px); pointer-events:none; }
   .code-lang { position:relative; display:inline-flex; align-items:center; }
   .code-lang select { appearance:none; -webkit-appearance:none; border:0; outline:none; background:none; cursor:pointer;
     font-family:var(--mono); font-size:10.5px; font-weight:500; color:var(--fg-soft); padding:3px 17px 3px 7px; border-radius:5px; }

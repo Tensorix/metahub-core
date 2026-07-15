@@ -3,8 +3,9 @@
 // rendered, highlighted component even while being edited. Editing uses the
 // classic transparent-textarea-over-hljs-mirror technique (CodeEditorBody); the
 // language picker and copy button live in the absolutely-positioned bottom-right
-// tools pill (hover/focus-revealed), so the block's height never changes and the
-// widget never degrades to raw source text.
+// tools pill (hover-revealed; hidden while editing or block-selected so it never
+// covers the editing area), so the block's height never changes and the widget
+// never degrades to raw source text.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import hljs from "highlight.js/lib/common";
@@ -120,8 +121,9 @@ export function CodeEditorBody({
 /**
  * The always-editable code block widget: CodeEditorBody plus the language
  * picker + copy button in the bottom-right tools pill. The pill is an absolute
- * overlay revealed on hover and while the island has focus, so showing it never
- * changes the block's height (no layout shift when clicking into the code).
+ * overlay revealed on hover only while the island is neither focused nor
+ * block-selected (it would cover the editing area otherwise), so showing it
+ * never changes the block's height (no layout shift when clicking into the code).
  */
 export function CodeIsland({
   code, lang, selected, onInput, onLang, onKeyDown, taRef,
