@@ -40,6 +40,11 @@ const HEALTH_INTERVAL_MS = 150;
 
 const DEFAULT_SHORTCUT = "CommandOrControl+Shift+Space";
 
+// Test-only isolation: point userData at a scratch dir so a second instance
+// (integration debugging against a scratch METAHUB_HOME) never touches the
+// real profile. No effect unless the env var is set.
+if (process.env.MH_TEST_USER_DATA) app.setPath("userData", process.env.MH_TEST_USER_DATA);
+
 /**
  * Resolve a path inside the app bundle. NOTE: do not use `__dirname` here —
  * `bun build` inlines it to the *source* dir (apps/desktop/src) at build time,

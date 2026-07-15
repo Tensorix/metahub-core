@@ -725,6 +725,11 @@ function Root() {
 if (typeof window !== "undefined" && window.metahubDesktop) {
   document.body.classList.add("desktop");
   if (window.metahubDesktop.platform === "darwin") document.body.classList.add("desktop-mac");
+  // Self-heal a leftover SW in EVERY desktop window, not just the main app:
+  // the quicknote/preview windows never mount <Root/> (whose effect runs this),
+  // so a SW registered by an older build would keep controlling them and could
+  // serve a stale cached shell after a restart (network-first timeout fallback).
+  ensurePwaRegistration(); // desktop surface → teardownPwa()
 }
 
 // The desktop Quick Notes window loads this same bundle at `…/#quick`. Mount the

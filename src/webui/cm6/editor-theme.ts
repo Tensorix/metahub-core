@@ -110,8 +110,13 @@ export const editorTheme = EditorView.baseTheme({
   // Void block widgets (code / table / media / html). Spacing MUST be padding, not
   // margin — CM6 measures a block widget's height via offsetHeight, which excludes
   // margin, so a margin would desync the height map and drift caret/selection.
-  // 3px = old void-host 2px + block 1px.
-  ".cm-void": { padding: "3px 0" },
+  // 3px = old void-host 2px + block 1px. The 2px horizontal padding (a) aligns
+  // void blocks with prose (.cm-line has 2px), and (b) keeps the selected-ring
+  // box-shadow (2px outside the block) INSIDE the host box: the host has
+  // contain:inline-size (styles.css) and Chromium's ink-overflow culling clips
+  // paint past a size-contained box's edge at 2x DPR — a flush child's ring
+  // loses its right edge.
+  ".cm-void": { padding: "3px 2px" },
 
   // Headings — absolute px (matching main's .b-hN), so they don't scale with the
   // responsive body base. Line-height inherits var(--note-lh) (old editable had no

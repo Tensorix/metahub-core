@@ -83,7 +83,12 @@ if (!g.__mhFetchShim) {
 
 // ---- 2. service worker ------------------------------------------------------------
 
-if ("serviceWorker" in navigator && window.isSecureContext) {
+// Never inside the desktop shell: its windows are pure views onto the local
+// sidecar, and a SW's network-first timeout fallback can pin them to a stale
+// cached shell across app restarts (the quicknote window pre-warms while a dev
+// sidecar is still cold-building the bundle). ensurePwaRegistration() applies
+// the same surface gate for the app bundle; this guards the injected runtime.
+if ("serviceWorker" in navigator && window.isSecureContext && !(window as { metahubDesktop?: unknown }).metahubDesktop) {
   navigator.serviceWorker.register("/sw.js").catch((e) => {
     // Progressive enhancement, but loud: a silent failure here costs the
     // entire offline story (e.g. a one-off 500 from a cold dev rebuild).
