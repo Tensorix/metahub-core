@@ -153,12 +153,26 @@ const inlinePlugin = ViewPlugin.fromClass(
   class {
     deco: DecorationSet;
     cache: TokenCache = new Map();
+    stale = false;
     constructor(view: EditorView) {
       this.deco = this.run(view);
     }
     update(u: ViewUpdate) {
-      if (u.view.composing) return; // never churn decorations mid-IME
-      if (u.docChanged || u.selectionSet || u.viewportChanged) this.deco = this.run(u.view);
+      if (u.view.composing) {
+        // Mid-IME: don't rebuild (a redraw would abort the composition), but
+        // keep positions honest — the preedit string grows the doc, and an
+        // unmapped set smears replace/mark decos onto the wrong characters
+        // downstream of the caret (next line "loses" letters, delimiters leak).
+        if (u.docChanged) {
+          this.deco = this.deco.map(u.changes);
+          this.stale = true;
+        }
+        return;
+      }
+      if (this.stale || u.docChanged || u.selectionSet || u.viewportChanged) {
+        this.stale = false;
+        this.deco = this.run(u.view);
+      }
     }
     private run(view: EditorView): DecorationSet {
       const next: TokenCache = new Map();
