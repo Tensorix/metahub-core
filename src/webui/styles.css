@@ -624,23 +624,48 @@
     font-family:var(--mono); font-size:10.5px; font-weight:500; color:var(--fg-soft); padding:3px 17px 3px 7px; border-radius:5px; }
   .code-lang select:hover { background:var(--hover-2); }
   .code-lang svg { position:absolute; right:3px; width:12px; height:12px; pointer-events:none; color:var(--muted); }
-  .code-copy, .code-fmt { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:500; color:var(--muted);
+  .code-copy, .code-fmt, .code-wrap-btn { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:500; color:var(--muted);
     padding:3px 7px; border-radius:5px; transition:background .12s,color .12s; white-space:nowrap; }
-  .code-copy:hover, .code-fmt:hover { background:var(--hover-2); color:var(--fg-soft); }
-  .code-copy.ok, .code-fmt.ok { color:var(--accent); }
+  .code-copy:hover, .code-fmt:hover, .code-wrap-btn:hover { background:var(--hover-2); color:var(--fg-soft); }
+  .code-copy.ok, .code-fmt.ok, .code-wrap-btn.on { color:var(--accent); }
   .code-fmt.err { color:var(--danger); }
-  .code-body { display:flex; align-items:stretch; font-family:var(--mono); font-size:var(--code-fs); line-height:var(--code-lh); }
+  /* Default (no wrap): lines run long, the textarea scrolls horizontally and
+     mirrors its scrollLeft onto the highlight layer; the gutter is a separate
+     flex column of "1\n2\n3" (every logical line is exactly one row high). */
+  .code-body { display:flex; align-items:stretch; font-family:var(--mono); font-size:var(--code-fs); line-height:var(--code-lh);
+    --code-ln-ch:1ch; --code-gutter-w:calc(var(--code-ln-ch) + 20px); }
   .code-gutter { flex:none; text-align:right; white-space:pre; user-select:none; color:var(--muted); opacity:.55;
     padding:var(--code-pad) 8px var(--code-pad) 12px; border-right:1px solid var(--line); font-variant-numeric:tabular-nums; }
   .code-scroll { position:relative; flex:1; min-width:0; }
   .code-hl, .code-input { margin:0; font-family:var(--mono); font-size:var(--code-fs); line-height:var(--code-lh);
     padding:var(--code-pad) 16px; tab-size:2; -moz-tab-size:2; white-space:pre; letter-spacing:0; }
   .code-hl { position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; background:none; color:var(--fg); }
-  .code-hl code { display:block; font:inherit; background:none; padding:0; }
+  .code-hl code { display:block; font:inherit; background:none; padding:0; counter-reset:code-ln; }
+  .code-hl-line { counter-increment:code-ln;
+    min-height:calc(var(--code-fs) * var(--code-lh)); /* empty logical line still occupies its row */ }
   .code-input { display:block; position:relative; z-index:1; width:100%; border:0; outline:none; resize:none;
     overflow-x:auto; overflow-y:hidden; background:transparent; color:transparent; caret-color:var(--fg);
     min-height:calc(var(--code-fs) * var(--code-lh) + var(--code-pad) * 2); }
   .code-input::placeholder { color:var(--muted); }
+  /* Wrap mode (.wrap, global toggle in the tools pill, persisted): textarea and
+     mirror share pre-wrap + break-word (the UA textarea wrap rules), so their
+     wrap points match and the caret stays on the glyphs. The flex gutter would
+     misalign (a logical line can span several visual rows), so it hides and
+     line numbers become CSS counters on the mirror's per-logical-line blocks —
+     a wrapped line grows its block and the next number moves with it, no JS
+     height sync. --code-ln-ch (digit count) is set by paint(). */
+  .code-body.wrap { display:block; position:relative; }
+  .code-body.wrap::before { content:""; position:absolute; left:var(--code-gutter-w); top:0; bottom:0;
+    width:1px; background:var(--line); }
+  .code-body.wrap .code-gutter { display:none; }
+  .code-body.wrap .code-hl, .code-body.wrap .code-input {
+    padding-left:calc(var(--code-gutter-w) + 17px);
+    white-space:pre-wrap; overflow-wrap:break-word; }
+  .code-body.wrap .code-input { overflow:hidden; }
+  .code-body.wrap .code-hl-line { position:relative; }
+  .code-body.wrap .code-hl-line::before { content:counter(code-ln); position:absolute; top:0;
+    left:calc(-17px - var(--code-gutter-w)); width:calc(var(--code-gutter-w) - 8px);
+    text-align:right; color:var(--muted); opacity:.55; font-variant-numeric:tabular-nums; }
 
   /* highlight.js token theme (cohesive with the app palette) */
   .hljs-comment, .hljs-quote { color:var(--hl-cmt); font-style:italic; }
