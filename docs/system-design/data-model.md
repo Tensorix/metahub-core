@@ -10,6 +10,8 @@ crdt_changes
 peers
 peer_grants
 pairing_codes
+storage_cursors
+shares
 databases
 properties
 records
@@ -17,6 +19,8 @@ documents
 doc_blocks
 sites
 site_files
+blob_cache
+blob_policy
 search_fts
 ```
 
@@ -77,9 +81,11 @@ interface Change {
 
 物化时同一 register 中 HLC 最大的 change 胜出。
 
+表还有一个显式主键 `seq INTEGER PRIMARY KEY AUTOINCREMENT`,是**复制游标**依据(peer 的 pull/push 按 `seq` 单调推进,永不回退)。旧库经 `migrateCrdtChangesSeq`(schema-init.ts)补 `seq`。有了声明式 `seq`,过去"保护 `MAX(rowid)` 行防 rowid 复用"的做法退化为**纯防御性下限**、不再是承重逻辑。
+
 **oplog 即历史**:表是 append-only(`INSERT OR IGNORE`,旧版本永不覆盖),任意时点 T 的状态 = 每个 register 取 `hlc ≤ T` 的最大值,据此 `src/core/history.ts` 提供修订列表/时点重建/回滚(回滚是正向写入,见 [15-history-rollback-compaction](../impl-context/15-history-rollback-compaction/design.md))。
 
-`txn` 由 `withChangeGroup`/`grouped()`(`crdt.ts`)在公开变更函数边界盖戳,**随 sync 复制**(各端历史聚簇一致);label 前缀 `repair:`/`revert:` 用于推导修订 kind(user/repair/revert)。存量行/旧 peer 的 change 为 NULL,历史聚簇退回 (node_id + 1.5s 间隙) 启发式。存量库经 `migrateOplog`(db.ts)补列。
+`txn` 由 `withChangeGroup`/`grouped()`(`crdt.ts`)在公开变更函数边界盖戳,**随 sync 复制**(各端历史聚簇一致);label 前缀 `repair:`/`revert:` 用于推导修订 kind(user/repair/revert)。存量行/旧 peer 的 change 为 NULL,历史聚簇退回 (node_id + 1.5s 间隙) 启发式。存量库经 `migrateOplog`(schema-init.ts)补列。
 
 索引:`idx_changes_hlc(hlc)`;局部索引 `idx_changes_docref(value) WHERE dataset='doc_blocks' AND col='doc_id'` 服务历史的按文档找块(局部是为了不给携带大 value 的 site_files 行建索引)。
 
@@ -90,10 +96,13 @@ interface Change {
 数据库表示一张 Notion-like 表:
 
 ```text
-databases(id, name, icon, created_hlc, __deleted)
+databases(id, name, icon, meta, created_hlc, __deleted)
 ```
 
-当前支持 create/list/get/delete。删除是软删除,写入 `__deleted = 1`。**删除会级联**(删除节点在删除时一次性 emit):其下 properties / records 跟随软删,documents 改为 detach(置空 `database_id`,内容作为独立文档保留)。见下文「完整性约束」。
+当前支持 create/list/get/**duplicate**/**update**/delete。删除是软删除,写入 `__deleted = 1`。**删除会级联**(删除节点在删除时一次性 emit):其下 properties / records 跟随软删,documents 改为 detach(置空 `database_id`,内容作为独立文档保留)。见下文「完整性约束」。
+
+`meta` 是**通用复制元数据**:一个 JSON 对象的**整对象 LWW 寄存器**(登记进 `crdt.ts` 的 `DOMAIN`:`databases` 列 = `name/icon/meta/created_hlc/__deleted`)。设计上**领域中立**——消费方自定义 key(当前唯一用例是 WebUI 侧栏的 `collapsed` 折叠标记)。`updateDatabase` 写入时校验必须是 JSON 对象或 null;`getDatabase`/`listDatabases` 经 `rowOut` 把列里的 JSON 串 `JSON.parse` 回对象。旧库经 `migrateDatabases`(schema-init.ts)加列并**从赢家 oplog 回填**(按最大 HLC 取该库 `meta` 变更的胜者,与 `applyChange` 的 LWW 规则一致),使升级后看到 peer 早已达成的状态。
+> ⚠️ 整对象寄存器:两个离线设备各写**不同** key 时,各自 emit 的完整对象都缺对方 key,LWW 会静默丢一个(结构性丢更新)。当前仅 `collapsed` 一个 key 故潜伏;第二个 key 落地前应改为**按 key 分寄存器**(见 `databases.ts` 的 `TODO(meta-per-key)`)。
 
 ## properties
 
@@ -203,21 +212,37 @@ doc_blocks(id, doc_id, text, order_key, blank_after, __deleted)
 - 展示时按 `ORDER BY order_key, id` 排序。
 - 正文序列化时块间用单个空行连接。
 - `blank_after`(默认 0)记录该块后面**额外**的空行数(超出标准单空行分隔的部分;最后一块则是末尾留白行数)。这让用户刻意留下的竖向间距(段落之间、文末)在 save/reload 后存活,而**不必**把空行表示成零内容的块——零内容块会让基于文本相等的 reconcile 抖动。空行不是独立块,而是相邻块上的间距属性,故并发改间距按块 LWW 干净合并。见 [04-block-level-doc-crdt](../impl-context/04-block-level-doc-crdt/design.md) §2.7。
-- WebUI 的文档编辑器会在前端把 Markdown 解析成更丰富的逻辑块树（例如列表项 `children`、代码块 `lang`、有序列表 `start` 起始号）,但这些字段不入库。保存仍写完整 Markdown body,再由 core 按段落/fenced code 重建或 reconcile `doc_blocks`；有序列表起始号通过 Markdown 序号本身往返；空行游程通过 body 里的空行往返(WebUI 把文末/段间空段落映射为空行,core 用 `blank_after` 持久化)。前端块树、Markdown 往返规则、渲染结构与块间导航详见 [webui-editor.md](./webui-editor.md)。
+- WebUI 的文档编辑器(**CodeMirror 6**)里,文档**就是**一份 Markdown 文本;"块"是从这份文本派生的扁平展示模型(装饰/void 组件),富字段(代码块 `lang`、有序列表起始号、自由块 `indent` 等)**不入库**。保存写完整 Markdown body(`getDoc()`),再由 core 按段落/fenced code reconcile 成 `doc_blocks`;有序列表起始号通过 Markdown 序号本身往返;空行游程通过 body 里的空行往返(编辑器把文末/段间空段落映射为空行,core 用 `blank_after` 持久化)。CM6 架构、派生块模型、Markdown 往返规则、渲染结构与导航详见 [webui-editor.md](./webui-editor.md)。
 
 ## peers / peer_grants / pairing_codes
 
 多设备同步的本机表(都不进 oplog、不随 sync;见 [11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md)):
 
 ```text
-peers(url PK, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_success_at, last_status, last_error)
+peers(url PK, kind, config, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_success_at, last_status, last_error)
 peer_grants(token PK, peer_url, node_id, created_at)
 pairing_codes(code PK, exp, used, created_at)
+storage_cursors(peer_url, node_id, last_key)     -- S3 转发的每桶/每远端节点拉取进度
 ```
 
-- `peers`(出站):我会同步去的对端。`pull_cursor`/`push_cursor` 是基于 rowid 的复制游标;`token` 是对端配对时签发给我、我出站 `/sync` 时出示的凭据;`enabled` 决定是否进自动同步定时器;`last_sync_at` 是最近尝试,`last_success_at` 是最近成功(读前 freshness 只看它),`last_status/error` 为状态。老库经 `migratePeers` 幂等补列。
+- `peers`(出站):我会同步去的对端。`kind`(默认 `'http'`;`'s3'` = 对象存储桶转发)选传输,`config`(JSON)持该传输的参数(桶端点/前缀等,S3 用)。`pull_cursor`/`push_cursor` 是基于 `crdt_changes.seq` 的复制游标;`token` 是对端配对时签发给我、我出站 `/sync` 时出示的凭据;`enabled` 决定是否进自动同步定时器;`last_sync_at` 是最近尝试,`last_success_at` 是最近成功(读前 freshness 只看它),`last_status/error` 为状态。老库经 `migratePeers` 幂等补列(含 `kind`/`config`)。
+- `storage_cursors`(S3 store-and-forward):挂了对象存储桶(`kind='s3'`)时,按**每桶 × 每远端节点**记拉取进度 `last_key`——桶是数据盲的转发中继,各设备把变更推上去、按 key 拉下来,无需两端同时在线。见 [17-s3-storage-sync](../impl-context/17-s3-storage-sync/design.md)。
 - `peer_grants`(入站):我签发、并在 `/sync` 上接受的长期 bearer 凭据(`acceptsSyncToken` = 主 token 或命中此表)。`peer_url` 记签发对象,`removePeer` 据此连带吊销;单向配对产生的 `peer_url` 为 null,需 `grant revoke`。**目前无过期**。
 - `pairing_codes`:一次性配对码(随机 12 位 base36,默认 10min)。兑换是单条原子 `UPDATE ... WHERE used=0 AND 未过期`(防 TOCTOU 双兑换);生成时清理过期/已用码。
+
+## shares
+
+公开分享链接的本机表(**node-local、故意不进 `crdt.ts` 的 `DOMAIN`、永不随 sync**——分享是"这台设备对外发布"的本机决定;见 `src/core/shares.ts`、[17-s3-storage-sync](../impl-context/17-s3-storage-sync/design.md)):
+
+```text
+shares(slug PK, kind, target_id, permission, transport, pw_salt, pw_hash,
+       expires_at, guest_node_id, served_base, created_at, s3_* …)
+```
+
+- `kind ∈ {doc, database, site}` + `target_id` 指向被分享实体;`permission ∈ {view, edit}`(`edit` 仅 `transport='server'`);`transport ∈ {server, s3}`。
+- `pw_salt`/`pw_hash`:可选密码(base64 PBKDF2 verifier,server 路径);`expires_at`:过期 epoch ms(null=永不)。
+- `guest_node_id`:edit 分享给 guest 写入用的合成 node id(view 为 null,guest 写入归属独立节点)。`served_base`:创建时选定的可达 base URL(链接/来源标签)。
+- `s3_*` 列为遗留字段(s3 分享实际活在桶里,不在此表)。SSR 渲染见 `share-render.ts`/`share-serve.ts`(`/share/<slug>`)。
 
 ## sites
 
@@ -247,15 +272,16 @@ site_files(id, site_id, path, content_type, encoding, content, created_hlc, __de
 blob 字节层(文档插图 / 大文件)的账本与策略(见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。`blob_cache` 本地;`blob_policy` 随 oplog 同步、登记进 `crdt.ts` 的 `DOMAIN`。
 
 ```text
-blob_cache(hash PK, size, content_type, last_access, pinned, pending)  -- node-local,不进 DOMAIN
-blob_policy(id="default", full_nodes, redundancy, __deleted)            -- 同步,单行
+blob_cache(hash PK, size, content_type, last_access, pinned, pending, anchored)  -- node-local,不进 DOMAIN
+blob_policy(id="default", full_nodes, redundancy, __deleted)                      -- 同步,单行
 ```
 
 - `blob_cache`:给内容寻址的裸文件(`cache/<hash>`)配元数据;**仅本地**,像 `peers`/`storage_cursors` 一样不入 oplog。
   - `pending`:本机**产出**、尚未确认 flush 到锚(桶/全量设备)的字节——**唯一必须保护**的。产出置 1,flush 成功(`blobMaintenance`)置 0;**取得的缓存直接置 0**。
   - `pinned`:用户「离线保留」,永不自动淘汰/清理。
-  - **可清判定**:`isClearable(hash)` = `本机非全量设备 && pending==0` —— **纯本地、可离线、零网络**。pending=0 者要么是已 flush 的产出(锚上有)、要么是可重取的缓存。**此本地事实取代了旧的同步 `blob_presence` 表**(已删):presence 缓存远端真相必然过期(假性可清),而 `pending` 是对本机**自己动作**的认知,永不过期。
-- `blob_policy`:工作区级策略——`full_nodes`(JSON node_id 数组,指定 1~N 台**全量设备 = durable 锚**:永不清 + pull 全量,无桶拓扑的落点)。`redundancy` 字段保留但当前未用(清理已移到本地 `pending` 模型)。
+  - `anchored`:该 hash 已确认在**锚**(全量设备/桶)上有副本——由按需的 presence-verify 依 `blob_policy.redundancy` 策略置位(`setAnchored`/`clearAnchored`,`blobs.ts`/`blobs-core.ts`)。
+  - **可清判定**:`isClearable(hash)` = `pending===0 && anchored===1`(`blobs-core.ts`)—— **纯本地、可离线、零网络**。`pending` 是对本机**自己动作**的认知(自产、尚未确认 flush 到锚,唯一必护),永不过期;`anchored` 保证清了还能重取。**此本地模型取代了旧的同步 `blob_presence` 表**(已删):presence 缓存远端真相必然过期(假性可清)。
+- `blob_policy`:工作区级策略——`full_nodes`(JSON node_id 数组,指定 1~N 台**全量设备 = durable 锚**:永不清 + pull 全量,无桶拓扑的落点);`redundancy`(`all`/`any`,`mh cache redundancy` 写)决定 presence-verify 判 `anchored` 时需要**全部/任一**全量设备在场。
 
 ## 完整性约束(invariant)
 

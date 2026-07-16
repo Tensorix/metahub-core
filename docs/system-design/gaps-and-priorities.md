@@ -54,6 +54,20 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 - record 读返回 name-keyed `values`(重名有损)+ id-keyed `cells`(无损);WebUI 全程按 id 读写,重名列互不串扰,新建列默认名自动去重。
 - `mh doctor` 报告 `dup_name`(repair 只报告、不自动改名/删,以免破坏用户内容)。
 
+## 已改善: 富文档编辑、媒体与分享(0.3.x)
+
+0.3.x 版本线关闭了一批"编辑与协作"缺口(见 [webui-editor.md](./webui-editor.md)、[capabilities.md](./capabilities.md)):
+
+- **文档编辑器重写为 CodeMirror 6**:文档 = 单份 Markdown 文本、块是派生模型、装饰驱动的所见即所得;结构编辑都是普通文本 transaction + 原生撤销,行/行内语法下沉共享的 `core/md/*`(编辑器/保存/分享三面一致,parity 测试钉住)。取代了原自研 contenteditable 嵌套块树(整类导航/往返 bug 结构性消失)。
+- **AI 批量编辑** `mh doc edit --edits`:一次 read 下 N 个锚定 delta,原子落笔、一次 `--if-match`。
+- **富媒体与 blob 同步**:图片/视频/音频/文件 void 区块 + 粘贴/拖拽上传;blob 字节内容寻址、不进 oplog、**按需**跨机取回(`mh blob`/`mh cache`,全量设备/桶作 durable 锚)。
+- **代码块一键格式化**:懒加载 prettier + per-language wasm(ruff/gofmt/clang/lua/taplo/sh),从不进主 bundle。
+- **能力分享与发布**:文档/数据库/站点发布成公开链接——server 实时 SSR(view 只读 / edit 接受 guest 写入)或 S3 预签名静态导出;可加密码/过期;URL 经 `safeUrl` 净化。
+- **PWA 离线副本 + 多设备接入**:浏览器成一等 CRDT 节点(离线读写全部内容);设备接入支持 HTTP 配对码与对象存储桶扫码 enroll(离线 store-and-forward)。
+- **文档表格与 TOC**:GFM 文档表格(Notion 式行列手柄)与目录 + 滚动高亮已实现(此前列在"未实现")。
+
+仍未做(编辑侧):文档数学公式/脚注/callout、按 block id 或行号的精确编辑、返回具体 changed block、浏览器副本**离线**取图。
+
 ## P0: 当前体验硬伤
 
 ### 友好参数错误

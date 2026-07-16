@@ -82,11 +82,12 @@ Pair two devices once and they sync both ways on a timer — no need to run `mh 
 
 ## WebUI, API, and agent-hosted sites
 
-`mh --server` serves a browser **WebUI** at `/` (browse and inline-edit tables, block-level WYSIWYG document editing, full-text search, manage agent sites). The same server also exposes:
+`mh --server` serves a browser **WebUI** at `/` (browse and inline-edit tables, a **CodeMirror 6** WYSIWYG Markdown editor — slash menu, doc tables, media embeds, one-click code-block formatting, source/blocks toggle, find, TOC — full-text search, manage agent sites). The same server also exposes:
 
 - `/api/*` — REST endpoints over your tables and documents (read **and** write; hosted site pages call them same-origin).
 - `/docs` — auto-generated OpenAPI documentation.
 - `/sites/<name>/` — `mh site publish` hosts the HTML/CSS/JS an agent generates; pages call `/api/*` same-origin, or import the optional typed client at `/metahub-sdk.js` (a local mini-Supabase). Note the trust model: hosted pages are same-origin, so any published site effectively holds full hub access — publish only sites you or your agent authored.
+- `/share/<slug>` — `mh share` publishes a doc/database/site as a public link (view = read-only SSR, edit = accepts guest writes; optional password + expiry), over a server or an S3 bucket.
 
 Requests are guarded by a single token (persisted in `~/.metahub`). The server binds `127.0.0.1` by default; only `--host 0.0.0.0` exposes it, and credentials travel as plaintext Bearer — put it behind a trusted network or TLS (a reverse proxy like Caddy / Tailscale Serve, or `--tls-cert`/`--tls-key` to terminate TLS directly). Details in the [system-design docs](./docs/system-design/).
 
@@ -105,7 +106,7 @@ The WebUI is an installable PWA. Open **Settings → 离线副本** and this bro
 
 | Command | Description |
 | --- | --- |
-| `mh init` | Create `~/.metahub` |
+| `mh init` | Create `~/.metahub` (`--claude` / `--codex` install this guide as a Claude Code `/mh` / Codex `$mh` skill instead) |
 | `mh db create\|list\|get\|delete` | Manage databases (tables) |
 | `mh use [<db>] [--clear]` | Set/show the "current db" (record/prop default to it) |
 | `mh get <ref>` | Universal lookup: resolve by id/prefix/name, auto-detect type |
@@ -113,7 +114,7 @@ The WebUI is an installable PWA. Open **Settings → 离线副本** and this bro
 | `mh record create\|list\|get\|update\|delete` | Manage records (rows) |
 | `mh doc create\|list\|get\|update\|delete` | Manage Markdown documents |
 | `mh doc read <id>` | Read body + version token (AI reads before editing) |
-| `mh doc edit <id> --old --new` | Anchored find-and-replace (`--replace-all` / `--if-match`) |
+| `mh doc edit <id> --old --new` | Anchored find-and-replace (`--replace-all` / `--if-match`); `--edits '<json array>'` applies N pairs atomically in one pass |
 | `mh doc append\|prepend <id> --body` | Append a block at the document head/tail |
 | `mh doc history <id>` / `mh doc revert <id> --to <version>` | List a document's revisions / restore a past version (a new forward revision; `doc get --at <version>` previews; revert resurrects a deleted doc) |
 | `mh record history <id> [--field <name>]` / `mh record revert <id> --to <version>` | Record edit history (per-revision field diffs, or one cell's value trail) / restore past cells (resurrects a deleted record) |
@@ -125,12 +126,15 @@ The WebUI is an installable PWA. Open **Settings → 离线副本** and this bro
 | `mh repair [--dry-run]` | Deterministic, idempotent repair of auto-fixable issues (changes replicate via oplog); `--dry-run` previews (same as doctor) |
 | `mh compact [--keep <days>] [--dry-run]` | Prune oplog history older than the retention window (default 90d) + GC blobs + VACUUM. Local-only; current data untouched, older history collapses to a baseline |
 | `mh site create\|put\|publish\|list\|files\|rm\|delete` | Host static sites (HTML/CSS/JS) an agent generates, served by `--server` at `/sites/<name>/` |
+| `mh share create\|list\|servers\|link\|renew\|revoke` | Publish a doc/database/site as a public link (`/share/<slug>`): server SSR or S3 export, view/edit permission, optional password + expiry |
+| `mh blob add <file>` / `mh blob get <hash>` | Store a local file as a content-addressed `/blob/<hash>` URL (embed in a doc) / resolve its bytes (local cache → peers → bucket) |
+| `mh cache [status\|clear\|gc\|full-device\|redundancy\|pin\|unpin]` | Inspect/manage the local blob cache; designate "full blob devices" (durable anchors) so images are safely clearable |
 | `mh token [show\|refresh]` | Show/rotate the persisted server auth token (stored in `~/.metahub`, rotates at 30-day expiry by default) |
 | `mh completion <bash\|zsh\|fish>` | Print a completion script: `eval "$(mh completion zsh)"` |
 | `mh sync <url>` | Sync one round with a server (CRDT push/pull); uses a stored credential when `/sync` is protected, otherwise prompts for a token in an interactive terminal and remembers it (`--token` for non-interactive) |
 | `mh sync <src> <dst>` | Move a single document/table to/from a file: document ↔ Markdown, table ↔ CSV; direction inferred from which side is an in-repo entity |
 | `mh config` | Configure the server and sync devices: no args opens an interactive wizard, `--flag` sets directly (`--host/--port/--sync-interval/--auto-sync`) |
-| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | Multi-device pairing and management: generate a one-time code / pair / list / sync now / enable-disable / remove (also revokes the credential issued to the peer) |
+| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | Multi-device pairing and management: generate a one-time code / pair / list / sync now / enable-disable / remove (also revokes the credential issued to the peer). `peer add --s3` / `--enroll <code>` attaches an object-storage bucket for offline store-and-forward |
 | `mh config grant list\|revoke` | List/revoke inbound sync credentials this machine issued (`revoke --token` accepts an exact value or prefix) |
 | `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync] [--tls-cert --tls-key]` | Start the server: `/sync` (master token or pairing credential) + WebUI/PWA at `/` + `/api/*` REST + `/docs` (OpenAPI) + static sites `/sites/<name>/` + token exchange `/auth/token` + pairing `/api/pair`; a built-in timer auto-syncs paired peers; `--tls-*` serves https directly (PEM paths) |
 

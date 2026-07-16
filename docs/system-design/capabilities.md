@@ -5,15 +5,15 @@
 已实现:
 
 ```bash
-mh init
+mh init                 # 创建 ~/.metahub
+mh init --claude        # 装 Claude Code 的 /mh skill 到 ~/.claude(不碰 ~/.metahub)
+mh init --codex         # 装 Codex 的 $mh skill 到 ~/.codex(不碰 ~/.metahub)
 ```
 
 效果:
 
-- 创建 `METAHUB_HOME` 或 `~/.metahub`。
-- 创建 SQLite schema。
-- 创建 cache 目录。
-- 初始化或读取 node id。
+- `mh init`:创建 `METAHUB_HOME` 或 `~/.metahub`、SQLite schema、cache 目录,初始化或读取 node id。
+- `--claude` / `--codex`:把仓库根 `SKILL.md` 作为**个人 agent skill** 装到对应 agent 配置目录(`~/.claude/skills/mh/SKILL.md` → `/mh`;`~/.codex/skills/mh/SKILL.md` + `agents/openai.yaml` → `$mh`),幂等(内容一致则跳过),`--claude --codex` 可同装。仅写 agent 配置目录、**不创建** `~/.metahub`。见 `src/cli/agent-skill.ts`。
 
 ## 引用与当前库
 
@@ -116,9 +116,12 @@ AI 增量编辑:
 ```bash
 mh doc read <doc-ref>
 mh doc edit <doc-ref> --old "old text" --new "new text" [--replace-all] [--if-match <version>]
+mh doc edit <doc-ref> --edits '<json array>' [--if-match <version>]   # 批量锚定改写
 mh doc append <doc-ref> --body "markdown"
 mh doc prepend <doc-ref> --body "markdown"
 ```
+
+`--edits` 接受一组 `[{"old","new"?,"replaceAll"?}]`,在**一次** transaction 里按序折叠改写(后一对的 `old` 可命中前一对的 `new`):**先全量校验再落笔**(validate-before-write),任一对锚点缺失/歧义则整批中止、文档不变;只做一次 `--if-match` 校验、一次修订、一次版本号 bump——AI 一次 read 就能下 N 个 delta。与 `--old/--new/--replace-all` 互斥。`--edits` 与 `--old`/`--new` 均支持 `@file`/`@-`。见 `src/core/documents.ts` `editDocumentBatch`。
 
 历史与回滚:
 
@@ -156,6 +159,27 @@ mh edit <ref> --editor zed
 
 - record 表单不适合复杂多行值。
 - raw editor command 使用简单空格拆分。
+
+## 分享(公开能力链接)
+
+已实现(见 [17-s3-storage-sync](../impl-context/17-s3-storage-sync/design.md) / 记忆 `share-feature-impl`;core 在 `src/core/shares.ts`,SSR 在 `src/core/sync/share-render.ts`/`share-serve.ts`):
+
+```bash
+mh share create <ref> [--kind doc|database|site] [--transport server|s3]
+                      [--permission view|edit] [--password <pw>] [--expires 24h|7d]
+                      [--via <peer-url|base-url>] [--bucket <url>] [--viewer <url>]
+mh share list [<target>]     # 汇总:本机 + 已配对 server + 桶上的分享
+mh share servers             # 可发布目标:本机 server + 已挂载对象存储桶
+mh share link <slug>         # 打印某分享的可访问链接
+mh share renew <slug>        # 续期(预签名 s3 链接最长 7 天)
+mh share revoke <slug>       # 撤销(别名 mh share rm;可 --via 让配对 server 代撤)
+```
+
+当前能力:
+- 目标可是**文档 / 数据库 / 站点**(`--kind` 省略时按类型化 id 推断)。
+- 两种传输:`server`(`mh --server` 在 `/share/<slug>` 实时 SSR;权限 `view`/`edit`,**edit 仅 server**、接受 guest 节点写入)与 `s3`(预签名对象存储静态导出 + 独立解密 viewer,只读,`view` only,过期上限 7 天)。
+- 可选**密码**与**过期**;`view` 分享 SSR 只读渲染(走共享语法 + `safeUrl` 净化 URL、按 kind 渲染媒体)。
+- `/share/<slug>` 在 token 门禁**之前**命中并原样返回(公开访问,不套 token shim)。
 
 ## 搜索
 
@@ -257,6 +281,26 @@ mh compact [--keep <days>] [--dry-run] [--no-vacuum]   # 默认 keep 90 天;0 = 
 
 当前未实现:自动定时压缩(规划归 `mh config`)、"彻底抹除已删数据"(需全 peer 墓碑确认)。
 
+## Blob 与缓存(内容寻址字节)
+
+已实现(见 [22-blob-sync](../impl-context/22-blob-sync/design.md);core `src/core/blobs.ts`/`blobs-core.ts`):
+
+```bash
+mh blob add <file> [--name <alt>]      # 存为内容寻址 blob → 打印稳定 /blob/<hash>.<ext> URL + 可嵌入的 Markdown 行
+mh blob get <hash> [--out <file>]      # 取字节:本地 cache → HTTP peer → 桶;--out 写文件,否则裸字节到 stdout(可 pipe)
+
+mh cache                               # status(默认):缓存量 / 可清量 / pinned / 全量设备 / redundancy
+mh cache clear | gc                    # 清可清 blob / 清不再被引用的孤儿 cache 文件
+mh cache full-device list|add|rm [--node <id>]   # 指定 1~N 台"全量设备(durable 锚)":永不清 + 拉全量
+mh cache redundancy all|any            # 判定 anchored 需要"全部/任一"全量设备在场
+mh cache pin <hash> | unpin <hash>     # 用户"离线保留",永不自动淘汰
+```
+
+当前能力:
+- **blob 字节**内容寻址(`cache/<hash>`),**不进 oplog**;`doc_blocks`/`site_files` 的清单(含 hash)照常同步,字节**按需**经 `/blob/<hash>` 取回。文档插图、图片、超阈值二进制走此路径。
+- **可清判定** `isClearable = pending===0 && anchored===1`:`pending` 是本机自产、尚未确认落到锚的字节(唯一必护);`anchored` 由按需 presence-verify 依 `redundancy` 策略确认锚上有副本。`pin` 覆盖淘汰。
+- 全量设备 = durable 锚(无对象存储桶拓扑时的落点),写进随 oplog 同步的 `blob_policy`。见 [data-model.md](./data-model.md) 的 `blob_cache`/`blob_policy`。
+
 ## 同步
 
 已实现:
@@ -274,10 +318,14 @@ mh sync http://host:7777
 - **多设备配对 + 自动同步**:一次性配对码引导、交换长期 per-peer 凭据,server 内置定时器周期性双向同步已配对 peer(默认 30s);`/sync` 鉴权(主 token 或配对凭据)。统一入口 `mh config`(方向键交互向导 `@clack/prompts` + `--flag`)/ WebUI 设置页。撤销:`peer rm`(连带吊销)/ `grant revoke`。见 [11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md)。
 - **浏览器离线副本(PWA)**:WebUI 设置页一键启用——自助配对(页面持主 token 自己铸码兑换凭据,在「已授权设备」可单独吊销)、按 `limit` 分页水合全量 oplog 至 OPFS、之后读写走本地 + 后台 `syncWithPeer()`,离线可查看编辑全部内容(含托管站点页的读写),回网块级合并。需 HTTPS(secure context)+ OPFS(Safari 17+);不满足时设置页显示原因并自动回落纯在线模式。见 [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
 - **同步分页**:`/sync` 请求可带 `limit`(分页拉取)与 `exclude_datasets`(部分副本;协议就绪,设置 UI 未开),游标保证永不回退。
+- **对象存储(S3)store-and-forward**:除 HTTP 对等外,可挂一个 S3 兼容桶作**数据盲的转发中继**——各设备把 oplog 变更推到桶、从桶拉,无需两端同时在线(离线转发)。桶 peer 记为 `peers.kind='s3'` + `peers.config`,拉取进度按 `storage_cursors`(每桶/每远端节点)。挂桶用 `--s3`(直填凭据)或 `--enroll <code>`(扫码/深链 `#enroll=`,只带访问描述符);`mh config peer cors` 自动配桶 CORS 以便浏览器直连。见 [17-s3-storage-sync](../impl-context/17-s3-storage-sync/design.md) / [21-enroll-code-onboarding](../impl-context/21-enroll-code-onboarding/design.md)。
 
 ```bash
-mh config peer code                                          # 生成一次性配对码
+mh config peer code                                          # 生成一次性配对码(HTTP 对等)
 mh config peer add --url http://host:7777 --code <code> --self-url <self>
+mh config peer add --s3 ...                                  # 挂对象存储桶(直填凭据)
+mh config peer add --enroll <code>                           # 用 enroll 码/深链挂桶(只带访问描述符)
+mh config peer cors                                          # 为桶配置 CORS(浏览器直连)
 mh config peer list|sync|enable|disable|rm   |   mh config grant list|revoke
 ```
 
@@ -352,6 +400,11 @@ GET    /api/site/files       PATCH/DELETE /api/site          # 文件清单（?s
 POST   /api/site/file        DELETE /api/site/file          # 上传(裸字节)/删文件（?site=&path=）
 GET    /sites/<name>/<path>  # 托管的静态站点（HTML/CSS/JS，agent 经 mh site 发布）
 
+GET    /share/<slug>         # 公开分享页 SSR（view 只读渲染 / edit 接受 guest 写入；在 token 门禁前，豁免、不套 shim）
+POST   /api/share            GET /api/shares    DELETE /api/share    # 分享创建 / 列表 / 撤销（WebUI 分享弹窗与 mh share --via 用）
+GET    /blob/<hash>          POST /api/blob     GET /api/blobs/has    # blob 取字节 / 上传 / 存在性探测（内容寻址）
+POST   /api/pair             # 设备配对握手（一次性配对码兑换长期凭据）
+
 GET    /auth/token           # token 交换：持当前或宽限内旧 token → 返回 {token, exp}（无感续期；豁免门禁）
 ```
 
@@ -362,19 +415,20 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
   - **表格**：按类型行内编辑（checkbox/select/multi_select/relation/text/number/date/url）、列头菜单（改名/**改类型**/选项增删/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。单元格读写一律按**属性 id**（record 响应的 `cells` 字段；`values` 按名供 CLI/agent），重名列互不串扰；新建列默认名自动去重（「日期」→「日期 2」）。
     - **覆盖式单元格编辑器**（v3.3）：编辑器悬浮于单元格上方（行高不变）；双击或选中后直接打字进入（打字替换原值）；点击别处/Enter/Tab 均提交、Esc 放弃，值不变不发请求/不写历史；乐观更新即时生效、失败 toast+回滚；中文 IME 选词 Enter 不误提交。
     - **电子表格键盘**（v3.3）：方向键移动选中格（Shift 扩展为框选）、Enter/F2 进编辑、编辑中 Tab/Shift+Tab 提交并左右走格、Enter 提交并下移一行、Delete 清空；框选 Cmd/Ctrl+C 复制 TSV、底部操作条复制/填充/清空。
-  - **文档**：块级**所见即所得**编辑器（`/` 斜杠菜单、块拖拽重排、单块选中浮动格式条、待办/列表/引用/代码/分隔线）；支持 Typora 风格核心快捷输入（标题、列表、待办、引用、代码 fence）、列表 Tab/Shift+Tab 嵌套、列表内段落/引用/代码块/子列表、代码语言名。代码块为 textarea + highlight.js 高亮镜像，含**语法高亮**、行号、语言下拉、复制（右下角 hover）与键盘退出（末行空行 Enter / 末行 ↓）；空列表项内删除空代码块会保留当前编号/marker。
-    - **多块选中**（v2.3）：拖拽跨块或左侧空白拖拽框选整块、Shift+点击扩展，选中块加底色（无浮动工具栏）；键盘批量删除/缩进/复制·剪切为 Markdown/复制(Cmd+D)/全选(Cmd+A)/Shift+↑↓ 扩展，多块整组拖拽移动。
-    - **撤销/重做**（v2.3）：Cmd/Ctrl+Z 撤销、Cmd/Ctrl+Shift+Z 或 Ctrl+Y 重做，覆盖结构性块操作与文字输入（接管原生撤销，连续打字合并为一步）。
-    - **有序列表起始号**（v2.3）：按用户输入的首项数字起算（`5.` 从 5 递增），后续自动递增；插入/删除/重排后序号自动重建。
-    - 防抖保存复用 `PATCH /api/document` 的按块 reconcile,保存 Markdown 会规范化缩进，并保留同级有序列表的起始号。
+  - **文档**：基于 **CodeMirror 6** 的所见即所得编辑器(v3.4,文档 = 单份 Markdown 文本、块是派生模型、装饰驱动;详见 [webui-editor.md](./webui-editor.md))。
+    - **块**:光标感知的 reveal-to-edit——标题/引用/列表/待办/分隔线渲成块样式,光标进入则标记复现;`/` 斜杠菜单、悬停 gutter 的 +/grip 拖拽(改类型/重排)、选区浮动格式条、行内实时预览(粗体/斜体/代码/删除线/链接/行内图)。Typora 风格快捷输入(空格/回车提交 marker)、Tab/Shift+Tab 缩进、有序列表**字面序号权威**。
+    - **void 区块**:图片/视频/音频/文件/**GFM 表格**/代码/HTML 作为原子或 reveal-to-edit 组件。代码块含语法高亮、行号、语言选择、软换行开关与**一键格式化**(懒加载 prettier/wasm 引擎,见 architecture.md 的 fmt 子系统);表格支持 Notion 式行列 pill 手柄 + autofit + 多选。
+    - **source/blocks 模式** `⌘/` 切换(同一 CM view reconfig,非另起 textarea);**⌘F 文档内查找**、右侧 **TOC** + 滚动高亮、右下**字数 pill**、图片标注/lightbox。
+    - **撤销/重做**为原生 CM6 `history()`(所有结构操作都是普通文本 transaction);粘贴/拖拽图片自动上传成 media void。
+    - 防抖保存(700ms)复用 `PATCH /api/document` 的按块 reconcile;标题走 `textContent` 播种(非 innerHTML,XSS 安全)。
   - **版本历史**：文档「…」菜单 → 右侧抽屉（修订列表 + 任意版本只读预览 + 「对比当前」git 式行级 diff，行内改动深浅双层高亮）；记录 peek「…」菜单 → 历史视图（逐修订字段 diff、恢复）；数据库「…」菜单 →「最近动态」（表级活动流只读抽屉）。恢复带 `if_match`（409 stale → 提示刷新重试）；repair 修订默认隐藏（「显示修复」开关）；设备名经 `/api/nodes` 解析。
-  - **顶栏菜单**（v3.1）：「分享」收口复制链接与导出（文档=Markdown、数据库=CSV，「…」菜单不再重复导出项）；「…」菜单含**创建副本**（文档=标题+全部块、数据库=属性列+全部记录，服务端 core 级原子复制、单一修订随 sync 收敛，完成后跳转副本；后缀「副本」是 WebUI 文案，core 不写死 locale）、视图切换、版本历史、重命名、删除。
+  - **顶栏菜单**（v3.1+）：「分享」打开**能力分享弹窗**——选目标(本机 server / 已配对 peer server / 挂载的对象存储桶)、权限 view|edit(edit 仅 server)、可选密码 + 过期,并管理/撤销/续期已有分享(另有全局「分享」视图);此外仍可复制链接与导出(文档=Markdown、数据库=CSV)。「…」菜单含**创建副本**（文档=标题+全部块、数据库=属性列+全部记录，服务端 core 级原子复制、单一修订随 sync 收敛，完成后跳转副本；后缀「副本」是 WebUI 文案，core 不写死 locale）、视图切换、版本历史、重命名、删除。
   - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题。
   - **移动端适配**（v3.0，触摸设备 + ≤768px）：首页变整页导航侧栏、点条目下钻到整屏内容、顶栏「←」返回；操作按钮无 hover 常显、≥16px 字号与触点（输入框 16px 防 iOS 放大）；状态栏 `theme-color` 随主题跟随、安全区适配。桌面端不受影响（判据含 `pointer:coarse`，拖窄桌面窗口不会切移动样式）。
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
 - REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
 - WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。
-- **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化；文档表格、数学、脚注、callout、TOC。
+- **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化；文档数学公式、脚注、callout（文档表格与 TOC 已实现）。
 - **静态站点托管**:AI agent 用 `mh site create|put|publish|list|files|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联;图片与大二进制走 `cache/` blob,字节不进 oplog、**按需**跨机取回,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
   - **WebUI「站点管理」页**(v2.9,2026-06-09):侧栏页脚入口 → 卡片列表 + 右侧 peek 文件抽屉(上传/预览/删除)+ 应用内 iframe 预览(直指已 serve 的 `/sites/<name>/`);配套补了 `POST/PATCH/DELETE /api/site*` HTTP 写接口(建站/改名·改标题/删站/传文件/删文件),仍是同一套 `emit()`。见 [08-agent-sites §6](../impl-context/08-agent-sites/design.md)。
   - **站点读写数据正式化 + 离线**(v3,2026-06-11):站点页同源调用 `/api/*` 的写路径纳入契约;可选 SDK `/metahub-sdk.js`(类型化方法 + code 化错误 + token 续期,裸 fetch 永远等价)。启用离线副本的浏览器里站点页**离线可打开**(含从未访问过的——站点文件随 oplog 在副本里,SW 网关从副本 serve,冷启动走自举壳页)、**离线可读写数据**,回网自动同步。信任模型显式化:站点同源=持有完整 hub 读写权限,只发布自产站点。见 [08-agent-sites v3](../impl-context/08-agent-sites/design.md) / [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。

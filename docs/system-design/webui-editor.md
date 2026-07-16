@@ -1,166 +1,178 @@
-# WebUI 文档编辑器：前端块模型、Markdown 渲染与块间导航
+# WebUI 文档编辑器：CodeMirror 6 架构、派生块模型与 Markdown 往返
 
-本文是 WebUI 富文本编辑器（`src/webui/` 下的 Notion 式块编辑器）的**常驻参考**。目标：做 Markdown 渲染 / 块编辑 / 光标导航 / 序列化相关改动时，先读本文即可，不必从头检索代码。
+本文是 WebUI 文档编辑器（`src/webui/` 下的富文本编辑器)的**常驻参考**。目标:做 Markdown 渲染 / 块装饰 / 结构编辑 / 光标导航 / 序列化相关改动时,先读本文即可,不必从头检索代码。
 
-与 [data-model.md](./data-model.md) 的分工：data-model 讲 **core 侧**权威存储（`doc_blocks` 扁平 CRDT、`documents.body` 是派生缓存）；本文讲 **前端侧**更丰富的逻辑块树、Markdown 往返、渲染 DOM 结构与编辑器交互。两者通过「整篇 Markdown body」对接。
+> **关键心智:文档就是一份 Markdown 文本。** 编辑器是一个 **CodeMirror 6**(`@codemirror/*`)的单文档 `EditorView`,它的 doc **就是文档的原始 Markdown body**。所谓"块"是从这份文本**派生出来的扁平、按偏移索引的展示层**(`cm6/blockmodel.ts` 的 `scanDoc`),用来驱动装饰、void 组件与结构键;它不是编辑器要维护的独立状态。所见即所得靠**光标感知的装饰**(reveal-to-edit):光标不在某块上时隐藏 `# `/`> `/marker 等标记、渲染成块样式,光标进入则标记复现、编辑真实文本。
 
-> 关键心智：系统里有**两套块模型**。前端是带类型的**嵌套树**（`src/webui/blocks.ts` 的 `Block`）；core 是**扁平**的 `doc_blocks`（每块一段 text + `blank_after`）。前端**不入库**它的富字段；保存时把整棵树序列化成 Markdown body，core 再 reconcile 成 `doc_blocks`。
+与 [data-model.md](./data-model.md) 的分工:data-model 讲 **core 侧**权威存储(`doc_blocks` 扁平 CRDT、`documents.body` 是派生缓存);本文讲 **前端侧** CM6 编辑器、派生块模型、Markdown 往返与交互。两者通过「整篇 Markdown body」对接。
+
+> ⚠️ 历史:0.3.x 之前是一套自研 Preact 嵌套块树 + contentEditable 编辑器(`editor-ops.ts`、`BlockRow`、`focusBlock`/`focusInto`、compactCodeHost…),**已整体删除**。若在旧代码/旧文档里见到这些符号,一律作废。
+
+---
+
+## 0. 三层表示 + 一个共享分类器
+
+| 层 | 位置 | 角色 |
+|---|---|---|
+| **CM6 Markdown 文本** | `cm6/CmDocBody.tsx` 的 `EditorView.state.doc` | 编辑器的**唯一真相**,`getDoc()` 即整篇 body |
+| **派生扁平块模型 `DocModel`** | `cm6/blockmodel.ts` `scanDoc`/`patchScan`;经 `cm6/doc-model.ts` 的 `docModelField` 存进 state | 每行的 role + 偏移、void 区间、标题;喂给装饰/void/结构键 |
+| **嵌套块树 `Block[]`** | `src/webui/blocks.ts` | **仅**保存/加载解析器 + 序列化器 + 共享行谓词 re-export;**不是**编辑器活模型 |
+| core 扁平 `doc_blocks` | `src/core/documents.ts` | 权威存储(见 data-model) |
+
+**共享分类器(唯一真源)** `src/core/md/`:
+- `grammar.ts`:唯一的**行级**语法——`RE` 表、`matchListLine` / `matchQuoteLine` / `matchMediaEmbed`、`safeUrl`(URL scheme 白名单)、`HTML_FENCE`、fence/table/indent 助手。
+- `inline.ts`:唯一的**行内** tokenizer `tokenizeInline`。
+- `heal.ts`:读边界 `healLegacyMarkdown`(修旧序列化器的宽松形式)。
+
+CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-export `grammar.ts`)、分享渲染(`core/sync/share-render.ts`)**三面共用同一套谓词**,故**同一份字节在任何面都分类成同一种块**——由 `cm6/grammar-parity.test.ts` 钉死。**STRICT 规则**:每个 marker(含 `>`)都要有尾随空白才成块(`> ` 是空引用行、裸 `>` 与 `>foo` 是段落);旧的宽松形式(`- [ ]`、多段引用里的裸 `>`)在**读边界** heal,不改语法本身。
+
+### CM6 扩展栈与派生(一张图看懂）
+
+```text
+              ┌─────────────────────────────────────────────────────────┐
+              │   one EditorView.state.doc  =  raw Markdown body  ← 真相  │
+              └───────────────────────────┬─────────────────────────────┘
+                            每次 doc change │  (patchScan 只重扫受损行窗口)
+                                            ▼
+                 docModelField ──► DocModel { lines[] · voids[] · headings[] }   派生·扁平·带偏移
+                                            │   装饰/结构键都经 docModel(state) 读同一份
+        ┌──────────────┬──────────────┬────┴───────────┬────────────────┬──────────────┐
+        ▼              ▼              ▼                ▼                ▼              ▼
+   block-deco       inline        void-field       structure         keymap         chrome
+   块装饰(reveal)  行内预览      widgets(原子/     文本 transaction   (最高 Prec)   slash/find/
+   headings/quote/ bold/link/     reveal:图/表/    enter/backspace/   委托 structure  format-bar/
+   list/todo/hr    code/strike    代码/html)       indent/convert     命令            toc/word-count/gutter
+        └──────── richCompartment(rich 装饰层) ────────┘                              copy-rich/upload
+                                            │
+              source 模式 = richCompartment.reconfigure(sourceLayer)  → 丢装饰,纯 Markdown 文本
+                                            │
+                        getDoc() ── 700ms 防抖 ──► PATCH /api/document {title, body}
+                                            │
+                         core reconcileBody(文本级 diff) ─► doc_blocks emit ─► /sync
+   加载/远端合并 ◄── setDoc(norm(body)) ◄── SYNCED_EVENT / 首次加载   (norm = heal ∘ stripStaleUpload)
+```
+
+三面共享分类器(横切):`blockmodel` 扫描、`blocks.ts` 保存解析、`share-render` 分享渲染都调 `core/md/{grammar,inline}` 的同一套谓词。
 
 ---
 
 ## 1. 数据流总览
 
 ```
-编辑器交互 → 改 blocks 树(内存) → bump()重渲染 + scheduleSave()(防抖700ms)
-  → snapshotMarkdown() = bodyFromBlocks(blocks)            [src/webui/blocks.ts]
-  → api.updateDocument(docId,{title, body})                [src/webui/api.ts]
-  → core updateDocument → reconcileBody(body)              [src/core/documents.ts]
-  → 文本级 diff，仅对变化的块 emit doc_blocks oplog 行
+键入/结构键 → CM6 文本 transaction(改的就是这一份 Markdown doc)
+  → docModelField.patchScan 只重扫受损行窗口,更新派生 DocModel
+  → 装饰层(block-deco / inline / voids)按新模型重画;onChange → scheduleSave(700ms 防抖)
+  → snapshotMarkdown() = cmRef.getDoc()   ← 恒等,doc 本身即 Markdown(不再 bodyFromBlocks)
+  → api.updateDocument(docId, {title, body})            [src/webui/api.ts]
+  → core updateDocument → reconcileBody(body)           [src/core/documents.ts]
+  → 文本级 diff,仅对变化的块 emit doc_blocks oplog 行
   → /sync 把 doc_blocks 变更同步给其它节点
-加载/远端合并: documents.body(缓存) 或 doc_blocks 重算 → blocksFromBody(body) → blocks 树
+加载/远端合并: documents.body → cmRef.setDoc(norm(body)),CM 用最小 diff 映射光标
+             norm = healLegacyMarkdown ∘ stripStaleUploadLines(换行规范化)
 ```
 
-要点：
-- **body 的同步源是 `doc_blocks`**（块级 CRDT 合并），`documents.body` 只是物化缓存、**不入 oplog**。详见 [data-model.md](./data-model.md) §documents/§doc_blocks 与记忆 `doc-body-syncs-via-doc-blocks`。
-- 因此「编辑了正文但 `/sync` 只见 `col:"title"`」的根因通常是：**序列化产物没变** → reconcile 无 diff → 不 emit。**不要**靠新增 `emit(documents,…,"body")` 来"修"，那会造出与块级 CRDT 冲突的幽灵寄存器。
-- 历史/检索按 `dataset='doc_blocks' AND col='doc_id'` 的局部索引找块（data-model §84）。
+要点:
+- **body 的同步源是 `doc_blocks`**(块级 CRDT 合并),`documents.body` 只是物化缓存、**不入 oplog**。详见 [data-model.md](./data-model.md) §documents/§doc_blocks 与记忆 `doc-body-syncs-via-doc-blocks`。
+- 「编辑了正文但 `/sync` 只见 `col:"title"`」的根因通常是:**序列化产物没变** → reconcile 无 diff → 不 emit。**不要**靠新增 `emit(documents,…,"body")` 来"修",那会造出与块级 CRDT 冲突的幽灵寄存器。
+- 远端合并经 `SYNCED_EVENT` → `cmRef.setDoc(d.body)`(`editor.tsx`),`setDoc` 用共享前后缀最小替换,CM 把光标映射过小改动。
+- 保存链是串行的(`editor.tsx` 的 `saveChainRef`),避免防抖 flush 与手动保存竞争。
 
 ---
 
-## 2. 前端块模型 `src/webui/blocks.ts`
+## 2. 派生块模型 `cm6/blockmodel.ts`(编辑器的活模型)
 
-`Block`（`blocks.ts:40-54`）：
-```ts
-interface Block {
-  id; type: BlockType; content;           // content = 去掉 marker/fence 后的内部文本
-  checked?;        // todo
-  lang?;           // code
-  start?;          // numbered: 一段连续有序列表的起始号(只记在该段首项)
-  children?;       // 仅列表项可有子块(嵌套)
-  rows?; align?;   // table
-  src?; name?; width?; size?;  // image/video/audio/file void 嵌入
-}
-```
-`BlockType`（`blocks.ts:6-36`）：`p / h1..h6 / bullet / numbered / todo / quote / code / table / divider`，块级 void 嵌入 `image/video/audio/file/html`，以及瞬态 `uploading`（仅内存、永不序列化）。
+`scanDoc(src) → DocModel`(`blockmodel.ts` `scanDoc`),把整篇文本走一遍,产出:
+- `lines[]`:每行一个 `LineInfo`——`role`(`LineRole`)+ 装饰要用的**字符偏移**(前导缩进区间、marker 区间、`contentFrom` 内容起点)+ `level`(缩进级)。
+- `voids[]`:块级嵌入的**源区间** `VoidRange`(`VoidKind = code|html|image|video|audio|file|table`),连同为组件解析好的 `Block`。
+- `headings[]`:h1–h6 行(偏移 + 原文),供 TOC 等消费。
 
-谓词/构造：
-- `isListType`（`192`）= `bullet|numbered|todo`；`isHeadingType`（`196`）。
-- `makeBlock(type, draft)`（`247`）+ `applyBlockDraft`（`214`，type↔字段不变式的唯一真源，`convert` 也走它）。
-- `isBlankSpacer(b)`（`327`）：**空 `p`、无 children** = 用户插入的竖向间距（空行），不是真内容。**空列表项不是 spacer**——它靠 marker 保住类型。
-- `isCompactCodeHost(b)`（`editor-ops.ts`，本仓新增）：**空 content 的列表项且 `children[0]` 是 code**。见 §5。
+关键 API:`patchScan(prev, edits, src)`(增量:只重扫受损行窗口再拼接,**每次击键成本正比于改动而非全文**)、`voidAt`/`voidInterior`/`quoteRunAt`/`correctNumberAtLevel`/`hiddenIndentChars`/`isListRole`、常量 `MAX_NEST=8`(缩进级上限,`editor-theme.ts` 从这里 import,别再各写一份)。
 
-嵌套：只有列表项可带 `children`。`indent/outdent` 把块移进/移出某列表项的 `children`。普通段落理论上也能成为列表项的子块，但**纯空的嵌套块往返会丢**（见 §3）。
+`cm6/doc-model.ts`:`docModelField`(把 `DocModel` 存进 CM state,doc 变化时 `patchScan` 增量更新)+ 访问器 `docModel(state)`。**所有装饰层、void、结构键都通过它读同一份偏移准确的模型**;纯选区变化不重扫(位置未变,reveal 层自行按缓存模型重算)。
+
+> 缩进在这里是**字面文本**,不是树嵌套:嵌套列表 = 行首的字面缩进列。自由(非列表)块的缩进级在往返时挂到 `Block.indent`(`blocks.ts`)。
 
 ---
 
-## 3. Markdown ↔ 块树往返（最易踩坑，重点）
+## 3. 块装饰与行内实时预览(所见即所得)
 
-### 3.1 解析 `blocksFromBody(body)`（`blocks.ts:307`）
-- 规范化换行后 `parseContainer(lines,0,0)`（`445`）：按**缩进**递归。
-  - `parseListItem`（`491`）：匹配 marker → 建列表项，子块从 `indent+2` 处 `parseContainer` 递归填入 `children`。
-  - `parseLeafBlock`（`508`）：fenced code(``` / ~~~，info string 决定 `code`/`html`)、divider、media 行、heading、todo、numbered、bullet、quote、否则 `p`。
-- **空行游程**：`parseContainer` 中，块间超出单空行分隔的额外空行会**在该层**物化成空 `p`（`476-477`），故**夹在两个真块之间**的空行能往返；shallower 的空行留给父层计数（`457-467`）。
-- `normalizeNumbering`（`355`）：每段有序列表只在首项保留显式 `start`（且 ≤1 时删），其余靠自增（CommonMark 行为）。
+### 3.1 块级 `cm6/block-deco.ts`
+`blockDecorations`(ViewPlugin)把每可见行的 role 变成 Notion 式块样式,**全程光标感知**:标题给字号类并折叠 `# `、引用给竖线并折叠 `> `、divider 渲成 `<hr>`、列表隐藏前导空白 + 按级 padding 缩进、bullet 出字形、有序项出**字面序号**(源码权威,编辑器**从不**给已有项重编号)、todo 出可点复选框。光标落到某行,其原始 marker 复现以便编辑真实文本。全部是 line/mark/inline-replace 装饰(**绝不** `block:true`),故来自 ViewPlugin;空文档占位符 `PLACEHOLDER`。
 
-### 3.2 序列化 `bodyFromBlocks(blocks)`（`blocks.ts:378`）
-`serializeContainer(blocks, indent, isTop)`（`386`）：
-- `isBlankSpacer` 块计为 `extraBlanks`（额外空行）；**前导 spacer 被丢**（`if(out.length) extraBlanks++`，`395`）。
-- `if(!shouldPersist(b)) continue`（`398`）丢弃不可持久块。
-- 块间分隔 `shouldSeparate`（`811`，两个列表项相邻则贴紧不空行）+ `extraBlanks`。
-- `renderBlock`（`750`）按类型出文本；列表走 `renderListBlock`（`790`）：children 经 `serializeContainer(children, indent+2,false)` 递归——**但仅当存在 `firstReal`（非 spacer 且 shouldPersist 的子块）时才渲染整个 children 容器**（`800-806`）。
-- `shouldPersist`（`816`）：divider/列表项**恒持久**（空列表项也以裸 marker 往返）；code 需有内容或 lang；table 需有非空单元；media 需 src；其余（含空 `p`）`content.trim()!==""`。
-
-### 3.3 关键往返规则（务必记住）
-- **顶层空段落** = 空行 spacer，能往返（`serializeContainer` 尾部 + `blocksFromBody:316-317` 重建末尾空行）。
-- **嵌套空块**：只有**夹在真子块之间**才作为空行往返；**孤立/前导/尾随的纯空嵌套块会被丢**（`renderListBlock` 的 `firstReal` 闸门 + `serializeContainer` 丢前导）。→ 这就是「插入空子块不生效/丢失」的根因。本仓采用的对策是**修插入层级**（让退出/插入把空段落落到列表**之后的顶层**，那里能往返），而**不**为缩进空块发明 Markdown 表示。
-- 有序列表起始号靠 Markdown 序号本身往返；`children` / `lang` / `start` 等富字段**不入库**，每次保存重算（见 data-model §206）。
-- 行内 Markdown（粗体/链接/代码等）：`markdown.tsx` 的 `inlineToHtml`/`htmlToInline`，编辑器对 contentEditable 的 innerHTML 做语义守恒（nbsp/`<b>`/字面量定点，见提交 `151ea02`）。
+### 3.2 行内 `cm6/inline.ts`
+`inlineDecorations` 渲染 `**b**`/`__b__`、`*i*`/`_i_`、`` `code` ``、`~~del~~`、`[t](u)`、行内 `![alt](u)`:给内容上样式并**折叠定界符**,光标进入该 span 则标记复现(reveal-to-edit 的行内版)。viewport 作用域、**IME 合成期不重建**(合成中把装饰 `map` 过 change 保持偏移诚实、事后 `stale` 重建,见提交 `b39d301`)。语法来自 `webui/inline-tokens.ts`(= `core/md/inline.ts` `tokenizeInline` 的 re-export,和表格桥/TOC 共用),单层无嵌套、转义感知(`\*x\*` 保持字面)。`linkClicks` 打开链接前过 `safeUrl`(挡 `javascript:`/`data:text/html`)。
 
 ---
 
-## 4. 编辑器组件结构 `src/webui/editor.tsx`（`DocView`）
+## 4. void 组件(图片/视频/音频/文件/表格/代码/HTML)`cm6/voids/void-field.tsx`
 
-渲染 DOM（`BlockRow`，约 `1576-1737`）：
-```
-.doc-title           ← 标题(contentEditable, 不是 block, 无 data-bid)
-.doc-meta
-(每个块) .block-wrap[.nested]
-           .block.b-<type>[.list-code-host][data-bid=ID]
-             .gutter (+按钮/grip 拖拽)
-             .marker (bullet/numbered/todo)
-             .editable(contentEditable) | <CodeBlock>(.code-input textarea + .code-hl 高亮镜像)
-                | .void-host(image/video/audio/file/html/uploading)
-           {children}         ← 子块在此渲染，是 .block 的【兄弟】，不在其内部
-```
-- code 块用真 `<textarea>`（`CodeBlock`），故有**独立**键处理器 `onCodeKeyDown`；其余 contentEditable 走 `onKeyDown`；void 块走 `onVoidKey`。
-- `mode==="source"` 时整篇切换成一个 `<textarea>`（`sourceTaRef`），与块树互转（`snapshotMarkdown` 在 source 模式读 textarea）。
+一个 `StateField` 把每个 void 源区间变成块级 `Decoration.replace` widget(宿主是现有 Preact 组件),并把 atomic 的登记进 `EditorView.atomicRanges`(块 replace 装饰**必须**来自 StateField,CM6 禁止 ViewPlugin 出块级 replace)。两种交互:
+- **ATOMIC**(media / table / code):光标永不落进区间内部。media「选中」= CM 选区覆盖整段(出缩放柄);表格在原地 contenteditable 岛内编辑;代码在 `CodeIsland` 的 textarea 内编辑(高亮 + focus 时显 ``` 围栏行,永不退回裸源码)。
+- **REVEAL-TO-EDIT**(仅 html):非 atomic,选区触及即丢 widget、露出原始 Markdown 编辑;`源码` 按钮派发一个选区进去触发露出。
+
+写回:宿主组件改块(图片缩放、代码 lang、表格单元格)→ `blockToText`(`blocks.ts`)序列化 → `min-diff` 最小替换 dispatch 回文档 → 下一次扫描重建模型。远端合并按 **generation** 判失效重建;表格单元格/代码有 **IME `composing` 守卫**(合成期不逐字提交,`compositionend` 一次提交),否则中/日文候选会逐键写入并推同步。
 
 ---
 
-## 5. compactCodeHost（列表内嵌代码块）——导航陷阱源头
+## 5. 结构编辑与"转换" `cm6/structure.ts` + `cm6/convert.ts`
 
-用户在列表项内插入代码块时（`insertListChildFromShortcut`，`editor.tsx:767`）：列表项 `content` 清空、code `unshift` 成 `children[0]`。渲染时该列表项被判为 **compactCodeHost**（`isCompactCodeHost`），其 `.block` body 渲染为 `null`、加类 `list-code-host`，真正的 `<textarea>` 作为**兄弟** `{children}` 渲染在该 `.block` 之外。
+结构动作**都是普通文本 transaction**——没有块树可改、没有 focus 要交接,下一次改动由行语法重新派生模型,原生 CM6 history 负责撤销。每个函数是 CM6 `Command`((view)=>boolean):干活并 dispatch 返 true,否则返 false 让默认 keymap 接手。
 
-⇒ 它**没有自己的可聚焦元素**。这导致 `focusBlock(host.id)`（只在 `.block[data-bid]` 内部找）**静默失败**——是一整类「↓/↑ 进不去/卡住」导航 bug 的根因。统一对策见 §6 的 `focusInto`。
+- `enterCommand`:列表项续行(带出下一 marker,有序自增)、空列表项 Enter **退出构造**(剥缩进+marker)、未闭合围栏行 Enter **补全成代码块**(严格:整行仅 `\`\`\`` + 纯 lang 才触发,`\`\`\`not code` 这种散文不误转)。
+- `backspaceCommand`:行首 Backspace 分级 outdent / 删 marker 转 `p`。
+- `indentCommand`/`outdentCommand`(Tab/Shift-Tab):行首 ±2 列缩进(tab-byte 安全);多行选区按级步进。
+- `smartHome`、`makeVoidExit(dir)`(方向键跨 void)、`makeArrowIntoCode`、`fenceContinuation`、`focusNewCodeVoid`、`enterDocTop`(文档开头是 void 时先开一空行)、`makeExitTop`(正文首行再上 → 回标题)。
+- `cm6/keymap.ts` `structureKeymap`:最高 `Prec`,逐一委托上面命令,false 即穿透到默认/history keymap。
 
----
-
-## 6. 光标与块间导航（修改导航前必读）
-
-模块级 DOM 工具（`editor.tsx` 底部）：
-- `focusBlock(id, atEnd)`（约 `2340`）：`querySelector('.block[data-bid=ID] .editable, .code-input, .void-host')`；**找不到就 `if(!el) return` 静默退出**（compactCodeHost / divider 等无可聚焦元素的块会命中）。
-- `focusBlockAtOffset(id, offset)`、`caretLineEdge(el)`（首/末**可视**行判定）、`captureBlockCaret/restoreBlockCaret`（结构化重渲染保住光标）。
-
-块树遍历（`src/webui/editor-ops.ts`）：
-- `findBlock(id)` → `{block,parent,index,parentBlock}`；`flattenBlocks`（DFS 前序）。
-- `previousBlock`（`67`）：**首子返回父**（前序里父先被访问）。
-- `nextBlock`（`85`）：扁平 DFS 的**下一个**——末子返回其**叔/兄**。
-- ⚠️ 这种「首子→父、末子→叔」的**不对称是按设计、正确的**，是 ↑/↓ 在嵌套边界表现不同的原因。**不要**为"对称"去改这两个函数的语义（曾被一次审计误判为根因）。
-
-编辑器内的导航 helper（`DocView` 闭包，本仓新增）：
-- `focusInto(block, atEnd)`：导航落点若是 compactCodeHost（无 caret 行）就**潜入其 code 子块**（`while` 兼容多层叠放）。**所有"进入某块"的方向键导航都应走它**，而非裸 `focusBlock`。
-- `insertTop(type)`：在 body 顶部插块并聚焦。
-- `focusTitle()`：聚焦 `.doc-title`，光标置末尾。
-
-方向键处理器现状（改导航就在这几处）：
-- contentEditable `onKeyDown` 跨块（约 `1094`）：`caretLineEdge` 判首/末可视行；↑ 首行→`focusInto(prev)`，**无 prev→`focusTitle()`**；↓ 末行→`focusInto(next)`。
-- `onCodeKeyDown`（约 `1170-1245`）：Enter **永远只换行不脱出**；↓ 末行脱出（`focusInto(next)`；无 next 时若在 compactCodeHost 则 `insertAfter(host.id,"p")` 落到列表**之后**而非内部）；↑ 首行脱出（本块是 host body 时跳 `previousBlock(host.id)` 越过宿主；无 prev→`focusTitle()`）；空块 Backspace 转 `p`。
-- 标题 `.doc-title` 的 `onKeyDown`（约 `1505`）：Enter→正文首行建空行并落入（首块已是空段落则复用，否则 `insertTop`）；↓ 在标题末可视行→`focusInto(blocks[0])` 进正文首块。
-- 标题↔正文三向打通：正文首行 ↑→标题、标题 ↓→正文首行、标题 ↵→新建空首行。
+**转换** `cm6/convert.ts`:块的类型**就是它的行前缀**,所以「turn into」= 重写前缀——把 `[缩进, contentFrom)` 之间的旧 marker 换成新 marker,整段在**一次** transaction(`userEvent:"input.convert"`)里改,撤销一步还原。核心 `turnIntoChanges` 是对扫描模型的纯函数(可用 `scanDoc` fixture 单测);`turnInto` 是 gutter 菜单调的薄封装。
 
 ---
 
-## 7. 块创建 / 编辑操作（`editor.tsx`）
+## 6. 编辑器外壳与 chrome
 
-- `insertAfter(afterId, type, draft)`（`472`）：**`afterId=null` 是 `blocks.push`（追加到文档末尾，不是开头！）**；否则 splice 进**被定位块所在的父数组**（在列表项子块上调用会插进该列表项的 `children`，易产生悬空空块）。要插到顶部用 `insertTop`。
-- `insertListChildFromShortcut`（`767`）：见 §5。
-- `indent/outdent`（约 `778+`）、`convert`（`487`，保光标用 capture/restore）。
-- 快捷输入：`shortcutFromInput`（`blocks.ts:417`）解析 `# / > / - / 1. / - [ ] / ```lang` 等 marker；contentEditable 处理器里空格/回车触发块类型提升；`/` slash 菜单。
-- IME 守卫：所有键处理器开头 `if (e.isComposing || e.keyCode === 229) return`（组合输入期不当作块操作）。
-
----
-
-## 8. 保存与同步桥接
-
-`scheduleSave`（`editor.tsx:372`，700ms 防抖）→ `save`（串行链，避免防抖与 flush 竞争）→ `doSave` → `api.updateDocument(docId,{title, body:snapshotMarkdown()})`。
-- 本地 replica 路径不带 `if_match`（单本地写者不自争；远端经 `/sync` 块级合并）；HTTP 模式才有 stale/`if_match` 冲突机制（`409`）。
-- core 侧 `reconcileBody`（`documents.ts:93`）对 body 做**文本级 diff**，只对变化的块 emit `doc_blocks`（text/blank_after/__deleted）。**无 `documents/body` 寄存器**（仅 title/database_id/parent_id）。
-- ⇒ 见 §1 的「只 title 同步」根因与禁忌。
+- **宿主** `cm6/CmDocBody.tsx`:Preact 组件,持一个 `EditorView`(doc = Markdown body),对外暴露小的命令式句柄 `CmHandle`(`getDoc`/`setDoc`/`focus`/`setSource`);view 只在 mount 建一次、unmount 拆,回调走 ref 读、无 per-render 抖动。
+- **扩展装配** `cm6/editor-view.ts`:`baseExtensions` + `richCompartment`;`richLayer()`(派生模型 field + 光标感知装饰 + 结构 keymap)与 `sourceLayer()`(丢掉这些 → 纯 Markdown 文本编辑器)放在 Compartment 后,**source 模式 = 同一 view reconfig 到 `sourceLayer`**(非另起 textarea)。原生选区(无 `drawSelection`)、`history()` 原生撤销、source 模式 `indentWithTab`。主题 `cm6/editor-theme.ts`。
+- **chrome**(`cm6/chrome/`,都是 CM 扩展/组件):`slash-menu.tsx`(`/` 唤起块菜单)、`find.tsx`(⌘F、装饰式查找,活动匹配按身份追踪 `remapMatches`)、`format-bar.tsx`(选区浮动格式条)、`toc.tsx`(目录 + 滚动高亮)、`word-count.tsx`(右下字数 pill,纯客户端、走 DocModel、CJK 按字/拉丁按词)、`gutter.tsx`(悬停 +/grip 拖拽 → turnInto/重排,一步撤销)、`copy-rich.ts`(富剪贴板复制)、`upload-paste.tsx` + `upload-field.ts`(粘贴/拖拽上传成 media void + `stripStaleUploadLines`)、`preview-anchor.ts`(预览锚点路由)。
+- **代码块一键格式化**:见 [architecture.md](./architecture.md) 的 fmt 子系统(`src/webui/fmt/*`,懒加载 prettier + per-language wasm),CodeIsland 里 `格式化` 按钮触发,`applyTaEdit` 写回保 undo 一步。
 
 ---
 
-## 9. 易错点 / 维护清单（动手前过一遍）
+## 7. 标题与保存桥接 `src/webui/editor.tsx`（`DocView`,~489 行)
 
-1. **纯空嵌套块不往返**：别期望孤立空子块能保存/同步；需要它"在那儿"就让它落到能往返的位置（顶层空行）或给它真内容。
-2. **`focusBlock` 对无可聚焦元素的块静默 no-op**：导航进入块一律用 `focusInto`，别裸调 `focusBlock`（尤其面对 compactCodeHost）。
-3. **别改 `previousBlock/nextBlock` 的首子/末子不对称**——按设计正确。
-4. **别新增 `emit(documents,…,"body")`**——body 经 `doc_blocks` 同步；body 不同步多半是序列化无 diff（上游）。
-5. **`insertAfter(null)` 追加到末尾**，不是开头；要顶部用 `insertTop`。
-6. **code 块内 Enter 永远只换行**；脱出靠末行 ↓ / 空块 Backspace（见记忆 `code-block-exit-design`）。
-7. **IME**：键处理器先判 `isComposing/keyCode===229`。
-8. **contentEditable innerHTML 守恒**：改渲染当心光标稳定性（nbsp/`<br>`/字面量定点，提交 `151ea02`）。
-9. **构建**：dev（from-source）刷新即热重建；dist/编译产物需 rebuild+restart（记忆 `webui-frontend-edits-need-rebuild`）。
-10. 富字段（children/lang/start…）不入库，靠 Markdown 往返；改往返规则要同时验证 `blocksFromBody`↔`bodyFromBlocks` 双向。
+渲染:`<div class="doc">` → `.doc-title`(contentEditable) + `.doc-meta`(`<SyncStamp/>` + 已分享徽标) + `<CmDocBody>`。
+- **标题是 contentEditable、不是块、无 data-bid**。它经 effect 用 `el.textContent = titleRef.current` **播种**(`titleElRef`,依赖 `[version]`——加载/远端合并才 bump);**写 textContent 不是 innerHTML**,故同步来的标题永不注入 HTML(消除存储型 XSS),打字也不触发重渲染重置光标。
+- **保存**:`scheduleSave`(700ms 防抖)→ 串行 `save` 链 → `doSave` → `api.updateDocument(docId,{title, body:snapshotMarkdown()})`;`snapshotMarkdown()` = `cmRef.getDoc()`。
+- **标题↔正文导航**:`focusTitle()`;`enterBody()`→ `enterDocTop(view)`(文档以 void 开头时先开空行);标题 `onKeyDown` 里 Enter/↓ 末行 → `enterBody`;正文首行再上 → `onExitTop`=`focusTitle`(CmDocBody 的 `structureKeymap({onExitTop})`)。`caretLineEdge` 现在**只**服务标题的首/末行判定。
+- **IME**:标题处理器仍 `if (e.isComposing || e.keyCode===229) return`;正文侧 IME 在 CM 层(inline 装饰跨合成 remap、表格/代码 void 的 composing 守卫)。
+
+**core 侧**:`reconcileBody`(`documents.ts`)对 body 做**文本级 diff**,只对变化块 emit `doc_blocks`(text/blank_after/__deleted);**无 `documents/body` 寄存器**。本地 replica 路径不带 `if_match`(单本地写者;远端经 `/sync` 块级合并),HTTP 模式才有 stale/`409`。
+
+---
+
+## 8. 保存解析器 / 序列化器 `src/webui/blocks.ts`（现在的角色)
+
+`blocks.ts` 不再是编辑器活模型,而是**整篇 Markdown ↔ `Block[]` 嵌套树**的往返 + 共享谓词 re-export。往返仍是最易踩坑处:
+
+- **解析** `blocksFromBody(body)`:`parseContainer`(按缩进递归)→ `parseListItem` / `parseTableBlock` / `parseLeafBlock`(fenced code/html、divider、media 行、heading、todo、numbered、bullet、quote,否则 `p`;逐行按自身缩进分类,**和 CM6 扫描 `classifyLine` 同规则**)。**故意不 heal**(`- [ ]` 在打字中途歧义)——heal 只在读边界(`CmDocBody` 的 `norm` / 分享渲染)做。
+- **序列化** `bodyFromBlocks(blocks)`:`serializeContainer` → `renderBlock` / `renderListBlock`;`shouldPersist` 决定可持久块(divider/列表项恒持久、空列表项以裸 marker 往返;code 需内容或 lang;table 需非空单元;media 需 src;其余含空 `p` 需 `content.trim()!==""`)。代码/HTML 围栏用 `fenceFor`(按内容最长反引号串 `max(3, longest+1)` 加长,含 ``` 的代码也能完整往返)。
+- **谓词/构造**:`isListType` / `isHeadingType` / `isBlankSpacer`(空 `p`、无 children = 竖向间距空行,不是内容)、`makeBlock` / `applyBlockDraft`(type↔字段不变式唯一真源)、`shortcutFromInput`、`matchMediaLine`(委托 `core/md/grammar.ts` `matchMediaEmbed`)、`blockToText`(void 写回用)。`Block` 含 `indent?`(自由块自由缩进级)。
+- **往返红线**:顶层空段 = 空行 spacer 能往返;**纯空的嵌套块会被丢**(对策:让空段落落到能往返的位置,不为缩进空块发明表示);有序起始号靠 Markdown 序号本身往返;`children`/`lang`/`start`/`indent` 等富字段**不入库**,每次保存重算。空行是相邻块的 `blank_after` 间距属性、不是独立块(见 data-model §doc_blocks)。
+
+---
+
+## 9. 易错点 / 维护清单(动手前过一遍)
+
+1. **文档就是 Markdown**:改「渲染」= 改**装饰**(block-deco/inline),不是改一棵块树;改「结构键」= 写**文本 transaction**(structure.ts)。
+2. **别新增 `emit(documents,…,"body")`**——body 经 `doc_blocks` 同步;body 不同步多半是序列化无 diff(上游)。
+3. **三面一致靠共享分类器**:任何行/行内判定都走 `core/md/{grammar,inline}`,别在编辑器/保存/分享任一面手搓一份,否则重新引入跨面漂移(有 `grammar-parity.test.ts` 兜底)。
+4. **heal 只在读边界**(load/setDoc、分享渲染),`blocksFromBody` **故意不 heal**;别把 heal 塞进保存解析器。
+5. **有序列表序号源码权威**,编辑器从不给已有项重编号。
+6. **代码块含 ``` 要靠 `fenceFor` 加长围栏**;别写死 3 反引号。
+7. **IME**:标题判 `isComposing/keyCode===229`;正文的行内装饰跨合成 remap、表格/代码 void 用 `composing` 守卫(别逐键提交)。
+8. **标题用 `textContent` 播种**,永不 `innerHTML`(XSS + 光标稳定)。
+9. **URL 一律过 `safeUrl`** 再进 `href`/`window.open`(编辑器 `inline.ts` 与分享渲染都要;HTML 属性上下文还需 `escapeHtml`)。
+10. **纯空嵌套块不往返**、富字段不入库——改往返规则要同时验证 `blocksFromBody`↔`bodyFromBlocks` 双向 + `grammar-parity.test.ts`。
+11. **构建**:dev(from-source)刷新即热重建;dist/编译产物需 rebuild+restart(记忆 `webui-frontend-edits-need-rebuild`)。
 
 ---
 
@@ -168,15 +180,14 @@ interface Block {
 
 | 关注点 | 位置 |
 |---|---|
-| 块模型/类型 | `src/webui/blocks.ts` `Block`/`BlockType`(40,6)、`isListType`(192)、`isBlankSpacer`(327)、`makeBlock`(247) |
-| MD→树 | `blocksFromBody`(307)、`parseContainer`(445)、`parseListItem`(491)、`parseLeafBlock`(508) |
-| 树→MD | `bodyFromBlocks`(378)、`serializeContainer`(386)、`renderBlock`(750)、`renderListBlock`(790)、`shouldPersist`(816)、`computeListNumbers`(338)、`normalizeNumbering`(355) |
-| 行内 MD | `src/webui/markdown.tsx` `inlineToHtml`/`htmlToInline` |
-| 编辑器组件/渲染 | `src/webui/editor.tsx` `DocView`、`BlockRow`(~1576)、`CodeBlock`、`.doc-title`(~1501) |
-| compactCodeHost | `editor.tsx` `compactCodeHost`(~1622)、`isCompactCodeHost`(`editor-ops.ts`) |
-| 导航/光标 | `editor.tsx` `focusBlock`(~2340)、`focusInto`、`focusTitle`、`insertTop`、`caretLineEdge`(~2259)；`editor-ops.ts` `findBlock`(14)、`previousBlock`(67)、`nextBlock`(85)、`flattenBlocks`(45) |
-| 键处理器 | `editor.tsx` `onKeyDown`(~1030)、`onCodeKeyDown`(~1170)、`onVoidKey`、标题 `onKeyDown`(~1505) |
-| 编辑操作 | `insertAfter`(472)、`insertTop`、`insertListChildFromShortcut`(767)、`indent/outdent`、`convert`(487) |
-| 保存/同步 | `editor.tsx` `scheduleSave`(372)/`save`/`snapshotMarkdown`(377)；`src/webui/api.ts` `updateDocument`；`src/core/documents.ts` `updateDocument`/`reconcileBody`(93)/`liveBlocks`(42) |
+| 编辑器宿主 / 句柄 | `cm6/CmDocBody.tsx` `CmDocBody`/`CmHandle`;扩展装配 `cm6/editor-view.ts` `baseExtensions`/`richLayer`/`sourceLayer`/`richCompartment` |
+| 派生块模型 | `cm6/blockmodel.ts` `scanDoc`/`patchScan`/`DocModel`/`LineInfo`/`LineRole`/`VoidRange`/`MAX_NEST`;`cm6/doc-model.ts` `docModelField`/`docModel(state)` |
+| 块装饰 / 行内预览 | `cm6/block-deco.ts` `blockDecorations`;`cm6/inline.ts` `inlineDecorations`+`linkClicks`;主题 `cm6/editor-theme.ts` |
+| void 组件 | `cm6/voids/void-field.tsx`(StateField + atomicRanges);写回 `blockToText`(blocks.ts)+ `cm6/min-diff.ts` |
+| 结构编辑 / 转换 / keymap | `cm6/structure.ts`(`enterCommand`/`backspaceCommand`/`indentCommand`/`outdentCommand`/`smartHome`/`makeVoidExit`/`enterDocTop`)、`cm6/convert.ts`(`turnInto`/`turnIntoChanges`)、`cm6/keymap.ts`(`structureKeymap`) |
+| chrome | `cm6/chrome/` slash-menu / find / format-bar / toc / word-count / gutter / copy-rich / upload-paste / upload-field / preview-anchor |
+| 共享语法(core) | `src/core/md/grammar.ts`(`RE`/`matchListLine`/`matchQuoteLine`/`matchMediaEmbed`/`safeUrl`/`HTML_FENCE`)、`src/core/md/inline.ts`(`tokenizeInline`)、`src/core/md/heal.ts`(`healLegacyMarkdown`);parity `cm6/grammar-parity.test.ts` |
+| 保存解析器 / 序列化 | `src/webui/blocks.ts` `blocksFromBody`/`bodyFromBlocks`/`parseLeafBlock`/`parseTableBlock`/`renderBlock`/`renderListBlock`/`shouldPersist`/`startsLeafBlock`/`fenceFor`/`blockToText`;行内桥 `src/webui/markdown.tsx`(现仅表格单元格 contenteditable 用) |
+| 编辑器外壳 / 保存 | `src/webui/editor.tsx` `DocView`、`.doc-title`(textContent 播种)、`scheduleSave`/`save`/`snapshotMarkdown`(=getDoc)、`focusTitle`/`enterBody`;`src/webui/api.ts` `updateDocument`;`src/core/documents.ts` `updateDocument`/`reconcileBody`/`liveBlocks` |
 
-相关历史文档：[02-edit-editor-selection](../impl-context/02-edit-editor-selection/)、[04-block-level-doc-crdt](../impl-context/04-block-level-doc-crdt/)、[07-webui](../impl-context/07-webui/)。
+相关历史文档:[02-edit-editor-selection](../impl-context/02-edit-editor-selection/)、[04-block-level-doc-crdt](../impl-context/04-block-level-doc-crdt/)、[07-webui](../impl-context/07-webui/)(均为 CM6 重写前的阶段性记录,仅作历史参考)。

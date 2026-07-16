@@ -75,11 +75,12 @@ mh sync http://a-host:7777
 
 ## WebUI、API 与 Agent 站点
 
-`mh --server` 在根路径 `/` 内置浏览器 **WebUI**（浏览 / 行内编辑数据表、块级所见即所得编辑文档、全文搜索、管理 agent 站点）。同一服务端还暴露：
+`mh --server` 在根路径 `/` 内置浏览器 **WebUI**（浏览 / 行内编辑数据表、**CodeMirror 6** 所见即所得 Markdown 编辑器——斜杠菜单、文档表格、媒体嵌入、代码块一键格式化、源码/块模式切换、查找、TOC、全文搜索、管理 agent 站点）。同一服务端还暴露：
 
 - `/api/*` —— REST 接口，读写本库的数据表与文档。
 - `/docs` —— 自动生成的 OpenAPI 文档。
 - `/sites/<name>/` —— `mh site publish` 托管 agent 生成的 HTML/CSS/JS；页面同源调用 `/api/*` 即可读本库数据（一个本地 mini-Supabase）。
+- `/share/<slug>` —— `mh share` 把文档/数据库/站点发布成公开链接（view = 只读 SSR，edit = 接受 guest 写入；可加密码 + 过期），经 server 或 S3 桶。
 
 每个请求由单 token 守护（持久化在 `~/.metahub`）。服务端默认只绑 `127.0.0.1`；`--host 0.0.0.0` 才对外，此时凭据以明文 Bearer 传输，请置于可信网络或前置 TLS。细节见[系统设计文档](./docs/system-design/)。
 
@@ -90,7 +91,7 @@ mh sync http://a-host:7777
 
 | 命令 | 说明 |
 | --- | --- |
-| `mh init` | 创建 `~/.metahub` |
+| `mh init` | 创建 `~/.metahub`（`--claude` / `--codex` 改为把本指南装成 Claude Code `/mh` / Codex `$mh` skill） |
 | `mh db create\|list\|get\|delete` | 管理数据库（表） |
 | `mh use [<db>] [--clear]` | 设置/显示「当前库」（record/prop 默认作用于它） |
 | `mh get <ref>` | 通用查找：按 id/前缀/名字解析，自动判别类型 |
@@ -98,7 +99,7 @@ mh sync http://a-host:7777
 | `mh record create\|list\|get\|update\|delete` | 管理记录（行） |
 | `mh doc create\|list\|get\|update\|delete` | 管理 markdown 文档 |
 | `mh doc read <id>` | 读正文 + version token（AI 改前先读） |
-| `mh doc edit <id> --old --new` | 锚定查找替换（`--replace-all` / `--if-match`） |
+| `mh doc edit <id> --old --new` | 锚定查找替换（`--replace-all` / `--if-match`）；`--edits '<json 数组>'` 一次原子应用 N 对 |
 | `mh doc append\|prepend <id> --body` | 在文档首/尾追加块 |
 | `mh doc history <id>` / `mh doc revert <id> --to <version>` | 列出文档修订历史 / 恢复到某版本（回滚是一次新的正向修订；`doc get --at <version>` 预览；revert 可复活已删文档） |
 | `mh record history <id> [--field <名>]` / `mh record revert <id> --to <version>` | 记录修改历史（逐修订字段 diff，或单字段值变迁）/ 恢复历史值（可复活已删记录） |
@@ -110,12 +111,15 @@ mh sync http://a-host:7777
 | `mh repair [--dry-run]` | 确定性、幂等修复可自动修的问题（改动随 oplog 复制）；`--dry-run` 仅预览（等价 doctor） |
 | `mh compact [--keep <天数>] [--dry-run]` | 清理保留窗口（默认 90 天）之外的 oplog 历史 + 回收无引用 blob + VACUUM。纯本地操作；当前数据不变，窗口外历史坍缩为基线（无法再回滚到更早版本） |
 | `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
+| `mh share create\|list\|servers\|link\|renew\|revoke` | 把文档/数据库/站点发布成公开链接（`/share/<slug>`）：server SSR 或 S3 导出、view/edit 权限、可选密码 + 过期 |
+| `mh blob add <file>` / `mh blob get <hash>` | 把本地文件存成内容寻址 `/blob/<hash>` URL（嵌入文档）/ 取回字节（本地 cache → peer → 桶） |
+| `mh cache [status\|clear\|gc\|full-device\|redundancy\|pin\|unpin]` | 查看/管理本地 blob 缓存；指定「全量设备」（durable 锚）使图片可安全清理 |
 | `mh token [show\|refresh]` | 查看 / 轮换持久化的服务器鉴权 token（存于 `~/.metahub`，默认 30 天到期轮换） |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
 | `mh sync <url>` | 与服务端同步一轮（CRDT 推/拉）；`/sync` 受保护时按已存凭据直连，否则在交互终端提示输入 token 并记住（`--token` 非交互） |
 | `mh sync <src> <dst>` | 单个文档/数据表与文件互导：文档↔markdown、数据表↔CSV；方向按参数判别（哪侧是库内实体） |
 | `mh config` | 配置服务器与同步设备：无参进交互向导，`--flag` 直配（`--host/--port/--sync-interval/--auto-sync`） |
-| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | 多设备配对与管理：生成一次性配对码 / 配对 / 列出 / 立即同步 / 启停 / 移除（连带吊销签发给对方的凭据） |
+| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | 多设备配对与管理：生成一次性配对码 / 配对 / 列出 / 立即同步 / 启停 / 移除（连带吊销签发给对方的凭据）。`peer add --s3` / `--enroll <code>` 挂对象存储桶做离线 store-and-forward |
 | `mh config grant list\|revoke` | 列出 / 吊销本机签发的入站同步凭据（`revoke --token` 支持精确或前缀） |
 | `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync]` | 启动服务端：`/sync`（主 token 或配对凭据）+ 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/` + token 交换 `/auth/token` + 配对 `/api/pair`；内置定时器自动同步已配对 peer |
 
