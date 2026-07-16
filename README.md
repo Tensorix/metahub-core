@@ -6,6 +6,10 @@ English · [简体中文](./README.zh-CN.md)
 
 metahub is a local-first knowledge base CLI built on Bun + SQLite. It gives an AI agent a durable, syncable working memory: Notion-style **typed tables** for structured data, **Markdown documents** for long-form knowledge, and a `Read / Edit / Write`-style editing interface. Everything lives on your own machine under `~/.metahub/` — offline on one machine, and consistent across many.
 
+<p align="center">
+  <img src="./docs/assets/webui.png" alt="metahub WebUI — block-level document editing" width="100%">
+</p>
+
 > Requires [Bun](https://bun.sh). Use `bunx`, a global `mh` install, or a standalone binary.
 
 ## Why metahub
@@ -15,7 +19,10 @@ metahub is a local-first knowledge base CLI built on Bun + SQLite. It gives an A
 - **Local-first and syncable** — your data sits on your own disk and works offline; multiple machines merge cleanly, and edits to different paragraphs don't clobber each other.
 - **GUI and API included** — `mh --server` starts a browser WebUI (browse, inline-edit, full-text search), a `/api/*` REST interface, and auto-generated OpenAPI docs.
 
-<!-- TODO screenshots: docs/assets/webui.png (WebUI), docs/assets/desktop.png (desktop app) -->
+<p align="center">
+  <img src="./docs/assets/webui-table.png" alt="metahub WebUI — typed tables with select, multi-select, and checkbox columns" width="100%">
+</p>
+
 > Want to see the UI? Install the [desktop app](#install) or run `mh --server` and open `http://localhost:7777/`.
 
 ## Quick start
