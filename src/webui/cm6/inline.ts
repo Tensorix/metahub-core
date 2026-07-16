@@ -29,6 +29,7 @@ import {
 import type { Extension, Range, EditorSelection } from "@codemirror/state";
 import { docModel } from "./doc-model";
 import { tokenizeInline, type InlineToken } from "../inline-tokens";
+import { safeUrl } from "../../core/md/grammar.ts";
 
 const CLASS: Record<Exclude<InlineToken["kind"], "image">, string> = {
   code: "cm-code",
@@ -193,10 +194,13 @@ const linkClicks = EditorView.domEventHandlers({
     if (!(el instanceof HTMLElement) || !view.dom.contains(el)) return false;
     const mod = e.metaKey || e.ctrlKey;
     if (el.hasAttribute("data-md-revealed") && !mod) return false; // caret placement
-    const href = el.getAttribute("data-href");
-    if (!href) return false;
+    const raw = el.getAttribute("data-href");
+    if (!raw) return false;
     e.preventDefault();
-    window.open(href, "_blank", "noopener");
+    // Whitelist the scheme — a `javascript:`/`data:text/html` link from a synced
+    // doc must not open/execute; safeUrl returns "#" for anything rejected.
+    const href = safeUrl(raw);
+    if (href !== "#") window.open(href, "_blank", "noopener");
     return true;
   },
 });

@@ -33,6 +33,23 @@ test("media promotion only fires when the block is solely the embed", () => {
   );
 });
 
+test("a code block whose content contains a ``` line lengthens the fence and round-trips", () => {
+  const content = "print(1)\n```\nprint(2)"; // an interior triple-backtick line
+  const body = bodyFromBlocks([{ id: "a", type: "code" as const, content, lang: "py" }]);
+  // fence must be longer than the interior run so it can't close the block early
+  expect(body.startsWith("````py")).toBe(true);
+  const reparsed = blocksFromBody(body);
+  expect(reparsed).toHaveLength(1);
+  expect(reparsed[0]).toMatchObject({ type: "code", content, lang: "py" });
+});
+
+test("a code block with a 4-backtick run lengthens the fence to 5", () => {
+  const content = "a\n````\nb"; // four backticks inside
+  const body = bodyFromBlocks([{ id: "a", type: "code" as const, content }]);
+  expect(body.startsWith("`````")).toBe(true);
+  expect(blocksFromBody(body)[0]).toMatchObject({ type: "code", content });
+});
+
 test("textToBlock recognises each block type", () => {
   expect(textToBlock("# Title").type).toBe("h1");
   expect(textToBlock("## Title").type).toBe("h2");

@@ -16,12 +16,15 @@ import { Icon } from "../icons.tsx";
 import { escapeHtml } from "../markdown.tsx";
 import { applyTaEdit, formatTaEdit } from "./code-edit.ts";
 
-/** Highlight code to HTML for the overlay layer. Falls back to escaped text. */
+/** Highlight code to HTML for the overlay layer. A known language is highlighted;
+ *  no/unknown language falls back to escaped plain text rather than hljs's
+ *  all-language `highlightAuto` probe, which is expensive to run on every repaint
+ *  (and often guesses wrong). Set a language on the block to get highlighting. */
 export function highlightCode(code: string, lang?: string): string {
   try {
-    return lang && hljs.getLanguage(lang)
-      ? hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
-      : hljs.highlightAuto(code).value;
+    if (lang && hljs.getLanguage(lang))
+      return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+    return escapeHtml(code);
   } catch {
     return escapeHtml(code);
   }
@@ -119,6 +122,8 @@ export function CodeEditorBody({
   const hlRef = useRef<HTMLElement>(null);
   const gutRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const paintRaf = useRef<number | null>(null);
+  const prevLineCount = useRef(-1);
 
   const setTa = (el: HTMLTextAreaElement | null) => {
     innerRef.current = el;
@@ -129,18 +134,39 @@ export function CodeEditorBody({
   // numbers of whichever gutter the current mode shows (flex column / CSS
   // counters sized by --code-ln-ch), and grow the textarea to fit its content
   // (so the block has no inner vertical scroll).
-  const paint = (value: string) => {
-    if (hlRef.current) {
-      const lines = highlightCodeLines(value, lang);
-      hlRef.current.innerHTML = lines
-        .map((h) => `<div class="code-hl-line">${h}</div>`)
-        .join("");
+  // Re-highlight the mirror + line numbers. The highlight (detached-DOM parse +
+  // tree walk) is the expensive part, so it's coalesced to one run per animation
+  // frame (see `paint`); the gutter/`--code-ln-ch` only rebuild when the line
+  // count actually changes.
+  const paintHighlight = (value: string) => {
+    if (!hlRef.current) return;
+    const lines = highlightCodeLines(value, lang);
+    hlRef.current.innerHTML = lines
+      .map((h) => `<div class="code-hl-line">${h}</div>`)
+      .join("");
+    if (lines.length !== prevLineCount.current) {
+      prevLineCount.current = lines.length;
       bodyRef.current?.style.setProperty("--code-ln-ch", `${String(lines.length).length}ch`);
       if (gutRef.current) {
         let s = "1";
         for (let i = 2; i <= lines.length; i++) s += "\n" + i;
         gutRef.current.textContent = s;
       }
+    }
+  };
+
+  const paint = (value: string) => {
+    // Coalesce highlight repaints so a burst of keystrokes doesn't re-highlight
+    // on every key — the textarea (source of truth) stays instant; a brief
+    // unhighlighted flash between frames is acceptable.
+    if (typeof requestAnimationFrame === "undefined") {
+      paintHighlight(value);
+    } else {
+      if (paintRaf.current != null) cancelAnimationFrame(paintRaf.current);
+      paintRaf.current = requestAnimationFrame(() => {
+        paintRaf.current = null;
+        paintHighlight(value);
+      });
     }
     const ta = innerRef.current;
     if (ta) { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; }
@@ -183,6 +209,14 @@ export function CodeEditorBody({
     ta.style.height = "auto";
     ta.style.height = ta.scrollHeight + "px";
   }, [wrap]);
+
+  // Drop any pending coalesced highlight when the block unmounts.
+  useEffect(
+    () => () => {
+      if (paintRaf.current != null) cancelAnimationFrame(paintRaf.current);
+    },
+    [],
+  );
 
   return (
     <div ref={bodyRef} class={"code-body" + (wrap ? " wrap" : "")}>

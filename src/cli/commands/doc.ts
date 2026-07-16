@@ -226,14 +226,18 @@ const edit = defineCommand({
     const db = openMetahub();
     const id = docId(db, args.id);
 
-    // Batch: one atomic, single-versioned pass over N pairs. Mutually exclusive
-    // with the single-pair flags so intent is never ambiguous.
+    // Batch: one validate-before-write, single-versioned pass over N pairs.
+    // Mutually exclusive with the single-pair flags so intent is never ambiguous.
     if (args.edits != null) {
       if (args.old != null || args.new != null || args["replace-all"])
         throw new MhError("invalid_input", "use --old/--new/--replace-all or --edits, not both");
       const edits = parseEditPairs(await resolveJson(args.edits));
       const r = editDocumentBatch(db, id, { edits, ifMatch: args["if-match"] });
-      print(r, () => `edited ${r.id} (${r.replaced} replaced across ${edits.length} edit(s))`);
+      print(r, () =>
+        r.changed
+          ? `edited ${r.id} (${r.replaced} replaced across ${edits.length} edit(s))`
+          : `no change: ${r.id}`,
+      );
       return;
     }
 
@@ -246,7 +250,7 @@ const edit = defineCommand({
       replaceAll: args["replace-all"],
       ifMatch: args["if-match"],
     });
-    print(r, () => `edited ${r.id} (${r.replaced} replaced)`);
+    print(r, () => (r.changed ? `edited ${r.id} (${r.replaced} replaced)` : `no change: ${r.id}`));
   }),
 });
 

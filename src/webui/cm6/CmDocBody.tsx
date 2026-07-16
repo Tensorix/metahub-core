@@ -53,9 +53,11 @@ const acceptFor = (type: BlockType): string =>
 
 // Boundary healing (idempotent; applies on load and on every remote setDoc):
 // stripStaleUploadLines drops the old upload pipeline's literal placeholder
-// lines, healLegacyMarkdown (core/md/heal — the same repair blocksFromBody and
-// the share renderer apply) restores pre-strict-grammar forms: empty todos
-// `- [ ]` → `- [ ] `, and bare-`>` quote gaps → `> `.
+// lines, healLegacyMarkdown (core/md/heal — the same repair the share renderer
+// applies at its read boundary) restores pre-strict-grammar forms: empty todos
+// `- [ ]` → `- [ ] `, and bare-`>` quote gaps → `> `. NB: the save parser
+// blocksFromBody deliberately does NOT heal (`- [ ]` is ambiguous there) — this
+// load boundary is where the repair happens.
 const norm = (s: string) => healLegacyMarkdown(stripStaleUploadLines(s.replace(/\r\n?/g, "\n")));
 
 /** Replace the whole doc with a minimal single-range change so CM maps the caret

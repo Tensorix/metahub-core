@@ -11,9 +11,7 @@
 // horizontal padding, and an empty paragraph line is 14×1.6 + 8 = 30.4px tall.
 
 import { EditorView } from "@codemirror/view";
-
-/** Max list nesting depth that gets its own indent/guide rule. */
-const MAX_NEST = 8;
+import { MAX_NEST } from "./blockmodel"; // single source of truth for nesting depth
 /** Visual indent per list nesting level, in px (mirrors block-deco's level model). */
 const INDENT_STEP = 24;
 /** Marker-column width for list lines (see block-deco.ts GUTTER). */
@@ -37,8 +35,8 @@ function nestRules(): Record<string, Record<string, string>> {
     // item): aligned to the parent item's content column; +2px is the base
     // horizontal line padding it overrides.
     ".cm-nested": { paddingLeft: "calc(var(--nest, 0px) + 2px)" },
-    // An indented void widget: same grid, but `.cm-void`'s `padding: 3px 0`
-    // shorthand zeroes padding-left at equal specificity — this two-class rule
+    // An indented void widget: same grid, but `.cm-void`'s `padding: 3px 2px`
+    // shorthand fixes padding-left at equal specificity — this two-class rule
     // wins on specificity, not on rule order, so the theme can't silently break.
     ".cm-void.cm-nested": { paddingLeft: "calc(var(--nest, 0px) + 2px)" },
     // Quote: 16px between the 3px rule and the text (old:

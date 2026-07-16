@@ -120,6 +120,11 @@ export function ImageAnnotator({
   // Ref mirror so blur + Escape (which fire before re-render) can't double-commit.
   const textEditRef = useRef<TextEdit | null>(null);
   const openText = (te: TextEdit | null) => { textEditRef.current = te; setTextEdit(te); };
+  // Ref mirror of shapes so EVERY redraw paints the live list — including the
+  // window-resize handler, whose effect closure is bound once at mount and would
+  // otherwise redraw the empty mount-time array, blanking all drawn annotations.
+  const shapesRef = useRef<Shape[]>([]);
+  shapesRef.current = shapes;
 
   const sizeCanvas = () => {
     const img = imgRef.current, cv = canvasRef.current;
@@ -140,7 +145,7 @@ export function ImageAnnotator({
     ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // shapes stay in display px
     const skip = textEditRef.current?.editIndex;
-    shapes.forEach((s, i) => { if (i !== skip) drawShape(ctx, s, 1); });
+    shapesRef.current.forEach((s, i) => { if (i !== skip) drawShape(ctx, s, 1); });
     if (draft.current) drawShape(ctx, draft.current, 1);
   };
   useEffect(redraw, [shapes, textEdit]);

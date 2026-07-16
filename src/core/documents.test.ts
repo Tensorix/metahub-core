@@ -216,6 +216,52 @@ test("editDocumentBatch leaves code fences and tables byte-identical when editin
   );
 });
 
+test("edit writes the replacement verbatim — no $-pattern expansion", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "price is X here" });
+  // `$&`/`$$`/`` $` `` would be expanded by a string replacement; the function
+  // replacer must write them literally.
+  editDocument(db, doc.id, { old: "X", new: "$& $$5 $`" });
+  expect(getDocument(db, doc.id)!.body).toBe("price is $& $$5 $` here");
+});
+
+test("editDocumentBatch writes replacements verbatim — no $-pattern expansion", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "a b" });
+  editDocumentBatch(db, doc.id, {
+    edits: [
+      { old: "a", new: "$&" },
+      { old: "b", new: "$$1" },
+    ],
+  });
+  expect(getDocument(db, doc.id)!.body).toBe("$& $$1");
+});
+
+test("editDocumentBatch that nets no change reports changed:false", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "cat" });
+  const v = documentVersion(db, doc.id);
+  const r = editDocumentBatch(db, doc.id, {
+    edits: [
+      { old: "cat", new: "dog" },
+      { old: "dog", new: "cat" },
+    ],
+  });
+  expect(r.changed).toBe(false); // body identical to the original
+  expect(r.replaced).toBe(2); // pairs still applied and folded
+  expect(getDocument(db, doc.id)!.body).toBe("cat");
+  expect(documentVersion(db, doc.id)).toBe(v); // no write, no version bump
+});
+
+test("single edit with old === new reports changed:false and does not bump version", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "T", body: "hello world" });
+  const v = documentVersion(db, doc.id);
+  const r = editDocument(db, doc.id, { old: "world", new: "world" });
+  expect(r.changed).toBe(false);
+  expect(documentVersion(db, doc.id)).toBe(v);
+});
+
 test("edit that introduces a block break splits into blocks", () => {
   const db = makeNode("aaaa");
   const doc = createDocument(db, { title: "T", body: "intro here" });

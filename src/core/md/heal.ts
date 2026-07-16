@@ -71,8 +71,19 @@ export function healLegacyMarkdown(src: string): string {
       lines[i] = line + " ";
       changed = true;
     } else if (BARE_QUOTE.test(line) && (quoteish(i - 1) || quoteish(i + 1))) {
-      // Top-down pass: a healed `>` becomes `> `, so a RUN of bare `>`s inside
-      // a quote heals transitively via the quoteish(i - 1) check.
+      // Top-down pass: a healed `>` becomes `> `, so a RUN of bare `>`s heals
+      // transitively DOWNWARD via the quoteish(i - 1) check.
+      lines[i] = line + " ";
+      changed = true;
+    }
+  }
+  // Backward pass: a run of bare `>` at the START of a quote (no real quote line
+  // above it) can't heal top-down — when i is visited, the line below is still
+  // bare. Propagate UPWARD so the whole leading run heals off the first `> text`.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (inFence[i]) continue;
+    const line = lines[i]!;
+    if (BARE_QUOTE.test(line) && (quoteish(i - 1) || quoteish(i + 1))) {
       lines[i] = line + " ";
       changed = true;
     }

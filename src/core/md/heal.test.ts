@@ -67,6 +67,13 @@ describe("healLegacyMarkdown: bare-> quote gaps", () => {
     expect(healLegacyMarkdown("> a\n>\n>\n> b")).toBe("> a\n> \n> \n> b");
   });
 
+  test("a RUN of bare > at the START of a quote heals upward off the first quote line", () => {
+    // No quote line above the run — the top-down pass alone leaves the first
+    // line(s) bare; the backward pass propagates the heal up the whole run.
+    expect(healLegacyMarkdown(">\n>\n> b")).toBe("> \n> \n> b");
+    expect(healLegacyMarkdown(">\n>\n>\n> b")).toBe("> \n> \n> \n> b");
+  });
+
   test("leading/trailing bare > adjacent to a quote line heals", () => {
     expect(healLegacyMarkdown(">\n> b")).toBe("> \n> b");
     expect(healLegacyMarkdown("> a\n>")).toBe("> a\n> ");

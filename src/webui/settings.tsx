@@ -7,6 +7,7 @@ import { encodeEnroll } from "../core/sync/enroll.ts";
 import { Icon, CUBE_OUTER, CUBE_INNER } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { getWordCountEnabled, setWordCountEnabled } from "./wordcount.ts";
+import { timeAgo } from "./date.ts";
 import { api, currentToken, type Peer, type Grant, type S3Peer, type BlobCacheInfo } from "./api.ts";
 import {
   replicaEnabled,
@@ -306,17 +307,6 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-/** Coarse "时间前" label for the last anchor-presence verify. */
-function fmtAgo(ts: number): string {
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return "刚刚";
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} 分钟前`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.round(h / 24)} 天前`;
-}
-
 /** A verify older than this (or never) makes an over-quota cache "stuck" — surfaced
  *  so "over quota but not evicting" reads as offline/stale, not a broken quota. */
 const VERIFY_STALE_MS = 5 * 60 * 1000;
@@ -560,7 +550,7 @@ function BlobCacheSettings({ scope }: { scope: Scope }) {
             {verifying
               ? ""
               : info.lastVerifiedAt != null
-                ? `${fmtAgo(info.lastVerifiedAt)}检查过`
+                ? `${timeAgo(info.lastVerifiedAt)}检查过`
                 : "未检查"}
           </div>
         </div>

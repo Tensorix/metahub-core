@@ -60,15 +60,10 @@ export interface Block {
   indent?: number;
 }
 
-/** Embeds carried by the `![](url)` / `[](url)` / ```mh-html grammar — promoted to
- *  a block-level widget only when the block's whole text is the embed. */
-export type MediaKind = "image" | "video" | "audio" | "file";
-
-// HTML_FENCE moved to ../core/md/grammar.ts (re-exported below).
-
-const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "m4v", "ogv", "mkv", "ogg"]);
-const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "opus", "oga", "weba"]);
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "bmp", "ico", "apng"]);
+// HTML_FENCE and the media-embed grammar (MediaKind / matchMediaEmbed /
+// parseMediaUrl / extOf / imageSyntaxKind + ext tables) moved to
+// ../core/md/grammar.ts so the share renderer classifies a standalone media line
+// through the exact same predicate. Re-exported below for webui consumers.
 
 /** Void-embed block type for an uploaded file, by its MIME type. Drives the
  *  drop/paste pipeline (image|video|audio render inline, everything else → file). */
@@ -78,41 +73,6 @@ export function mediaKindFromMime(mime: string): MediaKind {
   if (m.startsWith("video/")) return "video";
   if (m.startsWith("audio/")) return "audio";
   return "file";
-}
-
-/** Lowercased file extension of a URL (no query/fragment), or "". */
-function extOf(url: string): string {
-  const clean = url.split(/[?#]/, 1)[0] ?? url;
-  const base = clean.slice(clean.lastIndexOf("/") + 1);
-  const dot = base.lastIndexOf(".");
-  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
-}
-
-/** Which `![](url)` embed a media URL is, by extension. Image syntax never maps
- *  to "file": an unknown extension written as `![]()` is treated as an image. */
-function imageSyntaxKind(ext: string): "image" | "video" | "audio" {
-  if (VIDEO_EXTS.has(ext)) return "video";
-  if (AUDIO_EXTS.has(ext)) return "audio";
-  return "image";
-}
-
-/** Split a media URL into its base src and an optional `w=` width, preserving any
- *  other query params / fragment (external images may carry signed tokens). */
-function parseMediaUrl(url: string): { src: string; width?: number } {
-  const hash = url.indexOf("#");
-  const frag = hash >= 0 ? url.slice(hash) : "";
-  const noFrag = hash >= 0 ? url.slice(0, hash) : url;
-  const q = noFrag.indexOf("?");
-  if (q < 0) return { src: url };
-  const base = noFrag.slice(0, q);
-  let width: number | undefined;
-  const kept: string[] = [];
-  for (const p of noFrag.slice(q + 1).split("&").filter(Boolean)) {
-    const m = p.match(/^w=(\d+)$/);
-    if (m) width = parseInt(m[1]!, 10);
-    else kept.push(p);
-  }
-  return { src: base + (kept.length ? "?" + kept.join("&") : "") + frag, width };
 }
 
 /** Re-attach an image block's width as a `?w=` query on its src. */
@@ -131,22 +91,12 @@ function safeLabel(s: string): string {
  *  `![alt](url)` (kind by extension); file uses a `[name](/blob/..)` link so a
  *  plain standalone hyperlink stays a paragraph. */
 export function matchMediaLine(line: string): BlockDraft | null {
-  const t = line.trim();
-  let m = t.match(/^!\[([^\]]*)\]\(([^\s)]+)\)$/);
-  if (m) {
-    const { src, width } = parseMediaUrl(m[2]!);
-    const type = imageSyntaxKind(extOf(src));
-    const b: BlockDraft = { type, content: "", src, name: m[1]! };
-    if (type === "image" && width) b.width = width;
-    return b;
-  }
-  m = t.match(/^\[([^\]]*)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)$/);
-  if (m && m[2]!.startsWith("/blob/")) {
-    const b: BlockDraft = { type: "file", content: "", src: m[2]!, name: m[1]! };
-    if (m[3] != null && /^\d+$/.test(m[3])) b.size = parseInt(m[3], 10);
-    return b;
-  }
-  return null;
+  const m = matchMediaEmbed(line);
+  if (!m) return null;
+  const b: BlockDraft = { type: m.kind, content: "", src: m.src, name: m.name };
+  if (m.width != null) b.width = m.width;
+  if (m.size != null) b.size = m.size;
+  return b;
 }
 
 function isMediaType(type: BlockType): boolean {
@@ -178,7 +128,9 @@ export {
   cleanLang,
   looksLikeTableAt,
   splitTableRow,
+  matchMediaEmbed,
   type ListLine,
+  type MediaKind,
 } from "../core/md/grammar.ts";
 import {
   RE,
@@ -191,6 +143,7 @@ import {
   cleanLang,
   looksLikeTableAt,
   splitTableRow,
+  matchMediaEmbed,
 } from "../core/md/grammar.ts";
 
 export interface Parsed {
@@ -702,6 +655,16 @@ function escapeFenceLine(line: string): string {
   return RE_FENCE_LIKE.test(line) ? `\\${line}` : line;
 }
 
+/** A backtick fence long enough to wrap `content`: one longer than the longest
+ *  run of backticks inside it (min 3). Escaping fence lines the way prose does
+ *  would corrupt code/HTML content, so code & html blocks lengthen the fence
+ *  instead — a ``` line in the body then can't close the block early. */
+function fenceFor(content: string): string {
+  let longest = 0;
+  for (const run of content.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
 function unescapeFenceLine(line: string): string {
   return line.startsWith("\\") && RE_FENCE_LIKE.test(line.slice(1)) ? line.slice(1) : line;
 }
@@ -724,7 +687,17 @@ function startsLeafBlock(line: string, minIndent: number): boolean {
   // deeper-indented heading/quote mid-paragraph must break the paragraph here
   // exactly like it starts its own block on screen.
   const text = stripIndent(line, Number.MAX_SAFE_INTEGER);
-  return !!text.match(RE.fenceOpen) || !!text.match(RE.h) || RE.divider.test(text.trim()) || matchQuoteLine(text) !== null;
+  // A standalone media/file embed is its own block (the editor scan promotes it
+  // to a void) — so it must break a paragraph here too, or `caption\n![](url)`
+  // (no blank line) would fold into one paragraph on save while the editor shows
+  // two blocks. Keeps the same bytes consistent across editor/save/share.
+  return (
+    !!text.match(RE.fenceOpen) ||
+    !!text.match(RE.h) ||
+    RE.divider.test(text.trim()) ||
+    matchQuoteLine(text) !== null ||
+    matchMediaEmbed(text) !== null
+  );
 }
 
 // matchListLine moved to ../core/md/grammar.ts (re-exported above).
@@ -744,9 +717,10 @@ function renderBlock(block: Block, indent: number, number: number): string[] {
       // `>` (a bare `>` is a mid-typing paragraph, not an empty quote line).
       return block.content.split("\n").map((line) => `${pad}> ${line}`);
     case "code": {
-      const first = `${pad}\`\`\`${block.lang ? cleanLang(block.lang) : ""}`;
+      const fence = fenceFor(block.content);
+      const first = `${pad}${fence}${block.lang ? cleanLang(block.lang) : ""}`;
       const body = block.content.split("\n").map((line) => `${pad}${line}`);
-      return [first, ...body, `${pad}\`\`\``];
+      return [first, ...body, `${pad}${fence}`];
     }
     case "table":
       return renderTable(block, indent);
@@ -761,9 +735,10 @@ function renderBlock(block: Block, indent: number, number: number): string[] {
       return [`${pad}[${safeLabel(block.name ?? "文件")}](${block.src ?? ""}${title})`];
     }
     case "html": {
-      const first = `${pad}\`\`\`${HTML_FENCE}`;
+      const fence = fenceFor(block.content);
+      const first = `${pad}${fence}${HTML_FENCE}`;
       const body = block.content.split("\n").map((line) => `${pad}${line}`);
-      return [first, ...body, `${pad}\`\`\``];
+      return [first, ...body, `${pad}${fence}`];
     }
     case "uploading":
       return []; // transient placeholder — never serialized

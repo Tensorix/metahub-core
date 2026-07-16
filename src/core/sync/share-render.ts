@@ -17,9 +17,12 @@ import {
   isFenceClose,
   looksLikeTableAt,
   matchListLine,
+  matchMediaEmbed,
   matchQuoteLine,
+  safeUrl,
   splitTableRow,
   stripIndent,
+  type MediaLine,
 } from "../md/grammar.ts";
 import { tokenizeInline } from "../md/inline.ts";
 import { healLegacyMarkdown } from "../md/heal.ts";
@@ -47,7 +50,7 @@ export function renderInline(src: string, opts: RenderOpts = {}): string {
   for (const t of tokens) {
     out += escapeHtml(src.slice(pos, t.start));
     const inner = src.slice(t.innerFrom, t.innerTo);
-    const url = rewrite(t.url ?? "", opts).replace(/"/g, "&quot;");
+    const rawUrl = rewrite(t.url ?? "", opts);
     switch (t.kind) {
       case "code":
         out += `<code>${escapeHtml(inner)}</code>`;
@@ -61,12 +64,18 @@ export function renderInline(src: string, opts: RenderOpts = {}): string {
       case "del":
         out += `<del>${escapeHtml(inner)}</del>`;
         break;
-      case "link":
-        out += `<a href="${url}" target="_blank" rel="noreferrer noopener">${escapeHtml(inner)}</a>`;
+      case "link": {
+        // Whitelist the scheme so a hostile `javascript:`/`data:text/html` href
+        // from a shared doc can't execute when a page visitor clicks it.
+        const href = safeUrl(rawUrl).replace(/"/g, "&quot;");
+        out += `<a href="${href}" target="_blank" rel="noreferrer noopener">${escapeHtml(inner)}</a>`;
         break;
-      case "image":
-        out += `<img src="${url}" alt="${escapeHtml(t.alt ?? "")}" loading="lazy">`;
+      }
+      case "image": {
+        const imgSrc = safeUrl(rawUrl, { allowData: true }).replace(/"/g, "&quot;");
+        out += `<img src="${imgSrc}" alt="${escapeHtml(t.alt ?? "")}" loading="lazy">`;
         break;
+      }
     }
     pos = t.end;
   }
@@ -76,6 +85,24 @@ export function renderInline(src: string, opts: RenderOpts = {}): string {
 function rewrite(url: string, opts: RenderOpts): string {
   if (opts.rewriteBlob && url.startsWith("/blob/")) return opts.rewriteBlob(url);
   return url;
+}
+
+/** Render a standalone non-image media/file embed by kind, so video/audio play
+ *  and a file becomes a download link instead of degrading to a broken <img> or
+ *  a bare hyperlink (image is rendered inline by the caller). */
+function renderMedia(m: MediaLine, opts: RenderOpts): string {
+  const raw = rewrite(m.src, opts);
+  if (m.kind === "video") {
+    const src = safeUrl(raw, { allowData: true }).replace(/"/g, "&quot;");
+    return `<p class="mh-media"><video src="${src}" controls preload="metadata"></video></p>`;
+  }
+  if (m.kind === "audio") {
+    const src = safeUrl(raw, { allowData: true }).replace(/"/g, "&quot;");
+    return `<p class="mh-media"><audio src="${src}" controls preload="metadata"></audio></p>`;
+  }
+  // file
+  const href = safeUrl(raw).replace(/"/g, "&quot;");
+  return `<p class="mh-file"><a href="${href}" download>${escapeHtml(m.name || "file")}</a></p>`;
 }
 
 /** Render a markdown body to an HTML string (block-level). */
@@ -218,10 +245,17 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
       continue;
     }
 
-    // Standalone image line → block image (avoid wrapping in <p>).
-    if (/^\s*!\[[^\]]*\]\([^)\s]+\)\s*$/.test(line)) {
+    // Standalone media/file embed → its own block (the same predicate the editor
+    // scan and save parser use). Image renders inline as before; video/audio/file
+    // render by kind so they don't degrade to a broken <img> or a bare link.
+    const media = matchMediaEmbed(line);
+    if (media) {
       flushPara();
-      out.push(`<p class="mh-img">${renderInline(line.trim(), opts)}</p>`);
+      out.push(
+        media.kind === "image"
+          ? `<p class="mh-img">${renderInline(line.trim(), opts)}</p>`
+          : renderMedia(media, opts),
+      );
       i++;
       continue;
     }

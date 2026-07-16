@@ -435,20 +435,32 @@ export const editDocument = grouped(function editDocument(
   // Fast path: edit stays within single blocks and introduces no block break.
   if (!opts.old.includes("\n\n")) {
     const affected = blocks.filter((b) => b.text.includes(opts.old));
+    // Function replacer → the new text is written verbatim; a string replacement
+    // would expand `$&`/`$$`/`` $` ``/`$'` in the user's value.
     const next = affected.map((b) =>
-      opts.replaceAll ? b.text.replaceAll(opts.old, opts.new) : b.text.replace(opts.old, opts.new),
+      opts.replaceAll
+        ? b.text.replaceAll(opts.old, () => opts.new)
+        : b.text.replace(opts.old, () => opts.new),
     );
     if (next.every((t) => t.length > 0 && !t.includes("\n\n"))) {
       const targets = opts.replaceAll ? affected : affected.slice(0, 1);
-      targets.forEach((b, i) => emit(db, "doc_blocks", b.id, "text", next[i]!));
-      return { id, changed: true, replaced: opts.replaceAll ? count : 1, version: documentVersion(db, id) };
+      // Skip a no-op emit (old === new) so a pure no-change doesn't bump the
+      // version, and `changed` reports the real effect.
+      let wrote = false;
+      targets.forEach((b, i) => {
+        if (next[i] !== b.text) {
+          emit(db, "doc_blocks", b.id, "text", next[i]!);
+          wrote = true;
+        }
+      });
+      return { id, changed: wrote, replaced: opts.replaceAll ? count : 1, version: documentVersion(db, id) };
     }
   }
 
   // General path: rewrite the body and reconcile (handles spans/splits/merges).
   const newBody = opts.replaceAll
-    ? body.replaceAll(opts.old, opts.new)
-    : body.replace(opts.old, opts.new);
+    ? body.replaceAll(opts.old, () => opts.new)
+    : body.replace(opts.old, () => opts.new);
   reconcileBody(db, id, newBody);
   return { id, changed: newBody !== body, replaced: opts.replaceAll ? count : 1, version: documentVersion(db, id) };
 });
@@ -461,13 +473,16 @@ export interface EditPair {
 }
 
 /**
- * Apply several anchored find/replaces in one atomic, single-versioned pass —
- * the batch form of {@link editDocument}. Pairs fold left-to-right over the
- * evolving body (a later `old` can match an earlier `new`), every pair is
- * validated before anything is written, and the whole batch commits as one
- * grouped txn (one revision, one version bump). Any failing pair (empty/missing/
- * ambiguous anchor) aborts the batch with the document untouched. `ifMatch` is
+ * Apply several anchored find/replaces in one single-versioned pass — the batch
+ * form of {@link editDocument}. Pairs fold left-to-right over the evolving body
+ * (a later `old` can match an earlier `new`), EVERY pair is validated before
+ * anything is written (validate-all-before-write), so any failing pair (empty/
+ * missing/ambiguous anchor) aborts with the document untouched. The writes then
+ * land in one oplog change-group (one revision, one version bump). `ifMatch` is
  * checked once up front, so callers need only a single `doc read` for N deltas.
+ * NB: "one pass" here is validate-before-write + single-version, NOT a DB
+ * transaction — like every `grouped` mutator, there is no cross-process lock or
+ * rollback; concurrent writers reconcile via the block-level CRDT / LWW.
  */
 export const editDocumentBatch = grouped(function editDocumentBatch(
   db: DbDriver,
@@ -499,7 +514,8 @@ export const editDocumentBatch = grouped(function editDocumentBatch(
         `edit[${i}]: ${count} matches for old; add surrounding context or set replaceAll`,
       );
     const repl = e.new ?? "";
-    body = e.replaceAll ? body.replaceAll(e.old, repl) : body.replace(e.old, repl);
+    // Function replacer → `repl` is written verbatim (no `$&`/`$$` expansion).
+    body = e.replaceAll ? body.replaceAll(e.old, () => repl) : body.replace(e.old, () => repl);
     total += e.replaceAll ? count : 1;
   });
 

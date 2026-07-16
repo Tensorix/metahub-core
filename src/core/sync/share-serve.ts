@@ -525,6 +525,8 @@ function pageShell(
   td[contenteditable]{outline:none} td.saving{opacity:.5} td.saved{background:rgba(46,160,67,.18)}
   .tag{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:12px}
   .muted{color:var(--muted)} .mh-img{text-align:center}
+  .mh-media{text-align:center} .mh-media video,.mh-media audio{max-width:100%}
+  .mh-file a{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;color:var(--accent);text-decoration:none}
   iframe.mh-embed{width:100%;border:1px solid var(--line);border-radius:8px;min-height:240px}
   textarea.mh-raw{width:100%;min-height:60vh;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
   ul.files{list-style:none;padding:0} ul.files li{padding:4px 0} button.file{background:none;border:0;color:var(--accent);cursor:pointer;font-size:15px;padding:0}

@@ -43,6 +43,7 @@ export function DocView({
 }) {
   const sourceRef = useRef("");
   const titleRef = useRef("");
+  const titleElRef = useRef<HTMLDivElement | null>(null);
   const sharedTargets = useSharedTargets();
   const [mode, setModeState] = useState<DocMode>("blocks");
   const [version, setVersion] = useState(0);
@@ -163,6 +164,15 @@ export function DocView({
     loadDoc();
     return () => clearTimeout(saveTimer.current);
   }, [docId]);
+
+  // Seed the contentEditable title from the ref on every load / remote-merge
+  // (both bump `version`). Writing textContent keeps the title uncontrolled —
+  // no innerHTML, no framework-managed children — so a synced title can never
+  // inject HTML (stored XSS) and typing never triggers a caret-resetting render.
+  useEffect(() => {
+    const el = titleElRef.current;
+    if (el && el.textContent !== titleRef.current) el.textContent = titleRef.current;
+  }, [version]);
 
   // Unsaved work (debounce window, failed save being retried) shouldn't be
   // lost to a casual tab close — ask the browser to confirm.
@@ -367,13 +377,13 @@ export function DocView({
       <div
         class="doc-title"
         contentEditable
+        ref={titleElRef}
         onInput={(e) => { titleRef.current = (e.target as HTMLElement).textContent ?? ""; scheduleSave(); }}
         onKeyDown={(e) => {
           if (e.isComposing || e.keyCode === 229) return;
           if (e.key === "Enter") { e.preventDefault(); enterBody(); return; }
           if (e.key === "ArrowDown" && caretLineEdge(e.currentTarget as HTMLElement).last) { e.preventDefault(); enterBody(); }
         }}
-        dangerouslySetInnerHTML={{ __html: titleRef.current }}
       />
       <div class="doc-meta">
         <SyncStamp />

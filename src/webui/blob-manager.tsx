@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
+import { timeAgo } from "./date.ts";
 import {
   Modal,
   openModal,
@@ -110,17 +111,6 @@ function fmtBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-function fmtAgo(ts: number | null): string {
-  if (!ts) return "—";
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return "刚刚";
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} 分钟前`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.round(h / 24)} 天前`;
 }
 
 type Kind = "image" | "video" | "audio" | "file" | "other";
@@ -498,7 +488,7 @@ function BlobManager({ source }: { source: BlobSource }) {
                   </div>
                   <span class="blob-mgr-r blob-mgr-size">{fmtBytes(b.size)}</span>
                   <span class={"blob-mgr-badge s-" + status}>{STATUS_LABEL[status]}</span>
-                  <span class="blob-mgr-age">{fmtAgo(b.lastAccess)}</span>
+                  <span class="blob-mgr-age">{b.lastAccess ? timeAgo(b.lastAccess) : "—"}</span>
                   <button
                     class={"blob-mgr-pin" + (b.pinned ? " on" : "")}
                     disabled={busy || b.pending}

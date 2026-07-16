@@ -141,7 +141,12 @@ export function enterCommand(view: EditorView): boolean {
   // left verbatim.
   if (line.role === "p" && sel.head === line.to) {
     const m = line.text.match(RE.fenceOpen);
-    if (m) {
+    // Auto-complete only when the line is EXACTLY a fence opener (`\`\`\`` +
+    // optional pure lang, no trailing content) — matching fenceContinuation's
+    // strictness. The shared RE.fenceOpen tolerates a trailing info string
+    // (CommonMark-correct for the parser), but a prose line like `\`\`\`not code`
+    // must not silently become a code block on Enter.
+    if (m && line.text.slice(line.indentChars) === m[1]! + (m[2] ?? "")) {
       const indent = line.text.slice(0, line.indentChars);
       const close = m[1]![0]!.repeat(m[1]!.length); // same char (` or ~), same length
       const caret = line.to + 1 + indent.length;

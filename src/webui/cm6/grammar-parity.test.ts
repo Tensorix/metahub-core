@@ -128,6 +128,28 @@ test("parity: UNCLOSED fence is prose everywhere (editor semantics)", () => {
   expect(renderMarkdown(doc)).not.toContain("<pre");
 });
 
+test("parity: a media line right after prose (no blank) is its own block on all surfaces", () => {
+  const doc = "caption\n![shot](/blob/abcdef0123456789.png)";
+  // editor scan: a prose line + an image void (two blocks)
+  const scan = scanDoc(doc);
+  expect(scan.lines.map((l) => l.role)).toEqual(["p", "void"]);
+  expect(scan.voids.map((v) => v.kind)).toEqual(["image"]);
+  // save parser: must NOT fold the image into the caption paragraph
+  expect(blocksFromBody(doc).map((b) => b.type)).toEqual(["p", "image"]);
+  // share render: caption paragraph + image block
+  const html = renderMarkdown(doc);
+  expect(html).toContain("<p>caption</p>");
+  expect(html).toContain('class="mh-img"');
+});
+
+test("share: standalone video/audio/file render by kind, not a broken img or bare link", () => {
+  expect(renderMarkdown("![clip](/blob/deadbeefdeadbeef.mp4)")).toContain("<video");
+  expect(renderMarkdown("![tune](/blob/deadbeefdeadbeef.mp3)")).toContain("<audio");
+  const file = renderMarkdown('[report.zip](/blob/feedfacefeedface.zip "10240")');
+  expect(file).toContain('class="mh-file"');
+  expect(file).toContain("download");
+});
+
 test("parity: fence close must be at least the opener's length", () => {
   // ```` opened; a ``` line does NOT close it (editor scans one 4-line void).
   const doc = "````\ncode\n```\n````";

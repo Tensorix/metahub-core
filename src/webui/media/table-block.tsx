@@ -41,6 +41,7 @@ export function focusCellEnd(root: ParentNode, r: number, c: number): boolean {
 
 export function TableBlock({
   block, renderKey, onCellInput, onTableChange, cellSel, onCellSel,
+  onCellCompositionStart, onCellCompositionEnd,
 }: {
   block: Block;
   renderKey: number;
@@ -48,6 +49,8 @@ export function TableBlock({
   onTableChange: () => void;
   cellSel: CellSel | null;
   onCellSel: (sel: CellSel | null) => void;
+  onCellCompositionStart?: (r: number, c: number) => void;
+  onCellCompositionEnd?: (r: number, c: number, value: string) => void;
 }) {
   const rows = block.rows ?? [];
   const cols = rows[0]?.length ?? 0;
@@ -56,6 +59,11 @@ export function TableBlock({
   const rect = cellSel ? normRect(cellSel) : null;
   const widths = useRef<number[]>([]);
   const [manual, setManual] = useState(false);
+  // Teardown for an in-flight touch long-press gesture (window listeners + timer
+  // registered imperatively below). Parked here so an unmount mid-gesture — e.g.
+  // a remote merge rebuilding this void — can't leak them onto the dead host.
+  const gestureTeardown = useRef<(() => void) | null>(null);
+  useEffect(() => () => gestureTeardown.current?.(), []);
   // Manual mode only: keep the session-only width array sized to the column
   // count; new columns inherit the default, existing widths survive re-renders.
   if (manual && widths.current.length !== cols) {
@@ -71,12 +79,14 @@ export function TableBlock({
   const insertCol = (at: number) => {
     block.rows = rows.map((r) => { const n = [...r]; n.splice(at, 0, ""); return n; });
     const a = [...align]; a.splice(at, 0, null); block.align = a;
+    if (manual) widths.current.splice(at, 0, 160); // keep positional widths aligned
     onTableChange();
   };
   const deleteCol = (c: number) => {
     if (cols <= 1) return;
     block.rows = rows.map((r) => r.filter((_, i) => i !== c));
     block.align = align.filter((_, i) => i !== c);
+    if (manual) widths.current.splice(c, 1);
     onTableChange();
   };
   const deleteRow = (r: number) => {
@@ -102,6 +112,7 @@ export function TableBlock({
     const a = Array.from({ length: cols }, (_, i) => align[i] ?? null);
     a.splice(c + 1, 0, align[c] ?? null);
     block.align = a;
+    if (manual) widths.current.splice(c + 1, 0, widths.current[c] ?? 160);
     onTableChange();
   };
   // Move to an arbitrary boundary: `to` is an insertion index in the pre-splice
@@ -193,6 +204,7 @@ export function TableBlock({
         removeEventListener("pointermove", onMove);
         removeEventListener("pointerup", onUp);
         removeEventListener("pointercancel", onUp);
+        gestureTeardown.current = null;
       };
       const onMove = (ev: PointerEvent) => {
         if (ev.pointerId !== pid || fired) return;
@@ -218,6 +230,7 @@ export function TableBlock({
       addEventListener("pointermove", onMove);
       addEventListener("pointerup", onUp);
       addEventListener("pointercancel", onUp);
+      gestureTeardown.current = stop;
       return;
     }
     if (e.button !== 0) return;
@@ -576,6 +589,12 @@ export function TableBlock({
                           align={align[c] ?? null}
                           onInput={(v) => onCellInput(r, c, v)}
                           onKeyDown={(e) => onCellKeyDown(e, r, c)}
+                          onCompositionStart={
+                            onCellCompositionStart ? () => onCellCompositionStart(r, c) : undefined
+                          }
+                          onCompositionEnd={
+                            onCellCompositionEnd ? (v) => onCellCompositionEnd(r, c, v) : undefined
+                          }
                         />
                         {handle && <div class="doc-cell-handle" onPointerDown={(e) => startHandleDrag(e as PointerEvent)} />}
                         {r === 0 && <div class="doc-col-resizer" onPointerDown={(e) => startResize(e as PointerEvent, c)} />}
@@ -600,7 +619,7 @@ export function TableBlock({
 }
 
 export function TableCell({
-  value, renderKey, r, c, align, onInput, onKeyDown,
+  value, renderKey, r, c, align, onInput, onKeyDown, onCompositionStart, onCompositionEnd,
 }: {
   value: string;
   renderKey: number;
@@ -609,6 +628,8 @@ export function TableCell({
   align: ColAlign;
   onInput: (value: string) => void;
   onKeyDown: (e: KeyboardEvent) => void;
+  onCompositionStart?: () => void;
+  onCompositionEnd?: (value: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // Uncontrolled: rewrite innerHTML only on a structural re-render (renderKey),
@@ -633,6 +654,12 @@ export function TableCell({
       style={align ? { textAlign: align } : undefined}
       onInput={(e) => onInput(htmlToInline((e.currentTarget as HTMLElement).innerHTML))}
       onKeyDown={(e) => onKeyDown(e as KeyboardEvent)}
+      onCompositionStart={onCompositionStart ? () => onCompositionStart() : undefined}
+      onCompositionEnd={
+        onCompositionEnd
+          ? (e) => onCompositionEnd(htmlToInline((e.currentTarget as HTMLElement).innerHTML))
+          : undefined
+      }
     />
   );
 }

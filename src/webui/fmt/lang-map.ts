@@ -11,8 +11,11 @@ export type ProviderEngine = "core" | "ruff" | "gofmt" | "clang" | "lua" | "tapl
 export type FmtEngine = InlineEngine | ProviderEngine;
 
 const BY_LANG: Record<string, FmtEngine> = {
-  // native JSON.parse/stringify — instant, no engine download
-  json: "json", jsonc: "json", json5: "json",
+  // strict JSON: native JSON.parse/stringify — instant, no engine download
+  json: "json",
+  // dialects (comments / single quotes / unquoted keys / trailing commas) need
+  // a real parser → prettier's json5 / jsonc parsers in the core bundle
+  jsonc: "core", json5: "core",
 
   // prettier core bundle (+ sql-formatter, @prettier/plugin-php)
   javascript: "core", js: "core", jsx: "core", mjs: "core", cjs: "core",

@@ -12,7 +12,7 @@ GlobalRegistrator.register();
 import { afterAll, test, expect } from "bun:test";
 import { EditorState } from "@codemirror/state";
 import { findInText, type FindOpts } from "../find";
-import { findField, openFind, setFind } from "./chrome/find";
+import { findField, openFind, setFind, remapMatches } from "./chrome/find";
 
 afterAll(() => GlobalRegistrator.unregister());
 
@@ -74,6 +74,24 @@ test("directed: wholeWord verdict flips via a boundary char edit", () => {
   // Append "s" right after the first "cat" → "cats …": no longer whole-word.
   const got = afterEdit(st, 3, 3, "s");
   expect(got).toEqual(findInText("cats catalog cat", "cat", opts));
+});
+
+test("active match is tracked by identity when a new match is inserted before it", () => {
+  // doc has two "abc"; the SECOND is active (idx 1). Insert a fresh "abc " at the
+  // front → three matches; the active one must follow to its new index (2), not
+  // stay at the stale positional idx 1 (which would highlight a different match).
+  const base = EditorState.create({ doc: "abc def abc" });
+  const tr = base.update({ changes: { from: 0, to: 0, insert: "abc " } });
+  const prev = {
+    term: "abc",
+    opts: OPTS[0]!,
+    idx: 1,
+    matches: [[0, 3], [8, 11]] as Array<[number, number]>,
+  };
+  const next = remapMatches(prev as never, tr);
+  expect(next.matches).toEqual([[0, 3], [4, 7], [12, 15]]);
+  expect(next.idx).toBe(2);
+  expect(next.matches[next.idx]).toEqual([12, 15]);
 });
 
 test("randomized equivalence across opts and edits", () => {

@@ -32,6 +32,7 @@ const PLUGINS: Plugin[] = [
 const PARSER: Record<string, string> = {
   javascript: "babel", js: "babel", jsx: "babel", mjs: "babel", cjs: "babel",
   typescript: "babel-ts", ts: "babel-ts", tsx: "babel-ts",
+  jsonc: "jsonc", json5: "json5", // JSON dialects (strict json stays inline)
   css: "css", scss: "scss", less: "less",
   xml: "html", html: "html",
   yaml: "yaml", yml: "yaml",

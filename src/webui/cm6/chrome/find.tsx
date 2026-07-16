@@ -89,7 +89,19 @@ export function remapMatches(prev: FindState, tr: import("@codemirror/state").Tr
     if (as <= zoneTo && ae >= zoneFrom) matches.push([as, ae]);
   }
   matches.sort((a, b) => a[0] - b[0]);
-  return withMatches(term, opts, prev.idx, matches);
+  // Track the ACTIVE match by identity, not its old array index: map its range
+  // through the edit and find where it landed in the re-sorted list, so a new
+  // match inserted before it doesn't shift CUR / the n-of-m count onto a
+  // different match. Falls back to the clamped old index if it was deleted.
+  const active = prev.matches[prev.idx];
+  let idx = prev.idx;
+  if (active) {
+    const as = tr.changes.mapPos(active[0], 1);
+    const ae = tr.changes.mapPos(active[1], -1);
+    const found = matches.findIndex(([s, e]) => s === as && e === ae);
+    idx = found >= 0 ? found : Math.min(prev.idx, Math.max(0, matches.length - 1));
+  }
+  return withMatches(term, opts, idx, matches);
 }
 
 export const findField = StateField.define<FindState | null>({

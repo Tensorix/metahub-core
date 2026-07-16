@@ -49,6 +49,18 @@ test("sql keeps the cursor (clamped by the dispatcher, not here)", async () => {
   expect(r.cursor).toBe(3);
 });
 
+test("jsonc: comments survive, formatting applies", async () => {
+  const r = await format('{// c\n"a":1,"b":[2,3]}', "jsonc", 0);
+  expect(r.text).toContain("// c");
+  expect(r.text).toContain('"a": 1');
+});
+
+test("json5: single quotes / unquoted keys / trailing comma format (no strict-JSON error)", async () => {
+  const r = await format("{a:1,b:'x',}", "json5", 0);
+  expect(r.text).toContain("a: 1"); // unquoted keys survive
+  expect(r.text).toContain("b:"); // formats instead of throwing on the dialect
+});
+
 test("syntax errors reject with a line-referencing message", async () => {
   await expect(format("const = ;", "javascript", 0)).rejects.toThrow(/\(1:7\)|Unexpected/);
 });

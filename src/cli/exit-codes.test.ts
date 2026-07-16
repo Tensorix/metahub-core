@@ -56,3 +56,9 @@ test("anchor not found → exit 2 invalid_input", () => {
   expect(r.exit).toBe(2);
   expect(r.out.code).toBe("invalid_input");
 });
+
+test("malformed --edits JSON → exit 2 invalid_input (not a raw SyntaxError exit 1)", () => {
+  const r = mh("doc", "edit", "Contract", "--edits", "not json");
+  expect(r.exit).toBe(2);
+  expect(r.out.code).toBe("invalid_input");
+});

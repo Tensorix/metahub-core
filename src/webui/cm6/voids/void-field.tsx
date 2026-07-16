@@ -152,6 +152,7 @@ function TableHost({ view, host, initial }: { view: EditorView; host: HTMLElemen
   const bRef = useRef<Block>(structuredClone(initial));
   const [cellSel, setCellSel] = useState<CellSel | null>(null);
   const [rk, setRk] = useState(0);
+  const composing = useRef(false); // IME guard, mirrors CodeHost
 
   // Cell-rectangle keyboard layer: arrows move/extend the rect, Cmd/Ctrl+C
   // copies it as TSV, Delete/Backspace clears it, Escape dismisses, Enter/F2
@@ -241,6 +242,16 @@ function TableHost({ view, host, initial }: { view: EditorView; host: HTMLElemen
       cellSel={cellSel}
       onCellSel={setCellSel}
       onCellInput={(r, c, v) => {
+        const rows = bRef.current.rows ?? [];
+        if (rows[r]) rows[r]![c] = v; // keep the mirror fresh even mid-composition
+        // IME: commit once on compositionend, like the code island — otherwise
+        // every intermediate CJK candidate keystroke re-serializes the table and
+        // reschedules the 700ms autosave (and can push partial text to peers).
+        if (!composing.current) commit(view, host, bRef.current);
+      }}
+      onCellCompositionStart={() => { composing.current = true; }}
+      onCellCompositionEnd={(r, c, v) => {
+        composing.current = false;
         const rows = bRef.current.rows ?? [];
         if (rows[r]) rows[r]![c] = v;
         commit(view, host, bRef.current);

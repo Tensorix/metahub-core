@@ -32,6 +32,99 @@ export const RE = {
   divider: /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/,
 };
 
+/** URL-scheme whitelist for rendered links/images — the single sanitizer every
+ *  surface uses before emitting an `href`/`src` or calling `window.open`. Blocks
+ *  the injection vectors (`javascript:`, `vbscript:`, and — for links — `data:`)
+ *  while allowing normal web/mail/blob links, relative paths and `#anchors`.
+ *  Returns "#" for anything rejected, so a hostile URL from synced or shared
+ *  content can never execute. `allowData` is set for `<img>`, where `data:`
+ *  image URIs are legitimate and non-executable. */
+export function safeUrl(url: string, opts: { allowData?: boolean } = {}): string {
+  const m = /^\s*([a-z][a-z0-9+.-]*):/i.exec(url);
+  if (!m) return url; // relative path, #anchor, or scheme-less — safe
+  const scheme = m[1]!.toLowerCase();
+  if (scheme === "http" || scheme === "https" || scheme === "mailto" || scheme === "blob")
+    return url;
+  if (scheme === "data" && opts.allowData) return url;
+  return "#";
+}
+
+// ---- media-embed grammar (shared by editor scan, save parser, share render) ----
+
+/** A line that is solely a media/file embed is a block-level void on every
+ *  surface. The classifier + its helpers live here so the same bytes are a block
+ *  on all three (editor scan, `blocks.startsLeafBlock`, share renderer) — the
+ *  divergence that let a media line fold into a paragraph on save only. */
+export type MediaKind = "image" | "video" | "audio" | "file";
+
+const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "m4v", "ogv", "mkv", "ogg"]);
+const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "opus", "oga", "weba"]);
+
+/** Lowercased file extension of a URL (no query/fragment), or "". */
+export function extOf(url: string): string {
+  const clean = url.split(/[?#]/, 1)[0] ?? url;
+  const base = clean.slice(clean.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** Which `![](url)` embed a media URL is, by extension. Image syntax never maps
+ *  to "file": an unknown extension written as `![]()` is treated as an image. */
+export function imageSyntaxKind(ext: string): "image" | "video" | "audio" {
+  if (VIDEO_EXTS.has(ext)) return "video";
+  if (AUDIO_EXTS.has(ext)) return "audio";
+  return "image";
+}
+
+/** Split a media URL into its base src and an optional `w=` width, preserving any
+ *  other query params / fragment (external images may carry signed tokens). */
+export function parseMediaUrl(url: string): { src: string; width?: number } {
+  const hash = url.indexOf("#");
+  const frag = hash >= 0 ? url.slice(hash) : "";
+  const noFrag = hash >= 0 ? url.slice(0, hash) : url;
+  const q = noFrag.indexOf("?");
+  if (q < 0) return { src: url };
+  const base = noFrag.slice(0, q);
+  let width: number | undefined;
+  const kept: string[] = [];
+  for (const p of noFrag.slice(q + 1).split("&").filter(Boolean)) {
+    const m = p.match(/^w=(\d+)$/);
+    if (m) width = parseInt(m[1]!, 10);
+    else kept.push(p);
+  }
+  return { src: base + (kept.length ? "?" + kept.join("&") : "") + frag, width };
+}
+
+export interface MediaLine {
+  kind: MediaKind;
+  src: string;
+  name: string;
+  width?: number; // image only
+  size?: number; // file only
+}
+
+/** A line that is solely one embed → its classified parts, else null. Media use
+ *  `![alt](url)` (kind by extension); a file uses a `[name](/blob/..)` link so a
+ *  plain standalone hyperlink stays a paragraph. */
+export function matchMediaEmbed(line: string): MediaLine | null {
+  const t = line.trim();
+  let m = t.match(/^!\[([^\]]*)\]\(([^\s)]+)\)$/);
+  if (m) {
+    const { src, width } = parseMediaUrl(m[2]!);
+    const kind = imageSyntaxKind(extOf(src));
+    const r: MediaLine = { kind, src, name: m[1]! };
+    if (kind === "image" && width) r.width = width;
+    return r;
+  }
+  m = t.match(/^\[([^\]]*)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)$/);
+  if (m && m[2]!.startsWith("/blob/")) {
+    const r: MediaLine = { kind: "file", src: m[2]!, name: m[1]! };
+    if (m[3] != null && /^\d+$/.test(m[3])) r.size = parseInt(m[3], 10);
+    return r;
+  }
+  return null;
+}
+
 /** The single quote-line predicate for all consumers: quote content of `text`
  *  ("" for the serializer's empty form `> `), or null if the line is not a
  *  quote line. `text` must already be indent-stripped. */
