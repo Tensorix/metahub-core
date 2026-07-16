@@ -40,7 +40,12 @@ export const RE = {
  *  content can never execute. `allowData` is set for `<img>`, where `data:`
  *  image URIs are legitimate and non-executable. */
 export function safeUrl(url: string, opts: { allowData?: boolean } = {}): string {
-  const m = /^\s*([a-z][a-z0-9+.-]*):/i.exec(url);
+  // Probe against a copy with C0 control chars + whitespace removed: browsers
+  // strip those before parsing the scheme, so `javascript:` / `java\tscript:`
+  // would otherwise slip past a naive `^\s*[a-z]` match and still execute. Only
+  // the DETECTION uses the stripped copy — a safe URL is returned verbatim.
+  const probe = url.replace(/[\u0000-\u0020]+/g, "");
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(probe);
   if (!m) return url; // relative path, #anchor, or scheme-less — safe
   const scheme = m[1]!.toLowerCase();
   if (scheme === "http" || scheme === "https" || scheme === "mailto" || scheme === "blob")

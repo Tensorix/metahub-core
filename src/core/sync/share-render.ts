@@ -66,13 +66,15 @@ export function renderInline(src: string, opts: RenderOpts = {}): string {
         break;
       case "link": {
         // Whitelist the scheme so a hostile `javascript:`/`data:text/html` href
-        // from a shared doc can't execute when a page visitor clicks it.
-        const href = safeUrl(rawUrl).replace(/"/g, "&quot;");
+        // from a shared doc can't execute when a page visitor clicks it, and
+        // escapeHtml (not just quote-escaping) so an entity-encoded scheme like
+        // `&#106;avascript:` can't be decoded back to `javascript:` in the attr.
+        const href = escapeHtml(safeUrl(rawUrl));
         out += `<a href="${href}" target="_blank" rel="noreferrer noopener">${escapeHtml(inner)}</a>`;
         break;
       }
       case "image": {
-        const imgSrc = safeUrl(rawUrl, { allowData: true }).replace(/"/g, "&quot;");
+        const imgSrc = escapeHtml(safeUrl(rawUrl, { allowData: true }));
         out += `<img src="${imgSrc}" alt="${escapeHtml(t.alt ?? "")}" loading="lazy">`;
         break;
       }
@@ -93,15 +95,15 @@ function rewrite(url: string, opts: RenderOpts): string {
 function renderMedia(m: MediaLine, opts: RenderOpts): string {
   const raw = rewrite(m.src, opts);
   if (m.kind === "video") {
-    const src = safeUrl(raw, { allowData: true }).replace(/"/g, "&quot;");
+    const src = escapeHtml(safeUrl(raw, { allowData: true }));
     return `<p class="mh-media"><video src="${src}" controls preload="metadata"></video></p>`;
   }
   if (m.kind === "audio") {
-    const src = safeUrl(raw, { allowData: true }).replace(/"/g, "&quot;");
+    const src = escapeHtml(safeUrl(raw, { allowData: true }));
     return `<p class="mh-media"><audio src="${src}" controls preload="metadata"></audio></p>`;
   }
   // file
-  const href = safeUrl(raw).replace(/"/g, "&quot;");
+  const href = escapeHtml(safeUrl(raw));
   return `<p class="mh-file"><a href="${href}" download>${escapeHtml(m.name || "file")}</a></p>`;
 }
 

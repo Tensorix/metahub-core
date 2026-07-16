@@ -22,6 +22,7 @@ import { scanDoc } from "./blockmodel";
 import { blocksFromBody } from "../blocks";
 import { renderMarkdown, renderInline, escapeHtml } from "../../core/sync/share-render";
 import { tokenizeInline } from "../../core/md/inline";
+import { safeUrl } from "../../core/md/grammar";
 
 type Kind = "quote" | "bullet" | "numbered" | "todo" | "p" | "divider" | "h1" | "h2" | "h6";
 
@@ -210,14 +211,14 @@ function inlineOracle(src: string): string {
   for (const t of tokens) {
     out += escapeHtml(src.slice(pos, t.start));
     const inner = src.slice(t.innerFrom, t.innerTo);
-    const url = (t.url ?? "").replace(/"/g, "&quot;");
+    const raw = t.url ?? "";
     switch (t.kind) {
       case "code": out += `<code>${escapeHtml(inner)}</code>`; break;
       case "strong": out += `<strong>${escapeHtml(inner)}</strong>`; break;
       case "em": out += `<em>${escapeHtml(inner)}</em>`; break;
       case "del": out += `<del>${escapeHtml(inner)}</del>`; break;
-      case "link": out += `<a href="${url}" target="_blank" rel="noreferrer noopener">${escapeHtml(inner)}</a>`; break;
-      case "image": out += `<img src="${url}" alt="${escapeHtml(t.alt ?? "")}" loading="lazy">`; break;
+      case "link": out += `<a href="${escapeHtml(safeUrl(raw))}" target="_blank" rel="noreferrer noopener">${escapeHtml(inner)}</a>`; break;
+      case "image": out += `<img src="${escapeHtml(safeUrl(raw, { allowData: true }))}" alt="${escapeHtml(t.alt ?? "")}" loading="lazy">`; break;
     }
     pos = t.end;
   }
@@ -257,3 +258,35 @@ for (const s of INLINE_CORPUS) {
     expect(renderInline(s)).toBe(inlineOracle(s));
   });
 }
+
+// ---- URL scheme sanitisation (share page has no CSP; hostile URLs from synced
+//      / imported content must never become executable) ----
+
+test("safeUrl blocks dangerous schemes, incl. control-char / whitespace obfuscation", () => {
+  expect(safeUrl("javascript:alert(1)")).toBe("#");
+  expect(safeUrl("JavaScript:alert(1)")).toBe("#");
+  expect(safeUrl("\u0001javascript:alert(1)")).toBe("#"); // C0 control prefix (vector A)
+  expect(safeUrl("\tjava\nscript:alert(1)")).toBe("#"); // embedded tab/newline
+  expect(safeUrl("vbscript:x")).toBe("#");
+  expect(safeUrl("data:text/html,<script>1</script>")).toBe("#"); // link context: no data:
+  // safe URLs pass through verbatim (not mangled)
+  expect(safeUrl("https://x.com?a=1&b=2")).toBe("https://x.com?a=1&b=2");
+  expect(safeUrl("/blob/abc.png")).toBe("/blob/abc.png");
+  expect(safeUrl("#anchor")).toBe("#anchor");
+  expect(safeUrl("data:image/png;base64,AAAA", { allowData: true })).toBe(
+    "data:image/png;base64,AAAA",
+  );
+});
+
+test("share render: obfuscated javascript: links are neutralised (no executable href)", () => {
+  // vector A: control-char prefix — safeUrl strips it in the probe → "#"
+  const a = renderMarkdown("[x](\u0001javascript:alert(1))");
+  expect(a).not.toContain("javascript:");
+  expect(a).toContain('href="#"');
+  // vector B: HTML-entity-encoded scheme — escapeHtml writes &amp;#106;, so the
+  // browser never decodes it back to `javascript:` in the attribute.
+  const b = renderMarkdown("[x](&#106;avascript:alert(1))");
+  expect(b).not.toContain('href="javascript:');
+  expect(b).not.toContain('href="&#106;'); // the raw entity must not reach the attr
+  expect(b).toContain("&amp;#106;");
+});
