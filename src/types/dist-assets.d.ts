@@ -28,3 +28,7 @@ declare module "*/dist/sqlite3.wasm" {
   const path: string;
   export default path;
 }
+declare module "*/dist/edge-worker.js" {
+  const text: string;
+  export default text;
+}

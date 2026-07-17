@@ -24,6 +24,8 @@
 import { mapApiRequest } from "./data/api-map.ts";
 import { probeOrigin, type OriginMode } from "./data/origin.ts";
 import { cacheGet, cachePut, inferBlobType, verifyBytes } from "./data/blob-store.ts";
+import { injectRuntimeTag } from "../core/inject-runtime.ts";
+import { base64ToBytes } from "../core/sites-core.ts";
 
 // Local structural types: the project compiles this file under two tsconfigs
 // (root: ESNext-only libs; src/webui: DOM libs) and lib.webworker conflicts
@@ -269,9 +271,13 @@ function replyToResponse(reply: RpcReply): Response {
 
 // ---- /api/* gateway ----------------------------------------------------------------
 
-async function handleApi(event: FetchEventLike): Promise<Response> {
+/** `mappedPath` overrides the pathname used for the LOCAL replica mapping —
+ *  a /sites/<name>/api/* call maps as its stripped /api/* form (the network
+ *  attempt still uses the original request; the server strips server-side). */
+async function handleApi(event: FetchEventLike, mappedPath?: string): Promise<Response> {
   const req = event.request;
   const url = new URL(req.url);
+  const apiPath = mappedPath ?? url.pathname;
 
   // Read the body up front: forwarding to the network consumes it, and the
   // local fallback needs the same payload. Non-JSON bodies (site file upload)
@@ -284,7 +290,7 @@ async function handleApi(event: FetchEventLike): Promise<Response> {
   // No server behind this origin (data-blind CDN shell): the replica is the only
   // data source — go straight to it instead of letting a CDN 404 mask it.
   if (await swNoOrigin()) {
-    const mapped = mapApiRequest(req.method, url.pathname, url.searchParams, body);
+    const mapped = mapApiRequest(req.method, apiPath, url.searchParams, body);
     if (mapped) {
       const reply = await localRpc(event, mapped.op, mapped.args);
       if (reply) return replyToResponse(reply);
@@ -310,7 +316,7 @@ async function handleApi(event: FetchEventLike): Promise<Response> {
     }
     return res;
   } catch (err) {
-    const mapped = mapApiRequest(req.method, url.pathname, url.searchParams, body);
+    const mapped = mapApiRequest(req.method, apiPath, url.searchParams, body);
     if (mapped) {
       const reply = await localRpc(event, mapped.op, mapped.args);
       if (reply) return replyToResponse(reply);
@@ -325,27 +331,38 @@ async function handleApi(event: FetchEventLike): Promise<Response> {
 
 // ---- /sites/* gateway ---------------------------------------------------------------
 
-function injectRuntime(html: string): string {
-  const tag = '<script src="/mh-runtime.js"></script>';
-  const i = html.toLowerCase().indexOf("<head>");
-  if (i >= 0) return html.slice(0, i + 6) + tag + html.slice(i + 6);
-  return tag + html;
-}
-
-function siteFileResponse(
-  row: { content_type: string; encoding: string; content: string | null },
-): Response {
+async function siteFileResponse(
+  event: FetchEventLike,
+  row: {
+    content_type: string;
+    encoding: string;
+    content: string | null;
+    status?: number;
+    public?: boolean;
+  },
+): Promise<Response> {
   const isHtml = row.content_type.includes("text/html");
   const content = row.content ?? "";
-  let body: string | Uint8Array;
-  if (row.encoding === "utf8") body = isHtml ? injectRuntime(content) : content;
-  else {
-    const bin = atob(content);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    body = bytes;
+  // Blob-encoded file: content is the blob hash — resolve the bytes through the
+  // same verified chain /blob/* uses (cache → network → replica spool/bucket),
+  // so offline site images stop 404ing.
+  if (row.encoding === "blob") {
+    const blobRes = await resolveBlobBytesFor(event, content, row.content_type);
+    if (!blobRes) return new Response("blob unavailable offline", { status: 404 });
+    return new Response(blobRes.body, {
+      status: row.status ?? 200,
+      headers: { "content-type": row.content_type, "x-mh-source": "replica" },
+    });
   }
+  let body: string | Uint8Array;
+  // Public pages are never runtime-injected — on ANY surface (matches the
+  // server's serveSite): what an anonymous visitor gets is what you preview.
+  if (row.encoding === "utf8") body = isHtml && !row.public ? injectRuntimeTag(content) : content;
+  else body = base64ToBytes(content);
   return new Response(body as BodyInit, {
+    // status rides along from the replica's resolveSiteFileRow so a 404.html
+    // fallback serves as a real 404 offline too.
+    status: row.status ?? 200,
     headers: { "content-type": row.content_type, "x-mh-source": "replica" },
   });
 }
@@ -376,7 +393,16 @@ async function serveSiteFromReplica(event: FetchEventLike, url: URL): Promise<Re
 
   const reply = await localRpc(event, "siteFile", [name, path]);
   if (reply?.ok && reply.result) {
-    return siteFileResponse(reply.result as { content_type: string; encoding: string; content: string | null });
+    return siteFileResponse(
+      event,
+      reply.result as {
+        content_type: string;
+        encoding: string;
+        content: string | null;
+        status?: number;
+        public?: boolean;
+      },
+    );
   }
   if (reply?.ok && reply.result == null) {
     return new Response("not found (offline replica)", { status: 404 });
@@ -429,27 +455,51 @@ async function handleBlob(event: FetchEventLike): Promise<Response> {
   const hash = (dot >= 0 ? rest.slice(0, dot) : rest).toLowerCase();
   if (!/^[0-9a-f]{16,64}$/.test(hash)) return fetch(req); // not a blob URL — pass through
   const ct = inferBlobType(rest);
+  const res = await resolveBlobBytesFor(event, hash, ct, req);
+  return res ?? new Response("blob unavailable offline", { status: 404 });
+}
 
+/**
+ * The shared blob byte chain, with the anti-poisoning verify at every remote
+ * step (used by /blob/* above and by blob-encoded site files):
+ *   1. the bounded local Cache Storage (mh-blob-v1) — instant, offline;
+ *   2. the network (`GET /blob/<hash>`, server resolves local→peer→bucket)
+ *      when an origin is present — `no-store` bypasses the browser HTTP cache
+ *      (a /blob URL serves immutable, so a poisoned pre-SW entry would never
+ *      revalidate; our own verified copy in mh-blob-v1 is the cache);
+ *   3. the local replica worker (blobBytes: offline spool, or pulled +
+ *      decrypted from an attached bucket).
+ * A success from 2/3 is cached for next time, but ONLY after the bytes are
+ * verified to content-address to `hash` — a 200 that doesn't hash to `hash`
+ * (an SPA-fallback index.html, a captive-portal page, a truncated body) is NOT
+ * the blob and is dropped so it can't poison mh-blob-v1. Null when no source
+ * has the bytes. `netReq` (the original /blob request, when there is one)
+ * keeps the network step's request byte-identical to the old direct path.
+ */
+async function resolveBlobBytesFor(
+  event: FetchEventLike,
+  hash: string,
+  ct: string,
+  netReq?: Request,
+): Promise<Response | null> {
   const hit = await cacheGet(hash);
   if (hit) return hit;
 
-  // Network (server resolve) first when there's a reachable origin. `no-store`
-  // bypasses the browser's HTTP cache: a /blob URL is served immutable, so a
-  // poisoned entry (cached before the SW controlled the page) would never
-  // revalidate — we keep our own verified copy in mh-blob-v1 instead. A 404 here
-  // (blob composed offline, not yet drained to the server) or bytes that fail to
-  // verify fall through to the replica, which still holds it in its spool.
+  // A 404 here (blob composed offline, not yet drained to the server) or bytes
+  // that fail to verify fall through to the replica (spool / bucket).
   if (!(await swNoOrigin())) {
     try {
-      const res = await fetchWithTimeout(new Request(req, { cache: "no-store" }), NETWORK_TIMEOUT_MS * 2);
+      const req = netReq
+        ? new Request(netReq, { cache: "no-store" })
+        : new Request(`${sw.location.origin}/blob/${hash}`, { cache: "no-store" });
+      const res = await fetchWithTimeout(req, NETWORK_TIMEOUT_MS * 2);
       if (res.ok) {
         const buf = await res.clone().arrayBuffer();
         if (await verifyBytes(buf, hash)) {
           await cachePut(hash, buf, res.headers.get("content-type") ?? ct);
           return res;
         }
-        // 200 but not the blob bytes (SPA fallback / interstitial / corrupt) —
-        // don't cache or return it; try the local replica.
+        // 200 but not the blob bytes — don't cache or return it; fall through.
       }
     } catch {
       /* offline / unreachable — try the local replica */
@@ -466,7 +516,7 @@ async function handleBlob(event: FetchEventLike): Promise<Response> {
       });
     }
   }
-  return new Response("blob unavailable offline", { status: 404 });
+  return null;
 }
 
 // ---- dispatch -------------------------------------------------------------------------
@@ -478,6 +528,17 @@ sw.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(handleApi(event));
+    return;
+  }
+
+  // A site page's relative data call — /sites/<name>/api/* — is the same
+  // gateway as /api/* with the mount prefix stripped for the local-replica
+  // mapping, so the owner's offline PWA keeps working with relative paths.
+  // (Anonymous public visitors never run this SW.) Must sit before the
+  // GET-only guard: offline mutations divert to the replica too.
+  const siteApi = /^\/sites\/[^/]+(\/api\/.*)$/.exec(url.pathname);
+  if (siteApi) {
+    event.respondWith(handleApi(event, siteApi[1]));
     return;
   }
 

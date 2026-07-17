@@ -8,6 +8,7 @@ import { routes, type Route, type RouteCtx } from "./routes.ts";
 import { SYNC_PATH, HEALTH_PATH, RENEW_PATH, PAIR_PATH } from "./protocol.ts";
 import { DEFAULT_TTL_MS, DEFAULT_GRACE_MS } from "./token.ts";
 import { syncPeer, listPeers } from "./peers.ts";
+import { getEdgeConfig } from "./edge-config.ts";
 import { blobMaintenance } from "../blobs.ts";
 import { buildOpenApi } from "./openapi.ts";
 import {
@@ -108,6 +109,15 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   const ctx: RouteCtx = { db, node };
   const allRoutes = opts.ui ? [...routes, ...opts.ui.routes] : routes;
 
+  // In-process forward into the route table for /sites/<name>/api/* requests
+  // that carry a valid token: the site mount rewrites the URL to /api/* and the
+  // request is dispatched exactly like a top-level API call (see sites-serve.ts).
+  const forwardApi = async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname;
+    const route = allRoutes.find((r) => r.method === req.method && r.path === path);
+    return route ? route.handler(req, ctx) : new Response("not found", { status: 404 });
+  };
+
   // Resolve runtime settings: explicit opts (CLI flags) override stored config.
   const cfg = getServerConfig(db);
   const port = opts.port ?? cfg.port;
@@ -137,8 +147,16 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     tls: opts.tls
       ? { cert: Bun.file(opts.tls.certPath), key: Bun.file(opts.tls.keyPath) }
       : undefined,
-    async fetch(req) {
+    async fetch(req, srv) {
       const url = new URL(req.url);
+
+      // Client IP for the guest-surface rate limiters: first x-forwarded-for hop
+      // (reverse-proxy deployments) over the socket address. Best-effort — a
+      // missing address degrades to one shared bucket, never an open gate.
+      const clientIp =
+        req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+        srv.requestIP(req)?.address ||
+        null;
 
       // /sync now requires the master token OR a per-peer grant from pairing
       // (the old open trusted-peer model is gone; pairing distributes the
@@ -172,11 +190,19 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
           // icons, generic caching code), so they sit outside the token gate.
           url.pathname === "/manifest.webmanifest" ||
           url.pathname === "/sw.js" ||
+          // The typed data SDK module: public share/site pages import it, and it
+          // carries nothing sensitive (generic client code, no token) — same
+          // reasoning as /sw.js.
+          url.pathname === "/metahub-sdk.js" ||
           url.pathname.startsWith("/icons/") ||
           // Public shares enforce their own per-share access control (slug +
           // expiry + optional password) inside serveShare — never the master
           // token. See ./share-serve.ts.
-          url.pathname.startsWith("/share/");
+          url.pathname.startsWith("/share/") ||
+          // Sites run their own per-site access decision (visibility:public →
+          // token-free; otherwise serveSite re-runs the token gate itself,
+          // answering private and nonexistent identically). See ./sites-serve.ts.
+          url.pathname.startsWith("/sites/");
 
         // Token gate (no-op in --debug). A browser without a token gets the
         // unlock page; everything else gets 401. Once the unlock page sets the
@@ -212,11 +238,20 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       }
 
       // Agent-published static sites at /sites/<name>/<path...>. Lazy-imported
-      // for the same zero-startup-cost reason as the WebUI.
-      if (req.method === "GET" && url.pathname.startsWith("/sites/")) {
-        const { serveSite } = await import("./sites-serve.ts");
-        const res = await serveSite(req, ctx);
-        if (res) return withShim(res, auth, req, url);
+      // for the same zero-startup-cost reason as the WebUI. Autonomous: it
+      // token-gates private sites itself and injects the runtime only for
+      // authenticated HTML (public pages are returned RAW — same red line as
+      // /share/ below), so no withShim here.
+      if (url.pathname.startsWith("/sites/")) {
+        // Any method: /sites/<name>/api/* accepts POST/PATCH (grant-scoped guest
+        // writes, or the in-process forward below for token holders). File
+        // serving inside serveSite stays GET-shaped as before.
+        const isApi = /^\/sites\/[^/]+\/api(\/|$)/.test(url.pathname);
+        if (req.method === "GET" || isApi) {
+          const { serveSite } = await import("./sites-serve.ts");
+          const res = await serveSite(req, ctx, auth, { ip: clientIp, forwardApi });
+          if (res) return res;
+        }
       }
 
       // Content-addressed blob bytes at /blob/<hash>[.ext] (document images /
@@ -234,7 +269,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       // master-token runtime. Lazy-imported like the other off-startup handlers.
       if (url.pathname.startsWith("/share/")) {
         const { serveShare } = await import("./share-serve.ts");
-        const res = await serveShare(req, ctx);
+        const res = await serveShare(req, ctx, { ip: clientIp });
         if (res) return res;
       }
 
@@ -266,14 +301,26 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   // separate process) are picked up on the next tick without a restart.
   let timer: ReturnType<typeof setInterval> | null = null;
   if (autoSync && syncIntervalMs > 0) {
-    // Per-peer idle backoff for storage (s3) peers — the bucket poll is the metered
-    // cost. When the hub hasn't advanced (no local edit, nothing pulled) and a
-    // peer's rounds keep coming up empty, slow it down, capped at TTL/2 so the
-    // publisher lease / failover stay timely. Any hub advance (a local edit OR a
-    // pulled remote edit) reclaims the base cadence so propagation stays prompt.
-    // http peers sync every tick.
-    const S3_POLL_MAX_MS = 150_000; // 2.5min ≈ publisher-lease TTL/2
-    const s3Next = new Map<string, { delay: number; due: number }>();
+    // Shared idle backoff for every METERED remote round — s3 bucket polls,
+    // room (Durable Object) syncs, and the write-inbox pull all use one map:
+    // when the hub hasn't advanced (no local edit, nothing pulled) and a
+    // round keeps coming up empty, its cadence doubles, capped at 2.5min
+    // (≈ publisher-lease TTL/2 so lease failover stays timely). Any hub
+    // advance (a local edit OR a pulled remote edit) reclaims the base
+    // cadence so propagation stays prompt. http peers sync every tick.
+    const IDLE_BACKOFF_MAX_MS = 150_000; // 2.5min
+    const idleNext = new Map<string, { delay: number; due: number }>();
+    /** Whether `key` is due this tick, honoring its current backoff. */
+    const dueNow = (key: string, advanced: boolean, now: number): boolean => {
+      const st = idleNext.get(key);
+      return advanced || !st || now >= st.due;
+    };
+    /** Record a round's outcome: busy → base cadence, idle → doubled delay. */
+    const recordRound = (key: string, busy: boolean, baseMs: number): void => {
+      const st = idleNext.get(key);
+      const delay = busy ? baseMs : Math.min((st?.delay ?? baseMs) * 2, IDLE_BACKOFF_MAX_MS);
+      idleNext.set(key, { delay, due: Date.now() + delay });
+    };
     let lastMaxSeq = -1;
     let ticking = false;
     // Blob upkeep is metered separately from the oplog poll: a full-blob device
@@ -281,6 +328,12 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     // most once a minute regardless of the (possibly faster) sync cadence.
     const BLOB_MAINT_MS = 60_000;
     let lastBlobMaint = 0;
+    // Write-inbox pull cadence: base 60s (its own base — the edge poll is a
+    // metered cost), then the shared idle backoff above. Runs AFTER the peers
+    // loop so the bucket push round precedes the drop round each tick and the
+    // ack gate (seqAtIngest ≤ push_cursor) can pass.
+    const DROP_POLL_BASE_MS = 60_000;
+    const DROP_KEY = " drop"; // never collides with a peers.url
     const tick = async (): Promise<void> => {
       const maxSeq =
         (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number | null }).s ?? 0;
@@ -289,18 +342,26 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       const now = Date.now();
       for (const p of listPeers(db)) {
         if (!p.enabled) continue;
-        if (p.kind !== "s3") {
+        if (p.kind !== "s3" && p.kind !== "room") {
           await syncPeer(db, p.url);
           continue;
         }
-        const st = s3Next.get(p.url);
-        if (!advanced && st && now < st.due) continue; // idle & backed off → not due
+        if (!dueNow(p.url, advanced, now)) continue; // idle & backed off → not due
         const out = await syncPeer(db, p.url);
-        const busy = advanced || (out.pushed ?? 0) > 0 || (out.pulled ?? 0) > 0;
-        const delay = busy
-          ? syncIntervalMs
-          : Math.min((st?.delay ?? syncIntervalMs) * 2, S3_POLL_MAX_MS);
-        s3Next.set(p.url, { delay, due: Date.now() + delay });
+        recordRound(p.url, advanced || (out.pushed ?? 0) > 0 || (out.pulled ?? 0) > 0, syncIntervalMs);
+      }
+      if (getEdgeConfig(db) && dueNow(DROP_KEY, false, Date.now())) {
+        let busy = false;
+        try {
+          // Lazy import: the drop pipeline stays off the startup path (and out
+          // of memory entirely) until an edge is actually configured.
+          const { pullDropsOnce } = await import("./drop-pull.ts");
+          const r = await pullDropsOnce(db);
+          busy = r.ingested > 0 || r.acked > 0;
+        } catch (e) {
+          console.error("[drop] inbox pull failed —", e);
+        }
+        recordRound(DROP_KEY, busy, DROP_POLL_BASE_MS);
       }
       if (Date.now() - lastBlobMaint >= BLOB_MAINT_MS) {
         lastBlobMaint = Date.now();

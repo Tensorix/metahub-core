@@ -4,13 +4,17 @@ import { errorResponse, type Route, type RouteCtx } from "./routes.ts";
 import {
   listSites,
   listFiles,
+  fileSizeOf,
+  fileCounts,
   resolveSite,
   createSite,
   updateSite,
   deleteSite,
+  setSitePublicGrants,
   putFile,
   deleteFile,
 } from "../sites.ts";
+import { parseGrantSet, type GrantSet } from "../grants-core.ts";
 
 // Site endpoints for the WebUI / served pages. Reads (list sites/files) and
 // authoring (create, rename, delete, upload) both wrap the same core functions
@@ -22,7 +26,24 @@ const SiteSchema = z.object({
   name: z.string(),
   title: z.string().nullable(),
   created_hlc: z.string(),
+  // Raw register value — readers must apply isSitePublic's default-deny
+  // (only exactly "public" is public; a peer can sync arbitrary strings).
+  visibility: z.string().nullable(),
+  spa: z.number(),
+  // Raw serialized GrantSet register — readers must go through parseGrantSet.
+  public_grants: z.string().nullable(),
 });
+// Anonymous data grants (table × ops) for a public site's /sites/<name>/api/*.
+const GrantSetSchema = z.object({
+  v: z.literal(1),
+  tables: z.array(
+    z.object({
+      db: z.string().describe("database id (never a name)"),
+      ops: z.array(z.enum(["read", "create", "update"])),
+    }),
+  ),
+});
+const SiteGrantsRes = z.object({ grants: GrantSetSchema });
 const SiteWithCountSchema = SiteSchema.extend({ file_count: z.number() });
 const SiteFileSchema = z.object({
   id: z.string(),
@@ -30,12 +51,24 @@ const SiteFileSchema = z.object({
   path: z.string(),
   content_type: z.string(),
   encoding: z.string(),
+  // Derived served-byte size (see core listFiles); null when a blob's bytes
+  // aren't held locally.
+  size: z.number().nullable(),
 });
 // Request bodies — used both for the OpenAPI doc and to .parse() at runtime so a
 // malformed body is a clean 400 rather than an `as`-cast lie. Semantic rules
 // (slug/path shape) live in core (normalizeSiteName/normalizeSitePath).
-const CreateSiteBody = z.object({ name: z.string(), title: z.string().optional() });
-const UpdateSiteBody = z.object({ name: z.string().optional(), title: z.string().optional() });
+const CreateSiteBody = z.object({
+  name: z.string(),
+  title: z.string().optional(),
+  visibility: z.enum(["public", "private"]).optional(),
+});
+const UpdateSiteBody = z.object({
+  name: z.string().optional(),
+  title: z.string().optional(),
+  visibility: z.enum(["public", "private"]).optional(),
+  spa: z.boolean().optional(),
+});
 
 function need(req: Request, key: string): string {
   const v = new URL(req.url).searchParams.get(key);
@@ -59,9 +92,10 @@ export const sitesRoutes: Route[] = [
     path: "/api/sites",
     summary: "List published sites (with file counts)",
     response: z.array(SiteWithCountSchema),
-    handler: handle((_req, { db }) =>
-      listSites(db).map((s) => ({ ...s, file_count: listFiles(db, s.id).length })),
-    ),
+    handler: handle((_req, { db }) => {
+      const counts = fileCounts(db); // one GROUP BY instead of a per-site N+1
+      return listSites(db).map((s) => ({ ...s, file_count: counts.get(s.id) ?? 0 }));
+    }),
   },
   {
     method: "GET",
@@ -84,7 +118,7 @@ export const sitesRoutes: Route[] = [
   {
     method: "PATCH",
     path: "/api/site",
-    summary: "Rename a site or change its title. Query: ?id=<id>",
+    summary: "Rename a site, change its title, or set visibility/SPA mode. Query: ?id=<id>",
     request: UpdateSiteBody,
     response: SiteSchema,
     handler: handle(async (req, { db }) => {
@@ -100,10 +134,35 @@ export const sitesRoutes: Route[] = [
     handler: handle((req, { db }) => ({ ok: deleteSite(db, need(req, "id")) })),
   },
   {
+    method: "GET",
+    path: "/api/site/grants",
+    summary:
+      "A site's public data grants (anonymous /sites/<name>/api/* access), parsed default-deny. Query: ?id=<id>",
+    response: SiteGrantsRes,
+    handler: handle((req, { db }) => ({
+      grants: parseGrantSet(resolveSite(db, need(req, "id")).public_grants),
+    })),
+  },
+  {
+    method: "PUT",
+    path: "/api/site/grants",
+    summary:
+      "Replace a site's public data grants. Body is a GrantSet ({v:1,tables:[{db,ops}]}); an empty tables array clears them. Only effective while the site is public. Query: ?id=<id>",
+    request: GrantSetSchema,
+    response: SiteGrantsRes,
+    handler: handle(async (req, { db }) => {
+      const body = GrantSetSchema.parse(await req.json()) as GrantSet;
+      const site = resolveSite(db, need(req, "id"));
+      const updated = setSitePublicGrants(db, site.id, body.tables.length ? body : null);
+      return { grants: parseGrantSet(updated.public_grants) };
+    }),
+  },
+  {
     method: "POST",
     path: "/api/site/file",
     summary: "Upload/replace a file. Query: ?site=<id|name>&path=<path>; body is raw bytes",
-    response: SiteFileSchema,
+    // `changed: false` = skip-unchanged no-op (identical bytes already live).
+    response: SiteFileSchema.extend({ changed: z.boolean() }),
     handler: handle(async (req, { db }) => {
       const site = resolveSite(db, need(req, "site"));
       // Fall back to path-based inference when the browser sends no/generic type.
@@ -113,7 +172,7 @@ export const sitesRoutes: Route[] = [
         contentType: ct && ct !== "application/octet-stream" ? ct : undefined,
       });
       const { content: _content, ...summary } = file;
-      return summary;
+      return { ...summary, size: fileSizeOf(db, file) };
     }),
   },
   {

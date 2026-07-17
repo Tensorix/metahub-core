@@ -13,11 +13,15 @@
 //
 // Deliberately DOM-light (fetch + optional localStorage) and dependency-free.
 
+import { initDrop, type DropClient } from "./drop.ts";
+
 export interface SdkOptions {
   /** API origin; defaults to same-origin (hosted pages). */
   baseUrl?: string;
   /** Explicit Bearer token; defaults to the browser's stored one. */
   token?: string;
+  /** Password for the sealed write-drop fallback, when the site's grant set one. */
+  dropPassword?: string;
 }
 
 /** Carries the server's error `code` (core/errors.ts) so callers dispatch on
@@ -36,8 +40,30 @@ export class MetahubError extends Error {
 const TOKEN_KEY = "mh_token";
 const RENEW_PATH = "/auth/token";
 
+/**
+ * The API base for the current mount. One page runs unchanged under all four
+ * mounts because its data calls stay relative to where it is served:
+ *   /sites/<name>/…  →  "/sites/<name>"  (owner: full API; public: grant-scoped)
+ *   /share/<slug>/…  →  "/share/<slug>"  (grant-scoped, session-gated)
+ *   /r/<slug>/…      →  "/r/<slug>"      (Durable Object room — grant-scoped + live WS pokes)
+ *   anywhere else    →  ""               (the root /api/*)
+ * `pathname` is injectable for tests / non-DOM contexts.
+ */
+export function detectBase(pathname?: string): string {
+  const p =
+    pathname ?? (typeof location !== "undefined" && location ? location.pathname : "");
+  const m = /^\/(sites|share|r)\/[^/]+/.exec(p);
+  return m ? m[0] : "";
+}
+
 export function createClient(opts: SdkOptions = {}) {
-  const base = (opts.baseUrl ?? "").replace(/\/$/, "");
+  const base = (opts.baseUrl ?? detectBase()).replace(/\/$/, "");
+  // Token renewal is a ROOT endpoint — it is not mounted under /sites|/share.
+  // A relative base (site/share mount, same origin) renews at the origin root;
+  // an absolute base renews at that base's origin.
+  const renewUrl = /^https?:\/\//i.test(base)
+    ? new URL(RENEW_PATH, base).toString()
+    : RENEW_PATH;
 
   const storedToken = (): string | null => {
     if (opts.token) return opts.token;
@@ -72,7 +98,7 @@ export function createClient(opts: SdkOptions = {}) {
     let res = await exec(token);
     // Transparent renewal: an in-grace token swaps itself for the current one.
     if (res.status === 401 && token && !opts.token) {
-      const renewed = await fetch(base + RENEW_PATH, {
+      const renewed = await fetch(renewUrl, {
         headers: { authorization: `Bearer ${token}` },
       }).catch(() => null);
       const d = renewed?.ok ? ((await renewed.json()) as { token?: string }) : null;
@@ -98,6 +124,21 @@ export function createClient(opts: SdkOptions = {}) {
 
   const q = (s: string) => encodeURIComponent(s);
 
+  // Sealed write-drop fallback (async public writes): when the realtime
+  // endpoint refuses (401 — no write grant on this mount, or the server is
+  // auth-gated) or the network fails outright, and the page ships an
+  // mh-drop.json (published by `mh site grant … <db>:create` auto-wiring),
+  // createRecord degrades to sealing the write to the owner's key and posting
+  // it to the inbox host. Site authors keep writing plain api.createRecord();
+  // the returned record carries `_pending: true` (see drop.ts optimistic echo).
+  let dropClient: Promise<DropClient | null> | null = null;
+  const dropFallback = (): Promise<DropClient | null> => {
+    dropClient ??= initDrop(`${base}/mh-drop.json`, { password: opts.dropPassword }).catch(
+      () => null,
+    );
+    return dropClient;
+  };
+
   return {
     // databases
     listDatabases: () => req<DbInfo[]>("GET", "/api/databases"),
@@ -114,8 +155,19 @@ export function createClient(opts: SdkOptions = {}) {
       return req<RecordInfo[]>("GET", `/api/records?${p}`);
     },
     getRecord: (id: string) => req<RecordInfo>("GET", `/api/record?id=${q(id)}`),
-    createRecord: (db: string, values: Record<string, unknown>) =>
-      req<RecordInfo>("POST", `/api/records?db=${q(db)}`, values),
+    createRecord: async (db: string, values: Record<string, unknown>): Promise<RecordInfo> => {
+      try {
+        return await req<RecordInfo>("POST", `/api/records?db=${q(db)}`, values);
+      } catch (e) {
+        // Only auth refusals and transport failures may fall back — a 400/404/429
+        // is a real answer from a reachable, willing endpoint.
+        const eligible = e instanceof MetahubError ? e.status === 401 : true;
+        if (!eligible) throw e;
+        const drop = await dropFallback();
+        if (!drop) throw e;
+        return (await drop.createRecord(db, values)) as unknown as RecordInfo;
+      }
+    },
     updateRecord: (id: string, values: Record<string, unknown>) =>
       req<RecordInfo>("PATCH", `/api/record?id=${q(id)}`, values),
     deleteRecord: (id: string) => req<{ ok: boolean }>("DELETE", `/api/record?id=${q(id)}`),
@@ -137,6 +189,62 @@ export function createClient(opts: SdkOptions = {}) {
       const p = new URLSearchParams({ q: text });
       if (limit != null) p.set("limit", String(limit));
       return req<SearchHitInfo[]>("GET", `/api/search?${p}`);
+    },
+
+    /**
+     * Live-update notifications. On a room mount (/r/<slug>/) this opens a
+     * WebSocket to the room and invokes `cb` on every data poke (owner sync,
+     * another guest's write) — refetch what you render. Auto-reconnects until
+     * unsubscribed. On every other mount there is no push channel; pass
+     * `pollMs` to degrade to a simple interval callback (off by default).
+     * Returns an unsubscribe function.
+     */
+    onUpdate(cb: (info: { seq?: number }) => void, opts: { pollMs?: number } = {}): () => void {
+      let stopped = false;
+      let ws: WebSocket | null = null;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const roomBase = /(^|\/)r\/[^/]+$/.test(base) ? base : null;
+      if (roomBase && typeof WebSocket !== "undefined") {
+        // Same-origin relative base ("/r/<slug>") resolves against location;
+        // an absolute baseUrl resolves against itself. http(s) → ws(s).
+        const abs = /^https?:\/\//i.test(roomBase)
+          ? new URL(roomBase + "/ws")
+          : new URL(roomBase + "/ws", typeof location !== "undefined" ? location.href : "http://localhost");
+        abs.protocol = abs.protocol === "https:" ? "wss:" : "ws:";
+        const connect = (): void => {
+          if (stopped) return;
+          ws = new WebSocket(abs.toString());
+          ws.onmessage = (ev) => {
+            try {
+              const d = JSON.parse(String(ev.data)) as { type?: string; seq?: number };
+              if (d?.type === "poke") cb({ seq: d.seq });
+            } catch {
+              /* non-JSON frame (e.g. pong) — ignore */
+            }
+          };
+          ws.onclose = () => {
+            if (!stopped) timer = setTimeout(connect, 3000);
+          };
+        };
+        connect();
+      } else if (opts.pollMs && opts.pollMs > 0) {
+        const iv = setInterval(() => cb({}), opts.pollMs);
+        timer = iv as unknown as ReturnType<typeof setTimeout>;
+      }
+
+      return () => {
+        stopped = true;
+        if (timer != null) {
+          clearTimeout(timer);
+          clearInterval(timer as unknown as ReturnType<typeof setInterval>);
+        }
+        try {
+          ws?.close();
+        } catch {
+          /* already closed */
+        }
+      };
     },
   };
 }
@@ -183,6 +291,13 @@ export interface SearchHitInfo {
   title?: string;
   snippet: string;
 }
+
+// Sealed write-drop client (async public submissions) — exported for pages
+// that want the optimistic-echo helpers (pending/merge) or Turnstile/password
+// wiring; api.createRecord auto-routes through it when the realtime endpoint
+// is unavailable.
+export { initDrop, createDrop } from "./drop.ts";
+export type { DropClient, DropConfig, PendingRecord } from "./drop.ts";
 
 /** Ready-to-use same-origin client — what hosted site pages want. */
 export const api = createClient();

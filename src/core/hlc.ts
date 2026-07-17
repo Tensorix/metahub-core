@@ -9,8 +9,27 @@ export interface Hlc {
   node: string;
 }
 
+/** Max value of the fixed-width hex4 counter field. Beyond this the string
+ *  form would grow to 5 hex digits (padStart pads, it never truncates) and
+ *  break the lexicographic == causal ordering, so producers carry into millis
+ *  instead (see nextHlc/observeHlc). */
+export const MAX_HLC_COUNTER = 0xffff;
+
+/** Carry a counter overflow into millis so the hex4 field stays fixed-width.
+ *  Ordering is preserved: (millis+1, 0) sorts after (millis, 0xffff). */
+function carryCounter(millis: number, counter: number): { millis: number; counter: number } {
+  if (counter <= MAX_HLC_COUNTER) return { millis, counter };
+  return {
+    millis: millis + Math.floor(counter / (MAX_HLC_COUNTER + 1)),
+    counter: counter % (MAX_HLC_COUNTER + 1),
+  };
+}
+
 export function formatHlc(h: Hlc): string {
-  return `${String(h.millis).padStart(15, "0")}-${h.counter
+  // Defensive normalization: a counter beyond hex4 (e.g. parsed from a
+  // malicious remote string) must never widen the field.
+  const { millis, counter } = carryCounter(h.millis, h.counter);
+  return `${String(millis).padStart(15, "0")}-${counter
     .toString(16)
     .padStart(4, "0")}-${h.node}`;
 }
@@ -43,7 +62,9 @@ export function nextHlc(db: DbDriver, node: string, now = Date.now()): string {
   const last = readLast(db, node);
   const millis = Math.max(last.millis, now);
   const counter = millis === last.millis ? last.counter + 1 : 0;
-  const h: Hlc = { millis, counter, node };
+  // Counter overflow (e.g. >65k writes inside one frozen millisecond, a real
+  // workerd workload) carries into millis instead of widening the hex4 field.
+  const h: Hlc = { ...carryCounter(millis, counter), node };
   writeLast(db, h);
   return formatHlc(h);
 }
@@ -64,5 +85,6 @@ export function observeHlc(
   else if (millis === last.millis) counter = last.counter + 1;
   else if (millis === r.millis) counter = r.counter + 1;
   else counter = 0;
-  writeLast(db, { millis, counter, node });
+  // Same overflow carry as nextHlc (a remote counter of 0xffff lands here).
+  writeLast(db, { ...carryCounter(millis, counter), node });
 }

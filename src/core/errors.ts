@@ -21,6 +21,8 @@ export type MhErrorCode =
   | "auth"
   /** A remote peer was unreachable or replied non-OK — retryable (exit 7). */
   | "network"
+  /** Too many requests in the window — retry later (HTTP 429, exit 8). */
+  | "rate_limited"
   /** The requested listen port is taken (exit 98, historical). */
   | "port_in_use";
 

@@ -74,6 +74,38 @@ for (const [entry, name] of browserBundles) {
   }
 }
 
+// Edge worker (write-inbox host script `mh edge deploy` uploads to the user's
+// Cloudflare Worker). workerd ESM: browser target, cloudflare:workers kept
+// external (spike ⑤ — no DO import yet this release, but the build shape is
+// already the Stage C one).
+const edgeResult = await Bun.build({
+  entrypoints: ["src/workers/edge-worker.ts"],
+  outdir,
+  target: "browser",
+  format: "esm",
+  external: ["cloudflare:workers"],
+  naming: "edge-worker.js",
+});
+if (!edgeResult.success) {
+  console.error(edgeResult.logs);
+  throw new Error("edge-worker build failed");
+}
+{
+  const js = await Bun.file(`${outdir}/edge-worker.js`).text();
+  if (!js.includes("mh-edge-worker")) {
+    throw new Error("edge-worker.js is missing its 'mh-edge-worker' marker");
+  }
+  // The MhRoom Durable Object class must ride the same script (declared in
+  // cf-api.ts's exports map — a deploy without the class would brick rooms).
+  if (!js.includes("MhRoom")) {
+    throw new Error("edge-worker.js lost the MhRoom Durable Object export");
+  }
+  // workerd cannot import node:/bun: modules — the worker must stay self-contained.
+  if (/from\s*["'](node|bun):/.test(js) || /require\(["'](node|bun):/.test(js)) {
+    throw new Error("edge-worker.js leaked a node:/bun: import — workerd cannot run it");
+  }
+}
+
 const wasmSrc = join(
   dirname(Bun.resolveSync("@sqlite.org/sqlite-wasm", import.meta.dir)),
   "sqlite3.wasm",
@@ -119,6 +151,20 @@ for (const p of FMT_PROVIDERS) {
   const kb = ((await Bun.file(`${outdir}${p.js}`).size) / 1024).toFixed(0);
   const wasmKb = p.wasm ? ` + wasm ${((await Bun.file(`${outdir}${p.wasm.route}`).size) / 1024).toFixed(0)}KB` : "";
   console.log(`  fmt ${p.id}: ${kb}KB${wasmKb}`);
+}
+
+// The data SDK gained the sealed write-drop client; make sure the seal path is
+// in (marker from seal.ts) while the server-side isolation layer (grants-core's
+// checkGuestChanges) stayed OUT — the SDK never validates, it only seals, so a
+// tree-shaking regression that drags grants-core in would triple the bundle.
+{
+  const sdkJs = await Bun.file(`${outdir}/metahub-sdk.js`).text();
+  if (!sdkJs.includes("mh-drop-seal-v1")) {
+    throw new Error("metahub-sdk.js lost the write-drop seal path (sdk/drop.ts)");
+  }
+  if (sdkJs.includes("guest ops may only touch records")) {
+    throw new Error("metahub-sdk.js pulled in grants-core's checkGuestChanges — tree shaking regressed");
+  }
 }
 
 const cliResult = await Bun.build({

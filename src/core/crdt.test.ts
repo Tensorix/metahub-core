@@ -146,3 +146,34 @@ test("onlyNode honors limit and resumes from the last returned row", () => {
   const second = changesAfterSeq(a, first.cursor, { onlyNode: "nodeA", limit: 2 });
   expect(second.changes.length).toBe(1);
 });
+
+test("sites visibility/spa replicate across nodes; unknown sites columns are ignored mid-batch", () => {
+  const a = makeNode("nodea");
+  const b = makeNode("nodeb");
+
+  emit(a, "sites", "site_x", "name", "demo");
+  emit(a, "sites", "site_x", "visibility", "public");
+  emit(a, "sites", "site_x", "spa", 1);
+
+  const changes = changesSince(a, "");
+  // A malicious/future peer's unknown column must be skipped without aborting
+  // the rest of the batch.
+  const evil = {
+    hlc: "9999999999999-0000-evilnode",
+    node_id: "evilnode",
+    dataset: "sites",
+    row_id: "site_x",
+    col: "not_a_column",
+    value: JSON.stringify("boom"),
+    txn: null,
+  };
+  const inserted = ingest(b, [changes[0]!, evil, ...changes.slice(1)]);
+  expect(inserted).toBeGreaterThanOrEqual(changes.length);
+
+  const row = b
+    .query("SELECT name, visibility, spa FROM sites WHERE id = 'site_x'")
+    .get() as { name: string; visibility: string; spa: number };
+  expect(row.name).toBe("demo");
+  expect(row.visibility).toBe("public");
+  expect(row.spa).toBe(1);
+});

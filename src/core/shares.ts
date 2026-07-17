@@ -14,6 +14,12 @@ import type { DbDriver } from "./driver.ts";
 import { MhError } from "./errors.ts";
 import { randomSuffix } from "./ids.ts";
 import { toB64, fromB64 } from "./sync/e2ee.ts";
+import {
+  parseGrantSet,
+  serializeGrantSet,
+  validateGrantSetInput,
+  grantSetHasWrite,
+} from "./grants-core.ts";
 
 export type ShareKind = "doc" | "database" | "site";
 export type SharePermission = "view" | "edit";
@@ -44,10 +50,14 @@ export interface ShareRow {
   s3_presign_exp: number | null;
   s3_key_b64: string | null;
   created_at: number;
+  /** Serialized GrantSet for /share/<slug>/api/* — node-local like the rest of
+   *  the row, so revoking the share revokes the grants with zero dangling
+   *  state. Read through parseGrantSet only (default-deny). */
+  grants: string | null;
 }
 
 const SHARE_COLS =
-  "slug, kind, target_id, permission, transport, pw_salt, pw_hash, expires_at, guest_node_id, served_base, s3_peer_url, s3_object_prefix, s3_presign_exp, s3_key_b64, created_at";
+  "slug, kind, target_id, permission, transport, pw_salt, pw_hash, expires_at, guest_node_id, served_base, s3_peer_url, s3_object_prefix, s3_presign_exp, s3_key_b64, created_at, grants";
 
 export interface CreateShareInput {
   kind: ShareKind;
@@ -59,6 +69,8 @@ export interface CreateShareInput {
   expiresAt?: number | null;
   /** Reachable base URL recorded for the link / source label. */
   servedBase?: string | null;
+  /** Serialized GrantSet enabling /share/<slug>/api/* (validated + normalized here). */
+  grants?: string | null;
 }
 
 /**
@@ -74,12 +86,28 @@ export function createShare(db: DbDriver, input: CreateShareInput): ShareRow {
   if (permission !== "view" && permission !== "edit")
     throw new MhError("invalid_input", `unknown share permission: ${permission}`);
 
+  // Grants are validated loudly at this choke point and stored canonicalized.
+  let grants: string | null = null;
+  if (input.grants != null) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(input.grants);
+    } catch {
+      throw new MhError("invalid_input", "grants must be a JSON GrantSet");
+    }
+    grants = serializeGrantSet(validateGrantSetInput(parsed));
+  }
+
   let slug = randomSuffix(12);
   while (getShare(db, slug)) slug = randomSuffix(12);
-  const guest = permission === "edit" ? "g" + randomSuffix(8) : null;
+  // A guest author identity exists whenever the share can WRITE — via the edit
+  // permission or via any write-op grant. Per-visitor sub ids derive from it at
+  // unlock time (share-serve.ts), so rollback can target one visitor.
+  const canWrite = permission === "edit" || grantSetHasWrite(parseGrantSet(grants));
+  const guest = canWrite ? "g" + randomSuffix(8) : null;
 
   db.query(
-    `INSERT INTO shares (${SHARE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO shares (${SHARE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     slug,
     input.kind,
@@ -96,6 +124,7 @@ export function createShare(db: DbDriver, input: CreateShareInput): ShareRow {
     null,
     null,
     Date.now(),
+    grants,
   );
   return getShare(db, slug)!;
 }
@@ -165,13 +194,25 @@ export async function hashSharePassword(password: string): Promise<{ salt: strin
   return { salt: toB64(salt), hash: toB64(hash) };
 }
 
+/** Constant-time check of `password` against a stored {salt, hash} verifier
+ *  pair (both base64) — the portable core of verifySharePassword, reused by
+ *  the Durable Object room's unlock flow (same PBKDF2 parameters, so the
+ *  share row's verifier provisions the room unchanged). */
+export async function verifyPasswordVerifier(
+  hashB64: string,
+  saltB64: string,
+  password: string,
+): Promise<boolean> {
+  const expect = fromB64(hashB64);
+  const got = await pbkdf2(password, fromB64(saltB64));
+  return timingSafeEqual(expect, got);
+}
+
 /** Constant-time check of `password` against a share's stored verifier. A share
  *  with no password always returns true (nothing to verify). */
 export async function verifySharePassword(row: ShareRow, password: string): Promise<boolean> {
   if (!row.pw_hash || !row.pw_salt) return true;
-  const expect = fromB64(row.pw_hash);
-  const got = await pbkdf2(password, fromB64(row.pw_salt));
-  return timingSafeEqual(expect, got);
+  return verifyPasswordVerifier(row.pw_hash, row.pw_salt, password);
 }
 
 function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {

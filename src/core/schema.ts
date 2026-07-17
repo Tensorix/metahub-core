@@ -74,6 +74,19 @@ CREATE TABLE IF NOT EXISTS storage_cursors (
   PRIMARY KEY (peer_url, node_id)
 );
 
+-- Owner-side shadow of a room partition (sync/partition.ts): which (dataset,
+-- row_id) pairs THIS node last told a given room peer about. Node-local like
+-- peers/storage_cursors — deliberately absent from crdt.ts's DOMAIN map, never
+-- in the oplog, never synced (each device keeps its own shadow; cross-device
+-- shadow splits are healed by the room protocol's need_baseline/digest layers,
+-- not by syncing shadows). peer_key is the peers.url of a kind='room' row.
+CREATE TABLE IF NOT EXISTS room_rows (
+  peer_key TEXT NOT NULL,
+  dataset  TEXT NOT NULL,
+  row_id   TEXT NOT NULL,
+  PRIMARY KEY (peer_key, dataset, row_id)
+);
+
 -- Inbound side of a pairing: credentials *we* issued to remote devices. A peer
 -- presents one of these on /sync; acceptsSyncToken() checks it alongside the
 -- managed master token. Revoke by deleting the row.
@@ -120,7 +133,9 @@ CREATE TABLE IF NOT EXISTS shares (
   s3_object_prefix TEXT,            -- vestigial
   s3_presign_exp   INTEGER,         -- vestigial
   s3_key_b64       TEXT,            -- vestigial
-  created_at       INTEGER NOT NULL
+  created_at       INTEGER NOT NULL,
+  grants           TEXT             -- serialized GrantSet for /share/<slug>/api/* (node-local like the
+                                    -- rest of the row: revoking the share kills the grants with it)
 );
 CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(target_id);
 
@@ -189,6 +204,10 @@ CREATE TABLE IF NOT EXISTS sites (
   name        TEXT,        -- URL slug; resolved by getSiteByName
   title       TEXT,
   created_hlc TEXT,
+  visibility  TEXT,        -- exactly 'public' = token-free serving; anything else = private (isSitePublic)
+  spa         INTEGER NOT NULL DEFAULT 0,  -- 1 = extension-less misses fall back to index.html
+  public_grants TEXT,      -- serialized GrantSet for anonymous /sites/<name>/api/*; synced register,
+                           -- readers MUST go through parseGrantSet (default-deny on any junk)
   __deleted   INTEGER NOT NULL DEFAULT 0
 );
 
@@ -224,6 +243,18 @@ CREATE TABLE IF NOT EXISTS blob_cache (
   pinned       INTEGER NOT NULL DEFAULT 0, -- node-local: never auto-evicted / cleared
   pending      INTEGER NOT NULL DEFAULT 1, -- produced here, not yet flushed to anchor
   anchored     INTEGER NOT NULL DEFAULT 0  -- node-local: last verify confirmed a designated anchor holds it (per redundancy). Drives isClearable; reset on policy change
+);
+
+-- Node-local ledger of write-inbox envelopes the ingest isolation layer refused
+-- (drop-pull.ts): the reason is recorded here, then the envelope is deleted from
+-- the edge host (invalid mail never occupies inbox capacity). NOT synced — like
+-- peers/blob_cache, this is a fact about what THIS node saw, not workspace data.
+CREATE TABLE IF NOT EXISTS drop_rejects (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  drop_id     TEXT NOT NULL,
+  envelope_id TEXT,
+  reason      TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
 );
 
 -- Synced workspace policy (single row "default"): which nodes are designated

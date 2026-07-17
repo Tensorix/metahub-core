@@ -26,6 +26,8 @@ const CreateShareReq = z.object({
   server: z.string().nullable().optional(),
   bucketUrl: z.string().nullable().optional(),
   viewerBase: z.string().optional(),
+  // Serialized GrantSet enabling /share/<slug>/api/* (server transport only).
+  grants: z.string().nullable().optional(),
 });
 const CreatedShareRes = z.object({
   slug: z.string(),
@@ -112,6 +114,7 @@ export const shareRoutes: Route[] = [
           server,
           bucketUrl: body.bucketUrl ?? null,
           viewerBase: body.viewerBase,
+          grants: body.grants ?? null,
         });
         return Response.json(out);
       } catch (e) {

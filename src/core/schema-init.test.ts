@@ -5,6 +5,7 @@ import {
   migratePeers,
   migrateCrdtChangesSeq,
   migrateStoragePeerUrls,
+  migrateSitesAccess,
 } from "./schema-init.ts";
 import { readPolicy, setFullNodes } from "./blobs-core.ts";
 
@@ -226,4 +227,80 @@ test("migrateCrdtChangesSeq is idempotent on the current schema", () => {
     migrateCrdtChangesSeq(db);
   }).not.toThrow();
   expect(hasCol(db, "crdt_changes", "seq")).toBe(true);
+});
+
+// ---- migrateSitesAccess -------------------------------------------------------
+
+test("migrateSitesAccess adds visibility/spa to a legacy sites table (idempotent)", () => {
+  const db = new Database(":memory:");
+  // Legacy shape: the pre-Batch-4 sites table + an oplog to backfill from.
+  db.exec(`CREATE TABLE sites (
+    id TEXT PRIMARY KEY, name TEXT, title TEXT, created_hlc TEXT,
+    __deleted INTEGER NOT NULL DEFAULT 0
+  )`);
+  db.exec(`CREATE TABLE crdt_changes (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, hlc TEXT NOT NULL, node_id TEXT NOT NULL,
+    dataset TEXT NOT NULL, row_id TEXT NOT NULL, col TEXT NOT NULL, value TEXT, txn TEXT,
+    UNIQUE (dataset, row_id, col, hlc)
+  )`);
+  db.query("INSERT INTO sites (id, name) VALUES ('site_a', 'a'), ('site_b', 'b')").run();
+
+  migrateSitesAccess(db);
+  expect(hasCol(db, "sites", "visibility")).toBe(true);
+  expect(hasCol(db, "sites", "spa")).toBe(true);
+  const a = db.query("SELECT visibility, spa FROM sites WHERE id='site_a'").get() as {
+    visibility: string | null;
+    spa: number;
+  };
+  expect(a.visibility).toBeNull(); // no oplog history → defaults
+  expect(a.spa).toBe(0);
+
+  // idempotent: a second run is a no-op
+  migrateSitesAccess(db);
+  expect(
+    (db.query("PRAGMA table_info(sites)").all() as { name: string }[]).filter(
+      (c) => c.name === "spa",
+    ).length,
+  ).toBe(1);
+});
+
+test("migrateSitesAccess backfills from the max-HLC winning oplog change", () => {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE sites (
+    id TEXT PRIMARY KEY, name TEXT, title TEXT, created_hlc TEXT,
+    __deleted INTEGER NOT NULL DEFAULT 0
+  )`);
+  db.exec(`CREATE TABLE crdt_changes (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, hlc TEXT NOT NULL, node_id TEXT NOT NULL,
+    dataset TEXT NOT NULL, row_id TEXT NOT NULL, col TEXT NOT NULL, value TEXT, txn TEXT,
+    UNIQUE (dataset, row_id, col, hlc)
+  )`);
+  db.query("INSERT INTO sites (id, name) VALUES ('site_a', 'a')").run();
+  // An OLD binary ingested these from a newer peer: stored in the oplog, never
+  // materialized (unknown column then). Values are JSON-encoded, as emit stores
+  // them; the LOSING older change must not win.
+  const ins = db.query(
+    "INSERT INTO crdt_changes (hlc, node_id, dataset, row_id, col, value) VALUES (?, 'peer', 'sites', 'site_a', ?, ?)",
+  );
+  ins.run("0000000000001-0000-peer", "visibility", JSON.stringify("private"));
+  ins.run("0000000000002-0000-peer", "visibility", JSON.stringify("public")); // winner
+  ins.run("0000000000002-0000-peer", "spa", JSON.stringify(1));
+
+  migrateSitesAccess(db);
+  const a = db.query("SELECT visibility, spa FROM sites WHERE id='site_a'").get() as {
+    visibility: string | null;
+    spa: number;
+  };
+  expect(a.visibility).toBe("public"); // unwrapped from its JSON encoding
+  expect(a.spa).toBe(1);
+
+  // a synced null register must not violate spa's NOT NULL — COALESCE → 0
+  db.query("INSERT INTO sites (id, name) VALUES ('site_n', 'n')").run();
+  db.query(
+    "INSERT INTO crdt_changes (hlc, node_id, dataset, row_id, col, value) VALUES ('0000000000003-0000-peer', 'peer', 'sites', 'site_n', 'spa', NULL)",
+  ).run();
+  db.exec("ALTER TABLE sites DROP COLUMN spa");
+  migrateSitesAccess(db);
+  const n = db.query("SELECT spa FROM sites WHERE id='site_n'").get() as { spa: number };
+  expect(n.spa).toBe(0);
 });

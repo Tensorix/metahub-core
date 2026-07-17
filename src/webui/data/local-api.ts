@@ -113,8 +113,13 @@ export const localSites = {
   listSites: () => rpc("listSites"),
   listSiteFiles: (site: string) => rpc("listSiteFiles", site),
   createSite: (b: { name: string; title?: string }) => rpc("createSite", b),
-  updateSite: (id: string, b: { name?: string; title?: string }) => rpc("updateSite", id, b),
+  updateSite: (
+    id: string,
+    b: { name?: string; title?: string; visibility?: "public" | "private"; spa?: boolean },
+  ) => rpc("updateSite", id, b),
   deleteSite: (id: string) => rpc("deleteSite", id),
+  getSiteGrants: (id: string) => rpc("getSiteGrants", id),
+  setSiteGrants: (id: string, grants: unknown) => rpc("setSiteGrants", id, grants),
   deleteSiteFile: (site: string, path: string) => rpc("deleteSiteFile", site, path),
   uploadSiteFile: async (site: string, path: string, file: Blob) =>
     rpc("putSiteFile", site, path, await file.arrayBuffer(), file.type || undefined),

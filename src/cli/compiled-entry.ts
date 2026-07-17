@@ -37,7 +37,10 @@ import fmtGofmtWasm from "../../dist/webui-fmt-gofmt.wasm" with { type: "file" }
 import fmtClangWasm from "../../dist/webui-fmt-clang.wasm" with { type: "file" };
 import fmtLuaWasm from "../../dist/webui-fmt-lua.wasm" with { type: "file" };
 import fmtTaploWasm from "../../dist/webui-fmt-taplo.wasm" with { type: "file" };
+// The edge worker script `mh edge deploy` uploads (built by scripts/build.ts).
+import edgeWorkerBundle from "../../dist/edge-worker.js" with { type: "text" };
 import { setWebuiBundle } from "../webui/server/assets.ts";
+import { setEdgeWorkerScript } from "./edge-worker-script.ts";
 
 const bytes = async (p: string) => new Uint8Array(await Bun.file(p).arrayBuffer());
 
@@ -65,4 +68,5 @@ setWebuiBundle({
     "/webui-fmt-taplo.wasm": await bytes(fmtTaploWasm),
   },
 });
+setEdgeWorkerScript(edgeWorkerBundle);
 await import("./index.ts");

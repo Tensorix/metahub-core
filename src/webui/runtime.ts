@@ -15,6 +15,7 @@
 // globalThis guards below make double-injection harmless there.
 
 import { getReplicaBus, BusError } from "./data/replica-bus.ts";
+import { injectRuntimeTag } from "../core/inject-runtime.ts";
 
 const TOKEN_KEY = "mh_token";
 const RENEW_PATH = "/auth/token";
@@ -132,6 +133,7 @@ function replicaUsable(): boolean {
         content_type: string;
         encoding: string;
         content: string | null;
+        public?: boolean;
       } | null;
       if (!row) {
         fail("离线副本中没有这个页面。");
@@ -141,10 +143,17 @@ function replicaUsable(): boolean {
         fail("此资源不是页面，无法离线打开。");
         return;
       }
-      let html = row.encoding === "utf8" ? (row.content ?? "") : atob(row.content ?? "");
-      const tag = '<script src="/mh-runtime.js"></scr' + "ipt>";
-      const i = html.toLowerCase().indexOf("<head>");
-      html = i >= 0 ? html.slice(0, i + 6) + tag + html.slice(i + 6) : tag + html;
+      // Defensive: HTML always stores inline (isTextType → utf8), never as a
+      // blob — but the replica now passes blob rows through, so refuse loudly
+      // instead of atob-ing a bare hash into garbage.
+      if (row.encoding === "blob") {
+        fail("此页面以二进制块存储，无法离线打开。");
+        return;
+      }
+      const raw = row.encoding === "utf8" ? (row.content ?? "") : atob(row.content ?? "");
+      // Public pages never carry the runtime — on any surface (same rule as
+      // the server and the service worker: "preview is truth").
+      const html = row.public ? raw : injectRuntimeTag(raw);
       document.open();
       document.write(html);
       document.close();

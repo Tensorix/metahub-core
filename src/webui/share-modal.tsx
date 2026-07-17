@@ -7,7 +7,14 @@
 
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { api, type ShareTargetOpt, type ShareListItem, type CreateShareBody } from "./api.ts";
+import {
+  api,
+  type ShareTargetOpt,
+  type ShareListItem,
+  type CreateShareBody,
+  type GrantOp,
+  type GrantSet,
+} from "./api.ts";
 import { buildShareTargets, shareTargetUrl } from "./data/share-targets.ts";
 import { onReplicaStatus } from "./data/replica.ts";
 import type { Scope } from "./data/scopes.ts";
@@ -143,6 +150,19 @@ function copy(text: string) {
   navigator.clipboard?.writeText(text).catch(() => undefined);
 }
 
+/** Per-database grant edits for a site share: dbId → enabled ops. */
+type GrantDraft = Map<string, Set<GrantOp>>;
+
+function draftToGrantSet(draft: GrantDraft): GrantSet | null {
+  const tables = [...draft.entries()]
+    .filter(([, ops]) => ops.size > 0)
+    .map(([db, ops]) => ({
+      db,
+      ops: (["read", "create", "update"] as GrantOp[]).filter((o) => ops.has(o)),
+    }));
+  return tables.length ? { v: 1, tables } : null;
+}
+
 function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => void }) {
   const targets = useShareTargets();
   const [selId, setSelId] = useState("server");
@@ -153,10 +173,28 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
   const [error, setError] = useState("");
   const [shares, setShares] = useState<ShareListItem[]>([]);
   const [flash, setFlash] = useState("");
+  // Data grants (site shares over the server transport): which tables the
+  // link's pages may read/write through /share/<slug>/api/*.
+  const [dbs, setDbs] = useState<{ id: string; name: string }[]>([]);
+  const [grantDraft, setGrantDraft] = useState<GrantDraft>(() => new Map());
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     refreshShares();
+    if (target.kind === "site")
+      api.listDatabases().then((list) => setDbs(list.map((d) => ({ id: d.id, name: d.name })))).catch(() => undefined);
   }, []);
+
+  const toggleGrant = (dbId: string, op: GrantOp) => {
+    setGrantDraft((cur) => {
+      const next = new Map(cur);
+      const ops = new Set(next.get(dbId) ?? []);
+      if (ops.has(op)) ops.delete(op);
+      else ops.add(op);
+      next.set(dbId, ops);
+      return next;
+    });
+  };
 
   function refreshShares() {
     api.listShares({ target: target.ref }).then(setShares).catch(() => undefined);
@@ -179,6 +217,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     setBusy(true);
     setError("");
     try {
+      const grantSet = siteKind && !s3 ? draftToGrantSet(grantDraft) : null;
       const body: CreateShareBody = {
         kind: target.kind,
         ref: target.ref,
@@ -188,6 +227,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
         expiresMs: expiryOpts[eIdx]?.ms ?? null,
         server: s3 ? null : shareTargetUrl(sel, location.origin),
         bucketUrl: s3 ? shareTargetUrl(sel, location.origin) : null,
+        grants: grantSet ? JSON.stringify(grantSet) : null,
       };
       const r = await api.createShare(body);
       copy(r.url);
@@ -244,6 +284,42 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
               ))}
             </select>
           </label>
+          {siteKind && !s3 && (
+            <div class="mhshare-grants">
+              <div class="mhshare-section">数据授权（可选）</div>
+              <p class="mhshare-note">
+                让这个链接里的页面按表读写数据（页面内 <code>api/…</code> 调用）。不勾选则页面数据调用不可用。
+              </p>
+              {dbs.length === 0 ? (
+                <p class="mhshare-note">（没有可授权的数据库）</p>
+              ) : (
+                <ul class="mhshare-grantlist">
+                  {dbs.map((d) => {
+                    const ops = grantDraft.get(d.id) ?? new Set<GrantOp>();
+                    return (
+                      <li key={d.id}>
+                        <span class="mhshare-grantdb">{d.name}</span>
+                        <label>
+                          <input type="checkbox" checked={ops.has("read")} onChange={() => toggleGrant(d.id, "read")} /> 读
+                        </label>
+                        <label>
+                          <input type="checkbox" checked={ops.has("create")} onChange={() => toggleGrant(d.id, "create")} /> 新增
+                        </label>
+                        {showAdvanced && (
+                          <label>
+                            <input type="checkbox" checked={ops.has("update")} onChange={() => toggleGrant(d.id, "update")} /> 修改
+                          </label>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <button class="mhshare-adv" type="button" onClick={() => setShowAdvanced(!showAdvanced)}>
+                {showAdvanced ? "收起高级选项" : "高级：允许修改已有行…"}
+              </button>
+            </div>
+          )}
           {error && <p class="mhshare-err">{error}</p>}
           {flash && <p class="mhshare-ok">{flash}</p>}
           <div class="mhshare-foot">
@@ -340,6 +416,12 @@ function injectStyle() {
   .mhshare-li-actions{display:flex;gap:6px;align-items:center}
   .mhshare-li-actions button,.mhshare-li-actions a{font-size:13px;padding:4px 10px;border:1px solid var(--mh-line,#d0d7de);border-radius:6px;background:var(--mh-card,#f6f8fa);color:inherit;cursor:pointer;text-decoration:none}
   .mhshare-danger{color:#cf222e!important}
+  .mhshare-grants{display:flex;flex-direction:column;gap:6px}
+  .mhshare-grantlist{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:4px}
+  .mhshare-grantlist li{display:flex;align-items:center;gap:14px;padding:5px 8px;border:1px solid var(--mh-line,#e5e7eb);border-radius:7px}
+  .mhshare-grantlist label{display:flex;align-items:center;gap:4px;font-size:13px;color:var(--mh-muted,#6e7781);cursor:pointer}
+  .mhshare-grantdb{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mhshare-adv{align-self:flex-start;background:none;border:0;color:#0969da;font-size:12px;cursor:pointer;padding:0}
   @media (prefers-color-scheme: dark){.mhshare-modal{--mh-bg:#161b22;--mh-fg:#e6edf3;--mh-line:#30363d;--mh-muted:#8b949e;--mh-card:#0d1117}}
   `;
   const el = document.createElement("style");

@@ -1,0 +1,11 @@
+// Test-only worker config: a bare Durable Object whose state.storage the
+// contract suite drives directly through runInDurableObject.
+{
+  "name": "mh-do-driver-test",
+  "main": "./test-worker.ts",
+  "compatibility_date": "2026-07-01",
+  "durable_objects": {
+    "bindings": [{ "name": "DRIVER", "class_name": "DriverHost" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DriverHost"] }]
+}

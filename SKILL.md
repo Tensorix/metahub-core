@@ -75,6 +75,7 @@ resolve by id/prefix only (they have no name).
 ```bash
 mh init          # create ~/.metahub (idempotent; safe to run again)
 mh doctor        # read-only health check (run if anything looks off)
+mh init --claude # install this guide as a Claude Code /mh skill (~/.claude); --codex for Codex $mh (~/.codex)
 ```
 
 ## Databases & properties (structured data)
@@ -288,11 +289,27 @@ The server binds `127.0.0.1` by default; `--host 0.0.0.0` exposes it, and the
 token travels as plaintext Bearer — only do that on a trusted network/TLS.
 
 - `mh token [show|refresh]` — show/rotate the persisted server auth token.
-- `mh site create|put|publish|list|files|rm|delete` — host static HTML/CSS/JS an
-  agent generates; served at `/sites/<name>/`, and those pages call `/api/*`
-  same-origin to read your data (a local mini-backend for agent-built UIs).
-  `publish` requires the site to exist (a typo'd name fails `not_found`); pass
-  `--create` to create it on first publish.
+- `mh site ...` — host static HTML/CSS/JS an agent generates, served at
+  `/sites/<name>/` (a local mini-backend for agent-built UIs):
+
+  ```bash
+  mh site scaffold ./app                  # starter page (SDK import + working example)
+  mh site publish myapp ./app --create    # first publish creates the site
+  mh site publish myapp ./app --prune     # re-publish; --prune deletes remote files gone locally
+  ```
+
+  Pages read/write hub data same-origin: plain `fetch('/api/records?db=tasks')`
+  just works (the injected runtime attaches the auth token), or use the typed
+  SDK — `import { api } from "/metahub-sdk.js"` (listRecords / createRecord /
+  updateRecord / listDocuments / getDocument / updateDocument / search, …).
+  The full REST surface self-describes at `GET /docs.json` (OpenAPI).
+- `mh share create <ref> [--permission view|edit] [--password ..] [--expires 7d]` —
+  publish a doc/database/site as a public link (`/share/<slug>`, view = read-only
+  SSR, edit = server-only, accepts guest writes). `mh share list|link|revoke|renew`.
+- `mh edge deploy|status|pull|rotate|connect` — optional write-inbox on your own
+  Cloudflare Worker + D1: public sites with a `create` grant collect anonymous form
+  submissions asynchronously (sealed to your key at the edge — the host only ever
+  sees ciphertext; ingested on the next sync round, ~1 min).
 
 ## Sync across machines / files
 
@@ -310,6 +327,10 @@ mh sync ./data.csv <db-ref>                     # import a CSV into a table
 mh config peer code                             # device A: print a one-time pairing code
 mh config peer add --url http://A-host:7777 --code <code>   # device B: pair with A
 mh config                                       # interactive wizard for host/port/sync-interval/auto-sync
+
+# Object-storage (S3) store-and-forward: relay oplog via a bucket, no both-ends-online.
+mh config peer add --s3 ...                     # attach a bucket (credentials)
+mh config peer add --enroll <code>              # attach a bucket via an enroll code / QR
 ```
 
 ## Running non-interactively (agents, CI, pipes)

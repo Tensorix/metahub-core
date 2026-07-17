@@ -94,6 +94,39 @@ export function addStoragePeer(db: DbDriver, input: AddStoragePeerInput): void {
   ).run(input.url, JSON.stringify(input.config), input.label ?? null);
 }
 
+/** Connection settings of a kind='room' peer (a Durable Object room serving
+ *  one share). Node-local like every peers.config. `base` is the worker origin,
+ *  `slug` the share/room id, `ownerSecret` the Bearer credential for the
+ *  owner-side sync endpoint — independent of the master token by design. */
+export interface RoomPeerConfig {
+  base: string;
+  slug: string;
+  ownerSecret: string;
+  /** The share's base guest node id (pull filter + sub-id derivation). Persisted
+   *  here because a read-only share row carries no guest_node_id of its own. */
+  guestBase?: string;
+}
+
+export interface AddRoomPeerInput {
+  /** Synthetic peer key, by convention room://<slug>. */
+  url: string;
+  config: RoomPeerConfig;
+  label?: string | null;
+}
+
+/** Upsert a 'room' peer, preserving replication cursors on conflict. */
+export function addRoomPeer(db: DbDriver, input: AddRoomPeerInput): void {
+  db.query(
+    `INSERT INTO peers (url, kind, config, label, enabled, pull_cursor, push_cursor)
+     VALUES (?, 'room', ?, ?, 1, 0, 0)
+     ON CONFLICT(url) DO UPDATE SET
+       kind    = 'room',
+       config  = excluded.config,
+       label   = coalesce(excluded.label, peers.label),
+       enabled = 1`,
+  ).run(input.url, JSON.stringify(input.config), input.label ?? null);
+}
+
 function restorePeerRow(db: DbDriver, row: PeerRow): void {
   db.query(
     `UPDATE peers SET
@@ -207,6 +240,8 @@ export function removePeer(db: DbDriver, url: string): boolean {
     db.query("DELETE FROM peer_grants WHERE peer_url = ?").run(url);
     // Drop any storage-sync per-node cursors for this peer (no-op for http peers).
     db.query("DELETE FROM storage_cursors WHERE peer_url = ?").run(url);
+    // Drop the room-partition shadow for this peer (no-op for non-room peers).
+    db.query("DELETE FROM room_rows WHERE peer_key = ?").run(url);
     return changed;
   });
   return tx();
@@ -290,6 +325,12 @@ async function syncPeerOnce(
         priority: opts?.storage?.priority ?? config.priority,
       };
       result = await syncWithStorage(db, url, storageClientFor(config), config, storageOpts);
+    } else if (peer?.kind === "room") {
+      // Room peers sync through room-client's syncWithRoom over the HTTP
+      // transport in room-peer.ts (lazy import: rooms stay off the startup
+      // path until one actually exists).
+      const { syncRoomPeer } = await import("./room-peer.ts");
+      result = await syncRoomPeer(db, peer);
     } else {
       result = await syncWithPeer(db, url);
     }

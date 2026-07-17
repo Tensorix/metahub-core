@@ -146,7 +146,23 @@ export interface Site {
   name: string;
   title: string | null;
   created_hlc: string;
+  /** Raw synced register — only exactly "public" means public (default-deny). */
+  visibility: string | null;
+  spa: number;
+  /** Raw serialized GrantSet register — parse via parseGrantSet only. */
+  public_grants: string | null;
   file_count: number;
+}
+
+// Anonymous/guest data grants (mirrors core grants-core.ts shapes).
+export type GrantOp = "read" | "create" | "update";
+export interface GrantTable {
+  db: string;
+  ops: GrantOp[];
+}
+export interface GrantSet {
+  v: 1;
+  tables: GrantTable[];
 }
 // Not core SiteFileRow: content is deliberately not sent to the browser.
 export interface SiteFile {
@@ -155,6 +171,8 @@ export interface SiteFile {
   path: string;
   content_type: string;
   encoding: string; // "utf8" | "base64" | "blob"
+  /** Derived served-byte size; null when a blob's bytes aren't held locally. */
+  size: number | null;
 }
 
 // Public capability shares (server-shaped; see server/share-routes.ts).
@@ -185,6 +203,8 @@ export interface CreateShareBody {
   server?: string | null;
   bucketUrl?: string | null;
   viewerBase?: string;
+  /** Serialized GrantSet for the share's api/ surface (server transport only). */
+  grants?: string | null;
 }
 export interface ShareCreateResult {
   slug: string;
@@ -621,9 +641,14 @@ const httpApi = {
   listSites: () => req<Site[]>("GET", "/api/sites"),
   listSiteFiles: (site: string) => req<SiteFile[]>("GET", `/api/site/files?site=${q(site)}`),
   createSite: (b: { name: string; title?: string }) => req<Site>("POST", "/api/sites", b),
-  updateSite: (id: string, b: { name?: string; title?: string }) =>
-    req<Site>("PATCH", `/api/site?id=${q(id)}`, b),
+  updateSite: (
+    id: string,
+    b: { name?: string; title?: string; visibility?: "public" | "private"; spa?: boolean },
+  ) => req<Site>("PATCH", `/api/site?id=${q(id)}`, b),
   deleteSite: (id: string) => req<{ ok: boolean }>("DELETE", `/api/site?id=${q(id)}`),
+  getSiteGrants: (id: string) => req<{ grants: GrantSet }>("GET", `/api/site/grants?id=${q(id)}`),
+  setSiteGrants: (id: string, grants: GrantSet) =>
+    req<{ grants: GrantSet }>("PUT", `/api/site/grants?id=${q(id)}`, grants),
   deleteSiteFile: (site: string, path: string) =>
     req<{ ok: boolean }>("DELETE", `/api/site/file?site=${q(site)}&path=${q(path)}`),
   /** Raw-bytes upload — can't use req() (it JSON-stringifies the body). */

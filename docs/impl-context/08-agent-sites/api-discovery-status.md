@@ -1,7 +1,9 @@
 # Agent 站点：内部 API / SDK 的可发现性现状
 
+> **注（2026-07-16）**：本文所述发现链缺口已由 `docs/impl-context/23-sites-experience/design.md`（Batch 1）修复——SKILL.md site 条目、`mh site` help、publish/create 输出均已补 URL/SDK/docs.json 指引。以下为修复前的现状核查存档。
+
 > 现状核查（2026-07-15）。回答一个问题：**当 Agent 写一个 site 时，它怎么知道能调哪些内部 API、以及有没有 SDK？**
-> 一句话结论：**API 的"存在"只在 `SKILL.md` 里有一句；SDK 在任何面向 Agent 的表面都没有。Agent 走 CLI 这条线（help + 运行输出）完全得不到 API/SDK 信息。**
+> 一句话结论：**API 的"存在"只在 `SKILL.md` 里有一句；SDK 在任何面向 Agent 的表面都没有。Agent 走 CLI 这条线（help + 运行输出）得不到的只是 SDK 信息——顶层 `mh --help` 的 SITE DATA 块与 `--server` 输出已覆盖 `/api` 与 `/docs`。**
 
 ## 0. 结论速览
 
@@ -97,7 +99,7 @@ same-origin to read your data ...            （SKILL.md:291-293）
 
 ## 5. 缺口与补法建议
 
-**缺口**：若目标是"Agent 优先用 typed SDK / 至少知道有 `/docs`"，链路断在唯一进上下文的入口——SKILL.md 只给了 `/api/*` 一句，既没引 SDK 也没引 `/docs`；CLI（help + 输出）零覆盖。
+**缺口**：若目标是"Agent 优先用 typed SDK / 至少知道有 `/docs`"，链路断在唯一进上下文的入口——SKILL.md 只给了 `/api/*` 一句，既没引 SDK 也没引 `/docs`；CLI（help + 输出）的零覆盖仅对 SDK 成立（`/api` 与 `/docs` 在顶层 help 的 SITE DATA 块与 `--server` 输出里已有）。
 
 **低成本补法**（按性价比排序，择一或组合）：
 

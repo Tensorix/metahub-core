@@ -74,11 +74,15 @@ export function migrateRecords(db: DbDriver): void {
  * enabled/last_sync_at/last_success_at/last_status/last_error). Idempotent —
  * guarded per column, never drops the table so existing replication cursors survive.
  */
-/** Add `served_base` to a `shares` table created before the column existed
- *  (idempotent). The vestigial s3_* columns are left as-is. */
+/** Add `served_base` / `grants` to a `shares` table created before the columns
+ *  existed (idempotent). The vestigial s3_* columns are left as-is. `grants` is
+ *  node-local like the rest of the row (never in the oplog), so unlike the
+ *  synced sites columns there is nothing to backfill. */
 export function migrateShares(db: DbDriver): void {
   if (!hasColumn(db, "shares", "served_base"))
     db.exec("ALTER TABLE shares ADD COLUMN served_base TEXT");
+  if (!hasColumn(db, "shares", "grants"))
+    db.exec("ALTER TABLE shares ADD COLUMN grants TEXT");
 }
 
 export function migratePeers(db: DbDriver): void {
@@ -315,6 +319,52 @@ export function migrateDatabases(db: DbDriver): void {
   `);
 }
 
+/**
+ * Add the `visibility` / `spa` / `public_grants` access columns to a legacy
+ * `sites` table. Idempotent — guarded per column.
+ *
+ * Re-materialization (same pattern as migrateDatabases): an OLD binary that
+ * pulled `sites/visibility|spa` changes from newer peers stored them in
+ * crdt_changes but skipped materialization (unknown column, forward-compat)
+ * and advanced its cursors past them. When a column is first added, backfill
+ * each site from its WINNING oplog change (max HLC — the LWW rule applyChange
+ * uses). Unlike databases.meta (a JSON-text column, where the raw change value
+ * is the stored form), these columns store scalars, so the JSON-encoded oplog
+ * value is unwrapped with json_extract (`"public"` → public, `1` → 1).
+ */
+export function migrateSitesAccess(db: DbDriver): void {
+  const backfill = (col: string, fallback: string) => {
+    db.exec(`
+      UPDATE sites SET ${col} = COALESCE((
+        SELECT json_extract(c.value, '$') FROM crdt_changes c
+        WHERE c.dataset = 'sites' AND c.col = '${col}' AND c.row_id = sites.id
+        ORDER BY c.hlc DESC LIMIT 1
+      ), ${fallback})
+      WHERE id IN (
+        SELECT DISTINCT row_id FROM crdt_changes WHERE dataset = 'sites' AND col = '${col}'
+      )
+    `);
+  };
+  if (!hasColumn(db, "sites", "visibility")) {
+    db.exec("ALTER TABLE sites ADD COLUMN visibility TEXT");
+    backfill("visibility", "NULL");
+  }
+  if (!hasColumn(db, "sites", "spa")) {
+    // COALESCE fallback 0: the column is NOT NULL, and a peer may have synced
+    // an explicit null register.
+    db.exec("ALTER TABLE sites ADD COLUMN spa INTEGER NOT NULL DEFAULT 0");
+    backfill("spa", "0");
+  }
+  if (!hasColumn(db, "sites", "public_grants")) {
+    // Same oplog re-materialization as visibility: the winning change's value is
+    // a JSON-encoded string (the serialized GrantSet), unwrapped by json_extract.
+    // Junk survives the backfill harmlessly — every reader goes through
+    // parseGrantSet's default-deny.
+    db.exec("ALTER TABLE sites ADD COLUMN public_grants TEXT");
+    backfill("public_grants", "NULL");
+  }
+}
+
 /** Bring a freshly opened (or legacy) database to the current schema. */
 export function initSchema(db: DbDriver): void {
   runSchema(db);
@@ -328,4 +378,5 @@ export function initSchema(db: DbDriver): void {
   migrateDocuments(db);
   migrateBlobCache(db);
   migrateShares(db);
+  migrateSitesAccess(db);
 }

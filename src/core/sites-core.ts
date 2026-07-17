@@ -9,15 +9,25 @@ import { MhError } from "./errors.ts";
 import { emit, grouped, withChangeGroup } from "./crdt.ts";
 import { newId } from "./ids.ts";
 import type { ColumnsOf } from "./sqlcols.ts";
+import { serializeGrantSet, validateGrantSetInput, type GrantSet } from "./grants-core.ts";
 
 export interface SiteRow {
   id: string;
   name: string;
   title: string | null;
   created_hlc: string;
+  /** Access register: exactly "public" = served without a token. Synced, so a
+   *  peer can write ANY string here — never read it directly, go through
+   *  isSitePublic (default-deny). */
+  visibility: string | null;
+  /** 1 = SPA fallback: extension-less misses serve index.html (status 200). */
+  spa: number;
+  /** Serialized GrantSet for the anonymous /sites/<name>/api/* surface. Synced
+   *  register — never read raw, always through parseGrantSet (default-deny). */
+  public_grants: string | null;
 }
 
-export const SITE_COLS = ["id", "name", "title", "created_hlc"] as const;
+export const SITE_COLS = ["id", "name", "title", "created_hlc", "visibility", "spa", "public_grants"] as const;
 const _siteCols: ColumnsOf<SiteRow, typeof SITE_COLS> = SITE_COLS;
 const SITE_SELECT = SITE_COLS.join(", ");
 
@@ -33,8 +43,14 @@ export interface SiteFileRow {
   content: string | null;
 }
 
-/** Manifest entry — file metadata without the (potentially large) content. */
-export type SiteFileSummary = Omit<SiteFileRow, "content">;
+/** Manifest entry — file metadata without the (potentially large) content.
+ *  `size` is derived at query time (see listFiles), never stored. */
+export type SiteFileSummary = Omit<SiteFileRow, "content"> & {
+  /** Served byte size: exact for utf8, ~exact for base64 (padding ignored),
+   *  blob_cache lookup for blobs — null when the blob bytes aren't held
+   *  locally (e.g. a browser replica, or an evicted cache entry). */
+  size: number | null;
+};
 
 export const SITE_FILE_COLS = [
   "id", "site_id", "path", "content_type", "encoding", "content",
@@ -144,6 +160,17 @@ export function normalizeSitePath(raw: string): string {
 
 // ---- read paths --------------------------------------------------------------
 
+/**
+ * THE public/private decision point — every serve surface must route through
+ * here (default-deny). `visibility` is a synced CRDT register: any peer
+ * (including a malicious or future-versioned one) can write arbitrary strings
+ * into it, so only the exact string "public" opens the site; "PUBLIC", "true",
+ * garbage, and NULL all mean private.
+ */
+export function isSitePublic(site: Pick<SiteRow, "visibility">): boolean {
+  return site.visibility === "public";
+}
+
 export function getSite(db: DbDriver, id: string): SiteRow | null {
   return db
     .query(`SELECT ${SITE_SELECT} FROM sites WHERE id = ? AND __deleted = 0`)
@@ -198,19 +225,97 @@ export function getFileRow(
   const withIndex = path === "" || path.endsWith("/") ? `${path}index.html` : path;
   const p = normalizeSitePath(withIndex);
   if (!p) return null;
+  return fileRowAtPath(db, siteId, p);
+}
+
+/** The raw live-row lookup by an already-canonical path (no index resolution). */
+function fileRowAtPath(
+  db: DbDriver,
+  siteId: string,
+  p: string,
+): Pick<SiteFileRow, "content_type" | "encoding" | "content"> | null {
   return db
     .query(
       "SELECT content_type, encoding, content FROM site_files WHERE site_id = ? AND path = ? AND __deleted = 0 ORDER BY created_hlc LIMIT 1",
     )
-    .get(siteId, p) as { content_type: string; encoding: FileEncoding; content: string | null } | null;
+    .get(siteId, p) as Pick<SiteFileRow, "content_type" | "encoding" | "content"> | null;
+}
+
+/**
+ * Resolve a request path to the row that should be served, GitHub-Pages style:
+ * "" / trailing "/" → index.html (same order as getFileRow: index resolution
+ * first, then normalization); a miss falls back to the site's own `404.html`
+ * (served with status 404) when it exists; a pure miss returns null (caller
+ * renders its built-in 404). Shared by every serve surface — server, share,
+ * browser replica (db-worker siteFile op), and the service worker — so online
+ * and offline 404 behavior stay identical.
+ *
+ * `opts.spa` (the sites.spa column): a miss on a path whose last segment has no
+ * extension falls back to index.html with status 200 — client-side routes like
+ * /sites/app/settings/profile render the app shell, while a missing asset
+ * (app.js, logo.png) still 404s honestly instead of serving HTML to a <script>.
+ * The SPA fallback runs before the 404.html fallback.
+ */
+export function resolveSiteFileRow(
+  db: DbDriver,
+  siteId: string,
+  path: string,
+  opts: { spa?: boolean } = {},
+): { row: Pick<SiteFileRow, "content_type" | "encoding" | "content">; status: 200 | 404 } | null {
+  const withIndex = path === "" || path.endsWith("/") ? `${path}index.html` : path;
+  const p = normalizeSitePath(withIndex);
+  if (p) {
+    const row = fileRowAtPath(db, siteId, p);
+    if (row) return { row, status: 200 };
+  }
+  if (opts.spa) {
+    // Extension test on the REQUEST path's last segment (not the index-resolved
+    // one): "app/" and "app" are routes, "app.js" is an asset.
+    const last = path.split("/").pop() ?? "";
+    if (!/\.[a-z0-9]+$/i.test(last)) {
+      const idx = fileRowAtPath(db, siteId, "index.html");
+      if (idx) return { row: idx, status: 200 };
+    }
+  }
+  const nf = fileRowAtPath(db, siteId, "404.html");
+  if (nf) return { row: nf, status: 404 };
+  return null;
 }
 
 export function listFiles(db: DbDriver, siteId: string): SiteFileSummary[] {
+  // size derives from what each row already stores — no schema column:
+  //   utf8   → byte length of the text (CAST AS BLOB counts bytes, not chars);
+  //   base64 → decoded size approximated as 3/4 of the encoded length
+  //            (padding not subtracted — off by ≤2 bytes, fine for display);
+  //   blob   → content IS the hash; blob_cache holds the true size when the
+  //            bytes are held locally, else NULL (callers render "—").
   return db
     .query(
-      "SELECT id, site_id, path, content_type, encoding FROM site_files WHERE site_id = ? AND __deleted = 0 ORDER BY path",
+      `SELECT id, site_id, path, content_type, encoding,
+         CASE encoding
+           WHEN 'utf8' THEN LENGTH(CAST(content AS BLOB))
+           WHEN 'base64' THEN (LENGTH(content) / 4) * 3
+           ELSE (SELECT size FROM blob_cache WHERE hash = content)
+         END AS size
+       FROM site_files WHERE site_id = ? AND __deleted = 0 ORDER BY path`,
     )
     .all(siteId) as SiteFileSummary[];
+}
+
+/** The listFiles size derivation for one already-loaded row (the upload route
+ *  returns the row it just wrote and must report the same size the manifest
+ *  will). Kept in lockstep with the SQL CASE above. */
+export function fileSizeOf(
+  db: DbDriver,
+  row: Pick<SiteFileRow, "encoding" | "content">,
+): number | null {
+  const content = row.content ?? "";
+  if (row.encoding === "utf8") return new TextEncoder().encode(content).byteLength;
+  if (row.encoding === "base64") return Math.floor(content.length / 4) * 3;
+  const hit = db.query("SELECT size FROM blob_cache WHERE hash = ?").get(content) as {
+    size: number;
+  } | null;
+  return hit?.size ?? null;
 }
 
 // ---- portable mutations -----------------------------------------------------
@@ -248,32 +353,51 @@ export function toBytes(data: string | Uint8Array | ArrayBuffer): Uint8Array {
 }
 
 /** Portable base64 (no Buffer): for inline small-binary file content. */
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
   let s = "";
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]!);
   return btoa(s);
 }
 
+/** Portable base64 decode (no Buffer) — inverse of bytesToBase64. */
+export function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+/** Local writes only accept the two canonical values (a peer can still sync
+ *  arbitrary strings — isSitePublic default-denies those on read). */
+function assertVisibility(v: string): asserts v is "public" | "private" {
+  if (v !== "public" && v !== "private")
+    throw new MhError("invalid_input", `visibility must be "public" or "private", got ${JSON.stringify(v)}`);
+}
+
 export const createSite = grouped(function createSite(
   db: DbDriver,
-  opts: { name: string; title?: string },
+  opts: { name: string; title?: string; visibility?: "public" | "private" },
 ): SiteRow {
   const name = normalizeSiteName(opts.name);
   if (getSiteByName(db, name)) throw new MhError("conflict", `site name already exists: ${name}`);
+  if (opts.visibility !== undefined) assertVisibility(opts.visibility);
   const id = newId("site", name);
   const first = emit(db, "sites", id, "name", name);
   emit(db, "sites", id, "created_hlc", first.hlc);
   if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
+  if (opts.visibility !== undefined) emit(db, "sites", id, "visibility", opts.visibility);
   return getSite(db, id)!;
 });
 
-/** Rename a site and/or change its title. Guards against duplicate names. */
+/** Rename a site, change its title, and/or set visibility / SPA mode.
+ *  Guards against duplicate names; visibility only accepts public|private. */
 export const updateSite = grouped(function updateSite(
   db: DbDriver,
   id: string,
-  opts: { name?: string; title?: string },
+  opts: { name?: string; title?: string; visibility?: "public" | "private"; spa?: boolean },
 ): SiteRow {
   if (!getSite(db, id)) throw new MhError("not_found", `no such site: ${id}`);
+  if (opts.visibility !== undefined) assertVisibility(opts.visibility);
   if (opts.name !== undefined) {
     const name = normalizeSiteName(opts.name);
     const dup = getSiteByName(db, name);
@@ -281,7 +405,27 @@ export const updateSite = grouped(function updateSite(
     emit(db, "sites", id, "name", name);
   }
   if (opts.title !== undefined) emit(db, "sites", id, "title", opts.title);
+  if (opts.visibility !== undefined) emit(db, "sites", id, "visibility", opts.visibility);
+  if (opts.spa !== undefined) emit(db, "sites", id, "spa", opts.spa ? 1 : 0);
   return getSite(db, id)!;
+});
+
+/**
+ * Set (or clear, with null) a site's public data grants. The set is validated
+ * loudly here (this is the LOCAL write path — a peer can still sync junk, which
+ * readers default-deny via parseGrantSet) and stored in canonical serialized
+ * form. Grants only take effect while the site is visibility:public; setting
+ * them on a private site is allowed (they arm when the site goes public).
+ */
+export const setSitePublicGrants = grouped(function setSitePublicGrants(
+  db: DbDriver,
+  siteId: string,
+  grants: GrantSet | null,
+): SiteRow {
+  if (!getSite(db, siteId)) throw new MhError("not_found", `no such site: ${siteId}`);
+  const value = grants == null ? null : serializeGrantSet(validateGrantSetInput(grants));
+  emit(db, "sites", siteId, "public_grants", value);
+  return getSite(db, siteId)!;
 });
 
 export const deleteSite = grouped(function deleteSite(db: DbDriver, id: string): boolean {
@@ -302,7 +446,37 @@ export function fileIdFor(db: DbDriver, siteId: string, path: string): string | 
   return row?.id ?? null;
 }
 
-/** Emit the register writes for one file (shared by inline + blob put paths). */
+/**
+ * The live row at (site, path) when it already stores exactly this
+ * content_type/encoding/content triple — the skip-unchanged probe. Tombstoned
+ * rows never match (re-uploading the same bytes must still un-delete). putFile's
+ * blob branch also calls this with the content hash *before* touching the blob
+ * store, so an unchanged re-publish never re-marks a flushed blob as pending.
+ */
+export function liveFileRowIfSame(
+  db: DbDriver,
+  siteId: string,
+  cleanPath: string,
+  contentType: string,
+  encoding: FileEncoding,
+  content: string,
+): SiteFileRow | null {
+  const row = db
+    .query(
+      `SELECT ${SITE_FILE_SELECT} FROM site_files WHERE site_id = ? AND path = ? AND __deleted = 0 ORDER BY created_hlc LIMIT 1`,
+    )
+    .get(siteId, cleanPath) as SiteFileRow | null;
+  if (!row) return null;
+  return row.content_type === contentType && row.encoding === encoding && row.content === content
+    ? row
+    : null;
+}
+
+/** Emit the register writes for one file (shared by inline + blob put paths).
+ *  Skip-unchanged: when a live row already stores exactly this triple, nothing
+ *  is emitted and the row returns with `changed: false` — an idempotent
+ *  re-publish adds zero oplog rows on every peer. A tombstoned row always
+ *  rewrites (`changed: true`) so same-byte re-uploads still un-delete. */
 export function writeFileRow(
   db: DbDriver,
   siteId: string,
@@ -310,7 +484,9 @@ export function writeFileRow(
   contentType: string,
   encoding: FileEncoding,
   content: string,
-): SiteFileRow {
+): SiteFileRow & { changed: boolean } {
+  const same = liveFileRowIfSame(db, siteId, cleanPath, contentType, encoding, content);
+  if (same) return { ...same, changed: false };
   const existing = fileIdFor(db, siteId, cleanPath);
   const id = existing ?? newId("sf", cleanPath);
   withChangeGroup(null, () => {
@@ -324,7 +500,10 @@ export function writeFileRow(
     emit(db, "site_files", id, "content", content);
     emit(db, "site_files", id, "__deleted", 0); // un-delete on re-upload
   });
-  return db.query(`SELECT ${SITE_FILE_SELECT} FROM site_files WHERE id = ?`).get(id) as SiteFileRow;
+  const row = db
+    .query(`SELECT ${SITE_FILE_SELECT} FROM site_files WHERE id = ?`)
+    .get(id) as SiteFileRow;
+  return { ...row, changed: true };
 }
 
 /**
@@ -337,7 +516,7 @@ export function putFileInline(
   siteId: string,
   path: string,
   opts: { data: string | Uint8Array | ArrayBuffer; contentType?: string },
-): SiteFileRow {
+): SiteFileRow & { changed: boolean } {
   const cleanPath = normalizeSitePath(path);
   if (!cleanPath) throw new MhError("invalid_input", `invalid file path: ${JSON.stringify(path)}`);
   const contentType = opts.contentType ?? inferContentType(cleanPath);
@@ -373,6 +552,16 @@ export const deleteFile = grouped(function deleteFile(
   emit(db, "site_files", id, "__deleted", 1);
   return true;
 });
+
+/** Live-file counts for ALL sites in one GROUP BY (walks idx_site_files_site) —
+ *  the site list uses this instead of a per-site fileCount N+1. Sites with no
+ *  live files have no entry; callers default to 0. */
+export function fileCounts(db: DbDriver): Map<string, number> {
+  const rows = db
+    .query("SELECT site_id, COUNT(*) AS n FROM site_files WHERE __deleted = 0 GROUP BY site_id")
+    .all() as { site_id: string; n: number }[];
+  return new Map(rows.map((r) => [r.site_id, r.n]));
+}
 
 /** Count of live files per site (for the management list's file_count). */
 export function fileCount(db: DbDriver, siteId: string): number {

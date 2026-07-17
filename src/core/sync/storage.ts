@@ -163,6 +163,19 @@ const segKey = (base: string, node: string, seq: number) =>
 const snapshotRoot = (base: string) => `${base}/snapshot/`;
 const mainKeyPath = (base: string) => `${base}/keys/main.json`;
 
+/** The bucket's normalized namespace root for a configured prefix — exported so
+ *  sibling namespaces (drop keys, publisher lease) key off the same layout. */
+export function storageBasePrefix(prefix: string): string {
+  return basePrefix(prefix);
+}
+
+/** Object key of the write-inbox recipient keyring (drop-keys.ts): the wrapped
+ *  P-256 private keys live next to keys/main.json, bucket-authoritative so any
+ *  elected device can decrypt inbox envelopes. */
+export function dropKeysObjectKey(prefix: string): string {
+  return `${basePrefix(prefix)}/keys/drop.json`;
+}
+
 // ---- segment codec (Change[] ⇄ bytes) -------------------------------------------
 
 function ab(u: Uint8Array): ArrayBuffer {

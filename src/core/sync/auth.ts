@@ -9,6 +9,7 @@
 // re-attaches the token as a Bearer header on same-origin API calls.
 
 import type { Database } from "bun:sqlite";
+import { injectRuntimeTag } from "../inject-runtime.ts";
 import { loadOrRotate } from "./token.ts";
 import { isAcceptedGrant } from "./pairing.ts";
 import { RENEW_PATH } from "./protocol.ts";
@@ -348,15 +349,10 @@ export function unlockPage(): string {
  * service-worker registration and the local-replica RPC bridge that lets
  * hosted site pages read/write hub data with no network. Loaded synchronously
  * (classic script, head-first) so fetch is wrapped before page code runs.
+ * The tag + insertion rule live in core/inject-runtime.ts, shared with the
+ * service worker's and offline bootstrap's injectors.
  */
-const RUNTIME_TAG = `<script src="/mh-runtime.js"></script>`;
-
-/** Insert the runtime into an HTML document (right after <head>, else prepend). */
-export function injectShim(html: string): string {
-  const i = html.toLowerCase().indexOf("<head>");
-  if (i >= 0) return html.slice(0, i + 6) + RUNTIME_TAG + html.slice(i + 6);
-  return RUNTIME_TAG + html;
-}
+export { injectRuntimeTag as injectShim };
 
 /** Inject the page runtime into HTML responses. Unconditional (unlike the old
  *  token-only shim): the offline bridge matters even in --debug mode where
@@ -371,9 +367,13 @@ export async function withShim(
   req?: Request,
   url?: URL,
 ): Promise<Response> {
+  // Body-less responses pass through untouched (a 304 must stay empty and a
+  // 301 has nothing to inject) — explicit, even though neither carries an
+  // html content-type today.
+  if (res.status === 304 || res.status === 301) return res;
   const ct = res.headers.get("content-type") ?? "";
   if (!ct.includes("text/html")) return res;
-  const html = injectShim(await res.text());
+  const html = injectRuntimeTag(await res.text());
   const headers = new Headers(res.headers);
   if (req && url) {
     const cookie = queryTokenCookie(req, url, cfg);

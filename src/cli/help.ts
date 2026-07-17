@@ -80,10 +80,14 @@ COMMANDS
     search <query> [--limit N]        Full-text over documents + records
     edit <ref> [--vscode]             Open in $EDITOR (interactive, for humans)
   static sites  (host agent-authored HTML/CSS/JS, served by --server at /sites/<name>/)
-    site create <name> [--title]      Create a site (a named bucket of files)
+    site create <name> [--title] [--public]  Create a site (a named bucket of files)
+    site update <site> [--visibility public|private] [--spa|--no-spa] [--title]
+    site scaffold <dir> [--force]     Write a starter index.html (SDK import + working example)
     site put <site> <path> --from <file> | --content <txt|@file|@->
-    site publish <site> <dir>         Upload a whole directory (creates the site)
+    site publish <site> <dir>         Upload a directory (--create to create; --prune mirrors deletes)
     site list | files <site>
+    site grant <site> <db>:<ops>      Anonymous data access for a PUBLIC site's api/ (ops: read,create,update; --revoke <db>; --clear)
+    site grants <site>                Show a site's public data grants
     site rm <site> <path> | delete <site>
   server auth  (token persisted in ~/.metahub; rotates on expiry or 'token refresh')
     token show                        Print the current server token + expiry
@@ -102,6 +106,15 @@ COMMANDS
                                       env-tunable (METAHUB_TOKEN_TTL / _GRACE).
     snapshot <out.mhpack>             Package all data into a portable file
     restore <pack> [--reset --force]  Restore (merge by default)
+  edge  (optional: your own Cloudflare Worker+D1 as the always-on surface —
+         sealed write-inbox for public sites, and Durable Object rooms hosting shares)
+    edge deploy [--account-id --api-token --worker --d1]
+                                      Upload the edge worker + D1 schema (the Worker/D1 must
+                                      already exist — mh never creates remote resources)
+    edge status | pull | rotate [--purge-retired]
+    edge connect --endpoint <url> --token <t>   Use a non-Cloudflare inbox host
+    share create <site> --grant <db>:<ops> [--password] --room
+                                      Host a share on an always-on room (revoke destroys it)
   shell
     completion <bash|zsh|fish>        Print a completion script
 
@@ -126,6 +139,8 @@ SITE DATA  (read a table from a hosted page — field values nest under "values"
   // rs.records: [{ id, database_id, values: { Title, Status } }]
   rs.records.forEach(r => render(r.values.Title, r.values.Status));
   // NOTE: writes take a flat { column: value } map; reads wrap cells in .values
+  // or the typed SDK:  import { api } from "/metahub-sdk.js"; await api.listRecords('tasks')
+  // full REST reference: GET /docs.json (OpenAPI)
 
 Run 'mh <command> --help' for arguments and examples of a specific command.`;
 
@@ -179,11 +194,23 @@ const EXAMPLES: Record<string, string[]> = {
     "mh site put blog index.html --from ./index.html",
     "echo '<h1>hi</h1>' | mh site put blog index.html --content @-",
   ],
+  "site scaffold": [
+    "mh site scaffold ./app                 # starter index.html, then: mh site publish myapp ./app --create",
+    "mh site scaffold ./app --force         # overwrite an existing index.html",
+  ],
   "site publish": [
-    "mh site publish blog ./dist        # upload every file in ./dist",
-    "mh site publish blog ./out         # auto-creates the 'blog' site",
+    "mh site publish blog ./dist --create   # first publish creates the site",
+    "mh site publish blog ./dist            # re-publish (the site must exist)",
+    "mh site publish blog ./dist --prune    # mirror: also delete remote files gone locally",
   ],
   "site files": ["mh site files blog"],
+  "site grant": [
+    "mh site grant blog guestbook:read,create   # anonymous visitors read + add rows",
+    "mh site grant blog guestbook:create --turnstile <sitekey> --turnstile-secret <secret>",
+    "mh site grant blog guestbook:create --password hunter2   # submissions need the password",
+    "mh site grant blog guestbook --revoke",
+    "mh site grant blog --clear",
+  ],
   token: ["mh token            # show current token", "mh token show", "mh token refresh"],
   sync: [
     "mh sync http://localhost:7777        # peer push/pull",
@@ -192,6 +219,17 @@ const EXAMPLES: Record<string, string[]> = {
     "mh sync arch.md architecture         # import markdown → doc",
     "mh sync tasks.csv tasks              # import CSV → table",
   ],
+  "edge deploy": [
+    "mh edge deploy --account-id <id> --api-token <token> --worker mh-edge --d1 <uuid>",
+    "mh edge deploy                          # re-deploy/upgrade with the stored settings",
+  ],
+  "edge status": ["mh edge status", "mh edge status --json"],
+  "edge pull": ["mh edge pull        # one manual inbox round (auto-sync pulls every ~60s)"],
+  "edge rotate": [
+    "mh edge rotate",
+    "mh edge rotate --purge-retired          # after in-flight envelopes have drained",
+  ],
+  "edge connect": ["mh edge connect --endpoint https://inbox.example.com --token drt_..."],
   snapshot: ["mh snapshot backup.mhpack"],
   restore: ["mh restore backup.mhpack", "mh restore backup.mhpack --reset --force"],
   completion: ['eval "$(mh completion zsh)"', "mh completion bash >> ~/.bashrc"],

@@ -95,17 +95,22 @@ import {
 import { search } from "../../core/search.ts";
 import {
   resolveSite,
-  getFileRow,
+  resolveSiteFileRow,
+  isSitePublic,
   listSites,
   listFiles,
   createSite,
   updateSite,
   deleteSite,
+  setSitePublicGrants,
   deleteFile,
   putFileInline,
   fileCount,
+  fileCounts,
+  fileSizeOf,
   type FileEncoding,
 } from "../../core/sites-core.ts";
+import { parseGrantSet, type GrantSet } from "../../core/grants-core.ts";
 
 // ---- protocol ----------------------------------------------------------------
 
@@ -695,28 +700,42 @@ const ops: Record<string, Op> = {
     revertDocument(db!, id, to, { ifMatch }),
   deleteDocument: (id: string) => ({ ok: deleteDocument(db!, id) }),
 
-  // sites (offline serving: the SW asks for raw rows; blob-encoded content
-  // can't replicate — its bytes live in the server's on-disk store — so it
-  // resolves null and 404s offline)
+  // sites (offline serving: the SW asks for raw rows). blob-encoded rows pass
+  // through with content = the blob hash — the SW resolves the bytes itself
+  // via its shared blob chain (cache → network → blobBytes below). `public`
+  // carries the isSitePublic decision so the SW / offline bootstrap skip the
+  // runtime injection for public pages ("preview is truth" — a public page is
+  // byte-identical everywhere, and the runtime must never ship to one).
   siteFile: async (
     name: string,
     path: string,
-  ): Promise<{ content_type: string; encoding: FileEncoding; content: string | null } | null> => {
+  ): Promise<
+    | {
+        content_type: string;
+        encoding: FileEncoding;
+        content: string | null;
+        status: 200 | 404;
+        public: boolean;
+      }
+    | null
+  > => {
     // ②b: the served page is non-reactive, so re-pull before serving when the
     // local replica is very stale. runSync coalesces, so a navigation's many
     // subresource requests share one in-flight sync.
     const age = status.lastSync?.at ? Date.now() - status.lastSync.at : Infinity;
     if (age > SITE_FRESH_MAX_AGE_MS) await runSync(true).catch(() => {});
     const d = db!;
-    let siteId: string;
+    let site: ReturnType<typeof resolveSite>;
     try {
-      siteId = resolveSite(d, name).id;
+      site = resolveSite(d, name);
     } catch {
       return null;
     }
-    const row = getFileRow(d, siteId, path);
-    if (!row || row.encoding === "blob") return null;
-    return row;
+    // Same resolution the server uses (index.html + SPA + the site's own
+    // 404.html fallback, status carried along) so online and offline match.
+    const hit = resolveSiteFileRow(d, site.id, path, { spa: site.spa === 1 });
+    if (!hit) return null;
+    return { ...hit.row, status: hit.status, public: isSitePublic(site) };
   },
 
   // blob bytes (offline document images): the SW asks for a blob's bytes by hash
@@ -746,17 +765,36 @@ const ops: Record<string, Op> = {
   // sites management (offline / no-origin): portable read+write paths so the
   // browser replica lists, creates, edits and deletes sites with no server.
   // Large-binary blob uploads are server-only (putFileInline throws on them).
-  listSites: () => listSites(db!).map((s) => ({ ...s, file_count: fileCount(db!, s.id) })),
+  listSites: () => {
+    const counts = fileCounts(db!); // one GROUP BY instead of a per-site N+1
+    return listSites(db!).map((s) => ({ ...s, file_count: counts.get(s.id) ?? 0 }));
+  },
   listSiteFiles: (siteId: string) => listFiles(db!, siteId),
-  createSite: (b: { name: string; title?: string }) => ({ ...createSite(db!, b), file_count: 0 }),
-  updateSite: (id: string, b: { name?: string; title?: string }) => ({
+  createSite: (b: { name: string; title?: string; visibility?: "public" | "private" }) => ({
+    ...createSite(db!, b),
+    file_count: 0,
+  }),
+  updateSite: (
+    id: string,
+    b: { name?: string; title?: string; visibility?: "public" | "private"; spa?: boolean },
+  ) => ({
     ...updateSite(db!, id, b),
     file_count: fileCount(db!, id),
   }),
   deleteSite: (id: string) => ({ ok: deleteSite(db!, id) }),
+  getSiteGrants: (id: string) => ({
+    grants: parseGrantSet(resolveSite(db!, id).public_grants),
+  }),
+  setSiteGrants: (id: string, grants: GrantSet) => {
+    const site = resolveSite(db!, id);
+    const updated = setSitePublicGrants(db!, site.id, grants.tables.length ? grants : null);
+    return { grants: parseGrantSet(updated.public_grants) };
+  },
   putSiteFile: (siteId: string, path: string, data: ArrayBuffer | string, contentType?: string) => {
-    const { content: _content, ...row } = putFileInline(db!, siteId, path, { data, contentType });
-    return row; // SiteFile shape (content withheld from the UI, like the HTTP route)
+    const { content, ...row } = putFileInline(db!, siteId, path, { data, contentType });
+    // SiteFile shape (content withheld from the UI, like the HTTP route, which
+    // also derives + returns the display size).
+    return { ...row, size: fileSizeOf(db!, { encoding: row.encoding, content }) };
   },
   deleteSiteFile: (siteId: string, path: string) => ({ ok: deleteFile(db!, siteId, path) }),
 

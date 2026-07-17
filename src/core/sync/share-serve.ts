@@ -22,10 +22,15 @@ import { getDocument, updateDocument, documentVersion } from "../documents.ts";
 import { getDatabase } from "../databases.ts";
 import { listProperties, type PropertyRow } from "../properties.ts";
 import { listRecords, updateRecord, getRecord } from "../records.ts";
-import { resolveSite, getFileForServe, listFiles, getFileRow, putFile, deleteFile } from "../sites.ts";
+import { resolveSite, listFiles, getFileRow, putFile, deleteFile } from "../sites.ts";
+import { serveSiteFile } from "./sites-serve.ts";
 import { resolveBlob, blobContentType } from "../blobs.ts";
 import { inferContentType } from "../sites-core.ts";
 import { withNodeId } from "../crdt.ts";
+import { parseGrantSet } from "../grants-core.ts";
+import { serveGrantedApi } from "./grants-routes.ts";
+import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
+import { readGuestSession, mintGuestSession, type GuestSessionScope } from "./guest-session.ts";
 import { renderMarkdown, escapeHtml } from "./share-render.ts";
 
 const HTML = { "content-type": "text/html; charset=utf-8" } as const;
@@ -44,7 +49,16 @@ function wantsHtml(req: Request): boolean {
   return (req.headers.get("accept") ?? "").includes("text/html");
 }
 
-export async function serveShare(req: Request, ctx: RouteCtx): Promise<Response | null> {
+export interface ServeShareOpts {
+  /** Client IP — rate-limit fallback key for cookieless callers. */
+  ip?: string | null;
+}
+
+export async function serveShare(
+  req: Request,
+  ctx: RouteCtx,
+  opts: ServeShareOpts = {},
+): Promise<Response | null> {
   const url = new URL(req.url);
   const rest0 = url.pathname.slice("/share/".length);
   if (!rest0) return null;
@@ -63,7 +77,7 @@ export async function serveShare(req: Request, ctx: RouteCtx): Promise<Response 
 
   // Password gate (the unlock endpoint authenticates inside itself).
   if (sub === "unlock" && req.method === "POST") return handleUnlock(ctx, req, share, url);
-  const locked = !!share.pw_hash && !(await hasShareSession(ctx, req, share));
+  const locked = !!share.pw_hash && !(await readShareSession(ctx, req, share));
   if (locked) {
     return wantsHtml(req)
       ? new Response(passwordPage(share, false), { headers: HTML })
@@ -76,7 +90,7 @@ export async function serveShare(req: Request, ctx: RouteCtx): Promise<Response 
 
   if (share.kind === "doc") return serveDoc(ctx, req, share, sub);
   if (share.kind === "database") return serveTable(ctx, req, share, sub);
-  if (share.kind === "site") return serveSiteShare(ctx, req, share, sub);
+  if (share.kind === "site") return serveSiteShare(ctx, req, share, sub, opts);
   return notFound();
 }
 
@@ -91,14 +105,16 @@ async function serveDoc(
   const doc = getDocument(ctx.db, share.target_id);
   if (!doc) return notFound();
 
-  // Edit write-back: replace the whole body, attributed to the guest node.
+  // Edit write-back: replace the whole body, attributed to this visitor's
+  // guest sub id (falling back to the share's base guest node).
   if (sub === "doc" && req.method === "POST") {
     if (share.permission !== "edit") return unauthorizedJson();
     const body = (await req.json().catch(() => ({}))) as { body?: string; ifMatch?: string };
     if (typeof body.body !== "string")
       return Response.json({ error: "body required" }, { status: 400 });
+    const gs = await guestSessionFor(ctx, req, share);
     try {
-      withNodeId(share.guest_node_id, () =>
+      withNodeId(gs.sub || share.guest_node_id, () =>
         updateDocument(ctx.db, share.target_id, { body: body.body }, { ifMatch: body.ifMatch }),
       );
     } catch (e) {
@@ -107,7 +123,10 @@ async function serveDoc(
         { status: (e as { code?: string }).code === "stale" ? 409 : 400 },
       );
     }
-    return Response.json({ version: documentVersion(ctx.db, share.target_id) });
+    return withSessionCookie(
+      Response.json({ version: documentVersion(ctx.db, share.target_id) }),
+      gs.setCookie,
+    );
   }
 
   if (sub !== "") return notFound();
@@ -193,14 +212,15 @@ async function serveTable(
     const prop = props.find((p) => p.id === body.propId);
     if (!prop || !editableType(prop.type))
       return Response.json({ error: "not an editable column" }, { status: 400 });
+    const gs = await guestSessionFor(ctx, req, share);
     try {
-      withNodeId(share.guest_node_id, () =>
+      withNodeId(gs.sub || share.guest_node_id, () =>
         updateRecord(ctx.db, body.id!, { [body.propId!]: body.value ?? null }),
       );
     } catch (e) {
       return Response.json({ error: (e as Error).message }, { status: 400 });
     }
-    return Response.json({ ok: true });
+    return withSessionCookie(Response.json({ ok: true }), gs.setCookie);
   }
 
   if (sub !== "") return notFound();
@@ -256,12 +276,33 @@ async function serveSiteShare(
   req: Request,
   share: ShareRow,
   sub: string,
+  opts: ServeShareOpts = {},
 ): Promise<Response> {
-  let siteId: string;
+  let site: ReturnType<typeof resolveSite>;
   try {
-    siteId = resolveSite(ctx.db, share.target_id).id;
+    site = resolveSite(ctx.db, share.target_id);
   } catch {
     return notFound();
+  }
+  const siteId = site.id;
+
+  // Grant-scoped data API — the second mount of the same guest surface the
+  // public /sites/<name>/api/* serves (grants-routes.ts), so one page written
+  // against relative `api/…` paths runs under both. The password gate already
+  // ran; grants come from the share row (node-local — revoke kills them
+  // instantly), and writes are attributed to this visitor's session sub id.
+  if (sub === "api" || sub.startsWith("api/")) {
+    const gs = await guestSessionFor(ctx, req, share);
+    // One combined budget (SHARE_LIMIT/min) per session; cookieless callers
+    // key by IP so fresh per-request subs can't sidestep the limiter.
+    const key = `${share.slug}:${gs.setCookie ? (opts.ip ?? "?") : gs.sub}`;
+    const res = await serveGrantedApi(req, sub === "api" ? "" : sub.slice("api/".length), {
+      db: ctx.db,
+      set: parseGrantSet(share.grants),
+      principal: { kind: "share", guestNode: gs.sub || (share.guest_node_id ?? `gs-${share.slug}`) },
+      allow: () => rateLimiter.allow("share-api", key, SHARE_LIMIT),
+    });
+    return withSessionCookie(res, gs.setCookie);
   }
 
   // Edit surface (reserved underscore paths so they never collide with files).
@@ -271,20 +312,22 @@ async function serveSiteShare(
       const body = (await req.json().catch(() => ({}))) as { path?: string; content?: string; contentType?: string };
       if (!body.path || typeof body.content !== "string")
         return Response.json({ error: "path and content required" }, { status: 400 });
+      const gs = await guestSessionFor(ctx, req, share);
       try {
-        await withNodeId(share.guest_node_id, () =>
+        await withNodeId(gs.sub || share.guest_node_id, () =>
           putFile(ctx.db, siteId, body.path!, { data: body.content!, contentType: body.contentType }),
         );
       } catch (e) {
         return Response.json({ error: (e as Error).message }, { status: 400 });
       }
-      return Response.json({ ok: true });
+      return withSessionCookie(Response.json({ ok: true }), gs.setCookie);
     }
     if (sub === "_file/delete" && req.method === "POST") {
       const body = (await req.json().catch(() => ({}))) as { path?: string };
       if (!body.path) return Response.json({ error: "path required" }, { status: 400 });
-      withNodeId(share.guest_node_id, () => deleteFile(ctx.db, siteId, body.path!));
-      return Response.json({ ok: true });
+      const gs = await guestSessionFor(ctx, req, share);
+      withNodeId(gs.sub || share.guest_node_id, () => deleteFile(ctx.db, siteId, body.path!));
+      return withSessionCookie(Response.json({ ok: true }), gs.setCookie);
     }
     if (sub === "_raw") {
       // Raw text of one file for the editor (text files only).
@@ -296,12 +339,11 @@ async function serveSiteShare(
     }
   }
 
-  // Serve the site itself (live), exactly like /sites/<name>/ but token-exempt.
-  const file = await getFileForServe(ctx.db, siteId, sub);
-  if (!file) return notFound();
-  const out = new Uint8Array(file.bytes.byteLength);
-  out.set(file.bytes);
-  return new Response(out.buffer, { headers: { "content-type": file.contentType } });
+  // Serve the site itself (live), exactly like /sites/<name>/ but token-exempt:
+  // same ETag/304 negotiation, same 404.html + SPA fallbacks. Cache headers stay
+  // `private` here always (isPublic never set) — the slug IS the capability, so
+  // responses under it must never enter a shared cache.
+  return serveSiteFile(req, ctx.db, siteId, sub, { spa: site.spa === 1 });
 }
 
 function siteFilesPage(ctx: RouteCtx, share: ShareRow, siteId: string): string {
@@ -389,58 +431,75 @@ function shareSecret(ctx: RouteCtx): string {
   );
 }
 
-function toHex(b: Uint8Array): string {
-  let s = "";
-  for (const x of b) s += x.toString(16).padStart(2, "0");
-  return s;
-}
-
-async function hmac(secret: string, msg: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret) as unknown as ArrayBuffer,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(msg) as unknown as ArrayBuffer);
-  return toHex(new Uint8Array(sig));
-}
-
 const SHARE_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
-function shareCookieName(slug: string): string {
-  return "mh_share_" + slug;
+// Cookie mint/verify itself lives in guest-session.ts (portable), shared with
+// the Durable Object room's unlock flow. This wrapper binds it to the share
+// row + this node's meta-stored secret. Cookie value: `<exp>.<sub>.<mac>`
+// where `sub` is the per-visitor guest sub-id minted at session start (final
+// decision 2: one guest identity PER VISITOR — "who wrote this" is real data
+// for family use, and rollback can target one person). `sub` is "" for
+// read-only shares (no author identity). Pre-sub two-segment cookies simply
+// fail verification → re-unlock/re-mint.
+function shareSessionScope(ctx: RouteCtx, share: ShareRow): GuestSessionScope {
+  return {
+    secret: shareSecret(ctx),
+    cookieName: "mh_share_" + share.slug,
+    scopeKey: share.slug,
+  };
 }
 
-function readCookie(req: Request, name: string): string | null {
-  const header = req.headers.get("cookie");
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const [k, ...v] = part.trim().split("=");
-    if (k === name) return decodeURIComponent(v.join("="));
-  }
-  return null;
+async function readShareSession(
+  ctx: RouteCtx,
+  req: Request,
+  share: ShareRow,
+): Promise<{ exp: number; sub: string } | null> {
+  return readGuestSession(shareSessionScope(ctx, share), req.headers.get("cookie"));
 }
 
-async function hasShareSession(ctx: RouteCtx, req: Request, share: ShareRow): Promise<boolean> {
-  const raw = readCookie(req, shareCookieName(share.slug));
-  if (!raw) return false;
-  const dot = raw.lastIndexOf(".");
-  if (dot < 0) return false;
-  const exp = Number(raw.slice(0, dot));
-  const mac = raw.slice(dot + 1);
-  if (!Number.isFinite(exp) || Date.now() > exp) return false;
-  const expect = await hmac(shareSecret(ctx), `${share.slug}:${exp}`);
-  return timingSafeStr(expect, mac);
+/** Mint a fresh session (per-visitor sub id when the share can write) and the
+ *  Set-Cookie header that persists it. */
+async function mintShareSession(
+  ctx: RouteCtx,
+  share: ShareRow,
+  url: URL,
+): Promise<{ sub: string; cookie: string }> {
+  const sub = share.guest_node_id ? `${share.guest_node_id}-${randomSuffix(6)}` : "";
+  const minted = await mintGuestSession(shareSessionScope(ctx, share), {
+    sub,
+    ttlMs: Math.min(SHARE_SESSION_TTL_MS, ttlRemaining(share)),
+    path: `/share/${share.slug}`,
+    secure: url.protocol === "https:",
+  });
+  return { sub, cookie: minted.cookie };
 }
 
-function timingSafeStr(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+/**
+ * The guest author identity for one request's writes: the session's sub id
+ * when a valid session cookie rides along; otherwise a freshly minted session
+ * whose Set-Cookie the caller must attach to the response (browsers keep it —
+ * later writes from the same visitor reuse one sub; a cookieless client gets a
+ * per-request sub, which still rolls up under the share's base guest id via
+ * the `<guest_node_id>-%` prefix).
+ */
+async function guestSessionFor(
+  ctx: RouteCtx,
+  req: Request,
+  share: ShareRow,
+): Promise<{ sub: string; setCookie: string | null }> {
+  const sess = await readShareSession(ctx, req, share);
+  if (sess?.sub) return { sub: sess.sub, setCookie: null };
+  const minted = await mintShareSession(ctx, share, new URL(req.url));
+  return { sub: minted.sub || (share.guest_node_id ?? ""), setCookie: minted.cookie };
+}
+
+/** Attach a Set-Cookie to a handler response (fresh Response — some responses
+ *  have immutable headers). */
+function withSessionCookie(res: Response, setCookie: string | null): Response {
+  if (!setCookie) return res;
+  const headers = new Headers(res.headers);
+  headers.append("set-cookie", setCookie);
+  return new Response(res.body, { status: res.status, headers });
 }
 
 async function handleUnlock(
@@ -459,13 +518,9 @@ async function handleUnlock(
   if (!(await verifySharePassword(share, pw))) {
     return new Response(passwordPage(share, true), { headers: HTML, status: 401 });
   }
-  const exp = Date.now() + Math.min(SHARE_SESSION_TTL_MS, ttlRemaining(share));
-  const mac = await hmac(shareSecret(ctx), `${share.slug}:${exp}`);
-  const secure = url.protocol === "https:";
-  const cookie =
-    `${shareCookieName(share.slug)}=${exp}.${mac}; Path=/share/${share.slug}; SameSite=Strict; Max-Age=${Math.floor(
-      (exp - Date.now()) / 1000,
-    )}` + (secure ? "; Secure" : "");
+  // Unlock mints the session — including this visitor's own guest sub id, so
+  // every write of this session is attributed to one distinct author.
+  const { cookie } = await mintShareSession(ctx, share, url);
   return new Response(null, {
     status: 303,
     headers: { location: `/share/${share.slug}`, "set-cookie": cookie },

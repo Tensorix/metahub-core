@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Metahub starter</title>
+<style>
+  /* Minimal, self-contained styling with light/dark adaptation. */
+  :root { color-scheme: light dark; }
+  body {
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 640px;
+    margin: 3rem auto;
+    padding: 0 1.25rem;
+    background: light-dark(#fff, #16181d);
+    color: light-dark(#1d2129, #e8eaed);
+  }
+  h1 { font-size: 1.35rem; margin: 0 0 0.35rem; }
+  .muted { color: light-dark(#6a7180, #9aa2af); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+    background: light-dark(#f1f3f5, #23262d);
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+  }
+  ul#databases { padding-left: 0; list-style: none; }
+  ul#databases li {
+    padding: 0.5rem 0.75rem;
+    margin: 0.35rem 0;
+    border: 1px solid light-dark(#e2e5ea, #2c3038);
+    border-radius: 8px;
+  }
+  #status { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Metahub starter</h1>
+<p class="muted">
+  This page is served by your hub and talks to it same-origin. Edit
+  <code>index.html</code>, then re-run <code>mh site publish</code>.
+</p>
+
+<h2 style="font-size:1.05rem">Databases in this hub</h2>
+<ul id="databases"><li class="muted">Loading…</li></ul>
+<p id="status" class="muted"></p>
+
+<script type="module">
+// The typed SDK for hub data. It is optional sugar over the REST routes:
+// a plain fetch("api/records?db=tasks") from this page works exactly the
+// same (relative paths resolve under the page's mount), and the full REST
+// surface self-describes at GET /docs.json (OpenAPI).
+//
+// The SDK auto-detects its API base from the page URL, so one page runs
+// unchanged under every mount:
+//   /sites/<name>/…  →  "/sites/<name>/api/*"  (owner: full API; public site: grant-scoped)
+//   /share/<slug>/…  →  "/share/<slug>/api/*"  (grant-scoped, session-gated)
+//
+// All api.* methods (each returns a Promise and throws MetahubError):
+//   listDatabases()                                      → DbInfo[]
+//   createDatabase({ name, icon? })                      → DbInfo
+//   listProperties(db)                                   → PropInfo[]  (columns)
+//   listRecords(db, { sort?, limit? }?)                  → RecordInfo[]
+//   getRecord(id)                                        → RecordInfo
+//   createRecord(db, values)                             → RecordInfo  (flat { column: value } map)
+//   updateRecord(id, values)                             → RecordInfo
+//   deleteRecord(id)                                     → { ok }
+//   listDocuments(db?)                                   → DocSummaryInfo[]
+//   getDocument(id)                                      → DocInfo
+//   createDocument({ title, body?, database_id?, parent_id? }) → DocInfo
+//   updateDocument(id, { title?, body?, parent_id?, if_match? }) → DocInfo
+//   deleteDocument(id)                                   → { ok }
+//   search(text, limit?)                                 → SearchHitInfo[]
+//   onUpdate(cb, { pollMs? }?)                           → unsubscribe fn
+//     (room mounts /r/<slug>/ get live WS pokes — refetch in cb; elsewhere
+//      pass pollMs to poll, default off)
+import { api, MetahubError } from "/metahub-sdk.js";
+
+const list = document.getElementById("databases");
+const status = document.getElementById("status");
+
+async function main() {
+  const dbs = await api.listDatabases();
+  list.textContent = "";
+  if (dbs.length === 0) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "No databases yet — create one: mh db create Tasks";
+    list.appendChild(li);
+    return;
+  }
+  for (const d of dbs) {
+    const li = document.createElement("li");
+    li.textContent = `${d.icon ? d.icon + " " : ""}${d.name}  (${d.id})`;
+    list.appendChild(li);
+  }
+
+  // Reading rows: cell values nest under .values, keyed by property NAME —
+  //   const rows = await api.listRecords("tasks", { limit: 20 });
+  //   for (const r of rows) console.log(r.id, r.values.Title, r.values.Status);
+  //
+  // Writing rows takes a flat { column: value } map —
+  //   await api.createRecord("tasks", { Title: "From my site", Status: "todo" });
+}
+
+main().catch((e) => {
+  if (e instanceof MetahubError) {
+    // Dispatch on the machine-readable error code — never on message text.
+    switch (e.code) {
+      case "auth":
+        status.textContent =
+          "Not authorized. Open this page through your hub (the server injects the token), or check the site's public grants.";
+        break;
+      case "not_found":
+        status.textContent = "Not found: " + e.message;
+        break;
+      case "rate_limited":
+        status.textContent = "Rate limited — retry in a moment.";
+        break;
+      default:
+        status.textContent = `Error (${e.code ?? e.status}): ${e.message}`;
+    }
+  } else {
+    status.textContent = `Network error: ${e.message}`;
+  }
+});
+</script>
+</body>
+</html>

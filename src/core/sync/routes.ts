@@ -30,6 +30,7 @@ const HTTP_STATUS: Record<MhErrorCode, number> = {
   conflict: 409,
   auth: 401,
   network: 502,
+  rate_limited: 429,
   port_in_use: 500,
 };
 
@@ -50,7 +51,7 @@ export function errorResponse(e: unknown): Response {
  * in /docs automatically — no generate step, no separate spec file.
  */
 export interface Route {
-  method: "GET" | "POST" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   summary: string;
   request?: ZodType;

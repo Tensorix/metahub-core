@@ -96,7 +96,7 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
   },
   sites: {
     table: "sites",
-    cols: new Set(["name", "title", "created_hlc", "__deleted"]),
+    cols: new Set(["name", "title", "created_hlc", "visibility", "spa", "public_grants", "__deleted"]),
   },
   site_files: {
     table: "site_files",

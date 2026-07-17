@@ -36,6 +36,7 @@ const EXIT_CODES: Record<MhErrorCode, number> = {
   conflict: 5,
   auth: 6,
   network: 7,
+  rate_limited: 8,
   port_in_use: 98, // historical: pre-dates the code taxonomy
 };
 

@@ -1,0 +1,14 @@
+{
+  "name": "mh-workerd-tests",
+  "private": true,
+  "type": "module",
+  "description": "DoSqlDriver contract tests on real workerd (vitest-pool-workers). Deliberately a separate package so these heavy dev-deps stay out of the repo root and out of the `bun test` gate. Run: bun install && bun run test",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.5",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.111.0"
+  }
+}

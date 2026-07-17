@@ -1,8 +1,15 @@
 import { defineCommand } from "citty";
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "../../core/driver.ts";
 import { openMetahub } from "../../core/db.ts";
 import { idKind } from "../../core/ids.ts";
 import { MhError } from "../../core/errors.ts";
+import { resolveEntity } from "../../core/resolve.ts";
+import {
+  parseGrantSpec,
+  serializeGrantSet,
+  type GrantSet,
+  type GrantTable,
+} from "../../core/grants-core.ts";
 import { getShare, type ShareKind, type SharePermission } from "../../core/shares.ts";
 import { getPeer } from "../../core/sync/peers.ts";
 import {
@@ -13,10 +20,12 @@ import {
   listShareServers,
   listShareBuckets,
 } from "../../core/sync/share-actions.ts";
-import { getServerConfig } from "../../core/config.ts";
 import { parseDuration } from "../../core/sync/token.ts";
+import { getEdgeConfig } from "../../core/sync/edge-config.ts";
+import { provisionRoomForShare } from "../../core/sync/room-peer.ts";
 import { print, table, guard } from "../output.ts";
 import { FRESH_ARGS, freshDb } from "../fresh.ts";
+import { localServerBase } from "../local-base.ts";
 
 function inferKind(ref: string, explicit?: string): ShareKind {
   if (explicit) {
@@ -30,11 +39,17 @@ function inferKind(ref: string, explicit?: string): ShareKind {
   throw new MhError("invalid_input", "could not infer kind from the ref — pass --kind doc|database|site");
 }
 
-/** This node's own reachable base for a local server share's link. */
-function localServerBase(db: Database): string {
-  const cfg = getServerConfig(db);
-  const host = cfg.host === "0.0.0.0" || cfg.host === "::" ? "127.0.0.1" : cfg.host;
-  return `http://${host}:${cfg.port}`;
+/** Build a serialized GrantSet from repeatable `--grant <db>:<ops>` flags,
+ *  resolving each db ref to its id (grants pin ids, not renameable names). */
+function buildGrants(db: DbDriver, raw: string | string[] | undefined): string | null {
+  if (raw == null) return null;
+  const specs = Array.isArray(raw) ? raw : [raw];
+  const tables: GrantTable[] = specs.map((spec) => {
+    const { db: ref, ops } = parseGrantSpec(spec);
+    return { db: resolveEntity(db, ref, { kind: "db" }).id, ops };
+  });
+  const set: GrantSet = { v: 1, tables };
+  return serializeGrantSet(set);
 }
 
 const create = defineCommand({
@@ -49,6 +64,16 @@ const create = defineCommand({
     via: { type: "string", description: "Server target: a paired peer url → create there; else a reachable base url for the link (avoids the root --server flag)" },
     bucket: { type: "string", description: "Object-storage bucket peer url (s3; default the only one)" },
     viewer: { type: "string", description: "Static viewer base URL (s3)" },
+    grant: {
+      type: "string",
+      description:
+        "Data grant <db>:<ops> for the share's api/ surface, e.g. tasks:read,create (ops: read,create,update; repeatable; server transport only)",
+    },
+    room: {
+      type: "boolean",
+      description:
+        "Also host this share on your edge worker's always-on room (needs `mh edge deploy`; site shares only)",
+    },
   },
   run: guard(async (args) => {
     const db = openMetahub();
@@ -60,6 +85,19 @@ const create = defineCommand({
     const expiresMs = args.expires ? parseDuration(args.expires, 0) : 0;
     const server = transport === "server" ? (args.via ?? localServerBase(db)) : undefined;
 
+    // --room preflight: rooms are a hosting of a SERVER share for a SITE, and
+    // need a configured edge (never auto-created — design.md §7 red line 7).
+    let edge: ReturnType<typeof getEdgeConfig> = null;
+    if (args.room) {
+      if (transport !== "server")
+        throw new MhError("invalid_input", "--room needs the server transport");
+      if (kind !== "site")
+        throw new MhError("invalid_input", "--room currently hosts site shares — share a site and grant its tables (--grant)");
+      edge = getEdgeConfig(db);
+      if (!edge)
+        throw new MhError("invalid_input", "--room needs a configured edge — run `mh edge deploy` (or `mh edge connect`) first");
+    }
+
     const out = await createShareAction(db, {
       kind,
       ref: args.target,
@@ -70,13 +108,28 @@ const create = defineCommand({
       server,
       bucketUrl: args.bucket ?? null,
       viewerBase: args.viewer,
+      grants: buildGrants(db, args.grant as string | string[] | undefined),
     });
 
-    print(out, () =>
-      `${out.url}\n通过：${out.source}\n` +
-      (out.transport === "server"
-        ? "提示：host 需别人可达（LAN IP / 域名 / 隧道）才能给别人访问。"
-        : "提示：预签名链接最长 7 天；过期用 `mh share renew` 续期。"),
+    // Provision + seed the room (share row → grants snapshot/pw verifier/expiry).
+    let roomUrl: string | null = null;
+    if (args.room && edge) {
+      const share = getShare(db, out.slug);
+      if (!share)
+        throw new MhError(
+          "invalid_input",
+          "--room requires creating the share on this device — drop --via <peer>",
+        );
+      roomUrl = (await provisionRoomForShare(db, share, edge)).url;
+    }
+
+    print({ ...out, ...(roomUrl ? { room: roomUrl } : {}) }, () =>
+      `${roomUrl ?? out.url}\n通过：${roomUrl ? `房间（始终在线） + ${out.source}` : out.source}\n` +
+      (roomUrl
+        ? "提示：房间由你的 edge worker 托管，实时可写；撤销分享即销毁房间。"
+        : out.transport === "server"
+          ? "提示：host 需别人可达（LAN IP / 域名 / 隧道）才能给别人访问。"
+          : "提示：预签名链接最长 7 天；过期用 `mh share renew` 续期。"),
     );
   }),
 });
@@ -96,6 +149,7 @@ const list = defineCommand({
           slug: r.slug,
           kind: r.kind,
           perm: r.permission,
+          hosted: r.hosting ?? r.transport,
           via: r.source,
           pw: r.hasPassword ? "🔒" : "",
           expires: r.expiresAt ? new Date(r.expiresAt).toISOString() : "never",
@@ -168,5 +222,5 @@ const link = defineCommand({
 
 export default defineCommand({
   meta: { name: "share", description: "Create and manage public share links" },
-  subCommands: { create, list, servers, revoke, rm: revoke, renew, link },
+  subCommands: { create, list, ls: list, servers, revoke, rm: revoke, renew, link },
 });

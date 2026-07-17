@@ -58,8 +58,10 @@ function resolveRelation(db: DbDriver, prop: PropertyRow, value: string): string
   throw new MhError("ambiguous", `${prop.name}: ambiguous relation "${value}" (${cands.length} matches); use a full id`);
 }
 
-/** Validate + normalize a value for a property's type. Throws on mismatch. */
-function coerce(db: DbDriver, prop: PropertyRow, value: unknown): unknown {
+/** Validate + normalize a value for a property's type. Throws on mismatch.
+ *  Exported so grants-core delegates guest payload type checks to the ONE
+ *  coercion implementation (spike ⑨) instead of rewriting it. */
+export function coerce(db: DbDriver, prop: PropertyRow, value: unknown): unknown {
   switch (prop.type) {
     case "text":
     case "url":
@@ -118,9 +120,10 @@ function propsByName(props: PropertyRow[]): Map<string, PropertyRow[]> {
  * Match data keys (property name OR id) to properties. Duplicate property
  * names are a legal state (offline peers can create them concurrently), so a
  * name that matches several properties is ambiguous — callers must switch to
- * the property id.
+ * the property id. Exported for grants-core (guest payload validation matches
+ * keys to properties with the exact same rules as the real write path).
  */
-function resolveData(
+export function resolveData(
   props: PropertyRow[],
   data: Record<string, unknown>,
 ): { prop: PropertyRow; value: unknown }[] {

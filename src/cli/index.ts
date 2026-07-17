@@ -23,6 +23,7 @@ import compact from "./commands/compact.ts";
 import cache from "./commands/cache.ts";
 import blob from "./commands/blob.ts";
 import config from "./commands/config.ts";
+import edge from "./commands/edge.ts";
 import { parseDuration } from "../core/sync/token.ts";
 import { startServer } from "../core/sync/server.ts";
 import { errorCode } from "../core/errors.ts";
@@ -74,6 +75,7 @@ const main = defineCommand({
     cache,
     blob,
     config,
+    edge,
   },
 });
 

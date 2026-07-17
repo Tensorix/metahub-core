@@ -56,6 +56,9 @@ export interface CreateShareRequest {
   bucketUrl?: string | null;
   /** s3 only: the static viewer base for the link. */
   viewerBase?: string;
+  /** Serialized GrantSet enabling /share/<slug>/api/* (server transport only —
+   *  a presigned static export has no API surface). */
+  grants?: string | null;
 }
 
 export interface CreatedShare {
@@ -81,6 +84,9 @@ export interface ShareListItem {
   transport: "server" | "s3";
   source: string;
   sourceKind: "server" | "peer" | "bucket";
+  /** Where the share is actually served from: this/a server, an always-on DO
+   *  room (server share + kind='room' peer), or a bucket export. */
+  hosting?: "server" | "room" | "s3";
   expiresAt: number | null;
   hasPassword: boolean;
   /** server: ready-to-copy link; s3: omitted (use renew to mint a fresh one). */
@@ -170,6 +176,8 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
 
   // ── object storage ──────────────────────────────────────────────────────────
   if (transport === "s3") {
+    if (req.grants)
+      throw new MhError("invalid_input", "data grants need the server transport — a static object-storage share has no API surface");
     if (permission === "edit")
       throw new MhError("invalid_input", "object-storage shares are read-only — use the server transport to allow editing");
     if (req.kind === "site")
@@ -244,6 +252,7 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
     pwHash,
     expiresAt: req.expiresMs != null ? Date.now() + req.expiresMs : null,
     servedBase,
+    grants: req.grants ?? null, // validated + canonicalized inside createShare
   });
   return {
     slug: share.slug,
@@ -262,6 +271,17 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
   const out: ShareListItem[] = [];
   const rows = targetId ? listSharesForTarget(db, targetId) : listShares(db);
   for (const r of rows) {
+    // A kind='room' peer bound to the slug marks the share as room-hosted; its
+    // always-on link is the room URL (the local /share link keeps working too).
+    const roomPeer = getPeer(db, `room://${r.slug}`);
+    const roomCfg =
+      roomPeer?.kind === "room" && roomPeer.config
+        ? (JSON.parse(roomPeer.config) as { base?: string; slug?: string })
+        : null;
+    const roomUrl =
+      roomCfg?.base && roomCfg.slug
+        ? `${roomCfg.base.replace(/\/+$/, "")}/r/${roomCfg.slug}/`
+        : null;
     out.push({
       slug: r.slug,
       kind: r.kind,
@@ -269,11 +289,12 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
       title: targetTitle(db, r.kind, r.target_id),
       permission: r.permission,
       transport: "server",
-      source: r.served_base || "本机服务器",
+      source: roomUrl ? `房间 ${r.slug}` : r.served_base || "本机服务器",
       sourceKind: "server",
+      hosting: roomUrl ? "room" : "server",
       expiresAt: r.expires_at,
       hasPassword: !!r.pw_hash,
-      url: r.served_base ? `${r.served_base}/share/${r.slug}` : `/share/${r.slug}`,
+      url: roomUrl ?? (r.served_base ? `${r.served_base}/share/${r.slug}` : `/share/${r.slug}`),
     });
   }
   for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
@@ -290,6 +311,7 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
         transport: "s3",
         source: `桶 ${p.label ?? p.url}`,
         sourceKind: "bucket",
+        hosting: "s3",
         expiresAt: m.presign_exp,
         hasPassword: m.has_password,
       });
@@ -327,9 +349,17 @@ async function fetchPeerShares(url: string, token: string, targetId?: string): P
   return (await res.json()) as ShareListItem[];
 }
 
-/** Revoke: local server row → delete it; else a bucket holds it → delete objects. */
+/** Revoke: local server row → delete it (cascading the share's room, if one is
+ *  provisioned — final decision 3: the room's lifecycle is the share's); else a
+ *  bucket holds it → delete objects. */
 export async function revokeShareAction(db: DbDriver, slug: string): Promise<boolean> {
-  if (getShare(db, slug)) return deleteShare(db, slug);
+  if (getShare(db, slug)) {
+    // Best-effort room teardown (destroy + peer removal) — lazy import keeps
+    // the room pipeline off this module's startup path.
+    const { teardownRoomForShare } = await import("./room-peer.ts");
+    await teardownRoomForShare(db, slug).catch(() => undefined);
+    return deleteShare(db, slug);
+  }
   for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
     const config = JSON.parse(p.config!) as S3Config;
     const metas = await listBucketShares(config).catch(() => []);
