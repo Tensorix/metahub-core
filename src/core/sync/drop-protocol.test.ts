@@ -86,6 +86,23 @@ test("payload codec roundtrips; junk is invalid_input", () => {
   ).toBe("invalid_input");
 });
 
+test("v2 payload codec: intents roundtrip; malformed intent is invalid_input", () => {
+  const p = {
+    v: 2 as const,
+    guest_node: "gabcdefgh",
+    intents: [
+      { intentId: "int_1", action: "createRecord" as const, table: "db1", payload: { c: 1 }, submittedAt: 123 },
+    ],
+  };
+  expect(decodeDropPayload(encodeDropPayload(p))).toEqual(p);
+  // missing intentId / bad action / non-object payload / non-number submittedAt all reject
+  expect(code(() => decodeDropPayload(new TextEncoder().encode('{"v":2,"guest_node":"g1","intents":[{"action":"createRecord","payload":{},"submittedAt":1}]}')))).toBe("invalid_input");
+  expect(code(() => decodeDropPayload(new TextEncoder().encode('{"v":2,"guest_node":"g1","intents":[{"intentId":"i","action":"nope","payload":{},"submittedAt":1}]}')))).toBe("invalid_input");
+  expect(code(() => decodeDropPayload(new TextEncoder().encode('{"v":2,"guest_node":"g1","intents":"x"}')))).toBe("invalid_input");
+  // unknown version rejects
+  expect(code(() => decodeDropPayload(new TextEncoder().encode('{"v":9,"guest_node":"g1"}')))).toBe("invalid_input");
+});
+
 test("seal→open envelope roundtrip; envelope shape is validated", async () => {
   const kp = await generateSealKeypair();
   const payload: DropPayload = {

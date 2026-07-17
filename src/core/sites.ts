@@ -36,6 +36,12 @@ import { resolveBlob } from "./blobs.ts";
 
 export * from "./sites-core.ts";
 
+// Reserved site files owned by the grant/edge auto-wiring (sync/drop-wire.ts
+// RESERVED_SITE_FILES) — --prune must never delete them, or a mirror publish
+// would sever the wiring (re-created immediately: delete/recreate oplog churn).
+// A small local mirror avoids importing drop-wire's edge deps here.
+const RESERVED_PRUNE_EXEMPT: ReadonlySet<string> = new Set(["mh-drop.json", "mh-manifest.json"]);
+
 /** Upload or replace one file. utf8 text and small binaries ride the oplog via
  *  putFileInline (portable); binaries over the inline limit offload to the
  *  node-local blob store (server-only — their bytes don't replicate). */
@@ -127,12 +133,13 @@ export async function publishDirectory(
   if (opts.prune) {
     // Compare in the register's canonical form — putFile stored under
     // normalizeSitePath(rel), and listFiles returns those canonical paths.
-    // mh-drop.json is exempt: the grant auto-wiring owns that file (see
-    // sync/drop-wire.ts), and a mirror publish must not sever the inbox wiring
-    // (it would be re-created right after — pure delete/recreate oplog churn).
+    // mh-drop.json + mh-manifest.json are exempt: the grant auto-wiring owns
+    // those files (see sync/drop-wire.ts RESERVED_SITE_FILES), and a mirror
+    // publish must not sever the wiring (they'd be re-created right after —
+    // pure delete/recreate oplog churn).
     const local = new Set(rels.map((rel) => normalizeSitePath(rel)));
     for (const f of listFiles(db, siteId)) {
-      if (f.path === "mh-drop.json") continue;
+      if (RESERVED_PRUNE_EXEMPT.has(f.path)) continue;
       if (!local.has(f.path) && deleteFile(db, siteId, f.path)) pruned.push(f.path);
     }
   }

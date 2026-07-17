@@ -8,9 +8,9 @@ import {
   siteCacheControl,
   type SiteRow,
 } from "../sites.ts";
-import { parseGrantSet, publicGuestNode } from "../grants-core.ts";
-import { serveGrantedApi } from "./grants-routes.ts";
-import { assertAntiAbuse } from "./anti-abuse.ts";
+import { publicGuestNode } from "../grants-core.ts";
+import { policyForSite } from "../access-policy.ts";
+import { serveGrantedApi, grantedDepsFromPolicy } from "./grants-routes.ts";
 import { getDropKnobs } from "./edge-config.ts";
 import { safeDecode } from "./http-util.ts";
 import { rateLimiter, PUBLIC_READ_LIMIT, PUBLIC_WRITE_LIMIT } from "./rate-limit.ts";
@@ -100,21 +100,27 @@ export async function serveSite(
     if (site && isSitePublic(site)) {
       const siteId = site.id;
       const key = `${opts.ip ?? "?"}:${siteId}`;
-      return serveGrantedApi(req, filePath.slice("api/".length), {
-        db: ctx.db,
-        set: parseGrantSet(site.public_grants),
-        principal: { kind: "public", guestNode: publicGuestNode(siteId, ctx.node) },
-        allow: (cls) =>
-          cls === "read"
-            ? rateLimiter.allow("pub-read", key, PUBLIC_READ_LIMIT)
-            : rateLimiter.allow("pub-write", key, PUBLIC_WRITE_LIMIT),
-        // Same anti-abuse gate the write-inbox enforces: a --password/--turnstile
-        // grant now gates this realtime write path too (both transports, one
-        // gate). A page that doesn't send x-drop-pass / x-turnstile-token gets a
-        // 401 here and the SDK degrades to the sealed write-drop, which DOES send
-        // them — so password sites still accept writes, just asynchronously.
-        beforeWrite: () => assertAntiAbuse(getDropKnobs(ctx.db, siteId), req, { ip: opts.ip ?? null }),
-      });
+      // One policy → one deps builder → serveGrantedApi. The write gate
+      // (--password/--turnstile) is synthesized from the policy's writeGate by
+      // grantedDepsFromPolicy, so this realtime write path and the write-inbox
+      // enforce the SAME gate (a page not sending x-drop-pass/x-turnstile-token
+      // gets 401 here and the SDK degrades to the sealed drop, which does send
+      // them — password sites still accept writes, just asynchronously).
+      const policy = policyForSite({ publicGrants: site.public_grants, knobs: getDropKnobs(ctx.db, siteId) });
+      return serveGrantedApi(
+        req,
+        filePath.slice("api/".length),
+        grantedDepsFromPolicy(policy, {
+          db: ctx.db,
+          principal: { kind: "public", guestNode: publicGuestNode(siteId, ctx.node) },
+          allow: (cls) =>
+            cls === "read"
+              ? rateLimiter.allow("pub-read", key, PUBLIC_READ_LIMIT)
+              : rateLimiter.allow("pub-write", key, PUBLIC_WRITE_LIMIT),
+          req,
+          ip: opts.ip ?? null,
+        }),
+      );
     }
     return unauthorized();
   }

@@ -17,7 +17,8 @@
 // Authorization failures are a uniform 401 (anti-enumeration, grants-core).
 
 import type { DbDriver } from "../driver.ts";
-import { MhError, errorCode, type MhErrorCode } from "../errors.ts";
+import { MhError } from "../errors.ts";
+import { errorBody } from "./http-status.ts";
 import { listProperties } from "../properties.ts";
 import { listRecords } from "../records.ts";
 import {
@@ -26,9 +27,11 @@ import {
   GUEST_LIMITS,
   authorizeDbRef,
   authorizeRecord,
-  guestCreateRecord,
-  guestUpdateRecord,
 } from "../grants-core.ts";
+import type { AccessPolicy } from "../access-policy.ts";
+import { applyGuestIntent, type GuestIntent } from "../guest-intent.ts";
+import { randomSuffix } from "../ids.ts";
+import { assertAntiAbuse, type VerifyTurnstile } from "./anti-abuse.ts";
 
 export interface GrantedApiDeps {
   db: DbDriver;
@@ -46,24 +49,53 @@ export interface GrantedApiDeps {
 const LIST_LIMIT_DEFAULT = 100;
 const LIST_LIMIT_MAX = 500;
 
-// Local status map (grants-routes must not import routes.ts — that would drag
-// the whole node-only route registry into the portable bundle).
-const STATUS: Partial<Record<MhErrorCode, number>> = {
-  invalid_input: 400,
-  not_found: 404,
-  ambiguous: 400,
-  stale: 409,
-  conflict: 409,
-  auth: 401,
-  rate_limited: 429,
-};
+/**
+ * Build GrantedApiDeps from a resolved AccessPolicy — the one place a mount
+ * turns "who may do what" into the serving deps, so the grants + write-gate
+ * wiring is identical across the site / share / room adapters (the drift that
+ * once let a --password grant be enforced on one transport and skipped on
+ * another). `beforeWrite` is synthesized from policy.writeGate via the shared
+ * assertAntiAbuse.
+ *
+ * The gate is per-write ONLY for the public audience: a public site has no
+ * session, so the SDK sends the password/Turnstile proof (x-drop-pass /
+ * x-turnstile-token) on every write and this gate verifies it — the SAME gate
+ * the write-inbox enforces. Share/room audiences spend their password once at
+ * unlock and carry a session cookie thereafter, so their writeGate is an
+ * unlock-time gate, not a per-write one → no beforeWrite here.
+ */
+export function grantedDepsFromPolicy(
+  policy: AccessPolicy,
+  host: {
+    db: DbDriver;
+    principal: GrantPrincipal;
+    allow: (cls: "read" | "write") => boolean;
+    req: Request;
+    ip?: string | null;
+    verifyTurnstile?: VerifyTurnstile;
+  },
+): GrantedApiDeps {
+  const gate = policy.writeGate;
+  const gated = policy.audience === "public" && !!(gate.turnstile?.secret || gate.password);
+  return {
+    db: host.db,
+    set: policy.grants,
+    principal: host.principal,
+    allow: host.allow,
+    beforeWrite: gated
+      ? () =>
+          assertAntiAbuse(
+            { turnstileSecret: gate.turnstile?.secret, passwordVerifier: gate.password?.verifierB64 },
+            host.req,
+            { verifyTurnstile: host.verifyTurnstile, ip: host.ip ?? null },
+          )
+      : undefined,
+  };
+}
 
 function errJson(e: unknown): Response {
-  const message = e instanceof Error ? e.message : String(e);
-  const code = errorCode(e);
-  return Response.json(code ? { error: message, code } : { error: message }, {
-    status: code ? (STATUS[code] ?? 400) : 400,
-  });
+  const { body, status } = errorBody(e);
+  return Response.json(body, { status });
 }
 
 function tooMany(): Response {
@@ -93,6 +125,45 @@ async function guestJsonBody(req: Request): Promise<Record<string, unknown>> {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
     throw new MhError("invalid_input", "body must be a JSON object of {column: value}");
   return parsed as Record<string, unknown>;
+}
+
+/** A guest write body is either the intent wrapper `{"$intent":{id,submittedAt},
+ *  "values":{…}}` (new SDK — carries a client idempotency key) or a plain
+ *  `{column: value}` object (legacy / hand-rolled — server mints the intentId).
+ *  Both forever supported. A column literally named "$intent" can't collide: it
+ *  isn't a property id/name, so resolveData would reject it anyway. */
+function readWriteBody(body: Record<string, unknown>): {
+  intentId: string;
+  submittedAt: number;
+  values: Record<string, unknown>;
+} {
+  const wrap = body["$intent"];
+  if (wrap && typeof wrap === "object" && !Array.isArray(wrap) && "values" in body) {
+    const meta = wrap as { id?: unknown; submittedAt?: unknown };
+    const values = body["values"];
+    if (typeof values !== "object" || values === null || Array.isArray(values))
+      throw new MhError("invalid_input", "intent values must be a JSON object");
+    return {
+      intentId: typeof meta.id === "string" && meta.id ? meta.id : "srv_" + randomSuffix(16),
+      submittedAt: Number.isFinite(meta.submittedAt) ? (meta.submittedAt as number) : Date.now(),
+      values: values as Record<string, unknown>,
+    };
+  }
+  return { intentId: "srv_" + randomSuffix(16), submittedAt: Date.now(), values: body };
+}
+
+/** A thin authority-clock policy over the deps' grant set — the guest surface
+ *  authorizes by (set, principal); expiry/session gating already ran upstream. */
+function authorityPolicy(deps: GrantedApiDeps): AccessPolicy {
+  return {
+    audience: deps.principal.kind,
+    grants: deps.set,
+    writeGate: {},
+    limits: GUEST_LIMITS,
+    revision: 0,
+    expiresAt: null,
+    guestBase: deps.principal.guestNode,
+  };
 }
 
 /**
@@ -130,17 +201,35 @@ export async function serveGrantedApi(
     if (req.method === "POST" && sub === "records") {
       if (!deps.allow("write")) return tooMany();
       if (deps.beforeWrite) await deps.beforeWrite();
-      const values = await guestJsonBody(req);
+      const { intentId, submittedAt, values } = readWriteBody(await guestJsonBody(req));
+      const intent: GuestIntent = {
+        intentId,
+        action: "createRecord",
+        table: needParam(url, "db"),
+        payload: values,
+        submittedAt,
+      };
       return Response.json(
-        guestCreateRecord(db, set, principal, needParam(url, "db"), values),
+        applyGuestIntent(db, authorityPolicy(deps), { guestNode: principal.guestNode }, intent, {
+          clock: "authority",
+        }),
       );
     }
     if (req.method === "PATCH" && sub === "record") {
       if (!deps.allow("write")) return tooMany();
       if (deps.beforeWrite) await deps.beforeWrite();
-      const values = await guestJsonBody(req);
+      const { intentId, submittedAt, values } = readWriteBody(await guestJsonBody(req));
+      const intent: GuestIntent = {
+        intentId,
+        action: "updateRecord",
+        recordId: needParam(url, "id"),
+        payload: values,
+        submittedAt,
+      };
       return Response.json(
-        guestUpdateRecord(db, set, principal, needParam(url, "id"), values),
+        applyGuestIntent(db, authorityPolicy(deps), { guestNode: principal.guestNode }, intent, {
+          clock: "authority",
+        }),
       );
     }
     return Response.json({ error: "not found" }, { status: 404 });

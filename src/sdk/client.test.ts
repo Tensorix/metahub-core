@@ -124,6 +124,37 @@ test("detectBase maps the three mounts", () => {
   expect(detectBase()).toBe("");
 });
 
+test("channel selection: with a manifest declaring no inbox fallback, a 401 write throws instead of silently dropping", async () => {
+  const realFetch2 = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = ((input: string | URL | Request) => {
+    const u = String(input);
+    calls.push(u);
+    if (u.includes("mh-manifest.json"))
+      return Promise.resolve(
+        new Response(JSON.stringify({ v: 1, mode: "live", policyRevision: 0 }), { status: 200 }),
+      );
+    if (u.includes("/api/records"))
+      return Promise.resolve(new Response(JSON.stringify({ error: "unauthorized", code: "auth" }), { status: 401 }));
+    // A drop config exists but must NOT be consulted (fallback not declared).
+    if (u.includes("mh-drop.json")) return Promise.resolve(new Response("{}", { status: 200 }));
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  }) as typeof fetch;
+  try {
+    const api = createClient({ baseUrl: "http://x/sites/demo" });
+    let threw = false;
+    try {
+      await api.createRecord("db1", { Msg: "hi" });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true); // explicit: no silent drop
+    expect(calls.some((c) => c.includes("mh-manifest.json"))).toBe(true); // manifest consulted
+  } finally {
+    globalThis.fetch = realFetch2;
+  }
+});
+
 test("createClient exposes the full typed method surface", () => {
   const api = createClient({ baseUrl: "http://127.0.0.1:1" });
   for (const m of [

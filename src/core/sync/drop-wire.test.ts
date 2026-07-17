@@ -20,7 +20,11 @@ import { memSql } from "../../workers/edge-worker.test-util.ts";
 import { httpDropHost, type DropHostApi } from "./drop-host.ts";
 import { setEdgeConfig, setDropKnobs } from "./edge-config.ts";
 import { getLocalDropKeyring, activeDropKey } from "./drop-keys.ts";
-import { syncDropWiring, siteHasCreateGrant, DROP_CONFIG_PATH } from "./drop-wire.ts";
+import { syncDropWiring, siteHasCreateGrant, DROP_CONFIG_PATH, MANIFEST_PATH } from "./drop-wire.ts";
+import { publishDirectory } from "../sites.ts";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { DropConfig } from "../../sdk/drop.ts";
 
 const OWNER = "drt_wiretest";
@@ -133,6 +137,75 @@ test("no edge configured: create grant reports the server transport, no file app
   const w = await syncDropWiring(r.db, r.site, { host: r.host });
   expect(w).toMatchObject({ wired: false, file: "none", transport: "server" });
   expect(readDropConfig(r.db, r.site.id)).toBeNull();
+});
+
+function readManifest(db: Database, siteId: string): Record<string, unknown> | null {
+  const row = getFileRow(db, siteId, MANIFEST_PATH);
+  return row ? (JSON.parse(row.content ?? "") as Record<string, unknown>) : null;
+}
+
+test("wire: mh-manifest.json is published alongside mh-drop.json (mode live + inbox fallback + drop block)", async () => {
+  const r = rig();
+  await syncDropWiring(r.db, r.site, { host: r.host });
+  const m = readManifest(r.db, r.site.id)!;
+  expect(m.v).toBe(1);
+  expect(m.mode).toBe("live");
+  expect(m.runtimeEndpoint).toBe(""); // relative — same origin as the page
+  expect(m.inboxEndpoint).toBe(ENDPOINT);
+  expect(m.fallback).toBe("inbox");
+  expect(typeof m.policyRevision).toBe("number");
+  expect(m.policyRevision).not.toBe(0); // a real content fingerprint
+  const drop = m.drop as { drop_id: string; payload_versions: number[]; databases: unknown[] };
+  expect(drop.drop_id).toBe(r.site.id);
+  expect(drop.payload_versions).toEqual([1]);
+  expect(drop.databases).toHaveLength(1);
+  // E2EE key material stays inline (not stripped) so the page can seal offline.
+  expect((m.drop as { pk?: string }).pk).toBeTruthy();
+});
+
+test("revision: editing the grant republishes the manifest with a new policyRevision", async () => {
+  const r = rig();
+  await syncDropWiring(r.db, r.site, { host: r.host });
+  const rev1 = readManifest(r.db, r.site.id)!.policyRevision as number;
+
+  // Widen the grant (create → create+update) and re-wire.
+  const widened = setSitePublicGrants(r.db, r.site.id, {
+    v: 1,
+    tables: [{ db: r.dbId, ops: ["create", "update"] }],
+  });
+  await syncDropWiring(r.db, widened, { host: r.host });
+  const rev2 = readManifest(r.db, r.site.id)!.policyRevision as number;
+  expect(rev2).not.toBe(rev1); // the policy moved → the SDK/publisher can see it
+});
+
+test("unwire: clearing the create grant removes mh-manifest.json too", async () => {
+  const r = rig();
+  await syncDropWiring(r.db, r.site, { host: r.host });
+  expect(readManifest(r.db, r.site.id)).not.toBeNull();
+  const cleared = setSitePublicGrants(r.db, r.site.id, null);
+  await syncDropWiring(r.db, cleared, { host: r.host });
+  expect(readManifest(r.db, r.site.id)).toBeNull();
+});
+
+test("prune: a mirror --prune publish must NOT delete the reserved wiring files", async () => {
+  const r = rig();
+  await syncDropWiring(r.db, r.site, { host: r.host });
+  expect(readDropConfig(r.db, r.site.id)).not.toBeNull();
+  expect(readManifest(r.db, r.site.id)).not.toBeNull();
+
+  // Publish a directory that does NOT contain the reserved files, with prune on.
+  const dir = mkdtempSync(join(tmpdir(), "mh-prune-"));
+  try {
+    writeFileSync(join(dir, "index.html"), "<h1>site</h1>");
+    const res = await publishDirectory(r.db, r.site.id, dir, { prune: true });
+    expect(res.pruned).not.toContain(DROP_CONFIG_PATH);
+    expect(res.pruned).not.toContain(MANIFEST_PATH);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // Both reserved files survived the prune.
+  expect(readDropConfig(r.db, r.site.id)).not.toBeNull();
+  expect(readManifest(r.db, r.site.id)).not.toBeNull();
 });
 
 test("unreachable host: file still published, registration failure reported not thrown", async () => {

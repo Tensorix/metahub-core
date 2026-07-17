@@ -28,8 +28,8 @@ import { serveSiteFile } from "./sites-serve.ts";
 import { resolveBlob, blobContentType } from "../blobs.ts";
 import { inferContentType } from "../sites-core.ts";
 import { withNodeId } from "../crdt.ts";
-import { parseGrantSet } from "../grants-core.ts";
-import { serveGrantedApi } from "./grants-routes.ts";
+import { policyForShare } from "../access-policy.ts";
+import { serveGrantedApi, grantedDepsFromPolicy } from "./grants-routes.ts";
 import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
 import { readGuestSession, mintGuestSession, type GuestSessionScope } from "./guest-session.ts";
 import { renderMarkdown, escapeHtml } from "./share-render.ts";
@@ -298,12 +298,22 @@ async function serveSiteShare(
     // One combined budget (SHARE_LIMIT/min) per session; cookieless callers
     // key by IP so fresh per-request subs can't sidestep the limiter.
     const key = `${share.slug}:${gs.setCookie ? (opts.ip ?? "?") : gs.sub}`;
-    const res = await serveGrantedApi(req, sub === "api" ? "" : sub.slice("api/".length), {
-      db: ctx.db,
-      set: parseGrantSet(share.grants),
-      principal: { kind: "share", guestNode: gs.sub || (share.guest_node_id ?? `gs-${share.slug}`) },
-      allow: () => rateLimiter.allow("share-api", key, SHARE_LIMIT),
-    });
+    // Same policy seam as the public site mount. The share's session gate (slug
+    // + optional password, already run) is the access control, so no writeGate
+    // is applied here — policyForShare carries no turnstile and the password was
+    // spent at unlock; deps get no beforeWrite.
+    const policy = policyForShare(share);
+    const res = await serveGrantedApi(
+      req,
+      sub === "api" ? "" : sub.slice("api/".length),
+      grantedDepsFromPolicy(policy, {
+        db: ctx.db,
+        principal: { kind: "share", guestNode: gs.sub || (share.guest_node_id ?? `gs-${share.slug}`) },
+        allow: () => rateLimiter.allow("share-api", key, SHARE_LIMIT),
+        req,
+        ip: opts.ip ?? null,
+      }),
+    );
     return withSessionCookie(res, gs.setCookie);
   }
 

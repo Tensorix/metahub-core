@@ -16,6 +16,7 @@ import { randomSuffix } from "../ids.ts";
 import { parseHlc } from "../hlc.ts";
 import type { Change } from "../crdt.ts";
 import { checkGuestChanges, type GrantSet } from "../grants-core.ts";
+import type { GuestIntent } from "../guest-intent.ts"; // type-only: no runtime pull into the SDK bundle
 import { toB64, fromB64 } from "./e2ee.ts";
 import { seal, openSealed, SEAL_ENC } from "./seal.ts";
 
@@ -57,6 +58,21 @@ export interface DropPayload {
   meta?: Record<string, unknown>;
 }
 
+/** Payload v2: high-level GuestIntents instead of pre-signed Change[]. The
+ *  browser no longer mints HLC/oplog rows — the owner's applyGuestIntent does,
+ *  on the guest's own timeline at each intent's (clamped) submittedAt. Idempotent
+ *  on intentId (a replay under a new envelope_id is a no-op). This is where the
+ *  guest-clock-minting attack surface (NaN-HLC, seed offsets) stops existing. */
+export interface DropPayloadV2 {
+  v: 2;
+  guest_node: string;
+  intents: GuestIntent[];
+  meta?: Record<string, unknown>;
+}
+
+/** Either wire version — decodeDropPayload returns this; callers discriminate on `v`. */
+export type AnyDropPayload = DropPayload | DropPayloadV2;
+
 export function newEnvelopeId(): string {
   return "e" + randomSuffix(16);
 }
@@ -67,26 +83,27 @@ export function newGuestNode(): string {
 
 // ---- codec -----------------------------------------------------------------------
 
-export function encodeDropPayload(payload: DropPayload): Uint8Array {
+export function encodeDropPayload(payload: AnyDropPayload): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(payload));
 }
 
-export function decodeDropPayload(bytes: Uint8Array): DropPayload {
+export function decodeDropPayload(bytes: Uint8Array): AnyDropPayload {
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     throw new MhError("invalid_input", "drop payload is not JSON");
   }
-  const p = parsed as Partial<DropPayload> | null;
-  if (
-    !p ||
-    typeof p !== "object" ||
-    p.v !== 1 ||
-    typeof p.guest_node !== "string" ||
-    !Array.isArray(p.changes)
-  )
+  const p = parsed as { v?: unknown; guest_node?: unknown } | null;
+  if (!p || typeof p !== "object" || typeof p.guest_node !== "string")
     throw new MhError("invalid_input", "malformed drop payload");
+  if (p.v === 2) return decodeV2(p as Partial<DropPayloadV2>);
+  if (p.v === 1) return decodeV1(p as Partial<DropPayload>);
+  throw new MhError("invalid_input", "unknown drop payload version");
+}
+
+function decodeV1(p: Partial<DropPayload>): DropPayload {
+  if (!Array.isArray(p.changes)) throw new MhError("invalid_input", "malformed drop payload");
   for (const c of p.changes) {
     if (
       !c ||
@@ -101,6 +118,25 @@ export function decodeDropPayload(bytes: Uint8Array): DropPayload {
       throw new MhError("invalid_input", "malformed change in drop payload");
   }
   return p as DropPayload;
+}
+
+function decodeV2(p: Partial<DropPayloadV2>): DropPayloadV2 {
+  if (!Array.isArray(p.intents)) throw new MhError("invalid_input", "malformed drop payload");
+  for (const i of p.intents) {
+    const it = i as Partial<GuestIntent> | null;
+    if (
+      !it ||
+      typeof it !== "object" ||
+      typeof it.intentId !== "string" ||
+      (it.action !== "createRecord" && it.action !== "updateRecord") ||
+      typeof it.payload !== "object" ||
+      it.payload === null ||
+      Array.isArray(it.payload) ||
+      typeof it.submittedAt !== "number"
+    )
+      throw new MhError("invalid_input", "malformed intent in drop payload");
+  }
+  return p as DropPayloadV2;
 }
 
 /** Structural check on an envelope as it comes off the edge host. */
@@ -128,7 +164,7 @@ export async function sealDropEnvelope(opts: {
   keyId: string;
   /** Recipient public key, raw uncompressed P-256 point. */
   pk: Uint8Array;
-  payload: DropPayload;
+  payload: AnyDropPayload;
   now?: number;
 }): Promise<DropEnvelope> {
   const sealed = await seal(opts.pk, encodeDropPayload(opts.payload));
@@ -148,9 +184,19 @@ export async function sealDropEnvelope(opts: {
 export async function openDropEnvelope(
   env: DropEnvelope,
   key: { pk: Uint8Array; sk: Uint8Array },
-): Promise<DropPayload> {
+): Promise<AnyDropPayload> {
   const plain = await openSealed(key.sk, key.pk, fromB64(env.sealed));
   return decodeDropPayload(plain);
+}
+
+/** Validate a v2 payload's guest identity before its intents are applied
+ *  (mirrors checkDropPayload's guest_node guard; per-intent authorization +
+ *  minting is applyGuestIntent's job in drop-pull). */
+export function checkDropIntents(ownNode: string, payload: DropPayloadV2): DropPayloadV2 {
+  if (!GUEST_NODE_RE.test(payload.guest_node) || payload.guest_node === ownNode)
+    throw new MhError("auth", "unauthorized");
+  if (payload.intents.length === 0) throw new MhError("invalid_input", "empty drop payload");
+  return payload;
 }
 
 // ---- ingest isolation check --------------------------------------------------------

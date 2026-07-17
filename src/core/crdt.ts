@@ -66,6 +66,26 @@ export function withChangeGroup<T>(label: string | null, fn: () => T): T {
   }
 }
 
+/**
+ * Run `fn` with all emits stamped with an EXPLICIT, caller-supplied txn id (no
+ * random suffix) — the deterministic sibling of withChangeGroup. A guest write
+ * carries a client-minted intentId; stamping its ops `intent:<id>` makes a
+ * retried submission idempotent (the same intentId probes to the already-applied
+ * row instead of double-creating). Same single-threaded-mutator invariant as
+ * withNodeId/withChangeGroup — set/clear around one synchronous mutator call.
+ * Nested inside its own group (createRecord's grouped()) the explicit id wins,
+ * because withChangeGroup early-returns when a txn is already set.
+ */
+export function withTxnId<T>(txn: string, fn: () => T): T {
+  const prev = currentTxn;
+  currentTxn = txn;
+  try {
+    return fn();
+  } finally {
+    currentTxn = prev;
+  }
+}
+
 /** Wrap a mutator so its body runs inside one change group. */
 export function grouped<A extends unknown[], R>(
   fn: (...args: A) => R,

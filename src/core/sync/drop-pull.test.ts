@@ -76,7 +76,7 @@ async function rig(node = "hostnode"): Promise<Rig> {
     },
     { fetcher, storage: memStorage() },
   );
-  return { db, site: granted, dbId: table.id, titleProp: title.id, host, sql, drop };
+  return { db, site: granted, dbId: table.id, titleProp: title.id, host, sql, drop, key };
 }
 
 function addBucketPeer(db: Database, url = "s3://host/bucket/metahub"): string {
@@ -127,6 +127,75 @@ test("happy path (no bucket): submit → pull → guest record lands, envelope a
   expect(op.txn).toBe("drop:" + pendingRec.envelope_id);
   // inbox drained
   expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(0);
+});
+
+/** A v2 (GuestIntent) drop client over the same rig — payload_versions:[2]. */
+function v2Drop(r: Rig) {
+  const handler = createInboxFetch({ sql: r.sql, ownerToken: OWNER });
+  const fetcher = ((input: string | URL | Request, init?: RequestInit) =>
+    handler(new Request(input, init))) as typeof fetch;
+  return createDrop(
+    {
+      v: 1,
+      endpoint: ENDPOINT,
+      drop_id: r.site.id,
+      key_id: r.key.key_id,
+      pk: r.key.pk,
+      payload_versions: [2],
+      databases: [{ id: r.dbId, name: "guestbook", properties: [{ id: r.titleProp, name: "Title", type: "text" }] }],
+    },
+    { fetcher, storage: memStorage() },
+  );
+}
+
+test("v2 drop: SDK seals a GuestIntent; owner mints the op on the guest timeline (no browser HLC), acked", async () => {
+  const r = await rig();
+  const drop = v2Drop(r);
+  const before = Date.now();
+  const pending = await drop.createRecord("guestbook", { Title: "v2 hello" });
+  expect(pending._pending).toBe(true);
+
+  const s = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s.v2).toBe(1);
+  expect(s.v1).toBe(0);
+  expect(s.acked).toBe(1);
+  expect(s.ingested).toBeGreaterThan(0);
+
+  const rows = listRecords(r.db, r.dbId);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.id).toBe(pending.id); // client-minted rowId honored
+  expect(rows[0]!.values["Title"]).toBe("v2 hello");
+  // The op is stamped intent:<intentId> (not drop:<envId>) and authored by the
+  // guest node; its HLC millis is a real submit time (server-minted, near now).
+  const op = r.db
+    .query("SELECT node_id, txn, hlc FROM crdt_changes WHERE dataset='records' AND row_id=? AND col=?")
+    .get(pending.id, r.titleProp) as { node_id: string; txn: string; hlc: string };
+  expect(op.node_id).toBe(drop.guest);
+  expect(op.txn).toStartWith("intent:");
+  expect(Number(op.hlc.slice(0, 15))).toBeGreaterThanOrEqual(before);
+  expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(0);
+});
+
+test("v2 drop: replaying the SAME intent under a new envelope_id is idempotent (no duplicate), still acks", async () => {
+  const r = await rig();
+  const drop = v2Drop(r);
+  await drop.createRecord("guestbook", { Title: "once" });
+  // Capture the sealed envelope, then re-submit it under a fresh envelope_id.
+  const original = (await r.host.listEnvelopes(r.site.id, 0, 100))[0]!.envelope as Record<string, unknown>;
+
+  const s1 = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s1.acked).toBe(1);
+  expect(listRecords(r.db, r.dbId)).toHaveLength(1);
+
+  const replay = JSON.stringify({ ...original, envelope_id: original.envelope_id + "-r" });
+  await createInboxFetch({ sql: r.sql, ownerToken: OWNER })(
+    new Request(`${ENDPOINT}/v1/inbox/${r.site.id}/envelopes`, { method: "POST", body: replay }),
+  );
+  const s2 = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s2.v2).toBe(1);
+  expect(s2.acked).toBe(1); // acked+deleted, not deferred forever
+  expect(s2.deferred).toBe(0);
+  expect(listRecords(r.db, r.dbId)).toHaveLength(1); // still exactly one — idempotent on intentId
 });
 
 test("ack gate: with a bucket, deferred until push_cursor covers the ingest; replay is inserted:0 + catch-up ack", async () => {

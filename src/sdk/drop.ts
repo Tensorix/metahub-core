@@ -19,8 +19,9 @@ import {
   newGuestNode,
   sealDropEnvelope,
   GUEST_NODE_RE,
-  type DropPayload,
+  type AnyDropPayload,
 } from "../core/sync/drop-protocol.ts";
+import type { GuestIntent } from "../core/guest-intent.ts"; // type-only: no runtime pull
 import type { Change } from "../core/crdt.ts";
 
 // ---- published config ----------------------------------------------------------------
@@ -47,6 +48,10 @@ export interface DropConfig {
   pk: string;
   turnstile_sitekey?: string;
   password_salt?: string;
+  /** Payload wire versions the owner accepts. Absent → [1] (legacy). The SDK
+   *  seals v2 (high-level GuestIntent, no browser-minted HLC) only when 2 is
+   *  listed — the owner flips this after upgrading, closing the transition. */
+  payload_versions?: number[];
   /** Offline schema of the create-granted tables (ops address property IDs). */
   databases?: DropDatabaseInfo[];
 }
@@ -233,30 +238,51 @@ export function createDrop(cfg: DropConfig, opts: DropClientOptions = {}): DropC
   ): Promise<PendingRecord> {
     const dbInfo = resolveDb(dbRef);
     const rowId = "rec_" + randomSuffix(10);
-    const changes: Change[] = [];
-    const push = (col: string, value: unknown, hlc: string): void => {
-      changes.push({
-        hlc,
-        node_id: guest!,
-        dataset: "records",
-        row_id: rowId,
-        col,
-        value: value === undefined || value === null ? null : JSON.stringify(value),
-      });
-    };
-    const firstHlc = nextHlc();
-    push("database_id", dbInfo.id, firstHlc);
-    push("created_hlc", firstHlc, nextHlc());
+    // Resolve the cells once (id-keyed for the wire, name-keyed for the echo).
     const cells: Record<string, unknown> = {};
     const byName: Record<string, unknown> = {};
+    const idKeyed: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(values)) {
       const prop = resolveProp(dbInfo, key);
-      push(prop.id, value ?? null, nextHlc());
       cells[prop.id] = value;
       byName[prop.name] = value;
+      idKeyed[prop.id] = value ?? null;
     }
 
-    const payload: DropPayload = { v: 1, guest_node: guest!, changes };
+    // v2 (when the owner accepts it): a high-level GuestIntent — the browser
+    // mints NO HLC/ops; the owner does, on the guest's own timeline. Idempotent
+    // on intentId. v1 (default during the transition): pre-signed ops under the
+    // visitor's mini-HLC (kept until the owner flips payload_versions to include 2).
+    const acceptsV2 = (cfg.payload_versions ?? [1]).includes(2);
+    let payload: AnyDropPayload;
+    if (acceptsV2) {
+      const intent: GuestIntent = {
+        intentId: "int_" + randomSuffix(16),
+        action: "createRecord",
+        table: dbInfo.id,
+        recordId: rowId,
+        payload: idKeyed,
+        submittedAt: now() + offset, // offset-corrected → inside the owner's clamp
+      };
+      payload = { v: 2, guest_node: guest!, intents: [intent] };
+    } else {
+      const changes: Change[] = [];
+      const push = (col: string, value: unknown, hlc: string): void => {
+        changes.push({
+          hlc,
+          node_id: guest!,
+          dataset: "records",
+          row_id: rowId,
+          col,
+          value: value === undefined || value === null ? null : JSON.stringify(value),
+        });
+      };
+      const firstHlc = nextHlc();
+      push("database_id", dbInfo.id, firstHlc);
+      push("created_hlc", firstHlc, nextHlc());
+      for (const [id, value] of Object.entries(idKeyed)) push(id, value, nextHlc());
+      payload = { v: 1, guest_node: guest!, changes };
+    }
     const envelope = await sealDropEnvelope({
       dropId: cfg.drop_id,
       keyId: cfg.key_id,

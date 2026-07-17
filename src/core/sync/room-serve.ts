@@ -23,12 +23,13 @@
 // everything below only reads/writes its own database and answers requests.
 
 import type { DbDriver } from "../driver.ts";
-import { errorCode, type MhErrorCode } from "../errors.ts";
+import { errorCode } from "../errors.ts";
+import { errorBody } from "./http-status.ts";
 import { randomSuffix } from "../ids.ts";
-import { parseGrantSet } from "../grants-core.ts";
+import { policyForRoom } from "../access-policy.ts";
 import { safeDecode } from "./http-util.ts";
 import { escapeHtml } from "./html-escape.ts";
-import { serveGrantedApi } from "./grants-routes.ts";
+import { serveGrantedApi, grantedDepsFromPolicy } from "./grants-routes.ts";
 import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
 import { resolveSiteFileRow, base64ToBytes } from "../sites-core.ts";
 import { verifyPasswordVerifier } from "../shares.ts";
@@ -78,20 +79,9 @@ function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
 }
 
-const STATUS: Partial<Record<MhErrorCode, number>> = {
-  invalid_input: 400,
-  not_found: 404,
-  ambiguous: 400,
-  stale: 409,
-  conflict: 409,
-  auth: 401,
-  rate_limited: 429,
-};
-
 function errJson(e: unknown): Response {
-  const message = e instanceof Error ? e.message : String(e);
-  const code = errorCode(e);
-  return json(code ? { error: message, code } : { error: message }, code ? (STATUS[code] ?? 400) : 400);
+  const { body, status } = errorBody(e);
+  return json(body, status);
 }
 
 function plain404(): Response {
@@ -386,12 +376,19 @@ export function createRoomFetch(deps: RoomHostDeps): (req: Request) => Promise<R
       // Cookieless callers key the limiter by IP so fresh per-request subs
       // can't sidestep it (same rule as share-serve).
       const key = gs.setCookie ? (req.headers.get("cf-connecting-ip") ?? "?") : gs.sub;
-      const res = await serveGrantedApi(req, sub === "api" ? "" : sub.slice("api/".length), {
-        db,
-        set: parseGrantSet(cfg.grants),
-        principal: { kind: "share", guestNode: gs.sub || cfg.guestBase },
-        allow: () => rateLimiter.allow("room-api", `${cfg.slug}:${key}`, SHARE_LIMIT),
-      });
+      // Same policy seam as the site/share mounts; room writes are session-gated
+      // (unlock spent the password) so the DO adapter applies no per-write gate.
+      const res = await serveGrantedApi(
+        req,
+        sub === "api" ? "" : sub.slice("api/".length),
+        grantedDepsFromPolicy(policyForRoom(cfg), {
+          db,
+          principal: { kind: "share", guestNode: gs.sub || cfg.guestBase },
+          allow: () => rateLimiter.allow("room-api", `${cfg.slug}:${key}`, SHARE_LIMIT),
+          req,
+          ip: req.headers.get("cf-connecting-ip"),
+        }),
+      );
       if (req.method !== "GET" && res.ok) deps.poke?.(maxSeq(db));
       return withSetCookie(res, gs.setCookie);
     }

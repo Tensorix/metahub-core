@@ -24,12 +24,8 @@ import { MhError } from "../errors.ts";
 import { ingest, CHANGE_COLS, type Change } from "../crdt.ts";
 import { initSchema } from "../schema-init.ts";
 import { randomSuffix } from "../ids.ts";
-import {
-  parseGrantSet,
-  guestCreateRecord,
-  guestUpdateRecord,
-  type GrantPrincipal,
-} from "../grants-core.ts";
+import { policyForRoom } from "../access-policy.ts";
+import { applyGuestIntent, type GuestIntent } from "../guest-intent.ts";
 import type { RecordRow } from "../records.ts";
 import { allWinners, winnersDigest, PARTITION_DATASETS, type RowKey } from "./partition.ts";
 
@@ -452,14 +448,19 @@ export function handleOwnerSync(
 // ---- guest writes -------------------------------------------------------------------
 
 /** A guest write intent (final decision 1: intents, not pre-signed ops — the
- *  room's clock is the time authority; the write shape mirrors share-serve). */
+ *  room's clock is the time authority; the write shape mirrors share-serve).
+ *  The wire form the room WS accepts; mapped to the shared GuestIntent in
+ *  handleGuestWrite. `intentId`/`submittedAt` are optional (new SDK sends them
+ *  for retry-idempotency; older clients omit and the server synthesizes). */
 export interface GuestWriteIntent {
   op: "createRecord" | "updateRecord";
   /** Database ref (id or granted name) — createRecord. */
   db?: string;
-  /** Record id — updateRecord. */
+  /** Record id — updateRecord (or client-minted id on createRecord). */
   record?: string;
   values: Record<string, unknown>;
+  intentId?: string;
+  submittedAt?: number;
 }
 
 export interface RoomGuestSession {
@@ -475,10 +476,11 @@ export function mintRoomGuestSub(cfg: RoomConfig): string {
 }
 
 /**
- * Apply one guest intent inside the room. Authorization and guardrails are
- * grants-core's (same module the server share endpoints use); the HLC is
- * stamped by the room's persisted clock via the ordinary emit path, with the
- * session's sub id as the author node (withNodeId inside guest*Record).
+ * Apply one guest intent inside the room. Access gating (expiry + guest-node
+ * validity) is enforced here; authorization, guardrails and the write itself go
+ * through the shared applyGuestIntent executor (the same one the server share
+ * endpoints and — from Stage 4 — drop replay use). Authority clock: the room's
+ * persisted clock stamps the HLC, with the session's sub id as the author node.
  */
 export function handleGuestWrite(
   roomDb: DbDriver,
@@ -489,15 +491,15 @@ export function handleGuestWrite(
   if (roomExpired(cfg)) throw new MhError("auth", "unauthorized");
   if (!session.sub || !isGuestNode(cfg.guestBase, session.sub))
     throw new MhError("auth", "unauthorized");
-  const set = parseGrantSet(cfg.grants);
-  const principal: GrantPrincipal = { kind: "share", guestNode: session.sub };
-  if (intent.op === "createRecord") {
-    if (!intent.db) throw new MhError("invalid_input", "createRecord intent needs a db ref");
-    return guestCreateRecord(roomDb, set, principal, intent.db, intent.values);
-  }
-  if (intent.op === "updateRecord") {
-    if (!intent.record) throw new MhError("invalid_input", "updateRecord intent needs a record id");
-    return guestUpdateRecord(roomDb, set, principal, intent.record, intent.values);
-  }
-  throw new MhError("invalid_input", `unknown intent op ${JSON.stringify((intent as { op?: unknown }).op)}`);
+  if (intent.op !== "createRecord" && intent.op !== "updateRecord")
+    throw new MhError("invalid_input", `unknown intent op ${JSON.stringify((intent as { op?: unknown }).op)}`);
+  const gi: GuestIntent = {
+    intentId: intent.intentId || randomSuffix(16),
+    action: intent.op,
+    table: intent.db,
+    recordId: intent.record,
+    payload: intent.values,
+    submittedAt: Number.isFinite(intent.submittedAt) ? intent.submittedAt! : Date.now(),
+  };
+  return applyGuestIntent(roomDb, policyForRoom(cfg), { guestNode: session.sub }, gi, { clock: "authority" });
 }

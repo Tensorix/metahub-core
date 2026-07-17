@@ -40,6 +40,19 @@ export class MetahubError extends Error {
 const TOKEN_KEY = "mh_token";
 const RENEW_PATH = "/auth/token";
 
+/** The owner-published deployment manifest (mh-manifest.json) — the SDK's
+ *  explicit channel map (see core/sync/drop-wire.ts buildManifest). */
+export interface DeploymentManifest {
+  v: 1;
+  mode: "live" | "static-async";
+  runtimeEndpoint?: string;
+  websocketEndpoint?: string;
+  inboxEndpoint?: string;
+  fallback?: "inbox";
+  policyRevision: number;
+  drop?: { payload_versions?: number[]; [k: string]: unknown };
+}
+
 /**
  * The API base for the current mount. One page runs unchanged under all four
  * mounts because its data calls stay relative to where it is served:
@@ -124,6 +137,12 @@ export function createClient(opts: SdkOptions = {}) {
 
   const q = (s: string) => encodeURIComponent(s);
 
+  // A client idempotency key for a guest write intent — random enough that a
+  // retried submission reuses the SAME id (the caller retries the same request),
+  // while two distinct writes never collide.
+  const newIntentId = (): string =>
+    "int_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
   // Sealed write-drop fallback (async public writes): when the realtime
   // endpoint refuses (401 — no write grant on this mount, or the server is
   // auth-gated) or the network fails outright, and the page ships an
@@ -137,6 +156,25 @@ export function createClient(opts: SdkOptions = {}) {
       () => null,
     );
     return dropClient;
+  };
+
+  // Deployment manifest (mh-manifest.json): the owner's EXPLICIT channel map.
+  // When present, a live-endpoint failure only degrades to the sealed drop if
+  // the manifest declares `fallback:"inbox"` — otherwise the SDK surfaces the
+  // failure instead of silently guessing. Absent manifest → legacy behavior
+  // (drop whenever mh-drop.json exists). Fetched once, best-effort.
+  let manifestP: Promise<DeploymentManifest | null> | null = null;
+  const getManifest = (): Promise<DeploymentManifest | null> => {
+    manifestP ??= fetch(`${base}/mh-manifest.json`)
+      .then((r) => (r.ok ? (r.json() as Promise<DeploymentManifest>) : null))
+      .catch(() => null);
+    return manifestP;
+  };
+  /** Whether an eligible live-endpoint failure may fall back to the drop inbox:
+   *  yes if no manifest (legacy) or the manifest declares fallback:"inbox". */
+  const mayFallBackToInbox = async (): Promise<boolean> => {
+    const m = await getManifest();
+    return !m || m.fallback === "inbox";
   };
 
   return {
@@ -156,20 +194,45 @@ export function createClient(opts: SdkOptions = {}) {
     },
     getRecord: (id: string) => req<RecordInfo>("GET", `/api/record?id=${q(id)}`),
     createRecord: async (db: string, values: Record<string, unknown>): Promise<RecordInfo> => {
+      // On a guest mount, send the idempotent intent wrapper so a retried POST
+      // (dropped response) can't double-create. The root main API doesn't parse
+      // wrappers, so only wrap on a mount; and if a mount server is older than
+      // this SDK (a vendored copy), retry once with the plain body.
+      const mounted = base !== "";
+      const body = mounted ? { $intent: { id: newIntentId(), submittedAt: Date.now() }, values } : values;
       try {
-        return await req<RecordInfo>("POST", `/api/records?db=${q(db)}`, values);
+        return await req<RecordInfo>("POST", `/api/records?db=${q(db)}`, body);
       } catch (e) {
+        if (mounted && e instanceof MetahubError && e.status === 400) {
+          try {
+            return await req<RecordInfo>("POST", `/api/records?db=${q(db)}`, values);
+          } catch (e2) {
+            e = e2;
+          }
+        }
         // Only auth refusals and transport failures may fall back — a 400/404/429
         // is a real answer from a reachable, willing endpoint.
         const eligible = e instanceof MetahubError ? e.status === 401 : true;
         if (!eligible) throw e;
+        // Explicit channel selection: only degrade to the sealed drop if the
+        // manifest declares it (or there's no manifest — legacy).
+        if (!(await mayFallBackToInbox())) throw e;
         const drop = await dropFallback();
         if (!drop) throw e;
         return (await drop.createRecord(db, values)) as unknown as RecordInfo;
       }
     },
-    updateRecord: (id: string, values: Record<string, unknown>) =>
-      req<RecordInfo>("PATCH", `/api/record?id=${q(id)}`, values),
+    updateRecord: async (id: string, values: Record<string, unknown>): Promise<RecordInfo> => {
+      const mounted = base !== "";
+      const body = mounted ? { $intent: { id: newIntentId(), submittedAt: Date.now() }, values } : values;
+      try {
+        return await req<RecordInfo>("PATCH", `/api/record?id=${q(id)}`, body);
+      } catch (e) {
+        if (mounted && e instanceof MetahubError && e.status === 400)
+          return req<RecordInfo>("PATCH", `/api/record?id=${q(id)}`, values);
+        throw e;
+      }
+    },
     deleteRecord: (id: string) => req<{ ok: boolean }>("DELETE", `/api/record?id=${q(id)}`),
 
     // documents

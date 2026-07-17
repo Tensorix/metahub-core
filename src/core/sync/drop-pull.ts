@@ -22,7 +22,9 @@ import type { Change } from "../crdt.ts";
 import { getNodeId } from "../node.ts";
 import { ingest } from "../crdt.ts";
 import { MhError, errorCode } from "../errors.ts";
-import { parseGrantSet } from "../grants-core.ts";
+import { parseGrantSet, GUEST_LIMITS, type GrantSet } from "../grants-core.ts";
+import { applyGuestIntent } from "../guest-intent.ts";
+import type { AccessPolicy } from "../access-policy.ts";
 import { listSites, type SiteRow } from "../sites-core.ts";
 import { getEdgeConfig } from "./edge-config.ts";
 import { httpDropHost, type DropHostApi } from "./drop-host.ts";
@@ -39,6 +41,7 @@ import {
   parseDropEnvelope,
   openDropEnvelope,
   checkDropPayload,
+  checkDropIntents,
 } from "./drop-protocol.ts";
 import { fromB64 } from "./e2ee.ts";
 import { isElectedPublisher } from "./publisher-lease.ts";
@@ -68,6 +71,10 @@ export interface DropPullDropSummary {
   /** Held (NOT acked, NOT deleted) because opening failed on OUR side — a local
    *  key/bucket fault, not bad mail. Retried on a later, fixed pull; never lost. */
   held: number;
+  /** Payload-version breakdown of the envelopes ingested this round — drives the
+   *  drain metric for the v1→v2 migration (mh edge status). */
+  v1: number;
+  v2: number;
 }
 
 export interface DropPullSummary {
@@ -79,10 +86,12 @@ export interface DropPullSummary {
   rejected: number;
   deferred: number;
   held: number;
+  v1: number;
+  v2: number;
 }
 
 function emptySummary(skipped?: DropPullSummary["skipped"]): DropPullSummary {
-  return { ...(skipped ? { skipped } : {}), drops: [], fetched: 0, ingested: 0, acked: 0, rejected: 0, deferred: 0, held: 0 };
+  return { ...(skipped ? { skipped } : {}), drops: [], fetched: 0, ingested: 0, acked: 0, rejected: 0, deferred: 0, held: 0, v1: 0, v2: 0 };
 }
 
 function recordDropReject(db: DbDriver, dropId: string, envelopeId: string | null, reason: string): void {
@@ -131,6 +140,55 @@ export function changesMaxSeq(db: DbDriver, changes: Change[]): number | null {
     if (max == null || r.s > max) max = r.s;
   }
   return max;
+}
+
+/** Ack watermark for a v2 envelope: MAX oplog seq over its intents' txns
+ *  ("intent:"+id). null if any intent produced no oplog rows (hold, don't ack).
+ *  A replay under a new envelope_id resolves to the SAME intent txns (idempotent
+ *  on intentId), so it acks instead of deferring forever — the F6 defense for v2. */
+function intentsMaxSeq(db: DbDriver, intentIds: string[]): number | null {
+  let max: number | null = null;
+  for (const id of intentIds) {
+    const r = db.query("SELECT MAX(seq) AS s FROM crdt_changes WHERE txn = ?").get("intent:" + id) as {
+      s: number | null;
+    };
+    if (r.s == null) return null;
+    if (max == null || r.s > max) max = r.s;
+  }
+  return max;
+}
+
+/** Apply a v2 envelope's intents (owner side), atomically. Each intent runs
+ *  through the shared applyGuestIntent on the guest's own timeline (submitted
+ *  clock), idempotent on intentId. Returns the ack watermark + new-row count.
+ *  Throws (whole envelope rejected — a submission is atomic) on any violation. */
+function applyDropV2(
+  db: DbDriver,
+  set: GrantSet,
+  payload: { guest_node: string; intents: import("../guest-intent.ts").GuestIntent[] },
+  now: number,
+): { ackSeq: number | null; ingested: number } {
+  const policy: AccessPolicy = {
+    audience: "public",
+    grants: set,
+    writeGate: {},
+    limits: GUEST_LIMITS,
+    revision: 0,
+    expiresAt: null,
+    guestBase: payload.guest_node,
+  };
+  const before = (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number | null }).s ?? 0;
+  const ids: string[] = [];
+  db.transaction(() => {
+    for (const intent of payload.intents) {
+      applyGuestIntent(db, policy, { guestNode: payload.guest_node }, intent, { clock: "submitted", now });
+      ids.push(intent.intentId);
+    }
+  })();
+  const ingested = (
+    db.query("SELECT COUNT(*) AS n FROM crdt_changes WHERE seq > ?").get(before) as { n: number }
+  ).n;
+  return { ackSeq: intentsMaxSeq(db, ids), ingested };
 }
 
 function bucketPushCursor(db: DbDriver, bucket: DropBucket): number {
@@ -216,6 +274,8 @@ export async function pullDropsOnce(
       rejected: 0,
       deferred: 0,
       held: 0,
+      v1: 0,
+      v2: 0,
     };
     const set = parseGrantSet(site.public_grants);
     let afterId = 0;
@@ -278,9 +338,21 @@ export async function pullDropsOnce(
             // garbage ciphertext) → the outer catch rejects+deletes it, so an
             // attacker can't pin capacity with unopenable mail.
             const payload = await openDropEnvelope(env, { pk: fromB64(key.pk), sk });
-            const changes = checkDropPayload(db, set, node, env.envelope_id, payload, now());
-            s.ingested += ingest(db, changes);
-            ackSeq = changesMaxSeq(db, changes);
+            if (payload.v === 2) {
+              // v2: high-level intents, applied on the guest's own timeline by
+              // the shared executor (no browser-minted HLC). Idempotent on
+              // intentId; ack watermark keyed by the intent txns.
+              const checked = checkDropIntents(node, payload);
+              const r = applyDropV2(db, set, checked, now());
+              s.ingested += r.ingested;
+              s.v2++;
+              ackSeq = r.ackSeq;
+            } else {
+              const changes = checkDropPayload(db, set, node, env.envelope_id, payload, now());
+              s.ingested += ingest(db, changes);
+              s.v1++;
+              ackSeq = changesMaxSeq(db, changes);
+            }
           }
           if (ackSeq == null) {
             // Partial ingest: at least one op neither landed nor was superseded
@@ -312,6 +384,8 @@ export async function pullDropsOnce(
     summary.rejected += s.rejected;
     summary.deferred += s.deferred;
     summary.held += s.held;
+    summary.v1 += s.v1;
+    summary.v2 += s.v2;
   }
   return summary;
 }

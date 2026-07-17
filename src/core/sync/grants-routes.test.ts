@@ -267,3 +267,29 @@ test("two-node smoke: public_grants set on A replicates to B and serves there; j
   const junk = (await serveSite(get(`/sites/demo/api/records?db=${d.id}`), b, AUTH_TOKEN))!;
   expect(junk.status).toBe(401);
 });
+
+test("intent wrapper: $intent body creates like a plain body, and a retried intentId is idempotent", async () => {
+  const ctx = makeCtx();
+  const d = createDatabase(ctx.db, { name: "Guestbook" });
+  addProperty(ctx.db, d.id, { name: "Msg", type: "text" });
+  const site = createSite(ctx.db, { name: "demo", visibility: "public" });
+  setSitePublicGrants(ctx.db, site.id, { v: 1, tables: [{ db: d.id, ops: ["create"] }] });
+
+  const wrapped = { $intent: { id: "int_fixed99", submittedAt: Date.now() }, values: { Msg: "hi via intent" } };
+  const r1 = (await serveSite(post(`/sites/demo/api/records?db=${d.id}`, wrapped), ctx, AUTH_TOKEN))!;
+  expect(r1.status).toBe(200);
+  const c1 = (await r1.json()) as { id: string; values: { Msg: string } };
+  expect(c1.values.Msg).toBe("hi via intent");
+
+  // Retry the SAME intentId (a dropped-response resend) → same row, no duplicate.
+  const r2 = (await serveSite(post(`/sites/demo/api/records?db=${d.id}`, wrapped), ctx, AUTH_TOKEN))!;
+  expect(r2.status).toBe(200);
+  const c2 = (await r2.json()) as { id: string };
+  expect(c2.id).toBe(c1.id);
+  expect(listRecords(ctx.db, d.id)).toHaveLength(1); // exactly one, despite two POSTs
+
+  // A plain body still works (legacy path, server mints the intentId).
+  const r3 = (await serveSite(post(`/sites/demo/api/records?db=${d.id}`, { Msg: "plain" }), ctx, AUTH_TOKEN))!;
+  expect(r3.status).toBe(200);
+  expect(listRecords(ctx.db, d.id)).toHaveLength(2);
+});

@@ -15,6 +15,7 @@ import type { DbDriver } from "../driver.ts";
 import { getDatabase } from "../databases.ts";
 import { listProperties } from "../properties.ts";
 import { parseGrantSet, GUEST_COERCIBLE_TYPES } from "../grants-core.ts";
+import { policyForSite } from "../access-policy.ts";
 import { putFileInline, deleteFile, type SiteRow } from "../sites-core.ts";
 import { getEdgeConfig, getDropKnobs } from "./edge-config.ts";
 import { httpDropHost, type DropHostApi } from "./drop-host.ts";
@@ -24,6 +25,15 @@ import { ensureDropKeys, activeDropKey } from "./drop-keys.ts";
  *  deliberately skips it (sites.ts) so a mirror re-publish can't sever the
  *  wiring between two grant commands. */
 export const DROP_CONFIG_PATH = "mh-drop.json";
+
+/** Reserved deployment manifest the SDK reads for EXPLICIT channel selection
+ *  (mode + endpoints + policy revision) instead of guessing from 401/network.
+ *  Published alongside mh-drop.json; --prune skips it too. */
+export const MANIFEST_PATH = "mh-manifest.json";
+
+/** The reserved files the grant/edge wiring owns — never pruned by a mirror
+ *  publish (they'd be re-created immediately: pure delete/recreate oplog churn). */
+export const RESERVED_SITE_FILES: ReadonlySet<string> = new Set([DROP_CONFIG_PATH, MANIFEST_PATH]);
 
 export interface DropWireResult {
   site: string;
@@ -71,9 +81,39 @@ function buildDropConfig(db: DbDriver, site: SiteRow, endpoint: string, key: { k
     drop_id: site.id,
     key_id: key.key_id,
     pk: key.pk,
+    // Owner accepts v1 today; flips to [1, 2] once the v2 drop path is enabled,
+    // at which point SDKs seal high-level intents instead of pre-signed ops.
+    payload_versions: [1] as number[],
     ...(knobs?.turnstileSitekey ? { turnstile_sitekey: knobs.turnstileSitekey } : {}),
     ...(knobs?.passwordSalt ? { password_salt: knobs.passwordSalt } : {}),
     databases,
+  };
+}
+
+type DropConfig = ReturnType<typeof buildDropConfig>;
+
+/**
+ * The deployment manifest: the SDK's explicit channel map. A create-granted,
+ * edge-wired site is `mode:"live"` — the page's own origin serves the realtime
+ * granted `/api/*` (relative runtimeEndpoint "") — with a declared `fallback:
+ * "inbox"` so a live-endpoint failure degrades to the sealed drop transport
+ * (surfaced as "waiting to sync") instead of the SDK silently guessing. The
+ * `drop` sub-block embeds the drop config (E2EE key material stays inline) and
+ * the payload versions the owner accepts, so the SDK knows how to seal.
+ */
+function buildManifest(dropCfg: DropConfig, endpoint: string, policyRevision: number) {
+  // Drop sub-block = the drop config's public fields (drop_id/key_id/pk/
+  // turnstile_sitekey?/password_salt?/databases) minus the wire version + the
+  // duplicate endpoint, plus the payload versions the owner accepts.
+  const { v: _v, endpoint: _e, ...dropPublic } = dropCfg;
+  return {
+    v: 1 as const,
+    mode: "live" as const,
+    runtimeEndpoint: "", // relative: same origin as the page (the serving node)
+    inboxEndpoint: endpoint,
+    fallback: "inbox" as const,
+    policyRevision,
+    drop: { ...dropPublic, payload_versions: [1] as number[] }, // [1,2] once drop v2 is live
   };
 }
 
@@ -98,6 +138,14 @@ export async function syncDropWiring(
     const cfg = buildDropConfig(db, site, edge.endpoint, key);
     const f = putFileInline(db, site.id, DROP_CONFIG_PATH, {
       data: JSON.stringify(cfg, null, 2),
+      contentType: "application/json",
+    });
+    // Deployment manifest alongside the drop config — the SDK's explicit channel
+    // map. policyRevision fingerprints the enforceable policy so a change (grant
+    // or write-gate edit) republishes a new revision the SDK/publisher can see.
+    const revision = policyForSite({ publicGrants: site.public_grants, knobs: getDropKnobs(db, site.id) }).revision;
+    putFileInline(db, site.id, MANIFEST_PATH, {
+      data: JSON.stringify(buildManifest(cfg, edge.endpoint, revision), null, 2),
       contentType: "application/json",
     });
     const knobs = getDropKnobs(db, site.id);
@@ -127,6 +175,7 @@ export async function syncDropWiring(
   }
 
   // Not wired (no create grant, or no edge): tear down any previous wiring.
+  deleteFile(db, site.id, MANIFEST_PATH);
   const removed = deleteFile(db, site.id, DROP_CONFIG_PATH);
   let registered: boolean | null = null;
   let registerError: string | undefined;
