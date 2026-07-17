@@ -138,6 +138,27 @@ async function uploadBatch(
   return failed;
 }
 
+/** Strip a shared leading directory segment (a webkitdirectory pick or a single
+ *  dropped folder) so the folder's CONTENTS land at the site root — matching
+ *  `mh site publish` and the grid's publish-a-directory drop, so the same files
+ *  don't 404 at the root just because of the gesture used. Loose files with no
+ *  common segment are left untouched (they land at the root by name). */
+function stripCommonDirPrefix(files: DroppedFile[]): DroppedFile[] {
+  if (files.length === 0) return files;
+  const seg = (p: string) => (p.includes("/") ? p.slice(0, p.indexOf("/")) : null);
+  const first = seg(files[0]!.path);
+  if (!first || !files.every((f) => seg(f.path) === first)) return files;
+  return files.map((f) => ({ ...f, path: f.path.slice(first.length + 1) }));
+}
+
+/** Heads-up for files under the reserved api/ namespace: they upload but are
+ *  permanently shadowed by the site's data-API route (parity with the CLI's
+ *  publishDirectory warning). Non-blocking — the upload still proceeds. */
+function warnReservedApiPaths(files: DroppedFile[]): void {
+  const n = files.filter((f) => f.path === "api" || f.path.startsWith("api/")).length;
+  if (n) toast(`${n} 个 api/ 下的文件会被站点数据 API 遮蔽（仍会上传，但无法访问）`);
+}
+
 function reportUpload(total: number, failed: UploadFailure[]) {
   if (!failed.length) return toast(`已上传 ${total} 个文件`);
   toast(`已上传 ${total - failed.length}/${total} 个，${failed.length} 个失败`);
@@ -234,6 +255,7 @@ export function SitesView() {
     // publish semantics: the dropped directory's CONTENTS become the site root
     const inner = all.map((f) => ({ ...f, path: f.path.slice(dirName.length + 1) }));
     if (!inner.length) return toast("目录里没有可上传的文件");
+    warnReservedApiPaths(inner);
     let target = (sites ?? []).find((s) => s.name === slug) ?? null;
     if (!target) {
       const ok = await confirmDialog({
@@ -264,7 +286,7 @@ export function SitesView() {
       const ok = await confirmDialog({
         title: "公开此站点？",
         message:
-          "公开后：任何人无需登录即可读取该站点的所有页面和文件；页面内对 /api 的数据调用默认不可用（公开不等于授权读取数据）；只要任何一台已配对设备在运行 server，都会公开提供此站点。",
+          "公开后：任何人无需登录即可读取该站点的所有页面和文件；页面内对 /api 的数据调用默认不可用（公开不等于授权读取数据）；只要任何一台已配对设备在运行 server，都会公开提供此站点。若之后改回私有，外部 CDN／浏览器缓存里已取到的内容最多可能在数分钟内仍可访问。",
         confirmLabel: "设为公开",
       });
       if (!ok) return;
@@ -824,6 +846,7 @@ function SitePeek({
   // and always a refresh from the server so the list reflects real state.
   const doUpload = async (list: DroppedFile[]) => {
     if (!list.length || upload) return;
+    warnReservedApiPaths(list);
     setUpload({ done: 0, total: list.length });
     const failed = await uploadBatch(site.id, list, (done, total) => setUpload({ done, total }));
     setUpload(null);
@@ -841,7 +864,9 @@ function SitePeek({
       file: f,
     }));
     input.value = "";
-    doUpload(list.filter((f) => !HIDDEN_RE.test(f.path)));
+    // A directory pick shares one root segment (webkitRelativePath) — strip it so
+    // its contents fill the site root, like `mh site publish`.
+    doUpload(stripCommonDirPrefix(list.filter((f) => !HIDDEN_RE.test(f.path))));
   };
 
   const onDrop = (e: DragEvent) => {
@@ -849,9 +874,9 @@ function SitePeek({
     e.stopPropagation(); // the grid behind has its own publish-a-directory drop zone
     setDrag(false);
     const drop = dropEntries(e.dataTransfer!); // sync — before any await
-    // Relative paths are kept as dropped (a directory keeps its name as prefix,
-    // like dropping into a file manager); loose files land at the root.
-    collectDropped(drop).then(doUpload);
+    // A single dropped folder fills the site root (its shared root segment is
+    // stripped, matching the picker and CLI); loose files land at the root.
+    collectDropped(drop).then((files) => doUpload(stripCommonDirPrefix(files)));
   };
 
   const removeFile = async (f: SiteFile) => {

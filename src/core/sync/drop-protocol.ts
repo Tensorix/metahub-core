@@ -187,9 +187,15 @@ export function checkDropPayload(
   if (payload.changes.length === 0)
     throw new MhError("invalid_input", "empty drop payload");
   for (const c of payload.changes) {
-    if (parseHlc(c.hlc).millis > now + DROP_HLC_SKEW_MS)
-      throw new MhError("invalid_input", "change HLC is too far in the future");
+    // A non-numeric HLC prefix parses to NaN; `NaN > x` is false, which would
+    // sail past this future-clamp and (via observeHlc) poison the owner's clock.
+    // Reject non-finite millis explicitly.
+    const millis = parseHlc(c.hlc).millis;
+    if (!Number.isFinite(millis) || millis > now + DROP_HLC_SKEW_MS)
+      throw new MhError("invalid_input", "change HLC is malformed or too far in the future");
   }
-  checkGuestChanges(db, set, guest, payload.changes);
+  // A write-inbox drop is a site's public_grants surface → public principal
+  // (relations forbidden, mirroring the realtime granted API).
+  checkGuestChanges(db, set, guest, payload.changes, "public");
   return payload.changes.map((c) => ({ ...c, txn: "drop:" + envelopeId }));
 }

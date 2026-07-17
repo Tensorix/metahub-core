@@ -26,14 +26,10 @@ import {
 } from "../md/grammar.ts";
 import { tokenizeInline } from "../md/inline.ts";
 import { healLegacyMarkdown } from "../md/heal.ts";
+import { escapeHtml } from "./html-escape.ts";
 
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+// Re-exported so existing importers (sites-serve) keep resolving it from here.
+export { escapeHtml };
 
 export interface RenderOpts {
   /** Rewrite a `/blob/<hash>` URL to a reachable one (scoped endpoint or data URL). */

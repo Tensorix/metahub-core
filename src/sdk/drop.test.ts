@@ -11,7 +11,7 @@ import { memSql } from "../workers/edge-worker.test-util.ts";
 import { generateSealKeypair, openSealed } from "../core/sync/seal.ts";
 import { toB64, fromB64 } from "../core/sync/e2ee.ts";
 import { decodeDropPayload, parseDropEnvelope } from "../core/sync/drop-protocol.ts";
-import { createDrop, type DropConfig, type DropStorage } from "./drop.ts";
+import { createDrop, initDrop, type DropConfig, type DropStorage } from "./drop.ts";
 import { createClient } from "./client.ts";
 
 const ENDPOINT = "http://edge.test";
@@ -110,6 +110,37 @@ test("clock offset learns from server_time (skewed device stays inside the clamp
   expect(rec2._pending).toBe(true);
   const storedOffset = Number(store.get("mh_drop_clock:" + ENDPOINT));
   expect(Math.abs(storedOffset - 10 * 60_000)).toBeLessThan(5_000);
+});
+
+test("F9: initDrop seeds the clock offset from the config Date header (first send survives a fast clock)", async () => {
+  const host = await makeHost();
+  const { cfg, sk } = await makeConfig();
+  const store = memStorage();
+  const deviceFast = Date.now() + 8 * 60_000; // device wall clock 8min ahead
+  const serverDate = new Date(Date.now()).toUTCString(); // mh-drop.json Date = truth
+  const fetcher = ((input: string | URL | Request, init?: RequestInit) => {
+    const u = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+    if (u.endsWith("mh-drop.json"))
+      return Promise.resolve(new Response(JSON.stringify(cfg), { headers: { date: serverDate } }));
+    return host.fetcher(input, init);
+  }) as typeof fetch;
+
+  const drop = await initDrop(`${ENDPOINT}/mh-drop.json`, { fetcher, storage: store, now: () => deviceFast });
+  const rec = await drop.createRecord("guestbook", { Title: "first from a fast device" });
+  expect(rec._pending).toBe(true);
+
+  // The FIRST sealed HLC must land within the owner's +5min clamp of TRUE time —
+  // without the seed it would be ~8min ahead and rejected.
+  const list = await host.handler(
+    new Request(`${ENDPOINT}/v1/inbox/${DROP_ID}/envelopes?after_id=0`, {
+      headers: { authorization: `Bearer ${OWNER}` },
+    }),
+  );
+  const rows = ((await list.json()) as { rows: { envelope: unknown }[] }).rows;
+  const env = parseDropEnvelope(rows[0]!.envelope);
+  const payload = decodeDropPayload(await openSealed(sk, fromB64(cfg.pk), fromB64(env.sealed)));
+  const firstMs = parseHlc(payload.changes[0]!.hlc).millis;
+  expect(Math.abs(firstMs - Date.now())).toBeLessThan(5 * 60_000);
 });
 
 test("optimistic echo: pending → merge passthrough → reconcile on server appearance", async () => {

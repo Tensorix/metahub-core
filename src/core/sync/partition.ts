@@ -69,7 +69,10 @@ function memberSql(scope: PartitionScope): { sql: string; params: string[] } {
     parts.push(`SELECT 'site_files', id FROM site_files WHERE site_id = ?`);
     params.push(scope.siteId);
   }
-  if (parts.length === 0) parts.push(`SELECT '', '' WHERE 0`);
+  // Empty-scope fallback: name the columns so a bare-subquery wrapper (see
+  // computePartitionMembers) doesn't hit "no such column: dataset". Currently a
+  // dead branch (a --room share always carries a siteId), kept defensively.
+  if (parts.length === 0) parts.push(`SELECT '' AS dataset, '' AS row_id WHERE 0`);
   return { sql: parts.join(" UNION ALL "), params };
 }
 

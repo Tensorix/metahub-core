@@ -116,7 +116,26 @@ export async function initDrop(
   const cfg = (await res.json().catch(() => null)) as DropConfig | null;
   if (!cfg || cfg.v !== 1 || !cfg.endpoint || !cfg.drop_id || !cfg.key_id || !cfg.pk)
     throw new MhError("invalid_input", "malformed mh-drop.json");
+  // Seed the clock offset from this response's Date header BEFORE the first send.
+  // Otherwise a device whose wall clock is >5min fast seals its FIRST envelope
+  // with offset 0, the owner's ingest clamp rejects it, and the visitor is left
+  // with a permanent optimistic "_pending" that never lands (later sends learn
+  // the offset from the POST server_time — only the first was unprotected).
+  seedClockOffset(cfg, res.headers.get("date"), opts);
   return createDrop(cfg, opts);
+}
+
+/** Prime the persisted clock offset from a server Date header, unless a more
+ *  precise offset (learned from a real POST server_time) is already stored. */
+function seedClockOffset(cfg: DropConfig, dateHeader: string | null, opts: DropClientOptions): void {
+  if (!dateHeader) return;
+  const serverMs = Date.parse(dateHeader);
+  if (!Number.isFinite(serverMs)) return;
+  const store = opts.storage ?? defaultStorage();
+  const key = "mh_drop_clock:" + cfg.endpoint.replace(/\/+$/, "");
+  if (store.get(key)) return; // keep an already-learned, more precise offset
+  const nowFn = opts.now ?? (() => Date.now());
+  store.set(key, String(serverMs - nowFn()));
 }
 
 export interface DropClient {

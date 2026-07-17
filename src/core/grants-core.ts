@@ -369,6 +369,11 @@ export function guestUpdateRecord(
 /** Record meta columns a guest op may legitimately carry on a create. */
 const GUEST_META_COLS = new Set(["database_id", "created_hlc", "order_key"]);
 
+/** Well-formed HLC string: `<digits>-<hex>-<node>`. Guards the numeric millis
+ *  prefix so a NaN-parsing HLC can never reach ingest/observeHlc (clock-poison
+ *  defense mirrored in drop-protocol's clamp and hlc.observeHlc). */
+const GUEST_HLC_RE = /^\d+-[0-9a-fA-F]+-.+$/;
+
 /** Property types coerce() knows how to validate. Anything else (including any
  *  future blob-carrying type) is REFUSED — an unvalidatable value must never
  *  ride a guest op into the oplog (dangling-hash / poisoning risk). Exported
@@ -411,6 +416,10 @@ export function checkGuestChanges(
   set: GrantSet,
   guestNode: string,
   changes: Change[],
+  // A write-inbox drop is always a site public_grants surface, so public is the
+  // right default; threaded explicitly so a future share/room op-ingest caller
+  // gets the correct relation policy (public forbids relations — oracle guard).
+  principalKind: GrantPrincipal["kind"] = "public",
   limits: PayloadLimits = GUEST_LIMITS,
 ): void {
   if (!guestNode) throw new MhError("auth", "unauthorized");
@@ -422,6 +431,8 @@ export function checkGuestChanges(
       throw new MhError("invalid_input", `guest ops may only touch records (got dataset ${JSON.stringify(c.dataset)})`);
     if (c.node_id !== guestNode || !c.hlc.endsWith("-" + guestNode))
       throw new MhError("auth", "unauthorized");
+    if (!GUEST_HLC_RE.test(c.hlc))
+      throw new MhError("invalid_input", "malformed HLC");
     if (c.col === "__deleted")
       throw new MhError("invalid_input", "guest ops may not delete");
     totalBytes += utf8Len(c.value ?? "");
@@ -472,14 +483,11 @@ export function checkGuestChanges(
         throw new MhError("invalid_input", `unknown column ${JSON.stringify(c.col)} for this database`);
       if (!GUEST_COERCIBLE_TYPES.has(prop.type))
         throw new MhError("invalid_input", `${prop.name}: property type ${prop.type} is not guest-writable`);
-      if ((c.value?.length ?? 0) > limits.maxValueBytes)
+      if (utf8Len(c.value ?? "") > limits.maxValueBytes)
         throw new MhError("invalid_input", `${prop.name}: value too large (max ${limits.maxValueBytes} bytes)`);
       const value = c.value == null ? null : (JSON.parse(c.value) as unknown);
-      if (prop.type === "relation" && value != null && !(Array.isArray(value) && value.length === 0)) {
-        const target = prop.config?.database;
-        if (!target || !grantFor(set, target))
-          throw new MhError("invalid_input", `${prop.name}: relation target database is not granted`);
-      }
+      if (prop.type === "relation" && value != null && !(Array.isArray(value) && value.length === 0))
+        assertRelationAllowed(set, principalKind, prop);
       coerce(db, prop, value); // throws invalid_input on type mismatch
     }
   }

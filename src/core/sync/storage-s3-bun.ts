@@ -30,6 +30,18 @@ function makeClient(config: S3Config): StorageClient {
     ...(vhost ? { virtualHostedStyle: true } : {}),
   });
 
+  // aws4fetch fallback for conditional overwrites: Bun.S3Client.write has no
+  // If-Match, so an ifMatch put signs a raw PUT the same way presignGet does.
+  const aws = new AwsClient({
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    region: config.region || "auto",
+    service: "s3",
+  });
+  const origin = new URL(config.endpoint).origin;
+  const urlBase = vhost ? origin : `${origin}/${config.bucket}`;
+  const objectUrl = (key: string) => `${urlBase}/${key.split("/").map(encodeURIComponent).join("/")}`;
+
   return {
     async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
       const out: StorageObject[] = [];
@@ -66,6 +78,23 @@ function makeClient(config: S3Config): StorageClient {
       // race (no atomic CAS here); the browser client uses real If-None-Match.
       if (opts?.ifNoneMatch && (await s3.file(key).exists())) {
         throw new MhError("conflict", `S3 object already exists: ${key}`);
+      }
+      // Conditional overwrite (CAS): route through aws4fetch since Bun.S3Client
+      // has no If-Match — a real atomic compare-and-set (unlike the ifNoneMatch
+      // pre-check above), so concurrent drop-key rotations converge instead of
+      // clobbering.
+      if (opts?.ifMatch) {
+        const res = await aws.fetch(objectUrl(key), {
+          method: "PUT",
+          body,
+          headers: {
+            "if-match": opts.ifMatch,
+            ...(opts.contentType ? { "content-type": opts.contentType } : {}),
+          },
+        });
+        if (res.status === 412) throw new MhError("conflict", `S3 If-Match failed: ${key}`);
+        if (!res.ok) throw new MhError("network", `S3 put failed: ${res.status} ${key}`);
+        return;
       }
       await s3.file(key).write(body, opts?.contentType ? { type: opts.contentType } : undefined);
     },

@@ -132,6 +132,68 @@ async function wrapKeyring(kr: DropKeyring, masterKey: Uint8Array): Promise<Drop
   return { v: 1, keys };
 }
 
+/** Parse + validate a keyring blob from the authoritative bucket. Rejects a
+ *  malformed shape with invalid_input instead of blindly saving junk that a
+ *  later getLocalDropKeyring would read back as null (silently emptying the
+ *  keyring). Mirrors getLocalDropKeyring's shape check on every bucket read. */
+function parseKeyring(bytes: Uint8Array, where: string): DropKeyring {
+  let kr: unknown;
+  try {
+    kr = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new MhError("invalid_input", `${where} is not valid JSON`);
+  }
+  const k = kr as DropKeyring;
+  if (!k || k.v !== 1 || !Array.isArray(k.keys)) throw new MhError("invalid_input", `${where} is malformed`);
+  return k;
+}
+
+function encodeKeyring(kr: DropKeyring): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(kr));
+}
+
+/** Union two keyrings by key_id (primary wins on collision). Adopting the
+ *  bucket's authoritative keyring must never DROP a key this device holds that
+ *  the bucket lacks — e.g. one generated here before this bucket was attached,
+ *  with in-flight mail sealed to its pk (dropping it strands that mail forever). */
+function mergeKeyrings(primary: DropKeyring, extra: DropKeyring): DropKeyring {
+  const byId = new Map<string, DropKeyRecord>();
+  for (const k of primary.keys) byId.set(k.key_id, k);
+  for (const k of extra.keys) if (!byId.has(k.key_id)) byId.set(k.key_id, k);
+  return { v: 1, keys: [...byId.values()] };
+}
+
+/** Current ETag of the keyring object (targeted list), or null if absent / the
+ *  client doesn't surface etags (then the caller forgoes CAS). */
+async function keyringEtag(client: StorageClient, keyPath: string): Promise<string | null> {
+  const objs = await client.list(keyPath);
+  return objs.find((o) => o.key === keyPath)?.etag ?? null;
+}
+
+/** Compare-and-set write of the keyring, folding in (union by key_id) whatever a
+ *  concurrent writer landed on a lost race — so two devices rotating at once can
+ *  never clobber each other's freshly-appended key (each retries against the
+ *  winner's version, and both keys survive). Unconditional put only on the very
+ *  first create or a client without etags. */
+async function putKeyringCas(client: StorageClient, keyPath: string, desired: DropKeyring): Promise<DropKeyring> {
+  let merged = desired;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const etag = await keyringEtag(client, keyPath);
+    try {
+      await client.put(keyPath, encodeKeyring(merged), {
+        contentType: "application/json",
+        ...(etag ? { ifMatch: etag } : {}),
+      });
+      return merged;
+    } catch (e) {
+      if (errorCode(e) !== "conflict") throw e;
+      const current = await client.get(keyPath);
+      if (current) merged = mergeKeyrings(parseKeyring(current, "bucket keys/drop.json"), merged);
+    }
+  }
+  throw new MhError("conflict", "drop keyring write kept losing to concurrent writers");
+}
+
 export function activeDropKey(kr: DropKeyring): DropKeyRecord {
   const live = kr.keys.filter((k) => !k.retired);
   const key = live[live.length - 1] ?? kr.keys[kr.keys.length - 1];
@@ -182,11 +244,26 @@ export async function ensureDropKeys(
   const client = bucket.client();
   const remote = await client.get(bucket.keyPath);
   if (remote) {
-    const kr = JSON.parse(new TextDecoder().decode(remote)) as DropKeyring;
-    if (!kr || kr.v !== 1 || !Array.isArray(kr.keys))
-      throw new MhError("invalid_input", "bucket keys/drop.json is malformed");
-    saveLocalDropKeyring(db, kr);
-    return kr;
+    const remoteKr = parseKeyring(remote, "bucket keys/drop.json");
+    const local = getLocalDropKeyring(db);
+    // Union: adopt the bucket's authoritative keyring, but KEEP any key this
+    // device holds that the bucket lacks (in-flight mail may be sealed to it) —
+    // the old code blindly overwrote local, stranding that mail. Wrap the
+    // local-only keys before they can be written back to third-party storage.
+    const localOnly = local
+      ? local.keys.filter((k) => !remoteKr.keys.some((r) => r.key_id === k.key_id))
+      : [];
+    if (localOnly.length === 0) {
+      saveLocalDropKeyring(db, remoteKr);
+      return remoteKr;
+    }
+    const wrapped = await wrapKeyring({ v: 1, keys: localOnly }, bucket.masterKey);
+    const merged: DropKeyring = { v: 1, keys: [...remoteKr.keys, ...wrapped.keys] };
+    // Best-effort: publish the union so other devices see our key too. If it
+    // races/fails we still keep it locally and retry on the next ensureDropKeys.
+    const written = await putKeyringCas(client, bucket.keyPath, merged).catch(() => merged);
+    saveLocalDropKeyring(db, written);
+    return written;
   }
 
   const local = getLocalDropKeyring(db);
@@ -204,7 +281,7 @@ export async function ensureDropKeys(
     if (errorCode(e) === "conflict") {
       const winner = await client.get(bucket.keyPath);
       if (winner) {
-        const wkr = JSON.parse(new TextDecoder().decode(winner)) as DropKeyring;
+        const wkr = parseKeyring(winner, "bucket keys/drop.json");
         saveLocalDropKeyring(db, wkr);
         return wkr;
       }
@@ -235,11 +312,11 @@ export async function rotateDropKeys(
     v: 1,
     keys: [...kept.map((k) => ({ ...k, retired: true })), fresh],
   };
-  if (bucket) {
-    await bucket.client().put(bucket.keyPath, new TextEncoder().encode(JSON.stringify(next)), {
-      contentType: "application/json",
-    });
-  }
-  saveLocalDropKeyring(db, next);
-  return { keyring: next, active: fresh, purged };
+  // Compare-and-set write-back so a concurrent rotation on another device can't
+  // clobber our fresh key (or we theirs) — the loser folds in the winner's key
+  // and retries, and both survive. `written` may carry the other device's fresh
+  // key too; persist exactly what landed.
+  const written = bucket ? await putKeyringCas(bucket.client(), bucket.keyPath, next) : next;
+  saveLocalDropKeyring(db, written);
+  return { keyring: written, active: fresh, purged };
 }

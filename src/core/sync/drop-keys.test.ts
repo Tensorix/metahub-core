@@ -22,18 +22,24 @@ function makeDb(node = "hostnode"): Database {
   return db;
 }
 
-/** In-memory StorageClient with real If-None-Match semantics. */
+/** In-memory StorageClient with real If-None-Match AND If-Match (etag CAS). */
 class FakeStorageClient implements StorageClient {
-  store = new Map<string, Uint8Array>();
+  store = new Map<string, { body: Uint8Array; etag: string }>();
+  private seq = 0;
   async list(prefix: string): Promise<StorageObject[]> {
-    return [...this.store.keys()].filter((k) => k.startsWith(prefix)).sort().map((key) => ({ key }));
+    return [...this.store.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, v]) => ({ key, etag: v.etag }));
   }
   async get(key: string): Promise<Uint8Array | null> {
-    return this.store.get(key) ?? null;
+    return this.store.get(key)?.body ?? null;
   }
   async put(key: string, body: Uint8Array, opts?: StoragePutOpts): Promise<void> {
-    if (opts?.ifNoneMatch && this.store.has(key)) throw new MhError("conflict", "exists");
-    this.store.set(key, body);
+    const cur = this.store.get(key);
+    if (opts?.ifNoneMatch && cur) throw new MhError("conflict", "exists");
+    if (opts?.ifMatch && cur?.etag !== opts.ifMatch) throw new MhError("conflict", "etag mismatch");
+    this.store.set(key, { body, etag: `etag-${++this.seq}` });
   }
   async del(key: string): Promise<void> {
     this.store.delete(key);
@@ -129,6 +135,60 @@ test("rotation: old key retired but still opens; purge drops only the previously
   expect(findDropKey(r2.keyring, gen0.key_id)).toBeUndefined();
   expect(findDropKey(r2.keyring, r1.active.key_id)?.retired).toBe(true);
   expect(r2.keyring.keys).toHaveLength(2);
+});
+
+test("adopting a bucket keeps a local-only key (union, not clobber) — in-flight mail still opens (F22a)", async () => {
+  const client = new FakeStorageClient();
+  const mk = generateMasterKey();
+  // db1 provisions the bucket keyring (KA).
+  const db1 = makeDb("dev1");
+  await ensureDropKeys(db1, { bucket: bucketFor(client, mk) });
+
+  // db2 generated its OWN keyring (KB) locally BEFORE attaching this bucket, and
+  // a visitor already sealed mail to KB's pk.
+  const db2 = makeDb("dev2");
+  const krB = await ensureDropKeys(db2, { bucket: null });
+  const kb = activeDropKey(krB);
+  const sealed = await seal(fromB64(kb.pk), new TextEncoder().encode("sealed to KB"));
+
+  // Attaching the bucket must UNION (keep KB), not overwrite it away.
+  const adopted = await ensureDropKeys(db2, { bucket: bucketFor(client, mk) });
+  expect(findDropKey(adopted, kb.key_id)).toBeDefined();
+  // KB survives locally AND opens its in-flight envelope (now wrapped).
+  const sk = await dropKeySecret(db2, findDropKey(adopted, kb.key_id)!, { bucket: bucketFor(client, mk) });
+  expect(new TextDecoder().decode(await openSealed(sk, fromB64(kb.pk), sealed))).toBe("sealed to KB");
+  // and the bucket now advertises KB too, so another device can decrypt it.
+  const dev3 = await ensureDropKeys(makeDb("dev3"), { bucket: bucketFor(client, mk) });
+  expect(findDropKey(dev3, kb.key_id)).toBeDefined();
+});
+
+test("concurrent rotation converges via If-Match CAS: both fresh keys survive (F22c)", async () => {
+  const client = new FakeStorageClient();
+  const mk = generateMasterKey();
+  const db1 = makeDb("dev1");
+  const db2 = makeDb("dev2");
+  await ensureDropKeys(db1, { bucket: bucketFor(client, mk) });
+  await ensureDropKeys(db2, { bucket: bucketFor(client, mk) }); // both adopt KA
+
+  // Force a true interleave: when db2's rotate makes its first conditional PUT,
+  // slip db1's whole rotation in just before it — db2's CAS then 412s and must
+  // re-read + merge + retry. Both fresh keys must end up in the bucket keyring.
+  const realPut = client.put.bind(client);
+  let sneaked = false;
+  client.put = async (key, body, opts) => {
+    if (!sneaked && opts?.ifMatch) {
+      sneaked = true;
+      await rotateDropKeys(db1, { bucket: bucketFor(client, mk) });
+    }
+    return realPut(key, body, opts);
+  };
+  const r2 = await rotateDropKeys(db2, { bucket: bucketFor(client, mk) });
+  client.put = realPut;
+
+  const finalKr = await ensureDropKeys(makeDb("dev3"), { bucket: bucketFor(client, mk) });
+  const active = finalKr.keys.filter((k) => !k.retired).map((k) => k.key_id);
+  expect(active).toContain(r2.active.key_id); // db2's fresh key was NOT clobbered
+  expect(finalKr.keys.length).toBeGreaterThanOrEqual(3); // KA + db1-fresh + db2-fresh
 });
 
 test("wrong master key cannot unwrap the private key (auth)", async () => {

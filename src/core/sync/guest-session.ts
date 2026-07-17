@@ -77,7 +77,7 @@ export async function mintGuestSession(
   const exp = Date.now() + Math.max(0, opts.ttlMs);
   const mac = await hmacHex(scope.secret, `${scope.scopeKey}:${exp}:${opts.sub}`);
   const cookie =
-    `${scope.cookieName}=${exp}.${opts.sub}.${mac}; Path=${opts.path}; SameSite=Strict; Max-Age=${Math.floor(
+    `${scope.cookieName}=${exp}.${opts.sub}.${mac}; Path=${opts.path}; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(
       (exp - Date.now()) / 1000,
     )}` + (opts.secure ? "; Secure" : "");
   return { sub: opts.sub, exp, cookie };

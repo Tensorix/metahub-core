@@ -126,6 +126,32 @@ const RECORD_META = new Set(["database_id", "created_hlc", "order_key", "__delet
 
 type SqlValue = string | number | null;
 
+// Synced NOT NULL columns whose schema default is 0. A well-formed op never sets
+// these to null, but a malformed/hostile winning register carrying null would hit
+// the SQLite NOT NULL constraint and abort the WHOLE ingest transaction (cursor
+// never advances → that peer's sync wedges, re-failing the same batch forever).
+// materialize() coerces null → 0 (the column default) for these; ingest()'s
+// per-change guard is the backstop for anything not enumerated here.
+const NOT_NULL_ZERO_COLS = new Set([
+  "records:__deleted",
+  "databases:__deleted",
+  "properties:__deleted",
+  "documents:__deleted",
+  "doc_blocks:__deleted",
+  "doc_blocks:blank_after",
+  "sites:__deleted",
+  "sites:spa",
+  "site_files:__deleted",
+  "blob_policy:__deleted",
+]);
+
+/** Decode a register's JSON value for materialization, coalescing a null on a
+ *  NOT NULL synced column to its 0 default (see NOT_NULL_ZERO_COLS). */
+function decodeMaterializeValue(dataset: string, col: string, valueJson: string | null): unknown {
+  if (valueJson !== null) return JSON.parse(valueJson);
+  return NOT_NULL_ZERO_COLS.has(`${dataset}:${col}`) ? 0 : null;
+}
+
 function encodeScalar(val: unknown): SqlValue {
   if (val === null || val === undefined) return null;
   if (typeof val === "boolean") return val ? 1 : 0;
@@ -170,7 +196,7 @@ function materialize(
   if (dataset === "records") {
     if (RECORD_META.has(col)) {
       ensureRow(db, "records", rowId);
-      const v = valueJson === null ? null : JSON.parse(valueJson);
+      const v = decodeMaterializeValue("records", col, valueJson);
       db.query(`UPDATE records SET "${col}" = ? WHERE id = ?`).run(
         encodeScalar(v),
         rowId,
@@ -202,7 +228,7 @@ function materialize(
   if (dataset === "documents" && col === "body" && isBlockManaged(db, rowId)) return;
 
   ensureRow(db, d.table, rowId);
-  const v = valueJson === null ? null : JSON.parse(valueJson);
+  const v = decodeMaterializeValue(dataset, col, valueJson);
   db.query(`UPDATE ${d.table} SET "${col}" = ? WHERE id = ?`).run(
     encodeScalar(v),
     rowId,
@@ -299,13 +325,27 @@ export function emitFields(
 export function ingest(db: DbDriver, changes: Change[]): number {
   const node = getNodeId(db);
   let received = 0;
+  let poisoned = 0;
   const tx = db.transaction((cs: Change[]) => {
     for (const c of cs) {
       observeHlc(db, node, c.hlc);
-      if (applyChange(db, c).inserted) received++;
+      // Isolate a poison change (e.g. a malformed register that trips a NOT NULL
+      // or other SQLite constraint) to that one change instead of aborting the
+      // whole batch: SQLite's default ABORT rolls back only the failed statement,
+      // so the transaction stays usable and the cursor still advances. Fail
+      // loudly (logged + counted) — never silently.
+      try {
+        if (applyChange(db, c).inserted) received++;
+      } catch (e) {
+        poisoned++;
+        console.error(
+          `[ingest] skipped a change that failed to apply (dataset=${c.dataset} col=${c.col} row=${c.row_id}): ${(e as Error).message}`,
+        );
+      }
     }
   });
   tx(changes);
+  if (poisoned) console.error(`[ingest] ${poisoned} change(s) skipped this batch (see above)`);
   return received;
 }
 

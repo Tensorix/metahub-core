@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { runSchema } from "../db.ts";
 import { ingest, changesSince } from "../crdt.ts";
 import { createSite, updateSite, putFile, writeFileRow, getFileMetaForServe } from "../sites.ts";
+import { setSitePublicGrants } from "../sites-core.ts";
+import { createDatabase } from "../databases.ts";
+import { addProperty } from "../properties.ts";
 import { serveSite } from "./sites-serve.ts";
+import { setDropKnobs } from "./edge-config.ts";
 import type { AuthConfig } from "./auth.ts";
 
 function makeCtx(node = "hostnode") {
@@ -64,9 +68,20 @@ test("served files carry a weak ETag and tiered Cache-Control (html / inline ass
   const blob = (await serveSite(req("/sites/demo/logo.png"), ctx, AUTH_OFF))!;
   expect(blob.status).toBe(200);
   expect(blob.headers.get("cache-control")).toBe("private, max-age=3600");
-  // a blob row's ETag is its content hash, verbatim
+  // a blob row's ETag leads with its content hash (content_type mixed in, F16)
   const meta = getFileMetaForServe(ctx.db, s.id, "logo.png")!;
-  expect(blob.headers.get("etag")).toBe(`W/"${meta.row.content}"`);
+  expect(blob.headers.get("etag")).toMatch(new RegExp(`^W/"${meta.row.content}-[0-9a-f]+"$`));
+});
+
+test("F16: same bytes re-served under a corrected content-type mint a new ETag", async () => {
+  const ctx = makeCtx();
+  const s = createSite(ctx.db, { name: "demo" });
+  // write the SAME bytes twice, only the content-type differs
+  writeFileRow(ctx.db, s.id, "page", "text/plain", "utf8", "<h1>hi</h1>");
+  const before = (await serveSite(req("/sites/demo/page"), ctx, AUTH_OFF))!.headers.get("etag");
+  writeFileRow(ctx.db, s.id, "page", "text/html", "utf8", "<h1>hi</h1>");
+  const after = (await serveSite(req("/sites/demo/page"), ctx, AUTH_OFF))!.headers.get("etag");
+  expect(after).not.toBe(before); // no stale-type 304
 });
 
 test("If-None-Match hit answers 304 with no body; content change re-serves 200", async () => {
@@ -106,9 +121,10 @@ test("blob row: If-None-Match hit 304s before resolveBlob (unresolvable hash sti
   // this request could not succeed.
   const fakeHash = "0123456789abcdef0123456789abcdef";
   writeFileRow(ctx.db, s.id, "img/ghost.png", "image/png", "blob", fakeHash);
+  const etag = getFileMetaForServe(ctx.db, s.id, "img/ghost.png")!.etag;
 
   const hit = (await serveSite(
-    req("/sites/demo/img/ghost.png", { "if-none-match": `W/"${fakeHash}"` }),
+    req("/sites/demo/img/ghost.png", { "if-none-match": etag }),
     ctx,
     AUTH_OFF,
   ))!;
@@ -173,6 +189,15 @@ test("public site serves without a token, with `public, …` headers and NO runt
   const css = (await serveSite(req("/sites/demo/app.css"), ctx, AUTH_TOKEN))!;
   expect(css.status).toBe(200);
   expect(css.headers.get("cache-control")).toBe("public, max-age=300, stale-while-revalidate=3600");
+});
+
+test("F17: public blob assets use the short (not 1h) TTL so a flip-to-private drains fast", async () => {
+  const ctx = makeCtx();
+  const s = createSite(ctx.db, { name: "demo", visibility: "public" });
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9]);
+  await putFile(ctx.db, s.id, "pic.png", { data: png });
+  const blob = (await serveSite(req("/sites/demo/pic.png"), ctx, AUTH_TOKEN))!;
+  expect(blob.headers.get("cache-control")).toBe("public, max-age=300, stale-while-revalidate=3600");
 });
 
 test("private site without a token: unlock page for browsers, 401 otherwise", async () => {
@@ -255,6 +280,45 @@ test("SPA mode: extension-less miss serves index.html 200; assets still 404", as
 
   const asset = (await serveSite(req("/sites/app/missing.js"), ctx, AUTH_TOKEN))!;
   expect(asset.status).toBe(404);
+});
+
+test("F4: the realtime public write path enforces the grant's password verifier", async () => {
+  const ctx = makeCtx();
+  const s = createSite(ctx.db, { name: "demo", visibility: "public" });
+  const table = createDatabase(ctx.db, { name: "guestbook" });
+  addProperty(ctx.db, table.id, { name: "Title", type: "text" });
+  setSitePublicGrants(ctx.db, s.id, { v: 1, tables: [{ db: table.id, ops: ["create", "read"] }] });
+  setDropKnobs(ctx.db, s.id, { passwordVerifier: "verifier-abc" });
+
+  const post = (headers: Record<string, string>) =>
+    serveSite(
+      new Request(`http://x/sites/demo/api/records?db=${table.id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ Title: "hi" }),
+      }),
+      ctx,
+      AUTH_TOKEN,
+    );
+
+  // No password header → 401 (this path previously skipped the check entirely,
+  // so any anonymous POST wrote through — the F4 vulnerability).
+  expect((await post({}))!.status).toBe(401);
+  // Wrong verifier → 401.
+  expect((await post({ "x-drop-pass": "nope" }))!.status).toBe(401);
+  // Correct verifier → the gate passes and the write lands.
+  const ok = (await post({ "x-drop-pass": "verifier-abc" }))!;
+  expect(ok.status).toBe(200);
+  // Reads are never gated by the anti-abuse knobs.
+  const read = (await serveSite(req(`/sites/demo/api/records?db=${table.id}`), ctx, AUTH_TOKEN))!;
+  expect(read.status).toBe(200);
+});
+
+test("F13: a malformed %-escape in the path is a clean 400, not an uncaught 500", async () => {
+  const ctx = makeCtx();
+  createSite(ctx.db, { name: "demo" });
+  const res = (await serveSite(req("/sites/demo/%E0%A4"), ctx, AUTH_OFF))!;
+  expect(res.status).toBe(400);
 });
 
 // ---- Batch 4: two-node sync smoke -------------------------------------------

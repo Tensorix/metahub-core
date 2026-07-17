@@ -10,6 +10,9 @@ import {
 } from "../sites.ts";
 import { parseGrantSet, publicGuestNode } from "../grants-core.ts";
 import { serveGrantedApi } from "./grants-routes.ts";
+import { assertAntiAbuse } from "./anti-abuse.ts";
+import { getDropKnobs } from "./edge-config.ts";
+import { safeDecode } from "./http-util.ts";
 import { rateLimiter, PUBLIC_READ_LIMIT, PUBLIC_WRITE_LIMIT } from "./rate-limit.ts";
 import { escapeHtml } from "./share-render.ts";
 import {
@@ -63,13 +66,17 @@ export async function serveSite(
   if (rest === "") return null; // /sites/ with no site name
 
   const slash = rest.indexOf("/");
-  const name = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash));
+  const name = safeDecode(slash === -1 ? rest : rest.slice(0, slash));
+  if (name === null) return new Response("bad request", { status: 400 });
 
   // /sites/<name> → canonical /sites/<name>/ so relative asset URLs resolve.
-  // Unconditional (site existence is not consulted), so it leaks nothing.
-  if (slash === -1) return Response.redirect(`${url.origin}/sites/${name}/`, 301);
+  // Unconditional (site existence is not consulted), so it leaks nothing. Use
+  // the RAW (still-encoded) segment in the Location so a control-char name can't
+  // be re-injected into the header.
+  if (slash === -1) return Response.redirect(`${url.origin}/sites/${rest}/`, 301);
 
-  const filePath = decodeURIComponent(rest.slice(slash + 1));
+  const filePath = safeDecode(rest.slice(slash + 1));
+  if (filePath === null) return new Response("bad request", { status: 400 });
 
   let site: SiteRow | null;
   try {
@@ -93,12 +100,6 @@ export async function serveSite(
     if (site && isSitePublic(site)) {
       const siteId = site.id;
       const key = `${opts.ip ?? "?"}:${siteId}`;
-      // TODO(stage-b follow-up): enforce the grant's anti-abuse knobs here too —
-      // the SAME Turnstile sitekey/secret and password verifier that gate the
-      // write-inbox (edge-config.ts getDropKnobs(db, siteId)) should gate this
-      // realtime write path (verify x-turnstile-token via siteverify / compare
-      // x-drop-pass constant-time) so both transports of one grant share one
-      // gate. Config passthrough exists; only the check is deferred this batch.
       return serveGrantedApi(req, filePath.slice("api/".length), {
         db: ctx.db,
         set: parseGrantSet(site.public_grants),
@@ -107,6 +108,12 @@ export async function serveSite(
           cls === "read"
             ? rateLimiter.allow("pub-read", key, PUBLIC_READ_LIMIT)
             : rateLimiter.allow("pub-write", key, PUBLIC_WRITE_LIMIT),
+        // Same anti-abuse gate the write-inbox enforces: a --password/--turnstile
+        // grant now gates this realtime write path too (both transports, one
+        // gate). A page that doesn't send x-drop-pass / x-turnstile-token gets a
+        // 401 here and the SDK degrades to the sealed write-drop, which DOES send
+        // them — so password sites still accept writes, just asynchronously.
+        beforeWrite: () => assertAntiAbuse(getDropKnobs(ctx.db, siteId), req, { ip: opts.ip ?? null }),
       });
     }
     return unauthorized();

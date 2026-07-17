@@ -21,6 +21,9 @@
 
 export { MhRoom } from "./room.ts";
 
+import { assertAntiAbuse, timingSafeEq, siteverify } from "../core/sync/anti-abuse.ts";
+import { safeDecode } from "../core/sync/http-util.ts";
+
 export const EDGE_WORKER_VERSION = "2";
 export const EDGE_WORKER_MARKER = "mh-edge-worker";
 
@@ -32,7 +35,11 @@ const LIST_LIMIT_MAX = 500;
 
 /** D1 schema, also executed by `mh edge deploy` through the D1 HTTP API (the
  *  worker itself never migrates — deploy owns the schema). Statements are
- *  IF NOT EXISTS so re-deploys are idempotent. */
+ *  IF NOT EXISTS so re-deploys are idempotent.
+ *
+ *  CONTRACT: cf-api.ts `d1Exec` splits this on ';' naively (no SQL parser), so do
+ *  NOT add a trigger body or a string literal containing ';' here — it would cut
+ *  the statement in half. Keep every statement a single semicolon-free CREATE. */
 export const EDGE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS drops (
   drop_id           TEXT PRIMARY KEY,
@@ -87,34 +94,10 @@ function err(status: number, code: string, message: string): Response {
   return json({ error: message, code }, status);
 }
 
-/** Constant-time string equality (length leaks, content never). */
-function timingSafeEq(a: string, b: string): boolean {
-  const ab = new TextEncoder().encode(a);
-  const bb = new TextEncoder().encode(b);
-  let diff = ab.length ^ bb.length;
-  const n = Math.max(ab.length, bb.length);
-  for (let i = 0; i < n; i++) diff |= (ab[i] ?? 0) ^ (bb[i] ?? 0);
-  return diff === 0;
-}
-
 function isOwner(req: Request, ownerToken: string | undefined): boolean {
   if (!ownerToken) return false;
   const h = req.headers.get("authorization") ?? "";
   return h.startsWith("Bearer ") && timingSafeEq(h.slice(7), ownerToken);
-}
-
-async function siteverify(secret: string, token: string, ip: string | null): Promise<boolean> {
-  try {
-    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ secret, response: token, ...(ip ? { remoteip: ip } : {}) }),
-    });
-    const data = (await res.json()) as { success?: boolean };
-    return data?.success === true;
-  } catch {
-    return false;
-  }
 }
 
 interface DropRow {
@@ -151,7 +134,8 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
 
     const m = /^\/v1\/inbox\/([^/]+)(?:\/(envelopes|stats))?$/.exec(url.pathname);
     if (!m) return err(404, "not_found", "not found");
-    const dropId = decodeURIComponent(m[1]!);
+    const dropId = safeDecode(m[1]!);
+    if (dropId === null) return err(400, "invalid_input", "malformed drop id");
     const sub = m[2] ?? null;
 
     // ---- public route: envelope submission -----------------------------------------
@@ -187,21 +171,19 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
       )
         return err(400, "invalid_input", "malformed envelope");
 
-      // Turnstile — verified only when the drop registered a secret.
-      if (drop.turnstile_secret) {
-        const token = req.headers.get("x-turnstile-token") ?? "";
-        const ip = req.headers.get("cf-connecting-ip");
-        if (!token || !(await verify(drop.turnstile_secret, token, ip)))
-          return err(401, "auth", "turnstile verification failed");
-      }
-
-      // Password verifier — constant-time compare of the PBKDF2 output the
-      // page derived from (password, published salt). The password itself
-      // never travels; the verifier grants nothing but the right to submit.
-      if (drop.password_verifier) {
-        const pass = req.headers.get("x-drop-pass") ?? "";
-        if (!pass || !timingSafeEq(pass, drop.password_verifier))
-          return err(401, "auth", "password required");
+      // Anti-abuse gate — the SAME check the server's realtime granted API runs
+      // (assertAntiAbuse over the identical siteverify + constant-time verifier
+      // compare), so a --turnstile/--password grant can't be honored on one
+      // transport and silently skipped on the other. The password itself never
+      // travels; the verifier grants nothing but the right to submit.
+      try {
+        await assertAntiAbuse(
+          { turnstileSecret: drop.turnstile_secret, passwordVerifier: drop.password_verifier },
+          req,
+          { verifyTurnstile: verify, ip: req.headers.get("cf-connecting-ip") },
+        );
+      } catch (e) {
+        return err(401, "auth", (e as Error).message);
       }
 
       // Capacity + insert in ONE conditional statement — atomic in D1, so two
@@ -375,7 +357,9 @@ export default {
     // capability, so idFromName gives stable per-share routing.
     const room = /^\/r\/([^/]+)/.exec(new URL(req.url).pathname);
     if (room && env.ROOM) {
-      const id = env.ROOM.idFromName(decodeURIComponent(room[1]!));
+      const slug = safeDecode(room[1]!);
+      if (slug === null) return new Response("bad request", { status: 400 });
+      const id = env.ROOM.idFromName(slug);
       return env.ROOM.get(id).fetch(req);
     }
     return createInboxFetch({ sql: d1Sql(env.DB), ownerToken: env.OWNER_TOKEN })(req);

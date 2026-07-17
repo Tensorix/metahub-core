@@ -139,13 +139,23 @@ export class MhRoom {
 
   async alarm(): Promise<void> {
     // The only alarm is the expires_at self-destruct.
-    let expired = true;
+    let cfg;
     try {
-      expired = roomExpired(readRoomConfig(this.db));
+      cfg = readRoomConfig(this.db);
     } catch {
-      /* unprovisioned/already wiped — treat as expired */
+      // Unprovisioned / already wiped — nothing to protect, clear and stop.
+      await this.state.storage.deleteAll();
+      return;
     }
-    if (!expired) return;
+    if (!roomExpired(cfg)) {
+      // Fired early, or exactly on the expiry millisecond (roomExpired uses a
+      // strict `>`): a naked return would consume the alarm and leave the room
+      // to linger forever if the owner never syncs again. Re-arm at the real
+      // deadline instead so the self-destruct still fires.
+      const next = cfg.expiresAt != null ? Math.max(Date.now() + 1000, cfg.expiresAt) : Date.now() + 60_000;
+      await this.state.storage.setAlarm(next);
+      return;
+    }
     for (const ws of this.state.getWebSockets()) {
       try {
         ws.close(1001, "room expired");

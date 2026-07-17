@@ -10,6 +10,7 @@
 // a presigned static export served by a separate viewer (see share-export.ts).
 
 import type { RouteCtx } from "./routes.ts";
+import { safeDecode } from "./http-util.ts";
 import { randomSuffix } from "../ids.ts";
 import {
   getShare,
@@ -63,7 +64,8 @@ export async function serveShare(
   const rest0 = url.pathname.slice("/share/".length);
   if (!rest0) return null;
   const slash = rest0.indexOf("/");
-  const slug = decodeURIComponent(slash === -1 ? rest0 : rest0.slice(0, slash));
+  const slug = safeDecode(slash === -1 ? rest0 : rest0.slice(0, slash));
+  if (slug === null) return notFound();
   const sub = slash === -1 ? "" : rest0.slice(slash + 1);
   if (!slug) return null;
 

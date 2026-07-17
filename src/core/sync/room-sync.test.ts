@@ -488,6 +488,34 @@ test("evict racing an unpulled guest op defers its GC until acked", async () => 
   expectRoomMatches(fx, fx.A);
 });
 
+test("evict → re-enter on the next round keeps the owner baseline (no oplog fork, F3)", async () => {
+  const fx = fixture();
+  const rec = createRecord(fx.A, fx.X, { title: "contended" });
+  await settle(fx.A, fx.cfgA, fx.transport); // row is a room member
+
+  // An unacked guest edit is parked when the owner evicts the row...
+  const sub = mintRoomGuestSub(fx.roomCfg);
+  handleGuestWrite(fx.room, fx.roomCfg, { sub }, {
+    op: "updateRecord",
+    record: rec.id,
+    values: { title: "guest last words" },
+  });
+  moveRecord(fx.A, rec.id, fx.Y); // out of the partition
+  await settle(fx.A, fx.cfgA, fx.transport); // evict parks the guest op
+  expect(fx.room.query("SELECT 1 FROM evict_pending WHERE row_id = ?").get(rec.id)).not.toBeNull();
+
+  // ...and the row RE-ENTERS the partition immediately after. The owner's fresh
+  // baseline ops must NOT be swept as "guest residue" (the pre-fix bug forked
+  // the room oplog from the owner until the next digest reconcile).
+  moveRecord(fx.A, rec.id, fx.X);
+  await settle(fx.A, fx.cfgA, fx.transport); // re-enter baseline ingested + sweep
+  await settle(fx.A, fx.cfgA, fx.transport); // the round the old code wiped the baseline
+
+  expect(roomOplogCount(fx, rec.id)).toBeGreaterThan(0); // row still present
+  expect(fx.room.query("SELECT 1 FROM evict_pending WHERE row_id = ?").get(rec.id)).toBeNull();
+  expectRoomMatches(fx, fx.A); // winners + digest agree — no fork
+});
+
 // ---- shadow splits & self-healing ----------------------------------------------------
 
 function moveOp(node: string, recId: string, dbId: string, hlcTail: string): Change {

@@ -26,6 +26,8 @@ import type { DbDriver } from "../driver.ts";
 import { errorCode, type MhErrorCode } from "../errors.ts";
 import { randomSuffix } from "../ids.ts";
 import { parseGrantSet } from "../grants-core.ts";
+import { safeDecode } from "./http-util.ts";
+import { escapeHtml } from "./html-escape.ts";
 import { serveGrantedApi } from "./grants-routes.ts";
 import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
 import { resolveSiteFileRow, base64ToBytes } from "../sites-core.ts";
@@ -280,12 +282,14 @@ export function createRoomFetch(deps: RoomHostDeps): (req: Request) => Promise<R
     const url = new URL(req.url);
     const m = /^\/r\/([^/]+)(\/.*)?$/.exec(url.pathname);
     if (!m) return plain404();
-    const pathSlug = decodeURIComponent(m[1]!);
+    const pathSlug = safeDecode(m[1]!);
+    if (pathSlug === null) return plain404();
     // Canonical /r/<slug>/ so the page's relative asset/api URLs resolve.
     if (m[2] === undefined) {
       return new Response(null, { status: 301, headers: { location: `/r/${m[1]}/` } });
     }
-    const sub = decodeURIComponent(m[2]!.slice(1));
+    const sub = safeDecode(m[2]!.slice(1));
+    if (sub === null) return plain404();
 
     // ---- owner face -------------------------------------------------------------
     if (sub === "owner" || sub.startsWith("owner/")) {
@@ -466,14 +470,8 @@ function serveRoomFile(db: DbDriver, cfg: RoomConfig, path: string): Response {
 // ---- pages -------------------------------------------------------------------------------
 // Minimal copies of share-serve's pageShell styling (that module drags the
 // whole markdown renderer along — the room only needs these two static pages).
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+// escapeHtml comes from the shared html-escape module (not share-render) to keep
+// the markdown engine out of the DO bundle.
 
 const PAGE_CSS = `
   :root{--bg:#ffffff;--fg:#1f2328;--muted:#6e7781;--line:#d0d7de;--accent:#0969da;--card:#f6f8fa}

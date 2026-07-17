@@ -37,6 +37,10 @@ export interface GrantedApiDeps {
   /** Host-injected rate limit: return false to answer 429. Called once per
    *  request with its class ("read" for GETs, "write" for mutations). */
   allow: (cls: "read" | "write") => boolean;
+  /** Optional async gate run before a write (POST/PATCH) is accepted, after the
+   *  rate limit and before the body is read — the anti-abuse (Turnstile /
+   *  password) check on the public site mount. Throws MhError to reject. */
+  beforeWrite?: () => Promise<void>;
 }
 
 const LIST_LIMIT_DEFAULT = 100;
@@ -125,6 +129,7 @@ export async function serveGrantedApi(
     }
     if (req.method === "POST" && sub === "records") {
       if (!deps.allow("write")) return tooMany();
+      if (deps.beforeWrite) await deps.beforeWrite();
       const values = await guestJsonBody(req);
       return Response.json(
         guestCreateRecord(db, set, principal, needParam(url, "db"), values),
@@ -132,6 +137,7 @@ export async function serveGrantedApi(
     }
     if (req.method === "PATCH" && sub === "record") {
       if (!deps.allow("write")) return tooMany();
+      if (deps.beforeWrite) await deps.beforeWrite();
       const values = await guestJsonBody(req);
       return Response.json(
         guestUpdateRecord(db, set, principal, needParam(url, "id"), values),

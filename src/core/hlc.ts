@@ -78,6 +78,12 @@ export function observeHlc(
 ): void {
   const last = readLast(db, node);
   const r = parseHlc(remote);
+  // A malformed remote HLC (non-numeric prefix → NaN) must NEVER enter the local
+  // clock: Math.max(last, NaN, now) is NaN, which formatHlc then persists as
+  // "…NaN…", permanently wedging this node's clock (every later nextHlc reads
+  // NaN back). Anonymous write-inbox ops make this reachable, so drop the poison
+  // here as the last line of defense (the drop/grants layers reject it earlier).
+  if (!Number.isFinite(r.millis) || !Number.isFinite(r.counter)) return;
   const millis = Math.max(last.millis, r.millis, now);
   let counter: number;
   if (millis === last.millis && millis === r.millis)

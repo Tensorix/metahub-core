@@ -105,13 +105,15 @@ function makeClient(config: S3Config): StorageClient {
       if (opts?.contentType) headers["content-type"] = opts.contentType;
       // Conditional create: S3/R2 reject with 412 if the object already exists.
       if (opts?.ifNoneMatch) headers["if-none-match"] = "*";
+      // Conditional overwrite (CAS): 412 if the current ETag differs.
+      if (opts?.ifMatch) headers["if-match"] = opts.ifMatch;
       const res = await aws.fetch(objectUrl(key), {
         method: "PUT",
         body: body as unknown as BodyInit,
         headers: Object.keys(headers).length ? headers : undefined,
       });
-      if (opts?.ifNoneMatch && res.status === 412) {
-        throw new MhError("conflict", `S3 object already exists: ${key}`);
+      if ((opts?.ifNoneMatch || opts?.ifMatch) && res.status === 412) {
+        throw new MhError("conflict", `S3 conditional put failed (${opts?.ifMatch ? "If-Match" : "exists"}): ${key}`);
       }
       if (!res.ok) await fail(res, "put");
     },

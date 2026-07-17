@@ -206,10 +206,14 @@ export function getFileMetaForServe(
 } | null {
   const hit = resolveSiteFileRow(db, siteId, path, opts);
   if (!hit) return null;
+  // content_type is part of the validator: the same bytes re-served under a
+  // corrected content-type must mint a fresh ETag, else a client that cached the
+  // old representation stays on the wrong type through a 304.
+  const ct = hit.row.content_type ?? "";
   const etag =
     hit.row.encoding === "blob"
-      ? `W/"${hit.row.content ?? ""}"`
-      : `W/"${Bun.hash(`${hit.row.encoding}:${hit.row.content ?? ""}`).toString(16)}"`;
+      ? `W/"${hit.row.content ?? ""}-${Bun.hash(ct).toString(16)}"`
+      : `W/"${Bun.hash(`${ct}:${hit.row.encoding}:${hit.row.content ?? ""}`).toString(16)}"`;
   return { ...hit, etag };
 }
 
@@ -231,6 +235,12 @@ export function siteCacheControl(
 ): string {
   const vis = isPublic ? "public" : "private";
   if (contentType.toLowerCase().includes("text/html")) return `${vis}, no-cache`;
-  if (encoding === "blob") return `${vis}, max-age=3600`;
+  // Public blobs get the SAME short freshness as text assets (not 1h): a site
+  // flipped back to private has no way to purge a shared/CDN cache, so a long
+  // max-age would keep the bytes reachable for up to an hour after. Private
+  // blobs (behind the token / capability slug) can't be shared-cached, so they
+  // keep the cheaper 1h TTL.
+  if (encoding === "blob")
+    return isPublic ? `public, max-age=300, stale-while-revalidate=3600` : `private, max-age=3600`;
   return `${vis}, max-age=300, stale-while-revalidate=3600`;
 }

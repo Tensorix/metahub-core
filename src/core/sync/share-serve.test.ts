@@ -74,6 +74,8 @@ test("password share prompts, unlocks, then serves", async () => {
   expect(ok.status).toBe(303);
   const setCookie = ok.headers.get("set-cookie")!;
   expect(setCookie).toContain("mh_share_");
+  expect(setCookie).toContain("HttpOnly"); // F20: not readable via document.cookie
+  expect(setCookie).toContain("SameSite=Strict");
   const cookie = setCookie.split(";")[0]!;
 
   // With the cookie → content served.

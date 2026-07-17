@@ -18,9 +18,10 @@
 // inbox capacity, and it never touches the oplog).
 
 import type { DbDriver } from "../driver.ts";
+import type { Change } from "../crdt.ts";
 import { getNodeId } from "../node.ts";
 import { ingest } from "../crdt.ts";
-import { errorCode } from "../errors.ts";
+import { MhError, errorCode } from "../errors.ts";
 import { parseGrantSet } from "../grants-core.ts";
 import { listSites, type SiteRow } from "../sites-core.ts";
 import { getEdgeConfig } from "./edge-config.ts";
@@ -64,6 +65,9 @@ export interface DropPullDropSummary {
   rejected: number;
   /** Valid + ingested but ack deferred to a later round (bucket gate). */
   deferred: number;
+  /** Held (NOT acked, NOT deleted) because opening failed on OUR side — a local
+   *  key/bucket fault, not bad mail. Retried on a later, fixed pull; never lost. */
+  held: number;
 }
 
 export interface DropPullSummary {
@@ -74,10 +78,11 @@ export interface DropPullSummary {
   acked: number;
   rejected: number;
   deferred: number;
+  held: number;
 }
 
 function emptySummary(skipped?: DropPullSummary["skipped"]): DropPullSummary {
-  return { ...(skipped ? { skipped } : {}), drops: [], fetched: 0, ingested: 0, acked: 0, rejected: 0, deferred: 0 };
+  return { ...(skipped ? { skipped } : {}), drops: [], fetched: 0, ingested: 0, acked: 0, rejected: 0, deferred: 0, held: 0 };
 }
 
 function recordDropReject(db: DbDriver, dropId: string, envelopeId: string | null, reason: string): void {
@@ -87,14 +92,34 @@ function recordDropReject(db: DbDriver, dropId: string, envelopeId: string | nul
   console.error(`[drop] rejected envelope ${envelopeId ?? "(unparseable)"} for ${dropId}: ${reason}`);
 }
 
-/** Max oplog seq of one envelope's ingested ops (keyed by the stable txn) —
- *  the precise "what must the bucket have pushed past" ack watermark; stays
- *  correct across re-pulls and concurrent local edits. */
+/** Max oplog seq stamped with this envelope's stable txn — a fast "have we
+ *  already ingested THIS envelope_id" probe (the ordinary double-pull case),
+ *  used only to skip re-decrypt. NOT the ack watermark: a new-envelope_id replay
+ *  of already-held data ingests 0 rows and would leave this null forever (the
+ *  old deferred-forever inbox-DoS). The ack watermark is changesMaxSeq below,
+ *  keyed by the oplog UNIQUE coordinates, so a replay resolves to the ORIGINAL
+ *  seq and acks normally. */
 function envelopeMaxSeq(db: DbDriver, envelopeId: string): number | null {
   const r = db
     .query("SELECT MAX(seq) AS s FROM crdt_changes WHERE txn = ?")
     .get("drop:" + envelopeId) as { s: number | null };
   return r.s;
+}
+
+/** Max oplog seq of a payload's ops, keyed by their register coordinates
+ *  (dataset,row_id,col,hlc) = the oplog UNIQUE tuple. Correct across re-pulls,
+ *  concurrent local edits, AND new-id replays (which land 0 rows but resolve to
+ *  the already-stored original seq, so the ack gate advances instead of
+ *  deferring forever). */
+function changesMaxSeq(db: DbDriver, changes: Change[]): number | null {
+  let max: number | null = null;
+  for (const c of changes) {
+    const r = db
+      .query("SELECT MAX(seq) AS s FROM crdt_changes WHERE dataset = ? AND row_id = ? AND col = ? AND hlc = ?")
+      .get(c.dataset, c.row_id, c.col, c.hlc) as { s: number | null };
+    if (r.s != null && (max == null || r.s > max)) max = r.s;
+  }
+  return max;
 }
 
 function bucketPushCursor(db: DbDriver, bucket: DropBucket): number {
@@ -136,13 +161,20 @@ export async function pullDropsOnce(
 
   let keyring: DropKeyring | null = getLocalDropKeyring(db);
   let refreshedKeyring = false;
+  let keyringRefreshFailed = false;
   /** Unknown key_id may mean another device rotated — refresh from the bucket
-   *  once per round before giving up on an envelope. */
+   *  once per round before giving up on an envelope. A FAILED refresh (bucket
+   *  transiently unreachable) is recorded so an unknown key is HELD, not deleted
+   *  as bad mail. */
   const resolveKey = async (keyId: string) => {
     let key = keyring ? findDropKey(keyring, keyId) : undefined;
     if (!key && !refreshedKeyring && bucket) {
       refreshedKeyring = true;
-      keyring = await ensureDropKeys(db, { bucket }).catch(() => keyring);
+      try {
+        keyring = await ensureDropKeys(db, { bucket });
+      } catch {
+        keyringRefreshFailed = true;
+      }
       key = keyring ? findDropKey(keyring, keyId) : undefined;
     }
     return key;
@@ -159,6 +191,7 @@ export async function pullDropsOnce(
       acked: 0,
       rejected: 0,
       deferred: 0,
+      held: 0,
     };
     const set = parseGrantSet(site.public_grants);
     let afterId = 0;
@@ -187,20 +220,43 @@ export async function pullDropsOnce(
           // would misread our own materialized row as a guest "update" — and
           // fall straight through to the ack gate (the 未 ack 重拉 → 补 ack path).
           const priorSeq = envelopeMaxSeq(db, env.envelope_id);
-          if (priorSeq == null) {
+          let ackSeq: number | null;
+          if (priorSeq != null) {
+            ackSeq = priorSeq;
+          } else {
             const key = await resolveKey(env.key_id);
-            if (!key) throw new Error(`unknown drop key ${env.key_id}`);
-            const sk = await dropKeySecret(db, key, { bucket });
+            if (!key) {
+              // Unknown key while the bucket was unreachable this round: our
+              // keyring may just be stale — HOLD (don't delete legit mail). A
+              // resolvable-but-absent key (bogus/purged key_id) is bad mail.
+              if (keyringRefreshFailed) { s.held++; continue; }
+              throw new MhError("invalid_input", `unknown drop key ${env.key_id}`);
+            }
+            let sk: Uint8Array;
+            try {
+              sk = await dropKeySecret(db, key, { bucket });
+            } catch {
+              // Our master key can't unwrap the private half — a LOCAL fault
+              // (bucket master key misconfigured / rotated wrong) that fails
+              // identically for every envelope. Never delete legit mail for it:
+              // hold and retry once the key is fixed.
+              s.held++;
+              continue;
+            }
+            // openSealed failing past this point is per-envelope (tampered /
+            // garbage ciphertext) → the outer catch rejects+deletes it, so an
+            // attacker can't pin capacity with unopenable mail.
             const payload = await openDropEnvelope(env, { pk: fromB64(key.pk), sk });
             const changes = checkDropPayload(db, set, node, env.envelope_id, payload, now());
             s.ingested += ingest(db, changes);
+            ackSeq = changesMaxSeq(db, changes);
           }
           if (!bucket) {
             ackNow.push(row.id);
+          } else if (ackSeq != null && ackSeq <= bucketPushCursor(db, bucket)) {
+            ackNow.push(row.id);
           } else {
-            const seqAtIngest = envelopeMaxSeq(db, env.envelope_id);
-            if (seqAtIngest != null && seqAtIngest <= bucketPushCursor(db, bucket)) ackNow.push(row.id);
-            else s.deferred++;
+            s.deferred++;
           }
         } catch (e) {
           recordDropReject(db, site.id, envelopeId, (e as Error).message);
@@ -218,6 +274,7 @@ export async function pullDropsOnce(
     summary.acked += s.acked;
     summary.rejected += s.rejected;
     summary.deferred += s.deferred;
+    summary.held += s.held;
   }
   return summary;
 }

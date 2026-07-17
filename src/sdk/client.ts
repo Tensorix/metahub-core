@@ -212,9 +212,19 @@ export function createClient(opts: SdkOptions = {}) {
           ? new URL(roomBase + "/ws")
           : new URL(roomBase + "/ws", typeof location !== "undefined" ? location.href : "http://localhost");
         abs.protocol = abs.protocol === "https:" ? "wss:" : "ws:";
+        // Exponential backoff with jitter (1s → 30s cap), reset on a healthy
+        // open. A close code in the app-auth range (4401/4403 — session expired,
+        // grant revoked, room deleted) is terminal: stop reconnecting instead of
+        // hammering a door that will never open (the old code retried a dead room
+        // every 3s for the tab's lifetime, draining battery and flooding logs).
+        let attempt = 0;
+        const AUTH_CLOSE = new Set([1008, 4401, 4403]);
         const connect = (): void => {
           if (stopped) return;
           ws = new WebSocket(abs.toString());
+          ws.onopen = () => {
+            attempt = 0; // healthy connection — reset the backoff
+          };
           ws.onmessage = (ev) => {
             try {
               const d = JSON.parse(String(ev.data)) as { type?: string; seq?: number };
@@ -223,8 +233,17 @@ export function createClient(opts: SdkOptions = {}) {
               /* non-JSON frame (e.g. pong) — ignore */
             }
           };
-          ws.onclose = () => {
-            if (!stopped) timer = setTimeout(connect, 3000);
+          ws.onerror = () => {
+            /* surfaced as a close; reconnection is handled there */
+          };
+          ws.onclose = (ev) => {
+            if (stopped || AUTH_CLOSE.has(ev.code)) {
+              stopped = true;
+              return;
+            }
+            const backoff = Math.min(30000, 1000 * 2 ** attempt++);
+            const jitter = backoff * 0.25 * Math.random(); // spread reconnects across tabs
+            timer = setTimeout(connect, backoff + jitter);
           };
         };
         connect();

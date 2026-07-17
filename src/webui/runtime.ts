@@ -119,7 +119,13 @@ function replicaUsable(): boolean {
   path: string,
 ) => {
   const fail = (msg: string): void => {
-    document.body.innerHTML = `<p style="font:14px system-ui;color:#888;margin:2em">${msg}</p>`;
+    // textContent, not innerHTML: msg can carry a non-literal error string, and
+    // this is the one fail() sink that isn't a static template — never let it
+    // parse as markup.
+    const p = document.createElement("p");
+    p.style.cssText = "font:14px system-ui;color:#888;margin:2em";
+    p.textContent = msg;
+    document.body.replaceChildren(p);
   };
   if (!replicaUsable() || typeof Worker === "undefined") {
     fail("当前离线，且此浏览器尚未启用本地副本。请先在线打开 Metahub，在设置中开启「离线副本」。");

@@ -122,6 +122,7 @@ export async function syncRoomPeer(
   let pushed = 0;
   let pulled = 0;
   let needBlobs: string[] = [];
+  let pending = false;
   for (let i = 0; i < MAX_ROUNDS; i++) {
     st.rounds++;
     // Digest every ROOM_DIGEST_INTERVAL rounds, plus right after a grants change.
@@ -145,10 +146,15 @@ export async function syncRoomPeer(
     pushed += r.pushed;
     pulled += r.pulled;
     needBlobs = r.needBlobs;
+    pending = r.pending;
     if (!r.pending) break;
   }
   if (needBlobs.length > 0) await pushRoomBlobs(db, config, needBlobs);
-  return { pushed, pulled, pendingPush: false };
+  // Report the truth: if we exhausted MAX_ROUNDS with work still queued,
+  // pendingPush stays true so the caller can re-enter promptly instead of
+  // waiting a full auto-sync tick (a large backlog would otherwise drip out one
+  // round per tick).
+  return { pushed, pulled, pendingPush: pending };
 }
 
 /**

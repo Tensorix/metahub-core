@@ -94,6 +94,12 @@ export interface StoragePutOpts {
    *  compare-and-set so two devices initializing the same empty bucket can't
    *  clobber each other's master key. */
   ifNoneMatch?: boolean;
+  /** Conditional overwrite (S3 `If-Match: <etag>`): fail with MhError("conflict")
+   *  if the object's current ETag differs from this one — a compare-and-set for
+   *  read-modify-write updates (drop-key rotation) so a concurrent writer can't
+   *  silently clobber the loser's freshly-appended key. Both real clients honor
+   *  it; a mock that ignores it simply performs an unconditional put. */
+  ifMatch?: string;
 }
 
 /** The minimal object-store surface storage-sync needs. Implemented per runtime:

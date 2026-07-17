@@ -395,7 +395,12 @@ test("checkGuestChanges: create-only grant refuses ops against an EXISTING row; 
   ).toBe("invalid_input");
 });
 
-test("checkGuestChanges: relation columns require the target db in the set; row ceiling applies to creates", () => {
+// F10 parity guard: the op-ingest path (checkGuestChanges) must apply the SAME
+// relation policy as the realtime granted API (assertRelationAllowed) — public
+// forbids relations outright (resolving one probes the target db = an
+// enumeration oracle); a share principal may write them, but only into a db
+// that is itself in the set. Keeps the two guest-write transports from drifting.
+test("checkGuestChanges relation policy matches the sync path: public forbids, share allows granted", () => {
   const db = makeDb();
   const people = createDatabase(db, { name: "P" });
   addProperty(db, people.id, { name: "Name", type: "text" });
@@ -407,12 +412,19 @@ test("checkGuestChanges: relation columns require the target db in the set; row 
   const tasksOnly = grants({ db: tasks.id, ops: ["create"] });
   const both = grants({ db: tasks.id, ops: ["create"] }, { db: people.id, ops: ["read"] });
   const rel = creationChanges(db, tasks.id, "rec_new-100001", { [owner.id]: [person.id] });
-  expect(code(() => checkGuestChanges(db, tasksOnly, GUEST, rel))).toBe("invalid_input");
-  checkGuestChanges(db, both, GUEST, rel);
 
-  // row ceiling
+  // public (the drop/write-inbox default) — relations refused even when granted.
+  expect(code(() => checkGuestChanges(db, both, GUEST, rel, "public"))).toBe("invalid_input");
+  expect(code(() => checkGuestChanges(db, both, GUEST, rel))).toBe("invalid_input"); // default is public
+  // share — allowed into a granted target, refused into an ungranted one.
+  checkGuestChanges(db, both, GUEST, rel, "share");
+  expect(code(() => checkGuestChanges(db, tasksOnly, GUEST, rel, "share"))).toBe("invalid_input");
+
+  // row ceiling (independent of relation policy; limits is the 6th arg now)
   const tiny = { ...GUEST_LIMITS, maxRows: 0 };
   expect(
-    code(() => checkGuestChanges(db, both, GUEST, creationChanges(db, tasks.id, "rec_new-100002", {}), tiny)),
+    code(() =>
+      checkGuestChanges(db, both, GUEST, creationChanges(db, tasks.id, "rec_new-100002", {}), "public", tiny),
+    ),
   ).toBe("invalid_input");
 });

@@ -302,16 +302,26 @@ function evictRow(db: DbDriver, key: RowKey, ackSeq: number, guestBase: string):
 }
 
 /** Finish deferred evictions whose guest ops the owner has now acked. */
-function sweepEvictPending(db: DbDriver, ackSeq: number): void {
+function sweepEvictPending(db: DbDriver, ackSeq: number, guestBase: string): void {
   const pending = db.query("SELECT dataset, row_id FROM evict_pending").all() as RowKey[];
   for (const k of pending) {
-    // Everything still here is guest-authored by construction (evictRow removed
-    // the rest); the ack bound alone decides.
-    db.query("DELETE FROM crdt_changes WHERE dataset = ? AND row_id = ? AND seq <= ?").run(
-      k.dataset,
-      k.row_id,
-      ackSeq,
-    );
+    const table = STATE_TABLE[k.dataset];
+    // A row that has RE-ENTERED the partition (owner re-added it with a fresh,
+    // higher-seq baseline — already ingested + materialized this round) is a
+    // normal member again, not stale guest residue. Clear its marker and leave
+    // the oplog alone. The old code assumed "everything here is guest-authored"
+    // and its seq<=ackSeq delete would wipe the re-entry's OWNER baseline ops,
+    // forking the room oplog from the owner until the next digest reconcile.
+    if (table && db.query(`SELECT 1 FROM ${table} WHERE id = ? LIMIT 1`).get(k.row_id) != null) {
+      db.query("DELETE FROM evict_pending WHERE dataset = ? AND row_id = ?").run(k.dataset, k.row_id);
+      continue;
+    }
+    // Defense in depth: only guest-authored ops are ever eligible here (owner
+    // baselines must survive) — mirror evictRow's own author predicate so the
+    // invariant is enforced by SQL, not just by the assumption above.
+    db.query(
+      `DELETE FROM crdt_changes WHERE dataset = ? AND row_id = ? AND seq <= ? AND (${GUEST_NODE_SQL})`,
+    ).run(k.dataset, k.row_id, ackSeq, guestBase, guestBase);
     const remaining =
       db.query("SELECT 1 FROM crdt_changes WHERE dataset = ? AND row_id = ? LIMIT 1").get(
         k.dataset,
@@ -421,7 +431,7 @@ export function handleOwnerSync(
     }
 
     for (const k of req.evict) evictRow(roomDb, k, req.since, cfg.guestBase);
-    sweepEvictPending(roomDb, req.since);
+    sweepEvictPending(roomDb, req.since, cfg.guestBase);
     sweepRoomBlobs(roomDb);
 
     return {

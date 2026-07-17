@@ -252,10 +252,14 @@ function pullLines(r: DropPullSummary): string {
   if (r.skipped === "no_sites") return "no sites with a create grant — nothing to pull";
   if (r.skipped === "no_keys") return "no drop keys on this device — run `mh edge deploy` here or attach the workspace bucket";
   if (r.skipped === "not_publisher") return "another device holds the publisher lease — skipped (it pulls for the fleet)";
+  const heldTail = (n: number) => (n ? `, held ${n}` : "");
   const per = r.drops
-    .map((d) => `  ${d.site}: fetched ${d.fetched}, ingested ${d.ingested} op(s), acked ${d.acked}, rejected ${d.rejected}, deferred ${d.deferred}`)
+    .map((d) => `  ${d.site}: fetched ${d.fetched}, ingested ${d.ingested} op(s), acked ${d.acked}, rejected ${d.rejected}, deferred ${d.deferred}${heldTail(d.held)}`)
     .join("\n");
-  return `pulled ${r.fetched} envelope(s) → ${r.ingested} new op(s), acked ${r.acked}, rejected ${r.rejected}, deferred ${r.deferred}` + (per ? `\n${per}` : "");
+  const heldNote = r.held
+    ? `\n${r.held} envelope(s) held — a local drop-key/bucket fault (mail kept, not deleted); fix the key and pull again`
+    : "";
+  return `pulled ${r.fetched} envelope(s) → ${r.ingested} new op(s), acked ${r.acked}, rejected ${r.rejected}, deferred ${r.deferred}${heldTail(r.held)}` + (per ? `\n${per}` : "") + heldNote;
 }
 
 const pull = defineCommand({

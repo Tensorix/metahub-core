@@ -12,7 +12,7 @@ import { addProperty } from "../properties.ts";
 import { listRecords } from "../records.ts";
 import { changesSince, ingest } from "../crdt.ts";
 import { createSite, setSitePublicGrants, type SiteRow } from "../sites-core.ts";
-import { toB64, generateMasterKey } from "./e2ee.ts";
+import { toB64, fromB64, encryptBytes, generateMasterKey } from "./e2ee.ts";
 import { createInboxFetch, type EdgeSql } from "../../workers/edge-worker.ts";
 import { memSql } from "../../workers/edge-worker.test-util.ts";
 import { httpDropHost, type DropHostApi } from "./drop-host.ts";
@@ -211,6 +211,66 @@ test("unknown key_id is rejected, not crashed on", async () => {
   const s = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
   expect(s.rejected).toBe(1);
   expect(listRecords(r.db, r.dbId)).toHaveLength(0);
+});
+
+test("held (not deleted) when OUR drop key can't be unwrapped — a local bucket-key fault (F5)", async () => {
+  const r = await rig();
+  await r.drop.createRecord("guestbook", { Title: "sealed to a valid key" });
+
+  // Simulate a LOCAL fault: the keyring's private half is wrapped with one key,
+  // but the attached bucket now carries a DIFFERENT master key (misconfig / bad
+  // rotation) → dropKeySecret throws auth for EVERY envelope. That is our fault,
+  // not the mail's — it must be HELD, never acked+deleted.
+  const kr = getLocalDropKeyring(r.db)!;
+  const rec = kr.keys[0]!;
+  const wrongMaster = generateMasterKey();
+  const wrapped = { ...rec, sk: toB64(await encryptBytes(wrongMaster, fromB64(rec.sk))), wrapped: true };
+  saveLocalDropKeyring(r.db, { v: 1, keys: [wrapped] });
+  addBucketPeer(r.db); // bucket master key is yet another (also non-matching) key
+
+  const s = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s.held).toBe(1);
+  expect(s.acked).toBe(0);
+  expect(s.rejected).toBe(0);
+  expect(s.ingested).toBe(0);
+  // legit mail is STILL on the host, awaiting a fixed pull — nothing lost
+  expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(1);
+  expect(listRecords(r.db, r.dbId)).toHaveLength(0);
+});
+
+test("new-envelope_id replay acks + deletes instead of deferring forever (inbox-DoS fix, F6)", async () => {
+  const r = await rig();
+  setSitePublicGrants(r.db, r.site.id, { v: 1, tables: [{ db: r.dbId, ops: ["create", "update"] }] });
+  const url = addBucketPeer(r.db);
+  await r.drop.createRecord("guestbook", { Title: "original" });
+
+  // Round 1: ingested, deferred (cursor 0). Capture the envelope for replay.
+  const s1 = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s1.deferred).toBe(1);
+  const original = (await r.host.listEnvelopes(r.site.id, 0, 100))[0]!.envelope as Record<string, unknown>;
+
+  // Advance the bucket cursor → the original acks + drains.
+  const max = (r.db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number }).s;
+  r.db.query("UPDATE peers SET push_cursor = ? WHERE url = ?").run(max, url);
+  const s2 = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s2.acked).toBe(1);
+  expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(0);
+
+  // Attacker replays the SAME sealed payload under a NEW envelope_id.
+  const replay = JSON.stringify({ ...original, envelope_id: original.envelope_id + "-r" });
+  await createInboxFetch({ sql: r.sql, ownerToken: OWNER })(
+    new Request(`${ENDPOINT}/v1/inbox/${r.site.id}/envelopes`, { method: "POST", body: replay }),
+  );
+  expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(1);
+
+  // The replay ingests 0 rows (oplog UNIQUE) but MUST ack+delete — the old
+  // txn-keyed watermark would leave it deferred forever, pinning capacity.
+  const s3 = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s3.ingested).toBe(0);
+  expect(s3.deferred).toBe(0);
+  expect(s3.acked).toBe(1);
+  expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(0);
+  expect(listRecords(r.db, r.dbId)).toHaveLength(1); // still exactly one, no dup
 });
 
 test("two replicas double-pull the same inbox and converge with zero duplicates", async () => {
