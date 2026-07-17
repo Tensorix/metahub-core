@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { errorResponse, type Route, type RouteCtx } from "./routes.ts";
+import { safeDecode } from "./http-util.ts";
 import { MhError } from "../errors.ts";
 import { putBlob, getBlob, blobExists } from "../cache.ts";
 import { recordBlob, touchBlob, resolveBlob, blobContentType } from "../blobs.ts";
@@ -59,7 +60,10 @@ function ext(ct: string): string {
  */
 export async function serveBlob(req: Request, ctx: RouteCtx): Promise<Response | null> {
   const url = new URL(req.url);
-  const rest = decodeURIComponent(url.pathname.slice("/blob/".length));
+  // safeDecode, not bare decodeURIComponent: a malformed %-escape must fall
+  // through to the 404 path, not escape the handler as an uncaught URIError
+  // (Bun.serve has no error handler — it would surface as a generic 500).
+  const rest = safeDecode(url.pathname.slice("/blob/".length));
   if (!rest) return null;
   const dot = rest.indexOf(".");
   const hash = (dot >= 0 ? rest.slice(0, dot) : rest).toLowerCase();

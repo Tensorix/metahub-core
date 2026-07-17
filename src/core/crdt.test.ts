@@ -1,7 +1,17 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runSchema } from "./db.ts";
-import { emit, emitFields, ingest, changesSince, changesAfterSeq, withNodeId } from "./crdt.ts";
+import {
+  emit,
+  emitFields,
+  ingest,
+  changesSince,
+  changesAfterSeq,
+  withNodeId,
+  DOMAIN,
+  RECORD_META,
+  NOT_NULL_ZERO_COLS,
+} from "./crdt.ts";
 import { nextHlc, parseHlc } from "./hlc.ts";
 
 function makeNode(id: string): Database {
@@ -176,4 +186,74 @@ test("sites visibility/spa replicate across nodes; unknown sites columns are ign
   expect(row.name).toBe("demo");
   expect(row.visibility).toBe("public");
   expect(row.spa).toBe(1);
+});
+
+test("NOT_NULL_ZERO_COLS matches the live schema exactly (no drift on future columns)", () => {
+  // The null→0 coercion set is hand-maintained; this derives the same set from
+  // PRAGMA table_info over every synced table and pins equality. A future
+  // `INTEGER NOT NULL DEFAULT 0` synced column forgotten in the set would make
+  // a winning null register silently poison-skipped (cross-node drift with no
+  // failing test) — this test turns that omission into a red bar.
+  const db = makeNode("nodea");
+  const derived = new Set<string>();
+  const universe: [dataset: string, table: string, cols: Set<string>][] = [
+    ...Object.entries(DOMAIN).map(([ds, d]) => [ds, d.table, d.cols] as [string, string, Set<string>]),
+    ["records", "records", RECORD_META],
+  ];
+  for (const [dataset, table, cols] of universe) {
+    const info = db.query(`PRAGMA table_info(${table})`).all() as {
+      name: string;
+      notnull: number;
+      dflt_value: string | null;
+    }[];
+    for (const c of info) {
+      if (!cols.has(c.name)) continue; // only synced (write-allowed) columns
+      if (c.notnull === 1 && c.dflt_value === "0") derived.add(`${dataset}:${c.name}`);
+    }
+  }
+  expect(new Set(NOT_NULL_ZERO_COLS)).toEqual(derived);
+});
+
+test("a change that cannot materialize is rejected wholesale — never a stranded oplog winner", () => {
+  // Reject-don't-strand: if the poison change stayed in the oplog as the
+  // register's max-HLC winner while the state table kept the old value,
+  // changesAfterSeq would export it to peers that CAN apply it → permanent
+  // cross-node divergence that nothing repairs.
+  const a = makeNode("nodea");
+  const b = makeNode("nodeb");
+  emit(a, "documents", "doc_p", "title", "original");
+  emit(a, "documents", "doc_p", "body", "text");
+  ingest(b, changesSince(a, ""));
+
+  // Winning-HLC change whose value is invalid JSON: decodeMaterializeValue's
+  // JSON.parse throws — reachable from real peer sync (values are unvalidated
+  // wire strings), and NOT covered by the NOT_NULL_ZERO_COLS coercion.
+  const poison = {
+    hlc: "9999999999999-0000-evilnode",
+    node_id: "evilnode",
+    dataset: "documents",
+    row_id: "doc_p",
+    col: "title",
+    value: "not-json{", // raw string, no JSON.parse round-trip possible
+    txn: null,
+  };
+  const good = emit(a, "documents", "doc_p", "body", "updated");
+  const received = ingest(b, [poison, good]);
+
+  // The good sibling landed; the poison change did not survive in the oplog.
+  expect(received).toBe(1);
+  const strand = b
+    .query("SELECT COUNT(*) AS n FROM crdt_changes WHERE dataset='documents' AND row_id='doc_p' AND hlc=?")
+    .get(poison.hlc) as { n: number };
+  expect(strand.n).toBe(0);
+  // State is untouched for the poisoned register, updated for the good one.
+  const row = b.query("SELECT title, body FROM documents WHERE id='doc_p'").get() as {
+    title: string;
+    body: string;
+  };
+  expect(row.title).toBe("original");
+  expect(row.body).toBe("updated");
+  // And nothing exports the rejected winner onward.
+  const exported = changesAfterSeq(b, 0).changes.filter((c) => c.hlc === poison.hlc);
+  expect(exported).toEqual([]);
 });

@@ -17,6 +17,25 @@ import {
   type S3Config,
 } from "./storage.ts";
 
+/** THE aws4fetch signer for this config — one construction shared by the CAS
+ *  put, the CORS bootstrap and presignGet, so a signer-config fix can't land in
+ *  one call site and 403 the others. */
+function awsSigner(config: S3Config): AwsClient {
+  return new AwsClient({
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    region: config.region || "auto",
+    service: "s3",
+  });
+}
+
+/** Bucket-level base URL: virtual-hosted has the bucket in the host already
+ *  (COS), path-style puts it in the path (R2/MinIO/S3). */
+function bucketBase(config: S3Config): string {
+  const origin = new URL(config.endpoint).origin;
+  return isVirtualHostedStyle(config) ? origin : `${origin}/${config.bucket}`;
+}
+
 function makeClient(config: S3Config): StorageClient {
   // Virtual-hosted (e.g. Tencent COS, which rejects path-style): the endpoint
   // host already carries the bucket, so Bun ignores the `bucket` option.
@@ -32,15 +51,11 @@ function makeClient(config: S3Config): StorageClient {
 
   // aws4fetch fallback for conditional overwrites: Bun.S3Client.write has no
   // If-Match, so an ifMatch put signs a raw PUT the same way presignGet does.
-  const aws = new AwsClient({
-    accessKeyId: config.accessKeyId,
-    secretAccessKey: config.secretAccessKey,
-    region: config.region || "auto",
-    service: "s3",
-  });
-  const origin = new URL(config.endpoint).origin;
-  const urlBase = vhost ? origin : `${origin}/${config.bucket}`;
-  const objectUrl = (key: string) => `${urlBase}/${key.split("/").map(encodeURIComponent).join("/")}`;
+  // Lazy — only the rare drop-key CAS pays for it, not every list/get/put.
+  let awsLazy: AwsClient | null = null;
+  const aws = () => (awsLazy ??= awsSigner(config));
+  const objectUrl = (key: string) =>
+    `${bucketBase(config)}/${key.split("/").map(encodeURIComponent).join("/")}`;
 
   return {
     async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
@@ -84,7 +99,7 @@ function makeClient(config: S3Config): StorageClient {
       // pre-check above), so concurrent drop-key rotations converge instead of
       // clobbering.
       if (opts?.ifMatch) {
-        const res = await aws.fetch(objectUrl(key), {
+        const res = await aws().fetch(objectUrl(key), {
           method: "PUT",
           body,
           headers: {
@@ -117,17 +132,7 @@ setStorageClientFactory(makeClient);
 const MANAGED_CORS_RULE_ID = "metahub-pwa";
 
 function corsEndpoint(config: S3Config): { aws: AwsClient; url: string } {
-  const aws = new AwsClient({
-    accessKeyId: config.accessKeyId,
-    secretAccessKey: config.secretAccessKey,
-    region: config.region || "auto",
-    service: "s3",
-  });
-  const origin = new URL(config.endpoint).origin;
-  // Bucket-level subresource: virtual-hosted has the bucket in the host already
-  // (COS), path-style puts it in the path (R2/MinIO/S3).
-  const base = isVirtualHostedStyle(config) ? origin : `${origin}/${config.bucket}`;
-  return { aws, url: `${base}/?cors` };
+  return { aws: awsSigner(config), url: `${bucketBase(config)}/?cors` };
 }
 
 function escapeXml(s: string): string {
@@ -167,15 +172,8 @@ export const MAX_PRESIGN_SECONDS = 604800;
  * path-style). `expiresSec` is clamped to the 7-day SigV4 maximum.
  */
 export async function presignGet(config: S3Config, key: string, expiresSec: number): Promise<string> {
-  const aws = new AwsClient({
-    accessKeyId: config.accessKeyId,
-    secretAccessKey: config.secretAccessKey,
-    region: config.region || "auto",
-    service: "s3",
-  });
-  const origin = new URL(config.endpoint).origin;
-  const base = isVirtualHostedStyle(config) ? origin : `${origin}/${config.bucket}`;
-  const u = new URL(`${base}/${key.split("/").map(encodeURIComponent).join("/")}`);
+  const aws = awsSigner(config);
+  const u = new URL(`${bucketBase(config)}/${key.split("/").map(encodeURIComponent).join("/")}`);
   u.searchParams.set("X-Amz-Expires", String(Math.min(Math.max(1, Math.floor(expiresSec)), MAX_PRESIGN_SECONDS)));
   const signed = await aws.sign(u.toString(), { method: "GET", aws: { signQuery: true } });
   return signed.url;

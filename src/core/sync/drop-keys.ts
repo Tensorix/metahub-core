@@ -49,14 +49,22 @@ const META_KEY = "drop_keys";
 
 // ---- local cache -------------------------------------------------------------------
 
+/** THE keyring shape predicate — local reads (getLocalDropKeyring) and bucket
+ *  reads (parseKeyring) must agree on what counts as a valid keyring, or a v2
+ *  bump updated in one place would let the two paths silently diverge. */
+function isKeyringShape(k: unknown): k is DropKeyring {
+  const kr = k as DropKeyring | null;
+  return !!kr && kr.v === 1 && Array.isArray(kr.keys);
+}
+
 export function getLocalDropKeyring(db: DbDriver): DropKeyring | null {
   const row = db.query("SELECT value FROM meta WHERE key = ?").get(META_KEY) as
     | { value: string }
     | null;
   if (!row) return null;
   try {
-    const kr = JSON.parse(row.value) as DropKeyring;
-    return kr && kr.v === 1 && Array.isArray(kr.keys) ? kr : null;
+    const kr = JSON.parse(row.value) as unknown;
+    return isKeyringShape(kr) ? kr : null;
   } catch {
     return null;
   }
@@ -135,7 +143,7 @@ async function wrapKeyring(kr: DropKeyring, masterKey: Uint8Array): Promise<Drop
 /** Parse + validate a keyring blob from the authoritative bucket. Rejects a
  *  malformed shape with invalid_input instead of blindly saving junk that a
  *  later getLocalDropKeyring would read back as null (silently emptying the
- *  keyring). Mirrors getLocalDropKeyring's shape check on every bucket read. */
+ *  keyring). Same predicate as getLocalDropKeyring (isKeyringShape). */
 function parseKeyring(bytes: Uint8Array, where: string): DropKeyring {
   let kr: unknown;
   try {
@@ -143,9 +151,8 @@ function parseKeyring(bytes: Uint8Array, where: string): DropKeyring {
   } catch {
     throw new MhError("invalid_input", `${where} is not valid JSON`);
   }
-  const k = kr as DropKeyring;
-  if (!k || k.v !== 1 || !Array.isArray(k.keys)) throw new MhError("invalid_input", `${where} is malformed`);
-  return k;
+  if (!isKeyringShape(kr)) throw new MhError("invalid_input", `${where} is malformed`);
+  return kr;
 }
 
 function encodeKeyring(kr: DropKeyring): Uint8Array {
@@ -258,7 +265,7 @@ export async function ensureDropKeys(
       return remoteKr;
     }
     const wrapped = await wrapKeyring({ v: 1, keys: localOnly }, bucket.masterKey);
-    const merged: DropKeyring = { v: 1, keys: [...remoteKr.keys, ...wrapped.keys] };
+    const merged = mergeKeyrings(remoteKr, wrapped); // one spelling of "combine keyrings"
     // Best-effort: publish the union so other devices see our key too. If it
     // races/fails we still keep it locally and retry on the next ensureDropKeys.
     const written = await putKeyringCas(client, bucket.keyPath, merged).catch(() => merged);
@@ -271,7 +278,7 @@ export async function ensureDropKeys(
     ? await wrapKeyring(local, bucket.masterKey)
     : { v: 1, keys: [await generateKeyRecord(bucket.masterKey)] };
   try {
-    await client.put(bucket.keyPath, new TextEncoder().encode(JSON.stringify(kr)), {
+    await client.put(bucket.keyPath, encodeKeyring(kr), {
       contentType: "application/json",
       ifNoneMatch: true,
     });

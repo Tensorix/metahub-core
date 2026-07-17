@@ -99,14 +99,21 @@ export class MhRoom {
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    if (/^\/r\/[^/]+\/ws$/.test(url.pathname)) return this.upgrade(req);
+    // Route to upgrade() only for a REAL websocket handshake. A plain GET on
+    // /ws falls through to the portable handler, which answers 426 for a live
+    // room but 404 for a dead/expired one (room-serve gate) — the SDK's
+    // liveness probe depends on that distinction, and answering 426
+    // unconditionally here would hide "room gone" behind an alive-looking 426
+    // on the only production deployment.
+    if (
+      /^\/r\/[^/]+\/ws$/.test(url.pathname) &&
+      (req.headers.get("upgrade") ?? "").toLowerCase() === "websocket"
+    )
+      return this.upgrade(req);
     return this.handler(req);
   }
 
   private async upgrade(req: Request): Promise<Response> {
-    if ((req.headers.get("upgrade") ?? "").toLowerCase() !== "websocket") {
-      return new Response("upgrade required", { status: 426 });
-    }
     const sess = await roomWsSession(this.db, req);
     // Uniform 404: unprovisioned, expired and locked-without-session all look alike.
     if (!sess) return new Response("not found", { status: 404 });

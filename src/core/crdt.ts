@@ -76,8 +76,9 @@ export function grouped<A extends unknown[], R>(
 
 // Domain tables addressable by id, with their write-allowed columns. `col` is
 // interpolated into SQL, so it MUST be validated against these allowlists
-// (changes can arrive from untrusted sync peers).
-const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
+// (changes can arrive from untrusted sync peers). Exported (read-only by
+// convention) for the NOT_NULL_ZERO_COLS schema-parity test.
+export const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
   databases: {
     table: "databases",
     cols: new Set(["name", "icon", "meta", "created_hlc", "__deleted"]),
@@ -122,7 +123,8 @@ const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
 
 // The `records` dataset is special: these cols hit the `records` table, any
 // other col is a property cell (col == property id) folded into records.data JSON.
-const RECORD_META = new Set(["database_id", "created_hlc", "order_key", "__deleted"]);
+// Exported for the NOT_NULL_ZERO_COLS schema-parity test.
+export const RECORD_META = new Set(["database_id", "created_hlc", "order_key", "__deleted"]);
 
 type SqlValue = string | number | null;
 
@@ -132,7 +134,11 @@ type SqlValue = string | number | null;
 // never advances → that peer's sync wedges, re-failing the same batch forever).
 // materialize() coerces null → 0 (the column default) for these; ingest()'s
 // per-change guard is the backstop for anything not enumerated here.
-const NOT_NULL_ZERO_COLS = new Set([
+// Hand-maintained BUT test-pinned: crdt.test.ts derives the same set from
+// PRAGMA table_info over the synced tables and asserts equality, so adding a
+// NOT NULL DEFAULT 0 synced column without updating this set fails loudly
+// instead of silently dropping that column's null registers as poison.
+export const NOT_NULL_ZERO_COLS = new Set([
   "records:__deleted",
   "databases:__deleted",
   "properties:__deleted",
@@ -277,7 +283,29 @@ export function applyChange(db: DbDriver, c: Change): ApplyResult {
     .get(c.dataset, c.row_id, c.col) as { h: string | null };
 
   if (cur.h !== c.hlc) return { inserted, winner: false }; // a newer write already wins
-  materialize(db, c.dataset, c.row_id, c.col, c.value);
+  try {
+    materialize(db, c.dataset, c.row_id, c.col, c.value);
+  } catch (e) {
+    // Reject-don't-strand: a change that cannot materialize must not stay in the
+    // oplog as the register's winner — changesAfterSeq would export it to peers
+    // while our own table kept the old value (permanent cross-node divergence
+    // that nothing repairs: integrity.ts never compares oplog vs state). If WE
+    // just inserted it, delete it wholesale (seq gaps are already a fact —
+    // compact.ts deletes superseded rows; readers scan rowid > cursor). If the
+    // row pre-existed (a re-materialization of a change we already held and
+    // already exported), leave the oplog untouched — deleting history the world
+    // has seen would be worse than the stale cell. Known residue, accepted: the
+    // ensureRow blank domain row (defaults only, no oplog backing).
+    if (inserted) {
+      db.query("DELETE FROM crdt_changes WHERE dataset = ? AND row_id = ? AND col = ? AND hlc = ?").run(
+        c.dataset,
+        c.row_id,
+        c.col,
+        c.hlc,
+      );
+    }
+    throw e; // ingest counts it poisoned; a local emit() fails loudly and clean
+  }
   return { inserted, winner: true };
 }
 

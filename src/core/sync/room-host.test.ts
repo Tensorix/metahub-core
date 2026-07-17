@@ -63,7 +63,14 @@ function startRoomHost() {
       if (!m) return new Response("not found", { status: 404 });
       const slug = decodeURIComponent(m[1]!);
       const db = dbFor(slug);
-      if (url.pathname === `/r/${m[1]}/ws`) {
+      // Intercept /ws only for a REAL websocket handshake — a plain GET falls
+      // through to the portable handler (426 live / 404 dead), the same
+      // routing the DO shell (workers/room.ts) uses so the SDK liveness probe
+      // behaves identically on both runtimes.
+      if (
+        url.pathname === `/r/${m[1]}/ws` &&
+        (req.headers.get("upgrade") ?? "").toLowerCase() === "websocket"
+      ) {
         const sess = await roomWsSession(db, req);
         if (!sess) return new Response("not found", { status: 404 });
         if (srv.upgrade(req, { data: { slug, sub: sess.sub } })) return undefined as unknown as Response;
@@ -160,6 +167,12 @@ test("room e2e: create --room path → seed → tick → guest unlock/write → 
 
     // Anti-enumeration: an unprovisioned slug 404s uniformly.
     expect((await fetch(`${host.url}/r/nosuchroom/`, { headers: { accept: "text/html" } })).status).toBe(404);
+
+    // SDK liveness-probe contract (client.ts terminal detection keys on this):
+    // a plain GET on /ws answers 426 for a LIVE room — session-independent, so
+    // a locked room still probes alive — and a bare 404 for a dead slug.
+    expect((await fetch(`${host.url}/r/${share.slug}/ws`)).status).toBe(426);
+    expect((await fetch(`${host.url}/r/nosuchroom/ws`)).status).toBe(404);
 
     // ---- granted API: read + guest write ------------------------------------
     const rows = (await (
@@ -311,8 +324,10 @@ test("room e2e: expired room answers expired → owner tears the peer down", asy
     const out = await syncPeer(A, roomPeerKey(share.slug));
     expect(out.ok).toBe(true);
     expect(getPeer(A, roomPeerKey(share.slug))).toBeNull(); // peer torn down
-    // Guest face of an expired room: uniform 404.
+    // Guest face of an expired room: uniform 404 — including the /ws liveness
+    // probe, so a subscribed SDK client detects "gone" and stops reconnecting.
     expect((await fetch(`${host.url}/r/${share.slug}/`, { headers: { accept: "text/html" } })).status).toBe(404);
+    expect((await fetch(`${host.url}/r/${share.slug}/ws`)).status).toBe(404);
   } finally {
     host.stop();
   }

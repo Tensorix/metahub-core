@@ -10,7 +10,7 @@ import { runSchema } from "../db.ts";
 import { createDatabase } from "../databases.ts";
 import { addProperty } from "../properties.ts";
 import { listRecords } from "../records.ts";
-import { changesSince, ingest } from "../crdt.ts";
+import { changesSince, emit, ingest } from "../crdt.ts";
 import { createSite, setSitePublicGrants, type SiteRow } from "../sites-core.ts";
 import { toB64, fromB64, encryptBytes, generateMasterKey } from "./e2ee.ts";
 import { createInboxFetch, type EdgeSql } from "../../workers/edge-worker.ts";
@@ -23,7 +23,7 @@ import {
   getLocalDropKeyring,
   saveLocalDropKeyring,
 } from "./drop-keys.ts";
-import { pullDropsOnce, dropWiredSites } from "./drop-pull.ts";
+import { pullDropsOnce, dropWiredSites, changesMaxSeq } from "./drop-pull.ts";
 import { createDrop, type DropClient, type DropStorage } from "../../sdk/drop.ts";
 
 const OWNER = "drt_pulltest";
@@ -238,6 +238,84 @@ test("held (not deleted) when OUR drop key can't be unwrapped — a local bucket
   expect(listRecords(r.db, r.dbId)).toHaveLength(0);
 });
 
+test("bucket key fault short-circuits the round: one failed unwrap stops downloads for every drop", async () => {
+  // The bucket master key + keyring are round-shared, so a dropKeySecret fault
+  // is identical for every envelope of every drop. Re-attempting per envelope
+  // (and re-listing per drop) would re-pay download + AES-GCM for the whole
+  // held backlog every round, forever, while the key stays misconfigured.
+  const r = await rig();
+  const table2 = createDatabase(r.db, { name: "guestbook2" });
+  addProperty(r.db, table2.id, { name: "Title", type: "text" });
+  const site2 = createSite(r.db, { name: "demo2", visibility: "public" });
+  setSitePublicGrants(r.db, site2.id, { v: 1, tables: [{ db: table2.id, ops: ["create"] }] });
+  await r.host.register(site2.id, {});
+  await r.drop.createRecord("guestbook", { Title: "mail for drop 1" });
+
+  // Same local fault as the F5 test: keyring wrapped with a key the attached
+  // bucket's master key can't unwrap.
+  const kr = getLocalDropKeyring(r.db)!;
+  const rec = kr.keys[0]!;
+  const wrongMaster = generateMasterKey();
+  saveLocalDropKeyring(r.db, {
+    v: 1,
+    keys: [{ ...rec, sk: toB64(await encryptBytes(wrongMaster, fromB64(rec.sk))), wrapped: true }],
+  });
+  addBucketPeer(r.db);
+
+  const listed: string[] = [];
+  const countingHost: DropHostApi = {
+    ...r.host,
+    listEnvelopes: (dropId, afterId, limit) => {
+      listed.push(dropId);
+      return r.host.listEnvelopes(dropId, afterId, limit);
+    },
+  };
+  const s = await pullDropsOnce(r.db, { host: countingHost, ignoreLease: true });
+  expect(s.held).toBe(1);
+  expect(s.acked).toBe(0);
+  // Drop 1 hit the fault; drop 2 was never even listed.
+  expect(listed).toEqual([r.site.id]);
+  // Nothing lost: the mail is still on the host for a fixed-key retry.
+  expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(1);
+});
+
+test("tampered ciphertext under a KNOWN, unwrappable key is rejected+deleted, never held", async () => {
+  // Pins the held/reject classification boundary: held is EXCLUSIVELY for the
+  // local dropKeySecret fault (see the F5 test above); an auth failure from
+  // openDropEnvelope (garbage/tampered ciphertext, good key) is bad MAIL and
+  // must be rejected+deleted, or an attacker pins inbox capacity with
+  // unopenable envelopes. A refactor that makes key-unwrap lazy (auth surfacing
+  // from openDropEnvelope for local faults) would flip held→delete for legit
+  // mail — this test + the F5 test together make that flip impossible to miss.
+  const r = await rig();
+  await r.drop.createRecord("guestbook", { Title: "legit" });
+  const original = (await r.host.listEnvelopes(r.site.id, 0, 100))[0]!.envelope as Record<string, unknown>;
+
+  // Drain the legit envelope first (no bucket → immediate ack).
+  const s1 = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s1.acked).toBe(1);
+
+  // Same key_id (known + unwrappable), corrupted sealed bytes, fresh id.
+  const tampered = JSON.stringify({
+    ...original,
+    envelope_id: original.envelope_id + "-t",
+    sealed: (original.sealed as string).slice(0, -8) + "AAAAAAAA",
+  });
+  await createInboxFetch({ sql: r.sql, ownerToken: OWNER })(
+    new Request(`${ENDPOINT}/v1/inbox/${r.site.id}/envelopes`, { method: "POST", body: tampered }),
+  );
+
+  const s2 = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s2.rejected).toBe(1);
+  expect(s2.held).toBe(0);
+  expect(s2.ingested).toBe(0);
+  expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(0); // deleted, not pinned
+  const rejects = r.db.query("SELECT COUNT(*) AS n FROM drop_rejects WHERE drop_id = ?").get(r.site.id) as {
+    n: number;
+  };
+  expect(rejects.n).toBe(1);
+});
+
 test("new-envelope_id replay acks + deletes instead of deferring forever (inbox-DoS fix, F6)", async () => {
   const r = await rig();
   setSitePublicGrants(r.db, r.site.id, { v: 1, tables: [{ db: r.dbId, ops: ["create", "update"] }] });
@@ -310,4 +388,33 @@ test("skip states: no edge config / no wired sites", async () => {
   expect((await pullDropsOnce(db)).skipped).toBe("no_edge");
   setEdgeConfig(db, { endpoint: ENDPOINT, token: OWNER });
   expect((await pullDropsOnce(db)).skipped).toBe("no_sites");
+});
+
+test("ack gate accounts for EVERY op: landed or superseded → seq; any op missing → null (no partial ack)", () => {
+  // The gate that decides ack-vs-hold. A partial ingest (one op poison-skipped)
+  // must yield null — acking would delete the envelope and permanently lose
+  // that guest write. A superseded op (newer register winner, incl. compacted
+  // history) still counts as accounted for, so old mail can't wedge as held.
+  const db = new Database(":memory:");
+  runSchema(db);
+  db.query("INSERT INTO meta (key, value) VALUES ('node_id', 'hostnode')").run();
+
+  const c1 = emit(db, "documents", "doc_g", "title", "one");
+  const c2 = emit(db, "documents", "doc_g", "body", "two");
+
+  // All landed → the max of their seqs (non-null).
+  const all = changesMaxSeq(db, [c1, c2]);
+  expect(all).not.toBeNull();
+
+  // One op absent from the oplog (poison-skipped) → null, never a partial max.
+  const ghost = { ...c2, col: "order_key", hlc: c2.hlc.replace(/^\d/, "8") };
+  expect(changesMaxSeq(db, [c1, ghost])).toBeNull();
+
+  // Superseded: the payload's op predates the register's current winner and its
+  // own row is gone (compacted) — `hlc >=` resolves to the newer winner → accounted.
+  const newer = emit(db, "documents", "doc_g", "title", "newer");
+  db.query("DELETE FROM crdt_changes WHERE hlc = ?").run(c1.hlc); // compact the old op
+  const superseded = changesMaxSeq(db, [c1, c2]);
+  expect(superseded).not.toBeNull();
+  expect(newer.hlc > c1.hlc).toBe(true);
 });

@@ -195,14 +195,17 @@ export function createClient(opts: SdkOptions = {}) {
      * Live-update notifications. On a room mount (/r/<slug>/) this opens a
      * WebSocket to the room and invokes `cb` on every data poke (owner sync,
      * another guest's write) — refetch what you render. Auto-reconnects until
-     * unsubscribed. On every other mount there is no push channel; pass
-     * `pollMs` to degrade to a simple interval callback (off by default).
-     * Returns an unsubscribe function.
+     * unsubscribed; when the room turns out to be permanently gone (deleted /
+     * expired / revoked) the subscription stops and `cb({gone: true})` fires
+     * once — re-subscribing requires a new onUpdate call. On every other mount
+     * there is no push channel; pass `pollMs` to degrade to a simple interval
+     * callback (off by default). Returns an unsubscribe function.
      */
-    onUpdate(cb: (info: { seq?: number }) => void, opts: { pollMs?: number } = {}): () => void {
+    onUpdate(cb: (info: { seq?: number; gone?: true }) => void, opts: { pollMs?: number } = {}): () => void {
       let stopped = false;
       let ws: WebSocket | null = null;
       let timer: ReturnType<typeof setTimeout> | null = null;
+      let stableTimer: ReturnType<typeof setTimeout> | null = null;
 
       const roomBase = /(^|\/)r\/[^/]+$/.test(base) ? base : null;
       if (roomBase && typeof WebSocket !== "undefined") {
@@ -211,19 +214,36 @@ export function createClient(opts: SdkOptions = {}) {
         const abs = /^https?:\/\//i.test(roomBase)
           ? new URL(roomBase + "/ws")
           : new URL(roomBase + "/ws", typeof location !== "undefined" ? location.href : "http://localhost");
+        // http(s) form of the SAME path, captured BEFORE the ws swap: the room
+        // liveness probe. A live room answers a plain GET /ws with 426 (both
+        // the Bun server and the DO); a deleted/expired/revoked one answers a
+        // bare 404 — the ONLY reliable "gone forever" signal (the server
+        // rejects a dead room's upgrade with HTTP 404, which a browser
+        // surfaces as close code 1006, indistinguishable from a network blip).
+        const probeUrl = abs.toString();
         abs.protocol = abs.protocol === "https:" ? "wss:" : "ws:";
-        // Exponential backoff with jitter (1s → 30s cap), reset on a healthy
-        // open. A close code in the app-auth range (4401/4403 — session expired,
-        // grant revoked, room deleted) is terminal: stop reconnecting instead of
-        // hammering a door that will never open (the old code retried a dead room
-        // every 3s for the tab's lifetime, draining battery and flooding logs).
+        // Exponential backoff with jitter (1s → 30s cap). `attempt` resets only
+        // after ~5s of PROVEN stability, not on open — an endpoint that accepts
+        // the upgrade and immediately drops would otherwise reset the backoff
+        // every cycle into a permanent 1s hammer. Close codes 4401/4403 are
+        // reserved app-auth codes (terminal if the server ever adopts them);
+        // 1008 is deliberately NOT terminal — intermediaries send it for
+        // transient policy reasons unrelated to auth.
         let attempt = 0;
-        const AUTH_CLOSE = new Set([1008, 4401, 4403]);
+        const AUTH_CLOSE = new Set([4401, 4403]);
+        const terminate = (): void => {
+          stopped = true;
+          cb({ gone: true });
+        };
         const connect = (): void => {
           if (stopped) return;
+          let opened = false;
           ws = new WebSocket(abs.toString());
           ws.onopen = () => {
-            attempt = 0; // healthy connection — reset the backoff
+            opened = true;
+            stableTimer = setTimeout(() => {
+              attempt = 0; // survived 5s — a genuinely healthy connection
+            }, 5000);
           };
           ws.onmessage = (ev) => {
             try {
@@ -237,13 +257,37 @@ export function createClient(opts: SdkOptions = {}) {
             /* surfaced as a close; reconnection is handled there */
           };
           ws.onclose = (ev) => {
-            if (stopped || AUTH_CLOSE.has(ev.code)) {
-              stopped = true;
+            if (stableTimer != null) {
+              clearTimeout(stableTimer); // closed before proving stability
+              stableTimer = null;
+            }
+            if (stopped) return;
+            if (AUTH_CLOSE.has(ev.code)) {
+              terminate();
               return;
             }
             const backoff = Math.min(30000, 1000 * 2 ** attempt++);
             const jitter = backoff * 0.25 * Math.random(); // spread reconnects across tabs
-            timer = setTimeout(connect, backoff + jitter);
+            const retry = (): void => {
+              timer = setTimeout(connect, backoff + jitter);
+            };
+            // 3+ dials in a row never even opened: distinguish "room gone"
+            // from a transient outage before backing off again. Only a clean
+            // 404 is terminal; 426 (alive), other statuses and network errors
+            // all keep retrying.
+            if (!opened && attempt >= 3) {
+              fetch(probeUrl)
+                .then((res) => {
+                  if (stopped) return;
+                  if (res.status === 404) terminate();
+                  else retry();
+                })
+                .catch(() => {
+                  if (!stopped) retry();
+                });
+            } else {
+              retry();
+            }
           };
         };
         connect();
@@ -258,6 +302,7 @@ export function createClient(opts: SdkOptions = {}) {
           clearTimeout(timer);
           clearInterval(timer as unknown as ReturnType<typeof setInterval>);
         }
+        if (stableTimer != null) clearTimeout(stableTimer);
         try {
           ws?.close();
         } catch {

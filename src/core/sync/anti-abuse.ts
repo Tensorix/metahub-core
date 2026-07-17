@@ -22,13 +22,16 @@ export function timingSafeEq(a: string, b: string): boolean {
 
 export type VerifyTurnstile = (secret: string, token: string, ip: string | null) => Promise<boolean>;
 
-/** Cloudflare Turnstile siteverify. Fails closed on any network/parse error. */
+/** Cloudflare Turnstile siteverify. Fails closed on any network/parse error —
+ *  including the 5s timeout: this runs on the guest-write request path, so a
+ *  hung siteverify endpoint must 401 fast, not pile up handlers/sockets. */
 export const siteverify: VerifyTurnstile = async (secret, token, ip) => {
   try {
     const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ secret, response: token, ...(ip ? { remoteip: ip } : {}) }),
+      signal: AbortSignal.timeout(5000),
     });
     const data = (await res.json()) as { success?: boolean };
     return data?.success === true;

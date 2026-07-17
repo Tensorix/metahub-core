@@ -7,6 +7,7 @@ import { initSchema } from "../schema-init.ts";
 import { putBlob, deleteBlob } from "../cache.ts";
 import { recordBlob } from "../blobs-core.ts";
 import { routes, type Route, type RouteCtx } from "./routes.ts";
+import { serveBlob } from "./blob-routes.ts";
 
 // Real on-disk bytes (putBlob writes under METAHUB_HOME/cache) so the route's
 // reconcileCache keeps the rows instead of dropping them as orphans.
@@ -108,4 +109,14 @@ test("POST /api/blobs/has tolerates a missing/empty hash list", async () => {
   const res = await hasRoute.handler(req, ctx);
   const data = (await res.json()) as { has: string[] };
   expect(data.has).toEqual([]);
+});
+
+test("GET /blob/ with a malformed percent-escape is a clean miss, not an uncaught URIError", async () => {
+  // Bun.serve has no error handler: a URIError escaping serveBlob would surface
+  // as a generic 500. safeDecode must turn it into the same null → 404 fall-through
+  // every other decoded surface uses (F13 parity).
+  const db = makeNode("anchor");
+  const ctx: RouteCtx = { db, node: "anchor" };
+  const res = await serveBlob(new Request("http://x/blob/%E0%A4"), ctx);
+  expect(res).toBeNull(); // caller falls through to its 404
 });

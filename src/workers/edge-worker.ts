@@ -21,7 +21,7 @@
 
 export { MhRoom } from "./room.ts";
 
-import { assertAntiAbuse, timingSafeEq, siteverify } from "../core/sync/anti-abuse.ts";
+import { assertAntiAbuse, timingSafeEq } from "../core/sync/anti-abuse.ts";
 import { safeDecode } from "../core/sync/http-util.ts";
 
 export const EDGE_WORKER_VERSION = "2";
@@ -118,7 +118,6 @@ interface DropRow {
 export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Response> {
   const { sql } = deps;
   const now = deps.now ?? (() => Date.now());
-  const verify = deps.verifyTurnstile ?? siteverify;
 
   const getDrop = async (dropId: string): Promise<DropRow | null> => {
     const rows = await sql.all<DropRow>("SELECT * FROM drops WHERE drop_id = ?", [dropId]);
@@ -180,7 +179,7 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
         await assertAntiAbuse(
           { turnstileSecret: drop.turnstile_secret, passwordVerifier: drop.password_verifier },
           req,
-          { verifyTurnstile: verify, ip: req.headers.get("cf-connecting-ip") },
+          { verifyTurnstile: deps.verifyTurnstile, ip: req.headers.get("cf-connecting-ip") },
         );
       } catch (e) {
         return err(401, "auth", (e as Error).message);

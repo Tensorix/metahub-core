@@ -106,18 +106,29 @@ function envelopeMaxSeq(db: DbDriver, envelopeId: string): number | null {
   return r.s;
 }
 
-/** Max oplog seq of a payload's ops, keyed by their register coordinates
- *  (dataset,row_id,col,hlc) = the oplog UNIQUE tuple. Correct across re-pulls,
- *  concurrent local edits, AND new-id replays (which land 0 rows but resolve to
- *  the already-stored original seq, so the ack gate advances instead of
- *  deferring forever). */
-function changesMaxSeq(db: DbDriver, changes: Change[]): number | null {
+/** Ack watermark of a payload's ops, keyed by their register coordinates —
+ *  (dataset,row_id,col) plus `hlc >= theirs`, i.e. each op counts as accounted
+ *  for when it either LANDED (exact row present; the oplog UNIQUE tuple, so a
+ *  new-id replay resolves to the ORIGINAL seq and acks instead of deferring
+ *  forever) or was SUPERSEDED (a newer register write exists — LWW-moot, incl.
+ *  a long-deferred envelope whose op was compacted away, or one applyChange
+ *  rejected because a newer winner already made it un-materializable).
+ *  Returns null unless EVERY op is accounted for: a partial ingest (one change
+ *  skipped as poison) must NOT ack the envelope — the caller holds it and
+ *  retries, because ack+delete would permanently lose that guest write.
+ *  (Known limit: a held-partial envelope re-pulled after its landed sibling
+ *  passed the push cursor takes the envelopeMaxSeq fast path and acks — the txn
+ *  probe can't know the sealed payload's op count. Partial ingest is
+ *  constructively unreachable via checkDropPayload today; this gate is the
+ *  same-round backstop. Exported for the gate's unit tests.) */
+export function changesMaxSeq(db: DbDriver, changes: Change[]): number | null {
   let max: number | null = null;
   for (const c of changes) {
     const r = db
-      .query("SELECT MAX(seq) AS s FROM crdt_changes WHERE dataset = ? AND row_id = ? AND col = ? AND hlc = ?")
+      .query("SELECT MAX(seq) AS s FROM crdt_changes WHERE dataset = ? AND row_id = ? AND col = ? AND hlc >= ?")
       .get(c.dataset, c.row_id, c.col, c.hlc) as { s: number | null };
-    if (r.s != null && (max == null || r.s > max)) max = r.s;
+    if (r.s == null) return null; // neither landed nor superseded → not accounted for
+    if (max == null || r.s > max) max = r.s;
   }
   return max;
 }
@@ -162,6 +173,13 @@ export async function pullDropsOnce(
   let keyring: DropKeyring | null = getLocalDropKeyring(db);
   let refreshedKeyring = false;
   let keyringRefreshFailed = false;
+  /** First dropKeySecret failure this round: the bucket master key and keyring
+   *  are ROUND-shared (one bucket, one keyring), so the unwrap fault is
+   *  identical for every envelope of every drop. One failed unwrap proves the
+   *  whole round can't decrypt — skip the rest (no more downloads/crypto)
+   *  instead of re-failing per envelope; all of it is implicitly held on the
+   *  host and retried once the key is fixed. */
+  let bucketKeyFault = false;
   /** Unknown key_id may mean another device rotated — refresh from the bucket
    *  once per round before giving up on an envelope. A FAILED refresh (bucket
    *  transiently unreachable) is recorded so an unknown key is HELD, not deleted
@@ -183,6 +201,12 @@ export async function pullDropsOnce(
 
   const summary = emptySummary();
   for (const site of sites) {
+    if (bucketKeyFault) {
+      // Same bucket key serves every drop — listing/downloading more mail this
+      // round would only re-fail. It all stays on the host (implicitly held).
+      console.error(`[drop] skipped ${site.name}: bucket key fault (mail held on host)`);
+      continue;
+    }
     const s: DropPullDropSummary = {
       drop_id: site.id,
       site: site.name,
@@ -239,9 +263,16 @@ export async function pullDropsOnce(
               // Our master key can't unwrap the private half — a LOCAL fault
               // (bucket master key misconfigured / rotated wrong) that fails
               // identically for every envelope. Never delete legit mail for it:
-              // hold and retry once the key is fixed.
+              // hold and retry once the key is fixed. One failure proves the
+              // whole round — stop paying download+crypto for the rest.
               s.held++;
-              continue;
+              if (!bucketKeyFault) {
+                bucketKeyFault = true;
+                console.error(
+                  `[drop] bucket master key cannot unwrap the drop keyring — holding all remaining mail this round (fix the bucket key, then re-pull)`,
+                );
+              }
+              break;
             }
             // openSealed failing past this point is per-envelope (tampered /
             // garbage ciphertext) → the outer catch rejects+deletes it, so an
@@ -251,9 +282,14 @@ export async function pullDropsOnce(
             s.ingested += ingest(db, changes);
             ackSeq = changesMaxSeq(db, changes);
           }
-          if (!bucket) {
+          if (ackSeq == null) {
+            // Partial ingest: at least one op neither landed nor was superseded
+            // (a poison-skipped change). Ack+delete would permanently lose that
+            // guest write — hold the envelope and retry next round.
+            s.held++;
+          } else if (!bucket) {
             ackNow.push(row.id);
-          } else if (ackSeq != null && ackSeq <= bucketPushCursor(db, bucket)) {
+          } else if (ackSeq <= bucketPushCursor(db, bucket)) {
             ackNow.push(row.id);
           } else {
             s.deferred++;
@@ -265,6 +301,7 @@ export async function pullDropsOnce(
         }
       }
       if (ackNow.length) s.acked += await host.ackEnvelopes(site.id, ackNow);
+      if (bucketKeyFault) break; // remaining pages would only re-fail the unwrap
       if (rows.length < PAGE_LIMIT) break;
     }
     // acked counts include rejected deletions; report net numbers as-is.
