@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS crdt_changes (
   UNIQUE (dataset, row_id, col, hlc)
 );
 CREATE INDEX IF NOT EXISTS idx_changes_hlc ON crdt_changes(hlc);
+-- GuestIntent idempotency probes by txn prefix on every guest write. Keep the
+-- sparse legacy/null majority out of the index.
+CREATE INDEX IF NOT EXISTS idx_changes_txn ON crdt_changes(txn)
+  WHERE txn IS NOT NULL;
 -- Serves history's "every block ever attached to this doc" lookup. Partial so
 -- it never indexes the large values other datasets carry (e.g. site file bodies).
 CREATE INDEX IF NOT EXISTS idx_changes_docref ON crdt_changes(value)

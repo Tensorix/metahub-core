@@ -67,8 +67,7 @@ export function setEdgeConfig(db: DbDriver, cfg: EdgeConfig | null): void {
 /**
  * Per-site anti-abuse knobs, set on `mh site grant … --turnstile/--password`.
  * They gate BOTH guest-write transports of the same grant: the write-inbox
- * (enforced at the edge worker) and the server's realtime granted endpoint
- * (Turnstile verification there is a Stage B TODO — see sites-serve.ts).
+ * (enforced at the edge worker) and the server's realtime granted endpoint.
  * The password itself is never stored — only a PBKDF2 salt (published in
  * mh-drop.json so the page can derive the verifier) and the verifier (sent to
  * the edge registration for constant-time comparison).

@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
   runSchema,
+  migrateOplog,
   migratePeers,
   migrateCrdtChangesSeq,
   migrateStoragePeerUrls,
@@ -15,6 +16,10 @@ function hasCol(db: Database, table: string, col: string): boolean {
   );
 }
 
+function hasIndex(db: Database, name: string): boolean {
+  return db.query("SELECT 1 AS ok FROM sqlite_master WHERE type = 'index' AND name = ?").get(name) != null;
+}
+
 test("runSchema creates the storage_cursors table", () => {
   const db = new Database(":memory:");
   runSchema(db);
@@ -22,6 +27,19 @@ test("runSchema creates the storage_cursors table", () => {
     .query("SELECT name FROM sqlite_master WHERE type='table' AND name='storage_cursors'")
     .get();
   expect(t).not.toBeNull();
+  expect(hasIndex(db, "idx_changes_txn")).toBe(true);
+});
+
+test("migrateOplog adds the sparse txn index to an existing current-shape table", () => {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE crdt_changes (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    hlc TEXT NOT NULL, node_id TEXT NOT NULL, dataset TEXT NOT NULL,
+    row_id TEXT NOT NULL, col TEXT NOT NULL, value TEXT, txn TEXT,
+    UNIQUE (dataset, row_id, col, hlc)
+  )`);
+  migrateOplog(db);
+  expect(hasIndex(db, "idx_changes_txn")).toBe(true);
 });
 
 test("migratePeers adds kind/config to a legacy peers table, preserving cursors", () => {
@@ -102,6 +120,7 @@ test("migrateCrdtChangesSeq rebuilds a legacy oplog with a stable AUTOINCREMENT 
   migrateCrdtChangesSeq(db);
 
   expect(hasCol(db, "crdt_changes", "seq")).toBe(true);
+  expect(hasIndex(db, "idx_changes_txn")).toBe(true);
   const rows = db.query("SELECT seq, row_id FROM crdt_changes ORDER BY seq").all() as {
     seq: number;
     row_id: string;

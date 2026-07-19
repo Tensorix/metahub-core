@@ -45,21 +45,27 @@ export interface AccessPolicy {
 }
 
 /**
- * A deterministic fingerprint of a policy's ENFORCEABLE content (grants, write
- * gate presence, expiry, audience) — the manifest's policyRevision. Node-
- * independent (any node computes the same value for the same policy state) and
- * changes iff the policy changes, so an SDK/publisher can detect "the policy
- * moved" by comparing revisions. NOT a monotonic counter: a revert to a prior
- * policy yields the prior revision, which is the right behavior for change
- * detection. FNV-1a-32 over a canonical string (grants are already normalized +
- * sorted by parseGrantSet, so the string is stable).
+ * A deterministic fingerprint of the CLIENT-OBSERVABLE policy content —
+ * grants, public write-gate configuration, expiry and audience. Secrets and
+ * password verifiers are deliberately excluded: policyRevision is published,
+ * and must not become an offline password oracle. Password rotations mint a new
+ * public salt; Turnstile client configuration is identified by its public
+ * sitekey. Secret-only rotation therefore leaves the client contract unchanged.
+ *
+ * Node-independent and content-addressed (not a monotonic counter): a revert to
+ * a prior public policy yields the prior revision. FNV-1a-32 over a canonical
+ * string (grants are already normalized + sorted by parseGrantSet).
  */
 export function computeRevision(policy: Pick<AccessPolicy, "audience" | "grants" | "writeGate" | "expiresAt">): number {
   const canon = JSON.stringify({
     a: policy.audience,
     t: policy.grants.tables,
-    ts: !!policy.writeGate.turnstile?.secret,
-    pw: !!policy.writeGate.password,
+    ts: policy.writeGate.turnstile
+      ? { enabled: true, sitekey: policy.writeGate.turnstile.sitekey ?? null }
+      : null,
+    pw: policy.writeGate.password
+      ? { enabled: true, salt: policy.writeGate.password.saltB64 }
+      : null,
     x: policy.expiresAt ?? null,
   });
   let h = 0x811c9dc5;

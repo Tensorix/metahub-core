@@ -17,9 +17,11 @@
 //     HLC directly and applying via ingest() (NOT emit(), which would re-stamp
 //     against the owner's shared clock — see hlc.nextHlc's Math.max floor).
 //
-// Idempotency: every intent's ops carry txn "intent:<intentId>". A retried
-// submission (dropped response, drop replay) probes to the already-applied row
-// instead of double-creating.
+// Idempotency: every intent's ops carry
+// `intent:<guestNode>:<intentId>:<fingerprint>`. The guest scope prevents one
+// visitor from claiming another visitor's key; the fingerprint rejects reuse of
+// a key for a different request. Authorization is re-run before a receipt is
+// returned, so revocation remains immediate.
 //
 // PORTABLE, driver-only.
 
@@ -34,7 +36,6 @@ import { randomSuffix } from "./ids.ts";
 import type { AccessPolicy } from "./access-policy.ts";
 import {
   authorizeDbRef,
-  authorizeRecord,
   assertGuestPayload,
   guestCreateRecord,
   guestUpdateRecord,
@@ -46,6 +47,10 @@ import {
 // a skewed/hostile client can't poison the future. Kept local (not imported) so
 // this module doesn't pull the seal/drop stack into the room/DO bundle.
 const HLC_SKEW_MS = 5 * 60_000;
+const INTENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const FNV64_OFFSET = 0xcbf29ce484222325n;
+const FNV64_PRIME = 0x100000001b3n;
+const U64_MASK = 0xffffffffffffffffn;
 
 export interface GuestIntent {
   v?: 1;
@@ -72,6 +77,16 @@ export interface ApplyIntentOpts {
   now?: number;
 }
 
+interface PreparedIntent {
+  fingerprint: string;
+  /** Coerced, property-id-keyed cells in deterministic property-id order. */
+  cells: { propId: string; value: unknown }[];
+  databaseId: string;
+  /** Updates retain the tombstoned row's database for current-policy auth, but
+   *  a new write must still fail if the target is no longer live. */
+  targetLive: boolean;
+}
+
 /**
  * Apply one guest intent, authorized + guarded by the policy, attributed to the
  * session's guest node. Idempotent on intentId. Returns the resulting record.
@@ -86,16 +101,92 @@ export function applyGuestIntent(
   intent: GuestIntent,
   opts: ApplyIntentOpts,
 ): RecordRow {
-  const txn = "intent:" + intent.intentId;
-  const prior = recordForTxn(db, txn);
-  if (prior) return prior; // idempotent replay — already applied
-
+  if (!INTENT_ID_RE.test(intent.intentId))
+    throw new MhError("invalid_input", "intentId must be 1-64 safe characters");
   const principal: GrantPrincipal = { kind: policy.audience, guestNode: session.guestNode };
-  if (opts.clock === "submitted")
-    return applySubmitted(db, policy, principal, intent, txn, opts.now ?? Date.now());
+  const tx = db.transaction(() => {
+    // Re-authorize and re-validate on EVERY attempt. In particular, a receipt
+    // must never outlive the grant that made the original request legal.
+    const prepared = prepareIntent(db, policy, principal, intent);
+    const prefix = intentTxnPrefix(session.guestNode, intent.intentId);
+    const txn = prefix + prepared.fingerprint;
+    const receipt = receiptForPrefix(db, prefix);
+    if (receipt) {
+      if (receipt.txn !== txn)
+        throw new MhError("conflict", "intentId was already used for a different request");
+      const prior = getRecord(db, receipt.row_id);
+      if (!prior) throw new MhError("conflict", "intent result no longer exists");
+      return prior;
+    }
+    if (!prepared.targetLive) throw new MhError("auth", "unauthorized");
 
-  // Authority mode: the executing node's clock, via the ordinary emit path.
-  return withTxnId(txn, () => applyAuthority(db, policy, principal, intent));
+    if (opts.clock === "submitted")
+      return applySubmitted(db, policy, principal, intent, prepared, txn, opts.now ?? Date.now());
+
+    // Authority mode: the executing node's clock, via the ordinary emit path.
+    return withTxnId(txn, () => applyAuthority(db, policy, principal, intent));
+  });
+  return tx();
+}
+
+/** Resolve grants and normalize/coerce the request before the idempotency probe.
+ *  This makes the fingerprint semantic: table names and property names resolve
+ *  to stable IDs, and equivalent coerced values hash identically. */
+function prepareIntent(
+  db: DbDriver,
+  policy: AccessPolicy,
+  principal: GrantPrincipal,
+  intent: GuestIntent,
+): PreparedIntent {
+  if (intent.action === "createRecord") {
+    if (!intent.table || typeof intent.table !== "string")
+      throw new MhError("invalid_input", "createRecord intent needs a table");
+    const database = authorizeDbRef(db, policy.grants, intent.table, "create");
+    assertGuestPayload(db, policy.grants, principal, database, intent.payload, {
+      limits: policy.limits,
+    });
+    const cells = resolvedCells(db, database.id, intent.payload);
+    return {
+      databaseId: database.id,
+      cells,
+      targetLive: true,
+      fingerprint: fingerprintIntent("createRecord", database.id, intent.recordId ?? null, cells),
+    };
+  }
+
+  if (!intent.recordId || typeof intent.recordId !== "string")
+    throw new MhError("invalid_input", "updateRecord intent needs a record id");
+  if (Object.keys(intent.payload).length === 0)
+    throw new MhError("invalid_input", "updateRecord intent payload must not be empty");
+  // Keep the database association of a tombstoned row available for current
+  // policy authorization. This lets a replay whose result was deleted reach
+  // the receipt check and return 409, while a revoked grant still fails first.
+  const rec = db
+    .query("SELECT database_id, __deleted FROM records WHERE id = ?")
+    .get(intent.recordId) as { database_id: string | null; __deleted: number } | null;
+  if (!rec?.database_id) throw new MhError("auth", "unauthorized");
+  const database = authorizeDbRef(db, policy.grants, rec.database_id, "update");
+  assertGuestPayload(db, policy.grants, principal, database, intent.payload, {
+    limits: policy.limits,
+  });
+  const cells = resolvedCells(db, database.id, intent.payload);
+  return {
+    databaseId: database.id,
+    cells,
+    targetLive: rec.__deleted === 0,
+    fingerprint: fingerprintIntent("updateRecord", database.id, intent.recordId, cells),
+  };
+}
+
+function resolvedCells(
+  db: DbDriver,
+  databaseId: string,
+  payload: Record<string, unknown>,
+): PreparedIntent["cells"] {
+  const props = listProperties(db, databaseId);
+  return resolveData(props, payload)
+    .map(({ prop, value }) => ({ propId: prop.id, value: coerce(db, prop, value) }))
+    .sort((a, b) => (a.propId < b.propId ? -1 : a.propId > b.propId ? 1 : 0));
 }
 
 function applyAuthority(
@@ -119,20 +210,25 @@ function applySubmitted(
   policy: AccessPolicy,
   principal: GrantPrincipal,
   intent: GuestIntent,
+  prepared: PreparedIntent,
   txn: string,
   now: number,
 ): RecordRow {
-  const set = policy.grants;
   const node = principal.guestNode;
   const millis = clampMillis(intent.submittedAt, now);
 
   if (intent.action === "createRecord") {
-    if (!intent.table) throw new MhError("invalid_input", "createRecord intent needs a table");
-    const database = authorizeDbRef(db, set, intent.table, "create");
-    assertGuestPayload(db, set, principal, database, intent.payload, { create: true, limits: policy.limits });
     const rowId = intent.recordId ?? "rec_" + randomSuffix(10);
-    const props = listProperties(db, database.id);
-    const resolved = resolveData(props, intent.payload);
+    if (recordIdEverUsed(db, rowId))
+      throw new MhError("conflict", "record id already exists");
+    const database = getDatabase(db, prepared.databaseId);
+    if (!database) throw new MhError("auth", "unauthorized");
+    // The stateful row ceiling applies only to a fresh create. Exact retries
+    // already returned their receipt above, even if the table filled later.
+    assertGuestPayload(db, policy.grants, principal, database, intent.payload, {
+      create: true,
+      limits: policy.limits,
+    });
 
     let counter = seedCounter(db, node, millis);
     const changes: Change[] = [];
@@ -149,46 +245,36 @@ function applySubmitted(
       });
       counter++;
     };
-    mk("database_id", database.id);
+    mk("database_id", prepared.databaseId);
     mk("created_hlc", firstHlc); // created_hlc's VALUE is the first op's HLC (drop parity)
-    for (const { prop, value } of resolved) mk(prop.id, coerce(db, prop, value));
+    for (const cell of prepared.cells) mk(cell.propId, cell.value);
     ingest(db, changes);
     return getRecord(db, rowId)!;
   }
 
-  if (!intent.recordId) throw new MhError("invalid_input", "updateRecord intent needs a record id");
-  const rec = authorizeRecord(db, set, intent.recordId, "update");
-  const database = getDatabase(db, rec.database_id);
-  if (!database) throw new MhError("auth", "unauthorized");
-  assertGuestPayload(db, set, principal, database, intent.payload, { limits: policy.limits });
-  const props = listProperties(db, database.id);
-  const resolved = resolveData(props, intent.payload);
-
   let counter = seedCounter(db, node, millis);
-  const changes: Change[] = resolved.map(({ prop, value }) => {
+  const changes: Change[] = prepared.cells.map(({ propId, value }) => {
     const c: Change = {
       hlc: formatHlc({ millis, counter, node }),
       node_id: node,
       dataset: "records",
       row_id: intent.recordId!,
-      col: prop.id,
-      value: (() => {
-        const v = coerce(db, prop, value);
-        return v == null ? null : JSON.stringify(v);
-      })(),
+      col: propId,
+      value: value == null ? null : JSON.stringify(value),
       txn,
     };
     counter++;
     return c;
   });
   ingest(db, changes);
-  return getRecord(db, intent.recordId)!;
+  return getRecord(db, intent.recordId!)!;
 }
 
 function clampMillis(submittedAt: number, now: number): number {
-  const ceil = now + HLC_SKEW_MS;
-  if (!Number.isFinite(submittedAt)) return now;
-  return Math.min(submittedAt, ceil);
+  const safeNow = Math.max(0, Math.trunc(Number.isFinite(now) ? now : Date.now()));
+  const ceil = safeNow + HLC_SKEW_MS;
+  if (!Number.isFinite(submittedAt)) return safeNow;
+  return Math.max(0, Math.min(Math.trunc(submittedAt), ceil));
 }
 
 /** Counter to start a guest's ops at for `millis`, past any op it already has at
@@ -202,10 +288,67 @@ function seedCounter(db: DbDriver, node: string, millis: number): number {
   return row.h ? parseHlc(row.h).counter + 1 : 0;
 }
 
-/** The record last written under a txn (idempotency probe), or null. */
-function recordForTxn(db: DbDriver, txn: string): RecordRow | null {
-  const row = db
-    .query("SELECT row_id FROM crdt_changes WHERE txn = ? AND dataset = 'records' LIMIT 1")
-    .get(txn) as { row_id: string } | null;
-  return row ? getRecord(db, row.row_id) : null;
+function intentTxnPrefix(guestNode: string, intentId: string): string {
+  return `intent:${encodeURIComponent(guestNode)}:${intentId}:`;
+}
+
+/** Range lookup rather than LIKE: intentId excludes protocol separators and the
+ *  txn index can satisfy the bounded prefix scan. */
+function receiptForPrefix(
+  db: DbDriver,
+  prefix: string,
+): { txn: string; row_id: string } | null {
+  return db
+    .query(
+      `SELECT txn, row_id FROM crdt_changes
+       WHERE dataset = 'records' AND txn >= ? AND txn < ?
+       ORDER BY txn LIMIT 1`,
+    )
+    .get(prefix, prefix + "\uffff") as { txn: string; row_id: string } | null;
+}
+
+function recordIdEverUsed(db: DbDriver, rowId: string): boolean {
+  if (db.query("SELECT 1 AS ok FROM records WHERE id = ? LIMIT 1").get(rowId) != null)
+    return true;
+  return (
+    db
+      .query("SELECT 1 AS ok FROM crdt_changes WHERE dataset = 'records' AND row_id = ? LIMIT 1")
+      .get(rowId) != null
+  );
+}
+
+function fingerprintIntent(
+  action: GuestIntent["action"],
+  databaseId: string,
+  recordId: string | null,
+  cells: PreparedIntent["cells"],
+): string {
+  const canonical = stableStringify({
+    action,
+    databaseId,
+    recordId,
+    cells: cells.map((c) => [c.propId, c.value]),
+  });
+  let h = FNV64_OFFSET;
+  for (let i = 0; i < canonical.length; i++) {
+    h ^= BigInt(canonical.charCodeAt(i));
+    h = (h * FNV64_PRIME) & U64_MASK;
+  }
+  return h.toString(16).padStart(16, "0");
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    return (
+      "{" +
+      Object.keys(obj)
+        .sort()
+        .map((key) => JSON.stringify(key) + ":" + stableStringify(obj[key]))
+        .join(",") +
+      "}"
+    );
+  }
+  return JSON.stringify(value) ?? "null";
 }

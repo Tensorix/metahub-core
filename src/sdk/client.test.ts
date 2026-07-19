@@ -1,5 +1,8 @@
 import { test, expect, afterEach } from "bun:test";
 import { detectBase, createClient } from "./client.ts";
+import { deriveDropPasswordVerifier } from "./drop.ts";
+import { generateSealKeypair } from "../core/sync/seal.ts";
+import { toB64 } from "../core/sync/e2ee.ts";
 
 // ---- room WS reconnect harness ------------------------------------------------
 // Fake WebSocket + captured timers: the reconnect loop schedules real setTimeout
@@ -153,6 +156,174 @@ test("channel selection: with a manifest declaring no inbox fallback, a 401 writ
   } finally {
     globalThis.fetch = realFetch2;
   }
+});
+
+test("absolute root baseUrl stays on the owner API and sends a plain body", async () => {
+  let body: unknown;
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body));
+    return Response.json({ id: "rec_1", database_id: "db1", values: {}, cells: {} });
+  }) as typeof fetch;
+  await createClient({ baseUrl: "https://hub.example" }).createRecord("db1", { Title: "x" });
+  expect(body).toEqual({ Title: "x" });
+});
+
+test("absolute root runtimeEndpoint stays plain even when selected by a manifest", async () => {
+  let body: unknown;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "https://static.example/deployment.json")
+      return Response.json({
+        v: 1,
+        mode: "live",
+        runtimeEndpoint: "https://hub.example",
+        policyRevision: 1,
+      });
+    body = JSON.parse(String(init?.body));
+    return Response.json({ id: "rec_1", database_id: "db1", values: {}, cells: {} });
+  }) as typeof fetch;
+  await createClient({
+    baseUrl: "https://static.example",
+    manifestUrl: "https://static.example/deployment.json",
+  }).createRecord("db1", { Title: "x" });
+  expect(body).toEqual({ Title: "x" });
+});
+
+test("live manifest routes data calls through runtimeEndpoint", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/sites/demo/mh-manifest.json"))
+      return Response.json({
+        v: 1,
+        mode: "live",
+        runtimeEndpoint: "https://runtime.example/surface",
+        policyRevision: 1,
+      });
+    if (url === "https://runtime.example/surface/api/records?db=db1")
+      return Response.json([]);
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+  await createClient({ baseUrl: "https://static.example/sites/demo" }).listRecords("db1");
+  expect(calls).toContain("https://runtime.example/surface/api/records?db=db1");
+  expect(calls.some((url) => url.includes("static.example/sites/demo/api"))).toBe(false);
+});
+
+test("static-async create goes directly to the embedded inbox and stays visibly pending", async () => {
+  const kp = await generateSealKeypair();
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    calls.push(url);
+    if (url === "/mh-manifest.json")
+      return Response.json({
+        v: 1,
+        mode: "static-async",
+        inboxEndpoint: "https://edge.example",
+        policyRevision: 1,
+        drop: {
+          drop_id: "site_demo",
+          key_id: "key1",
+          pk: toB64(kp.publicKey),
+          payload_versions: [1],
+          databases: [
+            {
+              id: "db1",
+              name: "guestbook",
+              properties: [{ id: "prop1", name: "Title", type: "text" }],
+            },
+          ],
+        },
+      });
+    if (url === "https://edge.example/v1/inbox/site_demo/envelopes")
+      return Response.json({ ok: true, server_time: Date.now() });
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  const rec = await createClient().createRecord("guestbook", { Title: "queued" });
+  expect("_pending" in rec && rec._pending).toBe(true);
+  expect(calls.some((url) => url.includes("/api/records"))).toBe(false);
+  expect(calls).toContain("https://edge.example/v1/inbox/site_demo/envelopes");
+});
+
+test("static-async update/delete fail explicitly without probing a live API", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    calls.push(url);
+    return Response.json({
+      v: 1,
+      mode: "static-async",
+      inboxEndpoint: "https://edge.example",
+      policyRevision: 1,
+      drop: { drop_id: "d", key_id: "k", pk: "AA" },
+    });
+  }) as typeof fetch;
+  const client = createClient();
+  await expect(client.updateRecord("r", { Title: "x" })).rejects.toThrow(/does not support/);
+  await expect(client.deleteRecord("r")).rejects.toThrow(/does not support/);
+  expect(calls.filter((url) => url.includes("/api/"))).toHaveLength(0);
+});
+
+test("a 200 malformed manifest fails closed instead of enabling legacy routing", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("mh-manifest.json")) return Response.json({ mode: "live" });
+    return Response.json([]);
+  }) as typeof fetch;
+  await expect(
+    createClient({ baseUrl: "https://x/sites/demo" }).listRecords("db1"),
+  ).rejects.toThrow(/malformed/);
+  expect(calls.some((url) => url.includes("/api/records"))).toBe(false);
+});
+
+test("legacy guest server 404s the wrapper once, then receives the plain body", async () => {
+  const bodies: unknown[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("mh-manifest.json")) return new Response("missing", { status: 404 });
+    if (url.includes("/api/records")) {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      if ("$intent" in body)
+        return Response.json({ error: "unknown property", code: "not_found" }, { status: 404 });
+      return Response.json({ id: "rec_1", database_id: "db1", values: {}, cells: {} });
+    }
+    return new Response("missing", { status: 404 });
+  }) as typeof fetch;
+  await createClient({ baseUrl: "https://x/sites/demo" }).createRecord("db1", { Title: "x" });
+  expect(bodies).toHaveLength(2);
+  expect(bodies[0]).toHaveProperty("$intent");
+  expect(bodies[1]).toEqual({ Title: "x" });
+});
+
+test("live gated writes attach password and Turnstile proofs", async () => {
+  const salt = "c2FsdC1ieXRlcw==";
+  let seenHeaders: Headers | null = null;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("mh-manifest.json"))
+      return Response.json({
+        v: 1,
+        mode: "live",
+        runtimeEndpoint: "",
+        policyRevision: 1,
+        drop: { drop_id: "d", key_id: "k", pk: "AA", password_salt: salt },
+      });
+    seenHeaders = new Headers(init?.headers);
+    return Response.json({ id: "rec_1", database_id: "db1", values: {}, cells: {} });
+  }) as typeof fetch;
+  await createClient({
+    baseUrl: "https://x/sites/demo",
+    dropPassword: "secret",
+  }).createRecord("db1", { Title: "x" }, { turnstileToken: "turn-token" });
+  expect(seenHeaders!.get("x-turnstile-token")).toBe("turn-token");
+  expect(seenHeaders!.get("x-drop-pass")).toBe(
+    await deriveDropPasswordVerifier("secret", salt),
+  );
 });
 
 test("createClient exposes the full typed method surface", () => {

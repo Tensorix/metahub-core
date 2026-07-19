@@ -160,6 +160,7 @@ export function migrateDocuments(db: DbDriver): void {
 export function migrateOplog(db: DbDriver): void {
   if (!hasColumn(db, "crdt_changes", "txn"))
     db.exec("ALTER TABLE crdt_changes ADD COLUMN txn TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_changes_txn ON crdt_changes(txn) WHERE txn IS NOT NULL");
 }
 
 /**
@@ -202,6 +203,8 @@ export function migrateCrdtChangesSeq(db: DbDriver): void {
       DROP TABLE crdt_changes;
       ALTER TABLE crdt_changes_new RENAME TO crdt_changes;
       CREATE INDEX IF NOT EXISTS idx_changes_hlc ON crdt_changes(hlc);
+      CREATE INDEX IF NOT EXISTS idx_changes_txn ON crdt_changes(txn)
+        WHERE txn IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_changes_docref ON crdt_changes(value)
         WHERE dataset = 'doc_blocks' AND col = 'doc_id';
     `);

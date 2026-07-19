@@ -143,8 +143,10 @@ function readWriteBody(body: Record<string, unknown>): {
     const values = body["values"];
     if (typeof values !== "object" || values === null || Array.isArray(values))
       throw new MhError("invalid_input", "intent values must be a JSON object");
+    if (typeof meta.id !== "string")
+      throw new MhError("invalid_input", "intent id must be a string");
     return {
-      intentId: typeof meta.id === "string" && meta.id ? meta.id : "srv_" + randomSuffix(16),
+      intentId: meta.id,
       submittedAt: Number.isFinite(meta.submittedAt) ? (meta.submittedAt as number) : Date.now(),
       values: values as Record<string, unknown>,
     };

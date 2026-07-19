@@ -165,8 +165,8 @@ test("v2 drop: SDK seals a GuestIntent; owner mints the op on the guest timeline
   expect(rows).toHaveLength(1);
   expect(rows[0]!.id).toBe(pending.id); // client-minted rowId honored
   expect(rows[0]!.values["Title"]).toBe("v2 hello");
-  // The op is stamped intent:<intentId> (not drop:<envId>) and authored by the
-  // guest node; its HLC millis is a real submit time (server-minted, near now).
+  // The op is stamped with the guest-scoped intent txn (not drop:<envId>) and
+  // authored by the guest node; its HLC millis is server-minted near submit time.
   const op = r.db
     .query("SELECT node_id, txn, hlc FROM crdt_changes WHERE dataset='records' AND row_id=? AND col=?")
     .get(pending.id, r.titleProp) as { node_id: string; txn: string; hlc: string };
@@ -174,6 +174,36 @@ test("v2 drop: SDK seals a GuestIntent; owner mints the op on the guest timeline
   expect(op.txn).toStartWith("intent:");
   expect(Number(op.hlc.slice(0, 15))).toBeGreaterThanOrEqual(before);
   expect(await r.host.listEnvelopes(r.site.id, 0, 100)).toHaveLength(0);
+});
+
+test("v2 drop: create-only intent cannot overwrite an existing row id", async () => {
+  const r = await rig();
+  const pending = await v2Drop(r).createRecord("guestbook", { Title: "guest" });
+  emit(r.db, "records", pending.id, "database_id", r.dbId);
+  emit(r.db, "records", pending.id, r.titleProp, "owner");
+
+  const s = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s.rejected).toBe(1);
+  expect(s.ingested).toBe(0);
+  const rows = listRecords(r.db, r.dbId);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.values["Title"]).toBe("owner");
+});
+
+test("v2 drop: create-only intent cannot resurrect a tombstoned row id", async () => {
+  const r = await rig();
+  const pending = await v2Drop(r).createRecord("guestbook", { Title: "guest" });
+  emit(r.db, "records", pending.id, "database_id", r.dbId);
+  emit(r.db, "records", pending.id, r.titleProp, "owner");
+  emit(r.db, "records", pending.id, "__deleted", 1);
+
+  const s = await pullDropsOnce(r.db, { host: r.host, ignoreLease: true });
+  expect(s.rejected).toBe(1);
+  expect(s.ingested).toBe(0);
+  expect(listRecords(r.db, r.dbId)).toHaveLength(0);
+  expect(
+    r.db.query("SELECT COUNT(*) AS n FROM crdt_changes WHERE txn LIKE 'intent:%'").get(),
+  ).toEqual({ n: 0 });
 });
 
 test("v2 drop: replaying the SAME intent under a new envelope_id is idempotent (no duplicate), still acks", async () => {

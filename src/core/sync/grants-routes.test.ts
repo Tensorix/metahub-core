@@ -292,4 +292,17 @@ test("intent wrapper: $intent body creates like a plain body, and a retried inte
   const r3 = (await serveSite(post(`/sites/demo/api/records?db=${d.id}`, { Msg: "plain" }), ctx, AUTH_TOKEN))!;
   expect(r3.status).toBe(200);
   expect(listRecords(ctx.db, d.id)).toHaveLength(2);
+
+  for (const id of ["", "bad:key", "x".repeat(65), 42]) {
+    const invalid = (await serveSite(
+      post(`/sites/demo/api/records?db=${d.id}`, {
+        $intent: { id, submittedAt: Date.now() },
+        values: { Msg: "invalid id" },
+      }),
+      ctx,
+      AUTH_TOKEN,
+    ))!;
+    expect(invalid.status).toBe(400);
+  }
+  expect(listRecords(ctx.db, d.id)).toHaveLength(2);
 });

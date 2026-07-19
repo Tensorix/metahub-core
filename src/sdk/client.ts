@@ -13,7 +13,14 @@
 //
 // Deliberately DOM-light (fetch + optional localStorage) and dependency-free.
 
-import { initDrop, type DropClient } from "./drop.ts";
+import {
+  createDrop,
+  deriveDropPasswordVerifier,
+  initDrop,
+  type DropClient,
+  type DropConfig,
+  type PendingRecord,
+} from "./drop.ts";
 
 export interface SdkOptions {
   /** API origin; defaults to same-origin (hosted pages). */
@@ -22,6 +29,14 @@ export interface SdkOptions {
   token?: string;
   /** Password for the sealed write-drop fallback, when the site's grant set one. */
   dropPassword?: string;
+  /** Override deployment-manifest discovery. Useful for a static site whose
+   *  explicit baseUrl is not itself a /sites|/share|/r mount. */
+  manifestUrl?: string;
+}
+
+export interface WriteOptions {
+  /** Cloudflare Turnstile proof for a write-gated public site. */
+  turnstileToken?: string;
 }
 
 /** Carries the server's error `code` (core/errors.ts) so callers dispatch on
@@ -50,7 +65,7 @@ export interface DeploymentManifest {
   inboxEndpoint?: string;
   fallback?: "inbox";
   policyRevision: number;
-  drop?: { payload_versions?: number[]; [k: string]: unknown };
+  drop?: Omit<DropConfig, "v" | "endpoint">;
 }
 
 /**
@@ -69,8 +84,107 @@ export function detectBase(pathname?: string): string {
   return m ? m[0] : "";
 }
 
+function isGuestMountBase(base: string): boolean {
+  let path = base;
+  if (/^https?:\/\//i.test(base)) {
+    try {
+      path = new URL(base).pathname.replace(/\/+$/, "");
+    } catch {
+      return false;
+    }
+  }
+  return /^\/(sites|share|r)\/[^/]+$/.test(path);
+}
+
+function isDropDatabaseInfo(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const db = value as { id?: unknown; name?: unknown; properties?: unknown };
+  return (
+    typeof db.id === "string" &&
+    db.id.length > 0 &&
+    typeof db.name === "string" &&
+    db.name.length > 0 &&
+    Array.isArray(db.properties) &&
+    db.properties.every((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const prop = value as { id?: unknown; name?: unknown; type?: unknown };
+      return (
+        typeof prop.id === "string" &&
+        prop.id.length > 0 &&
+        typeof prop.name === "string" &&
+        prop.name.length > 0 &&
+        typeof prop.type === "string" &&
+        prop.type.length > 0
+      );
+    })
+  );
+}
+
+function parseManifest(raw: unknown): DeploymentManifest {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new MetahubError("malformed mh-manifest.json", "invalid_input", 500);
+  const m = raw as Partial<DeploymentManifest>;
+  if (
+    m.v !== 1 ||
+    (m.mode !== "live" && m.mode !== "static-async") ||
+    !Number.isInteger(m.policyRevision) ||
+    (m.policyRevision as number) < 0 ||
+    (m.runtimeEndpoint !== undefined && typeof m.runtimeEndpoint !== "string") ||
+    (m.websocketEndpoint !== undefined && typeof m.websocketEndpoint !== "string") ||
+    (m.inboxEndpoint !== undefined && typeof m.inboxEndpoint !== "string") ||
+    (m.fallback !== undefined && m.fallback !== "inbox")
+  )
+    throw new MetahubError("malformed mh-manifest.json", "invalid_input", 500);
+
+  if (m.drop !== undefined) {
+    const d = m.drop as Partial<DropConfig>;
+    if (
+      !d ||
+      typeof d !== "object" ||
+      typeof d.drop_id !== "string" ||
+      !d.drop_id ||
+      typeof d.key_id !== "string" ||
+      !d.key_id ||
+      typeof d.pk !== "string" ||
+      !d.pk ||
+      (d.payload_versions !== undefined &&
+        (!Array.isArray(d.payload_versions) ||
+          !d.payload_versions.every((v) => Number.isInteger(v) && v > 0))) ||
+      (d.databases !== undefined &&
+        (!Array.isArray(d.databases) || !d.databases.every(isDropDatabaseInfo))) ||
+      (d.password_salt !== undefined &&
+        (typeof d.password_salt !== "string" || !d.password_salt)) ||
+      (d.turnstile_sitekey !== undefined &&
+        (typeof d.turnstile_sitekey !== "string" || !d.turnstile_sitekey))
+    )
+      throw new MetahubError("malformed mh-manifest.json drop config", "invalid_input", 500);
+  }
+  if (
+    (m.mode === "static-async" || m.fallback === "inbox") &&
+    (!m.inboxEndpoint || !m.drop)
+  )
+    throw new MetahubError("inbox deployment is missing endpoint or drop config", "invalid_input", 500);
+  return m as DeploymentManifest;
+}
+
+function resolveEndpoint(endpoint: string | undefined, fallback: string): string {
+  if (!endpoint) return fallback;
+  if (/^https?:\/\//i.test(endpoint)) return endpoint.replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(fallback)) {
+    return new URL(endpoint, fallback.endsWith("/") ? fallback : fallback + "/")
+      .toString()
+      .replace(/\/+$/, "");
+  }
+  if (endpoint.startsWith("/")) return endpoint.replace(/\/+$/, "");
+  return `${fallback}/${endpoint}`.replace(/\/+/g, "/").replace(/\/+$/, "");
+}
+
 export function createClient(opts: SdkOptions = {}) {
   const base = (opts.baseUrl ?? detectBase()).replace(/\/$/, "");
+  const pathMounted = isGuestMountBase(base);
+  const discoverManifest =
+    opts.manifestUrl !== undefined || opts.baseUrl === undefined || pathMounted;
+  const manifestUrl = opts.manifestUrl ?? `${base}/mh-manifest.json`;
   // Token renewal is a ROOT endpoint — it is not mounted under /sites|/share.
   // A relative base (site/share mount, same origin) renews at the origin root;
   // an absolute base renews at that base's origin.
@@ -95,12 +209,18 @@ export function createClient(opts: SdkOptions = {}) {
     }
   };
 
-  async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async function reqAt<T>(
+    endpoint: string,
+    method: string,
+    path: string,
+    body?: unknown,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T> {
     const exec = (token: string | null): Promise<Response> => {
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { ...extraHeaders };
       if (body !== undefined) headers["content-type"] = "application/json";
       if (token) headers["authorization"] = `Bearer ${token}`;
-      return fetch(base + path, {
+      return fetch(endpoint + path, {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -135,6 +255,48 @@ export function createClient(opts: SdkOptions = {}) {
     return data as T;
   }
 
+  let manifestP: Promise<DeploymentManifest | null> | null = null;
+  const getManifest = (): Promise<DeploymentManifest | null> => {
+    if (!discoverManifest) return Promise.resolve(null);
+    manifestP ??= (async () => {
+      let res: Response;
+      try {
+        res = await fetch(manifestUrl);
+      } catch (e) {
+        throw new MetahubError(
+          `deployment manifest unavailable: ${(e as Error).message}`,
+          "network",
+          0,
+        );
+      }
+      if (res.status === 404) return null;
+      if (!res.ok)
+        throw new MetahubError(
+          `deployment manifest failed (HTTP ${res.status})`,
+          "network",
+          res.status,
+        );
+      return parseManifest(await res.json().catch(() => null));
+    })();
+    return manifestP;
+  };
+
+  const liveEndpoint = (manifest: DeploymentManifest | null): string => {
+    if (manifest?.mode === "static-async")
+      throw new MetahubError("static-async deployment has no live runtime", "invalid_input", 400);
+    return resolveEndpoint(manifest?.runtimeEndpoint, base);
+  };
+
+  const dataReq = async <T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers?: Record<string, string>,
+  ): Promise<T> => {
+    const manifest = await getManifest();
+    return reqAt<T>(liveEndpoint(manifest), method, path, body, headers);
+  };
+
   const q = (s: string) => encodeURIComponent(s);
 
   // A client idempotency key for a guest write intent — random enough that a
@@ -143,69 +305,102 @@ export function createClient(opts: SdkOptions = {}) {
   const newIntentId = (): string =>
     "int_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-  // Sealed write-drop fallback (async public writes): when the realtime
-  // endpoint refuses (401 — no write grant on this mount, or the server is
-  // auth-gated) or the network fails outright, and the page ships an
-  // mh-drop.json (published by `mh site grant … <db>:create` auto-wiring),
-  // createRecord degrades to sealing the write to the owner's key and posting
-  // it to the inbox host. Site authors keep writing plain api.createRecord();
-  // the returned record carries `_pending: true` (see drop.ts optimistic echo).
+  // Sealed write-drop: manifest deployments use the embedded config; only
+  // legacy/no-manifest sites discover mh-drop.json.
   let dropClient: Promise<DropClient | null> | null = null;
-  const dropFallback = (): Promise<DropClient | null> => {
-    dropClient ??= initDrop(`${base}/mh-drop.json`, { password: opts.dropPassword }).catch(
-      () => null,
-    );
+  const dropFor = (manifest: DeploymentManifest | null): Promise<DropClient | null> => {
+    dropClient ??= (
+      manifest?.drop && manifest.inboxEndpoint
+        ? Promise.resolve(
+            createDrop(
+              {
+                ...manifest.drop,
+                v: 1,
+                endpoint: manifest.inboxEndpoint,
+              },
+              { password: opts.dropPassword },
+            ),
+          )
+        : initDrop(`${base}/mh-drop.json`, { password: opts.dropPassword })
+    ).catch(() => null);
     return dropClient;
   };
 
-  // Deployment manifest (mh-manifest.json): the owner's EXPLICIT channel map.
-  // When present, a live-endpoint failure only degrades to the sealed drop if
-  // the manifest declares `fallback:"inbox"` — otherwise the SDK surfaces the
-  // failure instead of silently guessing. Absent manifest → legacy behavior
-  // (drop whenever mh-drop.json exists). Fetched once, best-effort.
-  let manifestP: Promise<DeploymentManifest | null> | null = null;
-  const getManifest = (): Promise<DeploymentManifest | null> => {
-    manifestP ??= fetch(`${base}/mh-manifest.json`)
-      .then((r) => (r.ok ? (r.json() as Promise<DeploymentManifest>) : null))
-      .catch(() => null);
-    return manifestP;
-  };
-  /** Whether an eligible live-endpoint failure may fall back to the drop inbox:
-   *  yes if no manifest (legacy) or the manifest declares fallback:"inbox". */
-  const mayFallBackToInbox = async (): Promise<boolean> => {
-    const m = await getManifest();
-    return !m || m.fallback === "inbox";
+  let passwordProofP: Promise<string | null> | null = null;
+  const liveWriteHeaders = async (
+    manifest: DeploymentManifest | null,
+    writeOpts: WriteOptions,
+  ): Promise<Record<string, string>> => {
+    const headers: Record<string, string> = {};
+    if (writeOpts.turnstileToken)
+      headers["x-turnstile-token"] = writeOpts.turnstileToken;
+    const salt = manifest?.drop?.password_salt;
+    if (opts.dropPassword && salt) {
+      passwordProofP ??= deriveDropPasswordVerifier(opts.dropPassword, salt);
+      headers["x-drop-pass"] = await passwordProofP;
+    }
+    return headers;
   };
 
   return {
     // databases
-    listDatabases: () => req<DbInfo[]>("GET", "/api/databases"),
-    createDatabase: (b: { name: string; icon?: string }) => req<DbInfo>("POST", "/api/databases", b),
+    listDatabases: () => dataReq<DbInfo[]>("GET", "/api/databases"),
+    createDatabase: (b: { name: string; icon?: string }) =>
+      dataReq<DbInfo>("POST", "/api/databases", b),
 
     // properties (columns)
-    listProperties: (db: string) => req<PropInfo[]>("GET", `/api/properties?db=${q(db)}`),
+    listProperties: (db: string) => dataReq<PropInfo[]>("GET", `/api/properties?db=${q(db)}`),
 
     // records
     listRecords: (db: string, opts2: { sort?: string; limit?: number } = {}) => {
       const p = new URLSearchParams({ db });
       if (opts2.sort) p.set("sort", opts2.sort);
       if (opts2.limit != null) p.set("limit", String(opts2.limit));
-      return req<RecordInfo[]>("GET", `/api/records?${p}`);
+      return dataReq<RecordInfo[]>("GET", `/api/records?${p}`);
     },
-    getRecord: (id: string) => req<RecordInfo>("GET", `/api/record?id=${q(id)}`),
-    createRecord: async (db: string, values: Record<string, unknown>): Promise<RecordInfo> => {
+    getRecord: (id: string) => dataReq<RecordInfo>("GET", `/api/record?id=${q(id)}`),
+    createRecord: async (
+      db: string,
+      values: Record<string, unknown>,
+      writeOpts: WriteOptions = {},
+    ): Promise<RecordInfo | PendingRecord> => {
+      const manifest = await getManifest();
+      if (manifest?.mode === "static-async") {
+        const drop = await dropFor(manifest);
+        if (!drop)
+          throw new MetahubError("static-async inbox is unavailable", "network", 0);
+        return drop.createRecord(db, values, writeOpts);
+      }
       // On a guest mount, send the idempotent intent wrapper so a retried POST
       // (dropped response) can't double-create. The root main API doesn't parse
       // wrappers, so only wrap on a mount; and if a mount server is older than
       // this SDK (a vendored copy), retry once with the plain body.
-      const mounted = base !== "";
+      const endpoint = liveEndpoint(manifest);
+      const mounted = isGuestMountBase(endpoint);
       const body = mounted ? { $intent: { id: newIntentId(), submittedAt: Date.now() }, values } : values;
+      const headers = await liveWriteHeaders(manifest, writeOpts);
       try {
-        return await req<RecordInfo>("POST", `/api/records?db=${q(db)}`, body);
+        return await reqAt<RecordInfo>(
+          endpoint,
+          "POST",
+          `/api/records?db=${q(db)}`,
+          body,
+          headers,
+        );
       } catch (e) {
-        if (mounted && e instanceof MetahubError && e.status === 400) {
+        if (
+          mounted &&
+          e instanceof MetahubError &&
+          (e.status === 400 || e.status === 404)
+        ) {
           try {
-            return await req<RecordInfo>("POST", `/api/records?db=${q(db)}`, values);
+            return await reqAt<RecordInfo>(
+              endpoint,
+              "POST",
+              `/api/records?db=${q(db)}`,
+              values,
+              headers,
+            );
           } catch (e2) {
             e = e2;
           }
@@ -214,44 +409,87 @@ export function createClient(opts: SdkOptions = {}) {
         // is a real answer from a reachable, willing endpoint.
         const eligible = e instanceof MetahubError ? e.status === 401 : true;
         if (!eligible) throw e;
-        // Explicit channel selection: only degrade to the sealed drop if the
-        // manifest declares it (or there's no manifest — legacy).
-        if (!(await mayFallBackToInbox())) throw e;
-        const drop = await dropFallback();
+        // New deployments degrade only when the manifest explicitly opts in.
+        // No-manifest sites keep the legacy mh-drop.json behavior.
+        if (manifest && manifest.fallback !== "inbox") throw e;
+        const drop = await dropFor(manifest);
         if (!drop) throw e;
-        return (await drop.createRecord(db, values)) as unknown as RecordInfo;
+        return drop.createRecord(db, values, writeOpts);
       }
     },
-    updateRecord: async (id: string, values: Record<string, unknown>): Promise<RecordInfo> => {
-      const mounted = base !== "";
+    updateRecord: async (
+      id: string,
+      values: Record<string, unknown>,
+      writeOpts: WriteOptions = {},
+    ): Promise<RecordInfo> => {
+      const manifest = await getManifest();
+      if (manifest?.mode === "static-async")
+        throw new MetahubError(
+          "static-async deployment does not support updateRecord",
+          "invalid_input",
+          400,
+        );
+      const endpoint = liveEndpoint(manifest);
+      const mounted = isGuestMountBase(endpoint);
       const body = mounted ? { $intent: { id: newIntentId(), submittedAt: Date.now() }, values } : values;
+      const headers = await liveWriteHeaders(manifest, writeOpts);
       try {
-        return await req<RecordInfo>("PATCH", `/api/record?id=${q(id)}`, body);
+        return await reqAt<RecordInfo>(
+          endpoint,
+          "PATCH",
+          `/api/record?id=${q(id)}`,
+          body,
+          headers,
+        );
       } catch (e) {
-        if (mounted && e instanceof MetahubError && e.status === 400)
-          return req<RecordInfo>("PATCH", `/api/record?id=${q(id)}`, values);
+        if (
+          mounted &&
+          e instanceof MetahubError &&
+          (e.status === 400 || e.status === 404)
+        )
+          return reqAt<RecordInfo>(
+            endpoint,
+            "PATCH",
+            `/api/record?id=${q(id)}`,
+            values,
+            headers,
+          );
         throw e;
       }
     },
-    deleteRecord: (id: string) => req<{ ok: boolean }>("DELETE", `/api/record?id=${q(id)}`),
+    deleteRecord: async (id: string) => {
+      const manifest = await getManifest();
+      if (manifest?.mode === "static-async")
+        throw new MetahubError(
+          "static-async deployment does not support deleteRecord",
+          "invalid_input",
+          400,
+        );
+      return reqAt<{ ok: boolean }>(
+        liveEndpoint(manifest),
+        "DELETE",
+        `/api/record?id=${q(id)}`,
+      );
+    },
 
     // documents
     listDocuments: (db?: string) =>
-      req<DocSummaryInfo[]>("GET", db ? `/api/documents?db=${q(db)}` : "/api/documents"),
-    getDocument: (id: string) => req<DocInfo>("GET", `/api/document?id=${q(id)}`),
+      dataReq<DocSummaryInfo[]>("GET", db ? `/api/documents?db=${q(db)}` : "/api/documents"),
+    getDocument: (id: string) => dataReq<DocInfo>("GET", `/api/document?id=${q(id)}`),
     createDocument: (b: { title: string; body?: string; database_id?: string; parent_id?: string }) =>
-      req<DocInfo>("POST", "/api/documents", b),
+      dataReq<DocInfo>("POST", "/api/documents", b),
     updateDocument: (
       id: string,
       b: { title?: string; body?: string; parent_id?: string | null; if_match?: string },
-    ) => req<DocInfo>("PATCH", `/api/document?id=${q(id)}`, b),
-    deleteDocument: (id: string) => req<{ ok: boolean }>("DELETE", `/api/document?id=${q(id)}`),
+    ) => dataReq<DocInfo>("PATCH", `/api/document?id=${q(id)}`, b),
+    deleteDocument: (id: string) =>
+      dataReq<{ ok: boolean }>("DELETE", `/api/document?id=${q(id)}`),
 
     // search
     search: (text: string, limit?: number) => {
       const p = new URLSearchParams({ q: text });
       if (limit != null) p.set("limit", String(limit));
-      return req<SearchHitInfo[]>("GET", `/api/search?${p}`);
+      return dataReq<SearchHitInfo[]>("GET", `/api/search?${p}`);
     },
 
     /**

@@ -74,7 +74,7 @@ test("verifyPolicyPassword: true when no gate; correct/incorrect against a real 
   expect(await verifyPolicyPassword(gated, "wrong")).toBe(false);
 });
 
-test("revision: a deterministic fingerprint that changes iff the enforceable policy changes", () => {
+test("revision: deterministic fingerprint follows the client-observable policy", () => {
   const base = () =>
     policyForSite({ publicGrants: JSON.stringify({ v: 1, tables: [{ db: "d", ops: ["create"] }] }), knobs: null });
   // Stable + node-independent: same content → same revision.
@@ -94,6 +94,48 @@ test("revision: a deterministic fingerprint that changes iff the enforceable pol
     knobs: { passwordVerifier: "v" },
   });
   expect(gated.revision).not.toBe(base().revision);
+
+  const passwordRotated = policyForSite({
+    publicGrants: JSON.stringify({ v: 1, tables: [{ db: "d", ops: ["create"] }] }),
+    knobs: { passwordSalt: "new-salt", passwordVerifier: "new-verifier" },
+  });
+  expect(passwordRotated.revision).not.toBe(gated.revision);
+  const passwordSecretOnlyRotation = policyForSite({
+    publicGrants: JSON.stringify({ v: 1, tables: [{ db: "d", ops: ["create"] }] }),
+    knobs: { passwordSalt: "new-salt", passwordVerifier: "another-verifier" },
+  });
+  expect(passwordSecretOnlyRotation.revision).toBe(passwordRotated.revision);
+
+  const turnstileA = policyForSite({
+    publicGrants: JSON.stringify({ v: 1, tables: [{ db: "d", ops: ["create"] }] }),
+    knobs: { turnstileSitekey: "site-a", turnstileSecret: "secret-a" },
+  });
+  const turnstileB = policyForSite({
+    publicGrants: JSON.stringify({ v: 1, tables: [{ db: "d", ops: ["create"] }] }),
+    knobs: { turnstileSitekey: "site-b", turnstileSecret: "secret-b" },
+  });
+  const secretOnlyRotation = policyForSite({
+    publicGrants: JSON.stringify({ v: 1, tables: [{ db: "d", ops: ["create"] }] }),
+    knobs: { turnstileSitekey: "site-a", turnstileSecret: "rotated-secret" },
+  });
+  expect(turnstileB.revision).not.toBe(turnstileA.revision);
+  expect(secretOnlyRotation.revision).toBe(turnstileA.revision);
+
+  const expiring = policyForShare({
+    grants: JSON.stringify({ v: 1, tables: [{ db: "d", ops: ["create"] }] }),
+    pw_salt: null,
+    pw_hash: null,
+    expires_at: 1234,
+    guest_node_id: "g",
+  });
+  const extended = policyForShare({
+    grants: JSON.stringify({ v: 1, tables: [{ db: "d", ops: ["create"] }] }),
+    pw_salt: null,
+    pw_hash: null,
+    expires_at: 5678,
+    guest_node_id: "g",
+  });
+  expect(extended.revision).not.toBe(expiring.revision);
 
   // A revert to the original content restores the original revision (content
   // fingerprint, not a monotonic counter — the right behavior for change detection).

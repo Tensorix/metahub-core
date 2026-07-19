@@ -104,8 +104,7 @@ export async function serveSite(
       // (--password/--turnstile) is synthesized from the policy's writeGate by
       // grantedDepsFromPolicy, so this realtime write path and the write-inbox
       // enforce the SAME gate (a page not sending x-drop-pass/x-turnstile-token
-      // gets 401 here and the SDK degrades to the sealed drop, which does send
-      // them — password sites still accept writes, just asynchronously).
+      // gets 401 here; the SDK supplies those proofs on the live request).
       const policy = policyForSite({ publicGrants: site.public_grants, knobs: getDropKnobs(ctx.db, siteId) });
       return serveGrantedApi(
         req,

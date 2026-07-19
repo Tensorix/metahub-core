@@ -6,9 +6,9 @@
 // ingests on its next sync round — write = confirmed immediately + optimistic
 // local echo; reading OTHERS' submissions stays minute-grade by design.
 //
-// Site authors normally never touch this module directly: sdk/client.ts's
-// createRecord auto-falls-back to the sealed transport on 401/network failure
-// when the page carries an mh-drop.json. It is exported for pages that want
+// Site authors normally never touch this module directly: sdk/client.ts uses
+// it for static-async deployments, explicit live inbox fallback, and legacy
+// no-manifest sites carrying mh-drop.json. It is exported for pages that want
 // the pending/merge optimistic-echo helpers or Turnstile/password wiring.
 
 import { MhError } from "../core/errors.ts";
@@ -82,6 +82,12 @@ export interface DropClientOptions {
 export interface DropStorage {
   get(key: string): string | null;
   set(key: string, value: string): void;
+}
+
+/** Derive the proof sent as x-drop-pass from a user password and the public
+ *  salt. Shared by the async inbox client and the live SiteRuntime SDK path. */
+export async function deriveDropPasswordVerifier(password: string, saltB64: string): Promise<string> {
+  return toB64(await deriveShareKey(password, fromB64(saltB64)));
 }
 
 function defaultStorage(): DropStorage {
@@ -226,7 +232,7 @@ export function createDrop(cfg: DropConfig, opts: DropClientOptions = {}): DropC
   function verifier(): Promise<string | null> {
     verifierPromise ??= (async () => {
       if (!opts.password || !cfg.password_salt) return null;
-      return toB64(await deriveShareKey(opts.password, fromB64(cfg.password_salt)));
+      return deriveDropPasswordVerifier(opts.password, cfg.password_salt);
     })();
     return verifierPromise;
   }

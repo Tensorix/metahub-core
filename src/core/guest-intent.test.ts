@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { runSchema } from "./db.ts";
 import { createDatabase } from "./databases.ts";
 import { addProperty } from "./properties.ts";
-import { getRecord, updateRecord } from "./records.ts";
+import { createRecord, deleteRecord, getRecord, updateRecord } from "./records.ts";
 import { parseHlc } from "./hlc.ts";
 import { policyForShare } from "./access-policy.ts";
 import { applyGuestIntent, type GuestIntent } from "./guest-intent.ts";
@@ -96,6 +96,27 @@ test("submitted mode: future submit time is clamped to now+5min", () => {
   expect(parseHlc(row.hlc).millis).toBe(now + 5 * 60_000); // clamped
 });
 
+test("submitted mode: negative/fractional submit time is normalized to a valid HLC", () => {
+  const { db, dbId, titleId } = seed();
+  applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-clock" },
+    INTENT({
+      action: "createRecord",
+      table: dbId,
+      recordId: "rec_clock01",
+      payload: { Title: "x" },
+      submittedAt: -1.25,
+    }),
+    { clock: "submitted", now: 1000 },
+  );
+  const row = db
+    .query("SELECT hlc FROM crdt_changes WHERE row_id = ? AND col = ?")
+    .get("rec_clock01", titleId) as { hlc: string };
+  expect(parseHlc(row.hlc)).toEqual({ millis: 0, counter: 2, node: "gbase-clock" });
+});
+
 test("submitted LWW: the later SUBMIT time wins regardless of execution order", () => {
   const { db, dbId, titleId } = seed();
   // A record exists.
@@ -143,6 +164,214 @@ test("idempotency: replaying the same intentId returns the same row, no duplicat
   expect(b.id).toBe(a.id);
   const n = db.query("SELECT COUNT(*) AS n FROM records WHERE __deleted = 0").get() as { n: number };
   expect(n.n).toBe(1); // exactly one record despite two applies
+});
+
+test("idempotency: same guest + intentId with different content is a conflict", () => {
+  const { db, dbId } = seed();
+  const first = INTENT({ intentId: "int_conflict", table: dbId, payload: { Title: "one" } });
+  applyGuestIntent(db, policy(dbId), { guestNode: "gbase-x" }, first, { clock: "authority" });
+  expect(() =>
+    applyGuestIntent(
+      db,
+      policy(dbId),
+      { guestNode: "gbase-x" },
+      { ...first, payload: { Title: "two" } },
+      { clock: "authority" },
+    ),
+  ).toThrow(/already used/);
+});
+
+test("idempotency: same guest + intentId with a different action is a conflict", () => {
+  const { db, dbId } = seed();
+  const intentId = "int_action";
+  applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-action" },
+    INTENT({
+      intentId,
+      action: "createRecord",
+      table: dbId,
+      recordId: "rec_action01",
+      payload: { Title: "created" },
+    }),
+    { clock: "submitted" },
+  );
+  expect(() =>
+    applyGuestIntent(
+      db,
+      policy(dbId),
+      { guestNode: "gbase-action" },
+      INTENT({
+        intentId,
+        action: "updateRecord",
+        recordId: "rec_action01",
+        payload: { Title: "updated" },
+      }),
+      { clock: "submitted" },
+    ),
+  ).toThrow(/already used/);
+});
+
+test("idempotency: the same intentId is isolated across guest scopes", () => {
+  const { db, dbId } = seed();
+  const intent = INTENT({ intentId: "int_scoped", table: dbId, payload: { Title: "same" } });
+  const a = applyGuestIntent(db, policy(dbId), { guestNode: "gbase-a" }, intent, { clock: "authority" });
+  const b = applyGuestIntent(db, policy(dbId), { guestNode: "gbase-b" }, intent, { clock: "authority" });
+  expect(b.id).not.toBe(a.id);
+});
+
+test("idempotency: current grants are rechecked before a receipt is returned", () => {
+  const { db, dbId } = seed();
+  const secret = addProperty(db, dbId, { name: "Private", type: "text" });
+  const intent = INTENT({ intentId: "int_revoke", table: dbId, payload: { Title: "hello" } });
+  const made = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-owner" },
+    intent,
+    { clock: "authority" },
+  );
+  updateRecord(db, made.id, { Private: "owner-only" });
+  const revoked = policyForShare({
+    grants: JSON.stringify({ v: 1, tables: [] }),
+    pw_salt: null,
+    pw_hash: null,
+    expires_at: null,
+    guest_node_id: "gbase",
+  });
+  let code: string | undefined;
+  try {
+    applyGuestIntent(db, revoked, { guestNode: "gbase-owner" }, intent, { clock: "authority" });
+  } catch (e) {
+    code = (e as { code?: string }).code;
+  }
+  expect(code).toBe("auth");
+  expect(getRecord(db, made.id)!.cells[secret.id]).toBe("owner-only");
+});
+
+test("idempotency: deleting a result makes replay conflict instead of recreating", () => {
+  const { db, dbId } = seed();
+  const intent = INTENT({ intentId: "int_deleted", table: dbId, payload: { Title: "once" } });
+  const made = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-delete" },
+    intent,
+    { clock: "authority" },
+  );
+  expect(deleteRecord(db, made.id)).toBe(true);
+  let code: string | undefined;
+  try {
+    applyGuestIntent(db, policy(dbId), { guestNode: "gbase-delete" }, intent, { clock: "authority" });
+  } catch (e) {
+    code = (e as { code?: string }).code;
+  }
+  expect(code).toBe("conflict");
+  expect(db.query("SELECT COUNT(*) AS n FROM records WHERE __deleted = 0").get()).toEqual({ n: 0 });
+});
+
+test("idempotency: deleting an updated result also makes its replay conflict", () => {
+  const { db, dbId } = seed();
+  const made = createRecord(db, dbId, { Title: "before" });
+  const intent = INTENT({
+    intentId: "int_update_deleted",
+    action: "updateRecord",
+    recordId: made.id,
+    payload: { Title: "after" },
+  });
+  applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-update-delete" },
+    intent,
+    { clock: "authority" },
+  );
+  expect(deleteRecord(db, made.id)).toBe(true);
+  let code: string | undefined;
+  try {
+    applyGuestIntent(
+      db,
+      policy(dbId),
+      { guestNode: "gbase-update-delete" },
+      intent,
+      { clock: "authority" },
+    );
+  } catch (e) {
+    code = (e as { code?: string }).code;
+  }
+  expect(code).toBe("conflict");
+});
+
+test("intentId rejects unsafe protocol delimiters and oversized values", () => {
+  const { db, dbId } = seed();
+  for (const intentId of ["", "bad:key", "x".repeat(65)]) {
+    expect(() =>
+      applyGuestIntent(
+        db,
+        policy(dbId),
+        { guestNode: "gbase-id" },
+        INTENT({ intentId, table: dbId }),
+        { clock: "authority" },
+      ),
+    ).toThrow(/intentId/);
+  }
+});
+
+test("submitted create-only intent cannot overwrite an existing record id", () => {
+  const { db, dbId, titleId } = seed();
+  const existing = createRecord(db, dbId, { Title: "owner" });
+  const createOnly = policyForShare({
+    grants: JSON.stringify({ v: 1, tables: [{ db: dbId, ops: ["create"] }] }),
+    pw_salt: null,
+    pw_hash: null,
+    expires_at: null,
+    guest_node_id: "gbase",
+  });
+  let code: string | undefined;
+  try {
+    applyGuestIntent(
+      db,
+      createOnly,
+      { guestNode: "gbase-attack" },
+      INTENT({
+        intentId: "int_overwrite",
+        table: dbId,
+        recordId: existing.id,
+        payload: { Title: "overwritten" },
+      }),
+      { clock: "submitted" },
+    );
+  } catch (e) {
+    code = (e as { code?: string }).code;
+  }
+  expect(code).toBe("conflict");
+  expect(getRecord(db, existing.id)!.cells[titleId]).toBe("owner");
+});
+
+test("submitted create-only intent cannot resurrect a tombstoned record id", () => {
+  const { db, dbId } = seed();
+  const existing = createRecord(db, dbId, { Title: "owner" });
+  expect(deleteRecord(db, existing.id)).toBe(true);
+  let code: string | undefined;
+  try {
+    applyGuestIntent(
+      db,
+      policy(dbId),
+      { guestNode: "gbase-tombstone" },
+      INTENT({
+        intentId: "int_tombstone",
+        table: dbId,
+        recordId: existing.id,
+        payload: { Title: "resurrected" },
+      }),
+      { clock: "submitted" },
+    );
+  } catch (e) {
+    code = (e as { code?: string }).code;
+  }
+  expect(code).toBe("conflict");
+  expect(getRecord(db, existing.id)).toBeNull();
 });
 
 test("submitted mode: two intents in the same millisecond both land (counter seeded past collision)", () => {

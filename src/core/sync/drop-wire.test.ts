@@ -144,7 +144,7 @@ function readManifest(db: Database, siteId: string): Record<string, unknown> | n
   return row ? (JSON.parse(row.content ?? "") as Record<string, unknown>) : null;
 }
 
-test("wire: mh-manifest.json is published alongside mh-drop.json (mode live + inbox fallback + drop block)", async () => {
+test("wire: live manifest publishes runtime + drop metadata without async fallback", async () => {
   const r = rig();
   await syncDropWiring(r.db, r.site, { host: r.host });
   const m = readManifest(r.db, r.site.id)!;
@@ -152,7 +152,7 @@ test("wire: mh-manifest.json is published alongside mh-drop.json (mode live + in
   expect(m.mode).toBe("live");
   expect(m.runtimeEndpoint).toBe(""); // relative — same origin as the page
   expect(m.inboxEndpoint).toBe(ENDPOINT);
-  expect(m.fallback).toBe("inbox");
+  expect(m.fallback).toBeUndefined(); // live success means the runtime committed
   expect(typeof m.policyRevision).toBe("number");
   expect(m.policyRevision).not.toBe(0); // a real content fingerprint
   const drop = m.drop as { drop_id: string; payload_versions: number[]; databases: unknown[] };

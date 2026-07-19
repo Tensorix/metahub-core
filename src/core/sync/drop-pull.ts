@@ -142,16 +142,17 @@ export function changesMaxSeq(db: DbDriver, changes: Change[]): number | null {
   return max;
 }
 
-/** Ack watermark for a v2 envelope: MAX oplog seq over its intents' txns
- *  ("intent:"+id). null if any intent produced no oplog rows (hold, don't ack).
+/** Ack watermark for a v2 envelope: MAX oplog seq over each guest-scoped intent
+ *  txn prefix. null if any intent produced no oplog rows (hold, don't ack).
  *  A replay under a new envelope_id resolves to the SAME intent txns (idempotent
  *  on intentId), so it acks instead of deferring forever — the F6 defense for v2. */
-function intentsMaxSeq(db: DbDriver, intentIds: string[]): number | null {
+function intentsMaxSeq(db: DbDriver, guestNode: string, intentIds: string[]): number | null {
   let max: number | null = null;
   for (const id of intentIds) {
-    const r = db.query("SELECT MAX(seq) AS s FROM crdt_changes WHERE txn = ?").get("intent:" + id) as {
-      s: number | null;
-    };
+    const prefix = `intent:${encodeURIComponent(guestNode)}:${id}:`;
+    const r = db
+      .query("SELECT MAX(seq) AS s FROM crdt_changes WHERE txn >= ? AND txn < ?")
+      .get(prefix, prefix + "\uffff") as { s: number | null };
     if (r.s == null) return null;
     if (max == null || r.s > max) max = r.s;
   }
@@ -188,7 +189,7 @@ function applyDropV2(
   const ingested = (
     db.query("SELECT COUNT(*) AS n FROM crdt_changes WHERE seq > ?").get(before) as { n: number }
   ).n;
-  return { ackSeq: intentsMaxSeq(db, ids), ingested };
+  return { ackSeq: intentsMaxSeq(db, payload.guest_node, ids), ingested };
 }
 
 function bucketPushCursor(db: DbDriver, bucket: DropBucket): number {

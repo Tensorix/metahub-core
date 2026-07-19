@@ -95,11 +95,10 @@ type DropConfig = ReturnType<typeof buildDropConfig>;
 /**
  * The deployment manifest: the SDK's explicit channel map. A create-granted,
  * edge-wired site is `mode:"live"` — the page's own origin serves the realtime
- * granted `/api/*` (relative runtimeEndpoint "") — with a declared `fallback:
- * "inbox"` so a live-endpoint failure degrades to the sealed drop transport
- * (surfaced as "waiting to sync") instead of the SDK silently guessing. The
- * `drop` sub-block embeds the drop config (E2EE key material stays inline) and
- * the payload versions the owner accepts, so the SDK knows how to seal.
+ * granted `/api/*` (relative runtimeEndpoint ""). Live success means the
+ * SiteRuntime committed the write, so the generated manifest does NOT opt into
+ * async fallback. The `drop` sub-block still embeds the public inbox config for
+ * explicit/static-async deployments and operational discovery.
  */
 function buildManifest(dropCfg: DropConfig, endpoint: string, policyRevision: number) {
   // Drop sub-block = the drop config's public fields (drop_id/key_id/pk/
@@ -111,7 +110,6 @@ function buildManifest(dropCfg: DropConfig, endpoint: string, policyRevision: nu
     mode: "live" as const,
     runtimeEndpoint: "", // relative: same origin as the page (the serving node)
     inboxEndpoint: endpoint,
-    fallback: "inbox" as const,
     policyRevision,
     drop: { ...dropPublic, payload_versions: [1] as number[] }, // [1,2] once drop v2 is live
   };
@@ -141,8 +139,8 @@ export async function syncDropWiring(
       contentType: "application/json",
     });
     // Deployment manifest alongside the drop config — the SDK's explicit channel
-    // map. policyRevision fingerprints the enforceable policy so a change (grant
-    // or write-gate edit) republishes a new revision the SDK/publisher can see.
+    // map. policyRevision fingerprints the client-observable policy so a public
+    // grant/gate edit republishes a revision the SDK/publisher can see.
     const revision = policyForSite({ publicGrants: site.public_grants, knobs: getDropKnobs(db, site.id) }).revision;
     putFileInline(db, site.id, MANIFEST_PATH, {
       data: JSON.stringify(buildManifest(cfg, edge.endpoint, revision), null, 2),

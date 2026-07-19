@@ -322,8 +322,7 @@ function grantEffectNote(site: SiteRow): string | null {
 
 /** Persist the anti-abuse knobs passed on `mh site grant`. The knobs gate BOTH
  *  guest-write transports of the grant (edge inbox + the server's realtime
- *  granted endpoint — server-side Turnstile verification is a passthrough TODO,
- *  see sites-serve.ts). The password itself is never stored: only a PBKDF2
+ *  granted endpoint). The password itself is never stored: only a PBKDF2
  *  salt (published in mh-drop.json) and its verifier (sent to the edge). */
 async function applyGrantKnobs(
   db: DbDriver,
