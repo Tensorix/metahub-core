@@ -31,6 +31,14 @@ export interface RecordRow {
   cells: Record<string, unknown>;
 }
 
+/** A property/value pair after name resolution and type coercion. Callers that
+ * already validated a payload can pass these to the prepared mutators without
+ * repeating relation resolution or coercion. */
+export interface PreparedRecordCell {
+  prop: PropertyRow;
+  value: unknown;
+}
+
 interface OrderedRecordRow {
   id: string;
   database_id: string;
@@ -147,6 +155,19 @@ export function resolveData(
   return out;
 }
 
+/** Resolve property refs and coerce each value exactly once. Input order is
+ * preserved because it also determines the HLC order of emitted cells. */
+export function prepareRecordCells(
+  db: DbDriver,
+  databaseId: string,
+  data: Record<string, unknown>,
+): PreparedRecordCell[] {
+  return resolveData(listProperties(db, databaseId), data).map(({ prop, value }) => ({
+    prop,
+    value: coerce(db, prop, value),
+  }));
+}
+
 /** Build a RecordRow from a materialized row; keys in `data` are property ids. */
 function rowToRecord(
   row: { id: string; database_id: string; data: string },
@@ -166,7 +187,6 @@ function rowToRecord(
 }
 
 function deriveTitle(
-  props: PropertyRow[],
   resolved: { prop: PropertyRow; value: unknown }[],
   fallbackBase: string,
 ): string {
@@ -252,24 +272,29 @@ export const backfillRecordOrderKeys = grouped(function backfillRecordOrderKeys(
   }
 });
 
+export const createRecordPrepared = grouped(function createRecordPrepared(
+  db: DbDriver,
+  database: { id: string; name: string },
+  cells: PreparedRecordCell[],
+): RecordRow {
+  const id = deriveTitle(cells, slugify(database.name, "rec"));
+  const orderKey = keyBetween(lastRecordOrderKey(db, database.id), null);
+
+  const first = emit(db, "records", id, "database_id", database.id);
+  emit(db, "records", id, "created_hlc", first.hlc);
+  emit(db, "records", id, "order_key", orderKey);
+  for (const { prop, value } of cells) emit(db, "records", id, prop.id, value);
+  return getRecord(db, id)!;
+});
+
 export const createRecord = grouped(function createRecord(
   db: DbDriver,
   databaseId: string,
   data: Record<string, unknown>,
 ): RecordRow {
-  const dbRow = getDatabase(db, databaseId);
-  if (!dbRow) throw new MhError("not_found", `no such database: ${databaseId}`);
-  const props = listProperties(db, databaseId);
-  const resolved = resolveData(props, data);
-  const id = deriveTitle(props, resolved, slugify(dbRow.name, "rec"));
-  const orderKey = keyBetween(lastRecordOrderKey(db, databaseId), null);
-
-  const first = emit(db, "records", id, "database_id", databaseId);
-  emit(db, "records", id, "created_hlc", first.hlc);
-  emit(db, "records", id, "order_key", orderKey);
-  for (const { prop, value } of resolved)
-    emit(db, "records", id, prop.id, coerce(db, prop, value));
-  return getRecord(db, id)!;
+  const database = getDatabase(db, databaseId);
+  if (!database) throw new MhError("not_found", `no such database: ${databaseId}`);
+  return createRecordPrepared(db, database, prepareRecordCells(db, database.id, data));
 });
 
 export function getRecord(db: DbDriver, id: string): RecordRow | null {
@@ -416,6 +441,19 @@ export const moveRecord = grouped(function moveRecord(
   return getRecord(db, id)!;
 });
 
+export const updateRecordPrepared = grouped(function updateRecordPrepared(
+  db: DbDriver,
+  id: string,
+  cells: PreparedRecordCell[],
+): RecordRow {
+  const rec = db
+    .query("SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0")
+    .get(id) as { id: string; database_id: string } | null;
+  if (!rec) throw new MhError("not_found", `no such record: ${id}`);
+  for (const { prop, value } of cells) emit(db, "records", id, prop.id, value);
+  return getRecord(db, id)!;
+});
+
 export const updateRecord = grouped(function updateRecord(
   db: DbDriver,
   id: string,
@@ -425,10 +463,7 @@ export const updateRecord = grouped(function updateRecord(
     .query("SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0")
     .get(id) as { id: string; database_id: string } | null;
   if (!rec) throw new MhError("not_found", `no such record: ${id}`);
-  const resolved = resolveData(listProperties(db, rec.database_id), data);
-  for (const { prop, value } of resolved)
-    emit(db, "records", id, prop.id, coerce(db, prop, value));
-  return getRecord(db, id)!;
+  return updateRecordPrepared(db, id, prepareRecordCells(db, rec.database_id, data));
 });
 
 export const deleteRecord = grouped(function deleteRecord(db: DbDriver, id: string): boolean {

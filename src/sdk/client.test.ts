@@ -280,6 +280,54 @@ test("a 200 malformed manifest fails closed instead of enabling legacy routing",
   expect(calls.some((url) => url.includes("/api/records"))).toBe(false);
 });
 
+test("a transient manifest failure is not cached and the same client recovers", async () => {
+  let manifestCalls = 0;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("mh-manifest.json")) {
+      manifestCalls++;
+      if (manifestCalls === 1)
+        return new Response("temporary", { status: 503 });
+      return Response.json({
+        v: 1,
+        mode: "live",
+        runtimeEndpoint: "https://runtime.example/sites/demo",
+        policyRevision: 1,
+      });
+    }
+    if (url === "https://runtime.example/sites/demo/api/records?db=db1")
+      return Response.json([]);
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  const client = createClient({ baseUrl: "https://static.example/sites/demo" });
+  await expect(client.listRecords("db1")).rejects.toThrow(/manifest failed/);
+  expect(await client.listRecords("db1")).toEqual([]);
+  expect(manifestCalls).toBe(2);
+  expect(calls).toContain("https://runtime.example/sites/demo/api/records?db=db1");
+});
+
+test("a malformed 200 manifest is retried, never cached as legacy", async () => {
+  let manifestCalls = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith("mh-manifest.json")) {
+      manifestCalls++;
+      return manifestCalls === 1
+        ? Response.json({ mode: "live" })
+        : Response.json({ v: 1, mode: "live", policyRevision: 1 });
+    }
+    return Response.json([]);
+  }) as typeof fetch;
+
+  const client = createClient({ baseUrl: "https://x/sites/demo" });
+  await expect(client.listRecords("db1")).rejects.toThrow(/malformed/);
+  expect(await client.listRecords("db1")).toEqual([]);
+  expect(manifestCalls).toBe(2);
+});
+
 test("legacy guest server 404s the wrapper once, then receives the plain body", async () => {
   const bodies: unknown[] = [];
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -298,6 +346,31 @@ test("legacy guest server 404s the wrapper once, then receives the plain body", 
   expect(bodies).toHaveLength(2);
   expect(bodies[0]).toHaveProperty("$intent");
   expect(bodies[1]).toEqual({ Title: "x" });
+});
+
+test("a declared manifest never retries a business 404 with a bare body", async () => {
+  const bodies: unknown[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("mh-manifest.json"))
+      return Response.json({ v: 1, mode: "live", policyRevision: 1 });
+    if (url.includes("/api/records")) {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json(
+        { error: "unknown database", code: "not_found" },
+        { status: 404 },
+      );
+    }
+    return new Response("missing", { status: 404 });
+  }) as typeof fetch;
+
+  await expect(
+    createClient({ baseUrl: "https://x/sites/demo" }).createRecord("missing", {
+      Title: "x",
+    }),
+  ).rejects.toThrow(/unknown database/);
+  expect(bodies).toHaveLength(1);
+  expect(bodies[0]).toHaveProperty("$intent");
 });
 
 test("live gated writes attach password and Turnstile proofs", async () => {

@@ -54,6 +54,7 @@ export class MetahubError extends Error {
 
 const TOKEN_KEY = "mh_token";
 const RENEW_PATH = "/auth/token";
+const MANIFEST_TIMEOUT_MS = 5_000;
 
 /** The owner-published deployment manifest (mh-manifest.json) — the SDK's
  *  explicit channel map (see core/sync/drop-wire.ts buildManifest). */
@@ -258,10 +259,17 @@ export function createClient(opts: SdkOptions = {}) {
   let manifestP: Promise<DeploymentManifest | null> | null = null;
   const getManifest = (): Promise<DeploymentManifest | null> => {
     if (!discoverManifest) return Promise.resolve(null);
-    manifestP ??= (async () => {
+    if (manifestP) return manifestP;
+    const pending = (async () => {
       let res: Response;
       try {
-        res = await fetch(manifestUrl);
+        res = await fetch(manifestUrl, {
+          signal:
+            typeof AbortSignal !== "undefined" &&
+            typeof AbortSignal.timeout === "function"
+              ? AbortSignal.timeout(MANIFEST_TIMEOUT_MS)
+              : undefined,
+        });
       } catch (e) {
         throw new MetahubError(
           `deployment manifest unavailable: ${(e as Error).message}`,
@@ -278,7 +286,13 @@ export function createClient(opts: SdkOptions = {}) {
         );
       return parseManifest(await res.json().catch(() => null));
     })();
-    return manifestP;
+    manifestP = pending;
+    // Cache only a successful parse or an explicit 404. A rejected promise
+    // would otherwise brick this client instance after one CDN/network blip.
+    void pending.catch(() => {
+      if (manifestP === pending) manifestP = null;
+    });
+    return pending;
   };
 
   const liveEndpoint = (manifest: DeploymentManifest | null): string => {
@@ -342,6 +356,36 @@ export function createClient(opts: SdkOptions = {}) {
     return headers;
   };
 
+  /** One granted record-write route. Intent wrappers are part of a declared
+   * manifest contract; bare-body fallback is only for legacy (404 manifest)
+   * guest mounts whose older server does not understand the wrapper yet. */
+  const grantedRecordWrite = async <T>(
+    manifest: DeploymentManifest | null,
+    method: "POST" | "PATCH",
+    path: string,
+    values: Record<string, unknown>,
+    writeOpts: WriteOptions,
+  ): Promise<T> => {
+    const endpoint = liveEndpoint(manifest);
+    const mounted = isGuestMountBase(endpoint);
+    const body = mounted
+      ? { $intent: { id: newIntentId(), submittedAt: Date.now() }, values }
+      : values;
+    const headers = await liveWriteHeaders(manifest, writeOpts);
+    try {
+      return await reqAt<T>(endpoint, method, path, body, headers);
+    } catch (e) {
+      if (
+        manifest === null &&
+        mounted &&
+        e instanceof MetahubError &&
+        (e.status === 400 || e.status === 404)
+      )
+        return reqAt<T>(endpoint, method, path, values, headers);
+      throw e;
+    }
+  };
+
   return {
     // databases
     listDatabases: () => dataReq<DbInfo[]>("GET", "/api/databases"),
@@ -371,40 +415,15 @@ export function createClient(opts: SdkOptions = {}) {
           throw new MetahubError("static-async inbox is unavailable", "network", 0);
         return drop.createRecord(db, values, writeOpts);
       }
-      // On a guest mount, send the idempotent intent wrapper so a retried POST
-      // (dropped response) can't double-create. The root main API doesn't parse
-      // wrappers, so only wrap on a mount; and if a mount server is older than
-      // this SDK (a vendored copy), retry once with the plain body.
-      const endpoint = liveEndpoint(manifest);
-      const mounted = isGuestMountBase(endpoint);
-      const body = mounted ? { $intent: { id: newIntentId(), submittedAt: Date.now() }, values } : values;
-      const headers = await liveWriteHeaders(manifest, writeOpts);
       try {
-        return await reqAt<RecordInfo>(
-          endpoint,
+        return await grantedRecordWrite<RecordInfo>(
+          manifest,
           "POST",
           `/api/records?db=${q(db)}`,
-          body,
-          headers,
+          values,
+          writeOpts,
         );
       } catch (e) {
-        if (
-          mounted &&
-          e instanceof MetahubError &&
-          (e.status === 400 || e.status === 404)
-        ) {
-          try {
-            return await reqAt<RecordInfo>(
-              endpoint,
-              "POST",
-              `/api/records?db=${q(db)}`,
-              values,
-              headers,
-            );
-          } catch (e2) {
-            e = e2;
-          }
-        }
         // Only auth refusals and transport failures may fall back — a 400/404/429
         // is a real answer from a reachable, willing endpoint.
         const eligible = e instanceof MetahubError ? e.status === 401 : true;
@@ -429,33 +448,13 @@ export function createClient(opts: SdkOptions = {}) {
           "invalid_input",
           400,
         );
-      const endpoint = liveEndpoint(manifest);
-      const mounted = isGuestMountBase(endpoint);
-      const body = mounted ? { $intent: { id: newIntentId(), submittedAt: Date.now() }, values } : values;
-      const headers = await liveWriteHeaders(manifest, writeOpts);
-      try {
-        return await reqAt<RecordInfo>(
-          endpoint,
-          "PATCH",
-          `/api/record?id=${q(id)}`,
-          body,
-          headers,
-        );
-      } catch (e) {
-        if (
-          mounted &&
-          e instanceof MetahubError &&
-          (e.status === 400 || e.status === 404)
-        )
-          return reqAt<RecordInfo>(
-            endpoint,
-            "PATCH",
-            `/api/record?id=${q(id)}`,
-            values,
-            headers,
-          );
-        throw e;
-      }
+      return grantedRecordWrite<RecordInfo>(
+        manifest,
+        "PATCH",
+        `/api/record?id=${q(id)}`,
+        values,
+        writeOpts,
+      );
     },
     deleteRecord: async (id: string) => {
       const manifest = await getManifest();

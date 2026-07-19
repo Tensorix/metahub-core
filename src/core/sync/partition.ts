@@ -22,7 +22,14 @@
 // Incremental pushes are the oplog filtered by a JOIN against the shadow.
 
 import type { DbDriver } from "../driver.ts";
-import { CHANGE_COLS, CHANGE_SELECT, type Change, type ChangeBatch } from "../crdt.ts";
+import {
+  CHANGE_COLS,
+  CHANGE_SELECT,
+  OPLOG_ONLY_DATASETS,
+  type Change,
+  type ChangeBatch,
+} from "../crdt.ts";
+import { fnv1a64Hex } from "../hash.ts";
 
 /** The scope of one share's partition. `siteId` is null for pure-data shares. */
 export interface PartitionScope {
@@ -253,25 +260,27 @@ export function partitionWinners(db: DbDriver, scope: PartitionScope): Change[] 
     .all(...m.params) as Change[];
 }
 
-/** Winners of every register in the whole oplog — the room side of the digest
- *  (a room's entire oplog IS its partition plus its guest ops). */
+/** Winners of every MATERIALIZED register in the whole oplog — the room side
+ * of the partition digest. Oplog-only protocol state (intent receipts) is
+ * replicated and retained, but must not make anti-entropy compare a room's
+ * protocol metadata against the owner's materialized partition projection. */
 export function allWinners(db: DbDriver): Change[] {
+  const excluded = [...OPLOG_ONLY_DATASETS];
+  const exclusion = excluded.length
+    ? `c.dataset NOT IN (${excluded.map(() => "?").join(", ")}) AND`
+    : "";
   return db
     .query(
       `SELECT ${CHANGE_SELECT} FROM crdt_changes c
-       WHERE NOT EXISTS (
+       WHERE ${exclusion} NOT EXISTS (
          SELECT 1 FROM crdt_changes k
          WHERE k.dataset = c.dataset AND k.row_id = c.row_id AND k.col = c.col AND k.hlc > c.hlc
        )`,
     )
-    .all() as Change[];
+    .all(...excluded) as Change[];
 }
 
 // ---- digest ------------------------------------------------------------------------
-
-const FNV_OFFSET = 0xcbf29ce484222325n;
-const FNV_PRIME = 0x100000001b3n;
-const FNV_MASK = 0xffffffffffffffffn;
 
 /**
  * Order-insensitive anti-entropy digest over a winner set: the winners'
@@ -283,14 +292,7 @@ const FNV_MASK = 0xffffffffffffffffn;
  */
 export function winnersDigest(rows: Pick<Change, "dataset" | "row_id" | "col" | "hlc">[]): string {
   const keys = rows.map((r) => `${r.dataset} ${r.row_id} ${r.col} ${r.hlc}`).sort();
-  let h = FNV_OFFSET;
-  for (const key of keys) {
-    for (let i = 0; i < key.length; i++) {
-      h = ((h ^ BigInt(key.charCodeAt(i))) * FNV_PRIME) & FNV_MASK;
-    }
-    h = ((h ^ 0x1en) * FNV_PRIME) & FNV_MASK; // record separator
-  }
-  return h.toString(16).padStart(16, "0");
+  return fnv1a64Hex(keys.map((key) => key + "\x1e").join(""));
 }
 
 /** The owner-side digest of a scope (winners restricted to current members). */

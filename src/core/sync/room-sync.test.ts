@@ -366,7 +366,9 @@ test("a lost response retries idempotently (cursors never advance early)", async
   expect(roomOplogCount(fx)).toBe(roomBefore); // room-side dedup, no growth
   expect(r.pulled).toBeGreaterThan(0); // the guest op was re-delivered
   const guestOps = fx.A
-    .query("SELECT COUNT(*) AS n FROM crdt_changes WHERE node_id LIKE ? || '-%'")
+    .query(
+      "SELECT COUNT(*) AS n FROM crdt_changes WHERE dataset = 'records' AND node_id LIKE ? || '-%'",
+    )
     .get(GUEST_BASE) as { n: number };
   expect(guestOps.n).toBe(1); // ingested exactly once
   expectRoomMatches(fx, fx.A);
@@ -399,6 +401,16 @@ test("guest write flows back to both devices with per-visitor attribution", asyn
     .query("SELECT DISTINCT node_id AS n FROM crdt_changes WHERE row_id = ?")
     .all(created.id) as { n: string }[];
   expect(authors.map((a) => a.n)).toEqual([sub]);
+  const receiptCount = (db: Database) =>
+    (
+      db
+        .query(
+          "SELECT COUNT(*) AS n FROM crdt_changes WHERE dataset = 'intent_receipts' AND node_id = ?",
+        )
+        .get(sub) as { n: number }
+    ).n;
+  expect(receiptCount(fx.room)).toBe(1);
+  expect(receiptCount(fx.A)).toBe(1); // protocol state follows the guest pull
 
   // …and it spreads to device B through the ordinary hub channel
   exchange(fx.A, fx.B);

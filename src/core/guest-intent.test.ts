@@ -6,8 +6,13 @@ import { addProperty } from "./properties.ts";
 import { createRecord, deleteRecord, getRecord, updateRecord } from "./records.ts";
 import { parseHlc } from "./hlc.ts";
 import { policyForShare } from "./access-policy.ts";
-import { applyGuestIntent, type GuestIntent } from "./guest-intent.ts";
+import {
+  applyGuestIntent,
+  INTENT_RECEIPT_DATASET,
+  type GuestIntent,
+} from "./guest-intent.ts";
 import type { AccessPolicy } from "./access-policy.ts";
+import { compactOplog } from "./compact.ts";
 
 function makeDb(node = "hostnode"): Database {
   const db = new Database(":memory:");
@@ -117,6 +122,30 @@ test("submitted mode: negative/fractional submit time is normalized to a valid H
   expect(parseHlc(row.hlc)).toEqual({ millis: 0, counter: 2, node: "gbase-clock" });
 });
 
+test("submitted mode: NaN and infinities normalize to the safe current time", () => {
+  for (const [i, submittedAt] of [Number.NaN, Infinity, -Infinity].entries()) {
+    const { db, dbId, titleId } = seed();
+    const rowId = `rec_nonfinite${i}`;
+    applyGuestIntent(
+      db,
+      policy(dbId),
+      { guestNode: `gbase-nonfinite${i}` },
+      INTENT({
+        action: "createRecord",
+        table: dbId,
+        recordId: rowId,
+        payload: { Title: "x" },
+        submittedAt,
+      }),
+      { clock: "submitted", now: 1234.9 },
+    );
+    const row = db
+      .query("SELECT hlc FROM crdt_changes WHERE row_id = ? AND col = ?")
+      .get(rowId, titleId) as { hlc: string };
+    expect(parseHlc(row.hlc).millis).toBe(1234);
+  }
+});
+
 test("submitted LWW: the later SUBMIT time wins regardless of execution order", () => {
   const { db, dbId, titleId } = seed();
   // A record exists.
@@ -164,6 +193,58 @@ test("idempotency: replaying the same intentId returns the same row, no duplicat
   expect(b.id).toBe(a.id);
   const n = db.query("SELECT COUNT(*) AS n FROM records WHERE __deleted = 0").get() as { n: number };
   expect(n.n).toBe(1); // exactly one record despite two applies
+});
+
+test("idempotency: submittedAt is clock metadata, not request identity", () => {
+  const { db, dbId } = seed();
+  const intent = INTENT({
+    intentId: "int_clock_metadata",
+    table: dbId,
+    recordId: "rec_clock_metadata",
+    payload: { Title: "once" },
+    submittedAt: 100,
+  });
+  const a = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-clock-metadata" },
+    intent,
+    { clock: "submitted", now: 1000 },
+  );
+  const b = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-clock-metadata" },
+    { ...intent, submittedAt: 900 },
+    { clock: "submitted", now: 1000 },
+  );
+  expect(b.id).toBe(a.id);
+});
+
+test("idempotency: property order and equivalent coerced values share a fingerprint", () => {
+  const { db, dbId } = seed();
+  const number = addProperty(db, dbId, { name: "N", type: "number" });
+  const intent = INTENT({
+    intentId: "int_semantic_fingerprint",
+    table: dbId,
+    payload: { Title: "same", N: "42" },
+  });
+  const first = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-semantic" },
+    intent,
+    { clock: "authority" },
+  );
+  const replay = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-semantic" },
+    { ...intent, payload: { N: 42, Title: "same" } },
+    { clock: "authority" },
+  );
+  expect(replay.id).toBe(first.id);
+  expect(replay.cells[number.id]).toBe(42);
 });
 
 test("idempotency: same guest + intentId with different content is a conflict", () => {
@@ -303,6 +384,137 @@ test("idempotency: deleting an updated result also makes its replay conflict", (
   expect(code).toBe("conflict");
 });
 
+test("idempotency: update receipt survives compaction and cannot roll back a later owner edit", () => {
+  const { db, dbId, titleId } = seed();
+  const made = createRecord(db, dbId, { Title: "before" });
+  const intent = INTENT({
+    intentId: "int_compacted_update",
+    action: "updateRecord",
+    recordId: made.id,
+    payload: { Title: "guest" },
+  });
+  applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-compact" },
+    intent,
+    { clock: "authority" },
+  );
+  updateRecord(db, made.id, { Title: "owner-newer" });
+  compactOplog(db, { keepDays: 0, now: Date.now() + 60_000, vacuum: false });
+
+  expect(
+    db
+      .query("SELECT COUNT(*) AS n FROM crdt_changes WHERE dataset = ?")
+      .get(INTENT_RECEIPT_DATASET),
+  ).toEqual({ n: 1 });
+  applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-compact" },
+    intent,
+    { clock: "authority" },
+  );
+  expect(getRecord(db, made.id)!.cells[titleId]).toBe("owner-newer");
+});
+
+test("write-only create returns only the immutable submitted projection on first apply and replay", () => {
+  const { db, dbId, titleId } = seed();
+  const privateProp = addProperty(db, dbId, { name: "Private", type: "text" });
+  const createOnly = policyForShare({
+    grants: JSON.stringify({ v: 1, tables: [{ db: dbId, ops: ["create"] }] }),
+    pw_salt: null,
+    pw_hash: null,
+    expires_at: null,
+    guest_node_id: "gbase",
+  });
+  const intent = INTENT({
+    intentId: "int_write_only",
+    table: dbId,
+    payload: { Title: "submitted" },
+  });
+  const first = applyGuestIntent(
+    db,
+    createOnly,
+    { guestNode: "gbase-write-only" },
+    intent,
+    { clock: "authority" },
+  );
+  updateRecord(db, first.id, { Private: "owner-secret" });
+  const replay = applyGuestIntent(
+    db,
+    createOnly,
+    { guestNode: "gbase-write-only" },
+    intent,
+    { clock: "authority" },
+  );
+  expect(first.cells).toEqual({ [titleId]: "submitted" });
+  expect(replay.cells).toEqual({ [titleId]: "submitted" });
+  expect(replay.cells[privateProp.id]).toBeUndefined();
+});
+
+test("write-only update never returns pre-existing fields", () => {
+  const { db, dbId, titleId } = seed();
+  const privateProp = addProperty(db, dbId, { name: "Private", type: "text" });
+  const made = createRecord(db, dbId, { Title: "before", Private: "owner-secret" });
+  const updateOnly = policyForShare({
+    grants: JSON.stringify({ v: 1, tables: [{ db: dbId, ops: ["update"] }] }),
+    pw_salt: null,
+    pw_hash: null,
+    expires_at: null,
+    guest_node_id: "gbase",
+  });
+  const intent = INTENT({
+    intentId: "int_update_only",
+    action: "updateRecord",
+    recordId: made.id,
+    payload: { Title: "submitted" },
+  });
+  const first = applyGuestIntent(
+    db,
+    updateOnly,
+    { guestNode: "gbase-update-only" },
+    intent,
+    { clock: "authority" },
+  );
+  const replay = applyGuestIntent(
+    db,
+    updateOnly,
+    { guestNode: "gbase-update-only" },
+    intent,
+    { clock: "authority" },
+  );
+  expect(first.cells).toEqual({ [titleId]: "submitted" });
+  expect(replay.cells).toEqual({ [titleId]: "submitted" });
+  expect(first.cells[privateProp.id]).toBeUndefined();
+});
+
+test("a current read grant may return the full current row on replay", () => {
+  const { db, dbId } = seed();
+  const privateProp = addProperty(db, dbId, { name: "Private", type: "text" });
+  const intent = INTENT({
+    intentId: "int_readable_replay",
+    table: dbId,
+    payload: { Title: "submitted" },
+  });
+  const first = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-readable" },
+    intent,
+    { clock: "authority" },
+  );
+  updateRecord(db, first.id, { Private: "visible-with-read" });
+  const replay = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-readable" },
+    intent,
+    { clock: "authority" },
+  );
+  expect(replay.cells[privateProp.id]).toBe("visible-with-read");
+});
+
 test("intentId rejects unsafe protocol delimiters and oversized values", () => {
   const { db, dbId } = seed();
   for (const intentId of ["", "bad:key", "x".repeat(65)]) {
@@ -347,6 +559,38 @@ test("submitted create-only intent cannot overwrite an existing record id", () =
   }
   expect(code).toBe("conflict");
   expect(getRecord(db, existing.id)!.cells[titleId]).toBe("owner");
+});
+
+test("authority create ignores a caller recordId and cannot overwrite it", () => {
+  const { db, dbId, titleId } = seed();
+  const existing = createRecord(db, dbId, { Title: "owner" });
+  const made = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-authority-id" },
+    INTENT({
+      intentId: "int_authority_id",
+      table: dbId,
+      recordId: existing.id,
+      payload: { Title: "guest" },
+    }),
+    { clock: "authority" },
+  );
+  expect(made.id).not.toBe(existing.id);
+  expect(getRecord(db, existing.id)!.cells[titleId]).toBe("owner");
+  const replay = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-authority-id" },
+    INTENT({
+      intentId: "int_authority_id",
+      table: dbId,
+      recordId: "rec_also_ignored",
+      payload: { Title: "guest" },
+    }),
+    { clock: "authority" },
+  );
+  expect(replay.id).toBe(made.id);
 });
 
 test("submitted create-only intent cannot resurrect a tombstoned record id", () => {

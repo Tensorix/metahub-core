@@ -146,6 +146,10 @@ export const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
 // Exported for the NOT_NULL_ZERO_COLS schema-parity test.
 export const RECORD_META = new Set(["database_id", "created_hlc", "order_key", "__deleted"]);
 
+/** Replicated registers that intentionally have no materialized state table.
+ * They remain in the oplog/snapshots as durable protocol state. */
+export const OPLOG_ONLY_DATASETS: ReadonlySet<string> = new Set(["intent_receipts"]);
+
 type SqlValue = string | number | null;
 
 // Synced NOT NULL columns whose schema default is 0. A well-formed op never sets
@@ -219,6 +223,8 @@ function materialize(
   col: string,
   valueJson: string | null,
 ): void {
+  if (OPLOG_ONLY_DATASETS.has(dataset)) return;
+
   if (dataset === "records") {
     if (RECORD_META.has(col)) {
       ensureRow(db, "records", rowId);

@@ -20,6 +20,7 @@ import type { DbDriver } from "./driver.ts";
 import type { GrantSet, GrantPrincipal, PayloadLimits } from "./grants-core.ts";
 import { parseGrantSet, GUEST_LIMITS } from "./grants-core.ts";
 import { verifyPasswordVerifier } from "./shares.ts";
+import { fnv1a32 } from "./hash.ts";
 
 /** The Turnstile / password write gate, normalized from whichever store holds
  *  it. Both are optional; absent = open submission for that factor. */
@@ -28,6 +29,12 @@ export interface WriteGate {
   /** PBKDF2 verifier + its published salt (the password itself never travels). */
   password?: { saltB64: string; verifierB64: string };
 }
+
+type AssertNever<T extends never> = T;
+type RevisionGateKeys = "turnstile" | "password";
+// Adding a gate dimension must be an explicit revision-contract decision:
+// either include its public fields below or deliberately extend this whitelist.
+type _RevisionGateCoverage = AssertNever<Exclude<keyof WriteGate, RevisionGateKeys>>;
 
 export interface AccessPolicy {
   /** Gates the relation-write policy in assertGuestPayload (public forbids). */
@@ -68,12 +75,7 @@ export function computeRevision(policy: Pick<AccessPolicy, "audience" | "grants"
       : null,
     x: policy.expiresAt ?? null,
   });
-  let h = 0x811c9dc5;
-  for (let i = 0; i < canon.length; i++) {
-    h ^= canon.charCodeAt(i);
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-  }
-  return h >>> 0;
+  return fnv1a32(canon);
 }
 
 /** Verify a candidate password against a policy's write gate (constant-time,

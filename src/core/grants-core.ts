@@ -21,9 +21,10 @@ import { listProperties, type PropertyRow } from "./properties.ts";
 import {
   coerce,
   resolveData,
-  createRecord,
-  updateRecord,
+  createRecordPrepared,
+  updateRecordPrepared,
   getRecord,
+  type PreparedRecordCell,
   type RecordRow,
 } from "./records.ts";
 import { withNodeId, type Change } from "./crdt.ts";
@@ -294,10 +295,12 @@ function assertRelationAllowed(
 }
 
 /**
- * Guest payload guardrails, run BEFORE any write: cell count, per-value and
- * total size, relation policy, and (for creates) the per-table row ceiling.
- * Type/shape validation itself is delegated to records.ts coerce() inside
- * createRecord/updateRecord — this layer only adds the guest-specific limits.
+ * Guest payload guardrails, run BEFORE any write: property resolution,
+ * coercion, cell count, per-value and total size, and relation policy. Returns
+ * the prepared cells so the actual mutator does not resolve/coerce them again.
+ *
+ * The stateful create capacity check is separate: an exact idempotent replay
+ * must still succeed after the table reaches its row ceiling.
  */
 export function assertGuestPayload(
   db: DbDriver,
@@ -305,15 +308,18 @@ export function assertGuestPayload(
   principal: GrantPrincipal,
   database: DatabaseRow,
   values: Record<string, unknown>,
-  opts: { create?: boolean; limits?: PayloadLimits } = {},
-): void {
+  opts: { limits?: PayloadLimits } = {},
+): PreparedRecordCell[] {
   const limits = opts.limits ?? GUEST_LIMITS;
   const entries = Object.entries(values);
   if (entries.length > limits.maxCells)
     throw new MhError("invalid_input", `too many cells (max ${limits.maxCells})`);
 
   const props = listProperties(db, database.id);
-  const resolved = resolveData(props, values); // unknown keys / ambiguous names throw here
+  const resolved = resolveData(props, values).map(({ prop, value }) => ({
+    prop,
+    value: coerce(db, prop, value),
+  })); // unknown keys / ambiguous names / invalid values throw here
 
   let total = 0;
   for (const { prop, value } of resolved) {
@@ -327,7 +333,15 @@ export function assertGuestPayload(
   if (total > limits.maxBodyBytes)
     throw new MhError("invalid_input", `payload too large (max ${limits.maxBodyBytes} bytes)`);
 
-  if (opts.create && liveRowCount(db, database.id) >= limits.maxRows)
+  return resolved;
+}
+
+export function assertGuestCreateCapacity(
+  db: DbDriver,
+  database: DatabaseRow,
+  limits: PayloadLimits = GUEST_LIMITS,
+): void {
+  if (liveRowCount(db, database.id) >= limits.maxRows)
     throw new MhError("invalid_input", `table is full (guest writes cap at ${limits.maxRows} rows)`);
 }
 
@@ -343,8 +357,9 @@ export function guestCreateRecord(
   limits?: PayloadLimits,
 ): RecordRow {
   const database = authorizeDbRef(db, set, dbRef, "create");
-  assertGuestPayload(db, set, principal, database, values, { create: true, limits });
-  return withNodeId(principal.guestNode, () => createRecord(db, database.id, values));
+  const cells = assertGuestPayload(db, set, principal, database, values, { limits });
+  assertGuestCreateCapacity(db, database, limits);
+  return withNodeId(principal.guestNode, () => createRecordPrepared(db, database, cells));
 }
 
 /** Authorized, guarded, guest-attributed record update (any row of a granted
@@ -360,8 +375,8 @@ export function guestUpdateRecord(
   const rec = authorizeRecord(db, set, recordId, "update");
   const database = getDatabase(db, rec.database_id);
   if (!database) throw deny();
-  assertGuestPayload(db, set, principal, database, values, { limits });
-  return withNodeId(principal.guestNode, () => updateRecord(db, recordId, values));
+  const cells = assertGuestPayload(db, set, principal, database, values, { limits });
+  return withNodeId(principal.guestNode, () => updateRecordPrepared(db, recordId, cells));
 }
 
 // ---- op-level validation (inbox ingest isolation layer) ----------------------------
