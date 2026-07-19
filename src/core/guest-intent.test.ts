@@ -69,6 +69,24 @@ test("authority mode: create is attributed to the guest node, stamped at server 
   expect(parseHlc(rows[0]!.hlc).millis).toBeGreaterThanOrEqual(before); // server clock ~now
 });
 
+test("authority mode accepts a first realtime write from a client with a stale clock", () => {
+  const { db, dbId, titleId } = seed();
+  const now = Date.now();
+  const rec = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-stale-clock" },
+    INTENT({
+      action: "createRecord",
+      table: dbId,
+      payload: { Title: "realtime" },
+      submittedAt: now - INTENT_REPLAY_WINDOW_MS - 1,
+    }),
+    { clock: "authority", now },
+  );
+  expect(rec.cells[titleId]).toBe("realtime");
+});
+
 test("submitted mode: op HLC carries the SUBMIT time, not the execution time", () => {
   const { db, dbId, titleId } = seed();
   const tuesday = Date.now() - 2 * 86_400_000; // 2 days ago

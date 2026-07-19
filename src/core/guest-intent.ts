@@ -141,7 +141,10 @@ export function applyGuestIntent(
     // A receipt that aged out must never turn a delayed replay back into a fresh
     // update. The inbox expires first, so legitimate first delivery remains
     // possible throughout its full retention period.
-    if (intentSubmissionExpired(intent.submittedAt, acceptedNow))
+    if (
+      opts.clock === "submitted" &&
+      intentSubmissionExpired(intent.submittedAt, acceptedNow)
+    )
       throw new MhError("conflict", "intent replay window expired");
 
     if (!prepared.targetLive) throw new MhError("auth", "unauthorized");
