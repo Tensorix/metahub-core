@@ -3,9 +3,10 @@
 // CRDT emission and durable idempotency.
 //
 // Idempotency receipts are oplog-only CRDT registers. Unlike a txn lookup on
-// business cells, a receipt is never superseded, so history compaction cannot
-// erase it. The register also follows normal oplog replication without adding
-// a node-local table that would split idempotency state across runtimes.
+// business cells, history compaction cannot erase one during its replay window.
+// The register follows normal oplog replication without adding a node-local
+// table that would split idempotency state across runtimes; protocol GC removes
+// it after that bounded window and replication filters prevent resurrection.
 //
 // PORTABLE, driver-only.
 
@@ -20,9 +21,15 @@ import {
   type RecordRow,
 } from "./records.ts";
 import { formatHlc, parseHlc } from "./hlc.ts";
-import { emit, ingest, withNodeId, withTxnId, type Change } from "./crdt.ts";
+import { ingest, withNodeId, withTxnId, type Change } from "./crdt.ts";
 import { randomSuffix } from "./ids.ts";
 import { fnv1a64Hex } from "./hash.ts";
+import {
+  INTENT_RECEIPT_DATASET,
+  intentSubmissionExpired,
+  isExpiredIntentReceipt,
+  pruneExpiredIntentReceipts,
+} from "./intent-retention.ts";
 import type { AccessPolicy } from "./access-policy.ts";
 import {
   assertGuestCreateCapacity,
@@ -37,8 +44,8 @@ import {
 const HLC_SKEW_MS = 5 * 60_000;
 const INTENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** Oplog-only dataset: materialize() deliberately ignores unknown datasets. */
-export const INTENT_RECEIPT_DATASET = "intent_receipts";
+/** Kept as a public re-export for callers/tests that treat receipts as protocol state. */
+export { INTENT_RECEIPT_DATASET } from "./intent-retention.ts";
 const RECEIPT_COL = "result";
 
 export interface GuestIntent {
@@ -99,6 +106,10 @@ export function applyGuestIntent(
   if (!INTENT_ID_RE.test(intent.intentId))
     throw new MhError("invalid_input", "intentId must be 1-64 safe characters");
 
+  const acceptedNow = opts.now ?? Date.now();
+  // This maintenance runs outside the request transaction deliberately: even a
+  // rejected stale replay must still be able to reclaim its expired receipt.
+  pruneExpiredIntentReceipts(db, acceptedNow);
   const principal: GrantPrincipal = {
     kind: policy.audience,
     guestNode: session.guestNode,
@@ -106,7 +117,12 @@ export function applyGuestIntent(
   const tx = db.transaction(() => {
     const prepared = prepareIntent(db, policy, principal, intent, opts.clock);
     const txn = intentTxnPrefix(session.guestNode, intent.intentId) + prepared.fingerprint;
-    const receipt = readReceipt(db, session.guestNode, intent.intentId);
+    const receipt = readReceipt(
+      db,
+      session.guestNode,
+      intent.intentId,
+      acceptedNow,
+    );
 
     if (receipt) {
       if (
@@ -122,6 +138,12 @@ export function applyGuestIntent(
       return responseForPolicy(policy, current, receipt.result);
     }
 
+    // A receipt that aged out must never turn a delayed replay back into a fresh
+    // update. The inbox expires first, so legitimate first delivery remains
+    // possible throughout its full retention period.
+    if (intentSubmissionExpired(intent.submittedAt, acceptedNow))
+      throw new MhError("conflict", "intent replay window expired");
+
     if (!prepared.targetLive) throw new MhError("auth", "unauthorized");
 
     if (opts.clock === "submitted")
@@ -132,9 +154,17 @@ export function applyGuestIntent(
         intent,
         prepared,
         txn,
-        opts.now ?? Date.now(),
+        acceptedNow,
       );
-    return applyAuthority(db, policy, principal, intent, prepared, txn);
+    return applyAuthority(
+      db,
+      policy,
+      principal,
+      intent,
+      prepared,
+      txn,
+      acceptedNow,
+    );
   });
   return tx();
 }
@@ -218,6 +248,7 @@ function applyAuthority(
   intent: GuestIntent,
   prepared: PreparedIntent,
   txn: string,
+  acceptedNow: number,
 ): RecordRow {
   return withTxnId(txn, () =>
     withNodeId(principal.guestNode, () => {
@@ -232,11 +263,13 @@ function applyAuthority(
         prepared.database.id,
         prepared.cells,
       );
-      emitReceipt(
+      writeReceiptAt(
         db,
         principal.guestNode,
         intent.intentId,
         makeReceipt(intent.action, prepared, current.id, projection),
+        txn,
+        acceptedNow,
       );
       return responseForPolicy(policy, current, projection);
     }),
@@ -294,13 +327,22 @@ function applySubmitted(
 
   const projection = submittedProjection(rowId, prepared.database.id, cells);
   const receipt = makeReceipt(intent.action, prepared, rowId, projection);
-  mk(
-    INTENT_RECEIPT_DATASET,
-    receiptRowId(node, intent.intentId),
-    RECEIPT_COL,
-    receipt,
-  );
-  ingest(db, changes);
+  // Retention is based on when the runtime accepted the intent, not on the
+  // guest-supplied submittedAt. Otherwise a last-moment Drop delivery could
+  // create a receipt that is immediately old enough to collect.
+  const receiptMillis = clampMillis(now, now);
+  const receiptCounter =
+    receiptMillis === millis ? counter : seedCounter(db, node, receiptMillis);
+  changes.push({
+    hlc: formatHlc({ millis: receiptMillis, counter: receiptCounter, node }),
+    node_id: node,
+    dataset: INTENT_RECEIPT_DATASET,
+    row_id: receiptRowId(node, intent.intentId),
+    col: RECEIPT_COL,
+    value: JSON.stringify(receipt),
+    txn,
+  });
+  ingest(db, changes, { now: receiptMillis });
 
   const current = getRecord(db, rowId);
   if (!current) throw new MhError("conflict", "intent result no longer exists");
@@ -345,23 +387,43 @@ function makeReceipt(
   };
 }
 
-function emitReceipt(
+/** Receipt age is protocol wall time, independent of a possibly-ahead CRDT
+ * clock observed from peers. Its coordinate is unique, so it need not be above
+ * unrelated business registers to remain a durable winner. */
+function writeReceiptAt(
   db: DbDriver,
   guestNode: string,
   intentId: string,
   receipt: IntentReceipt,
+  txn: string,
+  acceptedNow: number,
 ): void {
-  emit(db, INTENT_RECEIPT_DATASET, receiptRowId(guestNode, intentId), RECEIPT_COL, receipt);
+  const millis = clampMillis(acceptedNow, acceptedNow);
+  const change: Change = {
+    hlc: formatHlc({
+      millis,
+      counter: seedCounter(db, guestNode, millis),
+      node: guestNode,
+    }),
+    node_id: guestNode,
+    dataset: INTENT_RECEIPT_DATASET,
+    row_id: receiptRowId(guestNode, intentId),
+    col: RECEIPT_COL,
+    value: JSON.stringify(receipt),
+    txn,
+  };
+  ingest(db, [change], { now: millis });
 }
 
 function readReceipt(
   db: DbDriver,
   guestNode: string,
   intentId: string,
+  now: number,
 ): IntentReceipt | null {
   const row = db
     .query(
-      `SELECT value, node_id, txn FROM crdt_changes
+      `SELECT hlc, value, node_id, txn FROM crdt_changes
        WHERE dataset = ? AND row_id = ? AND col = ?
        ORDER BY hlc DESC LIMIT 1`,
     )
@@ -369,8 +431,20 @@ function readReceipt(
       INTENT_RECEIPT_DATASET,
       receiptRowId(guestNode, intentId),
       RECEIPT_COL,
-    ) as { value: string | null; node_id: string; txn: string | null } | null;
+    ) as {
+      hlc: string;
+      value: string | null;
+      node_id: string;
+      txn: string | null;
+    } | null;
   if (!row) return null;
+  if (
+    isExpiredIntentReceipt(
+      { dataset: INTENT_RECEIPT_DATASET, hlc: row.hlc },
+      now,
+    )
+  )
+    return null;
 
   try {
     const receipt = JSON.parse(row.value ?? "") as Partial<IntentReceipt>;

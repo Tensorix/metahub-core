@@ -33,6 +33,10 @@ import {
   fromB64,
   type KeyEnvelope,
 } from "./e2ee.ts";
+import {
+  filterExpiredIntentReceipts,
+  pruneExpiredIntentReceipts,
+} from "../intent-retention.ts";
 
 // ---- config + client surface ---------------------------------------------------
 
@@ -337,8 +341,8 @@ function setSnapshotConsumed(db: DbDriver, url: string, keys: Iterable<string>):
 /** The current winner (max-HLC row) of every register — the head state as oplog
  *  rows. Mirrors compact.ts's "collapse to as-of-cutoff winner": a consumer that
  *  ingests this reaches the same materialized state. Tombstone winners included. */
-function winnersSnapshot(db: DbDriver): Change[] {
-  return db
+function winnersSnapshot(db: DbDriver, now = Date.now()): Change[] {
+  const rows = db
     .query(
       `SELECT ${CHANGE_SELECT} FROM crdt_changes c
        WHERE NOT EXISTS (
@@ -347,6 +351,7 @@ function winnersSnapshot(db: DbDriver): Change[] {
        )`,
     )
     .all() as Change[];
+  return filterExpiredIntentReceipts(rows, now);
 }
 
 // ---- snapshot frontier (vector clock) for incremental skip -----------------------
@@ -490,6 +495,8 @@ export async function publishSnapshot(
   config: S3Config,
   retainSegments: number = DEFAULT_RETAIN_SEGMENTS,
 ): Promise<{ key: string; changes: number } | null> {
+  const now = Date.now();
+  pruneExpiredIntentReceipts(db, now);
   const key = masterKeyOf(config);
   const base = basePrefix(config.prefix);
   const node = getNodeId(db);
@@ -503,7 +510,7 @@ export async function publishSnapshot(
     .sort();
   const ownSegHigh = ownSegs.length ? ownSegs[ownSegs.length - 1]! : null;
 
-  const winners = winnersSnapshot(db);
+  const winners = winnersSnapshot(db, now);
   if (winners.length === 0) return null;
   const maxHlc = winners.reduce((m, c) => (c.hlc > m ? c.hlc : m), "");
   // Hash a deterministic (sorted) view so row order can't change the key.
@@ -633,6 +640,7 @@ export async function syncWithStorage(
   config: S3Config,
   opts: StorageSyncOpts = {},
 ): Promise<SyncResult> {
+  pruneExpiredIntentReceipts(db);
   const node = getNodeId(db);
   const key = masterKeyOf(config);
   const base = basePrefix(config.prefix);

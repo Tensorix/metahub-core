@@ -14,6 +14,10 @@ import { listDocumentRevisions, documentAtVersion } from "./history.ts";
 import { validateHub } from "./integrity.ts";
 import { compactOplog, gcBlobs, compactEstimate } from "./compact.ts";
 import { createSite, putFile, getFileForServe } from "./sites.ts";
+import {
+  INTENT_RECEIPT_DATASET,
+  INTENT_REPLAY_WINDOW_MS,
+} from "./intent-retention.ts";
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -192,4 +196,39 @@ test("dry run reports counts without changing anything", () => {
   const after = (db.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n;
   expect(after).toBe(before);
   expect(compactEstimate(db, 0, futureNow(db)).compactable_changes).toBe(r.deleted_changes);
+});
+
+test("compaction collects expired intent receipts even though they are not superseded", () => {
+  const db = makeNode("aaaa");
+  const acceptedAt = 1_700_000_000_000;
+  expect(
+    ingest(
+      db,
+      [
+        {
+          hlc: formatHlc({ millis: acceptedAt, counter: 0, node: "guest" }),
+          node_id: "guest",
+          dataset: INTENT_RECEIPT_DATASET,
+          row_id: "guest:int_old",
+          col: "result",
+          value: "{}",
+          txn: "intent:guest:int_old:fingerprint",
+        },
+      ],
+      { now: acceptedAt },
+    ),
+  ).toBe(1);
+  const now = acceptedAt + INTENT_REPLAY_WINDOW_MS + 1;
+  expect(compactEstimate(db, 3650, now).compactable_changes).toBe(1);
+  const result = compactOplog(db, {
+    keepDays: 3650,
+    now,
+    vacuum: false,
+  });
+  expect(result.deleted_changes).toBe(1);
+  expect(
+    db
+      .query("SELECT COUNT(*) AS n FROM crdt_changes WHERE dataset = ?")
+      .get(INTENT_RECEIPT_DATASET),
+  ).toEqual({ n: 0 });
 });

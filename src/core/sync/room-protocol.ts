@@ -26,6 +26,10 @@ import { initSchema } from "../schema-init.ts";
 import { randomSuffix } from "../ids.ts";
 import { policyForRoom } from "../access-policy.ts";
 import { applyGuestIntent, type GuestIntent } from "../guest-intent.ts";
+import {
+  intentReceiptCutoffHlc,
+  INTENT_RECEIPT_DATASET,
+} from "../intent-retention.ts";
 import type { RecordRow } from "../records.ts";
 import { allWinners, winnersDigest, PARTITION_DATASETS, type RowKey } from "./partition.ts";
 
@@ -345,9 +349,18 @@ function guestChangesAfterSeq(
   const rows = db
     .query(
       `SELECT seq AS __seq, ${CHANGE_COLS.join(", ")} FROM crdt_changes
-       WHERE seq > ? AND ${GUEST_NODE_SQL} ORDER BY seq LIMIT ?`,
+       WHERE seq > ? AND ${GUEST_NODE_SQL}
+         AND (dataset != ? OR hlc >= ?)
+       ORDER BY seq LIMIT ?`,
     )
-    .all(seq, guestBase, guestBase, limit) as (Change & { __seq: number })[];
+    .all(
+      seq,
+      guestBase,
+      guestBase,
+      INTENT_RECEIPT_DATASET,
+      intentReceiptCutoffHlc(),
+      limit,
+    ) as (Change & { __seq: number })[];
   const more = rows.length >= limit;
   let cursor: number;
   if (more) {

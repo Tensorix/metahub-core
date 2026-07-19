@@ -12,7 +12,11 @@ import {
   RECORD_META,
   NOT_NULL_ZERO_COLS,
 } from "./crdt.ts";
-import { nextHlc, parseHlc } from "./hlc.ts";
+import { nextHlc, parseHlc, formatHlc } from "./hlc.ts";
+import {
+  INTENT_RECEIPT_DATASET,
+  INTENT_REPLAY_WINDOW_MS,
+} from "./intent-retention.ts";
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -155,6 +159,42 @@ test("onlyNode honors limit and resumes from the last returned row", () => {
   expect(first.changes.length).toBe(2);
   const second = changesAfterSeq(a, first.cursor, { onlyNode: "nodeA", limit: 2 });
   expect(second.changes.length).toBe(1);
+});
+
+test("expired intent receipts are rejected on ingest and omitted from every egress path", () => {
+  const source = makeNode("source");
+  const acceptedAt = 1_700_000_000_000;
+  const receipt = {
+    hlc: formatHlc({ millis: acceptedAt, counter: 0, node: "guest" }),
+    node_id: "guest",
+    dataset: INTENT_RECEIPT_DATASET,
+    row_id: "guest:int_old",
+    col: "result",
+    value: JSON.stringify({ v: 1 }),
+    txn: "intent:guest:int_old:fingerprint",
+  };
+  expect(ingest(source, [receipt], { now: acceptedAt })).toBe(1);
+  emit(source, "databases", "db_live", "name", "Live");
+
+  const expiredAt = acceptedAt + INTENT_REPLAY_WINDOW_MS + 1;
+  expect(
+    changesSince(source, "", { now: expiredAt }).some(
+      (c) => c.dataset === INTENT_RECEIPT_DATASET,
+    ),
+  ).toBe(false);
+  const batch = changesAfterSeq(source, 0, { now: expiredAt });
+  expect(batch.changes.some((c) => c.dataset === INTENT_RECEIPT_DATASET)).toBe(
+    false,
+  );
+  expect(batch.changes.some((c) => c.row_id === "db_live")).toBe(true);
+
+  const fresh = makeNode("fresh");
+  expect(ingest(fresh, [receipt], { now: expiredAt })).toBe(0);
+  expect(
+    fresh
+      .query("SELECT 1 FROM crdt_changes WHERE dataset = ?")
+      .get(INTENT_RECEIPT_DATASET),
+  ).toBeNull();
 });
 
 test("sites visibility/spa replicate across nodes; unknown sites columns are ignored mid-batch", () => {

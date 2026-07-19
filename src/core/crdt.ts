@@ -4,6 +4,13 @@ import { nextHlc, observeHlc } from "./hlc.ts";
 import { serializeDocBlocks } from "./blocks.ts";
 import { randomSuffix } from "./ids.ts";
 import type { ColumnsOf } from "./sqlcols.ts";
+import {
+  filterExpiredIntentReceipts,
+  intentReceiptCutoffHlc,
+  INTENT_RECEIPT_DATASET,
+  isExpiredIntentReceipt,
+  pruneExpiredIntentReceipts,
+} from "./intent-retention.ts";
 
 // A single field assignment — the unit of replication. `value` is JSON-encoded
 // (or null). `dataset`/`row_id`/`col` identify the CRDT register. `txn` groups
@@ -147,8 +154,11 @@ export const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
 export const RECORD_META = new Set(["database_id", "created_hlc", "order_key", "__deleted"]);
 
 /** Replicated registers that intentionally have no materialized state table.
- * They remain in the oplog/snapshots as durable protocol state. */
-export const OPLOG_ONLY_DATASETS: ReadonlySet<string> = new Set(["intent_receipts"]);
+ * They remain in the oplog/snapshots as protocol state; a protocol may impose
+ * its own retention window at the replication boundary. */
+export const OPLOG_ONLY_DATASETS: ReadonlySet<string> = new Set([
+  INTENT_RECEIPT_DATASET,
+]);
 
 type SqlValue = string | number | null;
 
@@ -376,12 +386,19 @@ export function emitFields(
  *  the honest "received" count. Re-ingesting data we already hold returns 0, so
  *  this is a reliable progress signal for the auto-sync backoff (a round that
  *  only re-reads known data must not count as activity). */
-export function ingest(db: DbDriver, changes: Change[]): number {
+export function ingest(
+  db: DbDriver,
+  changes: Change[],
+  opts: { now?: number } = {},
+): number {
+  const now = opts.now ?? Date.now();
+  pruneExpiredIntentReceipts(db, now);
   const node = getNodeId(db);
   let received = 0;
   let poisoned = 0;
   const tx = db.transaction((cs: Change[]) => {
     for (const c of cs) {
+      if (isExpiredIntentReceipt(c, now)) continue;
       observeHlc(db, node, c.hlc);
       // Isolate a poison change (e.g. a malformed register that trips a NOT NULL
       // or other SQLite constraint) to that one change instead of aborting the
@@ -404,10 +421,15 @@ export function ingest(db: DbDriver, changes: Change[]): number {
 }
 
 /** All oplog changes with HLC strictly greater than `since` (test/debug helper). */
-export function changesSince(db: DbDriver, since: string): Change[] {
-  return db
+export function changesSince(
+  db: DbDriver,
+  since: string,
+  opts: { now?: number } = {},
+): Change[] {
+  const rows = db
     .query(`SELECT ${CHANGE_SELECT} FROM crdt_changes WHERE hlc > ? ORDER BY hlc`)
     .all(since) as Change[];
+  return filterExpiredIntentReceipts(rows, opts.now ?? Date.now());
 }
 
 export interface ChangeBatch {
@@ -428,6 +450,8 @@ export interface ChangesAfterOpts {
    * ops are skipped once, not rescanned every round.
    */
   onlyNode?: string;
+  /** Test hook and receipt-retention reference time. */
+  now?: number;
 }
 
 /**
@@ -456,6 +480,11 @@ export function changesAfterSeq(
     clauses.push("node_id = ?");
     params.push(opts.onlyNode);
   }
+  clauses.push("(dataset != ? OR hlc >= ?)");
+  params.push(
+    INTENT_RECEIPT_DATASET,
+    intentReceiptCutoffHlc(opts.now ?? Date.now()),
+  );
   const where = clauses.join(" AND ");
   const limitSql = opts.limit != null && opts.limit > 0 ? ` LIMIT ${Math.floor(opts.limit)}` : "";
   const rows = db

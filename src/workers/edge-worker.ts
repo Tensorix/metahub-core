@@ -23,8 +23,9 @@ export { MhRoom } from "./room.ts";
 
 import { assertAntiAbuse, timingSafeEq } from "../core/sync/anti-abuse.ts";
 import { safeDecode } from "../core/sync/http-util.ts";
+import { DROP_ENVELOPE_RETENTION_MS } from "../core/intent-retention.ts";
 
-export const EDGE_WORKER_VERSION = "2";
+export const EDGE_WORKER_VERSION = "3";
 export const EDGE_WORKER_MARKER = "mh-edge-worker";
 
 export const DROP_DEFAULT_MAX_ENVELOPES = 2000;
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS envelopes (
   UNIQUE (drop_id, envelope_id)
 );
 CREATE INDEX IF NOT EXISTS idx_envelopes_drop ON envelopes(drop_id, id);
+CREATE INDEX IF NOT EXISTS idx_envelopes_drop_created ON envelopes(drop_id, created_at);
 `;
 
 // ---- host-injectable dependencies ---------------------------------------------------
@@ -123,6 +125,12 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
     const rows = await sql.all<DropRow>("SELECT * FROM drops WHERE drop_id = ?", [dropId]);
     return rows[0] ?? null;
   };
+  const pruneExpired = async (dropId: string, currentTime: number): Promise<void> => {
+    await sql.run(
+      "DELETE FROM envelopes WHERE drop_id = ? AND created_at < ?",
+      [dropId, Math.max(0, currentTime - DROP_ENVELOPE_RETENTION_MS)],
+    );
+  };
 
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -141,6 +149,8 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
     if (req.method === "POST" && sub === "envelopes") {
       const drop = await getDrop(dropId);
       if (!drop) return err(404, "not_found", "no such drop");
+      const t = now();
+      await pruneExpired(dropId, t);
 
       const text = await req.text();
       const bytes = new TextEncoder().encode(text).byteLength;
@@ -187,7 +197,6 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
 
       // Capacity + insert in ONE conditional statement — atomic in D1, so two
       // racing submissions can't both squeeze past a full drop.
-      const t = now();
       const ins = await sql.run(
         `INSERT OR IGNORE INTO envelopes (drop_id, envelope_id, body, bytes, created_at)
          SELECT ?, ?, ?, ?, ?
@@ -253,6 +262,7 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
 
     if (sub === "envelopes" && req.method === "GET") {
       if (!(await getDrop(dropId))) return err(404, "not_found", "no such drop");
+      await pruneExpired(dropId, now());
       const afterId = Math.max(0, Number(url.searchParams.get("after_id") ?? 0) || 0);
       const rawLimit = Number(url.searchParams.get("limit") ?? NaN);
       const limit = Number.isFinite(rawLimit)
@@ -296,6 +306,7 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
     if (sub === "stats" && req.method === "GET") {
       const drop = await getDrop(dropId);
       if (!drop) return err(404, "not_found", "no such drop");
+      await pruneExpired(dropId, now());
       const rows = await sql.all<{ n: number; b: number }>(
         "SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM envelopes WHERE drop_id = ?",
         [dropId],

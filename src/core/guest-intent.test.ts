@@ -13,6 +13,10 @@ import {
 } from "./guest-intent.ts";
 import type { AccessPolicy } from "./access-policy.ts";
 import { compactOplog } from "./compact.ts";
+import {
+  DROP_ENVELOPE_RETENTION_MS,
+  INTENT_REPLAY_WINDOW_MS,
+} from "./intent-retention.ts";
 
 function makeDb(node = "hostnode"): Database {
   const db = new Database(":memory:");
@@ -416,6 +420,81 @@ test("idempotency: update receipt survives compaction and cannot roll back a lat
     { clock: "authority" },
   );
   expect(getRecord(db, made.id)!.cells[titleId]).toBe("owner-newer");
+});
+
+test("an expired update replay is rejected and cannot roll back a later owner edit", () => {
+  const { db, dbId, titleId } = seed();
+  const made = createRecord(db, dbId, { Title: "before" });
+  const acceptedAt = Date.now();
+  const intent = INTENT({
+    intentId: "int_expired_update",
+    action: "updateRecord",
+    recordId: made.id,
+    payload: { Title: "guest" },
+    submittedAt: acceptedAt,
+  });
+  applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-expired" },
+    intent,
+    { clock: "submitted", now: acceptedAt },
+  );
+  updateRecord(db, made.id, { Title: "owner-newer" });
+  const beforeReplay = (
+    db.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }
+  ).n;
+
+  let code: string | undefined;
+  try {
+    applyGuestIntent(
+      db,
+      policy(dbId),
+      { guestNode: "gbase-expired" },
+      intent,
+      {
+        clock: "submitted",
+        now: acceptedAt + INTENT_REPLAY_WINDOW_MS + 1,
+      },
+    );
+  } catch (e) {
+    code = (e as { code?: string }).code;
+  }
+  expect(code).toBe("conflict");
+  expect(getRecord(db, made.id)!.cells[titleId]).toBe("owner-newer");
+  expect(
+    db
+      .query("SELECT COUNT(*) AS n FROM crdt_changes WHERE dataset = ?")
+      .get(INTENT_RECEIPT_DATASET),
+  ).toEqual({ n: 0 });
+  // Only the expired receipt was collected; the replay emitted no business op.
+  expect(
+    (db.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n,
+  ).toBe(beforeReplay - 1);
+});
+
+test("a first Drop delivery near inbox expiry is accepted and receipt age starts at delivery", () => {
+  const { db, dbId } = seed();
+  const submittedAt = Date.now();
+  const acceptedAt = submittedAt + DROP_ENVELOPE_RETENTION_MS - 1;
+  const made = applyGuestIntent(
+    db,
+    policy(dbId),
+    { guestNode: "gbase-last-moment" },
+    INTENT({
+      intentId: "int_last_moment",
+      table: dbId,
+      recordId: "rec_last_moment",
+      payload: { Title: "delivered" },
+      submittedAt,
+    }),
+    { clock: "submitted", now: acceptedAt },
+  );
+  expect(made.id).toBe("rec_last_moment");
+  const receipt = db
+    .query("SELECT hlc FROM crdt_changes WHERE dataset = ?")
+    .get(INTENT_RECEIPT_DATASET) as { hlc: string };
+  expect(parseHlc(receipt.hlc).millis).toBe(acceptedAt);
 });
 
 test("write-only create returns only the immutable submitted projection on first apply and replay", () => {

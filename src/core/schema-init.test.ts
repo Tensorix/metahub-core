@@ -28,6 +28,7 @@ test("runSchema creates the storage_cursors table", () => {
     .get();
   expect(t).not.toBeNull();
   expect(hasIndex(db, "idx_changes_txn")).toBe(true);
+  expect(hasIndex(db, "idx_changes_intent_receipt_hlc")).toBe(true);
 });
 
 test("migrateOplog adds the sparse txn index to an existing current-shape table", () => {
@@ -40,6 +41,7 @@ test("migrateOplog adds the sparse txn index to an existing current-shape table"
   )`);
   migrateOplog(db);
   expect(hasIndex(db, "idx_changes_txn")).toBe(true);
+  expect(hasIndex(db, "idx_changes_intent_receipt_hlc")).toBe(true);
 });
 
 test("migratePeers adds kind/config to a legacy peers table, preserving cursors", () => {
@@ -121,6 +123,7 @@ test("migrateCrdtChangesSeq rebuilds a legacy oplog with a stable AUTOINCREMENT 
 
   expect(hasCol(db, "crdt_changes", "seq")).toBe(true);
   expect(hasIndex(db, "idx_changes_txn")).toBe(true);
+  expect(hasIndex(db, "idx_changes_intent_receipt_hlc")).toBe(true);
   const rows = db.query("SELECT seq, row_id FROM crdt_changes ORDER BY seq").all() as {
     seq: number;
     row_id: string;

@@ -5,6 +5,11 @@ import { formatHlc } from "./hlc.ts";
 import { cacheDir } from "./paths.ts";
 import { blobRefsIn } from "./blobs-core.ts";
 import { MhError } from "./errors.ts";
+import {
+  countExpiredIntentReceipts,
+  INTENT_RECEIPT_DATASET,
+  pruneExpiredIntentReceipts,
+} from "./intent-retention.ts";
 
 // Retention-window oplog compaction. Inside the window history is kept intact;
 // older than the window every register collapses to its as-of-cutoff winner, so
@@ -23,6 +28,9 @@ import { MhError } from "./errors.ts";
 //      migrateCrdtChangesSeq in schema-init.ts.)
 //   4. Compaction is local-only (no emit, nothing replicates): every node prunes
 //      its own disk on its own schedule.
+//   5. Oplog-only GuestIntent receipts are the sole exception to winner
+//      retention: they expire after the protocol replay window and replication
+//      filters keep an old peer from resurrecting them.
 
 export interface CompactResult {
   /** HLC cutoff actually used — history at or before this collapses to a baseline. */
@@ -56,6 +64,7 @@ function dbBytes(db: Database): number {
 /** WHERE clause selecting the compactable rows (superseded within the window). */
 const COMPACTABLE = `
   hlc <= ?1
+  AND dataset <> '${INTENT_RECEIPT_DATASET}'
   AND rowid <> (SELECT MAX(rowid) FROM crdt_changes)
   AND EXISTS (
     SELECT 1 FROM crdt_changes k
@@ -81,14 +90,18 @@ export function compactOplog(db: Database, opts: CompactOptions): CompactResult 
   const bytesBefore = dbBytes(db);
   const dryRun = opts.dryRun === true;
 
+  const expiredReceipts = countExpiredIntentReceipts(db, now);
   let deleted: number;
   if (dryRun) {
     const row = db
       .query(`SELECT COUNT(*) AS n FROM crdt_changes WHERE ${COMPACTABLE}`)
       .get(cutoff) as { n: number };
-    deleted = row.n;
+    deleted = row.n + expiredReceipts;
   } else {
-    deleted = db.query(`DELETE FROM crdt_changes WHERE ${COMPACTABLE}`).run(cutoff).changes;
+    deleted =
+      pruneExpiredIntentReceipts(db, now) +
+      db.query(`DELETE FROM crdt_changes WHERE ${COMPACTABLE}`).run(cutoff)
+        .changes;
   }
   const kept = (db.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n -
     (dryRun ? deleted : 0);
@@ -205,6 +218,6 @@ export function compactEstimate(
     db.query(`SELECT COUNT(*) AS n FROM crdt_changes WHERE ${COMPACTABLE}`).get(cutoff) as {
       n: number;
     }
-  ).n;
+  ).n + countExpiredIntentReceipts(db, now);
   return { total_changes: total, compactable_changes: compactable, db_bytes: dbBytes(db) };
 }

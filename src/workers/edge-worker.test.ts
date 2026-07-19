@@ -11,6 +11,7 @@ import {
   type InboxDeps,
 } from "./edge-worker.ts";
 import { memSql } from "./edge-worker.test-util.ts";
+import { DROP_ENVELOPE_RETENTION_MS } from "../core/intent-retention.ts";
 
 const OWNER = "drt_testownersecret";
 
@@ -124,6 +125,53 @@ test("capacity: envelope-count and byte ceilings answer 429 drop_full (atomicall
     new Request(`${BASE}/v1/inbox/site_demo-abc123/envelopes`, { method: "POST", body: envelope("e_dddddddddddddddd") }),
   );
   expect(res.status).toBe(429);
+});
+
+test("expired envelopes are removed before capacity, list, and stats checks", async () => {
+  let now = 1_700_000_000_000;
+  const h = makeHandler({ now: () => now });
+  await register(h, "site_demo-abc123", { max_envelopes: 1 });
+  expect(
+    (
+      await h(
+        new Request(`${BASE}/v1/inbox/site_demo-abc123/envelopes`, {
+          method: "POST",
+          body: envelope("e_oldaaaaaaaaaaaa"),
+        }),
+      )
+    ).status,
+  ).toBe(200);
+
+  now += DROP_ENVELOPE_RETENTION_MS + 1;
+  expect(
+    (
+      await h(
+        new Request(`${BASE}/v1/inbox/site_demo-abc123/envelopes`, {
+          method: "POST",
+          body: envelope("e_newaaaaaaaaaaaa"),
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  const list = (await (
+    await h(
+      new Request(
+        `${BASE}/v1/inbox/site_demo-abc123/envelopes?after_id=0`,
+        { headers: auth },
+      ),
+    )
+  ).json()) as { rows: { envelope: { envelope_id: string } }[] };
+  expect(list.rows.map((r) => r.envelope.envelope_id)).toEqual([
+    "e_newaaaaaaaaaaaa",
+  ]);
+  const stats = (await (
+    await h(
+      new Request(`${BASE}/v1/inbox/site_demo-abc123/stats`, {
+        headers: auth,
+      }),
+    )
+  ).json()) as { envelopes: number };
+  expect(stats.envelopes).toBe(1);
 });
 
 test("password verifier gates submissions (constant-time compare)", async () => {
