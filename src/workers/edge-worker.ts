@@ -1,10 +1,9 @@
 // mh-edge-worker — the unified metahub edge script, deployed by `mh edge deploy`
-// to the USER'S OWN Cloudflare Worker + D1 (mh never creates the resources; it
-// only uploads content into ones the user named). The inbox half below is
-// self-contained; the room half (MhRoom Durable Object, /r/<slug>/*) lives in
-// room.ts over the portable core modules — everything still bundles into one
-// auditable module with zero node:/bun: imports (build.ts asserts it), and the
-// same handler logic runs verbatim inside `bun test`.
+// to a dedicated Worker + D1 in the user's Cloudflare account. The inbox half
+// below is self-contained; the room half (MhRoom Durable Object, /r/<slug>/*)
+// lives in room.ts over the portable core modules — everything still bundles
+// into one auditable module with zero node:/bun: imports (build.ts asserts it),
+// and the same handler logic runs verbatim inside `bun test`.
 //
 // Two namespaces, one worker, one deploy command:
 //   /v1/inbox/*  →  write-inbox (Stage B; D1-backed, handled below)
@@ -24,8 +23,9 @@ export { MhRoom } from "./room.ts";
 import { assertAntiAbuse, timingSafeEq } from "../core/sync/anti-abuse.ts";
 import { safeDecode } from "../core/sync/http-util.ts";
 import { DROP_ENVELOPE_RETENTION_MS } from "../core/intent-retention.ts";
+import { EXPECTED_EDGE_WORKER_VERSION } from "../core/sync/edge-config.ts";
 
-export const EDGE_WORKER_VERSION = "3";
+export const EDGE_WORKER_VERSION = EXPECTED_EDGE_WORKER_VERSION;
 export const EDGE_WORKER_MARKER = "mh-edge-worker";
 
 export const DROP_DEFAULT_MAX_ENVELOPES = 2000;
@@ -136,6 +136,10 @@ export function createInboxFetch(deps: InboxDeps): (req: Request) => Promise<Res
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/health") {
+      return json({ ok: true, service: EDGE_WORKER_MARKER, version: EDGE_WORKER_VERSION });
+    }
+    if (req.method === "GET" && url.pathname === "/owner/health") {
+      if (!isOwner(req, deps.ownerToken)) return err(401, "auth", "unauthorized");
       return json({ ok: true, service: EDGE_WORKER_MARKER, version: EDGE_WORKER_VERSION });
     }
 
@@ -348,6 +352,28 @@ interface EdgeEnv {
   ROOM?: RoomNamespaceLike;
 }
 
+const OWNER_CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type",
+  "access-control-max-age": "86400",
+};
+
+function isOwnerCorsPath(pathname: string): boolean {
+  return (
+    pathname === "/health" ||
+    pathname === "/owner/health" ||
+    /^\/v1\/inbox\/[^/]+(?:\/(?:stats|envelopes))?$/.test(pathname) ||
+    /^\/r\/[^/]+\/owner(?:\/|$)/.test(pathname)
+  );
+}
+
+function corsResponse(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(OWNER_CORS)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 function d1Sql(db: D1Like): EdgeSql {
   return {
     async all<T>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -363,6 +389,10 @@ function d1Sql(db: D1Like): EdgeSql {
 
 export default {
   async fetch(req: Request, env: EdgeEnv): Promise<Response> {
+    const path = new URL(req.url).pathname;
+    const cors = isOwnerCorsPath(path);
+    if (cors && req.method === "OPTIONS")
+      return new Response(null, { status: 204, headers: OWNER_CORS });
     // Room namespace: one DO per slug — the slug is both the room id and the
     // capability, so idFromName gives stable per-share routing.
     const room = /^\/r\/([^/]+)/.exec(new URL(req.url).pathname);
@@ -370,8 +400,10 @@ export default {
       const slug = safeDecode(room[1]!);
       if (slug === null) return new Response("bad request", { status: 400 });
       const id = env.ROOM.idFromName(slug);
-      return env.ROOM.get(id).fetch(req);
+      const res = await env.ROOM.get(id).fetch(req);
+      return cors ? corsResponse(res) : res;
     }
-    return createInboxFetch({ sql: d1Sql(env.DB), ownerToken: env.OWNER_TOKEN })(req);
+    const res = await createInboxFetch({ sql: d1Sql(env.DB), ownerToken: env.OWNER_TOKEN })(req);
+    return cors ? corsResponse(res) : res;
   },
 };

@@ -3,34 +3,20 @@
 // semantic act ("this table is publicly writable") stays on `mh site grant`,
 // which auto-wires mh-drop.json + the inbox registration (design.md §3.1).
 //
-// Service creation discipline: `mh edge deploy` deploys INTO a Worker and a D1
-// database the user already created in their own Cloudflare account. A missing
-// resource is a loud not_found — there is no --create and never will be.
+// `mh edge deploy` shares the same resumable Worker + D1 creation pipeline as
+// the WebUI. Remote resources are never auto-deleted.
 
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
 import { MhError } from "../../core/errors.ts";
-import { randomSuffix } from "../../core/ids.ts";
-import {
-  getEdgeConfig,
-  setEdgeConfig,
-  type CfEdgeTarget,
-  type EdgeConfig,
-} from "../../core/sync/edge-config.ts";
-import {
-  workerExists,
-  d1Exists,
-  d1Exec,
-  uploadEdgeWorker,
-  putWorkerSecret,
-  workersDevSubdomain,
-} from "../../core/sync/cf-api.ts";
-import { EDGE_WORKER_VERSION, EDGE_SCHEMA_SQL } from "../../workers/edge-worker.ts";
+import { getEdgeConfig } from "../../core/sync/edge-config.ts";
+import { EDGE_WORKER_VERSION } from "../../workers/edge-worker.ts";
 import { listPeers } from "../../core/sync/peers.ts";
 import { ensureDropKeys, rotateDropKeys, activeDropKey } from "../../core/sync/drop-keys.ts";
 import { httpDropHost } from "../../core/sync/drop-host.ts";
 import { pullDropsOnce, dropWiredSites, type DropPullSummary } from "../../core/sync/drop-pull.ts";
 import { syncDropWiring, type DropWireResult } from "../../core/sync/drop-wire.ts";
+import { connectEdge, deployEdge } from "../../core/sync/edge-service.ts";
 import { getEdgeWorkerScript } from "../edge-worker-script.ts";
 import { print, table, guard, warn } from "../output.ts";
 
@@ -56,78 +42,69 @@ function wiredLine(wired: DropWireResult[]): string {
 
 const TOKEN_NOTE =
   "note: Cloudflare API tokens are account-scoped (no per-Worker granularity exists); " +
-  "mh only writes to the named Worker and D1 — a behavioral promise, auditable in this open-source code.";
+  "mh only creates or updates the confirmed Worker, D1 and workers.dev resources; the token is never saved.";
 
 const deploy = defineCommand({
   meta: {
     name: "deploy",
     description:
-      "Deploy/upgrade the edge worker into YOUR Cloudflare Worker + D1 (resources must already exist; mh never creates them)",
+      "Create or safely continue a dedicated Cloudflare Worker + D1 Edge deployment",
   },
   args: {
     "account-id": { type: "string", description: "Cloudflare account id" },
     "api-token": { type: "string", description: "Cloudflare API token (Workers Scripts + D1 edit)" },
-    worker: { type: "string", description: "Worker script name (created by you in the CF dashboard)" },
-    d1: { type: "string", description: "D1 database UUID (created by you in the CF dashboard)" },
+    worker: { type: "string", description: "Worker script name (defaults from this node id)" },
+    d1: { type: "string", description: "D1 database name (defaults from this node id)" },
+    subdomain: { type: "string", description: "workers.dev account subdomain if one must be created" },
+    yes: { type: "boolean", description: "Confirm Cloudflare resource creation/update" },
   },
   run: guard(async (args) => {
     const db = openMetahub();
     const prev = getEdgeConfig(db);
-    const usage = "mh edge deploy --account-id <id> --api-token <token> --worker <name> --d1 <uuid>";
-    const pick = (flag: unknown, stored: string | undefined, label: string): string => {
-      if (typeof flag === "string" && flag !== "") return flag;
-      if (stored) return stored;
-      throw new MhError("invalid_input", `missing --${label}\nusage: ${usage}`);
-    };
-    const cf: CfEdgeTarget = {
-      accountId: pick(args["account-id"], prev?.cf?.accountId, "account-id"),
-      apiToken: pick(args["api-token"], prev?.cf?.apiToken, "api-token"),
-      workerName: pick(args.worker, prev?.cf?.workerName, "worker"),
-      d1Id: pick(args.d1, prev?.cf?.d1Id, "d1"),
-    };
-
-    // Existence checks FIRST — mh deploys content into user-created resources,
-    // it never creates them (no --create escape hatch, by design).
-    if (!(await workerExists(cf)))
-      throw new MhError(
-        "not_found",
-        `Worker "${cf.workerName}" does not exist on this Cloudflare account — create it in the Cloudflare dashboard first (mh never creates remote resources)`,
-      );
-    if (!(await d1Exists(cf)))
-      throw new MhError(
-        "not_found",
-        `D1 database ${cf.d1Id} does not exist on this Cloudflare account — create it in the Cloudflare dashboard first (mh never creates remote resources)`,
-      );
-
-    await d1Exec(cf, EDGE_SCHEMA_SQL); // idempotent IF NOT EXISTS migration
-    await uploadEdgeWorker(cf, await getEdgeWorkerScript());
-    const token = prev?.token ?? "drt_" + randomSuffix(32);
-    await putWorkerSecret(cf, "OWNER_TOKEN", token);
-    const endpoint =
-      prev?.endpoint ?? `https://${cf.workerName}.${await workersDevSubdomain(cf)}.workers.dev`;
-
-    // The recipient keypair auto-provisions on first deploy (bucket-authoritative
-    // when an encrypted bucket is attached; local otherwise).
-    const keyring = await ensureDropKeys(db);
-    const key = activeDropKey(keyring);
-
-    const cfg: EdgeConfig = { endpoint, token, cf, deployedVersion: EDGE_WORKER_VERSION };
-    setEdgeConfig(db, cfg);
-    const wired = await rewireAll(db);
+    const usage = "mh edge deploy --account-id <id> --api-token <token> --yes";
+    const accountId =
+      typeof args["account-id"] === "string" && args["account-id"]
+        ? args["account-id"]
+        : prev?.cf?.accountId;
+    if (!accountId) throw new MhError("invalid_input", `missing --account-id\nusage: ${usage}`);
+    if (typeof args["api-token"] !== "string" || !args["api-token"])
+      throw new MhError("invalid_input", `missing --api-token\nusage: ${usage}`);
+    const result = await deployEdge(
+      db,
+      {
+        accountId,
+        apiToken: args["api-token"],
+        workerName:
+          typeof args.worker === "string" && args.worker ? args.worker : prev?.cf?.workerName,
+        d1Name:
+          typeof args.d1 === "string" && args.d1 ? args.d1 : prev?.cf?.d1Name,
+        workersSubdomain:
+          typeof args.subdomain === "string" && args.subdomain
+            ? args.subdomain
+            : prev?.cf?.workersSubdomain,
+        confirmed: Boolean(args.yes),
+      },
+      await getEdgeWorkerScript(),
+    );
 
     print(
       {
-        endpoint,
-        worker: cf.workerName,
-        d1: cf.d1Id,
-        version: EDGE_WORKER_VERSION,
-        key_id: key.key_id,
-        wired,
+        endpoint: result.endpoint,
+        worker: result.workerName,
+        d1: { id: result.d1Id, name: result.d1Name },
+        version: result.version,
+        key_id: result.keyId,
+        wired: result.wired,
       },
       () =>
-        `deployed edge worker "${cf.workerName}" (version ${EDGE_WORKER_VERSION})\n` +
-        `endpoint: ${endpoint}\n` +
-        `inbox key: ${key.key_id}${wiredLine(wired)}\n` +
+        `deployed edge worker "${result.workerName}" (version ${result.version})\n` +
+        `endpoint: ${result.endpoint}\n` +
+        `D1: ${result.d1Name} (${result.d1Id})\n` +
+        `inbox key: ${result.keyId}` +
+        (result.wired.length
+          ? `\nwired sites: ${result.wired.map((w) => `${w.site} (${w.registered ? "ok" : w.error ?? "FAILED"})`).join(", ")}`
+          : "") +
+        "\n" +
         TOKEN_NOTE,
     );
   }),
@@ -323,15 +300,16 @@ const connect = defineCommand({
     if (typeof args.token !== "string" || !args.token)
       throw new MhError("invalid_input", `missing --token\nusage: ${usage}`);
     const db = openMetahub();
-    const endpoint = args.endpoint.replace(/\/+$/, "");
-    const health = await httpDropHost(endpoint, args.token).health(); // loud fail-fast at the call site
-    if (!health.ok) throw new MhError("network", `inbox host at ${endpoint} is not healthy`);
+    const status = await connectEdge(db, args.endpoint, args.token);
     const keyring = await ensureDropKeys(db);
-    setEdgeConfig(db, { endpoint, token: args.token, deployedVersion: health.version });
-    const wired = await rewireAll(db);
     print(
-      { endpoint, version: health.version ?? null, key_id: activeDropKey(keyring).key_id, wired },
-      () => `connected to inbox host ${endpoint}${health.version ? ` (version ${health.version})` : ""}${wiredLine(wired)}`,
+      {
+        endpoint: status.endpoint,
+        version: status.version ?? null,
+        key_id: activeDropKey(keyring).key_id,
+      },
+      () =>
+        `connected to Edge ${status.endpoint} (version ${status.version})`,
     );
   }),
 });

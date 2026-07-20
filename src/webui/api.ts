@@ -184,9 +184,11 @@ export interface ShareListItem {
   title: string;
   permission: string;
   transport: "server" | "s3";
+  hosting?: "server" | "room" | "s3";
   /** Where it's served: a server address or a bucket name. */
   source: string;
-  sourceKind: "server" | "peer" | "bucket";
+  sourceKind: "server" | "peer" | "room" | "bucket";
+  sourceUrl?: string;
   expiresAt: number | null;
   hasPassword: boolean;
   /** server: ready-to-copy link; s3: omitted (use renewShare to mint one). */
@@ -196,6 +198,7 @@ export interface CreateShareBody {
   kind: "doc" | "database" | "site";
   ref: string;
   transport?: "server" | "s3";
+  hosting?: "server" | "room";
   permission?: "view" | "edit";
   password?: string | null;
   expiresMs?: number | null;
@@ -211,6 +214,7 @@ export interface ShareCreateResult {
   kind: string;
   permission: string;
   transport: "server" | "s3";
+  hosting: "server" | "room" | "s3";
   url: string;
   expiresAt: number | null;
   source: string;
@@ -218,6 +222,55 @@ export interface ShareCreateResult {
 export interface ShareTargetOpt {
   url: string;
   label: string;
+  enabled?: boolean;
+  lastStatus?: string | null;
+  lastSuccessAt?: number | null;
+}
+
+export interface SiteHostingInfo {
+  publicBaseUrl: string | null;
+  scope: "local" | "lan" | "public" | null;
+  node: string;
+}
+export interface SitePublishResult {
+  access: "public" | "private";
+  status: "ready" | "syncing" | "private";
+  url: string | null;
+  host: string | null;
+}
+export interface EdgeRoomStatus {
+  slug: string;
+  url: string;
+  status: string | null;
+  lastSuccessAt: number | null;
+  error: string | null;
+}
+export interface EdgeStatus {
+  configured: boolean;
+  endpoint?: string;
+  version?: string | null;
+  expectedVersion: string;
+  aligned: boolean;
+  reachable: boolean;
+  error?: string;
+  managed: boolean;
+  deployment?: {
+    accountId: string;
+    workerName: string;
+    d1Name: string;
+    workersSubdomain: string;
+  };
+  rooms: EdgeRoomStatus[];
+  defaults: { workerName: string; d1Name: string; workersSubdomain: string } | null;
+  pending: {
+    accountId: string;
+    workerName: string;
+    d1Name: string;
+    d1Id?: string;
+    workersSubdomain?: string;
+    step: string;
+    updatedAt: number;
+  } | null;
 }
 
 /** Thrown by req(): carries the server's error `code` (see core/errors.ts) so
@@ -649,6 +702,21 @@ const httpApi = {
   getSiteGrants: (id: string) => req<{ grants: GrantSet }>("GET", `/api/site/grants?id=${q(id)}`),
   setSiteGrants: (id: string, grants: GrantSet) =>
     req<{ grants: GrantSet }>("PUT", `/api/site/grants?id=${q(id)}`, grants),
+  getSiteHosting: () => req<SiteHostingInfo>("GET", "/api/site-hosting"),
+  setSiteHosting: (publicBaseUrl: string | null) =>
+    req<SiteHostingInfo>("PATCH", "/api/site-hosting", { publicBaseUrl }),
+  verifySiteHosting: (url: string) =>
+    req<{ ok: boolean; url: string; scope: "local" | "lan" | "public"; node: string }>(
+      "POST",
+      "/api/site-hosting/verify",
+      { url },
+    ),
+  publishSite: (b: {
+    siteId: string;
+    access: "public" | "private";
+    grants?: GrantSet;
+    targetBase?: string;
+  }) => req<SitePublishResult>("POST", "/api/site/publish", b),
   deleteSiteFile: (site: string, path: string) =>
     req<{ ok: boolean }>("DELETE", `/api/site/file?site=${q(site)}&path=${q(path)}`),
   /** Raw-bytes upload — can't use req() (it JSON-stringifies the body). */
@@ -675,10 +743,28 @@ const httpApi = {
   listShareServers: () => req<ShareTargetOpt[]>("GET", "/api/share/servers"),
   listShareBuckets: () => req<ShareTargetOpt[]>("GET", "/api/share/buckets"),
   listShares: (opts: { target?: string } = {}) =>
-    req<ShareListItem[]>("GET", `/api/shares${opts.target ? `?target=${q(opts.target)}` : ""}`),
+    req<ShareListItem[]>("GET", `/api/shares/all${opts.target ? `?target=${q(opts.target)}` : ""}`),
   createShare: (b: CreateShareBody) => req<ShareCreateResult>("POST", "/api/share", b),
-  revokeShare: (slug: string) => req<{ ok: boolean }>("DELETE", `/api/share?slug=${q(slug)}`),
+  revokeShare: (slug: string, via?: string) =>
+    req<{ ok: boolean }>(
+      "DELETE",
+      `/api/share/managed?slug=${q(slug)}${via ? `&via=${q(via)}` : ""}`,
+    ),
   renewShare: (slug: string) => req<ShareCreateResult>("POST", `/api/share/renew?slug=${q(slug)}`),
+
+  // Edge hosting
+  getEdgeStatus: () => req<EdgeStatus>("GET", "/api/edge"),
+  deployEdge: (b: {
+    accountId: string;
+    apiToken: string;
+    workerName?: string;
+    d1Name?: string;
+    workersSubdomain?: string;
+    confirmed: boolean;
+  }) => req<unknown>("POST", "/api/edge/deploy", b),
+  connectEdge: (endpoint: string, token: string) =>
+    req<EdgeStatus>("PUT", "/api/edge/connect", { endpoint, token }),
+  disconnectEdge: () => req<{ ok: boolean }>("DELETE", "/api/edge"),
 
   // blob cache (Settings storage panel)
   blobCache: () => req<BlobCacheInfo>("GET", "/api/blob-cache"),

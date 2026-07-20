@@ -123,4 +123,12 @@ export const localSites = {
   deleteSiteFile: (site: string, path: string) => rpc("deleteSiteFile", site, path),
   uploadSiteFile: async (site: string, path: string, file: Blob) =>
     rpc("putSiteFile", site, path, await file.arrayBuffer(), file.type || undefined),
+  getEdgeStatus: () => rpc("edgeStatus"),
+  connectEdge: (endpoint: string, token: string) => rpc("connectEdge", endpoint, token),
+  disconnectEdge: () => rpc("disconnectEdge"),
+  listShareServers: () => Promise.resolve([]),
+  listShareBuckets: () => Promise.resolve([]),
+  listShares: (opts: { target?: string } = {}) => rpc("listLocalShares", opts.target),
+  createShare: (body: unknown) => rpc("createLocalShare", body),
+  revokeShare: (slug: string) => rpc("revokeLocalShare", slug),
 };

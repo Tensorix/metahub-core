@@ -10,6 +10,7 @@ import {
   DROP_ENVELOPE_LIMIT_BYTES,
   type InboxDeps,
 } from "./edge-worker.ts";
+import edgeWorker from "./edge-worker.ts";
 import { memSql } from "./edge-worker.test-util.ts";
 import { DROP_ENVELOPE_RETENTION_MS } from "../core/intent-retention.ts";
 
@@ -48,6 +49,31 @@ test("health is open and reports the worker version", async () => {
   const d = (await res.json()) as { ok: boolean; version: string };
   expect(d.ok).toBe(true);
   expect(d.version).toBe(EDGE_WORKER_VERSION);
+});
+
+test("owner health verifies the bearer token without mutating resources", async () => {
+  const h = makeHandler();
+  expect((await h(new Request(`${BASE}/owner/health`))).status).toBe(401);
+  const res = await h(new Request(`${BASE}/owner/health`, { headers: auth }));
+  expect(res.status).toBe(200);
+  expect(await res.json()).toMatchObject({ ok: true, version: EDGE_WORKER_VERSION });
+});
+
+test("browser owner API preflight is narrow and allows bearer authorization", async () => {
+  const res = await edgeWorker.fetch(
+    new Request(`${BASE}/r/site_demo/owner/sync`, { method: "OPTIONS" }),
+    {} as never,
+  );
+  expect(res.status).toBe(204);
+  expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  expect(res.headers.get("access-control-allow-headers")).toContain("authorization");
+
+  const unrelated = await edgeWorker.fetch(
+    new Request(`${BASE}/unrelated`, { method: "OPTIONS" }),
+    {} as never,
+  );
+  expect(unrelated.status).toBe(404);
+  expect(unrelated.headers.get("access-control-allow-origin")).toBeNull();
 });
 
 test("owner routes without / with a wrong token → 401 auth", async () => {

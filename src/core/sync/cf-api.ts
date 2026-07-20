@@ -1,8 +1,6 @@
-// Thin Cloudflare REST wrapper for `mh edge deploy` — the node half of the
-// edge worker pipeline. Scope discipline (design.md §7 red line 7): every call
-// here either READS existence or WRITES CONTENT INTO a resource the user named
-// (script body, D1 rows, a secret); there is no create-service call in this
-// file, deliberately. Deployment uses the declarative `exports` metadata field
+// Thin Cloudflare REST wrapper for the Edge deployment pipeline. Calls that
+// create account resources are only reached after an explicit WebUI/CLI deploy
+// confirmation. Deployment uses the declarative `exports` metadata field
 // (spike ⑥): the exports map is the source of truth and re-submitting the same
 // map is naturally idempotent — no migration tag bookkeeping. The map carries
 // the MhRoom Durable Object class (share rooms, Stage C).
@@ -13,7 +11,7 @@
 // token-enforced one.
 
 import { MhError } from "../errors.ts";
-import type { CfEdgeTarget } from "./edge-config.ts";
+import type { CfApiTarget } from "./edge-config.ts";
 
 const CF_API = "https://api.cloudflare.com/client/v4";
 
@@ -24,7 +22,7 @@ interface CfResult<T> {
 }
 
 async function cfCall<T>(
-  cfg: CfEdgeTarget,
+  cfg: Pick<CfApiTarget, "accountId" | "apiToken">,
   method: string,
   path: string,
   init: { body?: string | FormData; headers?: Record<string, string> } = {},
@@ -50,9 +48,9 @@ function cfError(status: number, data: CfResult<unknown> | null, what: string): 
   return new MhError("network", `Cloudflare API failed (${what}): ${detail}`);
 }
 
-/** Does the named Worker script exist? (mh never creates it — the user does,
- *  in the Cloudflare dashboard.) */
-export async function workerExists(cfg: CfEdgeTarget): Promise<boolean> {
+/** Does the named Worker script exist? Used to prevent adopting or overwriting
+ *  a same-name script that this deployment did not create. */
+export async function workerExists(cfg: CfApiTarget): Promise<boolean> {
   const { status, data } = await cfCall(
     cfg,
     "GET",
@@ -64,7 +62,7 @@ export async function workerExists(cfg: CfEdgeTarget): Promise<boolean> {
 }
 
 /** Does the named D1 database exist? */
-export async function d1Exists(cfg: CfEdgeTarget): Promise<boolean> {
+export async function d1Exists(cfg: CfApiTarget): Promise<boolean> {
   const { status, data } = await cfCall(cfg, "GET", `/accounts/${cfg.accountId}/d1/database/${cfg.d1Id}`);
   if (status === 404) return false;
   if (!data?.success) throw cfError(status, data, "d1 lookup");
@@ -73,7 +71,7 @@ export async function d1Exists(cfg: CfEdgeTarget): Promise<boolean> {
 
 /** Run SQL against the D1 database (schema migration). Statements are sent one
  *  at a time so a mid-script failure reports the exact statement. */
-export async function d1Exec(cfg: CfEdgeTarget, sqlScript: string): Promise<void> {
+export async function d1Exec(cfg: CfApiTarget, sqlScript: string): Promise<void> {
   const statements = sqlScript
     .split(";")
     .map((s) => s.trim())
@@ -90,7 +88,7 @@ export async function d1Exec(cfg: CfEdgeTarget, sqlScript: string): Promise<void
 /** Upload the edge worker module (multipart metadata + script). Declarative
  *  `exports` + `keep_bindings:["secret_text"]` so a re-deploy never wipes the
  *  OWNER_TOKEN secret set separately below. */
-export async function uploadEdgeWorker(cfg: CfEdgeTarget, script: string): Promise<void> {
+export async function uploadEdgeWorker(cfg: CfApiTarget, script: string): Promise<void> {
   const metadata = {
     main_module: "edge-worker.js",
     compatibility_date: "2026-07-01",
@@ -120,7 +118,7 @@ export async function uploadEdgeWorker(cfg: CfEdgeTarget, script: string): Promi
 
 /** Set a secret on the worker via the dedicated secrets endpoint (spike ⑥
  *  recommendation: script re-deploys then never carry the secret in metadata). */
-export async function putWorkerSecret(cfg: CfEdgeTarget, name: string, text: string): Promise<void> {
+export async function putWorkerSecret(cfg: CfApiTarget, name: string, text: string): Promise<void> {
   const { status, data } = await cfCall(
     cfg,
     "PUT",
@@ -134,7 +132,7 @@ export async function putWorkerSecret(cfg: CfEdgeTarget, name: string, text: str
 }
 
 /** The account's workers.dev subdomain — derives the worker's default endpoint. */
-export async function workersDevSubdomain(cfg: CfEdgeTarget): Promise<string> {
+export async function workersDevSubdomain(cfg: CfApiTarget): Promise<string> {
   const { status, data } = await cfCall<{ subdomain?: string }>(
     cfg,
     "GET",
@@ -142,4 +140,77 @@ export async function workersDevSubdomain(cfg: CfEdgeTarget): Promise<string> {
   );
   if (!data?.success || !data.result?.subdomain) throw cfError(status, data, "workers.dev subdomain");
   return data.result.subdomain;
+}
+
+/** Create a dedicated D1 database and return its stable UUID. Cloudflare's
+ *  conflict response is surfaced loudly; callers never adopt a same-name DB. */
+export async function createD1Database(
+  cfg: Pick<CfApiTarget, "accountId" | "apiToken">,
+  name: string,
+): Promise<{ id: string; name: string }> {
+  const { status, data } = await cfCall<{ uuid?: string; id?: string; name?: string }>(
+    cfg,
+    "POST",
+    `/accounts/${cfg.accountId}/d1/database`,
+    {
+      body: JSON.stringify({ name }),
+      headers: { "content-type": "application/json" },
+    },
+  );
+  if (!data?.success) {
+    if (status === 409 || data?.errors?.some((e) => /exist|name/i.test(e.message ?? "")))
+      throw new MhError("conflict", `D1 database "${name}" already exists; choose another name`);
+    throw cfError(status, data, "d1 create");
+  }
+  const id = data.result?.uuid ?? data.result?.id;
+  if (!id) throw new MhError("network", "Cloudflare created D1 but returned no database id");
+  return { id, name: data.result?.name ?? name };
+}
+
+/** Return the account workers.dev subdomain, or null when none exists yet. */
+export async function maybeWorkersDevSubdomain(cfg: CfApiTarget): Promise<string | null> {
+  const { status, data } = await cfCall<{ subdomain?: string }>(
+    cfg,
+    "GET",
+    `/accounts/${cfg.accountId}/workers/subdomain`,
+  );
+  if (status === 404 || (data?.success && !data.result?.subdomain)) return null;
+  if (!data?.success) throw cfError(status, data, "workers.dev subdomain");
+  return data.result?.subdomain ?? null;
+}
+
+/** Create the account-level workers.dev subdomain. */
+export async function createWorkersDevSubdomain(
+  cfg: CfApiTarget,
+  subdomain: string,
+): Promise<string> {
+  const { status, data } = await cfCall<{ subdomain?: string }>(
+    cfg,
+    "PUT",
+    `/accounts/${cfg.accountId}/workers/subdomain`,
+    {
+      body: JSON.stringify({ subdomain }),
+      headers: { "content-type": "application/json" },
+    },
+  );
+  if (!data?.success) {
+    if (status === 409)
+      throw new MhError("conflict", `workers.dev subdomain "${subdomain}" is unavailable`);
+    throw cfError(status, data, "workers.dev subdomain create");
+  }
+  return data.result?.subdomain ?? subdomain;
+}
+
+/** Publish a script on the account's workers.dev domain. */
+export async function enableWorkerSubdomain(cfg: CfApiTarget): Promise<void> {
+  const { status, data } = await cfCall(
+    cfg,
+    "POST",
+    `/accounts/${cfg.accountId}/workers/scripts/${cfg.workerName}/subdomain`,
+    {
+      body: JSON.stringify({ enabled: true }),
+      headers: { "content-type": "application/json" },
+    },
+  );
+  if (!data?.success) throw cfError(status, data, "worker subdomain enable");
 }

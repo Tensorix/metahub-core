@@ -22,7 +22,8 @@ import {
 } from "../../core/sync/share-actions.ts";
 import { parseDuration } from "../../core/sync/token.ts";
 import { getEdgeConfig } from "../../core/sync/edge-config.ts";
-import { provisionRoomForShare } from "../../core/sync/room-peer.ts";
+import { registerRoomBlobResolver } from "../../core/sync/room-peer.ts";
+import { resolveBlob } from "../../core/blobs.ts";
 import { print, table, guard } from "../output.ts";
 import { FRESH_ARGS, freshDb } from "../fresh.ts";
 import { localServerBase } from "../local-base.ts";
@@ -87,21 +88,22 @@ const create = defineCommand({
 
     // --room preflight: rooms are a hosting of a SERVER share for a SITE, and
     // need a configured edge (never auto-created — design.md §7 red line 7).
-    let edge: ReturnType<typeof getEdgeConfig> = null;
     if (args.room) {
       if (transport !== "server")
         throw new MhError("invalid_input", "--room needs the server transport");
       if (kind !== "site")
         throw new MhError("invalid_input", "--room currently hosts site shares — share a site and grant its tables (--grant)");
-      edge = getEdgeConfig(db);
-      if (!edge)
+      const remote = args.via ? getPeer(db, args.via) : null;
+      if (!remote && !getEdgeConfig(db))
         throw new MhError("invalid_input", "--room needs a configured edge — run `mh edge deploy` (or `mh edge connect`) first");
+      registerRoomBlobResolver(resolveBlob);
     }
 
     const out = await createShareAction(db, {
       kind,
       ref: args.target,
       transport,
+      hosting: args.room ? "room" : "server",
       permission,
       password: args.password ?? null,
       expiresMs: expiresMs > 0 ? expiresMs : null,
@@ -111,21 +113,9 @@ const create = defineCommand({
       grants: buildGrants(db, args.grant as string | string[] | undefined),
     });
 
-    // Provision + seed the room (share row → grants snapshot/pw verifier/expiry).
-    let roomUrl: string | null = null;
-    if (args.room && edge) {
-      const share = getShare(db, out.slug);
-      if (!share)
-        throw new MhError(
-          "invalid_input",
-          "--room requires creating the share on this device — drop --via <peer>",
-        );
-      roomUrl = (await provisionRoomForShare(db, share, edge)).url;
-    }
-
-    print({ ...out, ...(roomUrl ? { room: roomUrl } : {}) }, () =>
-      `${roomUrl ?? out.url}\n通过：${roomUrl ? `房间（始终在线） + ${out.source}` : out.source}\n` +
-      (roomUrl
+    print(out, () =>
+      `${out.url}\n通过：${out.hosting === "room" ? "房间（始终在线）" : out.source}\n` +
+      (out.hosting === "room"
         ? "提示：房间由你的 edge worker 托管，实时可写；撤销分享即销毁房间。"
         : out.transport === "server"
           ? "提示：host 需别人可达（LAN IP / 域名 / 隧道）才能给别人访问。"

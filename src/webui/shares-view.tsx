@@ -27,7 +27,7 @@ function fmtExpiry(ts: number | null): { text: string; warn: boolean; dead: bool
 
 export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
   const [shares, setShares] = useState<ShareListItem[] | null>(null);
-  const [filter, setFilter] = useState<"all" | "server" | "s3">("all");
+  const [filter, setFilter] = useState<"all" | "server" | "room" | "s3">("all");
   const [q, setQ] = useState("");
 
   const reload = () =>
@@ -49,7 +49,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
     const needle = q.trim().toLowerCase();
     return list.filter(
       (s) =>
-        (filter === "all" || s.transport === filter) &&
+        (filter === "all" || (s.hosting ?? s.transport) === filter) &&
         (!needle || s.title.toLowerCase().includes(needle) || s.source.toLowerCase().includes(needle)),
     );
   }, [shares, filter, q]);
@@ -65,17 +65,17 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
       <div class="db-head">
         <div>
           <div class="db-title">分享</div>
-          <div class="db-desc">通过服务器或对象存储对外分享的文档、表格与站点。</div>
+          <div class="db-desc">通过设备、Edge 或存储桶管理公开链接；站点不使用存储桶托管。</div>
         </div>
         <div class="shv-tools">
           <div class="shv-seg" role="tablist">
-            {(["all", "server", "s3"] as const).map((f) => (
+            {(["all", "server", "room", "s3"] as const).map((f) => (
               <button
                 key={f}
                 class={"shv-seg-btn" + (filter === f ? " active" : "")}
                 onClick={() => setFilter(f)}
               >
-                {f === "all" ? "全部" : f === "server" ? "服务器" : "对象存储"}
+                {f === "all" ? "全部" : f === "server" ? "设备" : f === "room" ? "Edge" : "存储桶"}
               </button>
             ))}
           </div>
@@ -99,7 +99,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
           <div class="ei"><Icon name="link" /></div>
           <div class="et">{shares.length === 0 ? "还没有公开分享" : "没有匹配的分享"}</div>
           <div class="ed">
-            在文档、表格或站点里点「通过设备分享」即可创建——可经服务器（支持可编辑）或对象存储（只读、端到端加密）。
+            在文档、表格或站点里点「分享」或「发布与分享」即可创建。站点可由设备或 Edge 托管。
           </div>
         </div>
       ) : (
@@ -116,8 +116,8 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
                     <button class="shv-title" onClick={() => openObject(s)} title="打开对象">
                       {s.title}
                     </button>
-                    <span class={"shv-pill t-" + s.transport}>
-                      {s.transport === "s3" ? "对象存储" : "服务器"}
+                    <span class={"shv-pill t-" + (s.hosting ?? s.transport)}>
+                      {s.hosting === "room" ? "Edge" : s.transport === "s3" ? "存储桶" : "设备"}
                     </span>
                     <span class={"shv-pill p-" + s.permission}>
                       {s.permission === "edit" ? "可编辑" : "只读"}

@@ -20,6 +20,7 @@ export function runSidecar(): void {
     debug: true, // no token auth: the window is the only client, bound to loopback
     host: "127.0.0.1", // never exposed off the machine
     port: 0, // let the OS pick a free port, so we never clash with `mh --server`
+    allowRemoteSiteHosting: false,
     // Core ships no UI — the sidecar injects the WebUI it exists to serve.
     ui: { serveAssets: serveWebui, routes: webuiRoutes },
   });

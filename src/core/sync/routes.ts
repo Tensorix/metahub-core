@@ -18,6 +18,9 @@ import { errorCode, type MhErrorCode } from "../errors.ts";
 export interface RouteCtx {
   db: Database;
   node: string;
+  /** Desktop's unauthenticated loopback sidecar may preview locally but must
+   *  never be accepted as a LAN/public hosting origin. */
+  allowRemoteSiteHosting?: boolean;
 }
 
 /** HTTP status per error code (see core/errors.ts). Uncategorized errors stay

@@ -6,14 +6,21 @@
 
 import type { DbDriver } from "../driver.ts";
 
-/** The Cloudflare quadruple `mh edge deploy` writes into. All four name
- *  resources the USER created in their own CF account — mh never creates them
- *  (design.md §7 red line 7), it only uploads content into them. */
+/** Shared without importing the Worker bundle into browser/Node clients. */
+export const EXPECTED_EDGE_WORKER_VERSION = "3";
+
+/** Persisted Cloudflare resource identity. Deliberately excludes the account
+ *  API token: deploy/upgrade callers must supply that ephemeral credential. */
 export interface CfEdgeTarget {
   accountId: string;
-  apiToken: string;
   workerName: string;
   d1Id: string;
+  d1Name?: string;
+  workersSubdomain?: string;
+}
+
+export interface CfApiTarget extends CfEdgeTarget {
+  apiToken: string;
 }
 
 export interface EdgeConfig {
@@ -29,6 +36,7 @@ export interface EdgeConfig {
 }
 
 const CONFIG_KEY = "edge_config";
+const DEPLOY_KEY = "edge_deploy_progress";
 const KNOBS_PREFIX = "drop_knobs:";
 
 function getMeta(db: DbDriver, key: string): string | null {
@@ -52,8 +60,14 @@ export function getEdgeConfig(db: DbDriver): EdgeConfig | null {
   const raw = getMeta(db, CONFIG_KEY);
   if (!raw) return null;
   try {
-    const cfg = JSON.parse(raw) as EdgeConfig;
+    const cfg = JSON.parse(raw) as EdgeConfig & { cf?: CfEdgeTarget & { apiToken?: string } };
     if (!cfg || typeof cfg.endpoint !== "string" || typeof cfg.token !== "string") return null;
+    // Read-time migration for configs written by older releases. The secret is
+    // removed immediately so merely starting the upgraded app fixes storage.
+    if (cfg.cf && "apiToken" in cfg.cf) {
+      delete cfg.cf.apiToken;
+      setMeta(db, CONFIG_KEY, JSON.stringify(cfg));
+    }
     return cfg;
   } catch {
     return null;
@@ -61,7 +75,41 @@ export function getEdgeConfig(db: DbDriver): EdgeConfig | null {
 }
 
 export function setEdgeConfig(db: DbDriver, cfg: EdgeConfig | null): void {
+  if (cfg?.cf && "apiToken" in cfg.cf)
+    throw new Error("Cloudflare API token must not be persisted");
   setMeta(db, CONFIG_KEY, cfg ? JSON.stringify(cfg) : null);
+}
+
+export type EdgeDeployStep =
+  | "creating_d1"
+  | "creating_subdomain"
+  | "uploading_worker"
+  | "migrating_d1"
+  | "setting_secret"
+  | "enabling_subdomain";
+
+export interface EdgeDeployProgress {
+  accountId: string;
+  workerName: string;
+  d1Name: string;
+  d1Id?: string;
+  workersSubdomain?: string;
+  step: EdgeDeployStep;
+  updatedAt: number;
+}
+
+export function getEdgeDeployProgress(db: DbDriver): EdgeDeployProgress | null {
+  const raw = getMeta(db, DEPLOY_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as EdgeDeployProgress;
+  } catch {
+    return null;
+  }
+}
+
+export function setEdgeDeployProgress(db: DbDriver, progress: EdgeDeployProgress | null): void {
+  setMeta(db, DEPLOY_KEY, progress ? JSON.stringify(progress) : null);
 }
 
 /**

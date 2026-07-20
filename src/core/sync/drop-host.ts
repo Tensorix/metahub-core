@@ -36,6 +36,7 @@ export interface DropHostApi {
   ackEnvelopes(dropId: string, ids: number[]): Promise<number>;
   stats(dropId: string): Promise<DropStats>;
   health(): Promise<{ ok: boolean; version?: string }>;
+  ownerHealth(): Promise<{ ok: boolean; version?: string }>;
 }
 
 function statusCode(status: number): MhErrorCode {
@@ -103,6 +104,9 @@ export function httpDropHost(
     },
     async health() {
       return call<{ ok: boolean; version?: string }>("/health", {}, false);
+    },
+    async ownerHealth() {
+      return call<{ ok: boolean; version?: string }>("/owner/health");
     },
   };
 }

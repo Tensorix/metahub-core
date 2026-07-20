@@ -10,7 +10,6 @@ import { MhError } from "../errors.ts";
 import { randomSuffix } from "../ids.ts";
 import { getShare, type ShareRow } from "../shares.ts";
 import { parseGrantSet } from "../grants-core.ts";
-import { resolveBlob } from "../blobs.ts";
 import {
   addRoomPeer,
   getPeer,
@@ -26,6 +25,15 @@ import {
 } from "./room-client.ts";
 import { ROOM_BLOB_CHUNK_LIMIT, type OwnerSyncResponse } from "./room-protocol.ts";
 import type { PartitionScope } from "./partition.ts";
+
+export type RoomBlobResolver = (db: DbDriver, hash: string) => Promise<Uint8Array | null>;
+let defaultBlobResolver: RoomBlobResolver | undefined;
+
+/** Runtime adapter hook: Bun registers its blob resolver at server/CLI startup;
+ * browser replicas register spool→bucket resolution in db-worker. */
+export function registerRoomBlobResolver(resolve: RoomBlobResolver): void {
+  defaultBlobResolver = resolve;
+}
 
 /** Synthetic peers.url key of a share's room. */
 export function roomPeerKey(slug: string): string {
@@ -95,6 +103,9 @@ const MAX_ROUNDS = 50;
 export async function syncRoomPeer(
   db: DbDriver,
   peer: PeerRow,
+  opts: {
+    resolveBlob?: RoomBlobResolver;
+  } = {},
 ): Promise<{ pushed: number; pulled: number; pendingPush: boolean }> {
   if (!peer.config) throw new MhError("invalid_input", `room peer ${peer.url} has no config`);
   const config = JSON.parse(peer.config) as RoomPeerConfig;
@@ -149,7 +160,7 @@ export async function syncRoomPeer(
     pending = r.pending;
     if (!r.pending) break;
   }
-  if (needBlobs.length > 0) await pushRoomBlobs(db, config, needBlobs);
+  if (needBlobs.length > 0) await pushRoomBlobs(db, config, needBlobs, opts.resolveBlob);
   // Report the truth: if we exhausted MAX_ROUNDS with work still queued,
   // pendingPush stays true so the caller can re-enter promptly instead of
   // waiting a full auto-sync tick (a large backlog would otherwise drip out one
@@ -168,12 +179,14 @@ export async function pushRoomBlobs(
   db: DbDriver,
   config: RoomPeerConfig,
   hashes: string[],
-  resolve: (db: DbDriver, hash: string) => Promise<Uint8Array | null> = resolveBlob,
+  resolve?: (db: DbDriver, hash: string) => Promise<Uint8Array | null>,
 ): Promise<number> {
+  const resolveBytes = resolve ?? defaultBlobResolver;
+  if (!resolveBytes) return 0;
   let sent = 0;
   for (const hash of hashes) {
     if (!/^[0-9a-f]{16,64}$/.test(hash)) continue; // never echo junk into a URL
-    const bytes = await resolve(db, hash).catch(() => null);
+    const bytes = await resolveBytes(db, hash).catch(() => null);
     if (!bytes) continue;
     const total = Math.max(1, Math.ceil(bytes.byteLength / ROOM_BLOB_CHUNK_LIMIT));
     let ok = true;
@@ -206,6 +219,7 @@ export async function provisionRoomForShare(
   db: DbDriver,
   share: ShareRow,
   edge: { endpoint: string; token: string },
+  resolveBlob?: RoomBlobResolver,
 ): Promise<{ url: string; peerKey: string }> {
   const config: RoomPeerConfig = {
     base: edge.endpoint.replace(/\/+$/, ""),
@@ -244,7 +258,7 @@ export async function provisionRoomForShare(
   const peerKey = roomPeerKey(share.slug);
   addRoomPeer(db, { url: peerKey, config, label: `room ${share.slug}` });
   const peer = getPeer(db, peerKey)!;
-  await syncRoomPeer(db, peer); // first seed, loops until quiescent
+  await syncRoomPeer(db, peer, { resolveBlob }); // first seed, loops until quiescent
   return { url: roomUrlOf(config), peerKey };
 }
 

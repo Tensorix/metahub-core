@@ -35,6 +35,7 @@ import {
 } from "./share-export.ts";
 import { MAX_PRESIGN_SECONDS } from "./storage-s3-bun.ts";
 import type { S3Config } from "./storage.ts";
+import { getEdgeConfig } from "./edge-config.ts";
 
 const DEFAULT_SHARE_VIEWER = "https://share.mh.tensorix.org";
 const DEFAULT_S3_EXPIRY_SEC = MAX_PRESIGN_SECONDS;
@@ -45,6 +46,8 @@ export interface CreateShareRequest {
   ref: string;
   permission?: SharePermission;
   transport?: "server" | "s3";
+  /** Hosting surface for server shares. room provisions an always-on Edge room. */
+  hosting?: "server" | "room";
   password?: string | null;
   /** Server: any duration (ms); null = never. s3: clamped to ≤7d; default 7d. */
   expiresMs?: number | null;
@@ -66,6 +69,7 @@ export interface CreatedShare {
   kind: ShareKind;
   permission: SharePermission;
   transport: "server" | "s3";
+  hosting: "server" | "room" | "s3";
   /** Full link to copy (server: served_base/share/slug; s3: viewer link). */
   url: string;
   expiresAt: number | null;
@@ -83,7 +87,10 @@ export interface ShareListItem {
   permission: string;
   transport: "server" | "s3";
   source: string;
-  sourceKind: "server" | "peer" | "bucket";
+  sourceKind: "server" | "peer" | "room" | "bucket";
+  /** Paired node that owns this share; present only in aggregated listings so
+   *  management actions can be routed back to the correct device. */
+  sourceUrl?: string;
   /** Where the share is actually served from: this/a server, an always-on DO
    *  room (server share + kind='room' peer), or a bucket export. */
   hosting?: "server" | "room" | "s3";
@@ -131,11 +138,25 @@ export function listShareBuckets(db: DbDriver): { url: string; label: string }[]
     .map((p) => ({ url: p.url, label: p.label ?? p.url }));
 }
 
-/** Paired HTTP peer servers (a share can be created on / served by them). */
-export function listShareServers(db: DbDriver): { url: string; label: string }[] {
+/** Paired HTTP peer servers (a share can be created on / served by them).
+ *  Room peers are deliberately excluded: they are Edge destinations, not
+ *  devices a user can select as a hosting node. */
+export function listShareServers(db: DbDriver): {
+  url: string;
+  label: string;
+  enabled: boolean;
+  lastStatus: string | null;
+  lastSuccessAt: number | null;
+}[] {
   return listPeers(db)
-    .filter((p) => p.kind !== "s3")
-    .map((p) => ({ url: p.url, label: p.label ?? p.url }));
+    .filter((p) => p.kind === "http")
+    .map((p) => ({
+      url: p.url,
+      label: p.label ?? p.url,
+      enabled: p.enabled === 1,
+      lastStatus: p.last_status,
+      lastSuccessAt: p.last_success_at,
+    }));
 }
 
 function pickBucket(db: DbDriver, bucketUrl?: string | null): string {
@@ -169,13 +190,24 @@ function bucketLink(base: string, manifestUrl: string, keyB64?: string, saltB64?
   return `${base}/#${frag}`;
 }
 
+function absoluteShareUrl(url: string, base: string): string {
+  try {
+    return new URL(url, `${base.replace(/\/+$/, "")}/`).toString();
+  } catch {
+    return url;
+  }
+}
+
 /** Resolve, validate, and create (server local / server remote / s3 bucket) a share. */
 export async function createShareAction(db: DbDriver, req: CreateShareRequest): Promise<CreatedShare> {
   const permission = req.permission ?? "view";
   const transport = req.transport ?? "server";
+  const hosting = req.hosting ?? "server";
 
   // ── object storage ──────────────────────────────────────────────────────────
   if (transport === "s3") {
+    if (hosting === "room")
+      throw new MhError("invalid_input", "Edge room hosting requires the server transport");
     if (req.grants)
       throw new MhError("invalid_input", "data grants need the server transport — a static object-storage share has no API surface");
     if (permission === "edit")
@@ -201,6 +233,7 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
       kind: req.kind,
       permission: "view",
       transport: "s3",
+      hosting: "s3",
       url: bucketLink(base, out.manifestUrl, out.keyB64, out.saltB64),
       expiresAt: out.presignExp,
       source: `桶 ${label}`,
@@ -227,7 +260,8 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
       kind: req.kind,
       permission,
       transport: "server",
-      url: data.url!,
+      hosting: data.hosting ?? hosting,
+      url: absoluteShareUrl(data.url!, req.server),
       expiresAt: data.expiresAt ?? null,
       source: peer.label ?? req.server,
     };
@@ -254,14 +288,36 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
     servedBase,
     grants: req.grants ?? null, // validated + canonicalized inside createShare
   });
+  let roomUrl: string | null = null;
+  if (hosting === "room") {
+    if (req.kind !== "site") {
+      deleteShare(db, share.slug);
+      throw new MhError("invalid_input", "Edge rooms currently host site shares only");
+    }
+    const edge = getEdgeConfig(db);
+    if (!edge) {
+      deleteShare(db, share.slug);
+      throw new MhError("invalid_input", "Edge is not configured");
+    }
+    try {
+      const { provisionRoomForShare } = await import("./room-peer.ts");
+      roomUrl = (await provisionRoomForShare(db, share, edge)).url;
+    } catch (e) {
+      const { teardownRoomForShare } = await import("./room-peer.ts");
+      await teardownRoomForShare(db, share.slug).catch(() => undefined);
+      deleteShare(db, share.slug);
+      throw e;
+    }
+  }
   return {
     slug: share.slug,
     kind: req.kind,
     permission,
     transport: "server",
-    url: `${servedBase ?? ""}/share/${share.slug}`,
+    hosting,
+    url: roomUrl ?? `${servedBase ?? ""}/share/${share.slug}`,
     expiresAt: share.expires_at,
-    source: servedBase || "本机服务器",
+    source: roomUrl ? "Edge Room" : servedBase || "本机服务器",
   };
 }
 
@@ -290,7 +346,7 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
       permission: r.permission,
       transport: "server",
       source: roomUrl ? `房间 ${r.slug}` : r.served_base || "本机服务器",
-      sourceKind: "server",
+      sourceKind: roomUrl ? "room" : "server",
       hosting: roomUrl ? "room" : "server",
       expiresAt: r.expires_at,
       hasPassword: !!r.pw_hash,
@@ -332,7 +388,13 @@ export async function listSharesAggregated(db: DbDriver, targetId?: string): Pro
       if (!peer?.token) return;
       const items = await fetchPeerShares(url, peer.token, targetId).catch(() => []);
       for (const it of items) {
-        if (!bySlug.has(it.slug)) bySlug.set(it.slug, { ...it, source: label, sourceKind: "peer" });
+        if (!bySlug.has(it.slug))
+          bySlug.set(it.slug, {
+            ...it,
+            source: label,
+            sourceKind: "peer",
+            sourceUrl: url,
+          });
       }
     }),
   );
@@ -346,7 +408,10 @@ async function fetchPeerShares(url: string, token: string, targetId?: string): P
     new Promise<Response>((_r, rej) => setTimeout(() => rej(new Error("timeout")), PEER_LIST_TIMEOUT_MS)),
   ]);
   if (!res.ok) return [];
-  return (await res.json()) as ShareListItem[];
+  return ((await res.json()) as ShareListItem[]).map((item) => ({
+    ...item,
+    ...(item.url ? { url: absoluteShareUrl(item.url, url) } : {}),
+  }));
 }
 
 /** Revoke: local server row → delete it (cascading the share's room, if one is
@@ -385,6 +450,7 @@ export async function renewShareAction(db: DbDriver, slug: string, viewerBaseOve
       kind: m.kind,
       permission: "view",
       transport: "s3",
+      hosting: "s3",
       url: bucketLink(base, out.manifestUrl, out.keyB64, out.saltB64),
       expiresAt: out.presignExp,
       source: `桶 ${p.label ?? p.url}`,

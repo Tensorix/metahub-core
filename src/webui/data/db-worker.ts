@@ -111,6 +111,28 @@ import {
   type FileEncoding,
 } from "../../core/sites-core.ts";
 import { parseGrantSet, type GrantSet } from "../../core/grants-core.ts";
+import {
+  createShare,
+  deleteShare,
+  getShare,
+  hashSharePassword,
+  listShares,
+  listSharesForTarget,
+  type ShareKind,
+  type SharePermission,
+} from "../../core/shares.ts";
+import {
+  provisionRoomForShare,
+  registerRoomBlobResolver,
+  roomUrlOf,
+  teardownRoomForShare,
+} from "../../core/sync/room-peer.ts";
+import {
+  EXPECTED_EDGE_WORKER_VERSION,
+  getEdgeConfig,
+  setEdgeConfig,
+} from "../../core/sync/edge-config.ts";
+import { httpDropHost } from "../../core/sync/drop-host.ts";
 
 // ---- protocol ----------------------------------------------------------------
 
@@ -229,16 +251,31 @@ const bucketInitialSynced = new Set<string>();
  *  `synced` event listing what the pulls touched, derived from the local oplog
  *  (everything ingested lands above the pre-sync high-water rowid). */
 /** True when there's anything to sync to: the paired origin server, or any
- *  enabled storage (s3) peer. Storage peers let the browser sync even when the
- *  origin server is offline/unreachable. */
+ *  enabled storage (s3) or Edge room peer. */
 function hasSyncTarget(d: DbDriver): boolean {
   if (getPeer(d, origin)?.token != null) return true;
-  return listPeers(d).some((p) => p.enabled === 1 && p.kind === "s3");
+  return listPeers(d).some((p) => p.enabled === 1 && (p.kind === "s3" || p.kind === "room"));
 }
 
 function enabledStoragePeers(d: DbDriver) {
   return listPeers(d).filter((p) => p.enabled === 1 && p.kind === "s3");
 }
+
+function enabledRoomPeers(d: DbDriver) {
+  return listPeers(d).filter((p) => p.enabled === 1 && p.kind === "room");
+}
+
+async function browserRoomBlob(_driver: DbDriver, hash: string): Promise<Uint8Array | null> {
+  const sp = await spoolGet(hash).catch(() => undefined);
+  if (sp) return new Uint8Array(sp.bytes);
+  for (const peer of enabledStoragePeers(requireDb())) {
+    if (!peer.config) continue;
+    const bytes = await getBucketBlob(JSON.parse(peer.config) as S3Config, hash).catch(() => null);
+    if (bytes && (await verifyBytes(bytes, hash))) return new Uint8Array(bytes);
+  }
+  return null;
+}
+registerRoomBlobResolver(browserRoomBlob);
 
 function hasPendingBucketPush(d: DbDriver): boolean {
   const node = getNodeId(d);
@@ -427,6 +464,18 @@ async function runSync(force = false): Promise<SyncOutcome> {
       }
     }
 
+    // Edge rooms are node-local publishing peers. They sync even in no-origin
+    // bucket mode; CORS is handled by the Edge owner API.
+    for (const peer of enabledRoomPeers(d)) {
+      const out = await syncPeer(d, peer.url);
+      if (out.ok) {
+        pushed += out.pushed ?? 0;
+        pulled += out.pulled ?? 0;
+      } else {
+        errors.push(`${peer.label ?? peer.url}: ${out.error}`);
+      }
+    }
+
     // When this round's origin push didn't happen — no origin configured, OR an
     // origin is configured but was unreachable — drain offline-composed blob bytes
     // to the bucket so other devices that pulled the doc from the bucket can fetch
@@ -495,7 +544,9 @@ const SITE_FRESH_MAX_AGE_MS = 3 * 60_000;
 function mustBackgroundPoll(): boolean {
   if (!db) return false;
   if (getPeer(db, origin)?.token != null) return false; // origin-backed → event-driven
-  return listPeers(db).some((p) => p.enabled === 1 && p.kind === "s3");
+  return listPeers(db).some(
+    (p) => p.enabled === 1 && (p.kind === "s3" || p.kind === "room"),
+  );
 }
 
 async function pollTick(): Promise<void> {
@@ -622,6 +673,170 @@ const ops: Record<string, Op> = {
         lastSyncAt: p.last_success_at,
         lastAttemptAt: p.last_sync_at,
       })),
+
+  // Edge configuration and room-hosted site shares in no-origin mode. These
+  // rows live only in this browser's OPFS database and never enter the CRDT.
+  edgeStatus: async () => {
+    const d = requireDb();
+    const cfg = getEdgeConfig(d);
+    const rooms = listPeers(d)
+      .filter((p) => p.kind === "room" && p.config)
+      .map((p) => {
+        const c = JSON.parse(p.config!);
+        return {
+          slug: c.slug,
+          url: roomUrlOf(c),
+          status: p.last_status,
+          lastSuccessAt: p.last_success_at,
+          error: p.last_error,
+        };
+      });
+    if (!cfg)
+      return {
+        configured: false,
+        expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
+        aligned: false,
+        reachable: false,
+        managed: false,
+        rooms,
+        defaults: null,
+        pending: null,
+    };
+    try {
+      const health = await httpDropHost(cfg.endpoint, cfg.token).ownerHealth();
+      return {
+        configured: true,
+        endpoint: cfg.endpoint,
+        version: health.version ?? null,
+        expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
+        aligned: health.version === EXPECTED_EDGE_WORKER_VERSION,
+        reachable: health.ok,
+        managed: false,
+        rooms,
+        defaults: null,
+        pending: null,
+      };
+    } catch (e) {
+      return {
+        configured: true,
+        endpoint: cfg.endpoint,
+        version: null,
+        expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
+        aligned: false,
+        reachable: false,
+        error: (e as Error).message,
+        managed: false,
+        rooms,
+        defaults: null,
+        pending: null,
+      };
+    }
+  },
+  connectEdge: async (endpointInput: string, token: string) => {
+    let endpoint: string;
+    try {
+      const parsed = new URL(endpointInput.trim());
+      if (parsed.protocol !== "https:" && parsed.hostname !== "localhost")
+        throw new Error("Edge endpoint must use HTTPS");
+      endpoint = parsed.toString().replace(/\/+$/, "");
+    } catch (e) {
+      throw new MhError("invalid_input", (e as Error).message || "invalid Edge endpoint");
+    }
+    if (!token.trim()) throw new MhError("invalid_input", "owner token is required");
+    const health = await httpDropHost(endpoint, token.trim()).ownerHealth();
+    if (!health.ok) throw new MhError("network", "Edge is not healthy");
+    if (health.version !== EXPECTED_EDGE_WORKER_VERSION)
+      throw new MhError(
+        "conflict",
+        `Edge version ${health.version ?? "unknown"} is incompatible; expected ${EXPECTED_EDGE_WORKER_VERSION}`,
+      );
+    setEdgeConfig(requireDb(), {
+      endpoint,
+      token: token.trim(),
+      deployedVersion: health.version,
+    });
+    return ops.edgeStatus();
+  },
+  disconnectEdge: () => {
+    const d = requireDb();
+    if (listPeers(d).some((p) => p.kind === "room"))
+      throw new MhError("conflict", "请先撤销所有 Edge Room 再断开");
+    setEdgeConfig(d, null);
+    return { ok: true };
+  },
+  listLocalShares: (targetId?: string) => {
+    const d = requireDb();
+    const rows = targetId ? listSharesForTarget(d, targetId) : listShares(d);
+    return rows.map((s) => {
+      const peer = getPeer(d, `room://${s.slug}`);
+      const cfg = peer?.config ? JSON.parse(peer.config) : null;
+      const roomUrl = cfg ? roomUrlOf(cfg) : undefined;
+      const site = s.kind === "site" ? resolveSite(d, s.target_id) : null;
+      return {
+        slug: s.slug,
+        kind: s.kind,
+        target_id: s.target_id,
+        title: site?.title || site?.name || s.target_id,
+        permission: s.permission,
+        transport: "server",
+        source: roomUrl ? "Edge Room" : "本机",
+        sourceKind: roomUrl ? "room" : "server",
+        hosting: roomUrl ? "room" : "server",
+        expiresAt: s.expires_at,
+        hasPassword: !!s.pw_hash,
+        url: roomUrl,
+      };
+    });
+  },
+  createLocalShare: async (req: {
+    kind: ShareKind;
+    ref: string;
+    permission?: SharePermission;
+    hosting?: "server" | "room";
+    password?: string | null;
+    expiresMs?: number | null;
+    grants?: string | null;
+  }) => {
+    const d = requireDb();
+    if (req.kind !== "site" || req.hosting !== "room")
+      throw new MhError("invalid_input", "桶模式目前仅支持通过 Edge 发布站点");
+    const edge = getEdgeConfig(d);
+    if (!edge) throw new MhError("invalid_input", "请先连接 Edge");
+    const site = resolveSite(d, req.ref);
+    const hashed = req.password ? await hashSharePassword(req.password) : null;
+    const share = createShare(d, {
+      kind: "site",
+      target_id: site.id,
+      permission: req.permission,
+      pwSalt: hashed?.salt,
+      pwHash: hashed?.hash,
+      expiresAt: req.expiresMs != null ? Date.now() + req.expiresMs : null,
+      grants: req.grants,
+    });
+    try {
+      const room = await provisionRoomForShare(d, share, edge, browserRoomBlob);
+      return {
+        slug: share.slug,
+        kind: "site",
+        permission: share.permission,
+        transport: "server",
+        hosting: "room",
+        url: room.url,
+        expiresAt: share.expires_at,
+        source: "Edge Room",
+      };
+    } catch (e) {
+      await teardownRoomForShare(d, share.slug).catch(() => undefined);
+      deleteShare(d, share.slug);
+      throw e;
+    }
+  },
+  revokeLocalShare: async (slug: string) => {
+    const d = requireDb();
+    if (!getShare(d, slug)) return { ok: false };
+    await teardownRoomForShare(d, slug);
+    return { ok: deleteShare(d, slug) };
+  },
 
   // databases
   listDatabases: () => listDatabases(db!),

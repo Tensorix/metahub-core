@@ -246,6 +246,20 @@
   .set-block-title { font-size:14px; font-weight:650; color:var(--fg); letter-spacing:-.005em; }
   .set-block-desc { color:var(--fg-soft); font-size:var(--fs-sm); line-height:1.55; margin-bottom:14px; max-width:56ch; }
   .set-block-desc:last-child { margin-bottom:0; }
+  .set-inline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .set-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .set-badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px;
+    font-size:11px; font-weight:650; background:var(--surface); border:1px solid var(--line-strong); color:var(--fg-soft); }
+  .set-badge.ok { color:var(--success,#1a7f37); border-color:color-mix(in srgb,var(--success,#1a7f37) 35%,var(--line)); }
+  .set-badge.warn { color:var(--warning,#9a6700); border-color:color-mix(in srgb,var(--warning,#9a6700) 35%,var(--line)); }
+  .set-callout { padding:9px 11px; border-radius:var(--radius-sm); background:var(--surface);
+    border:1px solid var(--line); color:var(--fg-soft); font-size:var(--fs-xs); line-height:1.55; }
+  .set-callout.warn { border-color:color-mix(in srgb,var(--warning,#9a6700) 32%,var(--line)); }
+  .set-kv { display:flex; align-items:center; justify-content:space-between; gap:14px;
+    padding:6px 0; border-bottom:1px solid var(--line); font-size:var(--fs-sm); }
+  .set-kv > span { color:var(--muted); }
+  .set-kv code { min-width:0; max-width:75%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .set-err { color:var(--danger); font-size:var(--fs-xs); margin-top:8px; }
   /* title+desc on the left, a control (e.g. a switch) pinned right — used for
      single boolean settings where a whole card of chrome would be overkill */
   .set-toggle-row { display:flex; align-items:center; justify-content:space-between; gap:24px; }

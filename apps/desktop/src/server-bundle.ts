@@ -13,8 +13,10 @@ import swBundle from "../../../dist/sw.js" with { type: "text" };
 import dbWorkerBundle from "../../../dist/db-worker.js" with { type: "text" };
 import runtimeBundle from "../../../dist/mh-runtime.js" with { type: "text" };
 import sdkBundle from "../../../dist/metahub-sdk.js" with { type: "text" };
+import edgeWorkerBundle from "../../../dist/edge-worker.js" with { type: "text" };
 import wasmPath from "../../../dist/sqlite3.wasm" with { type: "file" };
 import { setWebuiBundle } from "../../../src/webui/server/assets.ts";
+import { setEdgeWorkerScript } from "../../../src/cli/edge-worker-script.ts";
 import { runSidecar } from "./sidecar.ts";
 
 setWebuiBundle({
@@ -25,4 +27,5 @@ setWebuiBundle({
   sdk: sdkBundle,
   wasm: new Uint8Array(await Bun.file(wasmPath).arrayBuffer()),
 });
+setEdgeWorkerScript(edgeWorkerBundle);
 runSidecar();

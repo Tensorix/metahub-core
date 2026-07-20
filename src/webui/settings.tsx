@@ -8,7 +8,16 @@ import { Icon, CUBE_OUTER, CUBE_INNER } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { getWordCountEnabled, setWordCountEnabled } from "./wordcount.ts";
 import { timeAgo } from "./date.ts";
-import { api, currentToken, type Peer, type Grant, type S3Peer, type BlobCacheInfo } from "./api.ts";
+import {
+  api,
+  currentToken,
+  type Peer,
+  type Grant,
+  type S3Peer,
+  type BlobCacheInfo,
+  type EdgeStatus,
+  type ShareTargetOpt,
+} from "./api.ts";
 import {
   replicaEnabled,
   replicaStatus,
@@ -72,6 +81,7 @@ const SEC = {
   appearance: "appearance",
   quicknote: "quicknote",
   sync: "sync",
+  hosting: "hosting",
   storage: "storage",
   devices: "devices",
 } as const;
@@ -81,6 +91,7 @@ const SECTIONS: { id: string; label: string; icon: string; show: () => boolean }
   { id: SEC.quicknote, label: "快速笔记", icon: "pin",
     show: () => typeof window !== "undefined" && !!window.metahubDesktop?.quicknote },
   { id: SEC.sync, label: "同步", icon: "cloudCheck", show: () => true },
+  { id: SEC.hosting, label: "站点托管", icon: "globe", show: () => true },
   { id: SEC.storage, label: "存储", icon: "database", show: () => true },
   { id: SEC.devices, label: "设备与授权", icon: "monitor", show: () => !isNoOrigin() },
 ];
@@ -249,6 +260,10 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
           <SyncStorage />
         </SetGroup>
 
+        <SetGroup id={SEC.hosting} label="站点托管">
+          <SiteHostingSettings />
+        </SetGroup>
+
         {/* Blob cache (document images / large files). Which store the user is
             managing falls out of scopesFor(clientMode()): a server-backed replica
             sees BOTH its on-device bytes (default) and the cloud workspace ledger,
@@ -268,6 +283,334 @@ export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolea
         <VersionFooter onUpdatePending={onUpdatePending} />
       </div>
     </div>
+  );
+}
+
+function SiteHostingSettings() {
+  const noOrigin = isNoOrigin();
+  const [base, setBase] = useState("");
+  const [savedBase, setSavedBase] = useState<string | null>(null);
+  const [scope, setScope] = useState<string | null>(null);
+  const [edge, setEdge] = useState<EdgeStatus | null>(null);
+  const [devices, setDevices] = useState<ShareTargetOpt[]>([]);
+  const [busy, setBusy] = useState("");
+  const [endpoint, setEndpoint] = useState("");
+  const [ownerToken, setOwnerToken] = useState("");
+
+  const load = () => {
+    api.getEdgeStatus().then(setEdge).catch(() => setEdge(null));
+    api.listShareServers().then(setDevices).catch(() => setDevices([]));
+    if (!noOrigin)
+      api
+        .getSiteHosting()
+        .then((v) => {
+          setSavedBase(v.publicBaseUrl);
+          setBase(v.publicBaseUrl ?? "");
+          setScope(v.scope);
+        })
+        .catch(() => undefined);
+  };
+  useEffect(load, []);
+
+  const saveBase = async () => {
+    setBusy("base");
+    try {
+      const out = await api.setSiteHosting(base.trim() || null);
+      setSavedBase(out.publicBaseUrl);
+      setBase(out.publicBaseUrl ?? "");
+      setScope(out.scope);
+      toast(out.publicBaseUrl ? "入口验证成功并已保存" : "已清除设备托管入口");
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const connect = async () => {
+    setBusy("connect");
+    try {
+      const out = await api.connectEdge(endpoint, ownerToken);
+      setEdge(out);
+      setOwnerToken("");
+      toast("已连接 Edge");
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const disconnect = async () => {
+    const ok = await confirmDialog({
+      title: "断开 Edge？",
+      message: "只移除本机连接，不会删除 Cloudflare Worker 或 D1。存在活动 Room 时会拒绝断开。",
+      confirmLabel: "断开",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy("disconnect");
+    try {
+      await api.disconnectEdge();
+      load();
+      toast("已断开 Edge");
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <>
+      {!noOrigin && (
+        <div class="set-block">
+          <div class="set-block-head">
+            <span class="set-block-title">设备托管入口</span>
+            {savedBase && (
+              <span class="set-badge ok">
+                {scope === "public" ? "公网 HTTPS" : scope === "lan" ? "局域网" : "仅本机"}
+              </span>
+            )}
+          </div>
+          <div class="set-block-desc">
+            填写已经由反向代理、隧道或公网 IP 转发到本节点的地址。保存时会访问
+            <code> /health</code> 并核对节点身份。
+          </div>
+          <div class="set-inline" style={{ marginTop: 10 }}>
+            <input
+              class="text-input"
+              style={{ flex: 1 }}
+              value={base}
+              placeholder="https://site.example.com"
+              onInput={(e) => setBase((e.currentTarget as HTMLInputElement).value)}
+            />
+            <button class="btn btn-primary" disabled={busy === "base"} onClick={saveBase}>
+              {busy === "base" ? "验证中…" : "验证并保存"}
+            </button>
+          </div>
+          {isDesktop() && (
+            <div class="set-callout warn" style={{ marginTop: 10 }}>
+              Desktop 内置 sidecar 只监听本机且关闭鉴权，不能直接暴露到公网。需要设备托管时请另行启动带鉴权的
+              <code> mh --server</code>，或使用下方 Edge。
+            </div>
+          )}
+          <div class="set-block-head" style={{ marginTop: 14 }}>
+            <span class="set-block-title">配对设备</span>
+            <span class="muted">{devices.length} 台</span>
+          </div>
+          {devices.length === 0 ? (
+            <div class="set-block-desc">暂无配对设备；发布时仍可使用当前设备或 Edge。</div>
+          ) : (
+            devices.map((device) => (
+              <div class="set-kv">
+                <span>
+                  {device.label}
+                  <small class="muted" style={{ display: "block" }}>{device.url}</small>
+                </span>
+                <span
+                  class={
+                    "set-badge " +
+                    (device.enabled !== false && device.lastStatus === "ok" ? "ok" : "warn")
+                  }
+                >
+                  {device.enabled === false
+                    ? "已停用"
+                    : device.lastStatus === "ok"
+                      ? "可用"
+                      : device.lastStatus
+                        ? "异常"
+                        : "未验证"}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      <div class="set-block">
+        <div class="set-block-head">
+          <span class="set-block-title">Edge 始终在线托管</span>
+          {edge?.configured && (
+            <span class={"set-badge " + (edge.reachable && edge.aligned ? "ok" : "warn")}>
+              {edge.reachable ? (edge.aligned ? "在线" : "需升级") : "不可达"}
+            </span>
+          )}
+        </div>
+        <div class="set-block-desc">
+          {noOrigin
+            ? "桶模式只能连接已部署的 Edge。浏览器关闭后站点继续提供最后同步版本，重新打开后恢复更新。"
+            : "Edge Room 不依赖设备在线。可一键部署到你的 Cloudflare 账户，或连接已有兼容端点。"}
+        </div>
+
+        {edge?.configured ? (
+          <div style={{ marginTop: 10 }}>
+            <div class="set-kv"><span>端点</span><code>{edge.endpoint}</code></div>
+            <div class="set-kv">
+              <span>版本</span>
+              <code>{edge.version ?? "未知"} / {edge.expectedVersion}</code>
+            </div>
+            <div class="set-kv"><span>活动 Room</span><b>{edge.rooms.length}</b></div>
+            <div class="set-kv">
+              <span>Room 同步</span>
+              <span>
+                {edge.rooms.length === 0
+                  ? "暂无 Room"
+                  : edge.rooms.some((room) => room.error || room.status === "error")
+                    ? "存在异常"
+                    : edge.rooms.some((room) => room.lastSuccessAt)
+                      ? `最近 ${timeAgo(
+                          Math.max(
+                            ...edge.rooms.map((room) => room.lastSuccessAt ?? 0),
+                          ),
+                        )}`
+                      : "等待首次同步"}
+              </span>
+            </div>
+            {edge.error && <div class="set-err">{edge.error}</div>}
+            <div class="set-actions" style={{ marginTop: 10 }}>
+              {!noOrigin && edge.managed && (
+                <button
+                  class="btn btn-secondary"
+                  onClick={() => openModal(<EdgeDeployModal status={edge} onDone={() => { closeModal(); load(); }} />)}
+                >
+                  升级部署…
+                </button>
+              )}
+              <button class="btn btn-danger" disabled={busy === "disconnect"} onClick={disconnect}>
+                断开
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div class="set-inline" style={{ marginTop: 10 }}>
+              <input
+                class="text-input"
+                style={{ flex: 1 }}
+                value={endpoint}
+                placeholder="https://…workers.dev"
+                onInput={(e) => setEndpoint((e.currentTarget as HTMLInputElement).value)}
+              />
+              <input
+                class="text-input"
+                style={{ flex: 1 }}
+                type="password"
+                value={ownerToken}
+                placeholder="Owner token"
+                onInput={(e) => setOwnerToken((e.currentTarget as HTMLInputElement).value)}
+              />
+              <button class="btn btn-secondary" disabled={busy === "connect"} onClick={connect}>
+                {busy === "connect" ? "连接中…" : "连接已有 Edge"}
+              </button>
+            </div>
+            {!noOrigin && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  class="btn btn-primary"
+                  onClick={() => openModal(<EdgeDeployModal status={edge} onDone={() => { closeModal(); load(); }} />)}
+                >
+                  一键部署到 Cloudflare…
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function EdgeDeployModal({
+  status,
+  onDone,
+}: {
+  status: EdgeStatus | null;
+  onDone: () => void;
+}) {
+  const defaults = status?.defaults;
+  const [accountId, setAccountId] = useState(
+    status?.pending?.accountId ?? status?.deployment?.accountId ?? "",
+  );
+  const [apiToken, setApiToken] = useState("");
+  const [workerName, setWorkerName] = useState(
+    status?.pending?.workerName ??
+      status?.deployment?.workerName ??
+      defaults?.workerName ??
+      "",
+  );
+  const [d1Name, setD1Name] = useState(
+    status?.pending?.d1Name ??
+      status?.deployment?.d1Name ??
+      defaults?.d1Name ??
+      "",
+  );
+  const [subdomain, setSubdomain] = useState(
+    status?.pending?.workersSubdomain ??
+      status?.deployment?.workersSubdomain ??
+      defaults?.workersSubdomain ??
+      "",
+  );
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const deploy = async () => {
+    if (!confirmed) return toast("请先确认将创建或更新列出的 Cloudflare 资源");
+    setBusy(true);
+    try {
+      await api.deployEdge({
+        accountId,
+        apiToken,
+        workerName,
+        d1Name,
+        workersSubdomain: subdomain,
+        confirmed,
+      });
+      setApiToken("");
+      toast("Edge 部署完成");
+      onDone();
+    } catch (e) {
+      setApiToken("");
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={status?.configured ? "升级 Edge" : "部署 Edge"}
+      sub="将在你的 Cloudflare 账户中创建或更新一个 Worker、一个 D1 数据库和 workers.dev 入口。API Token 仅用于本次请求，不会保存。"
+      footer={
+        <>
+          <button class="btn btn-secondary" onClick={closeModal}>取消</button>
+          <button class="btn btn-primary" disabled={busy || !confirmed} onClick={deploy}>
+            {busy ? "部署中…" : "确认并部署"}
+          </button>
+        </>
+      }
+    >
+      <div class="field-label">Cloudflare Account ID</div>
+      <input class="text-input" value={accountId} onInput={(e) => setAccountId((e.currentTarget as HTMLInputElement).value)} />
+      <div class="field-label">临时 API Token</div>
+      <input class="text-input" type="password" value={apiToken} onInput={(e) => setApiToken((e.currentTarget as HTMLInputElement).value)} />
+      <div class="muted" style={{ fontSize: 12, marginTop: 4 }}>
+        需要 Workers Scripts Write 与 D1 Write。Cloudflare Token 是账户级凭据，请仅使用最小权限 Token。
+      </div>
+      <div class="field-label">Worker 名称</div>
+      <input class="text-input" value={workerName} onInput={(e) => setWorkerName((e.currentTarget as HTMLInputElement).value)} />
+      <div class="field-label">D1 名称</div>
+      <input class="text-input" value={d1Name} onInput={(e) => setD1Name((e.currentTarget as HTMLInputElement).value)} />
+      <div class="field-label">workers.dev 子域（账户尚未设置时创建）</div>
+      <input class="text-input" value={subdomain} onInput={(e) => setSubdomain((e.currentTarget as HTMLInputElement).value)} />
+      {status?.pending && (
+        <div class="set-callout warn" style={{ marginTop: 10 }}>
+          检测到未完成部署，当前步骤：{status.pending.step}。使用相同名称可继续，不会自动删除已创建资源。
+        </div>
+      )}
+      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 12 }}>
+        <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed((e.currentTarget as HTMLInputElement).checked)} />
+        <span>我确认创建或更新上述 Cloudflare 资源；断开 MetaHub 时不会自动删除它们。</span>
+      </label>
+    </Modal>
   );
 }
 

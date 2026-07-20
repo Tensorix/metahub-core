@@ -108,9 +108,9 @@ COMMANDS
     restore <pack> [--reset --force]  Restore (merge by default)
   edge  (optional: your own Cloudflare Worker+D1 as the always-on surface —
          sealed write-inbox for public sites, and Durable Object rooms hosting shares)
-    edge deploy [--account-id --api-token --worker --d1]
-                                      Upload the edge worker + D1 schema (the Worker/D1 must
-                                      already exist — mh never creates remote resources)
+    edge deploy --account-id <id> --api-token <token> --yes
+                                      Create/continue a dedicated Worker + D1 deployment.
+                                      Names default from this node; API token is never saved.
     edge status | pull | rotate [--purge-retired]
     edge connect --endpoint <url> --token <t>   Use a non-Cloudflare inbox host
     share create <site> --grant <db>:<ops> [--password] --room
@@ -220,8 +220,8 @@ const EXAMPLES: Record<string, string[]> = {
     "mh sync tasks.csv tasks              # import CSV → table",
   ],
   "edge deploy": [
-    "mh edge deploy --account-id <id> --api-token <token> --worker mh-edge --d1 <uuid>",
-    "mh edge deploy                          # re-deploy/upgrade with the stored settings",
+    "mh edge deploy --account-id <id> --api-token <token> --yes",
+    "mh edge deploy --api-token <token> --yes  # upgrade using stored resource names",
   ],
   "edge status": ["mh edge status", "mh edge status --json"],
   "edge pull": ["mh edge pull        # one manual inbox round (auto-sync pulls every ~60s)"],

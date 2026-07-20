@@ -14,10 +14,13 @@ import {
   type CreateShareBody,
   type GrantOp,
   type GrantSet,
+  type EdgeStatus,
+  type SiteHostingInfo,
 } from "./api.ts";
 import { buildShareTargets, shareTargetUrl } from "./data/share-targets.ts";
 import { onReplicaStatus } from "./data/replica.ts";
 import type { Scope } from "./data/scopes.ts";
+import { isNoOrigin } from "./data/replica.ts";
 
 export interface ShareTarget {
   kind: "doc" | "database" | "site";
@@ -79,7 +82,7 @@ export function useShareActions(
   const revoke = async (s: ShareListItem) => {
     if (!confirm(`撤销这个分享？(${s.source})`)) return;
     try {
-      await api.revokeShare(s.slug);
+      await api.revokeShare(s.slug, s.sourceUrl);
       onFlash("已撤销");
       notifySharesChanged();
       reload();
@@ -166,6 +169,10 @@ function draftToGrantSet(draft: GrantDraft): GrantSet | null {
 function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => void }) {
   const targets = useShareTargets();
   const [selId, setSelId] = useState("server");
+  const [access, setAccess] = useState<"private" | "public" | "link">("link");
+  const [hosting, setHosting] = useState<"device" | "edge">(
+    isNoOrigin() ? "edge" : "device",
+  );
   const [permission, setPermission] = useState<"view" | "edit">("view");
   const [password, setPassword] = useState("");
   const [expiryIdx, setExpiryIdx] = useState(0);
@@ -178,11 +185,18 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
   const [dbs, setDbs] = useState<{ id: string; name: string }[]>([]);
   const [grantDraft, setGrantDraft] = useState<GrantDraft>(() => new Map());
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [edge, setEdge] = useState<EdgeStatus | null>(null);
+  const [siteHosting, setSiteHosting] = useState<SiteHostingInfo | null>(null);
+  const [resultUrl, setResultUrl] = useState("");
 
   useEffect(() => {
     refreshShares();
     if (target.kind === "site")
       api.listDatabases().then((list) => setDbs(list.map((d) => ({ id: d.id, name: d.name })))).catch(() => undefined);
+    if (target.kind === "site") {
+      api.getEdgeStatus().then(setEdge).catch(() => setEdge(null));
+      if (!isNoOrigin()) api.getSiteHosting().then(setSiteHosting).catch(() => setSiteHosting(null));
+    }
   }, []);
 
   const toggleGrant = (dbId: string, op: GrantOp) => {
@@ -200,9 +214,12 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     api.listShares({ target: target.ref }).then(setShares).catch(() => undefined);
   }
 
-  const sel = targets.find((t) => t.id === selId) ?? targets[0]!;
-  const s3 = sel.kind === "bucket";
   const siteKind = target.kind === "site";
+  const deviceTargets = targets.filter(
+    (t) => t.kind === "server" && (!isNoOrigin() || t.id !== "server"),
+  );
+  const sel = targets.find((t) => t.id === selId) ?? deviceTargets[0] ?? targets[0];
+  const s3 = !siteKind && sel?.kind === "bucket";
   useEffect(() => {
     if (s3 && permission === "edit") setPermission("view");
   }, [s3]);
@@ -216,22 +233,82 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     }
     setBusy(true);
     setError("");
+    setResultUrl("");
     try {
-      const grantSet = siteKind && !s3 ? draftToGrantSet(grantDraft) : null;
+      const grantSet = siteKind ? draftToGrantSet(grantDraft) : null;
+      if (siteKind && access === "private") {
+        if (isNoOrigin()) await api.updateSite(target.ref, { visibility: "private" });
+        else await api.publishSite({ siteId: target.ref, access: "private" });
+        setFlash("已关闭直接公开访问；已有分享链接不会自动撤销");
+        notifySharesChanged();
+        return;
+      }
+
+      if (siteKind && hosting === "device" && isNoOrigin())
+        throw new Error("桶模式没有可托管站点的设备，请选择 Edge");
+      if (siteKind && hosting === "edge" && !edge?.configured)
+        throw new Error("请先在“设置 → 站点托管”连接或部署 Edge");
+      if (
+        siteKind &&
+        hosting === "device" &&
+        sel?.id === "server" &&
+        !siteHosting?.publicBaseUrl
+      )
+        throw new Error("请先在“设置 → 站点托管”配置当前设备的公网或局域网入口");
+
+      if (siteKind && access === "public" && hosting === "device") {
+        const targetBase =
+          sel?.id === "server"
+            ? undefined
+            : sel
+              ? shareTargetUrl(sel, location.origin)
+              : undefined;
+        const published = await api.publishSite({
+          siteId: target.ref,
+          access: "public",
+          grants: grantSet ?? { v: 1, tables: [] },
+          targetBase,
+        });
+        if (!published.url) throw new Error("发布未返回访问地址");
+        if (published.status === "ready") {
+          copy(published.url);
+          setResultUrl(published.url);
+          setFlash("站点已上线，地址已复制");
+        } else {
+          setFlash("正在同步到目标设备；确认地址可访问后才会视为发布成功");
+        }
+        notifySharesChanged();
+        return;
+      }
+
+      const edgeHosting = siteKind && hosting === "edge";
+      const effectivePassword = siteKind && access === "public" ? null : password || null;
+      const effectiveExpiry =
+        siteKind && access === "public" ? null : expiryOpts[eIdx]?.ms ?? null;
+      const server =
+        edgeHosting
+          ? null
+          : siteKind && sel?.id === "server"
+            ? siteHosting?.publicBaseUrl ?? location.origin
+            : sel
+              ? shareTargetUrl(sel, location.origin)
+              : null;
       const body: CreateShareBody = {
         kind: target.kind,
         ref: target.ref,
         transport: s3 ? "s3" : "server",
+        hosting: edgeHosting ? "room" : "server",
         permission,
-        password: password || null,
-        expiresMs: expiryOpts[eIdx]?.ms ?? null,
-        server: s3 ? null : shareTargetUrl(sel, location.origin),
-        bucketUrl: s3 ? shareTargetUrl(sel, location.origin) : null,
+        password: effectivePassword,
+        expiresMs: effectiveExpiry,
+        server: s3 ? null : server,
+        bucketUrl: s3 && sel ? shareTargetUrl(sel, location.origin) : null,
         grants: grantSet ? JSON.stringify(grantSet) : null,
       };
       const r = await api.createShare(body);
       copy(r.url);
-      setFlash(`已通过「${r.source}」创建，链接已复制`);
+      setResultUrl(r.url);
+      setFlash(`已通过「${r.source}」上线，地址已复制`);
       setPassword("");
       notifySharesChanged();
       refreshShares();
@@ -246,7 +323,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     <div class="mhshare-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div class="mhshare-modal">
         <div class="mhshare-head">
-          <h2>分享{target.title ? `：${target.title}` : ""}</h2>
+          <h2>{siteKind ? "发布与分享" : "分享"}{target.title ? `：${target.title}` : ""}</h2>
           <button class="mhshare-x" onClick={onClose} aria-label="关闭">
             ✕
           </button>
@@ -254,37 +331,92 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
 
         <div class="mhshare-body">
           <div class="mhshare-section">新建分享</div>
-          <label class="mhshare-field">
-            <span>通过</span>
-            <select value={sel.id} onChange={(e) => setSelId((e.currentTarget as HTMLSelectElement).value)}>
-              {targets.map((t) => (
-                <option value={t.id} disabled={t.kind === "bucket" && siteKind}>
-                  {t.label} — {t.subtitle}
-                  {t.kind === "bucket" && siteKind ? "（站点不支持）" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label class="mhshare-field">
+          {siteKind && (
+            <label class="mhshare-field">
+              <span>访问</span>
+              <select
+                value={access}
+                onChange={(e) =>
+                  setAccess(
+                    (e.currentTarget as HTMLSelectElement).value as
+                      | "private"
+                      | "public"
+                      | "link",
+                  )
+                }
+              >
+                <option value="private">仅自己（停止直接公开）</option>
+                <option value="public">任何人</option>
+                <option value="link">持链接者</option>
+              </select>
+            </label>
+          )}
+          {(!siteKind || access !== "private") && (
+            <label class="mhshare-field">
+              <span>托管</span>
+              {siteKind ? (
+                <select
+                  value={hosting}
+                  onChange={(e) =>
+                    setHosting(
+                      (e.currentTarget as HTMLSelectElement).value as "device" | "edge",
+                    )
+                  }
+                >
+                  <option value="device" disabled={isNoOrigin() || deviceTargets.length === 0}>
+                    设备在线托管{isNoOrigin() ? "（桶模式不可用）" : ""}
+                  </option>
+                  <option value="edge" disabled={!edge?.configured}>
+                    Edge 始终在线{edge?.configured ? "" : "（请先配置）"}
+                  </option>
+                </select>
+              ) : (
+                <select
+                  value={sel?.id}
+                  onChange={(e) =>
+                    setSelId((e.currentTarget as HTMLSelectElement).value)
+                  }
+                >
+                  {targets.map((t) => (
+                    <option value={t.id}>{t.label} — {t.subtitle}</option>
+                  ))}
+                </select>
+              )}
+            </label>
+          )}
+          {siteKind && access !== "private" && hosting === "device" && (
+            <label class="mhshare-field">
+              <span>设备</span>
+              <select
+                value={sel?.id}
+                onChange={(e) => setSelId((e.currentTarget as HTMLSelectElement).value)}
+              >
+                {deviceTargets.map((t) => (
+                  <option value={t.id}>{t.label} — {t.subtitle}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(!siteKind || access === "link") && <label class="mhshare-field">
             <span>权限</span>
             <select value={permission} disabled={s3} onChange={(e) => setPermission((e.currentTarget as HTMLSelectElement).value as "view" | "edit")}>
               <option value="view">只读</option>
               <option value="edit">可编辑{s3 ? "（仅服务器）" : ""}</option>
             </select>
-          </label>
-          <label class="mhshare-field">
+          </label>}
+          {(!siteKind || access === "link") && <label class="mhshare-field">
             <span>口令</span>
             <input type="password" placeholder="可选" value={password} onInput={(e) => setPassword((e.currentTarget as HTMLInputElement).value)} />
-          </label>
-          <label class="mhshare-field">
+          </label>}
+          {(!siteKind || access === "link") && <label class="mhshare-field">
             <span>有效期</span>
             <select value={String(eIdx)} onChange={(e) => setExpiryIdx(Number((e.currentTarget as HTMLSelectElement).value))}>
               {expiryOpts.map((o, i) => (
                 <option value={String(i)}>{o.label}</option>
               ))}
             </select>
-          </label>
-          {siteKind && !s3 && (
+          </label>}
+          {siteKind && access !== "private" && (
             <div class="mhshare-grants">
               <div class="mhshare-section">数据授权（可选）</div>
               <p class="mhshare-note">
@@ -322,10 +454,23 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
           )}
           {error && <p class="mhshare-err">{error}</p>}
           {flash && <p class="mhshare-ok">{flash}</p>}
+          {resultUrl && (
+            <div class="mhshare-result">
+              <code>{resultUrl}</code>
+              <button onClick={() => copy(resultUrl)}>复制</button>
+              <a href={resultUrl} target="_blank" rel="noreferrer">打开</a>
+            </div>
+          )}
+          {siteKind && hosting === "device" && access !== "private" && (
+            <p class="mhshare-note">设备必须保持在线；公开状态会随工作区同步到其他运行托管服务的节点。</p>
+          )}
+          {siteKind && hosting === "edge" && access !== "private" && (
+            <p class="mhshare-note">Edge 会持续提供最后一次同步的版本；桶模式关闭浏览器后暂停更新，重新打开后继续同步。</p>
+          )}
           <div class="mhshare-foot">
             <button onClick={onClose}>关闭</button>
             <button class="mhshare-primary" disabled={busy} onClick={create}>
-              {busy ? "创建中…" : "创建并复制链接"}
+              {busy ? "发布中…" : access === "private" && siteKind ? "保存" : "发布并复制地址"}
             </button>
           </div>
 
@@ -359,7 +504,9 @@ function ShareRows({
       {shares.map((s) => (
         <li key={s.slug}>
           <div class="mhshare-li-main">
-            <span class="mhshare-badge">{s.transport === "s3" ? "对象存储" : "服务器"}</span>
+            <span class="mhshare-badge">
+              {s.hosting === "room" ? "Edge" : s.transport === "s3" ? "对象存储" : "设备"}
+            </span>
             <span class="mhshare-src">{s.source}</span>
             <span class="mhshare-meta">
               {s.permission === "edit" ? "可编辑" : "只读"}
@@ -407,6 +554,9 @@ function injectStyle() {
   .mhshare-note{color:var(--mh-muted,#6e7781);font-size:13px;margin:2px 0}
   .mhshare-err{color:#cf222e;font-size:13px;margin:0}
   .mhshare-ok{color:#1a7f37;font-size:13px;margin:0}
+  .mhshare-result{display:flex;gap:6px;align-items:center;padding:8px;border:1px solid var(--mh-line,#d0d7de);border-radius:7px}
+  .mhshare-result code{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+  .mhshare-result button,.mhshare-result a{font-size:12px;padding:4px 8px;border:1px solid var(--mh-line,#d0d7de);border-radius:5px;background:var(--mh-card,#f6f8fa);color:inherit;text-decoration:none}
   .mhshare-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
   .mhshare-list li{border:1px solid var(--mh-line,#e5e7eb);border-radius:9px;padding:9px 11px;display:flex;flex-direction:column;gap:6px}
   .mhshare-li-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}

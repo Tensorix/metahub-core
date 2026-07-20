@@ -9,7 +9,8 @@ import { SYNC_PATH, HEALTH_PATH, RENEW_PATH, PAIR_PATH } from "./protocol.ts";
 import { DEFAULT_TTL_MS, DEFAULT_GRACE_MS } from "./token.ts";
 import { syncPeer, listPeers } from "./peers.ts";
 import { getEdgeConfig } from "./edge-config.ts";
-import { blobMaintenance } from "../blobs.ts";
+import { blobMaintenance, resolveBlob } from "../blobs.ts";
+import { registerRoomBlobResolver } from "./room-peer.ts";
 import { buildOpenApi } from "./openapi.ts";
 import {
   type AuthConfig,
@@ -73,6 +74,9 @@ export interface ServerOptions {
   syncIntervalMs?: number;
   /** Master switch for the auto-sync timer. Falls back to stored config. */
   autoSync?: boolean;
+  /** Disable LAN/public site-base verification for an unauthenticated
+   *  loopback-only shell such as the Desktop sidecar. */
+  allowRemoteSiteHosting?: boolean;
   /** Browser UI plug-in point. Core ships no UI; callers (CLI, desktop
    *  sidecar) inject the WebUI's asset handler + data API routes here.
    *  Omitted = a headless sync/sites server. */
@@ -104,9 +108,14 @@ function scalarHtml(specUrl: string): string {
 
 /** Start the CRDT sync server. It is just another node backed by ~/.metahub. */
 export function startServer(opts: ServerOptions = {}): RunningServer {
+  registerRoomBlobResolver(resolveBlob);
   const db = openMetahub();
   const node = getNodeId(db);
-  const ctx: RouteCtx = { db, node };
+  const ctx: RouteCtx = {
+    db,
+    node,
+    allowRemoteSiteHosting: opts.allowRemoteSiteHosting ?? true,
+  };
   const allRoutes = opts.ui ? [...routes, ...opts.ui.routes] : routes;
 
   // In-process forward into the route table for /sites/<name>/api/* requests

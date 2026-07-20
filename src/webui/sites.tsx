@@ -1,8 +1,16 @@
 /** @jsxImportSource preact */
 import { useEffect, useRef, useState } from "preact/hooks";
-import { api, type Site, type SiteFile, type GrantOp, type GrantSet } from "./api.ts";
+import {
+  api,
+  type Site,
+  type SiteFile,
+  type GrantOp,
+  type GrantSet,
+  type ShareListItem,
+  type SiteHostingInfo,
+} from "./api.ts";
 import { normalizeSiteName } from "../core/sites-core.ts";
-import { openShareModal, useSharedTargets } from "./share-modal.tsx";
+import { openShareModal, SHARES_CHANGED } from "./share-modal.tsx";
 import { Icon } from "./icons.tsx";
 import {
   openMenu,
@@ -24,7 +32,7 @@ import {
 const siteUrl = (name: string) => location.origin + "/sites/" + name + "/";
 // Display form: drop the shared `${origin}/sites` prefix (identical for every
 // site) and show only the part that varies. Full URL is still used for copy/open.
-const siteUrlShort = (name: string) => "/" + name + "/";
+const siteUrlShort = (name: string) => "/sites/" + name + "/";
 const ext = (p: string) => (/\.([a-z0-9]+)$/i.exec(p)?.[1] ?? "").toLowerCase();
 const isImage = (ct: string) => ct.startsWith("image/");
 
@@ -216,7 +224,8 @@ export function SitesView() {
   const [preview, setPreview] = useState<Site | null>(null);
   const [drag, setDrag] = useState(false);
   const [upload, setUpload] = useState<{ done: number; total: number } | null>(null);
-  const shared = useSharedTargets();
+  const [shares, setShares] = useState<ShareListItem[]>([]);
+  const [hostingInfo, setHostingInfo] = useState<SiteHostingInfo | null>(null);
 
   const reload = () =>
     api
@@ -230,6 +239,16 @@ export function SitesView() {
 
   useEffect(() => {
     reload();
+    const loadShares = () => api.listShares().then(setShares).catch(() => undefined);
+    const refreshPublishState = () => {
+      loadShares();
+      reload();
+      api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
+    };
+    loadShares();
+    api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
+    document.addEventListener(SHARES_CHANGED, refreshPublishState);
+    return () => document.removeEventListener(SHARES_CHANGED, refreshPublishState);
   }, []);
 
   const newSite = () => openModal(<NewSiteModal onCreated={(site) => { reload(); setPeek(site); }} />);
@@ -281,25 +300,6 @@ export function SitesView() {
   // Default-deny, same rule as core isSitePublic: only exactly "public" counts.
   const isPublic = (s: Site) => s.visibility === "public";
 
-  const togglePublic = async (s: Site) => {
-    if (!isPublic(s)) {
-      const ok = await confirmDialog({
-        title: "公开此站点？",
-        message:
-          "公开后：任何人无需登录即可读取该站点的所有页面和文件；页面内对 /api 的数据调用默认不可用（公开不等于授权读取数据）；只要任何一台已配对设备在运行 server，都会公开提供此站点。若之后改回私有，外部 CDN／浏览器缓存里已取到的内容最多可能在数分钟内仍可访问。",
-        confirmLabel: "设为公开",
-      });
-      if (!ok) return;
-    }
-    try {
-      await api.updateSite(s.id, { visibility: isPublic(s) ? "private" : "public" });
-    } catch (err) {
-      return toast((err as Error).message);
-    }
-    toast(isPublic(s) ? "已恢复为私有" : "已设为公开");
-    reload();
-  };
-
   const toggleSpa = async (s: Site) => {
     try {
       await api.updateSite(s.id, { spa: s.spa !== 1 });
@@ -315,7 +315,7 @@ export function SitesView() {
       <>
         <MenuItem
           icon="externalLink"
-          label="复制访问地址"
+          label="复制本机预览地址"
           onClick={() => {
             close();
             copyText(siteUrl(s.name));
@@ -323,18 +323,10 @@ export function SitesView() {
         />
         <MenuItem
           icon="link"
-          label="通过设备分享…"
+          label="发布与分享…"
           onClick={() => {
             close();
             openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
-          }}
-        />
-        <MenuItem
-          icon="globe"
-          label={isPublic(s) ? "关闭公开访问" : "开启公开访问…"}
-          onClick={() => {
-            close();
-            togglePublic(s);
           }}
         />
         <MenuItem
@@ -343,21 +335,6 @@ export function SitesView() {
           onClick={() => {
             close();
             toggleSpa(s);
-          }}
-        />
-        <MenuItem
-          icon="link"
-          label={
-            isPublic(s) ? (
-              "公开数据授权…"
-            ) : (
-              <span style={{ opacity: 0.5 }}>公开数据授权（需先公开）</span>
-            )
-          }
-          onClick={() => {
-            close();
-            if (!isPublic(s)) return toast("先开启公开访问，公开数据授权才会生效");
-            openModal(<SiteGrantsModal site={s} onSaved={reload} />);
           }}
         />
         <MenuItem
@@ -457,6 +434,20 @@ export function SitesView() {
         <>
           <div class="sites-grid">
             {sites.map((s, i) => (
+              (() => {
+                const ownShares = shares.filter((x) => x.target_id === s.id);
+                const hasRoom = ownShares.some((x) => x.hosting === "room");
+                const hasRestricted = ownShares.some((x) => x.hosting !== "room");
+                const state = hasRoom
+                  ? "始终在线·Edge"
+                  : isPublic(s) && hostingInfo?.publicBaseUrl
+                    ? "已上线·设备"
+                    : isPublic(s)
+                      ? "公网未发布"
+                      : hasRestricted
+                        ? "受限分享"
+                        : "本机预览";
+                return (
               <div class="site-card" key={s.id} style={`--i:${i}`} onClick={() => setPeek(s)}>
                 <div class="site-card-head">
                   <span class="si">
@@ -466,29 +457,17 @@ export function SitesView() {
                     <div class="slug">{s.name}</div>
                     <div class={"ttl" + (s.title ? "" : " muted")}>{s.title || "未命名站点"}</div>
                   </div>
-                  {isPublic(s) && (
+                  {(isPublic(s) || ownShares.length > 0) && (
                     <span
                       class="share-badge"
-                      title="公开站点 · 任何人可访问"
+                      title={state}
                       style={{ marginLeft: "auto" }}
                     >
                       <Icon name="globe" />
                     </span>
                   )}
-                  {shared.has(s.id) && (
-                    <span
-                      class="share-badge"
-                      title="已分享 · 管理分享"
-                      style={{ marginLeft: isPublic(s) ? undefined : "auto" }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
-                      }}
-                    >
-                      <Icon name="link" />
-                    </span>
-                  )}
                 </div>
+                <div class="muted" style={{ fontSize: 12, marginBottom: 4 }}>{state}</div>
                 <button
                   class="site-addr"
                   title="点击复制访问地址"
@@ -517,7 +496,18 @@ export function SitesView() {
                     }}
                   >
                     <Icon name="globe" cls="ico sm" />
-                    访问
+                    预览
+                  </button>
+                  <button
+                    class="btn btn-primary"
+                    style={{ flex: 1 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
+                    }}
+                  >
+                    <Icon name="link" cls="ico sm" />
+                    {ownShares.length || isPublic(s) ? "管理" : "发布"}
                   </button>
                   <button
                     class="iconbtn"
@@ -531,6 +521,8 @@ export function SitesView() {
                   </button>
                 </div>
               </div>
+                );
+              })()
             ))}
           </div>
           <div class="gridfoot">

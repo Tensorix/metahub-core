@@ -18,12 +18,11 @@ import { addProperty } from "../properties.ts";
 import { createRecord, updateRecord, listRecords } from "../records.ts";
 import { createSite, putFileInline, writeFileRow } from "../sites-core.ts";
 import { serializeGrantSet } from "../grants-core.ts";
-import { getShare } from "../shares.ts";
-import { setEdgeConfig, getEdgeConfig } from "./edge-config.ts";
-import { getPeer, syncPeer } from "./peers.ts";
+import { getShare, listShares } from "../shares.ts";
+import { setEdgeConfig } from "./edge-config.ts";
+import { getPeer, listPeers, syncPeer } from "./peers.ts";
 import { createShareAction, revokeShareAction } from "./share-actions.ts";
 import {
-  provisionRoomForShare,
   pushRoomBlobs,
   roomPeerKey,
   roomTransport,
@@ -129,13 +128,15 @@ test("room e2e: create --room path → seed → tick → guest unlock/write → 
       kind: "site",
       ref: "board",
       transport: "server",
+      hosting: "room",
       password: "sesame",
       grants: serializeGrantSet({ v: 1, tables: [{ db: X, ops: ["read", "create", "update"] }] }),
     });
     const share = getShare(A, created.slug)!;
-    const room = await provisionRoomForShare(A, share, getEdgeConfig(A)!);
-    expect(room.url).toBe(`${host.url}/r/${share.slug}/`);
+    expect(created.hosting).toBe("room");
+    expect(created.url).toBe(`${host.url}/r/${share.slug}/`);
     expect(getPeer(A, roomPeerKey(share.slug))?.kind).toBe("room");
+    const room = { url: created.url };
 
     // Seed landed: the room's own db holds the pushed record.
     const roomDb = host.dbFor(share.slug);
@@ -301,11 +302,11 @@ test("room e2e: expired room answers expired → owner tears the peer down", asy
       kind: "site",
       ref: "exp",
       transport: "server",
+      hosting: "room",
       grants: serializeGrantSet({ v: 1, tables: [{ db: X, ops: ["read"] }] }),
       expiresMs: 60_000,
     });
     const share = getShare(A, created.slug)!;
-    await provisionRoomForShare(A, share, getEdgeConfig(A)!);
     expect(getPeer(A, roomPeerKey(share.slug))).not.toBeNull();
 
     // Flip the room's clock past expiry (the DO's alarm would deleteAll; the
@@ -328,6 +329,27 @@ test("room e2e: expired room answers expired → owner tears the peer down", asy
     // probe, so a subscribed SDK client detects "gone" and stops reconnecting.
     expect((await fetch(`${host.url}/r/${share.slug}/`, { headers: { accept: "text/html" } })).status).toBe(404);
     expect((await fetch(`${host.url}/r/${share.slug}/ws`)).status).toBe(404);
+  } finally {
+    host.stop();
+  }
+});
+
+test("room provisioning failure rolls back the share and peer", async () => {
+  const host = startRoomHost();
+  try {
+    const A = makeHub("nodeC");
+    setEdgeConfig(A, { endpoint: host.url, token: "wrong-owner-token" });
+    createSite(A, { name: "rollback" });
+    await expect(
+      createShareAction(A, {
+        kind: "site",
+        ref: "rollback",
+        transport: "server",
+        hosting: "room",
+      }),
+    ).rejects.toThrow("refused");
+    expect(listShares(A)).toHaveLength(0);
+    expect(listPeers(A).filter((p) => p.kind === "room")).toHaveLength(0);
   } finally {
     host.stop();
   }
