@@ -77,6 +77,9 @@ export interface ServerOptions {
   /** Disable LAN/public site-base verification for an unauthenticated
    *  loopback-only shell such as the Desktop sidecar. */
   allowRemoteSiteHosting?: boolean;
+  /** Desktop's debug sidecar: reject DNS-rebinding hosts and cross-site
+   * mutations even though the token gate is intentionally disabled. */
+  loopbackUiOnly?: boolean;
   /** Browser UI plug-in point. Core ships no UI; callers (CLI, desktop
    *  sidecar) inject the WebUI's asset handler + data API routes here.
    *  Omitted = a headless sync/sites server. */
@@ -94,6 +97,23 @@ export interface UiHandler {
   serveAssets(req: Request): Promise<Response | null>;
   /** The UI's data API routes, merged into the route registry (and /docs). */
   routes: Route[];
+}
+
+export function loopbackUiRejection(req: Request, port: number): Response | null {
+  const url = new URL(req.url);
+  const actualPort = String(port);
+  if (url.hostname !== "127.0.0.1" || url.port !== actualPort)
+    return new Response("forbidden host", { status: 403 });
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return null;
+  const expectedOrigin = `http://127.0.0.1:${actualPort}`;
+  const origin = req.headers.get("origin");
+  const fetchSite = req.headers.get("sec-fetch-site");
+  if (
+    origin !== expectedOrigin ||
+    (fetchSite != null && fetchSite !== "same-origin" && fetchSite !== "none")
+  )
+    return new Response("cross-site mutation denied", { status: 403 });
+  return null;
 }
 
 /** Scalar API reference UI, loaded from CDN — no bundling or npm dependency. */
@@ -158,6 +178,10 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       : undefined,
     async fetch(req, srv) {
       const url = new URL(req.url);
+      if (opts.loopbackUiOnly) {
+        const rejection = loopbackUiRejection(req, srv.port!);
+        if (rejection) return rejection;
+      }
 
       // Client IP for the guest-surface rate limiters: first x-forwarded-for hop
       // (reverse-proxy deployments) over the socket address. Best-effort — a
@@ -178,7 +202,9 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       // inventory + re-presign) stay master-only via the else branch below.
       const shareMgmt =
         ((req.method === "POST" || req.method === "DELETE") && url.pathname === "/api/share") ||
-        (req.method === "GET" && url.pathname === "/api/shares");
+        (req.method === "GET" && url.pathname === "/api/shares") ||
+        ((req.method === "GET" || req.method === "DELETE") &&
+          url.pathname === "/api/share/request");
       if (
         url.pathname === SYNC_PATH ||
         url.pathname.startsWith("/blob/") ||

@@ -4,7 +4,9 @@ import { MhError } from "../../core/errors.ts";
 import { getPeer } from "../../core/sync/peers.ts";
 import {
   createShareAction,
+  createdShareByRequestId,
   revokeShareAction,
+  revokeShareByRequestId,
   renewShareAction,
   listSharesAggregated,
   listSharesLocal,
@@ -31,6 +33,7 @@ const CreateShareReq = z.object({
   viewerBase: z.string().optional(),
   // Serialized GrantSet enabling /share/<slug>/api/* (server transport only).
   grants: z.string().nullable().optional(),
+  requestId: z.string().optional(),
 });
 const CreatedShareRes = z.object({
   slug: z.string(),
@@ -56,6 +59,11 @@ const ShareListItemRes = z.object({
   expiresAt: z.number().nullable(),
   hasPassword: z.boolean(),
   url: z.string().optional(),
+  lifecycle: z.enum(["active", "provisioning", "cleanup_pending"]).optional(),
+});
+const RevokeShareRes = z.object({
+  ok: z.boolean(),
+  status: z.enum(["revoked", "cleanup_pending", "not_found"]),
 });
 
 function originBase(req: Request): string {
@@ -77,14 +85,26 @@ export const shareRoutes: Route[] = [
         lastSuccessAt: z.number().nullable(),
       }),
     ),
-    handler: (_req, { db }) => Response.json(listShareServers(db)),
+    handler: (_req, { db }) => {
+      try {
+        return Response.json(listShareServers(db));
+      } catch (e) {
+        return errorResponse(e);
+      }
+    },
   },
   {
     method: "GET",
     path: "/api/share/buckets",
     summary: "Object-storage buckets available as a share transport (master-only).",
     response: z.array(z.object({ url: z.string(), label: z.string() })),
-    handler: (_req, { db }) => Response.json(listShareBuckets(db)),
+    handler: (_req, { db }) => {
+      try {
+        return Response.json(listShareBuckets(db));
+      } catch (e) {
+        return errorResponse(e);
+      }
+    },
   },
   {
     method: "GET",
@@ -144,8 +164,41 @@ export const shareRoutes: Route[] = [
           bucketUrl: body.bucketUrl ?? null,
           viewerBase: body.viewerBase,
           grants: body.grants ?? null,
+          requestId: body.requestId ?? null,
         });
         return Response.json(out);
+      } catch (e) {
+        return errorResponse(e);
+      }
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/share/request",
+    summary: "Resolve an idempotent remote share creation request.",
+    response: CreatedShareRes,
+    handler: async (req, { db }) => {
+      try {
+        const id = new URL(req.url).searchParams.get("id");
+        if (!id) throw new MhError("invalid_input", "request id required");
+        const found = createdShareByRequestId(db, id);
+        if (!found) throw new MhError("not_found", "share request not found");
+        return Response.json(found);
+      } catch (e) {
+        return errorResponse(e);
+      }
+    },
+  },
+  {
+    method: "DELETE",
+    path: "/api/share/request",
+    summary: "Compensate an idempotent remote share creation request.",
+    response: RevokeShareRes,
+    handler: async (req, { db }) => {
+      try {
+        const id = new URL(req.url).searchParams.get("id");
+        if (!id) throw new MhError("invalid_input", "request id required");
+        return Response.json(await revokeShareByRequestId(db, id));
       } catch (e) {
         return errorResponse(e);
       }
@@ -170,12 +223,12 @@ export const shareRoutes: Route[] = [
     method: "DELETE",
     path: "/api/share",
     summary: "Revoke a share (local server row, or a bucket share's objects). Query: ?slug=<slug>",
-    response: z.object({ ok: z.boolean() }),
+    response: RevokeShareRes,
     handler: async (req, { db }) => {
       try {
         const slug = new URL(req.url).searchParams.get("slug");
         if (!slug) throw new MhError("invalid_input", "slug required");
-        return Response.json({ ok: await revokeShareAction(db, slug) });
+        return Response.json(await revokeShareAction(db, slug));
       } catch (e) {
         return errorResponse(e);
       }
@@ -185,14 +238,14 @@ export const shareRoutes: Route[] = [
     method: "DELETE",
     path: "/api/share/managed",
     summary: "Master-only revoke routed to the local node or the paired device that owns it.",
-    response: z.object({ ok: z.boolean() }),
+    response: RevokeShareRes,
     handler: async (req, { db }) => {
       try {
         const url = new URL(req.url);
         const slug = url.searchParams.get("slug");
         const via = url.searchParams.get("via");
         if (!slug) throw new MhError("invalid_input", "slug required");
-        if (!via) return Response.json({ ok: await revokeShareAction(db, slug) });
+        if (!via) return Response.json(await revokeShareAction(db, slug));
         const peer = listShareServers(db).find((item) => item.url === via);
         const token = peer ? getPeer(db, via)?.token : null;
         if (!peer || !token) throw new MhError("not_found", "paired share owner not found");
@@ -202,9 +255,16 @@ export const shareRoutes: Route[] = [
         ).catch((e) => {
           throw new MhError("network", `could not reach ${via}: ${(e as Error).message}`);
         });
-        const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        const body = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          status?: "revoked" | "cleanup_pending" | "not_found";
+          error?: string;
+        } | null;
         if (!res.ok) throw new MhError("network", body?.error || `remote revoke failed: ${res.status}`);
-        return Response.json({ ok: !!body?.ok });
+        return Response.json({
+          ok: !!body?.ok,
+          status: body?.status ?? (body?.ok ? "revoked" : "not_found"),
+        });
       } catch (e) {
         return errorResponse(e);
       }

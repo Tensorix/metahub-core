@@ -4,13 +4,12 @@ import {
   api,
   type Site,
   type SiteFile,
-  type GrantOp,
-  type GrantSet,
   type ShareListItem,
   type SiteHostingInfo,
 } from "./api.ts";
 import { normalizeSiteName } from "../core/sites-core.ts";
 import { openShareModal, SHARES_CHANGED } from "./share-modal.tsx";
+import { isNoOrigin } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
 import {
   openMenu,
@@ -236,6 +235,8 @@ export function SitesView() {
         setPeek((cur) => (cur ? (s.find((x) => x.id === cur.id) ?? null) : null));
       })
       .catch((e) => toast(`加载失败：${e.message}`));
+  const reloadHosting = () =>
+    api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
 
   useEffect(() => {
     reload();
@@ -243,10 +244,10 @@ export function SitesView() {
     const refreshPublishState = () => {
       loadShares();
       reload();
-      api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
+      if (!isNoOrigin()) reloadHosting();
     };
     loadShares();
-    api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
+    if (!isNoOrigin()) reloadHosting();
     document.addEventListener(SHARES_CHANGED, refreshPublishState);
     return () => document.removeEventListener(SHARES_CHANGED, refreshPublishState);
   }, []);
@@ -436,12 +437,28 @@ export function SitesView() {
             {sites.map((s, i) => (
               (() => {
                 const ownShares = shares.filter((x) => x.target_id === s.id);
-                const hasRoom = ownShares.some((x) => x.hosting === "room");
+                const pendingRollback = hostingInfo?.pendingRollbacks.find((x) => x.siteId === s.id);
+                const publishStates =
+                  hostingInfo?.publishedSites.filter((x) => x.siteId === s.id) ?? [];
+                const deviceReady = publishStates.some((x) => x.status === "ready");
+                const deviceSyncing = publishStates.some((x) => x.status === "syncing");
+                const cleanupPending = ownShares.some(
+                  (x) => x.hosting === "room" && x.lifecycle === "cleanup_pending",
+                );
+                const hasRoom = ownShares.some(
+                  (x) => x.hosting === "room" && (x.lifecycle ?? "active") === "active",
+                );
                 const hasRestricted = ownShares.some((x) => x.hosting !== "room");
-                const state = hasRoom
+                const state = pendingRollback
+                  ? "回滚待确认"
+                  : cleanupPending
+                    ? "撤销待确认"
+                  : hasRoom
                   ? "始终在线·Edge"
-                  : isPublic(s) && hostingInfo?.publicBaseUrl
+                  : isPublic(s) && deviceReady
                     ? "已上线·设备"
+                    : isPublic(s) && deviceSyncing
+                      ? "正在同步·设备"
                     : isPublic(s)
                       ? "公网未发布"
                       : hasRestricted
@@ -499,15 +516,30 @@ export function SitesView() {
                     预览
                   </button>
                   <button
-                    class="btn btn-primary"
+                    class={"btn " + (pendingRollback ? "btn-danger" : "btn-primary")}
                     style={{ flex: 1 }}
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
+                      if (pendingRollback) {
+                        try {
+                          const result = await api.recoverSitePublish(
+                            pendingRollback.siteId,
+                            pendingRollback.peerUrl,
+                          );
+                          if (result.status === "rollback_pending")
+                            toast(`回滚仍未确认：${result.error ?? "目标设备不可达"}`);
+                          else toast("目标设备已确认恢复发布前状态");
+                          await reloadHosting();
+                        } catch (err) {
+                          toast((err as Error).message);
+                        }
+                        return;
+                      }
                       openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
                     }}
                   >
                     <Icon name="link" cls="ico sm" />
-                    {ownShares.length || isPublic(s) ? "管理" : "发布"}
+                    {pendingRollback ? "重试回滚" : ownShares.length || isPublic(s) ? "管理" : "发布"}
                   </button>
                   <button
                     class="iconbtn"
@@ -544,124 +576,6 @@ export function SitesView() {
       {preview && <SitePreview site={preview} onClose={() => setPreview(null)} />}
       {upload && <UploadProgress done={upload.done} total={upload.total} />}
     </div>
-  );
-}
-
-/** Public data grants editor: which tables anonymous visitors of a PUBLIC site
- *  may read / create / update through /sites/<name>/api/*. */
-function SiteGrantsModal({ site, onSaved }: { site: Site; onSaved: () => void }) {
-  const [dbs, setDbs] = useState<{ id: string; name: string }[] | null>(null);
-  const [draft, setDraft] = useState<Map<string, Set<GrantOp>>>(() => new Map());
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    Promise.all([api.listDatabases(), api.getSiteGrants(site.id)])
-      .then(([list, res]) => {
-        setDbs(list.map((d) => ({ id: d.id, name: d.name })));
-        setDraft(new Map(res.grants.tables.map((t) => [t.db, new Set(t.ops)])));
-      })
-      .catch((e) => {
-        toast((e as Error).message);
-        setDbs([]);
-      });
-  }, [site.id]);
-
-  const toggle = (dbId: string, op: GrantOp) => {
-    setDraft((cur) => {
-      const next = new Map(cur);
-      const ops = new Set(next.get(dbId) ?? []);
-      if (ops.has(op)) ops.delete(op);
-      else ops.add(op);
-      next.set(dbId, ops);
-      return next;
-    });
-  };
-
-  const save = async () => {
-    const tables = [...draft.entries()]
-      .filter(([, ops]) => ops.size > 0)
-      .map(([db, ops]) => ({
-        db,
-        ops: (["read", "create", "update"] as GrantOp[]).filter((o) => ops.has(o)),
-      }));
-    const set: GrantSet = { v: 1, tables };
-    setBusy(true);
-    try {
-      await api.setSiteGrants(site.id, set);
-      closeModal();
-      toast(tables.length ? "已保存公开数据授权" : "已清空公开数据授权");
-      onSaved();
-    } catch (e) {
-      toast((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title="公开数据授权"
-      sub={`任何访客都能按下列授权读写数据（站点「${site.name}」的 api/ 调用）。写入以访客身份记录，可按来源回滚。`}
-      footer={
-        <>
-          <button class="btn btn-secondary" onClick={closeModal}>
-            取消
-          </button>
-          <button class="btn btn-primary" disabled={busy || dbs == null} onClick={save}>
-            {busy ? "保存中…" : "保存"}
-          </button>
-        </>
-      }
-    >
-      {dbs == null ? (
-        <div class="muted">加载中…</div>
-      ) : dbs.length === 0 ? (
-        <div class="muted">还没有数据库可以授权。</div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {dbs.map((d) => {
-            const ops = draft.get(d.id) ?? new Set<GrantOp>();
-            return (
-              <div
-                key={d.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 16,
-                  padding: "6px 10px",
-                  border: "1px solid var(--line)",
-                  borderRadius: "var(--radius)",
-                }}
-              >
-                <span
-                  style={{
-                    flex: 1,
-                    fontWeight: 600,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {d.name}
-                </span>
-                {(["read", "create", "update"] as GrantOp[]).map((op) => (
-                  <label
-                    key={op}
-                    style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, cursor: "pointer" }}
-                  >
-                    <input type="checkbox" checked={ops.has(op)} onChange={() => toggle(d.id, op)} />
-                    {op === "read" ? "读" : op === "create" ? "新增" : "修改"}
-                  </label>
-                ))}
-              </div>
-            );
-          })}
-          <div class="muted" style={{ fontSize: 12, marginTop: 6 }}>
-            「修改」允许匿名访客改动表中任何行，请谨慎勾选。删除永远不开放。
-          </div>
-        </div>
-      )}
-    </Modal>
   );
 }
 

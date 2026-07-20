@@ -18,10 +18,14 @@ import { addProperty } from "../properties.ts";
 import { createRecord, updateRecord, listRecords } from "../records.ts";
 import { createSite, putFileInline, writeFileRow } from "../sites-core.ts";
 import { serializeGrantSet } from "../grants-core.ts";
-import { getShare, listShares } from "../shares.ts";
+import { createShare, getShare, listShares } from "../shares.ts";
 import { setEdgeConfig } from "./edge-config.ts";
-import { getPeer, listPeers, syncPeer } from "./peers.ts";
-import { createShareAction, revokeShareAction } from "./share-actions.ts";
+import { addRoomPeer, getPeer, listPeers, syncPeer } from "./peers.ts";
+import {
+  createShareAction,
+  createdShareByRequestId,
+  revokeShareAction,
+} from "./share-actions.ts";
 import {
   pushRoomBlobs,
   roomPeerKey,
@@ -44,6 +48,7 @@ function makeHub(node: string): Database {
  *  room fetch handler, plus Bun.serve's pubsub as the WS poke fan-out. */
 function startRoomHost() {
   const rooms = new Map<string, Database>();
+  let destroyStatus: number | null = null;
   const dbFor = (slug: string): Database => {
     let d = rooms.get(slug);
     if (!d) {
@@ -62,6 +67,12 @@ function startRoomHost() {
       if (!m) return new Response("not found", { status: 404 });
       const slug = decodeURIComponent(m[1]!);
       const db = dbFor(slug);
+      if (
+        destroyStatus != null &&
+        url.pathname === `/r/${m[1]}/owner/destroy`
+      ) {
+        return new Response("temporary destroy failure", { status: destroyStatus });
+      }
       // Intercept /ws only for a REAL websocket handshake — a plain GET falls
       // through to the portable handler (426 live / 404 dead), the same
       // routing the DO shell (workers/room.ts) uses so the SDK liveness probe
@@ -102,6 +113,9 @@ function startRoomHost() {
     server,
     url: `http://127.0.0.1:${server.port}`,
     dbFor,
+    setDestroyStatus: (status: number | null) => {
+      destroyStatus = status;
+    },
     stop: () => server.stop(true),
   };
 }
@@ -116,7 +130,7 @@ test("room e2e: create --room path → seed → tick → guest unlock/write → 
   try {
     // ---- owner hub with a site + granted table, edge config → the host ------
     const A = makeHub("nodeA");
-    setEdgeConfig(A, { endpoint: host.url, token: OWNER_TOKEN });
+    setEdgeConfig(A, { endpoint: host.url, token: OWNER_TOKEN, capabilities: ["inbox", "room"] });
     const X = createDatabase(A, { name: "tasks" }).id;
     const title = addProperty(A, X, { name: "title", type: "text" });
     const siteId = createSite(A, { name: "board" }).id;
@@ -282,7 +296,7 @@ test("room e2e: create --room path → seed → tick → guest unlock/write → 
 
     // ---- revoke: destroys the room + removes the peer (decision 3) -----------
     ws.close();
-    expect(await revokeShareAction(A, share.slug)).toBe(true);
+    expect(await revokeShareAction(A, share.slug)).toEqual({ ok: true, status: "revoked" });
     expect(getPeer(A, roomPeerKey(share.slug))).toBeNull();
     expect((await fetch(room.url, { headers: { accept: "text/html" } })).status).toBe(404);
   } finally {
@@ -294,7 +308,7 @@ test("room e2e: expired room answers expired → owner tears the peer down", asy
   const host = startRoomHost();
   try {
     const A = makeHub("nodeB");
-    setEdgeConfig(A, { endpoint: host.url, token: OWNER_TOKEN });
+    setEdgeConfig(A, { endpoint: host.url, token: OWNER_TOKEN, capabilities: ["inbox", "room"] });
     const X = createDatabase(A, { name: "notes" }).id;
     addProperty(A, X, { name: "t", type: "text" });
     createSite(A, { name: "exp" });
@@ -338,7 +352,11 @@ test("room provisioning failure rolls back the share and peer", async () => {
   const host = startRoomHost();
   try {
     const A = makeHub("nodeC");
-    setEdgeConfig(A, { endpoint: host.url, token: "wrong-owner-token" });
+    setEdgeConfig(A, {
+      endpoint: host.url,
+      token: "wrong-owner-token",
+      capabilities: ["inbox", "room"],
+    });
     createSite(A, { name: "rollback" });
     await expect(
       createShareAction(A, {
@@ -350,6 +368,82 @@ test("room provisioning failure rolls back the share and peer", async () => {
     ).rejects.toThrow("refused");
     expect(listShares(A)).toHaveLength(0);
     expect(listPeers(A).filter((p) => p.kind === "room")).toHaveLength(0);
+  } finally {
+    host.stop();
+  }
+});
+
+test("background sync resumes a provisional room after an owner crash", async () => {
+  const host = startRoomHost();
+  try {
+    const A = makeHub("node-provisional");
+    const site = createSite(A, { name: "resume-room" });
+    putFileInline(A, site.id, "index.html", { data: "<h1>resumed</h1>" });
+    const share = createShare(A, {
+      kind: "site",
+      target_id: site.id,
+      requestId: "resume_room_request_123456",
+    });
+    addRoomPeer(A, {
+      url: roomPeerKey(share.slug),
+      config: {
+        base: host.url,
+        slug: share.slug,
+        ownerSecret: OWNER_TOKEN,
+        guestBase: "gprovisional",
+        lifecycle: "provisioning",
+      },
+    });
+
+    const out = await syncPeer(A, roomPeerKey(share.slug));
+    expect(out.ok).toBe(true);
+    const peer = getPeer(A, roomPeerKey(share.slug));
+    expect(JSON.parse(peer!.config!).lifecycle).toBe("active");
+    expect(
+      (await fetch(`${host.url}/r/${share.slug}/`, { headers: { accept: "text/html" } }))
+        .status,
+    ).toBe(200);
+  } finally {
+    host.stop();
+  }
+});
+
+test("room revoke keeps cleanup state until background destroy succeeds", async () => {
+  const host = startRoomHost();
+  try {
+    const A = makeHub("nodeD");
+    setEdgeConfig(A, {
+      endpoint: host.url,
+      token: OWNER_TOKEN,
+      capabilities: ["inbox", "room"],
+    });
+    createSite(A, { name: "cleanup" });
+    const created = await createShareAction(A, {
+      kind: "site",
+      ref: "cleanup",
+      transport: "server",
+      hosting: "room",
+      requestId: "cleanup_request_1234567890",
+    });
+
+    host.setDestroyStatus(503);
+    expect(await revokeShareAction(A, created.slug)).toEqual({
+      ok: false,
+      status: "cleanup_pending",
+    });
+    expect(getShare(A, created.slug)).not.toBeNull();
+    expect(getPeer(A, roomPeerKey(created.slug))).not.toBeNull();
+    expect(createdShareByRequestId(A, "cleanup_request_1234567890")).toBeNull();
+
+    const failedRetry = await syncPeer(A, roomPeerKey(created.slug));
+    expect(failedRetry.ok).toBe(false);
+    expect(getShare(A, created.slug)).not.toBeNull();
+
+    host.setDestroyStatus(null);
+    const recovered = await syncPeer(A, roomPeerKey(created.slug));
+    expect(recovered.ok).toBe(true);
+    expect(getPeer(A, roomPeerKey(created.slug))).toBeNull();
+    expect(getShare(A, created.slug)).toBeNull();
   } finally {
     host.stop();
   }

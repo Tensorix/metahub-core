@@ -333,7 +333,16 @@ function SiteHostingSettings() {
       const out = await api.connectEdge(endpoint, ownerToken);
       setEdge(out);
       setOwnerToken("");
-      toast("已连接 Edge");
+      const failed = out.wired?.filter((x) => !x.registered) ?? [];
+      const notes = [
+        ...(out.warnings ?? []),
+        ...(failed.length
+          ? [`${failed.length} 个站点重新接线失败：${failed.map((x) => x.site).join("、")}`]
+          : []),
+      ];
+      toast(
+        notes.length ? `已连接 Edge；${notes.join("；")}` : "已连接 Edge",
+      );
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -557,7 +566,7 @@ function EdgeDeployModal({
     if (!confirmed) return toast("请先确认将创建或更新列出的 Cloudflare 资源");
     setBusy(true);
     try {
-      await api.deployEdge({
+      const result = await api.deployEdge({
         accountId,
         apiToken,
         workerName,
@@ -566,7 +575,12 @@ function EdgeDeployModal({
         confirmed,
       });
       setApiToken("");
-      toast("Edge 部署完成");
+      const failed = result.wired.filter((x) => !x.registered);
+      const notes = [
+        ...result.warnings,
+        ...(failed.length ? [`${failed.length} 个站点重新接线失败：${failed.map((x) => x.site).join("、")}`] : []),
+      ];
+      toast(notes.length ? `Edge 部署完成；${notes.join("；")}` : "Edge 部署完成");
       onDone();
     } catch (e) {
       setApiToken("");
@@ -601,6 +615,9 @@ function EdgeDeployModal({
       <input class="text-input" value={d1Name} onInput={(e) => setD1Name((e.currentTarget as HTMLInputElement).value)} />
       <div class="field-label">workers.dev 子域（账户尚未设置时创建）</div>
       <input class="text-input" value={subdomain} onInput={(e) => setSubdomain((e.currentTarget as HTMLInputElement).value)} />
+      <div class="muted" style={{ fontSize: 12, marginTop: 4 }}>
+        子域属于整个 Cloudflare 账户；如果账户已有子域，将使用现有值并在完成结果中提示。
+      </div>
       {status?.pending && (
         <div class="set-callout warn" style={{ marginTop: 10 }}>
           检测到未完成部署，当前步骤：{status.pending.step}。使用相同名称可继续，不会自动删除已创建资源。
@@ -2483,7 +2500,7 @@ const S3_PROVIDERS = [
   { id: "s3", name: "Amazon S3", region: "us-east-1", ph: "https://s3.<区域>.amazonaws.com", hint: "IAM 用户的访问密钥;区域如 us-east-1。" },
   { id: "minio", name: "MinIO", region: "us-east-1", ph: "https://minio.你的域名", hint: "自建 MinIO 的访问地址与 access / secret key。" },
   { id: "cos", name: "腾讯云 COS", region: "ap-shanghai", ph: "https://<桶名-APPID>.cos.<区域>.myqcloud.com", hint: "桶名须含 APPID,用虚拟主机风格地址(host 以桶名开头)。" },
-  { id: "custom", name: "自定义", region: "auto", ph: "https://s3.example.com", hint: "任何 S3 兼容对象存储。" },
+  { id: "custom", name: "自定义", region: "auto", ph: "https://s3.example.com", hint: "任何 S3 兼容存储桶。" },
 ] as const;
 
 function AddStorageModal({

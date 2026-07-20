@@ -369,6 +369,9 @@ function isOwnerCorsPath(pathname: string): boolean {
 }
 
 function corsResponse(res: Response): Response {
+  // Reconstructing an upgrade response drops Cloudflare's non-standard
+  // `webSocket` handle. Owner routes are JSON today, but preserve future 101s.
+  if (res.status === 101) return res;
   const headers = new Headers(res.headers);
   for (const [k, v] of Object.entries(OWNER_CORS)) headers.set(k, v);
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });

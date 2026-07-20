@@ -46,7 +46,7 @@ export function buildShareTargets(
     out.push({
       id: `bucket:${b.url}`,
       kind: "bucket",
-      label: "对象存储",
+      label: "存储桶",
       subtitle: b.label,
       icon: "database",
       isDefault: false,

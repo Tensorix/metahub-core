@@ -141,10 +141,12 @@ CREATE TABLE IF NOT EXISTS shares (
   s3_presign_exp   INTEGER,         -- vestigial
   s3_key_b64       TEXT,            -- vestigial
   created_at       INTEGER NOT NULL,
+  request_id       TEXT,            -- idempotency key for remote share creation
   grants           TEXT             -- serialized GrantSet for /share/<slug>/api/* (node-local like the
                                     -- rest of the row: revoking the share kills the grants with it)
 );
 CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(target_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_request_id ON shares(request_id) WHERE request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS databases (
   id          TEXT PRIMARY KEY,

@@ -16,7 +16,8 @@ import { ensureDropKeys, rotateDropKeys, activeDropKey } from "../../core/sync/d
 import { httpDropHost } from "../../core/sync/drop-host.ts";
 import { pullDropsOnce, dropWiredSites, type DropPullSummary } from "../../core/sync/drop-pull.ts";
 import { syncDropWiring, type DropWireResult } from "../../core/sync/drop-wire.ts";
-import { connectEdge, deployEdge } from "../../core/sync/edge-service.ts";
+import { connectInboxHost, deployEdge } from "../../core/sync/edge-service.ts";
+import { roomUrlOf } from "../../core/sync/room-url.ts";
 import { getEdgeWorkerScript } from "../edge-worker-script.ts";
 import { print, table, guard, warn } from "../output.ts";
 
@@ -89,12 +90,14 @@ const deploy = defineCommand({
 
     print(
       {
+        status: result.status,
         endpoint: result.endpoint,
         worker: result.workerName,
         d1: { id: result.d1Id, name: result.d1Name },
         version: result.version,
         key_id: result.keyId,
         wired: result.wired,
+        warnings: result.warnings,
       },
       () =>
         `deployed edge worker "${result.workerName}" (version ${result.version})\n` +
@@ -104,6 +107,7 @@ const deploy = defineCommand({
         (result.wired.length
           ? `\nwired sites: ${result.wired.map((w) => `${w.site} (${w.registered ? "ok" : w.error ?? "FAILED"})`).join(", ")}`
           : "") +
+        (result.warnings.length ? `\nwarnings: ${result.warnings.join("; ")}` : "") +
         "\n" +
         TOKEN_NOTE,
     );
@@ -166,7 +170,7 @@ const status = defineCommand({
         const rc = JSON.parse(p.config!) as { base?: string; slug?: string };
         return {
           slug: rc.slug ?? p.url,
-          url: rc.base && rc.slug ? `${rc.base.replace(/\/+$/, "")}/r/${rc.slug}/` : p.url,
+          url: rc.base && rc.slug ? roomUrlOf({ base: rc.base, slug: rc.slug }) : p.url,
           last_status: p.last_status,
           last_success_at: p.last_success_at,
           last_error: p.last_error,
@@ -300,16 +304,25 @@ const connect = defineCommand({
     if (typeof args.token !== "string" || !args.token)
       throw new MhError("invalid_input", `missing --token\nusage: ${usage}`);
     const db = openMetahub();
-    const status = await connectEdge(db, args.endpoint, args.token);
+    const status = await connectInboxHost(db, args.endpoint, args.token);
     const keyring = await ensureDropKeys(db);
     print(
       {
+        status: status.status,
         endpoint: status.endpoint,
         version: status.version ?? null,
         key_id: activeDropKey(keyring).key_id,
+        wired: status.wired ?? [],
+        warnings: status.warnings,
       },
       () =>
-        `connected to Edge ${status.endpoint} (version ${status.version})`,
+        `connected to Edge ${status.endpoint} (version ${status.version ?? "unknown"})` +
+        ((status.wired?.length ?? 0) > 0
+          ? "\nwired sites: " +
+            status.wired!
+              .map((x) => `${x.site} (registration ${x.registered ? "ok" : `FAILED: ${x.error ?? "unknown"}`})`)
+              .join(", ")
+          : ""),
     );
   }),
 });

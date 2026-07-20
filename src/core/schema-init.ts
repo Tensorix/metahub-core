@@ -83,6 +83,11 @@ export function migrateShares(db: DbDriver): void {
     db.exec("ALTER TABLE shares ADD COLUMN served_base TEXT");
   if (!hasColumn(db, "shares", "grants"))
     db.exec("ALTER TABLE shares ADD COLUMN grants TEXT");
+  if (!hasColumn(db, "shares", "request_id"))
+    db.exec("ALTER TABLE shares ADD COLUMN request_id TEXT");
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_request_id ON shares(request_id) WHERE request_id IS NOT NULL",
+  );
 }
 
 export function migratePeers(db: DbDriver): void {

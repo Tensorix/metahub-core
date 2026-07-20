@@ -14,6 +14,7 @@ import {
   type S3Config,
   type StorageSyncOpts,
 } from "./storage.ts";
+import { clearCoveredSiteRollbacks } from "./site-publish-recovery.ts";
 
 const PEER_COLS =
   "url, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_success_at, last_status, last_error, kind, config";
@@ -105,6 +106,8 @@ export interface RoomPeerConfig {
   /** The share's base guest node id (pull filter + sub-id derivation). Persisted
    *  here because a read-only share row carries no guest_node_id of its own. */
   guestBase?: string;
+  lifecycle?: "provisioning" | "active" | "cleanup_pending";
+  cleanupError?: string;
 }
 
 export interface AddRoomPeerInput {
@@ -290,7 +293,7 @@ export interface PeerSyncOutcome {
 export async function syncPeer(
   db: DbDriver,
   url: string,
-  opts?: { storage?: StorageSyncOpts },
+  opts?: { storage?: StorageSyncOpts; timeoutMs?: number },
 ): Promise<PeerSyncOutcome> {
   let byUrl = syncInFlight.get(db as object);
   if (!byUrl) {
@@ -309,7 +312,7 @@ export async function syncPeer(
 async function syncPeerOnce(
   db: DbDriver,
   url: string,
-  opts?: { storage?: StorageSyncOpts },
+  opts?: { storage?: StorageSyncOpts; timeoutMs?: number },
 ): Promise<PeerSyncOutcome> {
   try {
     const peer = getPeer(db, url);
@@ -332,9 +335,10 @@ async function syncPeerOnce(
       const { syncRoomPeer } = await import("./room-peer.ts");
       result = await syncRoomPeer(db, peer);
     } else {
-      result = await syncWithPeer(db, url);
+      result = await syncWithPeer(db, url, { timeoutMs: opts?.timeoutMs });
     }
     updatePeerStatus(db, url, "ok", null);
+    if (peer?.kind !== "s3" && peer?.kind !== "room") clearCoveredSiteRollbacks(db, url);
     return { url, ok: true, pushed: result.pushed, pulled: result.pulled, pendingPush: result.pendingPush };
   } catch (e) {
     const error = (e as Error).message;

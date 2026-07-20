@@ -10,6 +10,7 @@
 // Cross-device listing is fan-out: local rows + each bucket + each paired peer.
 
 import type { DbDriver } from "../driver.ts";
+import { z } from "zod";
 import { MhError } from "../errors.ts";
 import { randomSuffix } from "../ids.ts";
 import { resolveEntity } from "../resolve.ts";
@@ -21,6 +22,7 @@ import {
   createShare,
   deleteShare,
   getShare,
+  getShareByRequestId,
   listShares,
   listSharesForTarget,
   hashSharePassword,
@@ -35,11 +37,23 @@ import {
 } from "./share-export.ts";
 import { MAX_PRESIGN_SECONDS } from "./storage-s3-bun.ts";
 import type { S3Config } from "./storage.ts";
-import { getEdgeConfig } from "./edge-config.ts";
+import { edgeCapabilities, getEdgeConfig } from "./edge-config.ts";
+import { roomUrlOf } from "./room-url.ts";
 
 const DEFAULT_SHARE_VIEWER = "https://share.mh.tensorix.org";
 const DEFAULT_S3_EXPIRY_SEC = MAX_PRESIGN_SECONDS;
 const PEER_LIST_TIMEOUT_MS = 4000;
+const PEER_SHARE_TIMEOUT_MS = 10_000;
+const CreatedShareWireSchema = z.object({
+  slug: z.string().min(1).max(128),
+  kind: z.enum(["doc", "database", "site"]),
+  permission: z.enum(["view", "edit"]),
+  transport: z.literal("server"),
+  hosting: z.enum(["server", "room"]),
+  url: z.string().url(),
+  expiresAt: z.number().nullable(),
+  source: z.string(),
+});
 
 export interface CreateShareRequest {
   kind: ShareKind;
@@ -62,6 +76,8 @@ export interface CreateShareRequest {
   /** Serialized GrantSet enabling /share/<slug>/api/* (server transport only —
    *  a presigned static export has no API surface). */
   grants?: string | null;
+  /** Idempotency key used when a paired node creates the share remotely. */
+  requestId?: string | null;
 }
 
 export interface CreatedShare {
@@ -98,6 +114,7 @@ export interface ShareListItem {
   hasPassword: boolean;
   /** server: ready-to-copy link; s3: omitted (use renew to mint a fresh one). */
   url?: string;
+  lifecycle?: "active" | "provisioning" | "cleanup_pending";
 }
 
 /** Best-effort human title of a shared target (falls back to the id). */
@@ -243,32 +260,123 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
   // ── server: remote (a paired peer) ────────────────────────────────────────────
   const peer = req.server ? getPeer(db, req.server) : null;
   if (req.server && peer && peer.kind !== "s3") {
-    const res = await fetch(`${req.server.replace(/\/+$/, "")}/api/share`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(peer.token ? { authorization: `Bearer ${peer.token}` } : {}),
-      },
-      body: JSON.stringify({ ...req, server: undefined }),
-    }).catch((e) => {
-      throw new MhError("network", `could not reach ${req.server}: ${(e as Error).message}`);
-    });
-    const data = (await res.json().catch(() => ({}))) as Partial<CreatedShare> & { error?: string };
-    if (!res.ok) throw new MhError("network", data.error || `remote share failed: ${res.status}`);
+    const requestId = req.requestId || `share_${randomSuffix(24)}`;
+    const headers = {
+      "content-type": "application/json",
+      ...(peer.token ? { authorization: `Bearer ${peer.token}` } : {}),
+    };
+    let res: Response | null = null;
+    let transportError: string | null = null;
+    try {
+      res = await fetch(`${req.server.replace(/\/+$/, "")}/api/share`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...req, requestId, server: undefined }),
+        signal: AbortSignal.timeout(PEER_SHARE_TIMEOUT_MS),
+      });
+    } catch (e) {
+      transportError = (e as Error).message;
+    }
+    const raw = res ? await res.json().catch(() => null) : null;
+    const detail = raw as { error?: string } | null;
+    const remoteError =
+      res && !res.ok ? detail?.error || `remote share failed: ${res.status}` : null;
+    let parsed = CreatedShareWireSchema.safeParse(res?.ok ? raw : null);
+    if (
+      parsed.success &&
+      (parsed.data.kind !== req.kind ||
+        parsed.data.permission !== permission ||
+        parsed.data.hosting !== hosting)
+    ) {
+      parsed = CreatedShareWireSchema.safeParse(null);
+    }
+    if (!parsed.success) {
+      // The POST may have committed before a lost, malformed, or error
+      // response. Resolve the idempotency key before giving up so the caller
+      // never sees a fabricated URL and the remote row remains manageable.
+      const lookup = await fetch(
+        `${req.server.replace(/\/+$/, "")}/api/share/request?id=${encodeURIComponent(requestId)}`,
+        {
+          headers: peer.token ? { authorization: `Bearer ${peer.token}` } : {},
+          signal: AbortSignal.timeout(PEER_SHARE_TIMEOUT_MS),
+        },
+      ).catch(() => null);
+      const lookupBody = lookup?.ok ? await lookup.json().catch(() => null) : null;
+      parsed = CreatedShareWireSchema.safeParse(lookupBody);
+      if (
+        parsed.success &&
+        (parsed.data.kind !== req.kind ||
+          parsed.data.permission !== permission ||
+          parsed.data.hosting !== hosting)
+      ) {
+        parsed = CreatedShareWireSchema.safeParse(null);
+      }
+    }
+    if (!parsed.success) {
+      await fetch(
+        `${req.server.replace(/\/+$/, "")}/api/share/request?id=${encodeURIComponent(requestId)}`,
+        {
+          method: "DELETE",
+          headers: peer.token ? { authorization: `Bearer ${peer.token}` } : {},
+          signal: AbortSignal.timeout(PEER_SHARE_TIMEOUT_MS),
+        },
+      ).catch(() => null);
+      throw new MhError(
+        "network",
+        transportError
+          ? `could not confirm remote share creation: ${transportError}`
+          : remoteError
+            ? `${remoteError}; request-id recovery failed and compensation was requested`
+            : "remote share returned an invalid response and was compensated",
+      );
+    }
+    const data = parsed.data;
     return {
-      slug: data.slug!,
+      slug: data.slug,
       kind: req.kind,
       permission,
       transport: "server",
-      hosting: data.hosting ?? hosting,
-      url: absoluteShareUrl(data.url!, req.server),
-      expiresAt: data.expiresAt ?? null,
+      hosting: data.hosting,
+      url: absoluteShareUrl(data.url, req.server),
+      expiresAt: data.expiresAt,
       source: peer.label ?? req.server,
     };
   }
 
   // ── server: local ─────────────────────────────────────────────────────────────
   const target = resolveTarget(db, req.kind, req.ref);
+  const existing = req.requestId ? getShareByRequestId(db, req.requestId) : null;
+  if (existing) {
+    if (existing.kind !== req.kind || existing.target_id !== target.id)
+      throw new MhError("conflict", "share request id was already used for another target");
+    const roomPeer = getPeer(db, `room://${existing.slug}`);
+    const roomCfg =
+      roomPeer?.kind === "room" && roomPeer.config
+        ? (JSON.parse(roomPeer.config) as {
+            base: string;
+            slug: string;
+            lifecycle?: string;
+          })
+        : null;
+    const activeRoom = roomCfg && (roomCfg.lifecycle ?? "active") === "active";
+    if (roomCfg && !activeRoom)
+      throw new MhError("conflict", "Edge Room is not active; cleanup or provisioning is still pending");
+    if (hosting === "room" && !activeRoom)
+      throw new MhError("conflict", "Edge Room creation did not finish; retry with a new request");
+    const base = existing.served_base ?? req.server ?? "";
+    return {
+      slug: existing.slug,
+      kind: existing.kind,
+      permission: existing.permission,
+      transport: "server",
+      hosting: activeRoom ? "room" : "server",
+      url: activeRoom
+        ? roomUrlOf(roomCfg)
+        : `${base.replace(/\/+$/, "")}/share/${existing.slug}`,
+      expiresAt: existing.expires_at,
+      source: activeRoom ? "Edge Room" : base || "本机服务器",
+    };
+  }
   let pwSalt: string | null = null;
   let pwHash: string | null = null;
   if (req.password) {
@@ -287,6 +395,7 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
     expiresAt: req.expiresMs != null ? Date.now() + req.expiresMs : null,
     servedBase,
     grants: req.grants ?? null, // validated + canonicalized inside createShare
+    requestId: req.requestId ?? null,
   });
   let roomUrl: string | null = null;
   if (hosting === "room") {
@@ -299,13 +408,19 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
       deleteShare(db, share.slug);
       throw new MhError("invalid_input", "Edge is not configured");
     }
+    if (!edgeCapabilities(edge).includes("room")) {
+      deleteShare(db, share.slug);
+      throw new MhError("conflict", "Configured Edge host supports inbox only, not Room hosting");
+    }
     try {
       const { provisionRoomForShare } = await import("./room-peer.ts");
       roomUrl = (await provisionRoomForShare(db, share, edge)).url;
     } catch (e) {
       const { teardownRoomForShare } = await import("./room-peer.ts");
-      await teardownRoomForShare(db, share.slug).catch(() => undefined);
-      deleteShare(db, share.slug);
+      const cleanup = await teardownRoomForShare(db, share.slug).catch(
+        () => "cleanup_pending" as const,
+      );
+      if (cleanup !== "cleanup_pending") deleteShare(db, share.slug);
       throw e;
     }
   }
@@ -332,11 +447,15 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
     const roomPeer = getPeer(db, `room://${r.slug}`);
     const roomCfg =
       roomPeer?.kind === "room" && roomPeer.config
-        ? (JSON.parse(roomPeer.config) as { base?: string; slug?: string })
+        ? (JSON.parse(roomPeer.config) as {
+            base?: string;
+            slug?: string;
+            lifecycle?: "active" | "provisioning" | "cleanup_pending";
+          })
         : null;
     const roomUrl =
-      roomCfg?.base && roomCfg.slug
-        ? `${roomCfg.base.replace(/\/+$/, "")}/r/${roomCfg.slug}/`
+      roomCfg?.base && roomCfg.slug && (roomCfg.lifecycle ?? "active") === "active"
+        ? roomUrlOf({ base: roomCfg.base, slug: roomCfg.slug })
         : null;
     out.push({
       slug: r.slug,
@@ -345,12 +464,21 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
       title: targetTitle(db, r.kind, r.target_id),
       permission: r.permission,
       transport: "server",
-      source: roomUrl ? `房间 ${r.slug}` : r.served_base || "本机服务器",
-      sourceKind: roomUrl ? "room" : "server",
+      source: roomCfg
+        ? roomCfg.lifecycle === "cleanup_pending"
+          ? `Edge Room（撤销待确认）`
+          : `房间 ${r.slug}`
+        : r.served_base || "本机服务器",
+      sourceKind: roomCfg ? "room" : "server",
       hosting: roomUrl ? "room" : "server",
+      ...(roomCfg ? { hosting: "room" as const, lifecycle: roomCfg.lifecycle ?? "active" } : {}),
       expiresAt: r.expires_at,
       hasPassword: !!r.pw_hash,
-      url: roomUrl ?? (r.served_base ? `${r.served_base}/share/${r.slug}` : `/share/${r.slug}`),
+      url: roomCfg
+        ? roomUrl ?? undefined
+        : r.served_base
+          ? `${r.served_base}/share/${r.slug}`
+          : `/share/${r.slug}`,
     });
   }
   for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
@@ -374,6 +502,46 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
     }
   }
   return out;
+}
+
+export function createdShareByRequestId(
+  db: DbDriver,
+  requestId: string,
+): CreatedShare | null {
+  const share = getShareByRequestId(db, requestId);
+  if (!share) return null;
+  const roomPeer = getPeer(db, `room://${share.slug}`);
+  const roomCfg =
+    roomPeer?.kind === "room" && roomPeer.config
+      ? (JSON.parse(roomPeer.config) as {
+          base: string;
+          slug: string;
+          lifecycle?: string;
+        })
+      : null;
+  const activeRoom = roomCfg && (roomCfg.lifecycle ?? "active") === "active";
+  if (roomCfg && !activeRoom) return null;
+  const base = share.served_base ?? "";
+  return {
+    slug: share.slug,
+    kind: share.kind,
+    permission: share.permission,
+    transport: "server",
+    hosting: activeRoom ? "room" : "server",
+    url: activeRoom
+      ? roomUrlOf(roomCfg)
+      : `${base.replace(/\/+$/, "")}/share/${share.slug}`,
+    expiresAt: share.expires_at,
+    source: activeRoom ? "Edge Room" : base || "本机服务器",
+  };
+}
+
+export async function revokeShareByRequestId(
+  db: DbDriver,
+  requestId: string,
+): Promise<RevokeShareResult> {
+  const share = getShareByRequestId(db, requestId);
+  return share ? revokeShareAction(db, share.slug) : { ok: false, status: "not_found" };
 }
 
 /** Aggregated listing for CLI/WebUI: local ∪ each paired peer's /api/shares
@@ -417,23 +585,30 @@ async function fetchPeerShares(url: string, token: string, targetId?: string): P
 /** Revoke: local server row → delete it (cascading the share's room, if one is
  *  provisioned — final decision 3: the room's lifecycle is the share's); else a
  *  bucket holds it → delete objects. */
-export async function revokeShareAction(db: DbDriver, slug: string): Promise<boolean> {
+export interface RevokeShareResult {
+  ok: boolean;
+  status: "revoked" | "cleanup_pending" | "not_found";
+}
+
+export async function revokeShareAction(db: DbDriver, slug: string): Promise<RevokeShareResult> {
   if (getShare(db, slug)) {
-    // Best-effort room teardown (destroy + peer removal) — lazy import keeps
-    // the room pipeline off this module's startup path.
     const { teardownRoomForShare } = await import("./room-peer.ts");
-    await teardownRoomForShare(db, slug).catch(() => undefined);
-    return deleteShare(db, slug);
+    const teardown = await teardownRoomForShare(db, slug);
+    if (teardown === "cleanup_pending") return { ok: false, status: "cleanup_pending" };
+    return {
+      ok: deleteShare(db, slug),
+      status: "revoked",
+    };
   }
   for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
     const config = JSON.parse(p.config!) as S3Config;
     const metas = await listBucketShares(config).catch(() => []);
     if (metas.some((m) => m.slug === slug)) {
       await deleteBucketShareObjects(config, slug);
-      return true;
+      return { ok: true, status: "revoked" };
     }
   }
-  return false;
+  return { ok: false, status: "not_found" };
 }
 
 /** Renew an s3 share (re-presign, mint a fresh ≤7d link). */

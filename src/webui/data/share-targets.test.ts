@@ -25,7 +25,7 @@ test("bucket url comes from routeOp; name in subtitle, generic label", () => {
   const b = t.find((s) => s.kind === "bucket")!;
   expect(b.id).toBe("bucket:https://s3.example/bkt");
   expect(shareTargetUrl(b, ORIGIN)).toBe("https://s3.example/bkt");
-  expect(b.label).toBe("对象存储");
+  expect(b.label).toBe("存储桶");
   expect(b.subtitle).toBe("我的桶");
 });
 
@@ -48,5 +48,5 @@ test("option display text reproduces the legacy strings", () => {
   // <option> renders `${label} — ${subtitle}` (+ optional site note)
   expect(`${t[0]!.label} — ${t[0]!.subtitle}`).toBe(`当前服务器 — ${ORIGIN}`);
   expect(`${t[1]!.label} — ${t[1]!.subtitle}`).toBe("Peer — https://peer.example");
-  expect(`${t[2]!.label} — ${t[2]!.subtitle}`).toBe("对象存储 — Bkt");
+  expect(`${t[2]!.label} — ${t[2]!.subtitle}`).toBe("存储桶 — Bkt");
 });

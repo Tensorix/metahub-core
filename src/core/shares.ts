@@ -50,6 +50,8 @@ export interface ShareRow {
   s3_presign_exp: number | null;
   s3_key_b64: string | null;
   created_at: number;
+  /** Optional idempotency key supplied by a paired node. */
+  request_id: string | null;
   /** Serialized GrantSet for /share/<slug>/api/* — node-local like the rest of
    *  the row, so revoking the share revokes the grants with zero dangling
    *  state. Read through parseGrantSet only (default-deny). */
@@ -57,7 +59,7 @@ export interface ShareRow {
 }
 
 const SHARE_COLS =
-  "slug, kind, target_id, permission, transport, pw_salt, pw_hash, expires_at, guest_node_id, served_base, s3_peer_url, s3_object_prefix, s3_presign_exp, s3_key_b64, created_at, grants";
+  "slug, kind, target_id, permission, transport, pw_salt, pw_hash, expires_at, guest_node_id, served_base, s3_peer_url, s3_object_prefix, s3_presign_exp, s3_key_b64, created_at, request_id, grants";
 
 export interface CreateShareInput {
   kind: ShareKind;
@@ -71,6 +73,7 @@ export interface CreateShareInput {
   servedBase?: string | null;
   /** Serialized GrantSet enabling /share/<slug>/api/* (validated + normalized here). */
   grants?: string | null;
+  requestId?: string | null;
 }
 
 /**
@@ -85,6 +88,17 @@ export function createShare(db: DbDriver, input: CreateShareInput): ShareRow {
     throw new MhError("invalid_input", `unknown share kind: ${input.kind}`);
   if (permission !== "view" && permission !== "edit")
     throw new MhError("invalid_input", `unknown share permission: ${permission}`);
+  const requestId = input.requestId?.trim() || null;
+  if (requestId && !/^[A-Za-z0-9_-]{16,80}$/.test(requestId))
+    throw new MhError("invalid_input", "share request id is invalid");
+  if (requestId) {
+    const existing = getShareByRequestId(db, requestId);
+    if (existing) {
+      if (existing.kind !== input.kind || existing.target_id !== input.target_id)
+        throw new MhError("conflict", "share request id was already used for another target");
+      return existing;
+    }
+  }
 
   // Grants are validated loudly at this choke point and stored canonicalized.
   let grants: string | null = null;
@@ -107,7 +121,7 @@ export function createShare(db: DbDriver, input: CreateShareInput): ShareRow {
   const guest = canWrite ? "g" + randomSuffix(8) : null;
 
   db.query(
-    `INSERT INTO shares (${SHARE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO shares (${SHARE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     slug,
     input.kind,
@@ -124,9 +138,18 @@ export function createShare(db: DbDriver, input: CreateShareInput): ShareRow {
     null,
     null,
     Date.now(),
+    requestId,
     grants,
   );
   return getShare(db, slug)!;
+}
+
+export function getShareByRequestId(db: DbDriver, requestId: string): ShareRow | null {
+  return (
+    (db
+      .query(`SELECT ${SHARE_COLS} FROM shares WHERE request_id = ?`)
+      .get(requestId) as ShareRow | null) ?? null
+  );
 }
 
 export function getShare(db: DbDriver, slug: string): ShareRow | null {

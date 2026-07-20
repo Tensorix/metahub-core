@@ -8,6 +8,7 @@ import type { DbDriver } from "../driver.ts";
 
 /** Shared without importing the Worker bundle into browser/Node clients. */
 export const EXPECTED_EDGE_WORKER_VERSION = "3";
+export type EdgeCapability = "inbox" | "room";
 
 /** Persisted Cloudflare resource identity. Deliberately excludes the account
  *  API token: deploy/upgrade callers must supply that ephemeral credential. */
@@ -17,6 +18,9 @@ export interface CfEdgeTarget {
   d1Id: string;
   d1Name?: string;
   workersSubdomain?: string;
+  /** Non-secret marker also uploaded with the Worker, used to distinguish a
+   * resumable deployment from an unrelated same-name script. */
+  deploymentId?: string;
 }
 
 export interface CfApiTarget extends CfEdgeTarget {
@@ -29,6 +33,8 @@ export interface EdgeConfig {
   /** Owner secret ("drt_…") — independent of the master token so a leaked
    *  inbox credential can only read/ack ciphertext mail, nothing else. */
   token: string;
+  /** Third-party inbox hosts need not implement MetaHub Room APIs. */
+  capabilities?: EdgeCapability[];
   /** Present when the host is a CF worker managed by `mh edge deploy`. */
   cf?: CfEdgeTarget;
   /** EDGE_WORKER_VERSION at last deploy — `mh edge status` alignment check. */
@@ -60,7 +66,11 @@ export function getEdgeConfig(db: DbDriver): EdgeConfig | null {
   const raw = getMeta(db, CONFIG_KEY);
   if (!raw) return null;
   try {
-    const cfg = JSON.parse(raw) as EdgeConfig & { cf?: CfEdgeTarget & { apiToken?: string } };
+    const cfg = JSON.parse(raw) as Partial<EdgeConfig> & {
+      endpoint?: string;
+      token?: string;
+      cf?: CfEdgeTarget & { apiToken?: string };
+    };
     if (!cfg || typeof cfg.endpoint !== "string" || typeof cfg.token !== "string") return null;
     // Read-time migration for configs written by older releases. The secret is
     // removed immediately so merely starting the upgraded app fixes storage.
@@ -68,7 +78,14 @@ export function getEdgeConfig(db: DbDriver): EdgeConfig | null {
       delete cfg.cf.apiToken;
       setMeta(db, CONFIG_KEY, JSON.stringify(cfg));
     }
-    return cfg;
+    if (!Array.isArray(cfg.capabilities)) {
+      // Released pre-Room configs represented the CLI's generic inbox host.
+      // Managed Cloudflare deployments are the only legacy rows known to run
+      // the bundled Worker and therefore safely gain Room support.
+      cfg.capabilities = cfg.cf ? ["inbox", "room"] : ["inbox"];
+      setMeta(db, CONFIG_KEY, JSON.stringify(cfg));
+    }
+    return cfg as EdgeConfig;
   } catch {
     return null;
   }
@@ -77,7 +94,14 @@ export function getEdgeConfig(db: DbDriver): EdgeConfig | null {
 export function setEdgeConfig(db: DbDriver, cfg: EdgeConfig | null): void {
   if (cfg?.cf && "apiToken" in cfg.cf)
     throw new Error("Cloudflare API token must not be persisted");
-  setMeta(db, CONFIG_KEY, cfg ? JSON.stringify(cfg) : null);
+  const normalized = cfg
+    ? { ...cfg, capabilities: cfg.capabilities ?? (cfg.cf ? ["inbox", "room"] : ["inbox"]) }
+    : null;
+  setMeta(db, CONFIG_KEY, normalized ? JSON.stringify(normalized) : null);
+}
+
+export function edgeCapabilities(cfg: EdgeConfig): EdgeCapability[] {
+  return cfg.capabilities ?? (cfg.cf ? ["inbox", "room"] : ["inbox"]);
 }
 
 export type EdgeDeployStep =
@@ -94,6 +118,8 @@ export interface EdgeDeployProgress {
   d1Name: string;
   d1Id?: string;
   workersSubdomain?: string;
+  deploymentId: string;
+  startedAt: number;
   step: EdgeDeployStep;
   updatedAt: number;
 }
@@ -102,7 +128,23 @@ export function getEdgeDeployProgress(db: DbDriver): EdgeDeployProgress | null {
   const raw = getMeta(db, DEPLOY_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as EdgeDeployProgress;
+    const progress = JSON.parse(raw) as Partial<EdgeDeployProgress>;
+    if (
+      typeof progress.accountId !== "string" ||
+      typeof progress.workerName !== "string" ||
+      typeof progress.d1Name !== "string" ||
+      typeof progress.step !== "string"
+    )
+      return null;
+    return {
+      ...progress,
+      // Legacy pending rows cannot prove Worker ownership, so the empty marker
+      // will never match a remote Worker. They may still safely resume before
+      // the Worker-upload step.
+      deploymentId: progress.deploymentId ?? "",
+      startedAt: progress.startedAt ?? progress.updatedAt ?? Date.now(),
+      updatedAt: progress.updatedAt ?? Date.now(),
+    } as EdgeDeployProgress;
   } catch {
     return null;
   }

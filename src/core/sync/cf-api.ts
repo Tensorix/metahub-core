@@ -50,15 +50,26 @@ function cfError(status: number, data: CfResult<unknown> | null, what: string): 
 
 /** Does the named Worker script exist? Used to prevent adopting or overwriting
  *  a same-name script that this deployment did not create. */
-export async function workerExists(cfg: CfApiTarget): Promise<boolean> {
-  const { status, data } = await cfCall(
+export async function workerDeployment(
+  cfg: CfApiTarget,
+): Promise<{ exists: boolean; deploymentId: string | null }> {
+  const { status, data } = await cfCall<{
+    bindings?: { name?: string; type?: string; text?: string }[];
+  }>(
     cfg,
     "GET",
     `/accounts/${cfg.accountId}/workers/scripts/${cfg.workerName}/settings`,
   );
-  if (status === 404) return false;
+  if (status === 404) return { exists: false, deploymentId: null };
   if (!data?.success) throw cfError(status, data, "worker lookup");
-  return true;
+  const marker = data.result?.bindings?.find(
+    (x) => x.name === "MH_DEPLOYMENT_ID" && x.type === "plain_text",
+  );
+  return { exists: true, deploymentId: marker?.text ?? null };
+}
+
+export async function workerExists(cfg: CfApiTarget): Promise<boolean> {
+  return (await workerDeployment(cfg)).exists;
 }
 
 /** Does the named D1 database exist? */
@@ -67,6 +78,35 @@ export async function d1Exists(cfg: CfApiTarget): Promise<boolean> {
   if (status === 404) return false;
   if (!data?.success) throw cfError(status, data, "d1 lookup");
   return true;
+}
+
+export interface D1DatabaseSummary {
+  id: string;
+  name: string;
+  createdAt: string | null;
+}
+
+/** Exact-name lookup used only by the crash-resume path. D1's API accepts a
+ * name filter but we still filter the result exactly before adopting it. */
+export async function d1DatabasesByName(
+  cfg: Pick<CfApiTarget, "accountId" | "apiToken">,
+  name: string,
+): Promise<D1DatabaseSummary[]> {
+  const { status, data } = await cfCall<
+    { uuid?: string; id?: string; name?: string; created_at?: string }[]
+  >(
+    cfg,
+    "GET",
+    `/accounts/${cfg.accountId}/d1/database?name=${encodeURIComponent(name)}&per_page=10`,
+  );
+  if (!data?.success) throw cfError(status, data, "d1 lookup by name");
+  return (data.result ?? [])
+    .filter((x) => x.name === name && !!(x.uuid ?? x.id))
+    .map((x) => ({
+      id: (x.uuid ?? x.id)!,
+      name: x.name!,
+      createdAt: x.created_at ?? null,
+    }));
 }
 
 /** Run SQL against the D1 database (schema migration). Statements are sent one
@@ -88,7 +128,11 @@ export async function d1Exec(cfg: CfApiTarget, sqlScript: string): Promise<void>
 /** Upload the edge worker module (multipart metadata + script). Declarative
  *  `exports` + `keep_bindings:["secret_text"]` so a re-deploy never wipes the
  *  OWNER_TOKEN secret set separately below. */
-export async function uploadEdgeWorker(cfg: CfApiTarget, script: string): Promise<void> {
+export async function uploadEdgeWorker(
+  cfg: CfApiTarget,
+  script: string,
+  deploymentId: string,
+): Promise<void> {
   const metadata = {
     main_module: "edge-worker.js",
     compatibility_date: "2026-07-01",
@@ -96,6 +140,7 @@ export async function uploadEdgeWorker(cfg: CfApiTarget, script: string): Promis
       { type: "d1", name: "DB", id: cfg.d1Id },
       // The rooms namespace (/r/<slug>/* → MhRoom). Same-script class binding.
       { type: "durable_object_namespace", name: "ROOM", class_name: "MhRoom" },
+      { type: "plain_text", name: "MH_DEPLOYMENT_ID", text: deploymentId },
     ],
     keep_bindings: ["secret_text"],
     // Declarative Durable Object exports map — the source of truth for DO

@@ -44,6 +44,26 @@ test("createShare records served_base and is server-only", () => {
   expect(s.served_base).toBe("http://host:7777");
 });
 
+test("request id makes remote share creation idempotent", () => {
+  const db = makeDb();
+  const requestId = "share_request_1234567890";
+  const first = createShare(db, {
+    kind: "doc",
+    target_id: "doc_x-1",
+    requestId,
+  });
+  const retry = createShare(db, {
+    kind: "doc",
+    target_id: "doc_x-1",
+    requestId,
+  });
+  expect(retry.slug).toBe(first.slug);
+  expect(listShares(db)).toHaveLength(1);
+  expect(() =>
+    createShare(db, { kind: "doc", target_id: "doc_other", requestId }),
+  ).toThrow("another target");
+});
+
 test("list / listForTarget / delete", () => {
   const db = makeDb();
   const a = createShare(db, { kind: "doc", target_id: "doc_a-1" });

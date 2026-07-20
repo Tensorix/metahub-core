@@ -42,25 +42,60 @@ export const DEFAULT_CONFIG: ServerConfig = {
 
 export type PublicBaseScope = "local" | "lan" | "public";
 
-function isPrivateV4(host: string): boolean {
+function parseV4(host: string): number[] | null {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (!m) return false;
+  if (!m) return null;
   const n = m.slice(1).map(Number);
-  if (n.some((x) => x < 0 || x > 255)) return false;
-  return (
+  return n.some((x) => x < 0 || x > 255) ? null : n;
+}
+
+function v4Scope(n: number[]): PublicBaseScope | "invalid" {
+  if (n.every((x) => x === 0)) return "invalid";
+  if (n[0] === 127) return "local";
+  if (
     n[0] === 10 ||
-    n[0] === 127 ||
     (n[0] === 172 && n[1]! >= 16 && n[1]! <= 31) ||
     (n[0] === 192 && n[1] === 168) ||
     (n[0] === 169 && n[1] === 254)
-  );
+  )
+    return "lan";
+  return "public";
 }
 
-function isPrivateV6(host: string): boolean {
+function mappedV4(host: string): number[] | null {
+  const m = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(host);
+  if (!m) return null;
+  const hi = Number.parseInt(m[1]!, 16);
+  const lo = Number.parseInt(m[2]!, 16);
+  return [hi >> 8, hi & 255, lo >> 8, lo & 255];
+}
+
+function hostScope(host: string): PublicBaseScope | "invalid" {
+  if (host === "localhost") return "local";
+  const v4 = parseV4(host);
+  if (v4) return v4Scope(v4);
+  if (host === "::") return "invalid";
+  if (host === "::1") return "local";
+  const mapped = mappedV4(host);
+  if (mapped) return v4Scope(mapped);
+  const first = Number.parseInt(host.split(":")[0] || "0", 16);
+  if (Number.isFinite(first)) {
+    if ((first & 0xfe00) === 0xfc00) return "lan"; // fc00::/7
+    if ((first & 0xffc0) === 0xfe80) return "lan"; // fe80::/10
+  }
+  return "public";
+}
+
+/** Literal metadata endpoints that must never be used as a hosting target.
+ * Hostname-based SSRF is still constrained by the owner-only route and the
+ * no-redirect policy in site-hosting-routes.ts. */
+export function isCloudMetadataHost(hostInput: string): boolean {
+  const host = hostInput.toLowerCase().replace(/^\[|\]$/g, "");
   return (
-    host === "::1" ||
-    /^[fd][0-9a-f]{1,3}(?::|$)/i.test(host) ||
-    /^fe[89ab][0-9a-f](?::|$)/i.test(host)
+    host === "169.254.169.254" ||
+    host === "169.254.170.2" ||
+    host === "metadata.google.internal" ||
+    host === "fd00:ec2::254"
   );
 }
 
@@ -83,19 +118,13 @@ export function normalizePublicBaseUrl(input: string): {
   if (parsed.pathname !== "/" && parsed.pathname !== "")
     throw new Error("站点入口必须是域名根地址，不能包含路径");
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  const local = host === "localhost" || isPrivateV4(host) || isPrivateV6(host);
-  if (parsed.protocol === "http:" && !local)
+  const scope = hostScope(host);
+  if (scope === "invalid") throw new Error("站点入口必须是可访问的主机地址");
+  if (parsed.protocol === "http:" && scope === "public")
     throw new Error("公网入口必须使用 HTTPS；HTTP 仅允许本机或局域网地址");
   parsed.pathname = "";
   const url = parsed.toString().replace(/\/+$/, "");
-  return {
-    url,
-    scope: local
-      ? host === "localhost" || host === "::1" || host === "127.0.0.1"
-        ? "local"
-        : "lan"
-      : "public",
-  };
+  return { url, scope };
 }
 
 function getMeta(db: DbDriver, key: string): string | null {

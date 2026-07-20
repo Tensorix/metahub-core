@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { errorResponse, type Route, type RouteCtx } from "../../core/sync/routes.ts";
+import { type Route } from "../../core/sync/routes.ts";
 import {
   connectEdge,
   deployEdge,
@@ -8,6 +8,7 @@ import {
   type EdgeDeployInput,
 } from "../../core/sync/edge-service.ts";
 import { getEdgeWorkerScript } from "../../cli/edge-worker-script.ts";
+import { jsonHandler } from "./json-handler.ts";
 
 const EdgeStatusSchema = z.any();
 const EdgeDeploySchema = z.object({
@@ -20,23 +21,13 @@ const EdgeDeploySchema = z.object({
 });
 const EdgeConnectSchema = z.object({ endpoint: z.string(), token: z.string() });
 
-function handle(fn: (req: Request, ctx: RouteCtx) => unknown): Route["handler"] {
-  return async (req, ctx) => {
-    try {
-      return Response.json((await fn(req, ctx)) ?? null);
-    } catch (e) {
-      return errorResponse(e);
-    }
-  };
-}
-
 export const edgeRoutes: Route[] = [
   {
     method: "GET",
     path: "/api/edge",
     summary: "Edge endpoint health, version, deployment progress and rooms.",
     response: EdgeStatusSchema,
-    handler: handle((_req, { db }) => edgeStatus(db)),
+    handler: jsonHandler((_req, { db }) => edgeStatus(db)),
   },
   {
     method: "POST",
@@ -44,7 +35,7 @@ export const edgeRoutes: Route[] = [
     summary: "Create/upgrade a dedicated Cloudflare Worker and D1 after explicit confirmation.",
     request: EdgeDeploySchema,
     response: z.any(),
-    handler: handle(async (req, { db }) => {
+    handler: jsonHandler(async (req, { db }) => {
       const body = EdgeDeploySchema.parse(await req.json()) as EdgeDeployInput;
       return deployEdge(db, body, await getEdgeWorkerScript());
     }),
@@ -55,7 +46,7 @@ export const edgeRoutes: Route[] = [
     summary: "Connect this node to an existing compatible Edge endpoint.",
     request: EdgeConnectSchema,
     response: EdgeStatusSchema,
-    handler: handle(async (req, { db }) => {
+    handler: jsonHandler(async (req, { db }) => {
       const body = EdgeConnectSchema.parse(await req.json());
       return connectEdge(db, body.endpoint, body.token);
     }),
@@ -65,7 +56,7 @@ export const edgeRoutes: Route[] = [
     path: "/api/edge",
     summary: "Forget local Edge configuration; refused while rooms are active.",
     response: z.object({ ok: z.boolean() }),
-    handler: handle((_req, { db }) => {
+    handler: jsonHandler((_req, { db }) => {
       disconnectEdge(db);
       return { ok: true };
     }),

@@ -98,7 +98,11 @@ export const localApi = {
   revertDocument: (id: string, b: { to: string; if_match?: string }) =>
     rpc("revertDocument", id, b.to, b.if_match),
 
-  // nodes + search
+  // shares, nodes + search
+  // The ordinary UI only needs this browser/node's own share badges. Keep it
+  // on the replica instead of falling through to the server-wide fan-out.
+  listLocalShares: (opts: { target?: string } = {}) =>
+    rpc("listLocalShares", opts.target),
   nodes: () => rpc("nodes"),
   search: (text: string, limit?: number) => rpc("search", text, limit),
 };
@@ -129,6 +133,7 @@ export const localSites = {
   listShareServers: () => Promise.resolve([]),
   listShareBuckets: () => Promise.resolve([]),
   listShares: (opts: { target?: string } = {}) => rpc("listLocalShares", opts.target),
+  listLocalShares: (opts: { target?: string } = {}) => rpc("listLocalShares", opts.target),
   createShare: (body: unknown) => rpc("createLocalShare", body),
   revokeShare: (slug: string) => rpc("revokeLocalShare", slug),
 };

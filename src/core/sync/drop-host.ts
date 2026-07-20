@@ -60,6 +60,7 @@ export function httpDropHost(
     try {
       res = await fetcher(base + path, {
         ...init,
+        signal: init.signal ?? AbortSignal.timeout(15_000),
         headers: {
           ...(init.body != null ? { "content-type": "application/json" } : {}),
           ...(auth ? { authorization: `Bearer ${token}` } : {}),

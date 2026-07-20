@@ -42,6 +42,9 @@ export interface SyncOpts {
   pullLimit?: number;
   /** Datasets this replica opts out of (partial replica, e.g. site_files). */
   excludeDatasets?: string[];
+  /** Hard transport budget. Every sync is bounded even when the peer accepts
+   * the TCP connection but never replies. */
+  timeoutMs?: number;
 }
 
 /**
@@ -74,6 +77,7 @@ export async function syncWithPeer(
       ...(o.pullLimit != null ? { limit: o.pullLimit } : {}),
       ...(o.excludeDatasets?.length ? { exclude_datasets: o.excludeDatasets } : {}),
     }),
+    signal: AbortSignal.timeout(o.timeoutMs ?? 30_000),
   });
   if (!res.ok)
     throw new MhError(

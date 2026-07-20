@@ -21,6 +21,7 @@ import { buildShareTargets, shareTargetUrl } from "./data/share-targets.ts";
 import { onReplicaStatus } from "./data/replica.ts";
 import type { Scope } from "./data/scopes.ts";
 import { isNoOrigin } from "./data/replica.ts";
+import { confirmDialog } from "./ui.tsx";
 
 export interface ShareTarget {
   kind: "doc" | "database" | "site";
@@ -43,7 +44,7 @@ export function useSharedTargets(): Set<string> {
     let alive = true;
     const load = () =>
       api
-        .listShares()
+        .listLocalShares()
         .then((list) => alive && setIds(new Set(list.map((s) => s.target_id))))
         .catch(() => undefined);
     load();
@@ -82,7 +83,13 @@ export function useShareActions(
   const revoke = async (s: ShareListItem) => {
     if (!confirm(`撤销这个分享？(${s.source})`)) return;
     try {
-      await api.revokeShare(s.slug, s.sourceUrl);
+      const result = await api.revokeShare(s.slug, s.sourceUrl);
+      if (result.status === "cleanup_pending") {
+        onError("撤销已提交，但 Edge 尚未确认销毁 Room；本地保留管理记录并会继续重试。");
+        notifySharesChanged();
+        reload();
+        return;
+      }
       onFlash("已撤销");
       notifySharesChanged();
       reload();
@@ -228,7 +235,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
 
   async function create() {
     if (s3 && siteKind) {
-      setError("站点不支持对象存储分享，请选服务器。");
+      setError("站点不支持存储桶分享，请选设备或 Edge。");
       return;
     }
     setBusy(true);
@@ -248,6 +255,8 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
         throw new Error("桶模式没有可托管站点的设备，请选择 Edge");
       if (siteKind && hosting === "edge" && !edge?.configured)
         throw new Error("请先在“设置 → 站点托管”连接或部署 Edge");
+      if (siteKind && hosting === "edge" && !edge?.capabilities?.includes("room"))
+        throw new Error("当前 Edge 端点仅支持 inbox，不能托管 Room");
       if (
         siteKind &&
         hosting === "device" &&
@@ -255,6 +264,20 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
         !siteHosting?.publicBaseUrl
       )
         throw new Error("请先在“设置 → 站点托管”配置当前设备的公网或局域网入口");
+
+      if (siteKind && access === "public") {
+        const tableCount = grantSet?.tables.length ?? 0;
+        const device = hosting === "device";
+        const ok = await confirmDialog({
+          title: device ? "确认公开发布到设备？" : "确认公开发布到 Edge？",
+          message: device
+            ? `任何人无需登录即可访问。持有同一数据并运行托管服务的配对设备也可能公开提供此站点；改回私有后，浏览器或 CDN 缓存仍可能保留数分钟。数据授权：${tableCount} 个数据库。设备必须保持在线。`
+            : `任何人无需登录即可访问这个 Edge Room，链接无密码且永不过期。Edge 会在你的设备离线后继续提供最后一次同步的内容。数据授权：${tableCount} 个数据库。`,
+          confirmLabel: "确认公开发布",
+          danger: true,
+        });
+        if (!ok) return;
+      }
 
       if (siteKind && access === "public" && hosting === "device") {
         const targetBase =
@@ -269,6 +292,14 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
           grants: grantSet ?? { v: 1, tables: [] },
           targetBase,
         });
+        if (published.status === "rollback_pending") {
+          setError(
+            `发布失败，目标设备的回滚尚未确认；在确认前它可能仍可公开访问。${published.error ? ` ${published.error}` : ""}`,
+          );
+          setSiteHosting(await api.getSiteHosting().catch(() => siteHosting));
+          notifySharesChanged();
+          return;
+        }
         if (!published.url) throw new Error("发布未返回访问地址");
         if (published.status === "ready") {
           copy(published.url);
@@ -281,7 +312,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
         return;
       }
 
-      const edgeHosting = siteKind && hosting === "edge";
+  const edgeHosting = siteKind && hosting === "edge";
       const effectivePassword = siteKind && access === "public" ? null : password || null;
       const effectiveExpiry =
         siteKind && access === "public" ? null : expiryOpts[eIdx]?.ms ?? null;
@@ -289,7 +320,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
         edgeHosting
           ? null
           : siteKind && sel?.id === "server"
-            ? siteHosting?.publicBaseUrl ?? location.origin
+            ? siteHosting?.publicBaseUrl ?? null
             : sel
               ? shareTargetUrl(sel, location.origin)
               : null;
@@ -366,8 +397,16 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
                   <option value="device" disabled={isNoOrigin() || deviceTargets.length === 0}>
                     设备在线托管{isNoOrigin() ? "（桶模式不可用）" : ""}
                   </option>
-                  <option value="edge" disabled={!edge?.configured}>
-                    Edge 始终在线{edge?.configured ? "" : "（请先配置）"}
+                  <option
+                    value="edge"
+                    disabled={!edge?.configured || !edge.capabilities?.includes("room")}
+                  >
+                    Edge 始终在线
+                    {edge?.configured
+                      ? edge.capabilities?.includes("room")
+                        ? ""
+                        : "（当前端点仅支持 inbox）"
+                      : "（请先配置）"}
                   </option>
                 </select>
               ) : (
@@ -505,11 +544,17 @@ function ShareRows({
         <li key={s.slug}>
           <div class="mhshare-li-main">
             <span class="mhshare-badge">
-              {s.hosting === "room" ? "Edge" : s.transport === "s3" ? "对象存储" : "设备"}
+              {s.hosting === "room" ? "Edge" : s.transport === "s3" ? "存储桶" : "设备"}
             </span>
             <span class="mhshare-src">{s.source}</span>
             <span class="mhshare-meta">
-              {s.permission === "edit" ? "可编辑" : "只读"}
+              {s.lifecycle === "cleanup_pending"
+                ? "撤销待确认"
+                : s.lifecycle === "provisioning"
+                  ? "正在创建"
+                  : s.permission === "edit"
+                    ? "可编辑"
+                    : "只读"}
               {s.hasPassword ? " · 🔒" : ""}
               {s.expiresAt ? ` · 至 ${new Date(s.expiresAt).toLocaleString()}` : " · 永久"}
             </span>

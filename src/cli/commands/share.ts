@@ -176,11 +176,27 @@ const revoke = defineCommand({
         method: "DELETE",
         headers: peer?.token ? { authorization: `Bearer ${peer.token}` } : {},
       });
-      print({ ok: res.ok, revoked: res.ok ? args.slug : null });
+      const body = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        status?: string;
+      } | null;
+      print({
+        ok: !!body?.ok,
+        status: body?.status ?? (res.ok ? "revoked" : "not_found"),
+        revoked: body?.ok ? args.slug : null,
+      });
       return;
     }
-    const ok = await revokeShareAction(db, args.slug);
-    print({ ok, revoked: ok ? args.slug : null });
+    const result = await revokeShareAction(db, args.slug);
+    print(
+      { ...result, revoked: result.ok ? args.slug : null },
+      () =>
+        result.status === "cleanup_pending"
+          ? `revocation pending: Edge has not confirmed room destruction for ${args.slug}`
+          : result.ok
+            ? `revoked ${args.slug}`
+            : `no such share: ${args.slug}`,
+    );
   }),
 });
 

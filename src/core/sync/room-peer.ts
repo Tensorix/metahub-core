@@ -8,7 +8,7 @@
 import type { DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
 import { randomSuffix } from "../ids.ts";
-import { getShare, type ShareRow } from "../shares.ts";
+import { deleteShare, getShare, type ShareRow } from "../shares.ts";
 import { parseGrantSet } from "../grants-core.ts";
 import {
   addRoomPeer,
@@ -25,6 +25,8 @@ import {
 } from "./room-client.ts";
 import { ROOM_BLOB_CHUNK_LIMIT, type OwnerSyncResponse } from "./room-protocol.ts";
 import type { PartitionScope } from "./partition.ts";
+import { roomUrlOf } from "./room-url.ts";
+export { roomUrlOf } from "./room-url.ts";
 
 export type RoomBlobResolver = (db: DbDriver, hash: string) => Promise<Uint8Array | null>;
 let defaultBlobResolver: RoomBlobResolver | undefined;
@@ -40,9 +42,23 @@ export function roomPeerKey(slug: string): string {
   return `room://${slug}`;
 }
 
-/** The guest-facing room URL (what the share link points at). */
-export function roomUrlOf(config: Pick<RoomPeerConfig, "base" | "slug">): string {
-  return `${config.base.replace(/\/+$/, "")}/r/${config.slug}/`;
+function saveRoomLifecycle(
+  db: DbDriver,
+  config: RoomPeerConfig,
+  lifecycle: NonNullable<RoomPeerConfig["lifecycle"]>,
+  cleanupError?: string,
+): RoomPeerConfig {
+  const next: RoomPeerConfig = {
+    ...config,
+    lifecycle,
+    ...(cleanupError ? { cleanupError } : { cleanupError: undefined }),
+  };
+  addRoomPeer(db, {
+    url: roomPeerKey(config.slug),
+    config: next,
+    label: `room ${config.slug}`,
+  });
+  return next;
 }
 
 function ownerUrl(config: RoomPeerConfig, sub: string): string {
@@ -56,6 +72,40 @@ function ownerHeaders(config: RoomPeerConfig, json = true): Record<string, strin
   };
 }
 
+async function requestRoomProvision(
+  config: RoomPeerConfig,
+  share: ShareRow,
+): Promise<Response> {
+  try {
+    return await fetch(ownerUrl(config, "owner/provision"), {
+      method: "POST",
+      headers: ownerHeaders(config),
+      body: JSON.stringify({
+        slug: share.slug,
+        guestBase: config.guestBase,
+        grants: share.grants,
+        pwHash: share.pw_hash,
+        pwSalt: share.pw_salt,
+        expiresAt: share.expires_at,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    throw new MhError("network", `edge worker unreachable: ${(e as Error).message}`);
+  }
+}
+
+function provisionResponseError(res: Response): MhError {
+  if (res.status === 401)
+    return new MhError("auth", "edge worker refused the owner secret");
+  if (res.status === 404)
+    return new MhError(
+      "not_found",
+      "the deployed edge worker has no room support — run `mh edge deploy` to upgrade it",
+    );
+  return new MhError("network", `room provisioning failed: HTTP ${res.status}`);
+}
+
 /** The wire for room-client: POST /owner/sync with the owner secret. Statuses
  *  map onto MhError codes; a protocol-major mismatch is the room's 409. */
 export function roomTransport(config: RoomPeerConfig): RoomTransport {
@@ -66,6 +116,7 @@ export function roomTransport(config: RoomPeerConfig): RoomTransport {
         method: "POST",
         headers: ownerHeaders(config),
         body: JSON.stringify(req),
+        signal: AbortSignal.timeout(30_000),
       });
     } catch (e) {
       throw new MhError("network", `room ${config.slug} unreachable: ${(e as Error).message}`);
@@ -108,13 +159,79 @@ export async function syncRoomPeer(
   } = {},
 ): Promise<{ pushed: number; pulled: number; pendingPush: boolean }> {
   if (!peer.config) throw new MhError("invalid_input", `room peer ${peer.url} has no config`);
-  const config = JSON.parse(peer.config) as RoomPeerConfig;
+  let config = JSON.parse(peer.config) as RoomPeerConfig;
 
+  if (config.lifecycle === "cleanup_pending") {
+    const destroyed = await destroyRoom(config).catch(() => false);
+    if (!destroyed)
+      throw new MhError(
+        "network",
+        config.cleanupError || `room ${config.slug} cleanup is still pending`,
+      );
+    removePeer(db, peer.url);
+    deleteShare(db, config.slug);
+    digestState.delete(peer.url);
+    return { pushed: 0, pulled: 0, pendingPush: false };
+  }
   const share = getShare(db, config.slug);
   if (!share) {
-    await destroyRoom(config).catch(() => undefined); // best-effort
-    removePeer(db, peer.url);
-    return { pushed: 0, pulled: 0, pendingPush: false };
+    const destroyed = await destroyRoom(config).catch(() => false);
+    if (destroyed) {
+      removePeer(db, peer.url);
+      return { pushed: 0, pulled: 0, pendingPush: false };
+    }
+    config = saveRoomLifecycle(
+      db,
+      config,
+      "cleanup_pending",
+      "share row is gone but remote room destruction is unconfirmed",
+    );
+    throw new MhError("network", config.cleanupError!);
+  }
+
+  if (config.lifecycle === "provisioning") {
+    let res: Response;
+    try {
+      res = await requestRoomProvision(config, share);
+    } catch (e) {
+      const destroyed = await destroyRoom(config).catch(() => false);
+      if (destroyed) {
+        removePeer(db, peer.url);
+        deleteShare(db, share.slug);
+      } else {
+        saveRoomLifecycle(db, config, "cleanup_pending", (e as Error).message);
+      }
+      throw e;
+    }
+    if (!res.ok) {
+      const error = provisionResponseError(res);
+      // Auth/not-found responses are guaranteed to occur before a room
+      // mutation. Other failures are ambiguous and require confirmed destroy.
+      const safeNoEffect = res.status === 401 || res.status === 404;
+      const destroyed = safeNoEffect || (await destroyRoom(config).catch(() => false));
+      if (destroyed) {
+        removePeer(db, peer.url);
+        deleteShare(db, share.slug);
+      } else {
+        saveRoomLifecycle(db, config, "cleanup_pending", error.message);
+      }
+      throw error;
+    }
+
+    const active = saveRoomLifecycle(db, config, "active");
+    const activePeer = getPeer(db, peer.url)!;
+    try {
+      return await syncRoomPeer(db, activePeer, opts);
+    } catch (e) {
+      const destroyed = await destroyRoom(active).catch(() => false);
+      if (destroyed) {
+        removePeer(db, peer.url);
+        deleteShare(db, share.slug);
+      } else {
+        saveRoomLifecycle(db, active, "cleanup_pending", (e as Error).message);
+      }
+      throw e;
+    }
   }
 
   const scope: PartitionScope = {
@@ -200,6 +317,7 @@ export async function pushRoomBlobs(
           method: "POST",
           headers: { ...ownerHeaders(config, false), "content-type": "application/octet-stream" },
           body: body.buffer,
+          signal: AbortSignal.timeout(30_000),
         },
       ).catch(() => null);
       ok = !!res?.ok;
@@ -229,37 +347,45 @@ export async function provisionRoomForShare(
     // has a stable base for (future) per-visitor sub ids, persisted in the
     // node-local peer config alongside the rest of the connection settings.
     guestBase: share.guest_node_id ?? "g" + randomSuffix(8),
+    lifecycle: "provisioning",
   };
-  let res: Response;
-  try {
-    res = await fetch(ownerUrl(config, "owner/provision"), {
-      method: "POST",
-      headers: ownerHeaders(config),
-      body: JSON.stringify({
-        slug: share.slug,
-        guestBase: config.guestBase,
-        grants: share.grants,
-        pwHash: share.pw_hash,
-        pwSalt: share.pw_salt,
-        expiresAt: share.expires_at,
-      }),
-    });
-  } catch (e) {
-    throw new MhError("network", `edge worker unreachable: ${(e as Error).message}`);
-  }
-  if (res.status === 401) throw new MhError("auth", "edge worker refused the owner secret");
-  if (res.status === 404)
-    throw new MhError(
-      "not_found",
-      "the deployed edge worker has no room support — run `mh edge deploy` to upgrade it",
-    );
-  if (!res.ok) throw new MhError("network", `room provisioning failed: HTTP ${res.status}`);
-
   const peerKey = roomPeerKey(share.slug);
   addRoomPeer(db, { url: peerKey, config, label: `room ${share.slug}` });
+  let res: Response;
+  try {
+    res = await requestRoomProvision(config, share);
+  } catch (e) {
+    const message = (e as Error).message;
+    const destroyed = await destroyRoom(config).catch(() => false);
+    if (destroyed) removePeer(db, peerKey);
+    else saveRoomLifecycle(db, config, "cleanup_pending", message);
+    throw e;
+  }
+  if (!res.ok) {
+    const error = provisionResponseError(res);
+    if (res.status === 401 || res.status === 404) {
+      removePeer(db, peerKey);
+      throw error;
+    }
+    const message = error.message;
+    const destroyed = await destroyRoom(config).catch(() => false);
+    if (destroyed) removePeer(db, peerKey);
+    else saveRoomLifecycle(db, config, "cleanup_pending", message);
+    throw error;
+  }
+
+  const active = saveRoomLifecycle(db, config, "active");
   const peer = getPeer(db, peerKey)!;
-  await syncRoomPeer(db, peer, { resolveBlob }); // first seed, loops until quiescent
-  return { url: roomUrlOf(config), peerKey };
+  try {
+    await syncRoomPeer(db, peer, { resolveBlob }); // first seed, loops until quiescent
+  } catch (e) {
+    const message = (e as Error).message;
+    const destroyed = await destroyRoom(active).catch(() => false);
+    if (destroyed) removePeer(db, peerKey);
+    else saveRoomLifecycle(db, active, "cleanup_pending", message);
+    throw e;
+  }
+  return { url: roomUrlOf(active), peerKey };
 }
 
 /** POST /owner/destroy — the room wipes its storage and drops every socket. */
@@ -267,8 +393,9 @@ export async function destroyRoom(config: RoomPeerConfig): Promise<boolean> {
   const res = await fetch(ownerUrl(config, "owner/destroy"), {
     method: "POST",
     headers: ownerHeaders(config),
+    signal: AbortSignal.timeout(30_000),
   });
-  return res.ok;
+  return res.ok || res.status === 404;
 }
 
 /**
@@ -277,15 +404,19 @@ export async function destroyRoom(config: RoomPeerConfig): Promise<boolean> {
  * whether a room peer existed. Hooked into revokeShareAction so `mh share
  * revoke` / the WebUI revoke both cascade (final decision 3).
  */
-export async function teardownRoomForShare(db: DbDriver, slug: string): Promise<boolean> {
+export async function teardownRoomForShare(
+  db: DbDriver,
+  slug: string,
+): Promise<"absent" | "destroyed" | "cleanup_pending"> {
   const peer = getPeer(db, roomPeerKey(slug));
-  if (!peer || peer.kind !== "room" || !peer.config) return false;
-  try {
-    await destroyRoom(JSON.parse(peer.config) as RoomPeerConfig);
-  } catch {
-    /* best-effort — the peer row still goes */
+  if (!peer || peer.kind !== "room" || !peer.config) return "absent";
+  const config = JSON.parse(peer.config) as RoomPeerConfig;
+  const pending = saveRoomLifecycle(db, config, "cleanup_pending", "remote room destruction is unconfirmed");
+  const destroyed = await destroyRoom(pending).catch(() => false);
+  if (!destroyed) {
+    return "cleanup_pending";
   }
   removePeer(db, peer.url);
   digestState.delete(peer.url);
-  return true;
+  return "destroyed";
 }

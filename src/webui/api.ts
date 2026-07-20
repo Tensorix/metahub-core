@@ -193,6 +193,7 @@ export interface ShareListItem {
   hasPassword: boolean;
   /** server: ready-to-copy link; s3: omitted (use renewShare to mint one). */
   url?: string;
+  lifecycle?: "active" | "provisioning" | "cleanup_pending";
 }
 export interface CreateShareBody {
   kind: "doc" | "database" | "site";
@@ -208,6 +209,7 @@ export interface CreateShareBody {
   viewerBase?: string;
   /** Serialized GrantSet for the share's api/ surface (server transport only). */
   grants?: string | null;
+  requestId?: string | null;
 }
 export interface ShareCreateResult {
   slug: string;
@@ -231,12 +233,28 @@ export interface SiteHostingInfo {
   publicBaseUrl: string | null;
   scope: "local" | "lan" | "public" | null;
   node: string;
+  pendingRollbacks: {
+    siteId: string;
+    peerUrl: string;
+    targetUrl: string;
+    requiredSeq: number;
+    createdAt: number;
+    lastError: string;
+  }[];
+  publishedSites: {
+    siteId: string;
+    targetBase: string;
+    url: string;
+    status: "ready" | "syncing";
+    updatedAt: number;
+  }[];
 }
 export interface SitePublishResult {
   access: "public" | "private";
-  status: "ready" | "syncing" | "private";
+  status: "ready" | "syncing" | "private" | "rollback_pending";
   url: string | null;
   host: string | null;
+  error?: string;
 }
 export interface EdgeRoomStatus {
   slug: string;
@@ -254,6 +272,8 @@ export interface EdgeStatus {
   reachable: boolean;
   error?: string;
   managed: boolean;
+  capabilities?: ("inbox" | "room")[];
+  wired?: { site: string; registered: boolean; error?: string }[];
   deployment?: {
     accountId: string;
     workerName: string;
@@ -268,9 +288,16 @@ export interface EdgeStatus {
     d1Name: string;
     d1Id?: string;
     workersSubdomain?: string;
+    deploymentId: string;
+    startedAt: number;
     step: string;
     updatedAt: number;
   } | null;
+}
+export interface EdgeConnectResult extends EdgeStatus {
+  status: "connected";
+  wired: { site: string; registered: boolean; error?: string }[];
+  warnings: string[];
 }
 
 /** Thrown by req(): carries the server's error `code` (see core/errors.ts) so
@@ -717,6 +744,8 @@ const httpApi = {
     grants?: GrantSet;
     targetBase?: string;
   }) => req<SitePublishResult>("POST", "/api/site/publish", b),
+  recoverSitePublish: (siteId: string, targetBase: string) =>
+    req<SitePublishResult>("POST", "/api/site/publish/recover", { siteId, targetBase }),
   deleteSiteFile: (site: string, path: string) =>
     req<{ ok: boolean }>("DELETE", `/api/site/file?site=${q(site)}&path=${q(path)}`),
   /** Raw-bytes upload — can't use req() (it JSON-stringifies the body). */
@@ -744,9 +773,11 @@ const httpApi = {
   listShareBuckets: () => req<ShareTargetOpt[]>("GET", "/api/share/buckets"),
   listShares: (opts: { target?: string } = {}) =>
     req<ShareListItem[]>("GET", `/api/shares/all${opts.target ? `?target=${q(opts.target)}` : ""}`),
+  listLocalShares: (opts: { target?: string } = {}) =>
+    req<ShareListItem[]>("GET", `/api/shares${opts.target ? `?target=${q(opts.target)}` : ""}`),
   createShare: (b: CreateShareBody) => req<ShareCreateResult>("POST", "/api/share", b),
   revokeShare: (slug: string, via?: string) =>
-    req<{ ok: boolean }>(
+    req<{ ok: boolean; status: "revoked" | "cleanup_pending" | "not_found" }>(
       "DELETE",
       `/api/share/managed?slug=${q(slug)}${via ? `&via=${q(via)}` : ""}`,
     ),
@@ -761,9 +792,15 @@ const httpApi = {
     d1Name?: string;
     workersSubdomain?: string;
     confirmed: boolean;
-  }) => req<unknown>("POST", "/api/edge/deploy", b),
+  }) =>
+    req<{
+      status: "deployed";
+      endpoint: string;
+      wired: { site: string; registered: boolean; error?: string }[];
+      warnings: string[];
+    }>("POST", "/api/edge/deploy", b),
   connectEdge: (endpoint: string, token: string) =>
-    req<EdgeStatus>("PUT", "/api/edge/connect", { endpoint, token }),
+    req<EdgeConnectResult>("PUT", "/api/edge/connect", { endpoint, token }),
   disconnectEdge: () => req<{ ok: boolean }>("DELETE", "/api/edge"),
 
   // blob cache (Settings storage panel)

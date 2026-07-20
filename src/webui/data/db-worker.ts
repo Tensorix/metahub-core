@@ -129,10 +129,12 @@ import {
 } from "../../core/sync/room-peer.ts";
 import {
   EXPECTED_EDGE_WORKER_VERSION,
+  edgeCapabilities,
   getEdgeConfig,
   setEdgeConfig,
 } from "../../core/sync/edge-config.ts";
 import { httpDropHost } from "../../core/sync/drop-host.ts";
+import { verifyEdgeConnection } from "../../core/sync/edge-connect.ts";
 
 // ---- protocol ----------------------------------------------------------------
 
@@ -707,6 +709,7 @@ const ops: Record<string, Op> = {
       return {
         configured: true,
         endpoint: cfg.endpoint,
+        capabilities: edgeCapabilities(cfg),
         version: health.version ?? null,
         expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
         aligned: health.version === EXPECTED_EDGE_WORKER_VERSION,
@@ -720,6 +723,7 @@ const ops: Record<string, Op> = {
       return {
         configured: true,
         endpoint: cfg.endpoint,
+        capabilities: edgeCapabilities(cfg),
         version: null,
         expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
         aligned: false,
@@ -733,29 +737,19 @@ const ops: Record<string, Op> = {
     }
   },
   connectEdge: async (endpointInput: string, token: string) => {
-    let endpoint: string;
-    try {
-      const parsed = new URL(endpointInput.trim());
-      if (parsed.protocol !== "https:" && parsed.hostname !== "localhost")
-        throw new Error("Edge endpoint must use HTTPS");
-      endpoint = parsed.toString().replace(/\/+$/, "");
-    } catch (e) {
-      throw new MhError("invalid_input", (e as Error).message || "invalid Edge endpoint");
-    }
-    if (!token.trim()) throw new MhError("invalid_input", "owner token is required");
-    const health = await httpDropHost(endpoint, token.trim()).ownerHealth();
-    if (!health.ok) throw new MhError("network", "Edge is not healthy");
-    if (health.version !== EXPECTED_EDGE_WORKER_VERSION)
-      throw new MhError(
-        "conflict",
-        `Edge version ${health.version ?? "unknown"} is incompatible; expected ${EXPECTED_EDGE_WORKER_VERSION}`,
-      );
+    const verified = await verifyEdgeConnection(endpointInput, token, "edge");
     setEdgeConfig(requireDb(), {
-      endpoint,
-      token: token.trim(),
-      deployedVersion: health.version,
+      endpoint: verified.endpoint,
+      token: verified.token,
+      capabilities: verified.capabilities,
+      deployedVersion: verified.version,
     });
-    return ops.edgeStatus();
+    return {
+      ...(await ops.edgeStatus()),
+      status: "connected",
+      wired: [],
+      warnings: [],
+    };
   },
   disconnectEdge: () => {
     const d = requireDb();
@@ -770,7 +764,8 @@ const ops: Record<string, Op> = {
     return rows.map((s) => {
       const peer = getPeer(d, `room://${s.slug}`);
       const cfg = peer?.config ? JSON.parse(peer.config) : null;
-      const roomUrl = cfg ? roomUrlOf(cfg) : undefined;
+      const lifecycle = cfg?.lifecycle ?? "active";
+      const roomUrl = cfg && lifecycle === "active" ? roomUrlOf(cfg) : undefined;
       const site = s.kind === "site" ? resolveSite(d, s.target_id) : null;
       return {
         slug: s.slug,
@@ -779,9 +774,14 @@ const ops: Record<string, Op> = {
         title: site?.title || site?.name || s.target_id,
         permission: s.permission,
         transport: "server",
-        source: roomUrl ? "Edge Room" : "本机",
-        sourceKind: roomUrl ? "room" : "server",
-        hosting: roomUrl ? "room" : "server",
+        source: cfg
+          ? lifecycle === "cleanup_pending"
+            ? "Edge Room（撤销待确认）"
+            : "Edge Room"
+          : "本机",
+        sourceKind: cfg ? "room" : "server",
+        hosting: cfg ? "room" : "server",
+        ...(cfg ? { lifecycle } : {}),
         expiresAt: s.expires_at,
         hasPassword: !!s.pw_hash,
         url: roomUrl,
@@ -796,12 +796,15 @@ const ops: Record<string, Op> = {
     password?: string | null;
     expiresMs?: number | null;
     grants?: string | null;
+    requestId?: string | null;
   }) => {
     const d = requireDb();
     if (req.kind !== "site" || req.hosting !== "room")
       throw new MhError("invalid_input", "桶模式目前仅支持通过 Edge 发布站点");
     const edge = getEdgeConfig(d);
     if (!edge) throw new MhError("invalid_input", "请先连接 Edge");
+    if (!edgeCapabilities(edge).includes("room"))
+      throw new MhError("conflict", "当前 Edge 仅支持 inbox，不支持 Room 托管");
     const site = resolveSite(d, req.ref);
     const hashed = req.password ? await hashSharePassword(req.password) : null;
     const share = createShare(d, {
@@ -812,6 +815,7 @@ const ops: Record<string, Op> = {
       pwHash: hashed?.hash,
       expiresAt: req.expiresMs != null ? Date.now() + req.expiresMs : null,
       grants: req.grants,
+      requestId: req.requestId,
     });
     try {
       const room = await provisionRoomForShare(d, share, edge, browserRoomBlob);
@@ -826,16 +830,18 @@ const ops: Record<string, Op> = {
         source: "Edge Room",
       };
     } catch (e) {
-      await teardownRoomForShare(d, share.slug).catch(() => undefined);
-      deleteShare(d, share.slug);
+      const cleanup = await teardownRoomForShare(d, share.slug);
+      if (cleanup !== "cleanup_pending") deleteShare(d, share.slug);
       throw e;
     }
   },
   revokeLocalShare: async (slug: string) => {
     const d = requireDb();
-    if (!getShare(d, slug)) return { ok: false };
-    await teardownRoomForShare(d, slug);
-    return { ok: deleteShare(d, slug) };
+    if (!getShare(d, slug)) return { ok: false, status: "not_found" };
+    const teardown = await teardownRoomForShare(d, slug);
+    if (teardown === "cleanup_pending")
+      return { ok: false, status: "cleanup_pending" };
+    return { ok: deleteShare(d, slug), status: "revoked" };
   },
 
   // databases
