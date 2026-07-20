@@ -400,9 +400,13 @@ export function ensurePwaRegistration(): void {
   if (typeof window === "undefined" || !window.isSecureContext) return;
   // Desktop renderer is a pure window onto the local sidecar (its data home), so
   // it never needs the SW — and a stale mh_replica flag must not make it register
-  // one. Treat it as not-a-replica regardless of clientMode().
-  if (clientMode().surface === "desktop" || clientMode().hold !== "replica") {
-    void teardownPwa(); // lightweight window / desktop → self-heal a stale SW
+  // one. Legacy registrations span random-port origins and are cleaned once by
+  // the Electron main process; touching navigator.serviceWorker here would open
+  // that profile database again and can repeat Chromium's Database IO warning.
+  const mode = clientMode();
+  if (mode.surface === "desktop") return;
+  if (mode.hold !== "replica") {
+    void teardownPwa(); // lightweight browser window → self-heal a stale SW
     return;
   }
   navigator.serviceWorker.register("/sw.js").catch((e) => {

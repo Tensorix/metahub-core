@@ -32,6 +32,10 @@ import {
   getInstalledCoreVersion,
   maybeUpdateCore,
 } from "./core-updater";
+import {
+  quarantineLegacyServiceWorkerStorage,
+  removeQuarantinedServiceWorkerStorage,
+} from "./service-worker-cleanup";
 import { tagToVersion } from "./version-util";
 
 const HEALTH_PATH = "/health"; // mirrors src/core/sync/protocol.ts
@@ -44,6 +48,19 @@ const DEFAULT_SHORTCUT = "CommandOrControl+Shift+Space";
 // (integration debugging against a scratch METAHUB_HOME) never touches the
 // real profile. No effect unless the env var is set.
 if (process.env.MH_TEST_USER_DATA) app.setPath("userData", process.env.MH_TEST_USER_DATA);
+
+// Older desktop releases registered a Service Worker for every random sidecar
+// port. Those origins share this Electron profile but cannot be enumerated from
+// the current renderer, eventually leaving Chromium with a large/corrupt
+// Service Worker database. Detach it before Chromium opens the profile; removal
+// happens in the background once the app is ready.
+const legacyServiceWorkerCleanup = quarantineLegacyServiceWorkerStorage(app.getPath("userData"));
+if (legacyServiceWorkerCleanup.warning) {
+  console.warn(
+    "[desktop] could not detach legacy Service Worker storage:",
+    legacyServiceWorkerCleanup.warning,
+  );
+}
 
 /**
  * Resolve a path inside the app bundle. NOTE: do not use `__dirname` here —
@@ -609,6 +626,18 @@ function killSidecar(): void {
 // ---- lifecycle -------------------------------------------------------------
 
 app.whenReady().then(async () => {
+  if (legacyServiceWorkerCleanup.quarantined.length > 0) {
+    void removeQuarantinedServiceWorkerStorage(legacyServiceWorkerCleanup.quarantined).then(
+      (failures) => {
+        if (failures.length > 0) {
+          console.warn(
+            "[desktop] could not remove detached Service Worker storage:",
+            failures.join("; "),
+          );
+        }
+      },
+    );
+  }
   // Windows/Linux: drop the default File/Edit/View… menu bar on every window.
   // macOS keeps its application menu (Cmd shortcuts live there).
   if (process.platform !== "darwin") Menu.setApplicationMenu(null);
