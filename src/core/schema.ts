@@ -146,7 +146,6 @@ CREATE TABLE IF NOT EXISTS shares (
                                     -- rest of the row: revoking the share kills the grants with it)
 );
 CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(target_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_request_id ON shares(request_id) WHERE request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS databases (
   id          TEXT PRIMARY KEY,

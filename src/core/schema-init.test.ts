@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
   runSchema,
+  initSchema,
   migrateOplog,
   migratePeers,
   migrateCrdtChangesSeq,
@@ -29,6 +30,32 @@ test("runSchema creates the storage_cursors table", () => {
   expect(t).not.toBeNull();
   expect(hasIndex(db, "idx_changes_txn")).toBe(true);
   expect(hasIndex(db, "idx_changes_intent_receipt_hlc")).toBe(true);
+});
+
+test("initSchema adds request_id before creating its index on a legacy shares table", () => {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE shares (
+    slug TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    permission TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    pw_salt TEXT,
+    pw_hash TEXT,
+    expires_at INTEGER,
+    guest_node_id TEXT,
+    served_base TEXT,
+    s3_peer_url TEXT,
+    s3_object_prefix TEXT,
+    s3_presign_exp INTEGER,
+    s3_key_b64 TEXT,
+    created_at INTEGER NOT NULL,
+    grants TEXT
+  )`);
+
+  expect(() => initSchema(db)).not.toThrow();
+  expect(hasCol(db, "shares", "request_id")).toBe(true);
+  expect(hasIndex(db, "idx_shares_request_id")).toBe(true);
 });
 
 test("migrateOplog adds the sparse txn index to an existing current-shape table", () => {
