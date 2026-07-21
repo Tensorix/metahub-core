@@ -35,4 +35,8 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
   preview: {
     open: (p: { src: string; name?: string; blockId: string }) => ipcRenderer.invoke("preview:open", p),
   },
+  oauth: {
+    // Open a Cloudflare consent URL in the system browser (main-process validated).
+    openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke("oauth:open-external", url),
+  },
 });

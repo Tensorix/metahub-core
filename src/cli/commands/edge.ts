@@ -19,6 +19,12 @@ import { syncDropWiring, type DropWireResult } from "../../core/sync/drop-wire.t
 import { connectInboxHost, deployEdge } from "../../core/sync/edge-service.ts";
 import { roomUrlOf } from "../../core/sync/room-url.ts";
 import { getEdgeWorkerScript } from "../edge-worker-script.ts";
+import {
+  cfOAuthConfigured,
+  startCfLogin,
+  openBrowser,
+  discoverAccounts,
+} from "../../core/sync/cf-oauth.ts";
 import { print, table, guard, warn } from "../output.ts";
 
 /** Re-run the grant↔inbox wiring for every create-granted site (after deploy /
@@ -62,19 +68,61 @@ const deploy = defineCommand({
   run: guard(async (args) => {
     const db = openMetahub();
     const prev = getEdgeConfig(db);
-    const usage = "mh edge deploy --account-id <id> --api-token <token> --yes";
-    const accountId =
+    const flagAccount =
       typeof args["account-id"] === "string" && args["account-id"]
         ? args["account-id"]
         : prev?.cf?.accountId;
-    if (!accountId) throw new MhError("invalid_input", `missing --account-id\nusage: ${usage}`);
-    if (typeof args["api-token"] !== "string" || !args["api-token"])
-      throw new MhError("invalid_input", `missing --api-token\nusage: ${usage}`);
+    const flagToken =
+      typeof args["api-token"] === "string" && args["api-token"] ? args["api-token"] : null;
+
+    // Credential resolution: an explicit --api-token stays the headless/CI path;
+    // otherwise "Sign in with Cloudflare" (OAuth PKCE) opens the browser and
+    // discovers the account, so no token or account id need be pasted.
+    let accountId: string | undefined;
+    let apiToken: string;
+    if (flagToken) {
+      if (!flagAccount)
+        throw new MhError(
+          "invalid_input",
+          "missing --account-id\nusage: mh edge deploy --account-id <id> --api-token <token> --yes",
+        );
+      accountId = flagAccount;
+      apiToken = flagToken;
+    } else if (cfOAuthConfigured()) {
+      const login = await startCfLogin();
+      print(
+        { authUrl: login.authUrl },
+        () => `opening Cloudflare to authorize…\nif the browser didn't open, visit:\n${login.authUrl}`,
+      );
+      openBrowser(login.authUrl);
+      const token = await login.waitForToken();
+      apiToken = token.accessToken;
+      accountId = flagAccount;
+      if (!accountId) {
+        const accounts = await discoverAccounts(token.accessToken);
+        if (accounts.length === 0)
+          throw new MhError("invalid_input", "该 Cloudflare 登录下没有可用账号");
+        if (accounts.length > 1 && !flagAccount)
+          throw new MhError(
+            "invalid_input",
+            "该登录关联多个 Cloudflare 账号，请用 --account-id 指定其一：\n" +
+              accounts.map((a) => `  ${a.id}  ${a.name}`).join("\n"),
+          );
+        accountId = accounts[0]!.id;
+      }
+    } else {
+      throw new MhError(
+        "invalid_input",
+        "未配置 Cloudflare OAuth，请用 --account-id <id> --api-token <token> 部署",
+      );
+    }
+
+    if (!accountId) throw new MhError("invalid_input", "无法确定 Cloudflare 账号 id");
     const result = await deployEdge(
       db,
       {
         accountId,
-        apiToken: args["api-token"],
+        apiToken,
         workerName:
           typeof args.worker === "string" && args.worker ? args.worker : prev?.cf?.workerName,
         d1Name:

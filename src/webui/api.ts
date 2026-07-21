@@ -272,6 +272,8 @@ export interface EdgeStatus {
   reachable: boolean;
   error?: string;
   managed: boolean;
+  /** Whether "Sign in with Cloudflare" (OAuth) is available on this build. */
+  oauthConfigured?: boolean;
   capabilities?: ("inbox" | "room")[];
   wired?: { site: string; registered: boolean; error?: string }[];
   deployment?: {
@@ -786,8 +788,11 @@ const httpApi = {
   // Edge hosting
   getEdgeStatus: () => req<EdgeStatus>("GET", "/api/edge"),
   deployEdge: (b: {
-    accountId: string;
-    apiToken: string;
+    // OAuth path: a completed sign-in flow that holds the token server-side.
+    flowId?: string;
+    accountId?: string;
+    // Fallback path (headless/CI): a pasted API token.
+    apiToken?: string;
     workerName?: string;
     d1Name?: string;
     workersSubdomain?: string;
@@ -799,6 +804,18 @@ const httpApi = {
       wired: { site: string; registered: boolean; error?: string }[];
       warnings: string[];
     }>("POST", "/api/edge/deploy", b),
+  // "Sign in with Cloudflare" — the token stays server-side; the browser only
+  // opens `authUrl`, polls status for the discovered accounts, then deploys by flowId.
+  beginEdgeOAuth: () =>
+    req<{ flowId: string; authUrl: string }>("POST", "/api/edge/oauth/begin"),
+  edgeOAuthStatus: (flowId: string) =>
+    req<{
+      state: "pending" | "ready" | "error";
+      accounts?: { id: string; name: string }[];
+      error?: string;
+    }>("GET", `/api/edge/oauth/status?flowId=${q(flowId)}`),
+  cancelEdgeOAuth: (flowId: string) =>
+    req<{ ok: boolean }>("DELETE", `/api/edge/oauth?flowId=${q(flowId)}`),
   connectEdge: (endpoint: string, token: string) =>
     req<EdgeConnectResult>("PUT", "/api/edge/connect", { endpoint, token }),
   disconnectEdge: () => req<{ ok: boolean }>("DELETE", "/api/edge"),

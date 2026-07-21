@@ -58,6 +58,12 @@ export function fromB64(b64: string): Uint8Array {
   return out;
 }
 
+/** base64url (RFC 4648 §5, unpadded) of raw bytes — for OAuth PKCE verifiers and
+ *  SHA-256 challenges, where the value travels in a URL query. */
+export function toB64url(bytes: Uint8Array): string {
+  return toB64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 // ---- master key ----------------------------------------------------------------
 
 /** A fresh random 256-bit master key (raw bytes). */

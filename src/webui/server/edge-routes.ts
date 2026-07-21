@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MhError } from "../../core/errors.ts";
 import { type Route } from "../../core/sync/routes.ts";
 import {
   connectEdge,
@@ -7,13 +8,48 @@ import {
   edgeStatus,
   type EdgeDeployInput,
 } from "../../core/sync/edge-service.ts";
+import {
+  cfOAuthConfigured,
+  discoverAccounts,
+  startCfLogin,
+  type CfAccount,
+  type CfLoginHandle,
+} from "../../core/sync/cf-oauth.ts";
+import { randomSuffix } from "../../core/ids.ts";
 import { getEdgeWorkerScript } from "../../cli/edge-worker-script.ts";
 import { jsonHandler } from "./json-handler.ts";
 
+// In-flight "Sign in with Cloudflare" flows. The loopback catcher and the
+// resulting access token live ONLY here on the server — the browser opens the
+// consent URL and polls for the discovered account list, then triggers the
+// deploy by flowId. The token is never sent to the browser and is discarded
+// once the deploy that consumes it returns.
+interface CfFlow {
+  handle: CfLoginHandle;
+  state: "pending" | "ready" | "error";
+  token?: string;
+  accounts?: CfAccount[];
+  error?: string;
+  createdAt: number;
+}
+const flows = new Map<string, CfFlow>();
+const FLOW_TTL_MS = 10 * 60_000;
+
+function pruneFlows(now: number): void {
+  for (const [id, f] of flows)
+    if (now - f.createdAt > FLOW_TTL_MS) {
+      f.handle.cancel();
+      flows.delete(id);
+    }
+}
+
 const EdgeStatusSchema = z.any();
 const EdgeDeploySchema = z.object({
-  accountId: z.string(),
-  apiToken: z.string(),
+  // OAuth path: reference an OAuth flow that already holds the access token.
+  flowId: z.string().optional(),
+  accountId: z.string().optional(),
+  // Fallback path (headless/CI): a pasted API token.
+  apiToken: z.string().optional(),
   workerName: z.string().optional(),
   d1Name: z.string().optional(),
   workersSubdomain: z.string().optional(),
@@ -27,7 +63,68 @@ export const edgeRoutes: Route[] = [
     path: "/api/edge",
     summary: "Edge endpoint health, version, deployment progress and rooms.",
     response: EdgeStatusSchema,
-    handler: jsonHandler((_req, { db }) => edgeStatus(db)),
+    handler: jsonHandler(async (_req, { db }) => ({
+      ...(await edgeStatus(db)),
+      oauthConfigured: cfOAuthConfigured(),
+    })),
+  },
+  {
+    method: "POST",
+    path: "/api/edge/oauth/begin",
+    summary: "Start a Sign-in-with-Cloudflare flow; returns the consent URL + flow id.",
+    response: z.object({ flowId: z.string(), authUrl: z.string() }),
+    handler: jsonHandler(async () => {
+      pruneFlows(Date.now());
+      const handle = await startCfLogin();
+      const flowId = randomSuffix(24);
+      const flow: CfFlow = { handle, state: "pending", createdAt: Date.now() };
+      flows.set(flowId, flow);
+      // Await the redirect + exchange in the background; discover accounts so the
+      // browser can pick one without ever seeing the token.
+      handle
+        .waitForToken()
+        .then(async (t) => {
+          flow.token = t.accessToken;
+          flow.accounts = await discoverAccounts(t.accessToken);
+          flow.state = "ready";
+        })
+        .catch((e) => {
+          flow.state = "error";
+          flow.error = (e as Error).message;
+        });
+      return { flowId, authUrl: handle.authUrl };
+    }),
+  },
+  {
+    method: "GET",
+    path: "/api/edge/oauth/status",
+    summary: "Poll a Sign-in-with-Cloudflare flow; returns state + discovered accounts (never the token).",
+    response: z.object({
+      state: z.enum(["pending", "ready", "error"]),
+      accounts: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+      error: z.string().optional(),
+    }),
+    handler: jsonHandler((req) => {
+      const flowId = new URL(req.url).searchParams.get("flowId") ?? "";
+      const flow = flows.get(flowId);
+      if (!flow) throw new MhError("not_found", "OAuth 流程不存在或已过期，请重试");
+      return { state: flow.state, accounts: flow.accounts, error: flow.error };
+    }),
+  },
+  {
+    method: "DELETE",
+    path: "/api/edge/oauth",
+    summary: "Cancel a Sign-in-with-Cloudflare flow (modal closed) and tear down its listener.",
+    response: z.object({ ok: z.boolean() }),
+    handler: jsonHandler((req) => {
+      const flowId = new URL(req.url).searchParams.get("flowId") ?? "";
+      const flow = flows.get(flowId);
+      if (flow) {
+        flow.handle.cancel();
+        flows.delete(flowId);
+      }
+      return { ok: true };
+    }),
   },
   {
     method: "POST",
@@ -36,8 +133,40 @@ export const edgeRoutes: Route[] = [
     request: EdgeDeploySchema,
     response: z.any(),
     handler: jsonHandler(async (req, { db }) => {
-      const body = EdgeDeploySchema.parse(await req.json()) as EdgeDeployInput;
-      return deployEdge(db, body, await getEdgeWorkerScript());
+      const body = EdgeDeploySchema.parse(await req.json());
+      let accountId = body.accountId;
+      let apiToken = body.apiToken;
+      let consumeFlow: string | undefined;
+      if (body.flowId) {
+        const flow = flows.get(body.flowId);
+        if (!flow) throw new MhError("not_found", "OAuth 流程不存在或已过期，请重新登录");
+        if (flow.state === "error") throw new MhError("auth", flow.error || "Cloudflare 授权失败");
+        if (flow.state !== "ready" || !flow.token)
+          throw new MhError("conflict", "Cloudflare 授权尚未完成，请稍候");
+        apiToken = flow.token;
+        // Single account → auto-select; multiple → the caller must have chosen one.
+        accountId = accountId || (flow.accounts?.length === 1 ? flow.accounts[0]!.id : undefined);
+        consumeFlow = body.flowId;
+      }
+      if (!accountId) throw new MhError("invalid_input", "缺少 Cloudflare 账号 id");
+      if (!apiToken) throw new MhError("invalid_input", "缺少 Cloudflare 凭据（请先登录或提供 API Token）");
+      const input: EdgeDeployInput = {
+        accountId,
+        apiToken,
+        workerName: body.workerName,
+        d1Name: body.d1Name,
+        workersSubdomain: body.workersSubdomain,
+        confirmed: body.confirmed,
+      };
+      try {
+        return await deployEdge(db, input, await getEdgeWorkerScript());
+      } finally {
+        // Discard the OAuth token immediately after use — never persisted.
+        if (consumeFlow) {
+          flows.get(consumeFlow)?.handle.cancel();
+          flows.delete(consumeFlow);
+        }
+      }
     }),
   },
   {

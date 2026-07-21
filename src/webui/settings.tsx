@@ -538,10 +538,19 @@ function EdgeDeployModal({
   onDone: () => void;
 }) {
   const defaults = status?.defaults;
+  const oauthAvailable = status?.oauthConfigured ?? false;
+  // Default to OAuth when available; the API-token inputs stay as an explicit
+  // fallback (e.g. OAuth not registered on this build, or the user prefers it).
+  const [useToken, setUseToken] = useState(!oauthAvailable);
   const [accountId, setAccountId] = useState(
     status?.pending?.accountId ?? status?.deployment?.accountId ?? "",
   );
   const [apiToken, setApiToken] = useState("");
+  // OAuth flow state.
+  const [authState, setAuthState] = useState<"idle" | "authing" | "ready" | "error">("idle");
+  const [flowId, setFlowId] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([]);
+  const [authErr, setAuthErr] = useState("");
   const [workerName, setWorkerName] = useState(
     status?.pending?.workerName ??
       status?.deployment?.workerName ??
@@ -562,19 +571,81 @@ function EdgeDeployModal({
   );
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Poll the OAuth flow until the redirect is caught + accounts discovered.
+  useEffect(() => {
+    if (authState !== "authing" || !flowId) return;
+    let live = true;
+    const timer = setInterval(async () => {
+      try {
+        const s = await api.edgeOAuthStatus(flowId);
+        if (!live) return;
+        if (s.state === "ready") {
+          setAccounts(s.accounts ?? []);
+          if ((s.accounts ?? []).length === 1) setAccountId(s.accounts![0]!.id);
+          setAuthState("ready");
+        } else if (s.state === "error") {
+          setAuthErr(s.error || "Cloudflare 授权失败");
+          setAuthState("error");
+        }
+      } catch (e) {
+        if (!live) return;
+        setAuthErr((e as Error).message);
+        setAuthState("error");
+      }
+    }, 1500);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [authState, flowId]);
+
+  // Tear down an unconsumed flow if the modal unmounts mid-auth.
+  useEffect(
+    () => () => {
+      if (flowId && authState !== "idle") api.cancelEdgeOAuth(flowId).catch(() => {});
+    },
+    [flowId, authState],
+  );
+
+  const signIn = async () => {
+    setAuthErr("");
+    try {
+      const { flowId: id, authUrl } = await api.beginEdgeOAuth();
+      setFlowId(id);
+      setAuthState("authing");
+      // In the desktop app the consent page must open in the real browser (the
+      // loopback redirect is caught by the sidecar); in a plain browser a tab is fine.
+      if (window.metahubDesktop?.oauth) window.metahubDesktop.oauth.openExternal(authUrl);
+      else window.open(authUrl, "_blank", "noopener");
+    } catch (e) {
+      setAuthErr((e as Error).message);
+      setAuthState("error");
+    }
+  };
+
   const deploy = async () => {
     if (!confirmed) return toast("请先确认将创建或更新列出的 Cloudflare 资源");
+    if (!useToken && authState !== "ready") return toast("请先用 Cloudflare 登录");
+    if (!useToken && accounts.length > 1 && !accountId) return toast("请选择要部署到的 Cloudflare 账号");
     setBusy(true);
     try {
-      const result = await api.deployEdge({
-        accountId,
-        apiToken,
-        workerName,
-        d1Name,
-        workersSubdomain: subdomain,
-        confirmed,
-      });
+      const result = await api.deployEdge(
+        useToken
+          ? { accountId, apiToken, workerName, d1Name, workersSubdomain: subdomain, confirmed }
+          : {
+              flowId: flowId!,
+              accountId: accountId || undefined,
+              workerName,
+              d1Name,
+              workersSubdomain: subdomain,
+              confirmed,
+            },
+      );
       setApiToken("");
+      // The flow's token was consumed server-side; forget it locally.
+      setFlowId(null);
+      setAuthState("idle");
       const failed = result.wired.filter((x) => !x.registered);
       const notes = [
         ...result.warnings,
@@ -592,23 +663,91 @@ function EdgeDeployModal({
   return (
     <Modal
       title={status?.configured ? "升级 Edge" : "部署 Edge"}
-      sub="将在你的 Cloudflare 账户中创建或更新一个 Worker、一个 D1 数据库和 workers.dev 入口。API Token 仅用于本次请求，不会保存。"
+      sub="将在你自己的 Cloudflare 账户中创建或更新一个 Worker、一个 D1 数据库和 workers.dev 入口。凭据仅用于本次请求，不会保存。"
       footer={
         <>
-          <button class="btn btn-secondary" onClick={closeModal}>取消</button>
-          <button class="btn btn-primary" disabled={busy || !confirmed} onClick={deploy}>
+          <button
+            class="btn btn-secondary"
+            onClick={() => {
+              if (flowId && authState !== "idle") api.cancelEdgeOAuth(flowId).catch(() => {});
+              closeModal();
+            }}
+          >
+            取消
+          </button>
+          <button
+            class="btn btn-primary"
+            disabled={busy || !confirmed || (!useToken && authState !== "ready")}
+            onClick={deploy}
+          >
             {busy ? "部署中…" : "确认并部署"}
           </button>
         </>
       }
     >
-      <div class="field-label">Cloudflare Account ID</div>
-      <input class="text-input" value={accountId} onInput={(e) => setAccountId((e.currentTarget as HTMLInputElement).value)} />
-      <div class="field-label">临时 API Token</div>
-      <input class="text-input" type="password" value={apiToken} onInput={(e) => setApiToken((e.currentTarget as HTMLInputElement).value)} />
-      <div class="muted" style={{ fontSize: 12, marginTop: 4 }}>
-        需要 Workers Scripts Write 与 D1 Write。Cloudflare Token 是账户级凭据，请仅使用最小权限 Token。
-      </div>
+      {!useToken ? (
+        <>
+          <div class="field-label">Cloudflare 账号</div>
+          {authState === "ready" ? (
+            accounts.length > 1 ? (
+              <select
+                class="text-input"
+                value={accountId}
+                onChange={(e) => setAccountId((e.currentTarget as HTMLSelectElement).value)}
+              >
+                <option value="">选择账号…</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}（{a.id}）
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div class="muted" style={{ fontSize: 13 }}>
+                ✅ 已登录：{accounts[0]?.name ?? accountId}
+              </div>
+            )
+          ) : (
+            <button class="btn btn-secondary" disabled={authState === "authing"} onClick={signIn}>
+              {authState === "authing" ? "等待浏览器授权…" : "用 Cloudflare 登录"}
+            </button>
+          )}
+          <div class="muted" style={{ fontSize: 12, marginTop: 6 }}>
+            将打开 Cloudflare 授权页，只申请 Workers 与 D1 的最小权限；令牌仅用于本次部署、不会保存。
+            {oauthAvailable && (
+              <>
+                {" "}
+                <a href="#" onClick={(e) => { e.preventDefault(); setUseToken(true); }}>
+                  改用 API Token
+                </a>
+              </>
+            )}
+          </div>
+          {authErr && (
+            <div class="muted" style={{ fontSize: 12, marginTop: 4, color: "var(--danger, #c0392b)" }}>
+              {authErr}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div class="field-label">Cloudflare Account ID</div>
+          <input class="text-input" value={accountId} onInput={(e) => setAccountId((e.currentTarget as HTMLInputElement).value)} />
+          <div class="field-label">临时 API Token</div>
+          <input class="text-input" type="password" value={apiToken} onInput={(e) => setApiToken((e.currentTarget as HTMLInputElement).value)} />
+          <div class="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            需要 Workers Scripts Write 与 D1 Write。Cloudflare Token 是账户级凭据，请仅使用最小权限 Token。
+            {oauthAvailable && (
+              <>
+                {" "}
+                <a href="#" onClick={(e) => { e.preventDefault(); setUseToken(false); }}>
+                  改用 Cloudflare 登录
+                </a>
+              </>
+            )}
+          </div>
+        </>
+      )}
       <div class="field-label">Worker 名称</div>
       <input class="text-input" value={workerName} onInput={(e) => setWorkerName((e.currentTarget as HTMLInputElement).value)} />
       <div class="field-label">D1 名称</div>

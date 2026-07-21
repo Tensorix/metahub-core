@@ -46,6 +46,12 @@ export interface MetahubDesktop {
   preview?: {
     open: (p: { src: string; name?: string; blockId: string }) => Promise<void>;
   };
+  /** Open a Cloudflare OAuth consent URL in the system browser (the loopback
+   *  redirect is caught by the Bun sidecar). Main-process validated to the
+   *  Cloudflare dash host. Returns false if the URL was rejected. */
+  oauth?: {
+    openExternal: (url: string) => Promise<boolean>;
+  };
 }
 
 declare global {

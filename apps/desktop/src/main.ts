@@ -21,6 +21,7 @@ import {
   nativeImage,
   nativeTheme,
   screen,
+  shell,
   Tray,
 } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -606,6 +607,21 @@ function registerIpc(): void {
 
   // Open the frameless image-preview window for a doc image (see openPreview).
   ipcMain.handle("preview:open", (_e, p: { src: string; name?: string; blockId: string }) => openPreview(p));
+
+  // Open the Cloudflare OAuth consent page in the user's real browser (never an
+  // in-app window). Restricted to the Cloudflare dash host so the renderer can't
+  // drive the shell to arbitrary external URLs.
+  ipcMain.handle("oauth:open-external", async (_e, url: string) => {
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      return false;
+    }
+    if (u.protocol !== "https:" || u.hostname !== "dash.cloudflare.com") return false;
+    await shell.openExternal(u.toString());
+    return true;
+  });
 }
 
 // ---- helpers ---------------------------------------------------------------
