@@ -8,7 +8,7 @@ export type View =
   | { kind: "db"; id: string }
   | { kind: "doc"; id: string }
   | { kind: "search"; q: string }
-  | { kind: "settings" }
+  | { kind: "settings"; sec?: string }
   | { kind: "sites" }
   | { kind: "shares" };
 
@@ -25,7 +25,7 @@ export function viewToHash(v: View): string {
     case "db": return `#/db/${encodeURIComponent(v.id)}`;
     case "doc": return `#/doc/${encodeURIComponent(v.id)}`;
     case "search": return `#/search?q=${encodeURIComponent(v.q)}`;
-    case "settings": return "#/settings";
+    case "settings": return v.sec ? `#/settings?sec=${encodeURIComponent(v.sec)}` : "#/settings";
     case "sites": return "#/sites";
     case "shares": return "#/shares";
     case "empty": return "#/";
@@ -45,7 +45,10 @@ export function parseHash(h: string): View {
       const q = new URLSearchParams(query).get("q");
       if (q) return { kind: "search", q };
     }
-    if (kind === "settings") return { kind: "settings" };
+    if (kind === "settings") {
+      const sec = new URLSearchParams(query).get("sec");
+      return sec ? { kind: "settings", sec } : { kind: "settings" };
+    }
     if (kind === "sites") return { kind: "sites" };
     if (kind === "shares") return { kind: "shares" };
   } catch {

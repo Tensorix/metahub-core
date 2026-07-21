@@ -800,7 +800,7 @@ const ops: Record<string, Op> = {
   }) => {
     const d = requireDb();
     if (req.kind !== "site" || req.hosting !== "room")
-      throw new MhError("invalid_input", "桶模式目前仅支持通过 Edge 发布站点");
+      throw new MhError("invalid_input", "此设备不驻留在线托管，目前仅支持通过 Edge 发布站点");
     const edge = getEdgeConfig(d);
     if (!edge) throw new MhError("invalid_input", "请先连接 Edge");
     if (!edgeCapabilities(edge).includes("room"))

@@ -30,6 +30,7 @@ import {
   type GrantSet,
 } from "../../core/grants-core.ts";
 import { getEdgeConfig, getDropKnobs, setDropKnobs } from "../../core/sync/edge-config.ts";
+import { siteReachability } from "../../core/sync/site-reachability.ts";
 import { syncDropWiring, siteHasCreateGrant, type DropWireResult } from "../../core/sync/drop-wire.ts";
 import { deriveShareKey, toB64 } from "../../core/sync/e2ee.ts";
 import { getDatabase } from "../../core/databases.ts";
@@ -213,7 +214,7 @@ const publish = defineCommand({
       },
       () => {
         let out =
-          `published ${all.length} file(s) to ${site.name} ` +
+          `uploaded ${all.length} file(s) to ${site.name} ` +
           `(${res.uploaded.length} uploaded, ${res.unchanged.length} unchanged)\n` +
           all.map((p) => (unchanged.has(p) ? `  ${p} (unchanged)` : `  ${p}`)).join("\n") +
           "\n";
@@ -263,12 +264,17 @@ function resolveSiteForPublish(db: DbDriver, ref: string, create: boolean) {
 }
 
 const list = defineCommand({
-  meta: { name: "list", description: "List sites" },
+  meta: { name: "list", description: "List sites with their reachability state" },
   args: { ...FRESH_ARGS },
   run: guard(async (args) => {
     const db = await freshDb(args);
-    const rows = listSites(db);
-    print(rows, () => table(rows.map((r) => ({ id: r.id, name: r.name, title: r.title ?? "" }))));
+    const rows = listSites(db).map((r) => ({
+      ...r,
+      state: siteReachability(db, r.id).state,
+    }));
+    print(rows, () =>
+      table(rows.map((r) => ({ id: r.id, name: r.name, title: r.title ?? "", state: r.state }))),
+    );
   }),
 });
 
@@ -477,5 +483,8 @@ export default defineCommand({
     description:
       "Manage static sites served at /sites/<name>/ (pages call /api/* or import /metahub-sdk.js same-origin)",
   },
-  subCommands: { create, update, scaffold, put, publish, list, files, rm, grant, grants, delete: del },
+  // `upload` is an alias for `publish`: the verb "publish" here means "upload
+  // files" (visibility is a separate axis via `update --visibility`), and the
+  // alias lets docs/skills use the unambiguous verb.
+  subCommands: { create, update, scaffold, put, publish, upload: publish, list, files, rm, grant, grants, delete: del },
 });

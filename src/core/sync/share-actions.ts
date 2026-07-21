@@ -215,22 +215,42 @@ function absoluteShareUrl(url: string, base: string): string {
   }
 }
 
+/** The legal-combination matrix in ONE place. Every rule names the conflict and
+ *  the way out, so surfaces (CLI flags, WebUI selects, remote peers) fail the
+ *  same way instead of each scattering its own throws. */
+export function assertShareCombo(req: {
+  kind: ShareKind;
+  transport: "server" | "s3";
+  hosting: "server" | "room";
+  permission: SharePermission;
+  hasGrants: boolean;
+}): void {
+  const fail = (msg: string): never => {
+    throw new MhError("invalid_input", msg);
+  };
+  if (req.transport === "s3") {
+    if (req.hosting === "room")
+      fail("Edge room hosting requires the server transport");
+    if (req.hasGrants)
+      fail("data grants need the server transport — a static object-storage share has no API surface");
+    if (req.permission === "edit")
+      fail("object-storage shares are read-only — use the server transport to allow editing");
+    if (req.kind === "site")
+      fail("sites can't be shared via object storage — use the server transport");
+  }
+  if (req.hosting === "room" && req.kind !== "site")
+    fail("Edge rooms currently host site shares only");
+}
+
 /** Resolve, validate, and create (server local / server remote / s3 bucket) a share. */
 export async function createShareAction(db: DbDriver, req: CreateShareRequest): Promise<CreatedShare> {
   const permission = req.permission ?? "view";
   const transport = req.transport ?? "server";
   const hosting = req.hosting ?? "server";
+  assertShareCombo({ kind: req.kind, transport, hosting, permission, hasGrants: !!req.grants });
 
   // ── object storage ──────────────────────────────────────────────────────────
   if (transport === "s3") {
-    if (hosting === "room")
-      throw new MhError("invalid_input", "Edge room hosting requires the server transport");
-    if (req.grants)
-      throw new MhError("invalid_input", "data grants need the server transport — a static object-storage share has no API surface");
-    if (permission === "edit")
-      throw new MhError("invalid_input", "object-storage shares are read-only — use the server transport to allow editing");
-    if (req.kind === "site")
-      throw new MhError("invalid_input", "sites can't be shared via object storage — use the server transport");
     const target = resolveTarget(db, req.kind, req.ref);
     const bucketUrl = pickBucket(db, req.bucketUrl);
     const { config, label } = s3PeerConfig(db, bucketUrl);
@@ -238,7 +258,8 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
     const slug = freshSlug(db);
     const out = await createBucketShare(db, {
       slug,
-      kind: req.kind,
+      // assertShareCombo above rejects site+s3, so the cast can't lie
+      kind: req.kind as Exclude<ShareKind, "site">,
       targetId: target.id,
       config,
       password: req.password,
@@ -377,6 +398,14 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
       source: activeRoom ? "Edge Room" : base || "本机服务器",
     };
   }
+  // Room preflight BEFORE minting the row — a doomed request must not leave a
+  // create-then-delete trace (kind is covered by assertShareCombo above).
+  const roomEdge = hosting === "room" ? getEdgeConfig(db) : null;
+  if (hosting === "room") {
+    if (!roomEdge) throw new MhError("invalid_input", "Edge is not configured");
+    if (!edgeCapabilities(roomEdge).includes("room"))
+      throw new MhError("conflict", "Configured Edge host supports inbox only, not Room hosting");
+  }
   let pwSalt: string | null = null;
   let pwHash: string | null = null;
   if (req.password) {
@@ -399,22 +428,9 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
   });
   let roomUrl: string | null = null;
   if (hosting === "room") {
-    if (req.kind !== "site") {
-      deleteShare(db, share.slug);
-      throw new MhError("invalid_input", "Edge rooms currently host site shares only");
-    }
-    const edge = getEdgeConfig(db);
-    if (!edge) {
-      deleteShare(db, share.slug);
-      throw new MhError("invalid_input", "Edge is not configured");
-    }
-    if (!edgeCapabilities(edge).includes("room")) {
-      deleteShare(db, share.slug);
-      throw new MhError("conflict", "Configured Edge host supports inbox only, not Room hosting");
-    }
     try {
       const { provisionRoomForShare } = await import("./room-peer.ts");
-      roomUrl = (await provisionRoomForShare(db, share, edge)).url;
+      roomUrl = (await provisionRoomForShare(db, share, roomEdge!)).url;
     } catch (e) {
       const { teardownRoomForShare } = await import("./room-peer.ts");
       const cleanup = await teardownRoomForShare(db, share.slug).catch(
@@ -436,9 +452,10 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
   };
 }
 
-/** Local listing (server rows + each attached bucket) — NO peer fan-out (so the
- *  /api/shares endpoint a peer calls can't recurse). Optional target filter. */
-export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<ShareListItem[]> {
+/** This node's server-share rows only (sync, no network) — the bucket-free
+ *  subset of listSharesLocal. Site reachability and CLI listings use it so a
+ *  local derivation never waits on an S3 scan. */
+export function listServerSharesLocal(db: DbDriver, targetId?: string): ShareListItem[] {
   const out: ShareListItem[] = [];
   const rows = targetId ? listSharesForTarget(db, targetId) : listShares(db);
   for (const r of rows) {
@@ -481,6 +498,13 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
           : `/share/${r.slug}`,
     });
   }
+  return out;
+}
+
+/** Local listing (server rows + each attached bucket) — NO peer fan-out (so the
+ *  /api/shares endpoint a peer calls can't recurse). Optional target filter. */
+export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<ShareListItem[]> {
+  const out: ShareListItem[] = listServerSharesLocal(db, targetId);
   for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
     const config = JSON.parse(p.config!) as S3Config;
     const metas = await listBucketShares(config).catch(() => []);

@@ -186,9 +186,20 @@ function SettingsRail({ sections }: { sections: { id: string; label: string; ico
   );
 }
 
-export function SettingsView({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void } = {}) {
+export function SettingsView({ onUpdatePending, focusSec }: { onUpdatePending?: (p: boolean) => void; focusSec?: string } = {}) {
   const [theme, setThemeState] = useState<ThemeChoice>(getTheme());
   const [wordCount, setWordCountState] = useState<boolean>(getWordCountEnabled());
+
+  // Deep link from elsewhere in the app (#/settings?sec=hosting): jump to the
+  // requested chapter once mounted — sections render synchronously, so a rAF is
+  // enough for layout to settle before the scroll.
+  useEffect(() => {
+    if (!focusSec) return;
+    const raf = requestAnimationFrame(() =>
+      document.getElementById(focusSec)?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [focusSec]);
 
   const pick = (t: ThemeChoice) => {
     setTheme(t);
@@ -448,7 +459,7 @@ function SiteHostingSettings() {
         </div>
         <div class="set-block-desc">
           {noOrigin
-            ? "桶模式只能连接已部署的 Edge。浏览器关闭后站点继续提供最后同步版本，重新打开后恢复更新。"
+            ? "此设备把数据存放在云端存储桶、不常驻在线，站点需由 Edge 托管。你的设备离线期间，Edge 继续提供最后一次同步的版本。"
             : "Edge Room 不依赖设备在线。可一键部署到你的 Cloudflare 账户，或连接已有兼容端点。"}
         </div>
 

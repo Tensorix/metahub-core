@@ -1262,6 +1262,20 @@
     padding:2px 6px; border-radius:5px; background:var(--surface-2); color:var(--fg-soft); border:1px solid var(--line); }
   .enc-badge.blob { color:var(--accent); background:var(--accent-soft); border-color:transparent; }
 
+  /* access channels (peek drawer): one row per way the site is reachable */
+  .chanrow { display:flex; align-items:center; gap:8px; padding:8px 8px; border-bottom:1px solid var(--line); font-size:var(--fs-sm); }
+  .chanrow:last-child { border-bottom:0; }
+  .chan-badge { display:inline-flex; align-items:center; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px;
+    background:var(--surface-2); color:var(--fg-soft); border:1px solid var(--line); flex:none; }
+  .chan-badge.anyone { color:var(--accent); background:var(--accent-soft); border-color:transparent; }
+  .chan-host { color:var(--muted); font-size:12px; flex:none; }
+  .chan-status { font-size:12px; color:var(--fg-soft); flex:none; }
+  .chan-status.warn { color:var(--danger); }
+  .chan-status.busy { color:var(--muted); }
+  .chan-url { flex:1; font-family:var(--mono); font-size:12px; color:var(--fg-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chanrow button { width:26px; height:26px; display:grid; place-items:center; border-radius:6px; color:var(--muted); flex:none; }
+  .chanrow button:hover { background:var(--hover-2); color:var(--fg); }
+
   /* file preview (inside modal) */
   .preview-box { font-family:var(--mono); font-size:var(--fs-sm); background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius);
     padding:14px 16px; max-height:52vh; overflow:auto; white-space:pre-wrap; line-height:1.6; color:var(--fg); }

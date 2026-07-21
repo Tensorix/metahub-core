@@ -23,7 +23,7 @@ CONCEPTS
                    wrap them as { id, database_id, values: { column: value } }
                    — field values live under "values", keyed by property name.
   document (doc)   A markdown doc, stored as ordered blocks (block-level CRDT).
-  site (site)      A named bucket of files (HTML/CSS/JS) served at /sites/<name>/.
+  site (site)      A named set of files (HTML/CSS/JS) served at /sites/<name>/.
   Every id is "<kind>_<slug>-<rand>", e.g. db_tasks-k3f9c1, rec_fix-login-7j02an.
   The kind prefix makes ids self-describing; the random suffix is collision-safe.
 
@@ -80,11 +80,11 @@ COMMANDS
     search <query> [--limit N]        Full-text over documents + records
     edit <ref> [--vscode]             Open in $EDITOR (interactive, for humans)
   static sites  (host agent-authored HTML/CSS/JS, served by --server at /sites/<name>/)
-    site create <name> [--title] [--public]  Create a site (a named bucket of files)
+    site create <name> [--title] [--public]  Create a site (a named set of files)
     site update <site> [--visibility public|private] [--spa|--no-spa] [--title]
     site scaffold <dir> [--force]     Write a starter index.html (SDK import + working example)
     site put <site> <path> --from <file> | --content <txt|@file|@->
-    site publish <site> <dir>         Upload a directory (--create to create; --prune mirrors deletes)
+    site publish <site> <dir>         Upload a directory (alias: upload; --create to create; --prune mirrors deletes)
     site list | files <site>
     site grant <site> <db>:<ops>      Anonymous data access for a PUBLIC site's api/ (ops: read,create,update; --revoke <db>; --clear)
     site grants <site>                Show a site's public data grants

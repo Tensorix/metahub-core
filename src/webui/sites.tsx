@@ -8,6 +8,16 @@ import {
   type SiteHostingInfo,
 } from "./api.ts";
 import { normalizeSiteName } from "../core/sites-core.ts";
+import {
+  siteChannelInput,
+  siteChannels,
+  siteState,
+  SITE_STATE_LABEL,
+  CHANNEL_STATUS_LABEL,
+  channelAudienceLabel,
+  channelHostingLabel,
+  type SiteChannel,
+} from "./site-status.ts";
 import { openShareModal, SHARES_CHANGED } from "./share-modal.tsx";
 import { isNoOrigin } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
@@ -263,7 +273,7 @@ export function SitesView() {
     if (peek || preview || upload) return; // the open drawer owns its own drop zone
     const drop = dropEntries(e.dataTransfer!); // sync — before any await
     if (drop.entries.length !== 1 || !drop.entries[0]!.isDirectory)
-      return toast("拖入一个目录即可发布为站点（目录名 = 站点名）");
+      return toast("拖入一个目录即可上传为站点（目录名 = 站点名）");
     const dirName = drop.entries[0]!.name;
     let slug: string;
     try {
@@ -280,8 +290,8 @@ export function SitesView() {
     if (!target) {
       const ok = await confirmDialog({
         title: `创建站点「${slug}」？`,
-        message: `站点「${slug}」不存在。创建它并发布 ${inner.length} 个文件？`,
-        confirmLabel: "创建并发布",
+        message: `站点「${slug}」不存在。创建它并上传 ${inner.length} 个文件？`,
+        confirmLabel: "创建并上传",
       });
       if (!ok) return;
       try {
@@ -425,7 +435,7 @@ export function SitesView() {
         <div class="site-empty">
           <div class="ei"><Icon name="globe" /></div>
           <div class="et">还没有站点</div>
-          <div class="ed">站点是一个命名文件桶，发布后可通过 /sites/&lt;name&gt;/ 直接访问。</div>
+          <div class="ed">站点是一组网页文件，可先在本机预览，发布后供他人访问。</div>
           <button class="btn btn-primary" onClick={newSite}>
             <Icon name="plus" cls="ico sm" />
             新建站点
@@ -438,32 +448,9 @@ export function SitesView() {
               (() => {
                 const ownShares = shares.filter((x) => x.target_id === s.id);
                 const pendingRollback = hostingInfo?.pendingRollbacks.find((x) => x.siteId === s.id);
-                const publishStates =
-                  hostingInfo?.publishedSites.filter((x) => x.siteId === s.id) ?? [];
-                const deviceReady = publishStates.some((x) => x.status === "ready");
-                const deviceSyncing = publishStates.some((x) => x.status === "syncing");
-                const cleanupPending = ownShares.some(
-                  (x) => x.hosting === "room" && x.lifecycle === "cleanup_pending",
-                );
-                const hasRoom = ownShares.some(
-                  (x) => x.hosting === "room" && (x.lifecycle ?? "active") === "active",
-                );
-                const hasRestricted = ownShares.some((x) => x.hosting !== "room");
-                const state = pendingRollback
-                  ? "回滚待确认"
-                  : cleanupPending
-                    ? "撤销待确认"
-                  : hasRoom
-                  ? "始终在线·Edge"
-                  : isPublic(s) && deviceReady
-                    ? "已上线·设备"
-                    : isPublic(s) && deviceSyncing
-                      ? "正在同步·设备"
-                    : isPublic(s)
-                      ? "公网未发布"
-                      : hasRestricted
-                        ? "受限分享"
-                        : "本机预览";
+                // One shared derivation (core site-channels) — cards, the peek
+                // drawer and the publish dialog must answer identically.
+                const state = SITE_STATE_LABEL[siteState(siteChannelInput(s, shares, hostingInfo))];
                 return (
               <div class="site-card" key={s.id} style={`--i:${i}`} onClick={() => setPeek(s)}>
                 <div class="site-card-head">
@@ -567,6 +554,7 @@ export function SitesView() {
       {peek && (
         <SitePeek
           site={peek}
+          channels={siteChannels(siteChannelInput(peek, shares, hostingInfo))}
           onClose={() => setPeek(null)}
           onVisit={() => setPreview(peek)}
           onMenu={(e) => siteMenu(e, peek, true)}
@@ -602,7 +590,7 @@ function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
   return (
     <Modal
       title="新建站点"
-      sub="创建一个命名文件桶，随同步无冲突复制。"
+      sub="创建一组网页文件，随你的设备自动同步。"
       footer={
         <>
           <button class="btn btn-secondary" onClick={closeModal}>
@@ -709,12 +697,14 @@ function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: () => voi
 
 function SitePeek({
   site,
+  channels,
   onClose,
   onVisit,
   onMenu,
   onChanged,
 }: {
   site: Site;
+  channels: SiteChannel[];
   onClose: () => void;
   onVisit: () => void;
   onMenu: (e: MouseEvent) => void;
@@ -896,6 +886,59 @@ function SitePeek({
             </span>
             <span>创建于 {fmtDate(site.created_hlc)}</span>
           </div>
+
+          <div class="files-head">
+            <span>访问渠道</span>
+            <span>{channels.length || ""}</span>
+          </div>
+          {channels.length === 0 ? (
+            <div class="muted" style={{ fontSize: 12, margin: "4px 0 20px" }}>
+              还没有发布 — 目前只有你（和已配对设备）能打开上面的预览地址。
+            </div>
+          ) : (
+            <div style={{ marginBottom: 20 }}>
+              {channels.map((c) => (
+                <div class="chanrow" key={(c.slug ?? "public") + (c.url ?? "")}>
+                  <span class={"chan-badge" + (c.audience === "anyone" ? " anyone" : "")}>
+                    {channelAudienceLabel(c)}
+                  </span>
+                  <span class="chan-host">{channelHostingLabel(c)}托管</span>
+                  <span
+                    class={
+                      "chan-status" +
+                      (c.status === "rollback_pending" || c.status === "cleanup_pending" || c.status === "expired"
+                        ? " warn"
+                        : c.status === "ready"
+                          ? ""
+                          : " busy")
+                    }
+                  >
+                    {CHANNEL_STATUS_LABEL[c.status]}
+                  </span>
+                  {c.hasPassword && <span class="chan-host" title="需要口令">🔒</span>}
+                  <span class="chan-url" title={c.url ?? undefined}>
+                    {c.url ?? "—"}
+                  </span>
+                  {c.url && (
+                    <>
+                      <button title="复制地址" onClick={() => copyText(c.url!)}>
+                        <Icon name="copy" cls="ico sm" />
+                      </button>
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ display: "grid", placeItems: "center", width: 26, height: 26, color: "var(--muted)" }}
+                        title="打开"
+                      >
+                        <Icon name="globe" cls="ico sm" />
+                      </a>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           <div class="files-head">
             <span>文件</span>

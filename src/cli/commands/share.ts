@@ -86,13 +86,10 @@ const create = defineCommand({
     const expiresMs = args.expires ? parseDuration(args.expires, 0) : 0;
     const server = transport === "server" ? (args.via ?? localServerBase(db)) : undefined;
 
-    // --room preflight: rooms are a hosting of a SERVER share for a SITE, and
-    // need a configured edge (never auto-created — design.md §7 red line 7).
+    // --room preflight: transport/kind rules live in assertShareCombo (inside
+    // createShareAction); here only the CLI-remedied edge check remains (a room
+    // is never auto-created — design.md §7 red line 7).
     if (args.room) {
-      if (transport !== "server")
-        throw new MhError("invalid_input", "--room needs the server transport");
-      if (kind !== "site")
-        throw new MhError("invalid_input", "--room currently hosts site shares — share a site and grant its tables (--grant)");
       const remote = args.via ? getPeer(db, args.via) : null;
       if (!remote && !getEdgeConfig(db))
         throw new MhError("invalid_input", "--room needs a configured edge — run `mh edge deploy` (or `mh edge connect`) first");
