@@ -18,10 +18,25 @@ import {
   syncPeer,
   syncAllPeers,
   addAndSyncStoragePeer,
+  rotateStoragePeer,
+  type RotateOutcome,
   type PeerRow,
 } from "../../core/sync/peers.ts";
 import { type S3Config } from "../../core/sync/storage.ts";
+import { encodeRecoveryCode } from "../../core/sync/recovery.ts";
+import { fromB64 } from "../../core/sync/e2ee.ts";
 import { decodeEnroll } from "../../core/sync/enroll.ts";
+import { listDevices, refreshBucketPresence, type DeviceView } from "../../core/sync/devices.ts";
+import { provisionR2Bucket } from "../../core/sync/edge-service.ts";
+import {
+  cfOAuthConfigured,
+  discoverAccounts,
+  openBrowser,
+  startCfLogin,
+} from "../../core/sync/cf-oauth.ts";
+import { anchorsDispatch } from "./cache.ts";
+import { runEdgeDeploy, runEdgeConnect, runEdgeRotateKeys } from "./edge.ts";
+import { getEdgeConfig } from "../../core/sync/edge-config.ts";
 import { putBucketCors } from "../../core/sync/storage-s3-bun.ts";
 import { MhError } from "../../core/errors.ts";
 import { print, table, guard } from "../output.ts";
@@ -119,7 +134,7 @@ async function peerDispatch(
   switch (action) {
     case "add": {
       if (args.s3) return storagePeerAdd(db, args);
-      const usage = "mh config peer add --url <url> --code <code> [--self-url <url>]";
+      const usage = "mh config device add --url <url> --code <code> [--self-url <url>]";
       const url = flagOrAsk(args.url, "url", usage);
       const code = flagOrAsk(args.code, "code", usage);
       const selfUrl = typeof args["self-url"] === "string" ? args["self-url"] : undefined;
@@ -130,7 +145,7 @@ async function peerDispatch(
     }
     case "code": {
       const c = generatePairingCode(db);
-      print(c, () => `pairing code: ${c.code}\nexpires:      ${iso(c.exp)}\n(redeem with: mh config peer add --url <this-server-url> --code ${c.code})`);
+      print(c, () => `pairing code: ${c.code}\nexpires:      ${iso(c.exp)}\n(redeem with: mh config device add --url <this-server-url> --code ${c.code})`);
       return;
     }
     case "list":
@@ -161,15 +176,50 @@ async function peerDispatch(
       }
       return;
     }
+    case "recovery": {
+      // Deliberately secret-revealing (unlike `config show`): prints the master
+      // key as a printable card. The last-resort backup for "every device is
+      // gone AND the passphrase is forgotten".
+      const usage = "mh config backup recovery --url s3://<bucket>/<prefix>";
+      const url = flagOrAsk(args.url, "url", usage);
+      const peer = getPeer(db, url);
+      if (!peer || peer.kind !== "s3" || !peer.config)
+        throw new MhError("not_found", `no S3 storage peer at '${url}' (see: mh config backup list)`);
+      const config = JSON.parse(peer.config) as S3Config;
+      if (!config.encrypt || !config.masterKey)
+        throw new MhError("invalid_input", "plaintext bucket has no master key — nothing to back up");
+      const code = await encodeRecoveryCode(fromB64(config.masterKey));
+      print({ url, code }, () => recoveryCard(url, config.bucket, code));
+      return;
+    }
+    case "rotate": {
+      const usage =
+        "mh config backup rotate --url s3://<bucket>/<prefix> [--access-key <id> --secret-key <key>] [--new-passphrase <pw>] [--old-passphrase <pw>] [--recovery-code <MH1-…>]";
+      const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
+      const hasFlags =
+        str(args["access-key"]) || str(args["secret-key"]) || str(args["new-passphrase"]) ||
+        str(args["old-passphrase"]) || str(args["recovery-code"]);
+      if (!hasFlags && isTTY()) return rotateWizardFor(db, str(args.url));
+      const url = flagOrAsk(args.url, "url", usage);
+      const r = await rotateStoragePeer(db, url, {
+        accessKeyId: str(args["access-key"]),
+        secretAccessKey: str(args["secret-key"]),
+        newPassphrase: str(args["new-passphrase"]),
+        oldPassphrase: str(args["old-passphrase"]),
+        recoveryCode: str(args["recovery-code"]),
+      });
+      print(r, () => rotateLines(r));
+      return;
+    }
     case "cors": {
       // Open the bucket's CORS to a browser shell origin so a phone can talk to
       // it directly (the desktop does it — a browser can't bootstrap its own CORS).
       const usage =
-        "mh config peer cors --url s3://<bucket>/<prefix> --allow <origin>[,<origin2>...]";
+        "mh config backup cors --url s3://<bucket>/<prefix> --allow <origin>[,<origin2>...]";
       const url = flagOrAsk(args.url, "url", usage);
       const peer = getPeer(db, url);
       if (!peer || peer.kind !== "s3" || !peer.config) {
-        throw new MhError("not_found", `no S3 storage peer at '${url}' (see: mh config peer list)`);
+        throw new MhError("not_found", `no S3 storage peer at '${url}' (see: mh config backup list)`);
       }
       const config = JSON.parse(peer.config) as S3Config;
       const origins = String(flagOrAsk(args.allow, "allow", usage))
@@ -183,8 +233,169 @@ async function peerDispatch(
     default:
       throw new MhError(
         "invalid_input",
-        `unknown peer action '${action}' (add|code|list|rm|enable|disable|sync|cors)`,
+        `unknown peer action '${action}' (add|code|list|rm|enable|disable|sync|cors|rotate|recovery)`,
       );
+  }
+}
+
+/** Printable recovery card (human output of `peer recovery` and the wizard). */
+function recoveryCard(url: string, bucket: string, code: string): string {
+  const groups = code.split("-"); // ["MH1", ...14 groups]
+  const l1 = groups.slice(0, 8).join("-");
+  const l2 = "    " + groups.slice(8).join("-");
+  return [
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    " Metahub 恢复码",
+    ` 存储桶: ${bucket}  (${url})`,
+    ` 生成于: ${new Date().toISOString().slice(0, 10)}`,
+    "",
+    ` ${l1}`,
+    ` ${l2}`,
+    "",
+    " 这串代码等于你全部数据的钥匙。忘记加密口令时,凭它可恢复",
+    " 数据并设置新口令。请打印或抄写,放在安全的地方;不要保存",
+    " 在会被同步的笔记里。任何拿到它的人都能读取你的全部数据。",
+    "",
+    " 使用: mh config backup connect --enroll <接入码> --recovery-code <此码>",
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+  ].join("\n");
+}
+
+/** Human summary for a flag-driven rotate (agents read the JSON instead). */
+function rotateLines(r: RotateOutcome): string {
+  const lines = [
+    `rotated ${[r.rotatedCredentials ? "credentials" : null, r.rotatedPassphrase ? "passphrase" : null].filter(Boolean).join(" + ")} on ${r.url}`,
+    r.keyVerified === "verified" ? "master key verified against bucket ciphertext" : null,
+    r.keyVerified === "no_ciphertext"
+      ? "⚠️  bucket held no ciphertext to verify the key against — proceeded"
+      : null,
+    r.sync.ok
+      ? `post-rotate sync ok (${syncLine(r.sync)})`
+      : `⚠️  post-rotate sync FAILED: ${r.sync.error} — credentials saved; retry: mh sync`,
+    r.rotatedCredentials ? "you can now DISABLE the old keys at the storage provider" : null,
+    r.rotatedPassphrase
+      ? "passphrase changed: already-configured devices keep working; only NEW devices need the new passphrase"
+      : null,
+    "re-attach other devices with the fresh enroll code below (data and progress survive):",
+    `  mh config backup connect --enroll ${r.enroll}`,
+    "note: data a lost device already synced cannot be wiped remotely — it only loses access to FUTURE data",
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
+/** Interactive rotate (bare `mh config backup rotate` on a TTY + the wizard menu). */
+async function rotateWizardFor(
+  db: ReturnType<typeof openMetahub>,
+  presetUrl?: string,
+): Promise<void> {
+  const s3peers = listPeers(db).filter((x) => x.kind === "s3" && x.config);
+  if (!s3peers.length) {
+    p.note("(没有已配置的存储桶)");
+    return;
+  }
+  let url = presetUrl;
+  if (!url) {
+    const sel = await p.select({ message: "选择要轮换的存储桶", options: peerChoices(s3peers) });
+    if (cancelled(sel)) return;
+    url = sel;
+  }
+  const peer = s3peers.find((x) => x.url === url);
+  if (!peer?.config) {
+    p.note(`未找到存储桶 ${url}`);
+    return;
+  }
+  const config = JSON.parse(peer.config) as S3Config;
+  p.note(
+    [
+      "适用于「手机丢了 / 密钥泄露 / 想换口令」。",
+      "请先在存储服务商控制台**新建**一把 Access Key——先不要删除旧的,",
+      "完成后再停用。中途任何失败,旧钥匙都还能用;重跑本向导即可续接。",
+    ].join("\n"),
+    "轮换存储密钥",
+  );
+  const wantCreds = await p.confirm({ message: "更换存储访问密钥 (Access Key)?", initialValue: true });
+  if (cancelled(wantCreds)) return;
+  let accessKeyId: string | undefined;
+  let secretAccessKey: string | undefined;
+  if (wantCreds) {
+    const ak = await p.text({ message: "新 Access Key ID", validate: required });
+    if (cancelled(ak)) return;
+    const sk = await p.password({ message: "新 Secret Access Key", validate: required });
+    if (cancelled(sk)) return;
+    accessKeyId = ak;
+    secretAccessKey = sk;
+  }
+  let newPassphrase: string | undefined;
+  let oldPassphrase: string | undefined;
+  let recoveryCode: string | undefined;
+  if (config.encrypt) {
+    const wantPw = await p.confirm({ message: "同时更换加密口令?", initialValue: false });
+    if (cancelled(wantPw)) return;
+    if (wantPw) {
+      const pw1 = await p.password({ message: "新口令", validate: required });
+      if (cancelled(pw1)) return;
+      const pw2 = await p.password({
+        message: "再输一次确认",
+        validate: (v) => (v === pw1 ? undefined : "两次输入不一致"),
+      });
+      if (cancelled(pw2)) return;
+      newPassphrase = pw1;
+      if (!config.masterKey) {
+        const src = await p.select({
+          message: "本机没有缓存密钥,需要一个来源",
+          options: [
+            { value: "recovery", label: "输入恢复码", hint: "MH1- 开头的 14 组代码" },
+            { value: "old", label: "输入当前口令" },
+          ],
+        });
+        if (cancelled(src)) return;
+        if (src === "recovery") {
+          const rc = await p.text({ message: "恢复码", validate: required });
+          if (cancelled(rc)) return;
+          recoveryCode = rc;
+        } else {
+          const op = await p.password({ message: "当前口令", validate: required });
+          if (cancelled(op)) return;
+          oldPassphrase = op;
+        }
+      }
+    }
+  }
+  if (!wantCreds && !newPassphrase) {
+    p.note("没有要更改的内容");
+    return;
+  }
+  const s = p.spinner();
+  s.start("验证新凭据并轮换…");
+  try {
+    const r = await rotateStoragePeer(db, url, {
+      accessKeyId,
+      secretAccessKey,
+      newPassphrase,
+      oldPassphrase,
+      recoveryCode,
+    });
+    s.stop("✓ 轮换完成");
+    p.note(
+      [
+        r.rotatedCredentials ? "• 现在可以到存储服务商控制台停用旧密钥了。" : null,
+        r.rotatedPassphrase
+          ? "• 口令已更换:已配置设备无需重输,只有新加入的设备需要新口令。"
+          : null,
+        "• 其他设备用下面的新接入码重新接入(数据与同步进度不受影响)。",
+        "• 丢失设备此前已同步的数据无法远程抹除;它只是无法再获取之后的数据。",
+        r.sync.ok
+          ? null
+          : `⚠️ 轮换后的首次同步失败: ${r.sync.error}(凭据已保存;稍后重试 mh sync)`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      "下一步",
+    );
+    p.note(r.enroll, "新接入码 (含新密钥,勿公开;不含口令)");
+  } catch (e) {
+    s.stop(`✗ ${(e as Error).message}`);
+    p.note("中途失败不影响旧钥匙;修正后重跑本向导即可续接。", "提示");
   }
 }
 
@@ -203,7 +414,64 @@ async function storagePeerAdd(
   args: Record<string, any>,
 ): Promise<void> {
   const usage =
-    "mh config peer add --s3 --enroll <code>  |  --s3 --endpoint <url> --bucket <name> --access-key <id> --secret-key <key> [--prefix <p>] [--region <r>] [--passphrase <pw>] [--no-encrypt]";
+    "mh config backup connect --enroll <code>  |  --endpoint <url> --bucket <name> --access-key <id> --secret-key <key> [--prefix <p>] [--region <r>] [--passphrase <pw>] [--no-encrypt]  |  --provision-r2 --bucket <name> --yes [--cf-account-id <id> --cf-api-token <t>]";
+
+  // `--provision-r2`: create the named bucket in the user's Cloudflare account
+  // first (OAuth or --cf-api-token), then continue the ordinary attach flow with
+  // the R2 endpoint pre-filled. S3 credentials can't be minted via OAuth (no
+  // scope exists) — the user pastes them from the dashboard's R2 API Tokens page.
+  let provisionedEndpoint: string | undefined;
+  let provisionedBucket: string | undefined;
+  if (args["provision-r2"]) {
+    if (!args.yes && !isTTY())
+      throw new MhError("invalid_input", `--provision-r2 creates a remote resource; pass --yes to confirm\nusage: ${usage}`);
+    const cfToken = typeof args["cf-api-token"] === "string" && args["cf-api-token"] ? args["cf-api-token"] : null;
+    let accountId = typeof args["cf-account-id"] === "string" && args["cf-account-id"] ? args["cf-account-id"] : undefined;
+    let apiToken: string;
+    if (cfToken) {
+      if (!accountId) throw new MhError("invalid_input", `missing --cf-account-id\nusage: ${usage}`);
+      apiToken = cfToken;
+    } else if (cfOAuthConfigured()) {
+      const login = await startCfLogin();
+      print({ authUrl: login.authUrl }, () => `opening Cloudflare to authorize…\nif the browser didn't open, visit:\n${login.authUrl}`);
+      openBrowser(login.authUrl);
+      const token = await login.waitForToken();
+      apiToken = token.accessToken;
+      if (!accountId) {
+        const accounts = await discoverAccounts(token.accessToken);
+        if (accounts.length === 0) throw new MhError("invalid_input", "该 Cloudflare 登录下没有可用账号");
+        if (accounts.length > 1)
+          throw new MhError(
+            "invalid_input",
+            "该登录关联多个 Cloudflare 账号，请用 --cf-account-id 指定其一：\n" +
+              accounts.map((a) => `  ${a.id}  ${a.name}`).join("\n"),
+          );
+        accountId = accounts[0]!.id;
+      }
+    } else {
+      throw new MhError("invalid_input", "未配置 Cloudflare OAuth，请提供 --cf-account-id <id> --cf-api-token <token>");
+    }
+    if (!args.yes && isTTY()) {
+      const ok = ask(`create R2 bucket '${typeof args.bucket === "string" ? args.bucket : "(default name)"}' in Cloudflare account ${accountId}? it will NOT be auto-deleted on disconnect (yes/no)`, "no");
+      if (ok.toLowerCase() !== "yes" && ok.toLowerCase() !== "y")
+        throw new MhError("invalid_input", "cancelled");
+    }
+    const r2 = await provisionR2Bucket(db, {
+      accountId,
+      apiToken,
+      bucketName: typeof args.bucket === "string" && args.bucket ? args.bucket : undefined,
+      confirmed: true,
+    });
+    provisionedEndpoint = r2.endpoint;
+    provisionedBucket = r2.bucketName;
+    print(
+      { r2: r2 },
+      () =>
+        `R2 bucket ${r2.status}: ${r2.bucketName} (${r2.endpoint})\n` +
+        `next: create S3 credentials at ${r2.credentialsUrl} and pass/enter them below\n` +
+        `note: the bucket is never auto-deleted; removing this peer later leaves it untouched`,
+    );
+  }
 
   // `--enroll <code>` joins an existing bucket from the same token the WebUI QR /
   // 「添加设备」 carries (endpoint + creds, never the passphrase). Explicit flags
@@ -218,8 +486,8 @@ async function storagePeerAdd(
         ? fromCode
         : flagOrAsk(flag, label, usage);
 
-  const endpoint = pick(args.endpoint, enrolled?.endpoint, "endpoint");
-  const bucket = pick(args.bucket, enrolled?.bucket, "bucket");
+  const endpoint = pick(args.endpoint, provisionedEndpoint ?? enrolled?.endpoint, "endpoint");
+  const bucket = pick(args.bucket, provisionedBucket ?? enrolled?.bucket, "bucket");
   const accessKeyId = pick(args["access-key"], enrolled?.accessKeyId, "access-key");
   const secretAccessKey = pick(args["secret-key"], enrolled?.secretAccessKey, "secret-key");
   const prefix =
@@ -228,12 +496,19 @@ async function storagePeerAdd(
     typeof args.region === "string" && args.region ? args.region : enrolled?.region || "auto";
   // --no-encrypt always forces plaintext; else honor the code's flag, default on.
   const encrypt = args.encrypt === false ? false : enrolled?.encrypt ?? true;
-  const passphrase = encrypt ? flagOrAsk(args.passphrase, "passphrase", usage) : undefined;
+  // A recovery code substitutes for the passphrase ("forgot passphrase" join):
+  // it carries the master key itself and never touches the bucket's envelope.
+  const recoveryCode =
+    typeof args["recovery-code"] === "string" && args["recovery-code"]
+      ? args["recovery-code"]
+      : undefined;
+  const passphrase =
+    encrypt && !recoveryCode ? flagOrAsk(args.passphrase, "passphrase", usage) : undefined;
 
   const { url, config, sync } = await addAndSyncStoragePeer(db, {
     endpoint, region, bucket, prefix, accessKeyId, secretAccessKey,
     virtualHostedStyle: enrolled?.virtualHostedStyle,
-    encrypt, passphrase,
+    encrypt, passphrase, recoveryCode,
     publish: true, priority: enrolled ? 10 : 100, label: bucket,
   });
 
@@ -256,13 +531,117 @@ async function storagePeerAdd(
     () => {
       let line = `added storage peer ${url} (${encrypt ? "encrypted" : "PLAINTEXT — trusted storage only"}); ${syncLine(sync)}`;
       if (cors?.ok) line += `\nCORS opened for: ${cors.origins.join(", ")}`;
-      else if (cors) line += `\n⚠️  CORS not set (retry: mh config peer cors --url ${url} --allow ${cors.origins.join(",")}): ${cors.error}`;
+      else if (cors) line += `\n⚠️  CORS not set (retry: mh config backup cors --url ${url} --allow ${cors.origins.join(",")}): ${cors.error}`;
       return line;
     },
   );
 }
 
 const maskToken = (t: string) => (t.length > 10 ? `${t.slice(0, 8)}…` : t);
+
+// --- unified device roster (`mh config device …`) ----------------------------
+
+const CHANNEL_LABEL: Record<string, string> = {
+  paired_out: "paired",
+  grant_in: "grant",
+  oplog: "bucket/history",
+};
+
+function deviceRow(d: DeviceView) {
+  const joined = [...new Set(d.channels.map((c) => CHANNEL_LABEL[c.kind] ?? c.kind))].join("+");
+  return {
+    device: (d.self ? "* " : "") + (d.label ?? d.nodeId ?? "(unknown)"),
+    node: d.nodeId ?? "",
+    joined: joined || "-",
+    last_activity: iso(d.lastActivityAt),
+    removable: d.revocable === "yes" ? "yes" : d.revocable === "bucket_rotate" ? "rotate bucket" : "-",
+  };
+}
+
+/** JSON view: grant tokens masked to their bare 8-char prefix — enough for
+ *  display AND for `mh config grant revoke` (which accepts a unique prefix). */
+function deviceJson(d: DeviceView) {
+  return {
+    ...d,
+    channels: d.channels.map((c) => (c.kind === "grant_in" ? { ...c, ref: c.ref.slice(0, 8) } : c)),
+  };
+}
+
+async function deviceDispatch(
+  db: ReturnType<typeof openMetahub>,
+  action: string,
+  args: Record<string, any>,
+): Promise<void> {
+  switch (action) {
+    // Pairing lives here in the documented tree (a device joins the workspace);
+    // `config peer add/code` remain the hidden aliases of the same paths.
+    case "add":
+    case "code":
+      return peerDispatch(db, action, args);
+    case "list": {
+      const devices = listDevices(db);
+      let presence: { url: string; nodes?: unknown; error?: string }[] | undefined;
+      if (args.refresh) {
+        presence = [];
+        for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.enabled)) {
+          try {
+            presence.push({ url: p.url, nodes: await refreshBucketPresence(db, p.url) });
+          } catch (e) {
+            presence.push({ url: p.url, error: (e as Error).message });
+          }
+        }
+      }
+      print({ devices: devices.map(deviceJson), ...(presence ? { presence } : {}) }, () => {
+        let out = table(devices.map(deviceRow));
+        for (const b of presence ?? []) {
+          out += b.error
+            ? `\n\nbucket ${b.url}: refresh failed — ${b.error}`
+            : `\n\nbucket ${b.url} presence:\n${table(
+                (b.nodes as { nodeId: string; inBucket: boolean; leaseLiveUntil: number | null }[]).map(
+                  (n) => ({
+                    node: n.nodeId,
+                    in_bucket: n.inBucket ? "yes" : "no",
+                    recently_online: n.leaseLiveUntil ? `lease until ${iso(n.leaseLiveUntil)}` : "-",
+                  }),
+                ),
+              )}`;
+        }
+        return out;
+      });
+      return;
+    }
+    case "revoke": {
+      const usage = "mh config device revoke --node <nodeId>";
+      const nodeId = flagOrAsk(args.node, "node", usage);
+      const devices = listDevices(db);
+      const target = devices.find((d) => d.nodeId === nodeId);
+      if (!target) throw new MhError("not_found", `no known device with node id '${nodeId}'`);
+      if (target.self) throw new MhError("invalid_input", "refusing to revoke this device itself");
+      const grants = listGrants(db).filter((g) => g.node_id === nodeId);
+      for (const g of grants) revokeGrant(db, g.token);
+      const peers = listPeers(db).filter((p) => p.node_id === nodeId);
+      for (const p of peers) removePeer(db, p.url);
+      const bucketBound = target.revocable === "bucket_rotate" || grants.length + peers.length === 0;
+      print(
+        { node: nodeId, revokedGrants: grants.length, removedPeers: peers.length, bucketBound },
+        () => {
+          const lines = [
+            `revoked ${grants.length} grant(s), removed ${peers.length} peer(s) for ${nodeId}`,
+            "data it already synced stays on that device — it cannot be wiped remotely",
+          ];
+          if (bucketBound)
+            lines.push(
+              "this device shares the bucket key: to cut its access, disable the old keys at the provider and run `mh config backup rotate`",
+            );
+          return lines.join("\n");
+        },
+      );
+      return;
+    }
+    default:
+      throw new MhError("invalid_input", `unknown device action '${action}' (add|code|list|revoke)`);
+  }
+}
 
 function grantView(g: { token: string; peer_url: string | null; node_id: string | null; created_at: number | null }) {
   return {
@@ -292,6 +671,59 @@ function grantDispatch(
     }
     default:
       throw new MhError("invalid_input", `unknown grant action '${action}' (list|revoke)`);
+  }
+}
+
+// --- config namespaces (the user-facing tree) --------------------------------
+// `mh config backup|device|edge|server` is the documented surface; the older
+// `peer|grant|set` sections stay as hidden aliases (agents/scripts keep
+// working) but no longer appear in help.
+
+/** Cloud backup (the S3/R2 sync bucket family + workspace blob anchors). */
+async function backupDispatch(
+  db: ReturnType<typeof openMetahub>,
+  action: string,
+  args: Record<string, any>,
+): Promise<void> {
+  switch (action) {
+    case "connect":
+      return storagePeerAdd(db, args);
+    case "rotate":
+    case "recovery":
+    case "cors":
+      return peerDispatch(db, action, args);
+    case "anchors": {
+      const sub = typeof args.sub === "string" && args.sub ? args.sub : undefined;
+      const value = typeof args.value === "string" && args.value ? args.value : undefined;
+      return anchorsDispatch(db, sub, value, args);
+    }
+    case "list": {
+      const rows = listPeers(db).filter((x) => x.kind === "s3").map(peerView);
+      print(rows, () => (rows.length ? table(rows) : "(no backup buckets)"));
+      return;
+    }
+    default:
+      throw new MhError(
+        "invalid_input",
+        `unknown backup action '${action}' (connect|list|rotate|recovery|cors|anchors)`,
+      );
+  }
+}
+
+/** The always-on edge component (Cloudflare Worker+D1 / compatible hosts). */
+async function edgeConfigDispatch(action: string, args: Record<string, any>): Promise<void> {
+  switch (action) {
+    case "deploy":
+      return runEdgeDeploy(args);
+    case "connect":
+      return runEdgeConnect(args);
+    case "rotate-keys":
+      return runEdgeRotateKeys(args);
+    default:
+      throw new MhError(
+        "invalid_input",
+        `unknown edge action '${action}' (deploy|connect|rotate-keys) — status/pull are tools: mh edge status`,
+      );
   }
 }
 
@@ -419,22 +851,36 @@ async function serverWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
   }
 }
 
-async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
+/** One implementation, two wizard scopes: 设备 (pairing/roster) vs 云端备份
+ *  (buckets/rotation/recovery). Branches outside a scope's menu are simply
+ *  never selectable there. */
+async function peerWizard(
+  db: ReturnType<typeof openMetahub>,
+  scope: "device" | "backup",
+): Promise<void> {
   const node = getNodeId(db);
   for (;;) {
     const action = await p.select({
-      message: "同步设备",
-      options: [
-        { value: "add", label: "添加设备", hint: "对方地址 + 配对码" },
-        { value: "add-s3", label: "添加同步存储 (S3/R2)", hint: "用对象存储中转,免公网 IP" },
-        { value: "join-code", label: "粘贴接入码加入存储", hint: "用另一台设备的「添加设备」接入码" },
-        { value: "code", label: "生成本机配对码" },
-        { value: "list", label: "列出设备" },
-        { value: "rm", label: "移除设备" },
-        { value: "toggle", label: "启用 / 禁用设备" },
-        { value: "sync", label: "立即同步全部" },
-        { value: "back", label: "返回" },
-      ],
+      message: scope === "device" ? "设备" : "云端备份",
+      options:
+        scope === "device"
+          ? [
+              { value: "add", label: "添加设备", hint: "对方地址 + 配对码" },
+              { value: "code", label: "生成本机配对码" },
+              { value: "list", label: "列出设备" },
+              { value: "rm", label: "移除设备" },
+              { value: "toggle", label: "启用 / 禁用设备" },
+              { value: "grants", label: "吊销已签发凭据" },
+              { value: "back", label: "返回" },
+            ]
+          : [
+              { value: "add-s3", label: "连接存储桶 (S3/R2)", hint: "对象存储中转,免公网 IP" },
+              { value: "join-code", label: "粘贴接入码加入存储", hint: "另一台设备「添加设备」里的码" },
+              { value: "sync", label: "立即同步全部" },
+              { value: "rotate", label: "轮换存储密钥 / 更换口令", hint: "手机丢了 / 密钥泄露时" },
+              { value: "recovery", label: "导出恢复码", hint: "打印保存,口令忘了也能恢复" },
+              { value: "back", label: "返回" },
+            ],
     });
     if (cancelled(action) || action === "back") return;
     try {
@@ -513,10 +959,25 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
           continue;
         }
         let passphrase = "";
+        let recoveryCode: string | undefined;
         if (payload.encrypt !== false) {
-          const pw = await p.password({ message: "加密口令 (与其他设备相同)", validate: required });
-          if (cancelled(pw)) continue;
-          passphrase = pw;
+          const how = await p.select({
+            message: "解锁方式",
+            options: [
+              { value: "pw", label: "输入加密口令", hint: "与其他设备相同" },
+              { value: "rc", label: "忘记口令 — 用恢复码", hint: "MH1- 开头的 14 组代码" },
+            ],
+          });
+          if (cancelled(how)) continue;
+          if (how === "pw") {
+            const pw = await p.password({ message: "加密口令 (与其他设备相同)", validate: required });
+            if (cancelled(pw)) continue;
+            passphrase = pw;
+          } else {
+            const rc = await p.text({ message: "恢复码", validate: required });
+            if (cancelled(rc)) continue;
+            recoveryCode = rc;
+          }
         }
         const s = p.spinner();
         s.start("连接存储并同步…");
@@ -531,7 +992,8 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
             secretAccessKey: payload.secretAccessKey,
             virtualHostedStyle: payload.virtualHostedStyle,
             encrypt: payload.encrypt !== false,
-            passphrase,
+            passphrase: passphrase || undefined,
+            recoveryCode,
             publish: true,
             priority: 10,
             label: payload.bucket,
@@ -545,8 +1007,10 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
         const code = generatePairingCode(db);
         p.note(`配对码: ${code.code}\n有效至: ${iso(code.exp)}`, "本机配对码");
       } else if (action === "list") {
-        const rows = listPeers(db).map(peerView);
+        const rows = listDevices(db).map(deviceRow);
         p.note(rows.length ? table(rows) : "(无设备)", "设备列表");
+      } else if (action === "grants") {
+        await grantWizard(db);
       } else if (action === "rm") {
         const peers = listPeers(db);
         if (!peers.length) {
@@ -575,6 +1039,26 @@ async function peerWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
         const r = await syncAllPeers(db);
         s.stop("同步完成");
         p.note(r.length ? r.map(syncLine).join("\n") : "(无启用的设备)", "同步结果");
+      } else if (action === "rotate") {
+        await rotateWizardFor(db);
+      } else if (action === "recovery") {
+        const s3peers = listPeers(db).filter((x) => x.kind === "s3" && x.config);
+        if (!s3peers.length) {
+          p.note("(没有已配置的存储桶)");
+          continue;
+        }
+        const url =
+          s3peers.length === 1
+            ? s3peers[0]!.url
+            : await p.select({ message: "选择存储桶", options: peerChoices(s3peers) });
+        if (cancelled(url)) continue;
+        const cfg = JSON.parse(s3peers.find((x) => x.url === url)!.config!) as S3Config;
+        if (!cfg.encrypt || !cfg.masterKey) {
+          p.note("该桶未加密,没有需要备份的密钥。");
+          continue;
+        }
+        const code = await encodeRecoveryCode(fromB64(cfg.masterKey));
+        p.note(recoveryCard(url as string, cfg.bucket, code), "恢复码 (请打印或抄写)");
       }
     } catch (e) {
       p.note(`✗ ${(e as Error).message}`, "错误");
@@ -599,15 +1083,61 @@ async function grantWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
   }
 }
 
+async function edgeWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
+  for (;;) {
+    const cfg = getEdgeConfig(db);
+    const action = await p.select({
+      message: "Edge",
+      options: [
+        {
+          value: "deploy",
+          label: cfg?.cf ? "升级部署到 Cloudflare" : "部署到 Cloudflare",
+          hint: "浏览器登录或 API Token",
+        },
+        { value: "connect", label: "连接已有 Edge", hint: "endpoint + owner token" },
+        { value: "rotate", label: "轮换收件密钥" },
+        { value: "back", label: "返回" },
+      ],
+    });
+    if (cancelled(action) || action === "back") return;
+    try {
+      if (action === "deploy") {
+        const ok = await p.confirm({
+          message:
+            "将在你的 Cloudflare 账户创建/更新 Worker、D1 与 workers.dev 入口(断开时不会自动删除)。继续?",
+          initialValue: false,
+        });
+        if (cancelled(ok) || !ok) continue;
+        await runEdgeDeploy({ yes: true });
+      } else if (action === "connect") {
+        const endpoint = await p.text({
+          message: "Edge 端点",
+          placeholder: "https://….workers.dev",
+          validate: required,
+        });
+        if (cancelled(endpoint)) continue;
+        const token = await p.password({ message: "Owner token (drt_…)", validate: required });
+        if (cancelled(token)) continue;
+        await runEdgeConnect({ endpoint, token });
+      } else if (action === "rotate") {
+        await runEdgeRotateKeys({});
+      }
+    } catch (e) {
+      p.note(`✗ ${(e as Error).message}`, "错误");
+    }
+  }
+}
+
 async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
   p.intro("Metahub 配置");
   for (;;) {
     const choice = await p.select({
-      message: "选择操作",
+      message: "选择要配置的对象",
       options: [
         { value: "server", label: "服务器设置", hint: "host / port / 同步间隔 / auto-sync" },
-        { value: "peers", label: "同步设备", hint: "配对 / 列出 / 移除 / 同步" },
-        { value: "grants", label: "已签发凭据", hint: "列出 / 吊销" },
+        { value: "device", label: "设备", hint: "配对 / 列出 / 移除 / 吊销凭据" },
+        { value: "backup", label: "云端备份", hint: "存储桶 / 轮换密钥 / 恢复码" },
+        { value: "edge", label: "Edge", hint: "部署 / 连接 / 收件密钥" },
         { value: "exit", label: "退出" },
       ],
     });
@@ -616,8 +1146,9 @@ async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
       return;
     }
     if (choice === "server") await serverWizard(db);
-    else if (choice === "peers") await peerWizard(db);
-    else if (choice === "grants") await grantWizard(db);
+    else if (choice === "device") await peerWizard(db, "device");
+    else if (choice === "backup") await peerWizard(db, "backup");
+    else if (choice === "edge") await edgeWizard(db);
   }
 }
 
@@ -625,11 +1156,16 @@ export default defineCommand({
   meta: {
     name: "config",
     description:
-      "Configure server + sync devices. Run with no args for an interactive wizard, or use flags directly (e.g. `config --port 7777`, `config peer add --url <url> --code <code>`).",
+      "All configuration lives here: server settings, devices, cloud backup, edge. " +
+      "Run with no args for an interactive wizard, or drive sections directly: " +
+      "`config server --port 7777` · `config device add --url <url> --code <code>` · " +
+      "`config backup connect --endpoint … --bucket …` · `config edge deploy`.",
   },
   args: {
-    section: { type: "positional", required: false, description: "show | set | peer | grant (omit for wizard)" },
-    action: { type: "positional", required: false, description: "peer: add|code|list|rm|enable|disable|sync · grant: list|revoke" },
+    section: { type: "positional", required: false, description: "server | device | backup | edge | show (omit for the interactive wizard)" },
+    action: { type: "positional", required: false, description: "device: add|code|list|revoke · backup: connect|list|rotate|recovery|cors|anchors · edge: deploy|connect|rotate-keys" },
+    sub: { type: "positional", required: false, description: "backup anchors: list|add|rm|redundancy" },
+    value: { type: "positional", required: false, description: "backup anchors redundancy: all|any" },
     host: { type: "string", description: "Bind address" },
     port: { type: "string", description: "Server port" },
     "sync-interval": { type: "string", description: "Auto-sync interval (e.g. 30s, 5m)" },
@@ -638,17 +1174,33 @@ export default defineCommand({
     url: { type: "string", description: "Peer URL (peer add/rm/enable/disable/sync)" },
     code: { type: "string", description: "One-time pairing code (peer add)" },
     "self-url": { type: "string", description: "This device's reachable URL (peer add, optional)" },
-    token: { type: "string", description: "Issued credential token or prefix (grant revoke)" },
+    token: { type: "string", description: "Issued credential token or prefix (device revoke) · Edge owner secret (edge connect)" },
     // Storage peer (peer add --s3): an S3-compatible bucket as store-and-forward.
     s3: { type: "boolean", description: "Add an S3 storage peer (R2/MinIO/S3) instead of pairing" },
     enroll: { type: "string", description: "Enroll code from another device's 「添加设备」/QR — joins that bucket as a secondary device (peer add --s3)" },
-    endpoint: { type: "string", description: "S3 endpoint URL (peer add --s3)" },
-    bucket: { type: "string", description: "S3 bucket name (peer add --s3)" },
-    "access-key": { type: "string", description: "S3 access key id (peer add --s3)" },
-    "secret-key": { type: "string", description: "S3 secret access key (peer add --s3)" },
-    prefix: { type: "string", description: "Path prefix within the bucket (peer add --s3; default metahub)" },
-    region: { type: "string", description: "S3 region (peer add --s3; default auto for R2)" },
-    passphrase: { type: "string", description: "E2EE passphrase (peer add --s3)" },
+    endpoint: { type: "string", description: "S3 endpoint URL (backup connect) · Edge host URL (edge connect)" },
+    bucket: { type: "string", description: "S3 bucket name (backup connect)" },
+    "access-key": { type: "string", description: "S3 access key id (backup connect / rotate)" },
+    "secret-key": { type: "string", description: "S3 secret access key (backup connect / rotate)" },
+    prefix: { type: "string", description: "Path prefix within the bucket (backup connect; default metahub)" },
+    region: { type: "string", description: "S3 region (backup connect; default auto for R2)" },
+    passphrase: { type: "string", description: "E2EE passphrase (backup connect)" },
+    "recovery-code": { type: "string", description: "MH1- master-key recovery code — joins without the passphrase (peer add --s3) or supplies K for a passphrase reset (peer rotate)" },
+    "new-passphrase": { type: "string", description: "Rewrap the bucket key envelope under this passphrase (peer rotate)" },
+    "old-passphrase": { type: "string", description: "Current passphrase, only needed when this device has no cached key (peer rotate)" },
+    node: { type: "string", description: "Device node id (device revoke)" },
+    refresh: { type: "boolean", description: "Also check bucket presence + publisher heartbeats online (device list)" },
+    "provision-r2": { type: "boolean", description: "Create the R2 bucket in your Cloudflare account first, then attach it (backup connect)" },
+    "cf-account-id": { type: "string", description: "Cloudflare account id (backup connect --provision-r2)" },
+    "cf-api-token": { type: "string", description: "Cloudflare API token with Workers R2 Storage Write; omit to Sign in with Cloudflare (backup connect --provision-r2)" },
+    yes: { type: "boolean", description: "Confirm remote resource creation (backup connect --provision-r2 · edge deploy)" },
+    // edge deploy/connect (config edge …; same flags as the mh edge aliases)
+    "account-id": { type: "string", description: "Cloudflare account id (edge deploy)" },
+    "api-token": { type: "string", description: "Cloudflare API token, Workers Scripts + D1 edit (edge deploy)" },
+    worker: { type: "string", description: "Worker script name (edge deploy; defaults from this node id)" },
+    d1: { type: "string", description: "D1 database name (edge deploy; defaults from this node id)" },
+    subdomain: { type: "string", description: "workers.dev subdomain if one must be created (edge deploy)" },
+    "purge-retired": { type: "boolean", description: "Also drop previously-retired inbox keys (edge rotate-keys)" },
     allow: { type: "string", description: "Comma-separated shell origins to allow (peer cors)" },
     "cors-origin": { type: "string", description: "Comma-separated shell origins; open bucket CORS after add (peer add --s3, optional)" },
     // citty negates a boolean with --no-<name>, so `--no-encrypt` flips this to
@@ -674,10 +1226,19 @@ export default defineCommand({
       if (isTTY()) return wizard(db);
       return showConfig(db); // non-interactive default
     }
+    const action = (args.action as string) ?? "list";
     if (section === "show") return showConfig(db);
+    if (section === "server") return hasSettingFlag ? applySet(db, args) : showConfig(db);
+    if (section === "backup") return backupDispatch(db, action, args);
+    if (section === "device") return deviceDispatch(db, action, args);
+    if (section === "edge") return edgeConfigDispatch((args.action as string) ?? "", args);
+    // Hidden aliases of the pre-namespace tree — keep working, keep out of help.
     if (section === "set") return applySet(db, args);
-    if (section === "peer") return peerDispatch(db, (args.action as string) ?? "list", args);
-    if (section === "grant") return grantDispatch(db, (args.action as string) ?? "list", args);
-    throw new MhError("invalid_input", `unknown config section '${section}' (show | set | peer | grant)`);
+    if (section === "peer") return peerDispatch(db, action, args);
+    if (section === "grant") return grantDispatch(db, action, args);
+    throw new MhError(
+      "invalid_input",
+      `unknown config section '${section}' (server | device | backup | edge | show)`,
+    );
   }),
 });

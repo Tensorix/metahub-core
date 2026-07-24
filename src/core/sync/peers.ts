@@ -4,16 +4,23 @@
 // server's auto-sync timer calls each tick.
 
 import type { DbDriver } from "../driver.ts";
-import { MhError } from "../errors.ts";
+import { MhError, errorCode } from "../errors.ts";
 import { syncWithPeer, type SyncResult } from "./client.ts";
 import { storageUrl } from "./storage-url.ts";
 import {
   syncWithStorage,
   storageClientFor,
   provisionMasterKey,
+  verifyMasterKey,
+  rewrapMasterKey,
+  readMasterKeyEnvelope,
+  storageBasePrefix,
   type S3Config,
   type StorageSyncOpts,
 } from "./storage.ts";
+import { decodeRecoveryCode } from "./recovery.ts";
+import { encodeEnroll } from "./enroll.ts";
+import { toB64, fromB64, unwrapMasterKey } from "./e2ee.ts";
 import { clearCoveredSiteRollbacks } from "./site-publish-recovery.ts";
 
 const PEER_COLS =
@@ -182,6 +189,10 @@ export interface StoragePeerSpec {
   encrypt?: boolean;
   /** Required when encrypt — provisions/adopts the bucket's wrapped master key. */
   passphrase?: string;
+  /** Alternative to the passphrase: an MH1- recovery code carrying the master
+   *  key directly ("忘记口令" join). Verified against the bucket's ciphertext and
+   *  used as-is — this path NEVER writes keys/main.json. */
+  recoveryCode?: string;
   /** Mark this node the bucket's publisher (writes whole-hub snapshots). */
   publish?: boolean;
   priority?: number;
@@ -214,9 +225,22 @@ export async function addAndSyncStoragePeer(
     priority: spec.priority,
   };
   if (encrypt) {
-    if (!spec.passphrase) throw new MhError("invalid_input", "passphrase required for an encrypted bucket");
-    config.masterKey =
-      (await provisionMasterKey(storageClientFor(config), config, spec.passphrase)) ?? undefined;
+    if (spec.recoveryCode) {
+      // Join via recovery code: the code IS the master key. Verify it against
+      // the bucket's ciphertext (a valid code for the WRONG bucket must not get
+      // in), then adopt it without touching keys/main.json.
+      const rawKey = await decodeRecoveryCode(spec.recoveryCode);
+      await verifyMasterKey(storageClientFor(config), config, rawKey);
+      config.masterKey = toB64(rawKey);
+    } else if (spec.passphrase) {
+      config.masterKey =
+        (await provisionMasterKey(storageClientFor(config), config, spec.passphrase)) ?? undefined;
+    } else {
+      throw new MhError(
+        "invalid_input",
+        "encrypted bucket needs a passphrase (or a recovery code if the passphrase is lost)",
+      );
+    }
   }
   const url = storageUrl(config.endpoint, config.bucket, prefix);
   await waitForPeerIdle(db, url);
@@ -229,6 +253,157 @@ export async function addAndSyncStoragePeer(
     throw new MhError("network", `storage peer first sync failed: ${sync.error ?? "unknown error"}`);
   }
   return { url, config, sync };
+}
+
+/** Replace an s3 peer's config JSON in place. Cursors, status and label are
+ *  untouched — a credential/passphrase rotation moves no bucket objects, so
+ *  replication state stays valid. */
+export function updateStoragePeerConfig(db: DbDriver, url: string, config: S3Config): void {
+  const changed =
+    db
+      .query("UPDATE peers SET config = ? WHERE url = ? AND kind = 's3'")
+      .run(JSON.stringify(config), url).changes > 0;
+  if (!changed) throw new MhError("not_found", `no S3 storage peer at '${url}'`);
+}
+
+export interface RotateStoragePeerInput {
+  /** New S3 credentials (both or neither) — minted by the user at the provider;
+   *  the old keys stay valid until the user disables them AFTER the rotate. */
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  /** Rewrap keys/main.json under this passphrase (K itself never changes). */
+  newPassphrase?: string;
+  /** Optional K sources when this device's config lost its cached master key:
+   *  the printed recovery code, or the current passphrase (unwraps the bucket
+   *  envelope). The cached key, when present, needs neither. */
+  oldPassphrase?: string;
+  recoveryCode?: string;
+}
+
+export interface RotateOutcome {
+  url: string;
+  rotatedCredentials: boolean;
+  rotatedPassphrase: boolean;
+  /** Whether K was cryptographically checked against bucket ciphertext:
+   *  "skipped" = K came from this device's own trusted config. */
+  keyVerified: "verified" | "no_ciphertext" | "skipped";
+  /** Post-rotate sync (effect evidence the new credentials work end-to-end).
+   *  Not rolled back on failure — the new creds are the intended end state. */
+  sync: PeerSyncOutcome;
+  /** Fresh enroll token (new credentials) for re-attaching other devices. */
+  enroll: string;
+}
+
+/**
+ * Rotate an S3 storage peer's credentials and/or passphrase — the "lost
+ * device" remedy. Ordered so every failure point either mutates nothing or is
+ * safely re-runnable (idempotent: same K, CAS'd envelope, upsert config):
+ * validate new creds (zero side effects) → resolve K (cached / recovery code /
+ * old passphrase) → verify K against ciphertext when it came from outside →
+ * CAS-rewrap the envelope → persist local config → one sync as effect
+ * evidence. A crash between rewrap and persist is healed by re-running the
+ * same command.
+ */
+export async function rotateStoragePeer(
+  db: DbDriver,
+  url: string,
+  input: RotateStoragePeerInput,
+): Promise<RotateOutcome> {
+  // PREFLIGHT — nothing mutated on any throw below until the REWRAP step.
+  const peer = getPeer(db, url);
+  if (!peer || peer.kind !== "s3" || !peer.config)
+    throw new MhError("not_found", `no S3 storage peer at '${url}'`);
+  const current = JSON.parse(peer.config) as S3Config;
+  const wantCreds = input.accessKeyId != null || input.secretAccessKey != null;
+  if (wantCreds && (!input.accessKeyId?.trim() || !input.secretAccessKey?.trim()))
+    throw new MhError("invalid_input", "new credentials need both the access key id and secret");
+  if (input.newPassphrase && !current.encrypt)
+    throw new MhError("invalid_input", "bucket is not encrypted — no passphrase to change");
+  if (!wantCreds && !input.newPassphrase)
+    throw new MhError("invalid_input", "nothing to rotate: pass new credentials and/or a new passphrase");
+  await waitForPeerIdle(db, url);
+
+  // VALIDATE_CREDS — probe with the candidate credentials before touching anything.
+  const candidate: S3Config = {
+    ...current,
+    ...(wantCreds
+      ? { accessKeyId: input.accessKeyId!.trim(), secretAccessKey: input.secretAccessKey!.trim() }
+      : {}),
+  };
+  const client = storageClientFor(candidate);
+  try {
+    await client.list(`${storageBasePrefix(candidate.prefix)}/keys/`);
+  } catch (e) {
+    throw new MhError(
+      errorCode(e) === "auth" ? "auth" : "network",
+      `the new credentials failed against the bucket (nothing changed; the old keys still work): ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+
+  // RESOLVE_KEY + VERIFY_KEY — only needed for a passphrase change.
+  let rawKey: Uint8Array | null = null;
+  let keyVerified: RotateOutcome["keyVerified"] = "skipped";
+  if (input.newPassphrase) {
+    if (current.masterKey) {
+      rawKey = fromB64(current.masterKey); // normal path: no old passphrase needed
+    } else if (input.recoveryCode) {
+      rawKey = await decodeRecoveryCode(input.recoveryCode);
+      keyVerified = await verifyMasterKey(client, candidate, rawKey); // throws auth on mismatch
+    } else if (input.oldPassphrase) {
+      const env = await readMasterKeyEnvelope(client, candidate);
+      if (!env)
+        throw new MhError(
+          "invalid_input",
+          "bucket has no key envelope to unwrap — use the recovery code instead",
+        );
+      rawKey = await unwrapMasterKey(env, input.oldPassphrase); // throws auth on wrong passphrase
+      keyVerified = await verifyMasterKey(client, candidate, rawKey);
+    } else {
+      throw new MhError(
+        "invalid_input",
+        "this device has no cached master key — provide the recovery code or the current passphrase",
+      );
+    }
+
+    // REWRAP — CAS on the envelope's ETag; one automatic retry on a concurrent
+    // rewrap (idempotent: same K), then surface the conflict.
+    try {
+      await rewrapMasterKey(client, candidate, rawKey, input.newPassphrase);
+    } catch (e) {
+      if (errorCode(e) !== "conflict") throw e;
+      await rewrapMasterKey(client, candidate, rawKey, input.newPassphrase);
+    }
+  }
+
+  // PERSIST_LOCAL — cursors untouched (no bucket object moved). Also heals a
+  // config whose cached key was missing, now that we resolved it.
+  const next: S3Config = {
+    ...candidate,
+    masterKey: current.masterKey ?? (rawKey ? toB64(rawKey) : undefined),
+  };
+  updateStoragePeerConfig(db, url, next);
+
+  // VERIFY_SYNC — effect evidence; a failure here is NOT rolled back (the new
+  // credentials are the intended end state; the caller retries the sync).
+  const sync = await syncPeer(db, url);
+
+  return {
+    url,
+    rotatedCredentials: wantCreds,
+    rotatedPassphrase: !!input.newPassphrase,
+    keyVerified,
+    sync,
+    enroll: encodeEnroll({
+      endpoint: next.endpoint,
+      region: next.region,
+      bucket: next.bucket,
+      prefix: next.prefix,
+      accessKeyId: next.accessKeyId,
+      secretAccessKey: next.secretAccessKey,
+      encrypt: next.encrypt,
+      virtualHostedStyle: next.virtualHostedStyle,
+    }),
+  };
 }
 
 /**

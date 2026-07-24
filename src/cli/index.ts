@@ -15,6 +15,7 @@ import share from "./commands/share.ts";
 import token from "./commands/token.ts";
 import completion, { complete } from "./commands/completion.ts";
 import sync from "./commands/sync.ts";
+import status from "./commands/status.ts";
 import snapshot from "./commands/snapshot.ts";
 import restore from "./commands/restore.ts";
 import doctor from "./commands/doctor.ts";
@@ -67,6 +68,7 @@ const main = defineCommand({
     completion,
     __complete: complete,
     sync,
+    status,
     snapshot,
     restore,
     doctor,

@@ -20,6 +20,7 @@ import { Sidebar } from "./sidebar.tsx";
 import { DatabaseView } from "./table.tsx";
 import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
+import { resolvePage, pageLabel } from "./settings/nav.ts";
 import { cmpVer } from "./version.ts";
 import { SitesView } from "./sites.tsx";
 import { openShareModal } from "./share-modal.tsx";
@@ -535,7 +536,20 @@ function App() {
             {view.kind === "doc" && <><span class="emoji"><Icon name="file" cls="ico sm" /></span><span>{activeDoc?.title || "无标题"}</span></>}
             {view.kind === "db" && <><span class="emoji">{activeDb?.icon || "🗂️"}</span><span>{activeDb?.name}</span></>}
             {view.kind === "search" && <span>搜索：“{view.q}”</span>}
-            {view.kind === "settings" && <><span class="emoji"><Icon name="settings" cls="ico sm" /></span><span>设置</span></>}
+            {view.kind === "settings" && (
+              <>
+                <span class="emoji"><Icon name="settings" cls="ico sm" /></span>
+                {view.sec !== undefined ? (
+                  <>
+                    <button class="crumb-link" onClick={() => navigate({ kind: "settings" })}>设置</button>
+                    <span class="crumb-sep">›</span>
+                    <span>{pageLabel(resolvePage(view.sec))}</span>
+                  </>
+                ) : (
+                  <span>设置</span>
+                )}
+              </>
+            )}
             {view.kind === "sites" && <><span class="emoji"><Icon name="globe" cls="ico sm" /></span><span>站点管理</span></>}
             {view.kind === "shares" && <><span class="emoji"><Icon name="link" cls="ico sm" /></span><span>分享</span></>}
           </div>

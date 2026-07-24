@@ -15,7 +15,7 @@
 
 import type { DbDriver } from "./driver.ts";
 import { emit, withChangeGroup } from "./crdt.ts";
-import { getNodeId } from "./node.ts";
+import { getNodeId, getNodeLabel } from "./node.ts";
 
 export const POLICY_ID = "default";
 
@@ -304,7 +304,7 @@ export interface KnownNode {
 export function knownNodes(db: DbDriver): KnownNode[] {
   const self = getNodeId(db);
   const byId = new Map<string, string | null>();
-  byId.set(self, null);
+  byId.set(self, getNodeLabel(db));
   const peers = db
     .query("SELECT node_id, label FROM peers WHERE node_id IS NOT NULL")
     .all() as { node_id: string; label: string | null }[];

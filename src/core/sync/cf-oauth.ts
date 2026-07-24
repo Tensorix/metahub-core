@@ -39,6 +39,11 @@ export const CF_OAUTH_SCOPES = [
   "workers-scripts.write",
   "d1.read",
   "d1.write",
+  // R2 sync-bucket provisioning (provisionR2Bucket): bucket create/lookup only.
+  // Minting R2 S3 credentials has NO OAuth scope (API-token creation is
+  // classic-token-only) — that step stays a dashboard walk, by design.
+  "workers-r2.read",
+  "workers-r2.write",
 ];
 
 const CALLBACK_PATH = "/oauth/cf/callback";

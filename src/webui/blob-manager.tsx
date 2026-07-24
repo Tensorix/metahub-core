@@ -1,5 +1,6 @@
 /** @jsxImportSource preact */
-// Blob 管理弹窗（设置 → 存储 → 本机存储）。一个共享面板，按需打开，列出这台设备
+// Blob 管理弹窗（设置 → 离线与缓存 → 本机缓存，以及 数据与备份 → 附件存储）。
+// 一个共享面板，按需打开，列出这台设备
 // 持有的每个 blob（图片/大文件的本机副本），支持按大小/类型/最近使用排序、按类型与
 // 状态筛选，并对单项或批量执行「清理」（删别处已备份的副本，用时自动取回）或「删除
 // 孤儿」（没有任何文档/站点引用的 blob）。
@@ -52,12 +53,12 @@ export interface BlobSource {
  *  bucket original stays, an unpinned byte re-downloads); "server" manages the
  *  data home's ledger (purge semantics). The blob-specific copy is intentionally
  *  kept here, NOT read from scope.label/subtitle (those are the generic 本机/云端
- *  workspace names the scope picker shows). StoragePanel filters buckets out, so
- *  only local|server reach this; server is the fall-through default. */
+ *  workspace names). Callers (本机缓存 / 附件存储 sections) only ever hold
+ *  local|server scopes, never buckets; server is the fall-through default. */
 export function sourceForScope(scope: Scope): BlobSource {
   if (scope.kind === "local") {
     return {
-      title: "Blob 管理",
+      title: "管理本机缓存",
       subtitle:
         "已下载到这台设备的图片和大文件。清理只删本机副本，需要时从云端重新取回；桶里的原件始终不动。",
       deleteSemantics: "evict",
@@ -87,9 +88,9 @@ export function sourceForScope(scope: Scope): BlobSource {
     };
   }
   return {
-    title: "Blob 管理",
+    title: "管理附件存储",
     subtitle:
-      "图片和大文件的本机副本。可清理项随时能腾空间（用时自动取回）；没被任何文档或站点引用的孤儿可彻底删除。",
+      "工作区里的全部图片和大文件，所有设备共用。可清理项已有长期备份、随时能腾空间（用时自动取回）；没被任何文档或站点引用的孤儿可彻底删除。",
     deleteSemantics: "purge",
     list: () => api.blobs(),
     clear: (h) => api.clearBlobs(h),

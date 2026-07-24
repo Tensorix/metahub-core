@@ -424,8 +424,9 @@ function nodesFromKeys(objs: StorageObject[], root: string): string[] {
 /** Discover the node prefixes under oplog/. Asks for a delimited (one-level)
  *  listing so a backend that honors it returns just the "<node>/" folders
  *  instead of every segment; nodesFromKeys derives the same node set whether the
- *  backend collapsed them or returned full keys. */
-async function listRemoteNodes(client: StorageClient, base: string): Promise<string[]> {
+ *  backend collapsed them or returned full keys. Exported for the device roster
+ *  (sync/devices.ts refreshBucketPresence). */
+export async function listRemoteNodes(client: StorageClient, base: string): Promise<string[]> {
   const root = oplogRoot(base);
   return nodesFromKeys(await client.list(root, undefined, "/"), root);
 }
@@ -470,6 +471,93 @@ export async function provisionMasterKey(
     }
     throw e;
   }
+}
+
+/** Current ETag of one object via a targeted list, or null when absent / the
+ *  client doesn't surface etags (callers then forgo CAS). */
+export async function objectEtag(client: StorageClient, key: string): Promise<string | null> {
+  const objs = await client.list(key);
+  return objs.find((o) => o.key === key)?.etag ?? null;
+}
+
+/** The bucket's wrapped-master-key envelope, or null when absent. Read-only —
+ *  unlike provisionMasterKey this never creates one (rotate flows must not
+ *  mint a fresh K that mismatches existing ciphertext). */
+export async function readMasterKeyEnvelope(
+  client: StorageClient,
+  config: S3Config,
+): Promise<KeyEnvelope | null> {
+  const bytes = await client.get(mainKeyPath(basePrefix(config.prefix)));
+  if (!bytes) return null;
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes)) as KeyEnvelope;
+  } catch {
+    throw new MhError("invalid_input", "bucket keys/main.json is malformed");
+  }
+}
+
+/**
+ * Prove `rawKey` is THIS bucket's master key by decrypting a small existing
+ * ciphertext object (a snapshot's .vc sidecar, else any segment, else a
+ * snapshot body) — the GCM tag makes success a cryptographic verdict. Returns
+ * "no_ciphertext" for a bucket holding no encrypted objects yet (fresh/empty);
+ * callers proceed with a warning. Throws MhError("auth") on a mismatch — the
+ * guard that keeps a *valid key for the wrong bucket* (recovery-code mixups)
+ * from rewrapping this bucket's envelope and bricking future joins.
+ */
+export async function verifyMasterKey(
+  client: StorageClient,
+  config: S3Config,
+  rawKey: Uint8Array,
+): Promise<"verified" | "no_ciphertext"> {
+  if (!config.encrypt) return "no_ciphertext";
+  const base = basePrefix(config.prefix);
+  const attempt = async (key: string): Promise<boolean> => {
+    const bytes = await client.get(key);
+    if (!bytes) return false;
+    try {
+      await decryptBytes(rawKey, bytes);
+      return true;
+    } catch {
+      throw new MhError("auth", "master key does not match this bucket's data");
+    }
+  };
+  const snaps = await client.list(snapshotRoot(base));
+  const vc = snaps.find((o) => o.key.endsWith(".vc"));
+  if (vc && (await attempt(vc.key))) return "verified";
+  for (const node of await listRemoteNodes(client, base)) {
+    const seg = (await client.list(nodePrefix(base, node))).find((o) => o.key.endsWith(".seg"));
+    if (seg && (await attempt(seg.key))) return "verified";
+  }
+  const snap = snaps.find((o) => o.key.endsWith(".snap"));
+  if (snap && (await attempt(snap.key))) return "verified";
+  return "no_ciphertext";
+}
+
+/**
+ * Rewrap keys/main.json under a NEW passphrase, keeping K unchanged — all
+ * ciphertext and every device's cached K stay valid; only devices joining
+ * later need the new passphrase. Compare-and-set: If-Match on the current
+ * envelope's ETag (If-None-Match create when absent — which also restores a
+ * deleted envelope). Throws "conflict" when a concurrent rewrap won; callers
+ * retry against the winner (idempotent — same K).
+ */
+export async function rewrapMasterKey(
+  client: StorageClient,
+  config: S3Config,
+  rawKey: Uint8Array,
+  newPassphrase: string,
+): Promise<void> {
+  if (!config.encrypt)
+    throw new MhError("invalid_input", "bucket is not encrypted — no passphrase to change");
+  const base = basePrefix(config.prefix);
+  const path = mainKeyPath(base);
+  const env = await wrapMasterKey(rawKey, newPassphrase);
+  const etag = await objectEtag(client, path);
+  await client.put(path, new TextEncoder().encode(JSON.stringify(env)), {
+    contentType: "application/json",
+    ...(etag ? { ifMatch: etag } : { ifNoneMatch: true }),
+  });
 }
 
 // ---- snapshot publish + truncation ----------------------------------------------

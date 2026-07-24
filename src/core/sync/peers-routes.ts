@@ -21,9 +21,14 @@ import {
   setPeerLabel,
   syncPeer,
   addAndSyncStoragePeer,
+  rotateStoragePeer,
 } from "./peers.ts";
 import { putBucketCors } from "./storage-s3-bun.ts";
 import type { S3Config } from "./storage.ts";
+import { dataMap } from "./data-map-db.ts";
+import { listDevices, refreshBucketPresence } from "./devices.ts";
+import { encodeRecoveryCode } from "./recovery.ts";
+import { fromB64 } from "./e2ee.ts";
 
 // Peer pairing + management API. Mirrors the `mh config peer` CLI; the WebUI
 // settings page calls these. POST /api/pair is the cross-device handshake
@@ -99,12 +104,70 @@ const S3PeerSchema = z.object({
   encrypt: z.boolean(),
   virtualHostedStyle: z.boolean().nullable(),
 });
+const DataPlaceSchema = z.object({
+  kind: z.enum(["self", "device", "bucket"]),
+  url: z.string().nullable(),
+  label: z.string(),
+  freshness: z.enum(["live", "synced", "error", "never", "disabled"]),
+  syncedAt: z.number().nullable(),
+  error: z.string().nullable(),
+  roles: z.array(z.enum(["replica", "backend", "blob_anchor", "publisher"])),
+});
+const DataMapSchema = z.object({
+  state: z.object({
+    state: z.enum(["no_backup", "pending_blobs", "peer_error", "syncing", "healthy"]),
+    places: z.number(),
+    pendingBlobCount: z.number(),
+    pendingBlobBytes: z.number(),
+    oldestSyncedAt: z.number().nullable(),
+  }),
+  places: z.array(DataPlaceSchema),
+});
 const GrantSchema = z.object({
   token: z.string(),
   peer_url: z.string().nullable(),
   node_id: z.string().nullable(),
   created_at: z.number().nullable(),
 });
+const DeviceSchema = z.object({
+  nodeId: z.string().nullable(),
+  label: z.string().nullable(),
+  self: z.boolean(),
+  channels: z.array(
+    z.object({
+      kind: z.enum(["paired_out", "grant_in", "oplog"]),
+      ref: z.string(),
+      lastSeenAt: z.number().nullable(),
+      transport: z.enum(["http", "s3", "room"]).optional(),
+    }),
+  ),
+  lastActivityAt: z.number().nullable(),
+  revocable: z.enum(["yes", "bucket_rotate", "none"]),
+});
+const BucketPresenceSchema = z.object({
+  url: z.string(),
+  nodes: z
+    .array(z.object({ nodeId: z.string(), inBucket: z.boolean(), leaseLiveUntil: z.number().nullable() }))
+    .optional(),
+  error: z.string().optional(),
+});
+const RotateS3Req = z.object({
+  url: z.string(),
+  accessKeyId: z.string().optional(),
+  secretAccessKey: z.string().optional(),
+  newPassphrase: z.string().optional(),
+  oldPassphrase: z.string().optional(),
+  recoveryCode: z.string().optional(),
+});
+const RotateS3Res = z.object({
+  url: z.string(),
+  rotatedCredentials: z.boolean(),
+  rotatedPassphrase: z.boolean(),
+  keyVerified: z.enum(["verified", "no_ciphertext", "skipped"]),
+  sync: PeerSyncRes,
+  enroll: z.string(),
+});
+const RecoveryRes = z.object({ url: z.string(), code: z.string() });
 const RevokeRes = z.object({ revoked: z.number() });
 const OkSchema = z.object({ ok: z.boolean() });
 
@@ -211,6 +274,16 @@ export const peersRoutes: Route[] = [
     handler: handle((_req, { db }) => listPeers(db)),
   },
   {
+    // The workspace data map: where the data lives, how fresh each copy is,
+    // whether anything is not yet backed up. Local-only derivation (zero
+    // network) — same answer as `mh status` on this node.
+    method: "GET",
+    path: "/api/sync/health",
+    summary: "Derived data map: places holding this workspace + one summary state",
+    response: DataMapSchema,
+    handler: handle((_req, { db }) => dataMap(db)),
+  },
+  {
     method: "PATCH",
     path: "/api/peer",
     summary: "Update a peer (enable/disable or label). Query: ?url=<url>",
@@ -299,5 +372,74 @@ export const peersRoutes: Route[] = [
     summary: "Revoke an issued credential by token or prefix. Query: ?token=<token>",
     response: RevokeRes,
     handler: handle((req, { db }) => ({ revoked: revokeGrant(db, need(req, "token")) })),
+  },
+  {
+    // Unified device roster (sync/devices.ts). Grant tokens are masked to their
+    // 8-char prefix — enough for display AND for DELETE /api/grant, which
+    // revokes by unique prefix; full tokens stay on /api/grants.
+    method: "GET",
+    path: "/api/devices",
+    summary: "Every device touching this workspace: how it joined, activity, revocability",
+    response: z.array(DeviceSchema),
+    handler: handle((_req, { db }) =>
+      listDevices(db).map((d) => ({
+        ...d,
+        channels: d.channels.map((c) =>
+          c.kind === "grant_in" ? { ...c, ref: c.ref.slice(0, 8) } : c,
+        ),
+      })),
+    ),
+  },
+  {
+    // Online-only refinement: per attached bucket, which node streams exist and
+    // whose publisher heartbeat is live. Per-bucket errors are reported inline
+    // (one unreachable bucket must not sink the whole refresh).
+    method: "POST",
+    path: "/api/devices/refresh",
+    summary: "Check bucket presence + publisher heartbeats for all attached buckets",
+    response: z.array(BucketPresenceSchema),
+    handler: handle(async (_req, { db }) => {
+      const out: z.infer<typeof BucketPresenceSchema>[] = [];
+      for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.enabled)) {
+        try {
+          out.push({ url: p.url, nodes: await refreshBucketPresence(db, p.url) });
+        } catch (e) {
+          out.push({ url: p.url, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      return out;
+    }),
+  },
+  {
+    // The lost-device remedy (peers.ts rotateStoragePeer): new S3 credentials
+    // and/or a passphrase rewrap. The response's enroll token carries the NEW
+    // credentials for re-attaching other devices — master-token gated like
+    // /api/peer/s3/config.
+    method: "POST",
+    path: "/api/peer/s3/rotate",
+    summary: "Rotate a bucket's credentials and/or passphrase (lost-device remedy)",
+    request: RotateS3Req,
+    response: RotateS3Res,
+    handler: handle(async (req, { db }) => {
+      const { url, ...input } = (await req.json()) as z.infer<typeof RotateS3Req>;
+      return rotateStoragePeer(db, url, input);
+    }),
+  },
+  {
+    // Deliberately secret-revealing (the printable recovery card) — the master
+    // key IS the payload. Same gate + precedent as /api/peer/s3/config.
+    method: "GET",
+    path: "/api/peer/s3/recovery",
+    summary: "Master-key recovery code for one bucket (printable card). Query: ?url=<url>",
+    response: RecoveryRes,
+    handler: handle(async (req, { db }) => {
+      const url = need(req, "url");
+      const peer = listPeers(db).find((p) => p.url === url && p.kind === "s3" && p.config);
+      if (!peer) throw new MhError("not_found", `no S3 storage peer at '${url}'`);
+      const config = JSON.parse(peer.config!) as S3Config;
+      if (!config.encrypt || !config.masterKey)
+        throw new MhError("invalid_input", "plaintext bucket has no master key — nothing to back up");
+      return { url, code: await encodeRecoveryCode(fromB64(config.masterKey)) };
+    }),
   },
 ];

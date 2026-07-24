@@ -92,29 +92,33 @@ COMMANDS
   server auth  (token persisted in ~/.metahub; rotates on expiry or 'token refresh')
     token show                        Print the current server token + expiry
     token refresh                     Rotate now (old token swappable during grace)
-  sync & backup
-    sync <url>                        Push/pull one round against a sync server
+  sync & upkeep  (daily tools — one-shot actions, no long-term state changes)
+    status                            Where the data lives + how fresh each copy is
+    sync                              Sync now against every configured device/bucket
+    sync <url>                        One round against a specific sync server
     sync <src> <dst>                  Export/import a doc(→md) or table(→csv) file
+    cache [status|clear|gc|pin <h>]   Inspect / clear the local blob cache
+    snapshot <out.mhpack>             Package all data into a portable file
+    restore <pack> [--reset --force]  Restore (merge by default)
+    doctor | repair [--dry-run]       Integrity scan / deterministic fix
+    compact [--keep-days N]           Prune history + reclaim disk
+    edge status | edge pull           Edge health / manual inbox round
     --server [--port N] [--host H] [--debug] [--token T]
                                       Run as a server: /sync + WebUI + /api/* +
                                       /docs + sites at /sites/<name>/. Outside
-                                      --debug a token guards every request. The
-                                      token persists in ~/.metahub (30d TTL,
-                                      rotates on expiry; old token swappable for
-                                      7d via /auth/token). --token / METAHUB_TOKEN
-                                      pins a fixed token instead. Both windows are
-                                      env-tunable (METAHUB_TOKEN_TTL / _GRACE).
-    snapshot <out.mhpack>             Package all data into a portable file
-    restore <pack> [--reset --force]  Restore (merge by default)
-  edge  (optional: your own Cloudflare Worker+D1 as the always-on surface —
-         sealed write-inbox for public sites, and Durable Object rooms hosting shares)
-    edge deploy --account-id <id> --api-token <token> --yes
-                                      Create/continue a dedicated Worker + D1 deployment.
-                                      Names default from this node; API token is never saved.
-    edge status | pull | rotate [--purge-retired]
-    edge connect --endpoint <url> --token <t>   Use a non-Cloudflare inbox host
-    share create <site> --grant <db>:<ops> [--password] --room
-                                      Host a share on an always-on room (revoke destroys it)
+                                      --debug a token guards every request; it
+                                      persists in ~/.metahub (30d TTL, 7d grace;
+                                      METAHUB_TOKEN / _TTL / _GRACE tune it).
+  configuration  (everything long-lived lives under ONE command — see 'mh config --help')
+    config                            Interactive wizard (server/device/backup/edge)
+    config server --port … --host …   Server settings
+    config device add|code|list|revoke
+                                      Pair devices, inspect the roster, cut one off
+    config backup connect|list|rotate|recovery|anchors
+                                      Cloud backup bucket (S3/R2), key rotation,
+                                      printable recovery code, blob anchors
+    config edge deploy|connect|rotate-keys
+                                      Your own Cloudflare Worker+D1 (or compatible host)
   shell
     completion <bash|zsh|fish>        Print a completion script
 
@@ -213,11 +217,25 @@ const EXAMPLES: Record<string, string[]> = {
   ],
   token: ["mh token            # show current token", "mh token show", "mh token refresh"],
   sync: [
-    "mh sync http://localhost:7777        # peer push/pull",
+    "mh sync                              # sync now: every configured device + bucket",
+    "mh sync http://localhost:7777        # one round against a specific server",
     "mh sync architecture arch.md         # export doc → markdown",
     "mh sync tasks tasks.csv              # export table → CSV",
     "mh sync arch.md architecture         # import markdown → doc",
     "mh sync tasks.csv tasks              # import CSV → table",
+  ],
+  config: [
+    "mh config                                        # interactive wizard",
+    "mh config server --port 7777",
+    "mh config device add --url http://192.168.1.10:7777 --code 123456",
+    "mh config device list --refresh                  # roster + bucket presence",
+    "mh config backup connect --endpoint https://<acct>.r2.cloudflarestorage.com --bucket my-hub --access-key … --secret-key …",
+    "mh config backup connect --enroll <code>         # join another device's bucket",
+    "mh config backup connect --provision-r2 --bucket my-hub --yes   # create the R2 bucket first",
+    "mh config backup rotate                          # lost device: new keys / passphrase",
+    "mh config backup recovery                        # printable master-key card",
+    "mh config backup anchors redundancy any",
+    "mh config edge deploy --yes                      # own Cloudflare Worker+D1",
   ],
   "edge deploy": [
     "mh edge deploy --account-id <id> --api-token <token> --yes",

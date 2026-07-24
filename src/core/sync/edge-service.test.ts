@@ -195,3 +195,73 @@ describe("Edge deployment service", () => {
     expect(getEdgeConfig(d)).toBeNull();
   });
 });
+
+// ---- R2 sync-bucket provisioning ------------------------------------------------
+
+import { provisionR2Bucket } from "./edge-service.ts";
+import { getR2ProvisionProgress, setR2ProvisionProgress } from "./edge-config.ts";
+
+function r2Stub(opts: { exists?: boolean } = {}) {
+  const state = { exists: opts.exists ?? false, creates: 0, calls: [] as string[] };
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString());
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+    state.calls.push(`${method} ${url.pathname}`);
+    if (method === "GET" && /\/r2\/buckets\/[^/]+$/.test(url.pathname))
+      return state.exists ? json({ name: "x" }) : json(null, 404);
+    if (method === "POST" && url.pathname.endsWith("/r2/buckets")) {
+      state.creates++;
+      state.exists = true;
+      return json({ name: "x" });
+    }
+    return json(null, 404);
+  }) as typeof fetch;
+  return state;
+}
+
+describe("provisionR2Bucket", () => {
+  const input = { accountId: "acct1", apiToken: "tok", bucketName: "my-bucket", confirmed: true };
+
+  test("creates the bucket and returns endpoint + credentials walk; progress cleared", async () => {
+    const d = db();
+    const state = r2Stub();
+    const r = await provisionR2Bucket(d, input);
+    expect(r.status).toBe("created");
+    expect(r.bucketName).toBe("my-bucket");
+    expect(r.endpoint).toBe("https://acct1.r2.cloudflarestorage.com");
+    expect(r.credentialsUrl).toContain("acct1");
+    expect(state.creates).toBe(1);
+    expect(getR2ProvisionProgress(d)).toBeNull();
+  });
+
+  test("foreign same-name bucket → conflict, nothing created", async () => {
+    const d = db();
+    const state = r2Stub({ exists: true });
+    await expect(provisionR2Bucket(d, input)).rejects.toThrow(/already exists/);
+    expect(state.creates).toBe(0);
+  });
+
+  test("crash resume: our own half-created bucket is adopted, not refused", async () => {
+    const d = db();
+    setR2ProvisionProgress(d, { accountId: "acct1", bucketName: "my-bucket", startedAt: 1 });
+    const state = r2Stub({ exists: true });
+    const r = await provisionR2Bucket(d, input);
+    expect(r.status).toBe("adopted");
+    expect(state.creates).toBe(0);
+    expect(getR2ProvisionProgress(d)).toBeNull();
+  });
+
+  test("refuses without confirmation and with missing credentials", async () => {
+    const d = db();
+    r2Stub();
+    await expect(provisionR2Bucket(d, { ...input, confirmed: false })).rejects.toThrow(/confirm/);
+    await expect(provisionR2Bucket(d, { ...input, apiToken: " " })).rejects.toThrow(/required/);
+  });
+
+  test("default bucket name derives from the node id", async () => {
+    const d = db();
+    r2Stub();
+    const r = await provisionR2Bucket(d, { ...input, bucketName: undefined });
+    expect(r.bucketName).toMatch(/^metahub-sync-/);
+  });
+});

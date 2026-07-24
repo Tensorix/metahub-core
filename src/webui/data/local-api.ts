@@ -105,6 +105,13 @@ export const localApi = {
     rpc("listLocalShares", opts.target),
   nodes: () => rpc("nodes"),
   search: (text: string, limit?: number) => rpc("search", text, limit),
+
+  // Data map: a replica is a full node, so its own local derivation (which
+  // includes the origin server as an http peer) is this device's honest
+  // "where is my data" answer — and it works offline. Window mode falls
+  // through to the server's /api/sync/health.
+  syncHealth: () => rpc("dataMap"),
+  setNodeLabel: (label: string | null) => rpc("setNodeLabel", label),
 };
 
 /**

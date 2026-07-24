@@ -1,0 +1,63 @@
+import { defineCommand } from "citty";
+import { openMetahub } from "../../core/db.ts";
+import { dataMap } from "../../core/sync/data-map-db.ts";
+import type { DataPlace } from "../../core/data-map.ts";
+import { print, table, guard } from "../output.ts";
+
+const rel = (ms: number | null, now: number): string => {
+  if (ms == null) return "";
+  const s = Math.max(0, Math.round((now - ms) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+};
+
+const FRESHNESS: Record<DataPlace["freshness"], string> = {
+  live: "live (this device)",
+  synced: "synced",
+  error: "ERROR",
+  never: "never synced",
+  disabled: "disabled",
+};
+
+const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
+
+export default defineCommand({
+  meta: {
+    name: "status",
+    description:
+      "Where the workspace's data lives and how fresh each copy is (read-only, offline)",
+  },
+  run: guard(() => {
+    const db = openMetahub();
+    const map = dataMap(db);
+    print(map, () => {
+      const now = Date.now();
+      const { state } = map;
+      const head =
+        state.state === "no_backup"
+          ? "Data exists ONLY on this device — no sync target configured (add one: `mh config`)."
+          : state.state === "pending_blobs"
+            ? `Data in ${state.places} place(s), but ${state.pendingBlobCount} blob(s) (${mb(state.pendingBlobBytes)} MB) exist only here — not yet flushed to a durable anchor.`
+            : state.state === "peer_error"
+              ? `Data in ${state.places} place(s) — a sync target is FAILING (see below).`
+              : state.state === "syncing"
+                ? `Data in ${state.places} place(s); first sync to a configured target has not completed yet.`
+                : `Data in ${state.places} place(s); oldest copy synced ${rel(state.oldestSyncedAt, now)}.`;
+      const rows = map.places.map((p) => ({
+        place: p.label,
+        kind: p.kind,
+        freshness:
+          FRESHNESS[p.freshness] + (p.syncedAt != null ? ` (${rel(p.syncedAt, now)})` : ""),
+        roles: p.roles.join(","),
+        error: p.error ?? "",
+      }));
+      const tail =
+        state.state === "healthy" || state.state === "no_backup"
+          ? ""
+          : "\n(run `mh sync` to sync now)";
+      return `${head}\n\n${table(rows)}${tail}`;
+    });
+  }),
+});

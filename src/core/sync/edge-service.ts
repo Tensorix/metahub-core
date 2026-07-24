@@ -8,11 +8,14 @@ import {
   edgeCapabilities,
   setEdgeConfig,
   setEdgeDeployProgress,
+  getR2ProvisionProgress,
+  setR2ProvisionProgress,
   type CfApiTarget,
   type EdgeConfig,
 } from "./edge-config.ts";
 import {
   createD1Database,
+  createR2Bucket,
   createWorkersDevSubdomain,
   d1DatabasesByName,
   d1Exec,
@@ -20,6 +23,8 @@ import {
   enableWorkerSubdomain,
   maybeWorkersDevSubdomain,
   putWorkerSecret,
+  r2BucketExists,
+  r2Endpoint,
   uploadEdgeWorker,
   workerDeployment,
 } from "./cf-api.ts";
@@ -58,12 +63,14 @@ export function defaultEdgeNames(db: DbDriver): {
   workerName: string;
   d1Name: string;
   workersSubdomain: string;
+  r2BucketName: string;
 } {
   const suffix = getNodeId(db).replace(/[^a-z0-9]/gi, "").toLowerCase().slice(-8) || randomSuffix(6);
   return {
     workerName: `metahub-edge-${suffix}`,
     d1Name: `metahub-edge-${suffix}-db`,
     workersSubdomain: `metahub-${suffix}`,
+    r2BucketName: `metahub-sync-${suffix}`,
   };
 }
 
@@ -72,6 +79,69 @@ function cleanName(value: string | undefined, fallback: string, label: string): 
   if (!/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(out))
     throw new MhError("invalid_input", `${label} must use 3–64 lowercase letters, numbers, or hyphens`);
   return out;
+}
+
+// ---- R2 sync-bucket provisioning (the "connect Cloudflare" one-stop) -----------
+// Kept OUT of deployEdge: the bucket is a sync backend, not an edge component,
+// and the two provisioning flows fail/resume independently. Credential minting
+// has no OAuth scope (C0 spike) — the result points the user at the dashboard's
+// R2 API Tokens page; attaching the bucket then goes through the ordinary
+// addAndSyncStoragePeer / POST /api/peer/s3 path with the pasted keys.
+
+export interface R2ProvisionInput {
+  accountId: string;
+  apiToken: string;
+  bucketName?: string;
+  /** Required acknowledgment for the account-scoped remote creation. */
+  confirmed: boolean;
+}
+
+export interface R2ProvisionResult {
+  status: "created" | "adopted";
+  bucketName: string;
+  /** S3 endpoint to attach with (path-style, region "auto"). */
+  endpoint: string;
+  /** Dashboard page where the user mints the S3 credentials. */
+  credentialsUrl: string;
+}
+
+export function defaultR2BucketName(db: DbDriver): string {
+  return defaultEdgeNames(db).r2BucketName;
+}
+
+export async function provisionR2Bucket(
+  db: DbDriver,
+  input: R2ProvisionInput,
+): Promise<R2ProvisionResult> {
+  if (!input.confirmed)
+    throw new MhError("invalid_input", "confirm the Cloudflare resource creation first");
+  if (!input.accountId.trim() || !input.apiToken.trim())
+    throw new MhError("invalid_input", "Cloudflare account id and API token are required");
+  const accountId = input.accountId.trim();
+  const bucketName = cleanName(input.bucketName, defaultR2BucketName(db), "R2 bucket name");
+  const cfg = { accountId, apiToken: input.apiToken.trim() };
+  const done = (status: R2ProvisionResult["status"]): R2ProvisionResult => ({
+    status,
+    bucketName,
+    endpoint: r2Endpoint(accountId),
+    credentialsUrl: `https://dash.cloudflare.com/${accountId}/r2/api-tokens`,
+  });
+
+  if (await r2BucketExists(cfg, bucketName)) {
+    const pending = getR2ProvisionProgress(db);
+    const ours = pending?.accountId === accountId && pending.bucketName === bucketName;
+    if (!ours)
+      throw new MhError(
+        "conflict",
+        `an R2 bucket named '${bucketName}' already exists — pick another name, or attach the existing bucket manually`,
+      );
+    setR2ProvisionProgress(db, null); // our half-finished creation → adopt it
+    return done("adopted");
+  }
+  setR2ProvisionProgress(db, { accountId, bucketName, startedAt: Date.now() });
+  await createR2Bucket(cfg, bucketName);
+  setR2ProvisionProgress(db, null);
+  return done("created");
 }
 
 /** Create/upgrade a dedicated Worker+D1. Progress is persisted before every

@@ -30,14 +30,21 @@ function makeNode(id: string): Database {
 
 const PEER = "s3://bucket/mh";
 
-/** In-memory bucket: list/get/put/del over a Map, ordered by key like S3. */
+/** In-memory bucket: list/get/put/del over a Map, ordered by key like S3.
+ *  Carries per-key ETags and honors both conditional-put modes so CAS flows
+ *  (provisionMasterKey's ifNoneMatch, rewrapMasterKey's ifMatch) are honest. */
 class FakeBucket implements StorageClient {
   store = new Map<string, Uint8Array>();
+  versions = new Map<string, number>();
+  etagOf(key: string): string | undefined {
+    const v = this.versions.get(key);
+    return v ? `"v${v}"` : undefined;
+  }
   async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
     const keys = [...this.store.keys()]
       .filter((k) => k.startsWith(prefix) && (startAfter == null || k > startAfter))
       .sort();
-    if (!delimiter) return keys.map((key) => ({ key }));
+    if (!delimiter) return keys.map((key) => ({ key, etag: this.etagOf(key) }));
     // Collapse one level into common prefixes, like S3's delimiter listing.
     const out: StorageObject[] = [];
     const prefixes = new Set<string>();
@@ -45,7 +52,7 @@ class FakeBucket implements StorageClient {
       const rest = k.slice(prefix.length);
       const i = rest.indexOf(delimiter);
       if (i >= 0) prefixes.add(prefix + rest.slice(0, i + 1));
-      else out.push({ key: k });
+      else out.push({ key: k, etag: this.etagOf(k) });
     }
     for (const p of prefixes) out.push({ key: p });
     return out.sort((a, b) => (a.key < b.key ? -1 : 1));
@@ -56,10 +63,14 @@ class FakeBucket implements StorageClient {
   async put(key: string, body: Uint8Array, opts?: StoragePutOpts): Promise<void> {
     if (opts?.ifNoneMatch && this.store.has(key))
       throw new MhError("conflict", `S3 object already exists: ${key}`);
+    if (opts?.ifMatch && this.etagOf(key) !== opts.ifMatch)
+      throw new MhError("conflict", `etag mismatch on ${key}`);
     this.store.set(key, body);
+    this.versions.set(key, (this.versions.get(key) ?? 0) + 1);
   }
   async del(key: string): Promise<void> {
     this.store.delete(key);
+    this.versions.delete(key);
   }
 }
 

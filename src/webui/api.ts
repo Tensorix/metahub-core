@@ -17,6 +17,17 @@ import {
   cachePut,
 } from "./data/blob-store.ts";
 import type { S3Config } from "../core/sync/storage.ts";
+import type { DataMap } from "../core/sync/data-map-db.ts";
+export type { DataMap };
+export type { DataPlace, DataMapState } from "../core/data-map.ts";
+import type { DeviceView, BucketPresence } from "../core/sync/devices.ts";
+import type { RotateOutcome } from "../core/sync/peers.ts";
+export type { DeviceView, RotateOutcome };
+export interface BucketPresenceView {
+  url: string;
+  nodes?: BucketPresence[];
+  error?: string;
+}
 
 // API row types come straight from core via type-only imports — erased at
 // build time, so nothing of core leaks into the browser bundle. Adding a field
@@ -283,7 +294,12 @@ export interface EdgeStatus {
     workersSubdomain: string;
   };
   rooms: EdgeRoomStatus[];
-  defaults: { workerName: string; d1Name: string; workersSubdomain: string } | null;
+  defaults: {
+    workerName: string;
+    d1Name: string;
+    workersSubdomain: string;
+    r2BucketName?: string;
+  } | null;
   pending: {
     accountId: string;
     workerName: string;
@@ -691,6 +707,10 @@ const httpApi = {
   revertRecord: (id: string, to: string) =>
     req<RevertRecordResult>("POST", `/api/record/revert?id=${q(id)}`, { to }),
   nodes: () => req<NodeInfo[]>("GET", "/api/nodes"),
+  // Rename THIS node. Careful: through the api proxy the target flips with
+  // replicaActive() (hydration timing) — a rename UI must pick one end
+  // deterministically (see DeviceGroupName: replicaEnabled() ? worker : HTTP).
+  setNodeLabel: (label: string | null) => req<NodeInfo>("PATCH", "/api/node", { label }),
 
   // search
   search: (text: string, limit?: number) => {
@@ -701,6 +721,9 @@ const httpApi = {
 
   // sync peers / pairing
   listPeers: () => req<Peer[]>("GET", "/api/peers"),
+  // Workspace data map (mh status equivalent). Window mode asks the server
+  // (the data home); a replica answers from its own local derivation.
+  syncHealth: () => req<DataMap>("GET", "/api/sync/health"),
   newPairingCode: () => req<PairingCode>("POST", "/api/pair/new"),
   addPeerByPairing: (b: { url: string; code: string; self_url?: string }) =>
     req<{ node_id: string; url: string }>("POST", "/api/peers/pair", b),
@@ -718,6 +741,20 @@ const httpApi = {
   serverS3Config: (url: string) => req<S3Config>("GET", `/api/peer/s3/config?url=${q(url)}`),
   listGrants: () => req<Grant[]>("GET", "/api/grants"),
   revokeGrant: (token: string) => req<{ revoked: number }>("DELETE", `/api/grant?token=${q(token)}`),
+  // Unified device roster + the lost-device remedies. Grant tokens arrive as
+  // 8-char prefixes — enough for display and prefix-revoke.
+  listDevices: () => req<DeviceView[]>("GET", "/api/devices"),
+  refreshDevicePresence: () => req<BucketPresenceView[]>("POST", "/api/devices/refresh"),
+  rotateServerS3Peer: (b: {
+    url: string;
+    accessKeyId?: string;
+    secretAccessKey?: string;
+    newPassphrase?: string;
+    oldPassphrase?: string;
+    recoveryCode?: string;
+  }) => req<RotateOutcome>("POST", "/api/peer/s3/rotate", b),
+  serverS3Recovery: (url: string) =>
+    req<{ url: string; code: string }>("GET", `/api/peer/s3/recovery?url=${q(url)}`),
 
   // sites (static file buckets served at /sites/<name>/)
   listSites: () => req<Site[]>("GET", "/api/sites"),
@@ -797,6 +834,8 @@ const httpApi = {
     d1Name?: string;
     workersSubdomain?: string;
     confirmed: boolean;
+    /** Keep the OAuth token alive for a follow-up /api/edge/r2 call. */
+    keepFlow?: boolean;
   }) =>
     req<{
       status: "deployed";
@@ -804,6 +843,23 @@ const httpApi = {
       wired: { site: string; registered: boolean; error?: string }[];
       warnings: string[];
     }>("POST", "/api/edge/deploy", b),
+  // One-stop companion: create an R2 sync bucket on the same sign-in. S3
+  // credentials cannot be minted via OAuth (no scope exists) — the result's
+  // credentialsUrl is where the user creates and copies them.
+  provisionEdgeR2: (b: {
+    flowId?: string;
+    accountId?: string;
+    apiToken?: string;
+    bucketName?: string;
+    confirmed: boolean;
+    keepFlow?: boolean;
+  }) =>
+    req<{
+      status: "created" | "adopted";
+      bucketName: string;
+      endpoint: string;
+      credentialsUrl: string;
+    }>("POST", "/api/edge/r2", b),
   // "Sign in with Cloudflare" — the token stays server-side; the browser only
   // opens `authUrl`, polls status for the discovered accounts, then deploys by flowId.
   beginEdgeOAuth: () =>

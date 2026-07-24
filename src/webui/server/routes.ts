@@ -48,7 +48,7 @@ import {
   listDatabaseActivity,
 } from "../../core/history.ts";
 import { search } from "../../core/search.ts";
-import { getNodeId } from "../../core/node.ts";
+import { getNodeId, getNodeLabel, setNodeLabel, displayNodes } from "../../core/node.ts";
 import {
   cacheStats,
   cachedBlobs,
@@ -790,17 +790,18 @@ export const webuiRoutes: Route[] = [
     path: "/api/nodes",
     summary: "Known nodes for display: this device plus paired peers with their labels",
     response: z.array(NodeInfoSchema),
-    handler: handle((_req, { db }) => {
-      const self = getNodeId(db);
-      const peers = db
-        .query(
-          "SELECT node_id, label FROM peers WHERE node_id IS NOT NULL AND node_id <> '' GROUP BY node_id",
-        )
-        .all() as { node_id: string; label: string | null }[];
-      return [
-        { node_id: self, label: null, self: true },
-        ...peers.filter((p) => p.node_id !== self).map((p) => ({ ...p, self: false })),
-      ];
+    handler: handle((_req, { db }) => displayNodes(db)),
+  },
+  {
+    method: "PATCH",
+    path: "/api/node",
+    summary: "Set this device's display label (empty/null clears it)",
+    request: z.object({ label: z.string().nullable().optional() }),
+    response: NodeInfoSchema,
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { label?: string | null };
+      setNodeLabel(db, body.label ?? null);
+      return { node_id: getNodeId(db), label: getNodeLabel(db), self: true };
     }),
   },
   {

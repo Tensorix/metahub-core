@@ -15,7 +15,7 @@ import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { WasmDriver, type Oo1Db } from "./wasm-driver.ts";
 import type { DbDriver } from "../../core/driver.ts";
 import { initSchema } from "../../core/schema-init.ts";
-import { getNodeId } from "../../core/node.ts";
+import { getNodeId, getNodeLabel, setNodeLabel, displayNodes } from "../../core/node.ts";
 import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
 import { changesAfterSeq } from "../../core/crdt.ts";
@@ -30,6 +30,7 @@ import {
   syncPeer,
 } from "../../core/sync/peers.ts";
 import { storageUrl } from "../../core/sync/storage-url.ts";
+import { dataMap } from "../../core/sync/data-map-db.ts";
 import {
   provisionMasterKey,
   storageClientFor,
@@ -663,6 +664,10 @@ const ops: Record<string, Op> = {
     const p = getPeer(db!, url);
     return p?.config ? (JSON.parse(p.config) as S3Config) : null;
   },
+  // The workspace data map (mh status equivalent) derived from THIS replica's
+  // local tables — the no-origin settings header reads it; origin mode asks the
+  // server's /api/sync/health instead (the server is the data home there).
+  dataMap: () => dataMap(requireDb()),
   listStoragePeers: () =>
     listPeers(db!)
       .filter((p) => p.kind === "s3")
@@ -1044,18 +1049,10 @@ const ops: Record<string, Op> = {
   },
 
   // nodes + search
-  nodes: () => {
-    const d = db!;
-    const selfNode = getNodeId(d);
-    const peers = d
-      .query(
-        "SELECT node_id, label FROM peers WHERE node_id IS NOT NULL AND node_id <> '' GROUP BY node_id",
-      )
-      .all() as { node_id: string; label: string | null }[];
-    return [
-      { node_id: selfNode, label: null, self: true },
-      ...peers.filter((p) => p.node_id !== selfNode).map((p) => ({ ...p, self: false })),
-    ];
+  nodes: () => displayNodes(db!),
+  setNodeLabel: (label: string | null) => {
+    setNodeLabel(requireDb(), label);
+    return { node_id: getNodeId(requireDb()), label: getNodeLabel(requireDb()), self: true };
   },
   search: (text: string, limit?: number) => search(db!, text, { limit }),
 };

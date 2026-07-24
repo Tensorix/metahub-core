@@ -10,7 +10,7 @@
 // accepted on /sync) and a grant it RECEIVED (stored in peers.token, presented
 // when syncing out). See acceptsSyncToken in ./auth.ts and syncWithPeer.
 
-import type { Database } from "bun:sqlite";
+import type { DbDriver } from "../driver.ts";
 import { randomSuffix } from "../ids.ts";
 import { parseDuration } from "./token.ts";
 import { addPeer } from "./peers.ts";
@@ -26,7 +26,7 @@ export interface PairingCode {
 }
 
 /** Mint a one-time pairing code, stored until redeemed or expired. */
-export function generatePairingCode(db: Database, ttlMs: number = DEFAULT_PAIR_TTL_MS): PairingCode {
+export function generatePairingCode(db: DbDriver, ttlMs: number = DEFAULT_PAIR_TTL_MS): PairingCode {
   const now = Date.now();
   // Opportunistic housekeeping: drop spent/expired codes so the table can't grow.
   db.query("DELETE FROM pairing_codes WHERE used = 1 OR exp < ?").run(now);
@@ -43,7 +43,7 @@ export function generatePairingCode(db: Database, ttlMs: number = DEFAULT_PAIR_T
  * UPDATE (guarded on used=0 AND not-expired) so two concurrent redemptions of
  * the same code can't both succeed. Returns false if unknown/used/expired.
  */
-export function redeemPairingCode(db: Database, code: string): boolean {
+export function redeemPairingCode(db: DbDriver, code: string): boolean {
   return (
     db
       .query("UPDATE pairing_codes SET used = 1 WHERE code = ? AND used = 0 AND exp >= ?")
@@ -52,7 +52,7 @@ export function redeemPairingCode(db: Database, code: string): boolean {
 }
 
 /** Mint a durable credential we issue to a peer and will accept on /sync. */
-export function mintGrant(db: Database, peerUrl: string | null, nodeId: string | null): string {
+export function mintGrant(db: DbDriver, peerUrl: string | null, nodeId: string | null): string {
   const token = randomSuffix(32);
   db.query(
     "INSERT INTO peer_grants (token, peer_url, node_id, created_at) VALUES (?, ?, ?, ?)",
@@ -61,7 +61,7 @@ export function mintGrant(db: Database, peerUrl: string | null, nodeId: string |
 }
 
 /** Whether a presented token matches a credential we issued during pairing. */
-export function isAcceptedGrant(db: Database, token: string): boolean {
+export function isAcceptedGrant(db: DbDriver, token: string): boolean {
   return db.query("SELECT 1 FROM peer_grants WHERE token = ?").get(token) != null;
 }
 
@@ -73,7 +73,7 @@ export interface GrantRow {
 }
 
 /** All credentials we have issued and still accept on /sync (inbound access). */
-export function listGrants(db: Database): GrantRow[] {
+export function listGrants(db: DbDriver): GrantRow[] {
   return db
     .query("SELECT token, peer_url, node_id, created_at FROM peer_grants ORDER BY created_at DESC")
     .all() as GrantRow[];
@@ -84,7 +84,7 @@ export function listGrants(db: Database): GrantRow[] {
  * grants minted by one-directional pairing, which removePeer can't reach since
  * they have a null peer_url). Returns the number of grants revoked.
  */
-export function revokeGrant(db: Database, tokenOrPrefix: string): number {
+export function revokeGrant(db: DbDriver, tokenOrPrefix: string): number {
   return db
     .query("DELETE FROM peer_grants WHERE token = ? OR token LIKE ? || '%'")
     .run(tokenOrPrefix, tokenOrPrefix).changes;
@@ -94,7 +94,7 @@ export function revokeGrant(db: Database, tokenOrPrefix: string): number {
  * Inbound side (device A): redeem the caller's one-time code, mint a grant for
  * the caller, register the caller back as a peer if it gave a reachable URL.
  */
-export function handlePairRequest(db: Database, node: string, body: PairRequest): PairResponse {
+export function handlePairRequest(db: DbDriver, node: string, body: PairRequest): PairResponse {
   if (!redeemPairingCode(db, body.code)) {
     throw new MhError("auth", "invalid or expired pairing code");
   }
@@ -118,7 +118,7 @@ export interface PairOutcome {
  * its /api/pair, then register it as a peer with the grant it returned.
  */
 export async function performPairing(
-  db: Database,
+  db: DbDriver,
   node: string,
   remoteUrl: string,
   code: string,

@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
 import { syncWithPeer, type SyncResult } from "../../core/sync/client.ts";
-import { addPeer } from "../../core/sync/peers.ts";
+import { addPeer, listPeers, syncAllPeers } from "../../core/sync/peers.ts";
 import { syncFiles } from "../../core/sync/files.ts";
 import { errorCode, MhError } from "../../core/errors.ts";
 import { print, guard } from "../output.ts";
@@ -43,13 +43,14 @@ export default defineCommand({
   meta: {
     name: "sync",
     description:
-      "Push/pull against a sync server (sync <url>), or export/import a doc or table to a file (sync <src> <dst>)",
+      "Sync now: no args = one round against every configured peer; sync <url> = one server; sync <src> <dst> = export/import a doc or table file",
   },
   args: {
     src: {
       type: "positional",
-      required: true,
-      description: "Server URL (peer sync) — or a doc/table ref or file path (file sync)",
+      required: false,
+      description:
+        "Server URL (peer sync) — or a doc/table ref or file path (file sync). Omit to sync all configured peers",
     },
     dst: {
       type: "positional",
@@ -63,6 +64,22 @@ export default defineCommand({
   },
   run: guard(async (args) => {
     const db = openMetahub();
+    if (args.src == null) {
+      // Daily-driver form: one round against every enabled peer (buckets + servers).
+      if (!listPeers(db).some((p) => p.enabled))
+        throw new MhError(
+          "invalid_input",
+          "no sync targets configured — connect one first:\n  mh config backup connect   (cloud bucket)\n  mh config device add       (pair a device)",
+        );
+      const results = await syncAllPeers(db);
+      return print(results, () =>
+        results
+          .map((r) =>
+            r.ok ? `${r.url}: pushed ${r.pushed}, pulled ${r.pulled}` : `${r.url}: error — ${r.error}`,
+          )
+          .join("\n"),
+      );
+    }
     if (args.dst == null) {
       const result = await peerSync(db, args.src, args.token);
       return print(result, () => `pushed ${result.pushed}, pulled ${result.pulled}`);

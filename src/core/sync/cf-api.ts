@@ -109,6 +109,54 @@ export async function d1DatabasesByName(
     }));
 }
 
+// ---- R2 (sync-bucket provisioning; the "connect Cloudflare" one-stop) ----------
+// OAuth CAN create/inspect buckets (workers-r2.write) but structurally CANNOT
+// mint R2 S3 credentials (API-token creation has no OAuth scope) — the flow
+// creates the bucket, then walks the user to "Manage R2 API Tokens" to paste
+// the S3 keys (C0 spike verdict, task #1).
+
+/** Does the named R2 bucket exist? */
+export async function r2BucketExists(
+  cfg: Pick<CfApiTarget, "accountId" | "apiToken">,
+  name: string,
+): Promise<boolean> {
+  const { status, data } = await cfCall(
+    cfg,
+    "GET",
+    `/accounts/${cfg.accountId}/r2/buckets/${encodeURIComponent(name)}`,
+  );
+  if (status === 404) return false;
+  if (!data?.success) throw cfError(status, data, "r2 bucket lookup");
+  return true;
+}
+
+/** Create the named R2 bucket. Mirrors createD1Database's stance: a same-name
+ *  bucket that already exists is refused, never silently adopted (mh only
+ *  touches resources this flow itself named and created; the resume path in
+ *  edge-service tolerates its OWN half-finished creation via the persisted
+ *  progress record, not here). */
+export async function createR2Bucket(
+  cfg: Pick<CfApiTarget, "accountId" | "apiToken">,
+  name: string,
+): Promise<void> {
+  if (await r2BucketExists(cfg, name))
+    throw new MhError(
+      "conflict",
+      `an R2 bucket named '${name}' already exists — pick another name, or attach the existing bucket manually`,
+    );
+  const { status, data } = await cfCall(cfg, "POST", `/accounts/${cfg.accountId}/r2/buckets`, {
+    body: JSON.stringify({ name }),
+    headers: { "content-type": "application/json" },
+  });
+  if (!data?.success) throw cfError(status, data, "r2 bucket create");
+}
+
+/** The account's S3 endpoint for R2 (path-style; isVirtualHostedStyle
+ *  auto-detects false for it). */
+export function r2Endpoint(accountId: string): string {
+  return `https://${accountId}.r2.cloudflarestorage.com`;
+}
+
 /** Run SQL against the D1 database (schema migration). Statements are sent one
  *  at a time so a mid-script failure reports the exact statement. */
 export async function d1Exec(cfg: CfApiTarget, sqlScript: string): Promise<void> {

@@ -136,6 +136,30 @@ async function fullDeviceDispatch(db: Db, target: string, args: Record<string, a
   }
 }
 
+/** Workspace blob-anchor policy, shared with `mh config backup anchors`
+ *  (list|add|rm|redundancy <all|any>). `mh cache full-device`/`redundancy`
+ *  remain the tool-side aliases of the same dispatch. */
+export async function anchorsDispatch(
+  db: Db,
+  sub: string | undefined,
+  value: string | undefined,
+  args: Record<string, any>,
+): Promise<void> {
+  if (sub === "redundancy") {
+    if (value !== "all" && value !== "any")
+      throw new MhError("invalid_input", "usage: mh config backup anchors redundancy <all|any>");
+    setRedundancy(db, value as Redundancy);
+    print({ redundancy: value }, () => `redundancy set to ${value}`);
+    return;
+  }
+  if (sub && !["list", "add", "rm"].includes(sub))
+    throw new MhError(
+      "invalid_input",
+      `unknown anchors action '${sub}' (list|add|rm|redundancy all|any)`,
+    );
+  return fullDeviceDispatch(db, sub ?? "list", args);
+}
+
 export default defineCommand({
   meta: {
     name: "cache",

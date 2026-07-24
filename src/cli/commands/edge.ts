@@ -65,7 +65,12 @@ const deploy = defineCommand({
     subdomain: { type: "string", description: "workers.dev account subdomain if one must be created" },
     yes: { type: "boolean", description: "Confirm Cloudflare resource creation/update" },
   },
-  run: guard(async (args) => {
+  run: guard((args) => runEdgeDeploy(args)),
+});
+
+/** Shared body of `mh edge deploy` and `mh config edge deploy` (the config
+ *  namespace) — one implementation, two entry points. */
+export async function runEdgeDeploy(args: Record<string, any>): Promise<void> {
     const db = openMetahub();
     const prev = getEdgeConfig(db);
     const flagAccount =
@@ -159,8 +164,7 @@ const deploy = defineCommand({
         "\n" +
         TOKEN_NOTE,
     );
-  }),
-});
+}
 
 const status = defineCommand({
   meta: {
@@ -312,7 +316,11 @@ const rotate = defineCommand({
   args: {
     "purge-retired": { type: "boolean", description: "Also remove keys retired before this rotation" },
   },
-  run: guard(async (args) => {
+  run: guard((args) => runEdgeRotateKeys(args)),
+});
+
+/** Shared body of `mh edge rotate` and `mh config edge rotate-keys`. */
+export async function runEdgeRotateKeys(args: Record<string, any>): Promise<void> {
     const db = openMetahub();
     const { keyring, active, purged } = await rotateDropKeys(db, {
       purgeRetired: Boolean(args["purge-retired"]),
@@ -333,8 +341,7 @@ const rotate = defineCommand({
         wiredLine(wired) +
         "\nretired keys keep opening in-flight envelopes; purge them with --purge-retired once the backlog drains",
     );
-  }),
-});
+}
 
 const connect = defineCommand({
   meta: {
@@ -345,7 +352,11 @@ const connect = defineCommand({
     endpoint: { type: "string", description: "Inbox host base URL" },
     token: { type: "string", description: "Owner secret the host expects (Bearer)" },
   },
-  run: guard(async (args) => {
+  run: guard((args) => runEdgeConnect(args)),
+});
+
+/** Shared body of `mh edge connect` and `mh config edge connect`. */
+export async function runEdgeConnect(args: Record<string, any>): Promise<void> {
     const usage = "mh edge connect --endpoint <url> --token <t>";
     if (typeof args.endpoint !== "string" || !args.endpoint)
       throw new MhError("invalid_input", `missing --endpoint\nusage: ${usage}`);
@@ -372,8 +383,7 @@ const connect = defineCommand({
               .join(", ")
           : ""),
     );
-  }),
-});
+}
 
 export default defineCommand({
   meta: {

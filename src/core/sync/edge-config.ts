@@ -154,6 +154,33 @@ export function setEdgeDeployProgress(db: DbDriver, progress: EdgeDeployProgress
   setMeta(db, DEPLOY_KEY, progress ? JSON.stringify(progress) : null);
 }
 
+/** In-flight R2 bucket provisioning (edge-service provisionR2Bucket). Persisted
+ *  BEFORE the remote create so a crash mid-flight can prove on re-run that the
+ *  half-created bucket is OURS to adopt (the R2 API has no ownership marker). */
+export interface R2ProvisionProgress {
+  accountId: string;
+  bucketName: string;
+  startedAt: number;
+}
+
+const R2_PROVISION_KEY = "edge_r2_provision_progress";
+
+export function getR2ProvisionProgress(db: DbDriver): R2ProvisionProgress | null {
+  const raw = getMeta(db, R2_PROVISION_KEY);
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as Partial<R2ProvisionProgress>;
+    if (typeof p.accountId !== "string" || typeof p.bucketName !== "string") return null;
+    return { accountId: p.accountId, bucketName: p.bucketName, startedAt: p.startedAt ?? 0 };
+  } catch {
+    return null;
+  }
+}
+
+export function setR2ProvisionProgress(db: DbDriver, progress: R2ProvisionProgress | null): void {
+  setMeta(db, R2_PROVISION_KEY, progress ? JSON.stringify(progress) : null);
+}
+
 /**
  * Per-site anti-abuse knobs, set on `mh site grant … --turnstile/--password`.
  * They gate BOTH guest-write transports of the same grant: the write-inbox

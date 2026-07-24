@@ -127,6 +127,8 @@ export function mapApiRequest(
     // nodes + search
     case "GET /api/nodes":
       return { op: "nodes", args: [] };
+    case "GET /api/sync/health":
+      return { op: "dataMap", args: [] };
     case "GET /api/search": {
       const text = q.get("q");
       return text ? { op: "search", args: [text, num(q.get("limit"))] } : null;

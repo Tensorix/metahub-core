@@ -6,6 +6,7 @@ import {
   deployEdge,
   disconnectEdge,
   edgeStatus,
+  provisionR2Bucket,
   type EdgeDeployInput,
 } from "../../core/sync/edge-service.ts";
 import {
@@ -54,8 +55,48 @@ const EdgeDeploySchema = z.object({
   d1Name: z.string().optional(),
   workersSubdomain: z.string().optional(),
   confirmed: z.boolean(),
+  /** Keep the OAuth flow's token alive for a follow-up call (the one-stop modal
+   *  sequences deploy → R2 provision on a single sign-in). */
+  keepFlow: z.boolean().optional(),
+});
+const EdgeR2Schema = z.object({
+  flowId: z.string().optional(),
+  accountId: z.string().optional(),
+  apiToken: z.string().optional(),
+  bucketName: z.string().optional(),
+  confirmed: z.boolean(),
+  keepFlow: z.boolean().optional(),
 });
 const EdgeConnectSchema = z.object({ endpoint: z.string(), token: z.string() });
+
+/** Resolve credentials from a flowId (OAuth) or a pasted apiToken; the caller
+ *  discards the flow after use unless keepFlow was set. */
+function resolveCfCreds(body: {
+  flowId?: string;
+  accountId?: string;
+  apiToken?: string;
+}): { accountId?: string; apiToken?: string; consumeFlow?: string } {
+  let { accountId, apiToken } = body;
+  let consumeFlow: string | undefined;
+  if (body.flowId) {
+    const flow = flows.get(body.flowId);
+    if (!flow) throw new MhError("not_found", "OAuth 流程不存在或已过期，请重新登录");
+    if (flow.state === "error") throw new MhError("auth", flow.error || "Cloudflare 授权失败");
+    if (flow.state !== "ready" || !flow.token)
+      throw new MhError("conflict", "Cloudflare 授权尚未完成，请稍候");
+    apiToken = flow.token;
+    // Single account → auto-select; multiple → the caller must have chosen one.
+    accountId = accountId || (flow.accounts?.length === 1 ? flow.accounts[0]!.id : undefined);
+    consumeFlow = body.flowId;
+  }
+  return { accountId, apiToken, consumeFlow };
+}
+
+function dropFlow(flowId: string | undefined): void {
+  if (!flowId) return;
+  flows.get(flowId)?.handle.cancel();
+  flows.delete(flowId);
+}
 
 export const edgeRoutes: Route[] = [
   {
@@ -134,20 +175,7 @@ export const edgeRoutes: Route[] = [
     response: z.any(),
     handler: jsonHandler(async (req, { db }) => {
       const body = EdgeDeploySchema.parse(await req.json());
-      let accountId = body.accountId;
-      let apiToken = body.apiToken;
-      let consumeFlow: string | undefined;
-      if (body.flowId) {
-        const flow = flows.get(body.flowId);
-        if (!flow) throw new MhError("not_found", "OAuth 流程不存在或已过期，请重新登录");
-        if (flow.state === "error") throw new MhError("auth", flow.error || "Cloudflare 授权失败");
-        if (flow.state !== "ready" || !flow.token)
-          throw new MhError("conflict", "Cloudflare 授权尚未完成，请稍候");
-        apiToken = flow.token;
-        // Single account → auto-select; multiple → the caller must have chosen one.
-        accountId = accountId || (flow.accounts?.length === 1 ? flow.accounts[0]!.id : undefined);
-        consumeFlow = body.flowId;
-      }
+      const { accountId, apiToken, consumeFlow } = resolveCfCreds(body);
       if (!accountId) throw new MhError("invalid_input", "缺少 Cloudflare 账号 id");
       if (!apiToken) throw new MhError("invalid_input", "缺少 Cloudflare 凭据（请先登录或提供 API Token）");
       const input: EdgeDeployInput = {
@@ -162,10 +190,32 @@ export const edgeRoutes: Route[] = [
         return await deployEdge(db, input, await getEdgeWorkerScript());
       } finally {
         // Discard the OAuth token immediately after use — never persisted.
-        if (consumeFlow) {
-          flows.get(consumeFlow)?.handle.cancel();
-          flows.delete(consumeFlow);
-        }
+        // keepFlow lets the one-stop modal run the R2 step on the same sign-in
+        // (the flow still dies with its TTL if the follow-up never comes).
+        if (!body.keepFlow) dropFlow(consumeFlow);
+      }
+    }),
+  },
+  {
+    method: "POST",
+    path: "/api/edge/r2",
+    summary: "Create an R2 sync bucket after explicit confirmation (credentials stay a dashboard step).",
+    request: EdgeR2Schema,
+    response: z.any(),
+    handler: jsonHandler(async (req, { db }) => {
+      const body = EdgeR2Schema.parse(await req.json());
+      const { accountId, apiToken, consumeFlow } = resolveCfCreds(body);
+      if (!accountId) throw new MhError("invalid_input", "缺少 Cloudflare 账号 id");
+      if (!apiToken) throw new MhError("invalid_input", "缺少 Cloudflare 凭据（请先登录或提供 API Token）");
+      try {
+        return await provisionR2Bucket(db, {
+          accountId,
+          apiToken,
+          bucketName: body.bucketName,
+          confirmed: body.confirmed,
+        });
+      } finally {
+        if (!body.keepFlow) dropFlow(consumeFlow);
       }
     }),
   },

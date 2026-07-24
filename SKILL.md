@@ -306,31 +306,38 @@ token travels as plaintext Bearer — only do that on a trusted network/TLS.
 - `mh share create <ref> [--permission view|edit] [--password ..] [--expires 7d]` —
   publish a doc/database/site as a public link (`/share/<slug>`, view = read-only
   SSR, edit = server-only, accepts guest writes). `mh share list|link|revoke|renew`.
-- `mh edge deploy|status|pull|rotate|connect` — optional write-inbox on your own
-  Cloudflare Worker + D1: public sites with a `create` grant collect anonymous form
-  submissions asynchronously (sealed to your key at the edge — the host only ever
-  sees ciphertext; ingested on the next sync round, ~1 min).
+- `mh edge status|pull` (tools) + `mh config edge deploy|connect|rotate-keys` (setup) —
+  optional write-inbox on your own Cloudflare Worker + D1: public sites with a
+  `create` grant collect anonymous form submissions asynchronously (sealed to your
+  key at the edge — the host only ever sees ciphertext; ingested on the next sync
+  round, ~1 min).
 
 ## Sync across machines / files
 
+Daily tools stay top-level; anything that changes long-lived state lives under
+`mh config <server|device|backup|edge>` (older `config peer/grant/set` spellings
+still work as hidden aliases).
+
 ```bash
-# Peer sync: one round of CRDT push/pull. Documents merge at paragraph level.
-mh sync http://other-host:7777                 # prompts for a token if the server is protected
-mh sync http://other-host:7777 --token <tok>   # non-interactive
+# Sync now: one round against every configured device + bucket.
+mh sync
+mh status                                      # where the data lives, how fresh each copy is
+
+# One-shot against a specific server (also saves its token for next time):
+mh sync http://other-host:7777 --token <tok>
 
 # File sync: export/import a single entity. Direction is inferred from which side
 # is an in-repo entity. document ↔ Markdown, table ↔ CSV.
 mh sync <doc-ref> ./out.md                      # export a doc to Markdown
 mh sync ./data.csv <db-ref>                     # import a CSV into a table
 
-# Persistent multi-device pairing (sync both ways on a timer, no repeated `mh sync`):
-mh config peer code                             # device A: print a one-time pairing code
-mh config peer add --url http://A-host:7777 --code <code>   # device B: pair with A
-mh config                                       # interactive wizard for host/port/sync-interval/auto-sync
-
-# Object-storage (S3) store-and-forward: relay oplog via a bucket, no both-ends-online.
-mh config peer add --s3 ...                     # attach a bucket (credentials)
-mh config peer add --enroll <code>              # attach a bucket via an enroll code / QR
+# Configuration (persistent): pair devices / attach a cloud backup bucket.
+mh config device code                           # device A: print a one-time pairing code
+mh config device add --url http://A-host:7777 --code <code>   # device B: pair with A
+mh config backup connect --endpoint <s3-url> --bucket <name> --access-key … --secret-key …
+mh config backup connect --enroll <code>        # join a bucket via an enroll code / QR
+mh config backup rotate                         # lost device: new keys / passphrase
+mh config                                       # interactive wizard (server/device/backup/edge)
 ```
 
 ## Running non-interactively (agents, CI, pipes)
@@ -340,7 +347,7 @@ missing required value fails fast with `{"error":"missing --<flag>", "code":
 "invalid_input"}`. But **on a TTY (including PTY-based harnesses) two commands
 will prompt interactively** — always pass their flags explicitly:
 
-- `mh config ...` — run with full flags (e.g. `mh config peer add --url ... --code ...`);
+- `mh config ...` — run with full flags (e.g. `mh config device add --url ... --code ...`);
   bare `mh config` on a TTY opens an arrow-key wizard.
 - `mh sync <url>` — pass `--token <tok>`; without it a 401 on a TTY prompts for
   the token.

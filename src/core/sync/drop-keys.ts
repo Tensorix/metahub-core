@@ -23,6 +23,7 @@ import {
   storageClientFor,
   storageBasePrefix,
   dropKeysObjectKey,
+  objectEtag,
   type S3Config,
   type StorageClient,
 } from "./storage.ts";
@@ -170,12 +171,8 @@ function mergeKeyrings(primary: DropKeyring, extra: DropKeyring): DropKeyring {
   return { v: 1, keys: [...byId.values()] };
 }
 
-/** Current ETag of the keyring object (targeted list), or null if absent / the
- *  client doesn't surface etags (then the caller forgoes CAS). */
-async function keyringEtag(client: StorageClient, keyPath: string): Promise<string | null> {
-  const objs = await client.list(keyPath);
-  return objs.find((o) => o.key === keyPath)?.etag ?? null;
-}
+/** Current ETag of the keyring object — shared CAS helper (storage.ts). */
+const keyringEtag = objectEtag;
 
 /** Compare-and-set write of the keyring, folding in (union by key_id) whatever a
  *  concurrent writer landed on a lost race — so two devices rotating at once can
