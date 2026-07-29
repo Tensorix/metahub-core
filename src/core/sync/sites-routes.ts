@@ -15,6 +15,18 @@ import {
   deleteFile,
 } from "../sites.ts";
 import { parseGrantSet, type GrantSet } from "../grants-core.ts";
+import {
+  putSiteChannel,
+  putSiteChannelObservation,
+  revokeAllSiteChannels,
+  revokePublicSiteChannels,
+  setPublicSiteChannelPolicies,
+  updatePublicSiteChannelUrls,
+} from "../site-channel-store.ts";
+import { reconcileSiteChannels } from "./site-channel-reconcile.ts";
+import { getServerConfig } from "../config.ts";
+import { getNodeId } from "../node.ts";
+import type { SiteRow } from "../sites-core.ts";
 
 // Site endpoints for the WebUI / served pages. Reads (list sites/files) and
 // authoring (create, rename, delete, upload) both wrap the same core functions
@@ -86,6 +98,27 @@ function handle(fn: (req: Request, ctx: RouteCtx) => unknown): Route["handler"] 
   };
 }
 
+function recordPublicChannel(
+  req: Request,
+  db: RouteCtx["db"],
+  site: SiteRow,
+): void {
+  const node = getNodeId(db);
+  const base = getServerConfig(db).publicBaseUrl ?? new URL(req.url).origin;
+  const channel = putSiteChannel(db, {
+    siteId: site.id,
+    audience: "public",
+    hosting: "device",
+    targetRef: node,
+    canonicalUrl: `${base}/sites/${encodeURIComponent(site.name)}/`,
+    policy: parseGrantSet(site.public_grants),
+  });
+  putSiteChannelObservation(db, {
+    channelId: channel.id,
+    status: "legacy_unverified",
+  });
+}
+
 export const sitesRoutes: Route[] = [
   {
     method: "GET",
@@ -112,7 +145,15 @@ export const sitesRoutes: Route[] = [
     response: SiteSchema,
     handler: handle(async (req, { db }) => {
       const body = CreateSiteBody.parse(await req.json());
-      return createSite(db, body);
+      const site = createSite(db, {
+        ...body,
+        // Public access is scoped by the explicit channel below. Never emit
+        // the legacy global-public register for a new publication.
+        visibility:
+          body.visibility === "public" ? "private" : body.visibility,
+      });
+      if (body.visibility === "public") recordPublicChannel(req, db, site);
+      return site;
     }),
   },
   {
@@ -123,7 +164,15 @@ export const sitesRoutes: Route[] = [
     response: SiteSchema,
     handler: handle(async (req, { db }) => {
       const body = UpdateSiteBody.parse(await req.json());
-      return updateSite(db, need(req, "id"), body);
+      const site = updateSite(db, need(req, "id"), {
+        ...body,
+        visibility:
+          body.visibility === "public" ? "private" : body.visibility,
+      });
+      if (body.visibility === "private") revokePublicSiteChannels(db, site.id);
+      if (body.visibility === "public") recordPublicChannel(req, db, site);
+      if (body.name !== undefined) updatePublicSiteChannelUrls(db, site.id, site.name);
+      return site;
     }),
   },
   {
@@ -131,7 +180,13 @@ export const sitesRoutes: Route[] = [
     path: "/api/site",
     summary: "Delete a site and its files. Query: ?id=<id>",
     response: z.object({ ok: z.boolean() }),
-    handler: handle((req, { db }) => ({ ok: deleteSite(db, need(req, "id")) })),
+    handler: handle(async (req, { db }) => {
+      const id = need(req, "id");
+      revokeAllSiteChannels(db, id);
+      const ok = deleteSite(db, id);
+      await reconcileSiteChannels(db);
+      return { ok };
+    }),
   },
   {
     method: "GET",
@@ -147,13 +202,14 @@ export const sitesRoutes: Route[] = [
     method: "PUT",
     path: "/api/site/grants",
     summary:
-      "Replace a site's public data grants. Body is a GrantSet ({v:1,tables:[{db,ops}]}); an empty tables array clears them. Only effective while the site is public. Query: ?id=<id>",
+      "Replace a site's public data grants. Body is a GrantSet ({v:1,tables:[{db,ops}]}); an empty tables array clears them. Effective while an explicit public channel is active (or on an unmigrated legacy-public site). Query: ?id=<id>",
     request: GrantSetSchema,
     response: SiteGrantsRes,
     handler: handle(async (req, { db }) => {
       const body = GrantSetSchema.parse(await req.json()) as GrantSet;
       const site = resolveSite(db, need(req, "id"));
       const updated = setSitePublicGrants(db, site.id, body.tables.length ? body : null);
+      setPublicSiteChannelPolicies(db, site.id, parseGrantSet(updated.public_grants));
       return { grants: parseGrantSet(updated.public_grants) };
     }),
   },

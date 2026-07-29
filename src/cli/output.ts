@@ -40,6 +40,14 @@ const EXIT_CODES: Record<MhErrorCode, number> = {
   port_in_use: 98, // historical: pre-dates the code taxonomy
 };
 
+/** Record a semantic failure after a command has already printed its structured
+ * result. This is used by batch commands: stdout remains the full per-target
+ * result array while scripts still receive a non-zero status. */
+export function markExitCode(code: MhErrorCode | number): void {
+  const exit = typeof code === "string" ? EXIT_CODES[code] : code;
+  process.exitCode = Math.max(process.exitCode ?? 0, exit);
+}
+
 /** Print an error and exit non-zero. `codeOrExit`: an MhErrorCode (mapped via
  *  EXIT_CODES, emitted as the JSON `code` field) or a raw exit number. */
 export function fail(message: string, codeOrExit: MhErrorCode | number = 1): never {

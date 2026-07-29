@@ -170,7 +170,7 @@ function copy(text: string) {
 /** Per-database grant edits for a site share: dbId → enabled ops. */
 type GrantDraft = Map<string, Set<GrantOp>>;
 
-function draftToGrantSet(draft: GrantDraft): GrantSet | null {
+export function draftToGrantSet(draft: GrantDraft): GrantSet | null {
   const tables = [...draft.entries()]
     .filter(([, ops]) => ops.size > 0)
     .map(([db, ops]) => ({
@@ -178,6 +178,15 @@ function draftToGrantSet(draft: GrantDraft): GrantSet | null {
       ops: (["read", "create", "update"] as GrantOp[]).filter((o) => ops.has(o)),
     }));
   return tables.length ? { v: 1, tables } : null;
+}
+
+export function grantSetToDraft(grants: GrantSet): GrantDraft {
+  return new Map(
+    grants.tables.map((table) => [
+      table.db,
+      new Set<GrantOp>(table.ops),
+    ]),
+  );
 }
 
 function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => void }) {
@@ -200,7 +209,12 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
   // Data grants (site shares over the server transport): which tables the
   // link's pages may read/write through /share/<slug>/api/*.
   const [dbs, setDbs] = useState<{ id: string; name: string }[]>([]);
+  // Capability-link grants and anonymous-public grants are deliberately
+  // separate. Public starts from the site's current synced policy; a new link
+  // remains default-deny.
   const [grantDraft, setGrantDraft] = useState<GrantDraft>(() => new Map());
+  const [publicGrantDraft, setPublicGrantDraft] = useState<GrantDraft>(() => new Map());
+  const [publicGrantsLoaded, setPublicGrantsLoaded] = useState(target.kind !== "site");
   const [showGrants, setShowGrants] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [edge, setEdge] = useState<EdgeStatus | null>(null);
@@ -208,36 +222,89 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
   const [siteHosting, setSiteHosting] = useState<SiteHostingInfo | null>(null);
   const [resultUrl, setResultUrl] = useState("");
 
+  const applySiteHosting = (info: SiteHostingInfo) => {
+    setSiteHosting(info);
+    if (
+      info.channels.some(
+        (channel) =>
+          channel.siteId === target.ref &&
+          channel.audience === "public" &&
+          channel.desiredState === "active",
+      )
+    )
+      setAccess("public");
+  };
+
   const refreshSiteState = () => {
     if (target.kind !== "site") return;
     api.listSites().then((list) => setSite(list.find((s) => s.id === target.ref) ?? null)).catch(() => undefined);
-    if (!isNoOrigin()) api.getSiteHosting().then(setSiteHosting).catch(() => setSiteHosting(null));
+    api.getSiteHosting().then(applySiteHosting).catch(() => setSiteHosting(null));
   };
 
   useEffect(() => {
     refreshShares();
     if (target.kind === "site") {
       api.listDatabases().then((list) => setDbs(list.map((d) => ({ id: d.id, name: d.name })))).catch(() => undefined);
+      api.getSiteGrants(target.ref)
+        .then(({ grants }) => {
+          setPublicGrantDraft(grantSetToDraft(grants));
+          setPublicGrantsLoaded(true);
+        })
+        .catch((e) => {
+          setError(`无法读取现有公开权限：${(e as Error).message}`);
+          setPublicGrantsLoaded(false);
+        });
       api.getEdgeStatus().then(setEdge).catch(() => setEdge(null));
-      refreshSiteState();
+      api.listSites()
+        .then((list) => {
+          const current = list.find((s) => s.id === target.ref) ?? null;
+          setSite(current);
+          if (current?.visibility === "public") setAccess("public");
+        })
+        .catch(() => undefined);
+      api.getSiteHosting().then(applySiteHosting).catch(() => setSiteHosting(null));
     }
   }, []);
 
-  const grantedCount = [...grantDraft.values()].filter((ops) => ops.size > 0).length;
+  const activeGrantDraft = access === "public" ? publicGrantDraft : grantDraft;
+  const grantedCount = [...activeGrantDraft.values()].filter((ops) => ops.size > 0).length;
 
   const toggleGrant = (dbId: string, op: GrantOp) => {
-    setGrantDraft((cur) => {
+    const update = (cur: GrantDraft) => {
       const next = new Map(cur);
       const ops = new Set(next.get(dbId) ?? []);
       if (ops.has(op)) ops.delete(op);
       else ops.add(op);
       next.set(dbId, ops);
       return next;
-    });
+    };
+    if (access === "public") setPublicGrantDraft(update);
+    else setGrantDraft(update);
   };
 
   function refreshShares() {
     api.listShares({ target: target.ref }).then(setShares).catch(() => undefined);
+  }
+
+  async function requestPrivateAccess(): Promise<boolean> {
+    if (isNoOrigin()) {
+      await api.updateSite(target.ref, { visibility: "private" });
+      const latest = await api.getSiteHosting().catch(() => null);
+      if (latest) setSiteHosting(latest);
+      return !!latest?.channels.some(
+        (channel) =>
+          channel.siteId === target.ref &&
+          channel.audience === "public" &&
+          channel.desiredState === "revoked" &&
+          (channel.status === "waiting_controller" ||
+            channel.status === "cleanup_pending"),
+      );
+    }
+    const result = await api.publishSite({
+      siteId: target.ref,
+      access: "private",
+    });
+    return result.status === "cleanup_pending";
   }
 
   const stopPublic = async () => {
@@ -252,9 +319,12 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     setBusy(true);
     setError("");
     try {
-      if (isNoOrigin()) await api.updateSite(target.ref, { visibility: "private" });
-      else await api.publishSite({ siteId: target.ref, access: "private" });
-      setFlash("已停止公开访问");
+      const pending = await requestPrivateAccess();
+      setFlash(
+        pending
+          ? "已提交停止公开，等待托管设备收到同步"
+          : "已停止公开访问",
+      );
       notifySharesChanged();
       refreshSiteState();
     } catch (e) {
@@ -264,9 +334,50 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     }
   };
 
+  const revokeChannel = async (channel: SiteChannel) => {
+    if (!channel.id) return stopPublic();
+    const ok = await confirmDialog({
+      title: channel.audience === "anyone" ? "停止这个公开渠道？" : "撤销这个链接？",
+      message:
+        channel.hosting === "room"
+          ? "撤销意图会同步到控制设备。若控制设备离线，Edge Room 会显示“等待控制设备”，上线后自动销毁。"
+          : "撤销意图会同步到托管设备；该设备收到后将停止提供这个渠道。",
+      confirmLabel: "撤销",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.revokeSiteChannel(channel.id);
+      setFlash(
+        result.status === "waiting_controller" ||
+          result.status === "cleanup_pending"
+          ? "撤销已同步，等待控制设备完成清理"
+          : "渠道已撤销",
+      );
+      notifySharesChanged();
+      refreshShares();
+      refreshSiteState();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const siteKind = target.kind === "site";
-  const deviceTargets = targets.filter(
+  const allDeviceTargets = targets.filter(
     (t) => t.kind === "server" && (!isNoOrigin() || t.id !== "server"),
+  );
+  // A configured row is not evidence that a remote host can serve. Keep failed,
+  // disabled, and never-synced peers out of automatic publishing choices.
+  const deviceTargets = allDeviceTargets.filter(
+    (t) =>
+      t.id === "server" ||
+      (!!t.availability?.enabled &&
+        t.availability.lastStatus !== "error" &&
+        t.availability.lastSuccessAt != null),
   );
   const sel = targets.find((t) => t.id === selId) ?? deviceTargets[0] ?? targets[0];
   const s3 = !siteKind && sel?.kind === "bucket";
@@ -282,8 +393,17 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     : deviceTargets.find((t) => t.id !== "server") ?? deviceTargets[0];
   const deviceUsable =
     !isNoOrigin() && !!autoDevice && (autoDevice.id !== "server" || serverEntryOk);
-  const autoHosting: "device" | "edge" = edgeUsable ? "edge" : deviceUsable ? "device" : "edge";
-  const effHosting = !siteKind ? hosting : hostingAuto ? autoHosting : hosting;
+  // Edge Room URLs are unguessable capability links. They are not a
+  // token-free public namespace, so "任何人" always uses a verified device.
+  const autoHosting: "device" | "edge" =
+    access === "public" ? "device" : edgeUsable ? "edge" : deviceUsable ? "device" : "edge";
+  const effHosting = !siteKind
+    ? hosting
+    : access === "public"
+      ? "device"
+      : hostingAuto
+        ? autoHosting
+        : hosting;
   const effSel = siteKind && hostingAuto && effHosting === "device" ? (autoDevice ?? sel) : sel;
 
   // Dead-end prevention: figure out up front why the chosen hosting can't work,
@@ -293,13 +413,17 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
   const deviceBlocked = !hostingActive || effHosting !== "device"
     ? ""
     : isNoOrigin()
-      ? "此设备把数据存放在云端存储桶、不常驻在线，无法托管站点。"
+      ? access === "public"
+        ? "此设备通过同步存储桶交换数据、不常驻在线。请在在线主节点管理公开发布；这里仍可创建由 Edge 托管的私密分享链接。"
+        : "此设备通过同步存储桶交换数据、不常驻在线，无法直接托管站点。"
       : deviceTargets.length === 0
-        ? "没有可托管站点的设备。"
+        ? allDeviceTargets.length > 0
+          ? "已配对的托管设备当前未确认可用。请先同步成功，或配置当前主节点的访问入口。"
+          : "没有可托管站点的设备。"
         : effSel?.id === "server" && !serverEntryOk
           ? "当前设备还没有配置公网或局域网入口，访客将无法访问。"
           : "";
-  const edgeBlocked = !hostingActive || effHosting !== "edge"
+  const edgeBlocked = !hostingActive || access === "public" || effHosting !== "edge"
     ? ""
     : edge === null
       ? "" // status still loading — don't flash a warning
@@ -317,8 +441,20 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
   // Public (token-free) channels of this site — publish states, rollbacks, or
   // the honest "public but unverified" placeholder. Link channels stay in the
   // shares list below; together they form the 访问渠道 section.
-  const publicChannels: SiteChannel[] =
-    siteKind && site ? siteChannels(siteChannelInput(site, [], siteHosting)) : [];
+  const derivedChannels: SiteChannel[] =
+    siteKind && site
+      ? siteChannels(siteChannelInput(site, shares, siteHosting))
+      : [];
+  const publicChannels = derivedChannels.filter(
+    (channel) => channel.audience === "anyone",
+  );
+  const syncedLinkChannels = derivedChannels.filter(
+    (channel) => channel.audience === "link" && !!channel.id,
+  );
+  const syncedLinkSlugs = new Set(
+    syncedLinkChannels.map((channel) => channel.slug).filter(Boolean),
+  );
+  const legacyShares = shares.filter((share) => !syncedLinkSlugs.has(share.slug));
   useEffect(() => {
     if (s3 && permission === "edit") setPermission("view");
   }, [s3]);
@@ -334,18 +470,23 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
     setError("");
     setResultUrl("");
     try {
-      const grantSet = siteKind ? draftToGrantSet(grantDraft) : null;
+      if (siteKind && access === "public" && !publicGrantsLoaded)
+        throw new Error("现有公开权限尚未加载，暂不能保存；请重试。");
+      const grantSet = siteKind ? draftToGrantSet(activeGrantDraft) : null;
       if (siteKind && access === "private") {
-        if (isNoOrigin()) await api.updateSite(target.ref, { visibility: "private" });
-        else await api.publishSite({ siteId: target.ref, access: "private" });
-        setFlash("已关闭直接公开访问；已有分享链接不会自动撤销");
+        const pending = await requestPrivateAccess();
+        setFlash(
+          pending
+            ? "已提交停止公开，等待托管设备收到同步；已有分享链接不受影响"
+            : "已关闭直接公开访问；已有分享链接不会自动撤销",
+        );
         notifySharesChanged();
         refreshSiteState();
         return;
       }
 
       if (siteKind && effHosting === "device" && isNoOrigin())
-        throw new Error("此设备把数据存放在云端存储桶、不常驻在线，无法托管站点，请选择 Edge");
+        throw new Error("此设备通过同步存储桶交换数据、不常驻在线；请在在线主节点管理公开发布，或改为创建 Edge 分享链接");
       if (siteKind && effHosting === "edge" && !edge?.configured)
         throw new Error("请先在“设置 → 站点托管”连接或部署 Edge");
       if (siteKind && effHosting === "edge" && !edge?.capabilities?.includes("room"))
@@ -360,12 +501,9 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
 
       if (siteKind && access === "public") {
         const tableCount = grantSet?.tables.length ?? 0;
-        const device = effHosting === "device";
         const ok = await confirmDialog({
-          title: device ? "确认公开发布到设备？" : "确认公开发布到 Edge？",
-          message: device
-            ? `任何人无需登录即可访问。持有同一数据并运行托管服务的配对设备也可能公开提供此站点；改回私有后，浏览器或 CDN 缓存仍可能保留数分钟。数据授权：${tableCount} 个数据库。设备必须保持在线。`
-            : `任何人无需登录即可访问，链接无口令且永不过期。Edge 会在你的设备离线后继续提供最后一次同步的内容。数据授权：${tableCount} 个数据库。`,
+          title: "确认公开发布到设备？",
+          message: `任何人无需登录即可通过这个地址访问。公开权限会同步，但只有选定的托管设备提供此渠道；改回私有后，浏览器或 CDN 缓存仍可能保留数分钟。数据授权：${tableCount} 个数据库。设备必须保持在线。`,
           confirmLabel: "确认公开发布",
           danger: true,
         });
@@ -468,7 +606,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
                   {
                     v: "public",
                     t: "任何人",
-                    d: "无需登录即可访问；公开状态会同步到你的所有设备。",
+                    d: "无需登录；只在你选择的托管设备提供公开地址。",
                   },
                   {
                     v: "private",
@@ -482,7 +620,10 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
                     type="radio"
                     name="mh-access"
                     checked={access === o.v}
-                    onChange={() => setAccess(o.v)}
+                    onChange={() => {
+                      setAccess(o.v);
+                      if (o.v === "public") setHosting("device");
+                    }}
                   />
                   <span class="mhshare-acard-t">{o.t}</span>
                   <span class="mhshare-acard-d">{o.d}</span>
@@ -531,7 +672,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
             <label class="mhshare-field">
               <span>托管</span>
               <select
-                value={hosting}
+                value={effHosting}
                 onChange={(e) =>
                   setHosting(
                     (e.currentTarget as HTMLSelectElement).value as "device" | "edge",
@@ -543,10 +684,16 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
                 </option>
                 <option
                   value="edge"
-                  disabled={!edge?.configured || !edge.capabilities?.includes("room")}
+                  disabled={
+                    access === "public" ||
+                    !edge?.configured ||
+                    !edge.capabilities?.includes("room")
+                  }
                 >
-                  Edge 始终在线
-                  {edge?.configured
+                  Edge 始终在线（持链接者）
+                  {access === "public"
+                    ? "（公开网页暂不支持）"
+                    : edge?.configured
                     ? edge.capabilities?.includes("room")
                       ? ""
                       : "（当前端点仅支持 inbox）"
@@ -555,7 +702,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
               </select>
             </label>
           )}
-          {siteKind && access !== "private" && !hostingAuto && hosting === "device" && (
+          {siteKind && access !== "private" && !hostingAuto && effHosting === "device" && (
             <label class="mhshare-field">
               <span>设备</span>
               <select
@@ -572,7 +719,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
             <div class="mhshare-guide">
               <p>{hostingBlocked}</p>
               <div class="mhshare-guide-actions">
-                {deviceBlocked && edge?.configured && edge.capabilities?.includes("room") && (
+                {access === "link" && deviceBlocked && edge?.configured && edge.capabilities?.includes("room") && (
                   <button type="button" onClick={() => setHosting("edge")}>改用 Edge 托管</button>
                 )}
                 <button type="button" onClick={() => gotoSettings("hosting")}>前往设置 → 站点托管</button>
@@ -622,7 +769,7 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
                   ) : (
                     <ul class="mhshare-grantlist">
                       {dbs.map((d) => {
-                        const ops = grantDraft.get(d.id) ?? new Set<GrantOp>();
+                        const ops = activeGrantDraft.get(d.id) ?? new Set<GrantOp>();
                         return (
                           <li key={d.id}>
                             <span class="mhshare-grantdb">{d.name}</span>
@@ -659,36 +806,54 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
             </div>
           )}
           {siteKind && effHosting === "device" && access !== "private" && (
-            <p class="mhshare-note">托管设备必须保持在线；公开状态会随工作区同步到其他运行托管服务的节点。</p>
+            <p class="mhshare-note">托管设备必须保持在线。渠道和撤销意图会随工作区同步，其他设备不会自动获得这个公开地址。</p>
           )}
           {siteKind && effHosting === "edge" && access !== "private" && (
             <p class="mhshare-note">Edge 会持续提供最后一次同步的版本；你的设备离线期间，站点内容停留在最后一次同步的状态。</p>
           )}
           <div class="mhshare-foot">
             <button onClick={onClose}>关闭</button>
-            <button class="mhshare-primary" disabled={busy || !!hostingBlocked} onClick={create}>
+            <button
+              class="mhshare-primary"
+              disabled={
+                busy ||
+                !!hostingBlocked ||
+                (siteKind && access === "public" && !publicGrantsLoaded)
+              }
+              onClick={create}
+            >
               {busy ? "发布中…" : access === "private" && siteKind ? "保存" : "发布并复制地址"}
             </button>
           </div>
 
           {siteKind ? (
             <>
-              <div class="mhshare-section">访问渠道（{publicChannels.length + shares.length}）</div>
+              <div class="mhshare-section">
+                访问渠道（{publicChannels.length + syncedLinkChannels.length + legacyShares.length}）
+              </div>
               {publicChannels.map((c) => (
                 <PublicChannelRow
-                  key={c.url ?? "unverified"}
+                  key={c.id ?? c.url ?? "unverified"}
                   channel={c}
-                  onStop={stopPublic}
+                  onStop={() => revokeChannel(c)}
+                  onFlash={setFlash}
+                />
+              ))}
+              {syncedLinkChannels.map((c) => (
+                <SyncedLinkChannelRow
+                  key={c.id}
+                  channel={c}
+                  onRevoke={() => revokeChannel(c)}
                   onFlash={setFlash}
                 />
               ))}
               <ShareRows
-                shares={shares}
+                shares={legacyShares}
                 reload={refreshShares}
                 onFlash={setFlash}
                 onError={setError}
                 empty={
-                  publicChannels.length
+                  publicChannels.length || syncedLinkChannels.length
                     ? "没有链接分享。"
                     : "还没有任何访问渠道 — 在上面选择受众并发布即可生成。"
                 }
@@ -745,9 +910,60 @@ function PublicChannelRow({
               </a>
             </>
           )}
-          <button class="mhshare-danger" onClick={onStop}>
-            停止公开
-          </button>
+          {c.desiredState !== "revoked" && (
+            <button class="mhshare-danger" onClick={onStop}>
+              停止公开
+            </button>
+          )}
+        </div>
+      </li>
+    </ul>
+  );
+}
+
+function SyncedLinkChannelRow({
+  channel: c,
+  onRevoke,
+  onFlash,
+}: {
+  channel: SiteChannel;
+  onRevoke: () => void;
+  onFlash: (s: string) => void;
+}) {
+  return (
+    <ul class="mhshare-list">
+      <li>
+        <div class="mhshare-li-main">
+          <span class="mhshare-badge">
+            {c.hosting === "room" ? "Edge 链接" : "设备链接"}
+          </span>
+          <span class="mhshare-src">{c.url ?? "等待生成地址"}</span>
+          <span class="mhshare-meta">
+            {CHANNEL_STATUS_LABEL[c.status]}
+            {c.desiredState === "revoked" ? " · 已提交撤销" : ""}
+          </span>
+        </div>
+        <div class="mhshare-li-actions">
+          {c.url && c.desiredState !== "revoked" && (
+            <>
+              <button
+                onClick={() => {
+                  copy(c.url!);
+                  onFlash("链接已复制");
+                }}
+              >
+                复制
+              </button>
+              <a href={c.url} target="_blank" rel="noreferrer">
+                打开
+              </a>
+            </>
+          )}
+          {c.desiredState !== "revoked" && (
+            <button class="mhshare-danger" onClick={onRevoke}>
+              撤销
+            </button>
+          )}
         </div>
       </li>
     </ul>

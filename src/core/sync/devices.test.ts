@@ -6,7 +6,7 @@ import { addPeer, addStoragePeer } from "./peers.ts";
 import { mintGrant } from "./pairing.ts";
 import { ingest, type Change } from "../crdt.ts";
 import { formatHlc } from "../hlc.ts";
-import { listDevices } from "./devices.ts";
+import { listDevices, resolveDevicePresence } from "./devices.ts";
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -68,7 +68,8 @@ test("listDevices folds oplog + peers + grants; self first; honest classificatio
   expect(box.lastActivityAt).toBeGreaterThanOrEqual(111);
 
   const phone = list.find((d) => d.nodeId === "phonenod")!;
-  expect(phone.revocable).toBe("bucket_rotate"); // only reachable via the shared bucket key
+  expect(phone.revocable).toBe("unknown");
+  expect(phone.revocationConfidence).toBe("unknown");
   expect(phone.channels).toEqual([{ kind: "oplog", ref: "", lastSeenAt: 5_000 }]);
 
   const anon = list.find((d) => d.nodeId === null)!;
@@ -76,11 +77,33 @@ test("listDevices folds oplog + peers + grants; self first; honest classificatio
   expect(anon.channels[0]!.kind).toBe("grant_in");
 });
 
-test("bucket-only device without any bucket attached is 'none' (nothing to rotate)", () => {
+test("an oplog-only historical device stays unknown without source evidence", () => {
   const db = makeNode("selfnode");
   seedForeignChange(db, "ghostnod", 1_000);
   const ghost = listDevices(db).find((d) => d.nodeId === "ghostnod")!;
-  expect(ghost.revocable).toBe("none");
+  expect(ghost.revocable).toBe("unknown");
+});
+
+test("only explicit bucket presence upgrades an oplog-only device to bucket_rotate", () => {
+  const db = makeNode("selfnode");
+  seedForeignChange(db, "phone", 1_000);
+  seedForeignChange(db, "historic", 2_000);
+  const resolved = resolveDevicePresence(listDevices(db), [
+    {
+      url: "s3://actual/mh",
+      nodes: [{ nodeId: "phone", inBucket: true, leaseLiveUntil: null }],
+    },
+    {
+      url: "s3://unrelated/mh",
+      nodes: [{ nodeId: "other", inBucket: true, leaseLiveUntil: null }],
+    },
+  ]);
+  const phone = resolved.find((d) => d.nodeId === "phone")!;
+  expect(phone.revocable).toBe("bucket_rotate");
+  expect(phone.revocationConfidence).toBe("confirmed");
+  expect(phone.revocationSources).toEqual(["s3://actual/mh"]);
+  expect(phone.channels.some((c) => c.kind === "bucket_presence")).toBe(true);
+  expect(resolved.find((d) => d.nodeId === "historic")!.revocable).toBe("unknown");
 });
 
 test("self with own ops keeps 'none' and carries oplog activity", () => {

@@ -7,6 +7,7 @@ import { runSchema } from "../db.ts";
 import { ingest, changesSince } from "../crdt.ts";
 import { createSite, updateSite, putFile, writeFileRow, getFileMetaForServe } from "../sites.ts";
 import { setSitePublicGrants } from "../sites-core.ts";
+import { putSiteChannel } from "../site-channel-store.ts";
 import { createDatabase } from "../databases.ts";
 import { addProperty } from "../properties.ts";
 import { serveSite } from "./sites-serve.ts";
@@ -312,6 +313,43 @@ test("F4: the realtime public write path enforces the grant's password verifier"
   // Reads are never gated by the anti-abuse knobs.
   const read = (await serveSite(req(`/sites/demo/api/records?db=${table.id}`), ctx, AUTH_TOKEN))!;
   expect(read.status).toBe(200);
+});
+
+test("a v2 public channel with no policy never inherits legacy grants", async () => {
+  const ctx = makeCtx();
+  const site = createSite(ctx.db, {
+    name: "channel-policy",
+    visibility: "public",
+  });
+  await putFile(ctx.db, site.id, "index.html", { data: "public page" });
+  const table = createDatabase(ctx.db, { name: "legacy-granted" });
+  setSitePublicGrants(ctx.db, site.id, {
+    v: 1,
+    tables: [{ db: table.id, ops: ["read"] }],
+  });
+  putSiteChannel(ctx.db, {
+    siteId: site.id,
+    audience: "public",
+    hosting: "device",
+    targetRef: ctx.node,
+    canonicalUrl: "http://x/sites/channel-policy/",
+    // Deliberately absent: null is default-deny, not "inherit legacy".
+  });
+
+  expect(
+    (await serveSite(
+      req(`/sites/channel-policy/api/records?db=${table.id}`),
+      ctx,
+      AUTH_TOKEN,
+    ))!.status,
+  ).toBe(401);
+  expect(
+    (await serveSite(
+      req("/sites/channel-policy/"),
+      ctx,
+      AUTH_TOKEN,
+    ))!.status,
+  ).toBe(200);
 });
 
 test("F13: a malformed %-escape in the path is a clean 400, not an uncaught 500", async () => {

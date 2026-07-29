@@ -15,6 +15,8 @@ import type { ShareListItem } from "./sync/share-actions.ts";
 
 /** One way the site is (or is about to be) reachable. */
 export interface SiteChannel {
+  /** Present for v2 synced desired-state channels. */
+  id?: string;
   /** anyone = token-free (visibility/public room); link = capability slug. */
   audience: "anyone" | "link";
   /** device = a server node must be online; room = always-on Edge DO. */
@@ -28,6 +30,8 @@ export interface SiteChannel {
     | "provisioning" // room being created
     | "rollback_pending" // failed publish; compensating write unacknowledged
     | "cleanup_pending" // revoked; Edge has not confirmed room destruction
+    | "waiting_controller" // desired revoke synced; secret-owning node is offline
+    | "error"
     | "expired"; // share past its expiry (row still manageable)
   /** Human label of where it's served (device label / Edge Room / base URL). */
   source: string;
@@ -35,6 +39,8 @@ export interface SiteChannel {
   permission?: "view" | "edit";
   hasPassword?: boolean;
   expiresAt?: number | null;
+  desiredState?: "active" | "revoked";
+  controllerNodeId?: string;
 }
 
 /** Precedence-ordered one-word summary for cards/lists. Attention states first
@@ -42,6 +48,7 @@ export interface SiteChannel {
 export type SiteState =
   | "rollback_pending"
   | "cleanup_pending"
+  | "error"
   | "provisioning"
   | "room_live"
   | "device_live"
@@ -59,6 +66,29 @@ export interface SiteChannelInput {
   pendingRollbacks: { peerUrl: string; targetUrl: string; lastError: string }[];
   /** Share listing rows already filtered to this site (local ∪ aggregated). */
   shares: ShareListItem[];
+  /** Synced v2 desired channels + this node's optional observation. */
+  storedChannels?: {
+    id: string;
+    audience: "public" | "link";
+    hosting: "device" | "edge";
+    controllerNodeId: string;
+    targetRef: string;
+    canonicalUrl: string | null;
+    policyJson: string | null;
+    desiredState: "active" | "revoked";
+    status:
+      | "provisioning"
+      | "syncing"
+      | "ready"
+      | "rollback_pending"
+      | "cleanup_pending"
+      | "error"
+      | "legacy_unverified"
+      | "revoked"
+      | "waiting_controller"
+      | "unverified";
+    lastError?: string | null;
+  }[];
   now?: number;
 }
 
@@ -68,6 +98,71 @@ export function siteChannels(input: SiteChannelInput): SiteChannel[] {
   const now = input.now ?? Date.now();
   const isPublic = input.visibility === "public";
   const out: SiteChannel[] = [];
+  const stored = input.storedChannels ?? [];
+  const storedPublic = stored.filter((channel) => channel.audience === "public");
+  const storedLinkRefs = new Set(
+    stored
+      .filter((channel) => channel.audience === "link")
+      .map((channel) => channel.targetRef),
+  );
+
+  for (const channel of stored) {
+    // Fully-applied revoked rows remain in CRDT history but are no longer an
+    // access channel. Pending/error rows stay visible until cleanup is proven.
+    if (channel.desiredState === "revoked" && channel.status === "revoked")
+      continue;
+    let rawPolicy: Record<string, unknown> = {};
+    try {
+      const parsed = channel.policyJson
+        ? JSON.parse(channel.policyJson)
+        : {};
+      rawPolicy =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed as Record<string, unknown>
+          : {};
+    } catch {
+      // Policy is synced/untrusted; malformed means no optional claims.
+    }
+    const permission =
+      rawPolicy.permission === "view" || rawPolicy.permission === "edit"
+        ? rawPolicy.permission
+        : undefined;
+    const hasPassword =
+      typeof rawPolicy.hasPassword === "boolean"
+        ? rawPolicy.hasPassword
+        : undefined;
+    const expiresAt =
+      rawPolicy.expiresAt === null ||
+      (typeof rawPolicy.expiresAt === "number" &&
+        Number.isFinite(rawPolicy.expiresAt))
+        ? rawPolicy.expiresAt
+        : undefined;
+    const status: SiteChannel["status"] =
+      channel.desiredState === "active" &&
+      expiresAt != null &&
+      expiresAt <= now
+        ? "expired"
+        : channel.status === "legacy_unverified" ||
+            channel.status === "unverified"
+          ? "unverified"
+          : channel.status === "revoked"
+            ? "cleanup_pending"
+            : channel.status;
+    out.push({
+      id: channel.id,
+      audience: channel.audience === "public" ? "anyone" : "link",
+      hosting: channel.hosting === "edge" ? "room" : "device",
+      url: channel.canonicalUrl,
+      status,
+      source: channel.targetRef,
+      slug: channel.audience === "link" ? channel.targetRef : undefined,
+      permission,
+      hasPassword,
+      expiresAt,
+      desiredState: channel.desiredState,
+      controllerNodeId: channel.controllerNodeId,
+    });
+  }
 
   for (const r of input.pendingRollbacks)
     out.push({
@@ -78,7 +173,7 @@ export function siteChannels(input: SiteChannelInput): SiteChannel[] {
       source: r.peerUrl,
     });
 
-  if (isPublic) {
+  if (isPublic && storedPublic.length === 0) {
     for (const p of input.publishStates)
       out.push({
         audience: "anyone",
@@ -100,7 +195,9 @@ export function siteChannels(input: SiteChannelInput): SiteChannel[] {
       });
   }
 
-  const links = input.shares.map((s) => shareChannel(s, now));
+  const links = input.shares
+    .filter((share) => !storedLinkRefs.has(share.slug))
+    .map((s) => shareChannel(s, now));
   // Rooms ahead of plain links: an always-on channel matters more to "where is
   // this reachable" than a device-bound one.
   links.sort((a, b) => Number(b.hosting === "room") - Number(a.hosting === "room"));
@@ -140,11 +237,15 @@ export function siteState(input: SiteChannelInput): SiteState {
   const has = (st: SiteChannel["status"]) => channels.some((c) => c.status === st);
   if (has("rollback_pending")) return "rollback_pending";
   if (has("cleanup_pending")) return "cleanup_pending";
+  if (has("waiting_controller")) return "cleanup_pending";
+  if (has("error")) return "error";
   if (has("provisioning")) return "provisioning";
   const live = channels.filter((c) => c.status === "ready" || c.status === "syncing");
   if (live.some((c) => c.hosting === "room")) return "room_live";
-  if (input.visibility === "public") {
-    const pub = channels.filter((c) => c.audience === "anyone");
+  const pub = channels.filter(
+    (c) => c.audience === "anyone" && c.desiredState !== "revoked",
+  );
+  if (pub.length > 0 || input.visibility === "public") {
     if (pub.some((c) => c.status === "ready")) return "device_live";
     if (pub.some((c) => c.status === "syncing")) return "device_syncing";
     return "public_unverified";

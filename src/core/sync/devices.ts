@@ -28,11 +28,14 @@ import {
 export interface DeviceChannel {
   /** paired_out = an outbound peer row here; grant_in = a credential we issued
    *  to it; oplog = its changes reached us (bucket or historic sync). */
-  kind: "paired_out" | "grant_in" | "oplog";
+  kind: "paired_out" | "grant_in" | "oplog" | "bucket_presence";
   /** peer url (paired_out) / full grant token (grant_in; surfaces mask it) /
    *  "" (oplog). */
   ref: string;
   lastSeenAt: number | null;
+  /** Future expiry of a currently-live publisher lease. It is not a
+   * last-activity timestamp and must not be rendered as one. */
+  leaseLiveUntil?: number | null;
   transport?: "http" | "s3" | "room";
 }
 
@@ -40,9 +43,11 @@ export interface DeviceChannel {
  * yes           — one-click: revoke the grant and/or remove the peer row.
  * bucket_rotate — only reachable through the shared bucket key: cutting it off
  *                 means rotating the bucket credentials (rotateStoragePeer).
+ * unknown       — only historical authorship is known; no destructive action
+ *                 can yet be tied to the right credential.
  * none          — this device itself, or nothing to revoke.
  */
-export type Revocable = "yes" | "bucket_rotate" | "none";
+export type Revocable = "yes" | "bucket_rotate" | "unknown" | "none";
 
 export interface DeviceView {
   /** null: a grant that never learned its peer's node id (one-directional). */
@@ -52,6 +57,11 @@ export interface DeviceView {
   channels: DeviceChannel[];
   lastActivityAt: number | null;
   revocable: Revocable;
+  /** Why the revocation verdict is safe to show. Unknown deliberately prevents
+   *  an unrelated configured bucket from being blamed for a historical oplog
+   *  author. */
+  revocationConfidence: "confirmed" | "unknown" | "none";
+  revocationSources: string[];
 }
 
 /** Fold the three stores into one per-device list: self first, then by most
@@ -62,7 +72,16 @@ export function listDevices(db: DbDriver): DeviceView[] {
   const ensure = (nodeId: string): DeviceView => {
     let v = byNode.get(nodeId);
     if (!v) {
-      v = { nodeId, label: null, self: nodeId === self, channels: [], lastActivityAt: null, revocable: "none" };
+      v = {
+        nodeId,
+        label: null,
+        self: nodeId === self,
+        channels: [],
+        lastActivityAt: null,
+        revocable: "none",
+        revocationConfidence: "none",
+        revocationSources: [],
+      };
       byNode.set(nodeId, v);
     }
     return v;
@@ -101,18 +120,29 @@ export function listDevices(db: DbDriver): DeviceView[] {
         channels: [ch],
         lastActivityAt: g.created_at,
         revocable: "yes",
+        revocationConfidence: "confirmed",
+        revocationSources: ["issued_grant"],
       });
   }
 
-  const hasBucket = peers.some((p) => p.kind === "s3" && p.enabled);
-  const views = [...byNode.values()].map((v) => {
+  const views: DeviceView[] = [...byNode.values()].map((v): DeviceView => {
     const last = v.channels.reduce<number | null>(
       (m, c) => (c.lastSeenAt != null && (m == null || c.lastSeenAt > m) ? c.lastSeenAt : m),
       null,
     );
     const direct = v.channels.some((c) => c.kind === "paired_out" || c.kind === "grant_in");
-    const revocable: Revocable = v.self ? "none" : direct ? "yes" : hasBucket ? "bucket_rotate" : "none";
-    return { ...v, lastActivityAt: last, revocable };
+    const revocable: Revocable = v.self ? "none" : direct ? "yes" : "unknown";
+    return {
+      ...v,
+      lastActivityAt: last,
+      revocable,
+      revocationConfidence: v.self ? "none" : direct ? "confirmed" : "unknown",
+      revocationSources: direct
+        ? v.channels
+            .filter((c) => c.kind === "paired_out" || c.kind === "grant_in")
+            .map((c) => c.ref)
+        : [],
+    };
   });
   views.sort(
     (a, b) => Number(b.self) - Number(a.self) || (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0),
@@ -126,6 +156,59 @@ export interface BucketPresence {
   inBucket: boolean;
   /** Publisher heartbeat expiry when live (≈ "recently online"), else null. */
   leaseLiveUntil: number | null;
+}
+
+export interface BucketPresenceResult {
+  url: string;
+  nodes?: BucketPresence[];
+  error?: string;
+}
+
+/** Refine an offline roster with online bucket evidence. Only an explicit
+ * stream/lease match may produce bucket_rotate; absence or refresh failure
+ * remains unknown because the oplog author might have arrived via old HTTP
+ * pairing or a bucket no longer attached here. */
+export function resolveDevicePresence(
+  devices: DeviceView[],
+  buckets: BucketPresenceResult[],
+): DeviceView[] {
+  return devices.map((device) => {
+    if (device.self || !device.nodeId || device.revocable === "yes") return device;
+    const confirmed = buckets.filter((bucket) =>
+      bucket.nodes?.some(
+        (node) =>
+          node.nodeId === device.nodeId &&
+          (node.inBucket || node.leaseLiveUntil != null),
+      ),
+    );
+    if (confirmed.length === 0) {
+      return {
+        ...device,
+        revocable: "unknown",
+        revocationConfidence: "unknown",
+        revocationSources: [],
+      };
+    }
+    const channels = [...device.channels];
+    for (const bucket of confirmed) {
+      const node = bucket.nodes!.find((n) => n.nodeId === device.nodeId)!;
+      if (!channels.some((c) => c.kind === "bucket_presence" && c.ref === bucket.url))
+        channels.push({
+          kind: "bucket_presence",
+          ref: bucket.url,
+          lastSeenAt: null,
+          leaseLiveUntil: node.leaseLiveUntil,
+          transport: "s3",
+        });
+    }
+    return {
+      ...device,
+      channels,
+      revocable: "bucket_rotate",
+      revocationConfidence: "confirmed",
+      revocationSources: confirmed.map((b) => b.url),
+    };
+  });
 }
 
 /** Online refresh for one bucket: which nodes' streams live in it and whose

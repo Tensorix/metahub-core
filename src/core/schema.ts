@@ -219,6 +219,34 @@ CREATE TABLE IF NOT EXISTS sites (
   __deleted   INTEGER NOT NULL DEFAULT 0
 );
 
+-- Synced desired-state control plane for each way a site is reachable. Access
+-- policy and hosting are separate axes; controller_node_id names the node that
+-- owns any node-local secret/cleanup work. Runtime success is NOT synced here
+-- (see node-local site_channel_observations below).
+CREATE TABLE IF NOT EXISTS site_channels (
+  id                 TEXT PRIMARY KEY,
+  site_id            TEXT,
+  audience           TEXT, -- 'public' | 'link'
+  hosting            TEXT, -- 'device' | 'edge'
+  controller_node_id TEXT,
+  target_ref         TEXT, -- serving node id (device) / capability slug (edge)
+  canonical_url      TEXT,
+  policy_json        TEXT,
+  desired_state      TEXT, -- 'active' | 'revoked'
+  created_hlc        TEXT,
+  __deleted          INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_site_channels_site ON site_channels(site_id);
+
+-- What THIS node has actually observed while applying a channel's desired
+-- state. Never replicated: readiness/errors are node-relative facts.
+CREATE TABLE IF NOT EXISTS site_channel_observations (
+  channel_id       TEXT PRIMARY KEY,
+  status           TEXT NOT NULL,
+  last_verified_at INTEGER,
+  last_error       TEXT
+);
+
 -- One row per file in a site. content holds inline utf8/base64 text, or a blob
 -- hash (see cache.ts) when encoding = 'blob'. (site_id, path) maps to a stable
 -- id so re-uploads merge as a CRDT register instead of duplicating.

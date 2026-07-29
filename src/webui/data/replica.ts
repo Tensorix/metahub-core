@@ -14,6 +14,15 @@ import type { S3Config } from "../../core/sync/storage.ts";
 /** Fired on `document` after a sync pulled remote changes; detail carries
  *  `{ datasets, rowIds }` so open views can refresh what they show. */
 export const SYNCED_EVENT = "mh-synced";
+export const REPLICA_LIFECYCLE_EVENT = "mh-replica-lifecycle";
+export type ReplicaLifecycle = "enabled" | "disabled" | "reset";
+
+function notifyReplicaLifecycle(state: ReplicaLifecycle): void {
+  if (typeof document !== "undefined")
+    document.dispatchEvent(
+      new CustomEvent<ReplicaLifecycle>(REPLICA_LIFECYCLE_EVENT, { detail: state }),
+    );
+}
 
 const ENABLED_KEY = "mh_replica";
 const HYDRATED_KEY = "mh_replica_hydrated";
@@ -239,7 +248,12 @@ function waitReady(timeoutMs = 30_000): Promise<void> {
  *  already holds the master token, so it mints the one-time code itself), then
  *  kick off hydration. Resolves once pairing succeeds — hydration progress
  *  streams via status events. */
-export async function enableReplica(): Promise<void> {
+export async function enableReplicaFromServer(): Promise<void> {
+  if (isNoOrigin())
+    throw new ReplicaError(
+      "此页面没有工作区主节点，不能使用服务器配对；请重新连接同步备份。",
+      "invalid_input",
+    );
   startReplica();
   await waitReady();
   if (!status.paired) {
@@ -251,7 +265,11 @@ export async function enableReplica(): Promise<void> {
   setFlag(ENABLED_KEY, true);
   ensurePwaRegistration(); // now a replica → register the SW live (no reload needed)
   requestSync();
+  notifyReplicaLifecycle("enabled");
 }
+
+/** @deprecated Use the topology-explicit enableReplicaFromServer. */
+export const enableReplica = enableReplicaFromServer;
 
 /**
  * No-origin onboarding: enroll a storage bucket as the data source when there's
@@ -270,6 +288,7 @@ export async function enableReplicaFromBucket(
   setFlag(ENABLED_KEY, true);
   ensurePwaRegistration(); // now a replica → register the SW live (no reload needed)
   requestSync();
+  notifyReplicaLifecycle("enabled");
   return r;
 }
 
@@ -286,6 +305,7 @@ export async function disableReplica(): Promise<void> {
   // Lightweight window keeps no SW: drop the offline gateway + shell/api caches so
   // it stops intercepting /api/* (the offline ERR_CONNECTION_REFUSED source).
   await teardownPwa();
+  notifyReplicaLifecycle("disabled");
 }
 
 /** Wipe the local replica entirely (settings → 重置本地副本): close + delete
@@ -300,7 +320,7 @@ export async function resetReplica(): Promise<void> {
     }
   } finally {
     getReplicaBus().stopWorker();
-    void teardownPwa(); // full wipe → also drop the SW + shell/api caches
+    await teardownPwa(); // full wipe → also drop the SW + shell/api caches
     // Drop the stale "ready" status and the started flag so a later
     // enableReplica() re-runs the full join (startReplica → fresh worker) and
     // waitReady() actually waits for that worker, instead of resolving on this
@@ -310,6 +330,7 @@ export async function resetReplica(): Promise<void> {
     started = false;
     status = { state: "booting", paired: false, node: null };
     for (const fn of statusListeners) fn(status);
+    notifyReplicaLifecycle("reset");
   }
 }
 

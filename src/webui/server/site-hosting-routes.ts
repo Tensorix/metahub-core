@@ -8,7 +8,7 @@ import {
 } from "../../core/config.ts";
 import { resolveSite, updateSite, setSitePublicGrants } from "../../core/sites.ts";
 import { parseGrantSet, type GrantSet } from "../../core/grants-core.ts";
-import { getPeer, syncPeer } from "../../core/sync/peers.ts";
+import { getPeer, listPeers, syncPeer } from "../../core/sync/peers.ts";
 import { type Route } from "../../core/sync/routes.ts";
 import {
   getPendingSiteRollback,
@@ -22,6 +22,16 @@ import {
   updatePendingSiteRollbackError,
 } from "../../core/sync/site-publish-recovery.ts";
 import { jsonHandler } from "./json-handler.ts";
+import {
+  listSiteChannelRows,
+  listSiteChannelViews,
+  putSiteChannel,
+  putSiteChannelObservation,
+  revokePublicSiteChannels,
+  setPublicSiteChannelPolicies,
+  setSiteChannelDesiredState,
+} from "../../core/site-channel-store.ts";
+import { reconcileSiteChannels } from "../../core/sync/site-channel-reconcile.ts";
 
 const GrantSetSchema = z.object({
   v: z.literal(1),
@@ -31,6 +41,32 @@ const GrantSetSchema = z.object({
       ops: z.array(z.enum(["read", "create", "update"])),
     }),
   ),
+});
+
+const SiteChannelViewSchema = z.object({
+  id: z.string(),
+  siteId: z.string(),
+  audience: z.enum(["public", "link"]),
+  hosting: z.enum(["device", "edge"]),
+  controllerNodeId: z.string(),
+  targetRef: z.string(),
+  canonicalUrl: z.string().nullable(),
+  policyJson: z.string().nullable(),
+  desiredState: z.enum(["active", "revoked"]),
+  status: z.enum([
+    "provisioning",
+    "syncing",
+    "ready",
+    "rollback_pending",
+    "cleanup_pending",
+    "error",
+    "legacy_unverified",
+    "revoked",
+    "waiting_controller",
+    "unverified",
+  ]),
+  lastVerifiedAt: z.number().nullable(),
+  lastError: z.string().nullable(),
 });
 
 const HostingSchema = z.object({
@@ -56,6 +92,7 @@ const HostingSchema = z.object({
       updatedAt: z.number(),
     }),
   ),
+  channels: z.array(SiteChannelViewSchema),
 });
 
 const VerifyReq = z.object({ url: z.string() });
@@ -73,7 +110,13 @@ const PublishReq = z.object({
 });
 const PublishRes = z.object({
   access: z.enum(["public", "private"]),
-  status: z.enum(["ready", "syncing", "private", "rollback_pending"]),
+  status: z.enum([
+    "ready",
+    "syncing",
+    "private",
+    "rollback_pending",
+    "cleanup_pending",
+  ]),
   url: z.string().nullable(),
   host: z.string().nullable(),
   error: z.string().optional(),
@@ -142,6 +185,7 @@ async function verifyBase(
     const body = (await limitedJson(res, HEALTH_RESPONSE_MAX)) as {
       ok?: boolean;
       node?: string;
+      capabilities?: unknown;
     } | null;
     if (!body?.ok || !body.node)
       throw new MhError("network", "站点入口健康响应无效");
@@ -149,6 +193,14 @@ async function verifyBase(
       throw new MhError(
         "conflict",
         `站点入口节点不匹配（期望 ${expectedNode}，实际 ${body.node}）；这是防误配检查，不是身份认证`,
+      );
+    if (
+      !Array.isArray(body.capabilities) ||
+      !body.capabilities.includes("site_channels")
+    )
+      throw new MhError(
+        "conflict",
+        "目标设备版本不支持定向发布渠道；请先升级该设备，再重新验证入口",
       );
     return { ...base, node: body.node };
   } catch (e) {
@@ -202,6 +254,7 @@ export const siteHostingRoutes: Route[] = [
         node,
         pendingRollbacks: listPendingSiteRollbacks(db),
         publishedSites: listSitePublishStates(db),
+        channels: listSiteChannelViews(db),
       };
     }),
   },
@@ -221,6 +274,7 @@ export const siteHostingRoutes: Route[] = [
           node,
           pendingRollbacks: listPendingSiteRollbacks(db),
           publishedSites: listSitePublishStates(db),
+          channels: listSiteChannelViews(db),
         };
       }
       const checked = await verifyBase(
@@ -235,6 +289,7 @@ export const siteHostingRoutes: Route[] = [
         node,
         pendingRollbacks: listPendingSiteRollbacks(db),
         publishedSites: listSitePublishStates(db),
+        channels: listSiteChannelViews(db),
       };
     }),
   },
@@ -271,9 +326,112 @@ export const siteHostingRoutes: Route[] = [
       };
       const before = resolveSite(db, body.siteId);
       if (body.access === "private") {
+        const channels = listSiteChannelRows(db, before.id).filter(
+          (channel) =>
+            channel.audience === "public" &&
+            channel.desired_state === "active",
+        );
+        revokePublicSiteChannels(db, before.id);
+        const remoteTargets = [
+          ...new Set(
+            channels
+              .filter(
+                (channel) =>
+                  channel.hosting === "device" &&
+                  channel.target_ref !== node,
+              )
+              .map((channel) => channel.target_ref),
+          ),
+        ];
+        const results = new Map<
+          string,
+          { ok: boolean; error?: string }
+        >();
+        await Promise.all(
+          remoteTargets.map(async (targetNode) => {
+            const peer = listPeers(db).find(
+              (candidate) =>
+                candidate.kind === "http" &&
+                candidate.enabled === 1 &&
+                candidate.node_id === targetNode,
+            );
+            if (!peer) {
+              results.set(targetNode, {
+                ok: false,
+                error: "没有可直连的托管设备，等待后续同步",
+              });
+              return;
+            }
+            const result = await syncPeer(db, peer.url, {
+              timeoutMs: 10_000,
+            });
+            results.set(targetNode, {
+              ok: result.ok,
+              ...(result.error ? { error: result.error } : {}),
+            });
+          }),
+        );
+        for (const channel of channels) {
+          const remoteResult = results.get(channel.target_ref);
+          putSiteChannelObservation(db, {
+            channelId: channel.id,
+            status:
+              channel.hosting === "device" &&
+              channel.target_ref === node
+                ? "revoked"
+                : remoteResult?.ok
+                  ? "revoked"
+                  : "cleanup_pending",
+            lastVerifiedAt:
+              (
+                channel.hosting === "device" &&
+                channel.target_ref === node
+              ) ||
+              remoteResult?.ok
+                ? Date.now()
+                : null,
+            lastError:
+              (
+                channel.hosting === "device" &&
+                channel.target_ref === node
+              ) ||
+              remoteResult?.ok
+                ? null
+                : remoteResult?.error ??
+                  "等待控制设备同步撤销状态",
+          });
+        }
         updateSite(db, before.id, { visibility: "private" });
         removeSitePublishStates(db, before.id);
-        return { access: "private", status: "private", url: null, host: null };
+        const pending = channels.filter(
+          (channel) =>
+            !(
+              channel.hosting === "device" &&
+              (
+                channel.target_ref === node ||
+                results.get(channel.target_ref)?.ok
+              )
+            ),
+        );
+        return {
+          access: "private",
+          status:
+            pending.length > 0 ? "cleanup_pending" : "private",
+          url: null,
+          host: null,
+          ...(pending.length > 0
+            ? {
+                error: pending
+                  .map(
+                    (channel) =>
+                      results.get(channel.target_ref)?.error ??
+                      "等待控制设备同步撤销状态",
+                  )
+                  .filter(Boolean)
+                  .join("；"),
+              }
+            : {}),
+        };
       }
 
       const peer = body.targetBase ? getPeer(db, body.targetBase) : null;
@@ -294,19 +452,50 @@ export const siteHostingRoutes: Route[] = [
         expectedNode,
         peer ? true : allowRemoteSiteHosting ?? true,
       );
+      const url = `${checked.url}/sites/${encodeURIComponent(before.name)}/`;
+      const previousChannel = listSiteChannelRows(db, before.id).find(
+        (channel) =>
+          channel.audience === "public" &&
+          channel.hosting === "device" &&
+          channel.target_ref === expectedNode,
+      );
+      let channelId: string | null = null;
       const previousGrants = parseGrantSet(before.public_grants);
       try {
+        const channel = putSiteChannel(db, {
+          siteId: before.id,
+          audience: "public",
+          hosting: "device",
+          // For a device channel the host applies synced revocation, so it is
+          // also the controller even when another node initiated publishing.
+          controllerNodeId: expectedNode,
+          targetRef: expectedNode,
+          canonicalUrl: url,
+          policy: body.grants ?? { v: 1, tables: [] },
+        });
+        channelId = channel.id;
+        putSiteChannelObservation(db, {
+          channelId,
+          status: "provisioning",
+        });
         setSitePublicGrants(
           db,
           before.id,
           body.grants && body.grants.tables.length ? body.grants : null,
         );
-        updateSite(db, before.id, { visibility: "public" });
+        setPublicSiteChannelPolicies(
+          db,
+          before.id,
+          body.grants ?? { v: 1, tables: [] },
+        );
+        // Channel rows are the access authority. Keep the legacy global
+        // visibility register private so a mixed-version peer cannot ignore
+        // the target node and accidentally serve this site too.
+        updateSite(db, before.id, { visibility: "private" });
         if (peer) {
           const sync = await syncPeer(db, peer.url, { timeoutMs: 10_000 });
           if (!sync.ok) throw new MhError("network", sync.error || "配对设备同步失败");
         }
-        const url = `${checked.url}/sites/${encodeURIComponent(before.name)}/`;
         const ready = await pollSite(url);
         putSitePublishState(db, {
           siteId: before.id,
@@ -315,6 +504,11 @@ export const siteHostingRoutes: Route[] = [
           status: ready ? "ready" : "syncing",
           updatedAt: Date.now(),
         });
+        putSiteChannelObservation(db, {
+          channelId,
+          status: ready ? "ready" : "syncing",
+          lastVerifiedAt: ready ? Date.now() : null,
+        });
         return {
           access: "public",
           status: ready ? "ready" : "syncing",
@@ -322,11 +516,46 @@ export const siteHostingRoutes: Route[] = [
           host: checked.url,
         };
       } catch (e) {
+        if (channelId) {
+          if (previousChannel) {
+            let previousPolicy: unknown = null;
+            try {
+              previousPolicy =
+                previousChannel.policy_json == null
+                  ? null
+                  : JSON.parse(previousChannel.policy_json);
+            } catch {
+              // Invalid synced policy stays default-deny during rollback.
+            }
+            putSiteChannel(db, {
+              id: previousChannel.id,
+              siteId: previousChannel.site_id,
+              audience: "public",
+              hosting: "device",
+              controllerNodeId: previousChannel.controller_node_id,
+              targetRef: previousChannel.target_ref,
+              canonicalUrl: previousChannel.canonical_url,
+              policy: previousPolicy,
+              desiredState:
+                previousChannel.desired_state === "active"
+                  ? "active"
+                  : "revoked",
+            });
+          } else {
+            setSiteChannelDesiredState(db, channelId, "revoked");
+          }
+          putSiteChannelObservation(db, {
+            channelId,
+            status: peer ? "rollback_pending" : "error",
+            lastError: (e as Error).message || "发布失败",
+          });
+        }
         setSitePublicGrants(
           db,
           before.id,
           previousGrants.tables.length ? previousGrants : null,
         );
+        setPublicSiteChannelPolicies(db, before.id, previousGrants);
         updateSite(db, before.id, {
           visibility: before.visibility === "public" ? "public" : "private",
         });
@@ -387,6 +616,63 @@ export const siteHostingRoutes: Route[] = [
         url: null,
         host: new URL(pending.targetUrl).origin,
       };
+    }),
+  },
+  {
+    method: "PATCH",
+    path: "/api/site/channel",
+    summary:
+      "Change a synced site channel's desired state; controller applies node-local cleanup when online.",
+    request: z.object({
+      id: z.string(),
+      desiredState: z.literal("revoked"),
+    }),
+    response: SiteChannelViewSchema,
+    handler: jsonHandler(async (req, { db, node }) => {
+      const body = z
+        .object({ id: z.string(), desiredState: z.literal("revoked") })
+        .parse(await req.json());
+      const channel = setSiteChannelDesiredState(
+        db,
+        body.id,
+        body.desiredState,
+      );
+      if (
+        channel.audience === "public" &&
+        !listSiteChannelRows(db, channel.site_id).some(
+          (item) =>
+            item.audience === "public" &&
+            item.desired_state === "active",
+        )
+      ) {
+        // Dual-write the legacy register until every client is channel-aware.
+        // Otherwise an older synced node could keep serving after the final v2
+        // public channel was revoked.
+        updateSite(db, channel.site_id, { visibility: "private" });
+      }
+      if (
+        channel.hosting === "device" &&
+        channel.target_ref === node
+      ) {
+        putSiteChannelObservation(db, {
+          channelId: channel.id,
+          status: "revoked",
+          lastVerifiedAt: Date.now(),
+        });
+      } else if (channel.controller_node_id === node) {
+        await reconcileSiteChannels(db);
+      } else {
+        putSiteChannelObservation(db, {
+          channelId: channel.id,
+          status: "cleanup_pending",
+          lastError: "等待控制设备上线并应用撤销",
+        });
+      }
+      const view = listSiteChannelViews(db).find(
+        (item) => item.id === channel.id,
+      );
+      if (!view) throw new MhError("not_found", "站点渠道已不存在");
+      return view;
     }),
   },
 ];

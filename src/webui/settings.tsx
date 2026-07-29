@@ -27,7 +27,7 @@ import {
   replicaEnabled,
   replicaStatus,
   onReplicaStatus,
-  enableReplica,
+  enableReplicaFromServer,
   disableReplica,
   resetReplica,
   requestSync,
@@ -813,7 +813,8 @@ function BackupPage() {
               <div class="cloud-cta-text">
                 <div class="cloud-cta-title">连接 Cloudflare</div>
                 <div class="cloud-cta-sub">
-                  一次登录，同时开通云端备份（R2 同步桶，免费 10GB）与始终在线入口（Edge）。数据全程端到端加密，云端只见密文。
+                  登录后可部署 Edge，并可选择创建一个 R2 桶。R2 接入还需要在 Cloudflare
+                  控制台创建 S3 凭据并设置加密口令；向导会分步引导，不会声称已自动完成。
                 </div>
               </div>
               <button
@@ -840,7 +841,7 @@ function BackupPage() {
           ) : (
             <SetRow
               title="还没连接存储桶"
-              caption="连一个云端存储桶，所有设备就能保持同步——内容端到端加密。"
+              caption="连接一个同步存储桶，让各设备交换加密后的工作区数据。"
               control={<button class="btn btn-primary" onClick={add}>连接存储桶</button>}
             />
           )
@@ -1171,7 +1172,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
   const enable = async () => {
     setBusy(true);
     try {
-      await enableReplica();
+      await enableReplicaFromServer();
       setEnabled(true);
       toast("离线副本已启用，正在下载数据…");
     } catch (e) {
@@ -1183,10 +1184,11 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
 
   const disable = async () => {
     const ok = await confirmDialog({
-      title: "停用离线副本",
-      message:
-        "此浏览器将恢复纯在线模式。已下载的本地数据保留在浏览器里，重新启用后从断点续传。",
-      confirmLabel: "停用",
+      title: noOrigin ? "断开同步备份？" : "停用离线副本",
+      message: noOrigin
+        ? "此页面没有在线主节点可回退。断开后会返回「连接同步备份」；已下载的数据仍保留在浏览器里，重新连接后可从断点继续。若要同时删除本地数据，请使用下方「重置本地副本」。"
+        : "此浏览器将恢复纯在线模式。已下载的本地数据保留在浏览器里，重新启用后从断点续传。",
+      confirmLabel: noOrigin ? "断开" : "停用",
       danger: true,
     });
     if (!ok) return;
@@ -1202,7 +1204,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     try {
       await disableReplica();
       setEnabled(false);
-      toast("已停用离线副本");
+      toast(noOrigin ? "已断开，请重新连接同步备份" : "已停用离线副本");
       if (hadSw) location.reload();
     } finally {
       setBusy(false);
@@ -1210,10 +1212,12 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
   };
 
   const reset = async () => {
+    const bucketOnly = isNoOrigin();
     const ok = await confirmDialog({
       title: "重置本地副本",
-      message:
-        "将删除此浏览器里的全部本地数据（服务器数据不受影响），并停用离线副本。未同步的本地修改会丢失——建议先「立即同步」。",
+      message: bucketOnly
+        ? "将删除此浏览器里的本地副本并返回「连接同步备份」。存储桶中已完成同步的数据不受影响；尚未同步的本地修改和本地附件会丢失。建议先确认上方显示“当前版本已确认”。"
+        : "将删除此浏览器里的全部本地数据并停用离线副本。工作区主节点的数据不受影响；尚未同步的本地修改会丢失。建议先「立即同步」。",
       confirmLabel: "删除并重置",
       danger: true,
     });
@@ -1222,7 +1226,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     try {
       await resetReplica();
       setEnabled(false);
-      toast("本地副本已重置");
+      toast(bucketOnly ? "本地副本已重置，请重新连接同步备份" : "本地副本已重置");
     } catch (e) {
       toast(`重置失败：${(e as Error).message}`);
     } finally {
@@ -1741,7 +1745,8 @@ function QuickNotesSettings() {
 const DEVICE_CHANNEL_LABEL: Record<string, string> = {
   paired_out: "直连配对",
   grant_in: "已授权接入",
-  oplog: "存储桶或历史同步",
+  oplog: "历史同步记录",
+  bucket_presence: "已确认存储桶",
 };
 
 /** One list for every device touching the workspace (core sync/devices.ts):
@@ -1753,6 +1758,7 @@ function DevicesPanel() {
   const [peers, setPeers] = useState<Peer[]>([]);
   const [buckets, setBuckets] = useState<S3Peer[]>([]);
   const [open, setOpen] = useState<string | null>(null);
+  const [presenceRefreshing, setPresenceRefreshing] = useState(false);
 
   const reload = () => {
     api.listDevices().then(setDevices).catch((e) => toast(`加载失败：${e.message}`));
@@ -1760,7 +1766,24 @@ function DevicesPanel() {
     api.listServerS3Peers().then(setBuckets).catch(() => undefined);
   };
   useEffect(() => {
-    reload();
+    let live = true;
+    api.listPeers().then((rows) => live && setPeers(rows)).catch(() => undefined);
+    api.listServerS3Peers().then((rows) => live && setBuckets(rows)).catch(() => undefined);
+    api.listDevices()
+      .then((rows) => {
+        if (!live) return;
+        setDevices(rows);
+        setPresenceRefreshing(true);
+        return api.refreshDevicePresence();
+      })
+      .then((resolved) => {
+        if (live && resolved) setDevices(resolved.devices);
+      })
+      .catch((e) => live && toast(`设备来源刷新失败：${e.message}`))
+      .finally(() => live && setPresenceRefreshing(false));
+    return () => {
+      live = false;
+    };
   }, []);
 
   const syncNow = async (url: string) => {
@@ -1850,7 +1873,11 @@ function DevicesPanel() {
                   ([...new Set(d.channels.map((c) => DEVICE_CHANNEL_LABEL[c.kind]))].join(" · ") || "—") +
                   " · 最近活动 " +
                   (d.lastActivityAt ? timeAgo(d.lastActivityAt) : "未知") +
-                  (!d.self && d.revocable === "bucket_rotate" ? " · 共用存储钥匙" : "")
+                  (!d.self && d.revocable === "bucket_rotate"
+                    ? " · 已确认共用存储钥匙"
+                    : !d.self && d.revocable === "unknown"
+                      ? " · 来源待确认"
+                      : "")
                 }
                 onClick={() => setOpen(expanded ? null : key)}
                 control={
@@ -1866,7 +1893,13 @@ function DevicesPanel() {
                       <div key={i} class="device-detail-line">
                         <span class="device-ch-label">{DEVICE_CHANNEL_LABEL[c.kind]}</span>
                         <span class="device-ch-ref">{c.kind === "grant_in" ? `${c.ref}…` : c.ref}</span>
-                        <span class="muted">{c.lastSeenAt ? fmtTime(c.lastSeenAt) : ""}</span>
+                        <span class="muted">
+                          {c.leaseLiveUntil
+                            ? `在线租约至 ${fmtTime(c.leaseLiveUntil)}`
+                            : c.lastSeenAt
+                              ? fmtTime(c.lastSeenAt)
+                              : ""}
+                        </span>
                         {c.kind === "paired_out" && (
                           <span class="device-ch-actions">
                             <button class="btn btn-ghost" onClick={() => syncNow(c.ref)}>立即同步</button>
@@ -1885,7 +1918,17 @@ function DevicesPanel() {
                     ))}
                     {!d.self && d.revocable === "bucket_rotate" && (
                       <div class="device-detail-note">
-                        通过云端存储同步的设备共用同一把存储钥匙，无法单独移除。要让丢失的设备失去访问：先在存储服务商停用旧钥匙，再到「数据与备份」该桶的菜单里选「轮换存储密钥」。<b>它已下载的数据无法追回。</b>
+                        已在以下同步备份中确认该设备：
+                        <code>{d.revocationSources.join("、")}</code>。这些设备共用存储凭据，无法单独移除。
+                        要让丢失的设备失去后续访问：先在存储服务商停用旧钥匙，再到「数据与备份」对应桶的菜单里选
+                        「轮换存储密钥」。<b>它已下载的数据无法追回。</b>
+                      </div>
+                    )}
+                    {!d.self && d.revocable === "unknown" && (
+                      <div class="device-detail-note">
+                        {presenceRefreshing
+                          ? "正在核对已连接的同步备份…"
+                          : "只能确认这个节点曾写入工作区，无法确认它来自历史直连、已移除的备份，还是当前存储桶。为避免轮换错误的密钥，这里不会给出破坏性操作；请先检查该设备和各存储服务的访问记录。"}
                       </div>
                     )}
                   </div>

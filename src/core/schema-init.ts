@@ -9,6 +9,7 @@ import { backfillRecordOrderKeys } from "./records.ts";
 import { backfillDocumentOrderKeys } from "./documents.ts";
 import { readPolicy, setFullNodes } from "./blobs-core.ts";
 import { storageUrl } from "./sync/storage-url.ts";
+import { applyChange, CHANGE_SELECT, type Change } from "./crdt.ts";
 
 export function runSchema(db: DbDriver): void {
   db.exec(CORE_SCHEMA);
@@ -378,6 +379,24 @@ export function migrateSitesAccess(db: DbDriver): void {
   }
 }
 
+/** Re-materialize site_channels changes an older binary may already have pulled
+ * and retained in its oplog while ignoring the unknown dataset. runSchema has
+ * created the table by this point; replaying existing winners is idempotent
+ * because applyChange re-materializes even when INSERT OR IGNORE is a no-op. */
+export function migrateSiteChannels(db: DbDriver): void {
+  if (!tableExists(db, "site_channels")) return;
+  const changes = db
+    .query(
+      `SELECT ${CHANGE_SELECT} FROM crdt_changes
+       WHERE dataset = 'site_channels' ORDER BY seq`,
+    )
+    .all() as Change[];
+  if (changes.length === 0) return;
+  db.transaction((rows: Change[]) => {
+    for (const change of rows) applyChange(db, change);
+  })(changes);
+}
+
 /** Bring a freshly opened (or legacy) database to the current schema. */
 export function initSchema(db: DbDriver): void {
   runSchema(db);
@@ -392,4 +411,5 @@ export function initSchema(db: DbDriver): void {
   migrateBlobCache(db);
   migrateShares(db);
   migrateSitesAccess(db);
+  migrateSiteChannels(db);
 }

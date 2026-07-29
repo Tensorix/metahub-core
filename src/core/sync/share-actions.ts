@@ -39,6 +39,12 @@ import { MAX_PRESIGN_SECONDS } from "./storage-s3-bun.ts";
 import type { S3Config } from "./storage.ts";
 import { edgeCapabilities, getEdgeConfig } from "./edge-config.ts";
 import { roomUrlOf } from "./room-url.ts";
+import {
+  listSiteChannelRows,
+  putSiteChannel,
+  putSiteChannelObservation,
+  setSiteChannelDesiredState,
+} from "../site-channel-store.ts";
 
 const DEFAULT_SHARE_VIEWER = "https://share.mh.tensorix.org";
 const DEFAULT_S3_EXPIRY_SEC = MAX_PRESIGN_SECONDS;
@@ -115,6 +121,37 @@ export interface ShareListItem {
   /** server: ready-to-copy link; s3: omitted (use renew to mint a fresh one). */
   url?: string;
   lifecycle?: "active" | "provisioning" | "cleanup_pending";
+}
+
+function recordSiteLinkChannel(
+  db: DbDriver,
+  input: {
+    siteId: string;
+    slug: string;
+    hosting: "server" | "room";
+    url: string;
+    permission: SharePermission;
+    hasPassword: boolean;
+    expiresAt: number | null;
+  },
+): void {
+  const channel = putSiteChannel(db, {
+    siteId: input.siteId,
+    audience: "link",
+    hosting: input.hosting === "room" ? "edge" : "device",
+    targetRef: input.slug,
+    canonicalUrl: input.url,
+    policy: {
+      permission: input.permission,
+      hasPassword: input.hasPassword,
+      expiresAt: input.expiresAt,
+    },
+  });
+  putSiteChannelObservation(db, {
+    channelId: channel.id,
+    status: "ready",
+    lastVerifiedAt: Date.now(),
+  });
 }
 
 /** Best-effort human title of a shared target (falls back to the id). */
@@ -385,7 +422,7 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
     if (hosting === "room" && !activeRoom)
       throw new MhError("conflict", "Edge Room creation did not finish; retry with a new request");
     const base = existing.served_base ?? req.server ?? "";
-    return {
+    const created: CreatedShare = {
       slug: existing.slug,
       kind: existing.kind,
       permission: existing.permission,
@@ -397,6 +434,17 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
       expiresAt: existing.expires_at,
       source: activeRoom ? "Edge Room" : base || "本机服务器",
     };
+    if (existing.kind === "site")
+      recordSiteLinkChannel(db, {
+        siteId: existing.target_id,
+        slug: existing.slug,
+        hosting: activeRoom ? "room" : "server",
+        url: created.url,
+        permission: existing.permission,
+        hasPassword: !!existing.pw_hash,
+        expiresAt: existing.expires_at,
+      });
+    return created;
   }
   // Room preflight BEFORE minting the row — a doomed request must not leave a
   // create-then-delete trace (kind is covered by assertShareCombo above).
@@ -440,7 +488,7 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
       throw e;
     }
   }
-  return {
+  const created: CreatedShare = {
     slug: share.slug,
     kind: req.kind,
     permission,
@@ -450,6 +498,17 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
     expiresAt: share.expires_at,
     source: roomUrl ? "Edge Room" : servedBase || "本机服务器",
   };
+  if (share.kind === "site")
+    recordSiteLinkChannel(db, {
+      siteId: share.target_id,
+      slug: share.slug,
+      hosting,
+      url: created.url,
+      permission: share.permission,
+      hasPassword: !!share.pw_hash,
+      expiresAt: share.expires_at,
+    });
+  return created;
 }
 
 /** This node's server-share rows only (sync, no network) — the bucket-free
@@ -616,11 +675,34 @@ export interface RevokeShareResult {
 
 export async function revokeShareAction(db: DbDriver, slug: string): Promise<RevokeShareResult> {
   if (getShare(db, slug)) {
+    const channels = listSiteChannelRows(db).filter(
+      (channel) =>
+        channel.audience === "link" &&
+        channel.target_ref === slug &&
+        channel.desired_state === "active",
+    );
+    for (const channel of channels)
+      setSiteChannelDesiredState(db, channel.id, "revoked");
     const { teardownRoomForShare } = await import("./room-peer.ts");
     const teardown = await teardownRoomForShare(db, slug);
-    if (teardown === "cleanup_pending") return { ok: false, status: "cleanup_pending" };
+    if (teardown === "cleanup_pending") {
+      for (const channel of channels)
+        putSiteChannelObservation(db, {
+          channelId: channel.id,
+          status: "cleanup_pending",
+          lastError: "Edge 尚未确认销毁 Room",
+        });
+      return { ok: false, status: "cleanup_pending" };
+    }
+    const deleted = deleteShare(db, slug);
+    for (const channel of channels)
+      putSiteChannelObservation(db, {
+        channelId: channel.id,
+        status: "revoked",
+        lastVerifiedAt: Date.now(),
+      });
     return {
-      ok: deleteShare(db, slug),
+      ok: deleted,
       status: "revoked",
     };
   }

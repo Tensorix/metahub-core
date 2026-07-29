@@ -13,6 +13,9 @@ import {
   onReplicaStatus,
   replicaStatus,
   syncReplicaNow,
+  isNoOrigin,
+  REPLICA_LIFECYCLE_EVENT,
+  type ReplicaLifecycle,
 } from "./data/replica.ts";
 import { Enroll } from "./enroll.tsx";
 import { Icon } from "./icons.tsx";
@@ -371,8 +374,8 @@ function App() {
     saveState === "share"
       ? "分享"
       : saveState === "error"
-        ? `保存到云端失败：${replicaSt.bucketError ?? ""}`
-        : `保存到云端${saveHint}`;
+        ? `保存到同步备份失败：${replicaSt.bucketError ?? ""}`
+        : `保存到同步备份${saveHint}`;
 
   // Quiet success / loud failure: success rides on the inline "已保存" flash
   // (saveFlash, see above), so no success toast — we only shout on failure.
@@ -383,7 +386,7 @@ function App() {
       await syncReplicaNow();
       const st = replicaStatus();
       if (st.bucketError) throw new Error(st.bucketError);
-      if (st.bucketDirty) throw new Error("仍有改动尚未保存到云端");
+      if (st.bucketDirty) throw new Error("仍有改动尚未保存到同步备份");
     } catch (err) {
       toast(`保存失败：${(err as Error).message}`);
     }
@@ -717,6 +720,19 @@ function Root() {
     });
   }, []);
 
+  // Reset/disable can happen while <App> is already mounted. A no-origin shell
+  // has no HTTP fallback, so transition immediately back to enrollment instead
+  // of leaving a dead settings screen whose "enable" path calls /api/pair/new.
+  useEffect(() => {
+    const onLifecycle = (event: Event) => {
+      const state = (event as CustomEvent<ReplicaLifecycle>).detail;
+      if (state === "enabled") return;
+      if (isNoOrigin()) setMode("enroll");
+    };
+    document.addEventListener(REPLICA_LIFECYCLE_EVENT, onLifecycle);
+    return () => document.removeEventListener(REPLICA_LIFECYCLE_EVENT, onLifecycle);
+  }, []);
+
   // Flip to the app once the bucket hydration completes.
   useEffect(() => {
     if (mode !== "hydrating") return;
@@ -729,7 +745,7 @@ function Root() {
   if (mode === "detecting") return <Splash text="加载中…" />;
   if (mode === "enroll")
     return <Enroll onDone={() => setMode(replicaActive() ? "app" : "hydrating")} />;
-  if (mode === "hydrating") return <Splash text="正在从云端水合本地副本…" />;
+  if (mode === "hydrating") return <Splash text="正在从同步备份恢复本地副本…" />;
   return <App />;
 }
 

@@ -126,6 +126,21 @@ export const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
     table: "sites",
     cols: new Set(["name", "title", "created_hlc", "visibility", "spa", "public_grants", "__deleted"]),
   },
+  site_channels: {
+    table: "site_channels",
+    cols: new Set([
+      "site_id",
+      "audience",
+      "hosting",
+      "controller_node_id",
+      "target_ref",
+      "canonical_url",
+      "policy_json",
+      "desired_state",
+      "created_hlc",
+      "__deleted",
+    ]),
+  },
   site_files: {
     table: "site_files",
     cols: new Set([
@@ -181,6 +196,7 @@ export const NOT_NULL_ZERO_COLS = new Set([
   "doc_blocks:blank_after",
   "sites:__deleted",
   "sites:spa",
+  "site_channels:__deleted",
   "site_files:__deleted",
   "blob_policy:__deleted",
 ]);

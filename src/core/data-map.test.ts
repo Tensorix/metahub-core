@@ -13,6 +13,9 @@ const base = (over: Partial<DataMapInput> = {}): DataMapInput => ({
   pendingBlobCount: 0,
   pendingBlobBytes: 0,
   blobFullNodes: [],
+  globalHighWaterSeq: 0,
+  ownHighWaterSeq: 0,
+  staleAfterMs: 200_000,
   now: 1_000_000,
   ...over,
 });
@@ -26,6 +29,7 @@ const httpPeer = (over: Partial<DataMapPeerInput> = {}): DataMapPeerInput => ({
   lastSuccessAt: 900_000,
   lastStatus: "ok",
   lastError: null,
+  pushCursor: 0,
   ...over,
 });
 
@@ -38,6 +42,7 @@ const s3Peer = (over: Partial<DataMapPeerInput> = {}): DataMapPeerInput => ({
   lastSuccessAt: 800_000,
   lastStatus: "ok",
   lastError: null,
+  pushCursor: 0,
   bucket: "bkt",
   publish: true,
   ...over,
@@ -125,4 +130,45 @@ test("labels: peer label wins, bucket name falls back, then url host", () => {
   expect(labels).toContain("我的 R2");
   expect(labels).toContain("other");
   expect(labels).toContain("box.local:7777");
+});
+
+test("a local edit after the last acknowledgement is not reported healthy", () => {
+  const input = base({
+    globalHighWaterSeq: 12,
+    ownHighWaterSeq: 12,
+    peers: [httpPeer({ pushCursor: 9 })],
+  });
+  const state = dataMapState(input);
+  expect(state.state).toBe("unsynced_changes");
+  expect(state.pendingChanges).toBe(3);
+  expect(state.places).toBe(1);
+  expect(dataPlaces(input)[1]).toMatchObject({
+    freshness: "behind",
+    acknowledgedSeq: 9,
+    highWaterSeq: 12,
+    lag: 3,
+  });
+});
+
+test("S3 compares its cursor with own-node high-water, not foreign pulled rows", () => {
+  const input = base({
+    globalHighWaterSeq: 50,
+    ownHighWaterSeq: 7,
+    peers: [s3Peer({ pushCursor: 7 })],
+  });
+  expect(dataMapState(input).state).toBe("healthy");
+  expect(dataPlaces(input)[1]).toMatchObject({
+    freshness: "current",
+    highWaterSeq: 7,
+  });
+});
+
+test("an acknowledged but old confirmation is stale", () => {
+  const input = base({
+    now: 1_000_000,
+    staleAfterMs: 50_000,
+    peers: [httpPeer({ lastSuccessAt: 900_000 })],
+  });
+  expect(dataMapState(input).state).toBe("stale");
+  expect(dataPlaces(input)[1]!.freshness).toBe("stale");
 });

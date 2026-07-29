@@ -26,7 +26,13 @@ import { type S3Config } from "../../core/sync/storage.ts";
 import { encodeRecoveryCode } from "../../core/sync/recovery.ts";
 import { fromB64 } from "../../core/sync/e2ee.ts";
 import { decodeEnroll } from "../../core/sync/enroll.ts";
-import { listDevices, refreshBucketPresence, type DeviceView } from "../../core/sync/devices.ts";
+import {
+  listDevices,
+  refreshBucketPresence,
+  resolveDevicePresence,
+  type BucketPresenceResult,
+  type DeviceView,
+} from "../../core/sync/devices.ts";
 import { provisionR2Bucket } from "../../core/sync/edge-service.ts";
 import {
   cfOAuthConfigured,
@@ -39,7 +45,7 @@ import { runEdgeDeploy, runEdgeConnect, runEdgeRotateKeys } from "./edge.ts";
 import { getEdgeConfig } from "../../core/sync/edge-config.ts";
 import { putBucketCors } from "../../core/sync/storage-s3-bun.ts";
 import { MhError } from "../../core/errors.ts";
-import { print, table, guard } from "../output.ts";
+import { print, table, guard, warn } from "../output.ts";
 import * as p from "@clack/prompts";
 
 // Single command, positional dispatch. citty subCommands are unusable here for
@@ -544,7 +550,8 @@ const maskToken = (t: string) => (t.length > 10 ? `${t.slice(0, 8)}…` : t);
 const CHANNEL_LABEL: Record<string, string> = {
   paired_out: "paired",
   grant_in: "grant",
-  oplog: "bucket/history",
+  oplog: "history",
+  bucket_presence: "confirmed-bucket",
 };
 
 function deviceRow(d: DeviceView) {
@@ -554,7 +561,14 @@ function deviceRow(d: DeviceView) {
     node: d.nodeId ?? "",
     joined: joined || "-",
     last_activity: iso(d.lastActivityAt),
-    removable: d.revocable === "yes" ? "yes" : d.revocable === "bucket_rotate" ? "rotate bucket" : "-",
+    removable:
+      d.revocable === "yes"
+        ? "yes"
+        : d.revocable === "bucket_rotate"
+          ? `rotate ${d.revocationSources.join(",")}`
+          : d.revocable === "unknown"
+            ? "unknown source"
+            : "-",
   };
 }
 
@@ -579,17 +593,24 @@ async function deviceDispatch(
     case "code":
       return peerDispatch(db, action, args);
     case "list": {
-      const devices = listDevices(db);
-      let presence: { url: string; nodes?: unknown; error?: string }[] | undefined;
+      let devices = listDevices(db);
+      let presence: BucketPresenceResult[] | undefined;
       if (args.refresh) {
-        presence = [];
-        for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.enabled)) {
-          try {
-            presence.push({ url: p.url, nodes: await refreshBucketPresence(db, p.url) });
-          } catch (e) {
-            presence.push({ url: p.url, error: (e as Error).message });
-          }
-        }
+        presence = await Promise.all(
+          listPeers(db)
+            .filter((x) => x.kind === "s3" && x.enabled)
+            .map(async (p): Promise<BucketPresenceResult> => {
+              try {
+                return {
+                  url: p.url,
+                  nodes: await refreshBucketPresence(db, p.url),
+                };
+              } catch (e) {
+                return { url: p.url, error: (e as Error).message };
+              }
+            }),
+        );
+        devices = resolveDevicePresence(devices, presence);
       }
       print({ devices: devices.map(deviceJson), ...(presence ? { presence } : {}) }, () => {
         let out = table(devices.map(deviceRow));
@@ -1137,7 +1158,6 @@ async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
         { value: "server", label: "服务器设置", hint: "host / port / 同步间隔 / auto-sync" },
         { value: "device", label: "设备", hint: "配对 / 列出 / 移除 / 吊销凭据" },
         { value: "backup", label: "云端备份", hint: "存储桶 / 轮换密钥 / 恢复码" },
-        { value: "edge", label: "Edge", hint: "部署 / 连接 / 收件密钥" },
         { value: "exit", label: "退出" },
       ],
     });
@@ -1148,22 +1168,97 @@ async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
     if (choice === "server") await serverWizard(db);
     else if (choice === "device") await peerWizard(db, "device");
     else if (choice === "backup") await peerWizard(db, "backup");
-    else if (choice === "edge") await edgeWizard(db);
   }
+}
+
+/** Scoped usage for the positional compatibility dispatcher. index.ts
+ * intercepts `mh config [section [action]] --help` before citty renders the
+ * monolithic root arg set, so each surface shows only relevant concepts. */
+export function configScopedHelp(section?: string, action?: string): string {
+  if (!section) {
+    return `Configure the workspace
+
+USAGE
+  mh config                         Interactive server/device/backup wizard
+  mh config server [OPTIONS]        Server settings
+  mh config device <ACTION>         Pair, inspect, or revoke a device
+  mh config backup <ACTION>         Connect and manage sync backups
+
+Edge is an operational subsystem: use \`mh edge --help\`.`;
+  }
+  if (section === "server") {
+    return `Configure the workspace main node
+
+USAGE
+  mh config server [--host <host>] [--port <port>]
+                   [--sync-interval <30s|5m>] [--auto-sync <true|false>]
+                   [--blob-quota <2gb|500mb|0>]`;
+  }
+  if (section === "device") {
+    if (action === "add")
+      return `Pair another device
+
+USAGE
+  mh config device add --url <url> --code <one-time-code> [--self-url <url>]`;
+    if (action === "revoke")
+      return `Revoke a device
+
+USAGE
+  mh config device revoke --node <node-id>`;
+    return `Manage devices
+
+USAGE
+  mh config device add --url <url> --code <code>
+  mh config device code
+  mh config device list [--refresh]
+  mh config device revoke --node <node-id>`;
+  }
+  if (section === "backup") {
+    if (action === "connect")
+      return `Connect a sync backup
+
+USAGE
+  mh config backup connect --endpoint <url> --bucket <name>
+      --access-key <id> --secret-key <secret> [--region <region>]
+      [--prefix <prefix>] [--passphrase <passphrase>] [--no-encrypt]
+  mh config backup connect --enroll <code>`;
+    if (action === "rotate")
+      return `Rotate a sync backup's credentials or passphrase
+
+USAGE
+  mh config backup rotate --url <backup-url>
+      [--access-key <id> --secret-key <secret>]
+      [--new-passphrase <passphrase>]
+      [--old-passphrase <passphrase> | --recovery-code <MH1-code>]`;
+    return `Manage sync backups
+
+USAGE
+  mh config backup connect [OPTIONS]
+  mh config backup list
+  mh config backup rotate [OPTIONS]
+  mh config backup recovery [--url <backup-url>]
+  mh config backup cors --url <backup-url> --allow <origins>
+  mh config backup anchors [list|add|rm|redundancy]`;
+  }
+  if (section === "edge")
+    return `Deprecated compatibility alias.
+
+Use \`mh edge --help\` (deploy, connect, status, pull, rotate).`;
+  return `Unknown config section '${section}'. Use server, device, or backup.`;
 }
 
 export default defineCommand({
   meta: {
     name: "config",
     description:
-      "All configuration lives here: server settings, devices, cloud backup, edge. " +
+      "Configure server settings, devices, and sync backups. " +
       "Run with no args for an interactive wizard, or drive sections directly: " +
       "`config server --port 7777` · `config device add --url <url> --code <code>` · " +
-      "`config backup connect --endpoint … --bucket …` · `config edge deploy`.",
+      "`config backup connect --endpoint … --bucket …`. Edge operations live under `mh edge`.",
   },
   args: {
-    section: { type: "positional", required: false, description: "server | device | backup | edge | show (omit for the interactive wizard)" },
-    action: { type: "positional", required: false, description: "device: add|code|list|revoke · backup: connect|list|rotate|recovery|cors|anchors · edge: deploy|connect|rotate-keys" },
+    section: { type: "positional", required: false, description: "server | device | backup | show (omit for the interactive wizard)" },
+    action: { type: "positional", required: false, description: "device: add|code|list|revoke · backup: connect|list|rotate|recovery|cors|anchors" },
     sub: { type: "positional", required: false, description: "backup anchors: list|add|rm|redundancy" },
     value: { type: "positional", required: false, description: "backup anchors redundancy: all|any" },
     host: { type: "string", description: "Bind address" },
@@ -1231,14 +1326,17 @@ export default defineCommand({
     if (section === "server") return hasSettingFlag ? applySet(db, args) : showConfig(db);
     if (section === "backup") return backupDispatch(db, action, args);
     if (section === "device") return deviceDispatch(db, action, args);
-    if (section === "edge") return edgeConfigDispatch((args.action as string) ?? "", args);
+    if (section === "edge") {
+      warn("`mh config edge …` is deprecated; use `mh edge …`");
+      return edgeConfigDispatch((args.action as string) ?? "", args);
+    }
     // Hidden aliases of the pre-namespace tree — keep working, keep out of help.
     if (section === "set") return applySet(db, args);
     if (section === "peer") return peerDispatch(db, action, args);
     if (section === "grant") return grantDispatch(db, action, args);
     throw new MhError(
       "invalid_input",
-      `unknown config section '${section}' (server | device | backup | edge | show)`,
+      `unknown config section '${section}' (server | device | backup | show)`,
     );
   }),
 });

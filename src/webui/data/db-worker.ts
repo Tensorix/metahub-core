@@ -31,6 +31,7 @@ import {
 } from "../../core/sync/peers.ts";
 import { storageUrl } from "../../core/sync/storage-url.ts";
 import { dataMap } from "../../core/sync/data-map-db.ts";
+import { reconcileSiteChannels } from "../../core/sync/site-channel-reconcile.ts";
 import {
   provisionMasterKey,
   storageClientFor,
@@ -97,7 +98,6 @@ import { search } from "../../core/search.ts";
 import {
   resolveSite,
   resolveSiteFileRow,
-  isSitePublic,
   listSites,
   listFiles,
   createSite,
@@ -111,6 +111,18 @@ import {
   fileSizeOf,
   type FileEncoding,
 } from "../../core/sites-core.ts";
+import {
+  isSitePublicOnThisNode,
+  listSiteChannelRows,
+  listSiteChannelViews,
+  putSiteChannel,
+  putSiteChannelObservation,
+  revokeAllSiteChannels,
+  revokePublicSiteChannels,
+  setPublicSiteChannelPolicies,
+  setSiteChannelDesiredState,
+  updatePublicSiteChannelUrls,
+} from "../../core/site-channel-store.ts";
 import { parseGrantSet, type GrantSet } from "../../core/grants-core.ts";
 import {
   createShare,
@@ -486,6 +498,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
     // so gating on `originOk` rather than "origin unconfigured" also covers the
     // configured-but-offline case where doc changes still reached the bucket.)
     if (!originOk && hasBuckets) await drainSpoolToBuckets(d);
+    await reconcileSiteChannels(d);
 
     const bucketDirty = hasBuckets ? hasPendingBucketPush(d) : false;
     if (bucketDirty && bucketErrors.length === 0) scheduleBucketFlush();
@@ -824,6 +837,23 @@ const ops: Record<string, Op> = {
     });
     try {
       const room = await provisionRoomForShare(d, share, edge, browserRoomBlob);
+      const channel = putSiteChannel(d, {
+        siteId: site.id,
+        audience: "link",
+        hosting: "edge",
+        targetRef: share.slug,
+        canonicalUrl: room.url,
+        policy: {
+          permission: share.permission,
+          hasPassword: !!share.pw_hash,
+          expiresAt: share.expires_at,
+        },
+      });
+      putSiteChannelObservation(d, {
+        channelId: channel.id,
+        status: "ready",
+        lastVerifiedAt: Date.now(),
+      });
       return {
         slug: share.slug,
         kind: "site",
@@ -843,10 +873,32 @@ const ops: Record<string, Op> = {
   revokeLocalShare: async (slug: string) => {
     const d = requireDb();
     if (!getShare(d, slug)) return { ok: false, status: "not_found" };
+    const channels = listSiteChannelRows(d).filter(
+      (channel) =>
+        channel.audience === "link" &&
+        channel.target_ref === slug &&
+        channel.desired_state === "active",
+    );
+    for (const channel of channels)
+      setSiteChannelDesiredState(d, channel.id, "revoked");
     const teardown = await teardownRoomForShare(d, slug);
-    if (teardown === "cleanup_pending")
+    if (teardown === "cleanup_pending") {
+      for (const channel of channels)
+        putSiteChannelObservation(d, {
+          channelId: channel.id,
+          status: "cleanup_pending",
+          lastError: "Edge 尚未确认销毁 Room",
+        });
       return { ok: false, status: "cleanup_pending" };
-    return { ok: deleteShare(d, slug), status: "revoked" };
+    }
+    const deleted = deleteShare(d, slug);
+    for (const channel of channels)
+      putSiteChannelObservation(d, {
+        channelId: channel.id,
+        status: "revoked",
+        lastVerifiedAt: Date.now(),
+      });
+    return { ok: deleted, status: "revoked" };
   },
 
   // databases
@@ -961,7 +1013,11 @@ const ops: Record<string, Op> = {
     // 404.html fallback, status carried along) so online and offline match.
     const hit = resolveSiteFileRow(d, site.id, path, { spa: site.spa === 1 });
     if (!hit) return null;
-    return { ...hit.row, status: hit.status, public: isSitePublic(site) };
+    return {
+      ...hit.row,
+      status: hit.status,
+      public: isSitePublicOnThisNode(d, site),
+    };
   },
 
   // blob bytes (offline document images): the SW asks for a blob's bytes by hash
@@ -996,25 +1052,73 @@ const ops: Record<string, Op> = {
     return listSites(db!).map((s) => ({ ...s, file_count: counts.get(s.id) ?? 0 }));
   },
   listSiteFiles: (siteId: string) => listFiles(db!, siteId),
-  createSite: (b: { name: string; title?: string; visibility?: "public" | "private" }) => ({
-    ...createSite(db!, b),
-    file_count: 0,
-  }),
+  createSite: (b: { name: string; title?: string; visibility?: "public" | "private" }) => {
+    if (b.visibility === "public")
+      throw new MhError(
+        "invalid_input",
+        "此浏览器通过同步存储桶交换数据、不驻留在线；请在在线主节点管理公开发布",
+      );
+    return {
+      ...createSite(db!, b),
+      file_count: 0,
+    };
+  },
   updateSite: (
     id: string,
     b: { name?: string; title?: string; visibility?: "public" | "private"; spa?: boolean },
-  ) => ({
-    ...updateSite(db!, id, b),
-    file_count: fileCount(db!, id),
-  }),
-  deleteSite: (id: string) => ({ ok: deleteSite(db!, id) }),
+  ) => {
+    if (b.visibility === "public")
+      throw new MhError(
+        "invalid_input",
+        "此浏览器通过同步存储桶交换数据、不驻留在线；请在在线主节点管理公开发布",
+      );
+    if (b.visibility === "private") revokePublicSiteChannels(db!, id);
+    const updated = updateSite(db!, id, b);
+    if (b.name !== undefined) updatePublicSiteChannelUrls(db!, id, updated.name);
+    return {
+      ...updated,
+      file_count: fileCount(db!, id),
+    };
+  },
+  deleteSite: async (id: string) => {
+    revokeAllSiteChannels(db!, id);
+    const ok = deleteSite(db!, id);
+    await reconcileSiteChannels(db!);
+    return { ok };
+  },
   getSiteGrants: (id: string) => ({
     grants: parseGrantSet(resolveSite(db!, id).public_grants),
   }),
   setSiteGrants: (id: string, grants: GrantSet) => {
     const site = resolveSite(db!, id);
     const updated = setSitePublicGrants(db!, site.id, grants.tables.length ? grants : null);
+    setPublicSiteChannelPolicies(db!, site.id, parseGrantSet(updated.public_grants));
     return { grants: parseGrantSet(updated.public_grants) };
+  },
+  siteHosting: () => ({
+    publicBaseUrl: null,
+    scope: null,
+    node: getNodeId(db!),
+    pendingRollbacks: [],
+    publishedSites: [],
+    channels: listSiteChannelViews(db!),
+  }),
+  revokeSiteChannel: async (id: string) => {
+    const d = requireDb();
+    const channel = setSiteChannelDesiredState(d, id, "revoked");
+    if (
+      channel.audience === "public" &&
+      !listSiteChannelRows(d, channel.site_id).some(
+        (item) =>
+          item.audience === "public" &&
+          item.desired_state === "active",
+      )
+    )
+      updateSite(d, channel.site_id, { visibility: "private" });
+    await reconcileSiteChannels(d);
+    const view = listSiteChannelViews(d).find((channel) => channel.id === id);
+    if (!view) throw new MhError("not_found", `no such site channel: ${id}`);
+    return view;
   },
   putSiteFile: (siteId: string, path: string, data: ArrayBuffer | string, contentType?: string) => {
     const { content, ...row } = putFileInline(db!, siteId, path, { data, contentType });

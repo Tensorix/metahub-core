@@ -18,6 +18,10 @@ import {
   listPendingSiteRollbacks,
   listSitePublishStates,
 } from "./site-publish-recovery.ts";
+import {
+  isSitePublicConfigured,
+  listSiteChannelViews,
+} from "../site-channel-store.ts";
 
 export interface SiteReachability {
   siteId: string;
@@ -34,10 +38,11 @@ export function siteReachability(db: DbDriver, siteId: string): SiteReachability
     publishStates: listSitePublishStates(db).filter((s) => s.siteId === siteId),
     pendingRollbacks: listPendingSiteRollbacks(db).filter((r) => r.siteId === siteId),
     shares: listServerSharesLocal(db, siteId).filter((s) => s.kind === "site"),
+    storedChannels: listSiteChannelViews(db, siteId),
   };
   return {
     siteId,
-    visibility: site.visibility === "public" ? "public" : "private",
+    visibility: isSitePublicConfigured(db, site) ? "public" : "private",
     state: siteState(input),
     channels: siteChannels(input),
   };

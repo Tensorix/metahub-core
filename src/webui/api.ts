@@ -259,10 +259,40 @@ export interface SiteHostingInfo {
     status: "ready" | "syncing";
     updatedAt: number;
   }[];
+  channels: SiteChannelView[];
+}
+export interface SiteChannelView {
+  id: string;
+  siteId: string;
+  audience: "public" | "link";
+  hosting: "device" | "edge";
+  controllerNodeId: string;
+  targetRef: string;
+  canonicalUrl: string | null;
+  policyJson: string | null;
+  desiredState: "active" | "revoked";
+  status:
+    | "provisioning"
+    | "syncing"
+    | "ready"
+    | "rollback_pending"
+    | "cleanup_pending"
+    | "error"
+    | "legacy_unverified"
+    | "revoked"
+    | "waiting_controller"
+    | "unverified";
+  lastVerifiedAt: number | null;
+  lastError: string | null;
 }
 export interface SitePublishResult {
   access: "public" | "private";
-  status: "ready" | "syncing" | "private" | "rollback_pending";
+  status:
+    | "ready"
+    | "syncing"
+    | "private"
+    | "rollback_pending"
+    | "cleanup_pending";
   url: string | null;
   host: string | null;
   error?: string;
@@ -744,7 +774,11 @@ const httpApi = {
   // Unified device roster + the lost-device remedies. Grant tokens arrive as
   // 8-char prefixes — enough for display and prefix-revoke.
   listDevices: () => req<DeviceView[]>("GET", "/api/devices"),
-  refreshDevicePresence: () => req<BucketPresenceView[]>("POST", "/api/devices/refresh"),
+  refreshDevicePresence: () =>
+    req<{ devices: DeviceView[]; buckets: BucketPresenceView[] }>(
+      "POST",
+      "/api/devices/refresh",
+    ),
   rotateServerS3Peer: (b: {
     url: string;
     accessKeyId?: string;
@@ -785,6 +819,11 @@ const httpApi = {
   }) => req<SitePublishResult>("POST", "/api/site/publish", b),
   recoverSitePublish: (siteId: string, targetBase: string) =>
     req<SitePublishResult>("POST", "/api/site/publish/recover", { siteId, targetBase }),
+  revokeSiteChannel: (id: string) =>
+    req<SiteChannelView>("PATCH", "/api/site/channel", {
+      id,
+      desiredState: "revoked",
+    }),
   deleteSiteFile: (site: string, path: string) =>
     req<{ ok: boolean }>("DELETE", `/api/site/file?site=${q(site)}&path=${q(path)}`),
   /** Raw-bytes upload — can't use req() (it JSON-stringifies the body). */

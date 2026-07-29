@@ -15,7 +15,9 @@ const rel = (ms: number | null, now: number): string => {
 
 const FRESHNESS: Record<DataPlace["freshness"], string> = {
   live: "live (this device)",
-  synced: "synced",
+  current: "current (acknowledged)",
+  behind: "BEHIND",
+  stale: "STALE",
   error: "ERROR",
   never: "never synced",
   disabled: "disabled",
@@ -40,16 +42,22 @@ export default defineCommand({
           ? "Data exists ONLY on this device — no sync target configured (add one: `mh config`)."
           : state.state === "pending_blobs"
             ? `Data in ${state.places} place(s), but ${state.pendingBlobCount} blob(s) (${mb(state.pendingBlobBytes)} MB) exist only here — not yet flushed to a durable anchor.`
+            : state.state === "unsynced_changes"
+              ? `Current version is confirmed in ${state.places} place(s), but one or more enabled targets have not acknowledged it.`
             : state.state === "peer_error"
               ? `Data in ${state.places} place(s) — a sync target is FAILING (see below).`
               : state.state === "syncing"
                 ? `Data in ${state.places} place(s); first sync to a configured target has not completed yet.`
+                : state.state === "stale"
+                  ? `Current version is acknowledged in ${state.places} place(s), but the confirmation is stale.`
                 : `Data in ${state.places} place(s); oldest copy synced ${rel(state.oldestSyncedAt, now)}.`;
       const rows = map.places.map((p) => ({
         place: p.label,
         kind: p.kind,
         freshness:
-          FRESHNESS[p.freshness] + (p.syncedAt != null ? ` (${rel(p.syncedAt, now)})` : ""),
+          FRESHNESS[p.freshness] +
+          (p.syncedAt != null ? ` (${rel(p.syncedAt, now)})` : "") +
+          (p.lag > 0 ? "; current version unacknowledged" : ""),
         roles: p.roles.join(","),
         error: p.error ?? "",
       }));

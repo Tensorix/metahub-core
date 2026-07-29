@@ -7,6 +7,7 @@ import { DATABASE_COLS } from "./databases.ts";
 import { PROPERTY_COLS } from "./properties.ts";
 import { DOCUMENT_COLS } from "./documents.ts";
 import { SITE_COLS, SITE_FILE_COLS } from "./sites-core.ts";
+import { SITE_CHANNEL_COLS } from "./site-channel-store.ts";
 
 // Schema contract: the row interfaces (via their exported column lists) must
 // stay a subset of the real tables. The lists themselves are compile-time
@@ -33,6 +34,7 @@ const EXPECTED: [table: string, cols: readonly string[]][] = [
   ["documents", DOCUMENT_COLS],
   ["sites", SITE_COLS],
   ["site_files", SITE_FILE_COLS],
+  ["site_channels", SITE_CHANNEL_COLS],
   ["crdt_changes", CHANGE_COLS],
   ["records", ["id", "database_id", "created_hlc", "order_key", "data"]],
   ["doc_blocks", ["id", "doc_id", "text", "order_key", "blank_after"]],
@@ -50,7 +52,7 @@ test("every row interface's columns exist in its table", () => {
 
 test("domain tables keep their tombstone column", () => {
   const db = makeNode("aaaa");
-  for (const table of ["databases", "properties", "records", "documents", "doc_blocks", "sites", "site_files"]) {
+  for (const table of ["databases", "properties", "records", "documents", "doc_blocks", "sites", "site_files", "site_channels"]) {
     expect(tableColumns(db, table).has("__deleted"), `${table}.__deleted`).toBe(true);
   }
 });

@@ -98,3 +98,115 @@ test("shareChannel carries permission/password/expiry through", () => {
     status: "ready",
   });
 });
+
+test("synced desired channels replace matching legacy projections without duplicates", () => {
+  const input = base({
+    visibility: "public",
+    publishStates: [
+      {
+        targetBase: "https://legacy",
+        url: "https://legacy/sites/x/",
+        status: "ready",
+      },
+    ],
+    shares: [share({ slug: "room-1", hosting: "room" })],
+    storedChannels: [
+      {
+        id: "chan_public",
+        audience: "public",
+        hosting: "device",
+        controllerNodeId: "a",
+        targetRef: "b",
+        canonicalUrl: "https://b/sites/x/",
+        policyJson: '{"v":1,"tables":[]}',
+        desiredState: "active",
+        status: "ready",
+      },
+      {
+        id: "chan_link",
+        audience: "link",
+        hosting: "edge",
+        controllerNodeId: "a",
+        targetRef: "room-1",
+        canonicalUrl: "https://edge/room/room-1",
+        policyJson:
+          '{"permission":"view","hasPassword":false,"expiresAt":null}',
+        desiredState: "active",
+        status: "ready",
+      },
+    ],
+  });
+  const channels = siteChannels(input);
+  expect(channels).toHaveLength(2);
+  expect(channels.map((channel) => channel.id)).toEqual([
+    "chan_public",
+    "chan_link",
+  ]);
+});
+
+test("revocation waiting for the controller remains visible and attention-first", () => {
+  const input = base({
+    storedChannels: [
+      {
+        id: "chan_link",
+        audience: "link",
+        hosting: "edge",
+        controllerNodeId: "offline",
+        targetRef: "room-1",
+        canonicalUrl: "https://edge/room/room-1",
+        policyJson: null,
+        desiredState: "revoked",
+        status: "waiting_controller",
+      },
+    ],
+  });
+  expect(siteChannels(input)[0]).toMatchObject({
+    desiredState: "revoked",
+    status: "waiting_controller",
+  });
+  expect(siteState(input)).toBe("cleanup_pending");
+});
+
+test("a failed local publish is not mislabeled as a pending rollback", () => {
+  const input = base({
+    storedChannels: [
+      {
+        id: "chan_failed",
+        audience: "public",
+        hosting: "device",
+        controllerNodeId: "node-a",
+        targetRef: "node-a",
+        canonicalUrl: "https://bad.example/sites/x/",
+        policyJson: null,
+        desiredState: "revoked",
+        status: "error",
+      },
+    ],
+  });
+  expect(siteState(input)).toBe("error");
+});
+
+test("a synced link policy becomes expired without relying on a local share row", () => {
+  const input = base({
+    now: 2_000,
+    storedChannels: [
+      {
+        id: "chan_expired",
+        audience: "link",
+        hosting: "edge",
+        controllerNodeId: "node-a",
+        targetRef: "slug",
+        canonicalUrl: "https://edge.example/room/slug",
+        policyJson: JSON.stringify({
+          permission: "view",
+          hasPassword: false,
+          expiresAt: 1_000,
+        }),
+        desiredState: "active",
+        status: "ready",
+      },
+    ],
+  });
+  expect(siteChannels(input)[0]!.status).toBe("expired");
+  expect(siteState(input)).toBe("private");
+});

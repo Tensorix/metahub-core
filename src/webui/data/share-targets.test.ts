@@ -50,3 +50,24 @@ test("option display text reproduces the legacy strings", () => {
   expect(`${t[1]!.label} — ${t[1]!.subtitle}`).toBe("Peer — https://peer.example");
   expect(`${t[2]!.label} — ${t[2]!.subtitle}`).toBe("存储桶 — Bkt");
 });
+
+test("peer health evidence survives into the scope for publishing eligibility", () => {
+  const t = buildShareTargets(
+    [
+      {
+        url: "https://failed.example",
+        label: "Failed",
+        enabled: true,
+        lastStatus: "error",
+        lastSuccessAt: 123,
+      },
+    ],
+    [],
+    ORIGIN,
+  );
+  expect(t[1]!.availability).toEqual({
+    enabled: true,
+    lastStatus: "error",
+    lastSuccessAt: 123,
+  });
+});

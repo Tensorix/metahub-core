@@ -514,6 +514,8 @@ async function syncPeerOnce(
     }
     updatePeerStatus(db, url, "ok", null);
     if (peer?.kind !== "s3" && peer?.kind !== "room") clearCoveredSiteRollbacks(db, url);
+    const { reconcileSiteChannels } = await import("./site-channel-reconcile.ts");
+    await reconcileSiteChannels(db);
     return { url, ok: true, pushed: result.pushed, pulled: result.pulled, pendingPush: result.pendingPush };
   } catch (e) {
     const error = (e as Error).message;

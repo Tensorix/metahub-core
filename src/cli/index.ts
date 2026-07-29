@@ -23,14 +23,14 @@ import repair from "./commands/repair.ts";
 import compact from "./commands/compact.ts";
 import cache from "./commands/cache.ts";
 import blob from "./commands/blob.ts";
-import config from "./commands/config.ts";
+import config, { configScopedHelp } from "./commands/config.ts";
 import edge from "./commands/edge.ts";
 import { parseDuration } from "../core/sync/token.ts";
 import { startServer } from "../core/sync/server.ts";
 import { errorCode } from "../core/errors.ts";
 import { serveWebui, warmWebui } from "../webui/server/assets.ts";
 import { webuiRoutes } from "../webui/server/routes.ts";
-import { print, fail } from "./output.ts";
+import { print, fail, warn } from "./output.ts";
 import { renderStartupBanner } from "./banner.ts";
 import { resolveEndpoints } from "./netaddr.ts";
 import { showUsage } from "./help.ts";
@@ -91,7 +91,21 @@ function flagValue(argv: string[], name: string): string | undefined {
 }
 
 const argv = process.argv.slice(2);
-if (argv.includes("--server")) {
+if (argv[0] === "site" && argv[1] === "publish") {
+  warn("`mh site publish` is deprecated; use `mh site upload`");
+  argv[1] = "upload";
+  process.argv[3] = "upload";
+}
+const scopedConfigHelp =
+  argv[0] === "config" &&
+  (argv.includes("--help") || argv.includes("-h"));
+
+if (scopedConfigHelp) {
+  const parts = argv
+    .slice(1)
+    .filter((arg) => arg !== "--help" && arg !== "-h");
+  console.log(configScopedHelp(parts[0], parts[1]));
+} else if (argv.includes("--server")) {
   // Pass a flag only when present; startServer falls back to persisted config
   // (mh config) then built-in defaults, so explicit flags keep top priority.
   const portFlag = flagValue(argv, "port");

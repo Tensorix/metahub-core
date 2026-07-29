@@ -13,6 +13,7 @@ export {
   migrateDocBlocks,
   migrateDocuments,
   migrateOplog,
+  migrateSiteChannels,
   initSchema,
 } from "./schema-init.ts";
 

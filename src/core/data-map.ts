@@ -24,6 +24,8 @@ export interface DataMapPeerInput {
   lastSuccessAt: number | null;
   lastStatus: string | null;
   lastError: string | null;
+  /** Highest local sequence durably acknowledged by this target. */
+  pushCursor: number;
   /** s3 only: bucket name from config (display fallback). */
   bucket?: string | null;
   /** s3 only: this node is configured to publish full snapshots to it. */
@@ -39,6 +41,12 @@ export interface DataMapInput {
   pendingBlobBytes: number;
   /** Designated full-blob anchors: node ids and/or bucket s3:// urls. */
   blobFullNodes: string[];
+  /** Latest sequence in the whole local oplog (HTTP peers replicate this). */
+  globalHighWaterSeq: number;
+  /** Latest sequence authored by this node (S3 publishes per-node streams). */
+  ownHighWaterSeq: number;
+  /** A current copy older than this is shown as stale, not healthy. */
+  staleAfterMs?: number;
   now?: number;
 }
 
@@ -51,14 +59,19 @@ export interface DataPlace {
   label: string;
   /**
    * live      — this node's own library (always current)
-   * synced    — has synced successfully; syncedAt says when
+   * current   — target acknowledged the relevant local high-water mark
+   * behind    — target holds an older copy but local changes are unacknowledged
+   * stale     — cursor is current, but the last confirmation is too old
    * error     — last sync failed (lastError says why); may still hold old data
    * never     — configured but no successful sync yet (holds nothing)
    * disabled  — configured but turned off
    */
-  freshness: "live" | "synced" | "error" | "never" | "disabled";
+  freshness: "live" | "current" | "behind" | "stale" | "error" | "never" | "disabled";
   syncedAt: number | null;
   error: string | null;
+  acknowledgedSeq: number;
+  highWaterSeq: number;
+  lag: number;
   /**
    * replica     — a full node (device) holding the whole workspace
    * backend     — a dumb bucket store (holds segments/snapshots, not queryable)
@@ -75,8 +88,10 @@ export interface DataPlace {
 export type DataMapStateKind =
   | "no_backup" // data exists ONLY here: no enabled sync target configured
   | "pending_blobs" // some bytes produced here not yet at any durable anchor
+  | "unsynced_changes" // at least one enabled target has not acked current ops
   | "peer_error" // a backup place is failing to sync
   | "syncing" // first sync to a configured place hasn't completed yet
+  | "stale" // cursors are current but confirmation is too old
   | "healthy"; // every enabled place has synced
 
 export interface DataMapState {
@@ -85,6 +100,9 @@ export interface DataMapState {
   places: number;
   pendingBlobCount: number;
   pendingBlobBytes: number;
+  /** Maximum replication-cursor gap. This is a health signal, not an exact
+   * user-edit count (filtered streams can contain sequence gaps). */
+  pendingChanges: number;
   /** Oldest last-success among enabled synced places — the freshness anchor
    *  (null when self is the only place). */
   oldestSyncedAt: number | null;
@@ -95,8 +113,17 @@ const hostOf = (url: string): string => {
   return m ? m[1]! : url;
 };
 
-function placeOf(p: DataMapPeerInput, fullNodes: string[]): DataPlace {
+function placeOf(
+  p: DataMapPeerInput,
+  fullNodes: string[],
+  globalHighWaterSeq: number,
+  ownHighWaterSeq: number,
+  now: number,
+  staleAfterMs: number,
+): DataPlace {
   const isBucket = p.kind === "s3";
+  const highWaterSeq = isBucket ? ownHighWaterSeq : globalHighWaterSeq;
+  const lag = Math.max(0, highWaterSeq - p.pushCursor);
   const roles: DataPlace["roles"] = isBucket ? ["backend"] : ["replica"];
   const anchorKey = isBucket ? p.url : p.nodeId;
   if (anchorKey && fullNodes.includes(anchorKey)) roles.push("blob_anchor");
@@ -107,13 +134,20 @@ function placeOf(p: DataMapPeerInput, fullNodes: string[]): DataPlace {
     label: p.label ?? (isBucket ? (p.bucket ?? hostOf(p.url)) : hostOf(p.url)),
     freshness: !p.enabled
       ? "disabled"
+      : p.lastSuccessAt == null
+        ? "never"
       : p.lastStatus === "error"
         ? "error"
-        : p.lastSuccessAt != null
-          ? "synced"
-          : "never",
+        : lag > 0
+          ? "behind"
+          : now - p.lastSuccessAt > staleAfterMs
+            ? "stale"
+            : "current",
     syncedAt: p.lastSuccessAt,
     error: p.lastStatus === "error" ? (p.lastError ?? null) : null,
+    acknowledgedSeq: p.pushCursor,
+    highWaterSeq,
+    lag,
     roles,
   };
 }
@@ -128,14 +162,38 @@ export function dataPlaces(input: DataMapInput): DataPlace[] {
     freshness: "live",
     syncedAt: null,
     error: null,
+    acknowledgedSeq: input.globalHighWaterSeq,
+    highWaterSeq: input.globalHighWaterSeq,
+    lag: 0,
     roles: input.blobFullNodes.includes(input.selfNodeId)
       ? ["replica", "blob_anchor"]
       : ["replica"],
   };
   const rank = (f: DataPlace["freshness"]) =>
-    f === "synced" ? 0 : f === "error" ? 1 : f === "never" ? 2 : 3;
+    f === "current"
+      ? 0
+      : f === "stale"
+        ? 1
+        : f === "behind"
+          ? 2
+          : f === "error"
+            ? 3
+            : f === "never"
+              ? 4
+              : 5;
+  const now = input.now ?? Date.now();
+  const staleAfterMs = input.staleAfterMs ?? 24 * 60 * 60 * 1000;
   const rest = input.peers
-    .map((p) => placeOf(p, input.blobFullNodes))
+    .map((p) =>
+      placeOf(
+        p,
+        input.blobFullNodes,
+        input.globalHighWaterSeq,
+        input.ownHighWaterSeq,
+        now,
+        staleAfterMs,
+      ),
+    )
     .sort(
       (a, b) =>
         Number(a.kind === "bucket") - Number(b.kind === "bucket") ||
@@ -149,25 +207,30 @@ export function dataPlaces(input: DataMapInput): DataPlace[] {
 export function dataMapState(input: DataMapInput): DataMapState {
   const places = dataPlaces(input);
   const enabled = places.filter((p) => p.kind !== "self" && p.freshness !== "disabled");
-  const synced = enabled.filter((p) => p.freshness === "synced" || p.freshness === "error");
-  // error places still HOLD previously-synced data — count the ones that ever
-  // succeeded; a place that errored before its first success holds nothing.
-  const holding = synced.filter((p) => p.syncedAt != null);
-  const oldest = holding.length
-    ? holding.reduce<number | null>(
+  // `places` means confirmed holders of the CURRENT local version. Older
+  // copies remain visible in the expanded list but do not inflate safety.
+  const current = enabled.filter(
+    (p) => p.syncedAt != null && p.acknowledgedSeq >= p.highWaterSeq,
+  );
+  const oldest = current.length
+    ? current.reduce<number | null>(
         (min, p) => (min == null || (p.syncedAt ?? 0) < min ? p.syncedAt : min),
         null,
       )
     : null;
+  const pendingChanges = enabled.reduce((max, p) => Math.max(max, p.lag), 0);
   const base = {
-    places: 1 + holding.length,
+    places: 1 + current.length,
     pendingBlobCount: input.pendingBlobCount,
     pendingBlobBytes: input.pendingBlobBytes,
+    pendingChanges,
     oldestSyncedAt: oldest,
   };
   if (enabled.length === 0) return { state: "no_backup", ...base };
   if (input.pendingBlobCount > 0) return { state: "pending_blobs", ...base };
+  if (pendingChanges > 0) return { state: "unsynced_changes", ...base };
   if (enabled.some((p) => p.freshness === "error")) return { state: "peer_error", ...base };
   if (enabled.some((p) => p.freshness === "never")) return { state: "syncing", ...base };
+  if (enabled.some((p) => p.freshness === "stale")) return { state: "stale", ...base };
   return { state: "healthy", ...base };
 }

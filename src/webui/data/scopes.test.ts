@@ -16,10 +16,10 @@ const ALL: ClientMode[] = [
   M("cli", "server", "window"), // cli (reserved)
 ];
 
-test("thin (window+server): one cloud-workspace scope, no choice", () => {
+test("thin (window+server): one workspace-main-node scope, no cloud assumption", () => {
   const s = scopesFor(M("web", "server", "window"));
   expect(s.map((x) => x.kind)).toEqual(["server"]);
-  expect(s[0]!.label).toBe("云端工作区");
+  expect(s[0]!.label).toBe("工作区主节点");
 });
 
 test("offline-replica (replica+server): [local, server], default local — the 2-switch case", () => {

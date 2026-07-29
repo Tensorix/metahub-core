@@ -34,6 +34,13 @@ export interface Scope {
   /** Delete UX for this scope's bytes: purge = remove for good (server ledger);
    *  evict = drop the local copy, re-fetched on demand. */
   deleteSemantics: "purge" | "evict";
+  /** Optional connection evidence for selectable remote scopes. A missing
+   *  value means "local/current scope", not "healthy remote". */
+  availability?: {
+    enabled: boolean;
+    lastStatus: string | null;
+    lastSuccessAt: number | null;
+  };
 }
 
 // ---- product copy ----------------------------------------------------------
@@ -42,7 +49,7 @@ export interface Scope {
 // snapshot, oplog. Guarded by scopes.test.ts.
 const COPY = {
   localDevice: { label: "本机", subtitle: "这台设备上的副本", icon: "monitor" },
-  cloudWorkspace: { label: "云端工作区", subtitle: "你常用的在线工作区", icon: "globe" },
+  serverWorkspace: { label: "工作区主节点", subtitle: "当前连接的工作区", icon: "globe" },
   localWorkspace: { label: "本机工作区", subtitle: "这台电脑上的工作区", icon: "monitor" },
 } as const;
 
@@ -62,7 +69,7 @@ function localScope(): Scope {
 function serverScope(surface: Surface): Scope {
   // The desktop sidecar's data home is local to the machine, so it reads as a
   // "本机工作区" rather than a remote cloud workspace — a pure copy switch.
-  const c = surface === "desktop" ? COPY.localWorkspace : COPY.cloudWorkspace;
+  const c = surface === "desktop" ? COPY.localWorkspace : COPY.serverWorkspace;
   return {
     id: "server",
     kind: "server",

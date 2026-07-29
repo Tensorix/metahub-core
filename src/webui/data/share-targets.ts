@@ -41,6 +41,11 @@ export function buildShareTargets(
       isDefault: false,
       routeOp: { via: "http" },
       deleteSemantics: "purge",
+      availability: {
+        enabled: s.enabled !== false,
+        lastStatus: s.lastStatus ?? null,
+        lastSuccessAt: s.lastSuccessAt ?? null,
+      },
     });
   for (const b of buckets)
     out.push({

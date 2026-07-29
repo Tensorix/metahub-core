@@ -26,7 +26,11 @@ import {
 import { putBucketCors } from "./storage-s3-bun.ts";
 import type { S3Config } from "./storage.ts";
 import { dataMap } from "./data-map-db.ts";
-import { listDevices, refreshBucketPresence } from "./devices.ts";
+import {
+  listDevices,
+  refreshBucketPresence,
+  resolveDevicePresence,
+} from "./devices.ts";
 import { encodeRecoveryCode } from "./recovery.ts";
 import { fromB64 } from "./e2ee.ts";
 
@@ -108,17 +112,29 @@ const DataPlaceSchema = z.object({
   kind: z.enum(["self", "device", "bucket"]),
   url: z.string().nullable(),
   label: z.string(),
-  freshness: z.enum(["live", "synced", "error", "never", "disabled"]),
+  freshness: z.enum(["live", "current", "behind", "stale", "error", "never", "disabled"]),
   syncedAt: z.number().nullable(),
   error: z.string().nullable(),
+  acknowledgedSeq: z.number(),
+  highWaterSeq: z.number(),
+  lag: z.number(),
   roles: z.array(z.enum(["replica", "backend", "blob_anchor", "publisher"])),
 });
 const DataMapSchema = z.object({
   state: z.object({
-    state: z.enum(["no_backup", "pending_blobs", "peer_error", "syncing", "healthy"]),
+    state: z.enum([
+      "no_backup",
+      "pending_blobs",
+      "unsynced_changes",
+      "peer_error",
+      "syncing",
+      "stale",
+      "healthy",
+    ]),
     places: z.number(),
     pendingBlobCount: z.number(),
     pendingBlobBytes: z.number(),
+    pendingChanges: z.number(),
     oldestSyncedAt: z.number().nullable(),
   }),
   places: z.array(DataPlaceSchema),
@@ -135,14 +151,17 @@ const DeviceSchema = z.object({
   self: z.boolean(),
   channels: z.array(
     z.object({
-      kind: z.enum(["paired_out", "grant_in", "oplog"]),
+      kind: z.enum(["paired_out", "grant_in", "oplog", "bucket_presence"]),
       ref: z.string(),
       lastSeenAt: z.number().nullable(),
+      leaseLiveUntil: z.number().nullable().optional(),
       transport: z.enum(["http", "s3", "room"]).optional(),
     }),
   ),
   lastActivityAt: z.number().nullable(),
-  revocable: z.enum(["yes", "bucket_rotate", "none"]),
+  revocable: z.enum(["yes", "bucket_rotate", "unknown", "none"]),
+  revocationConfidence: z.enum(["confirmed", "unknown", "none"]),
+  revocationSources: z.array(z.string()),
 });
 const BucketPresenceSchema = z.object({
   url: z.string(),
@@ -150,6 +169,10 @@ const BucketPresenceSchema = z.object({
     .array(z.object({ nodeId: z.string(), inBucket: z.boolean(), leaseLiveUntil: z.number().nullable() }))
     .optional(),
   error: z.string().optional(),
+});
+const DeviceRefreshSchema = z.object({
+  devices: z.array(DeviceSchema),
+  buckets: z.array(BucketPresenceSchema),
 });
 const RotateS3Req = z.object({
   url: z.string(),
@@ -397,17 +420,34 @@ export const peersRoutes: Route[] = [
     method: "POST",
     path: "/api/devices/refresh",
     summary: "Check bucket presence + publisher heartbeats for all attached buckets",
-    response: z.array(BucketPresenceSchema),
+    response: DeviceRefreshSchema,
     handler: handle(async (_req, { db }) => {
-      const out: z.infer<typeof BucketPresenceSchema>[] = [];
-      for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.enabled)) {
-        try {
-          out.push({ url: p.url, nodes: await refreshBucketPresence(db, p.url) });
-        } catch (e) {
-          out.push({ url: p.url, error: e instanceof Error ? e.message : String(e) });
-        }
-      }
-      return out;
+      const out = await Promise.all(
+        listPeers(db)
+          .filter((x) => x.kind === "s3" && x.enabled)
+          .map(async (p): Promise<z.infer<typeof BucketPresenceSchema>> => {
+            try {
+              return {
+                url: p.url,
+                nodes: await refreshBucketPresence(db, p.url),
+              };
+            } catch (e) {
+              return {
+                url: p.url,
+                error: e instanceof Error ? e.message : String(e),
+              };
+            }
+          }),
+      );
+      return {
+        devices: resolveDevicePresence(listDevices(db), out).map((d) => ({
+          ...d,
+          channels: d.channels.map((c) =>
+            c.kind === "grant_in" ? { ...c, ref: c.ref.slice(0, 8) } : c,
+          ),
+        })),
+        buckets: out,
+      };
     }),
   },
   {

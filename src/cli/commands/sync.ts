@@ -4,7 +4,7 @@ import { syncWithPeer, type SyncResult } from "../../core/sync/client.ts";
 import { addPeer, listPeers, syncAllPeers } from "../../core/sync/peers.ts";
 import { syncFiles } from "../../core/sync/files.ts";
 import { errorCode, MhError } from "../../core/errors.ts";
-import { print, guard } from "../output.ts";
+import { print, guard, markExitCode } from "../output.ts";
 
 const isTTY = () => Boolean(process.stdout.isTTY && process.stdin.isTTY);
 
@@ -72,13 +72,15 @@ export default defineCommand({
           "no sync targets configured — connect one first:\n  mh config backup connect   (cloud bucket)\n  mh config device add       (pair a device)",
         );
       const results = await syncAllPeers(db);
-      return print(results, () =>
+      print(results, () =>
         results
           .map((r) =>
             r.ok ? `${r.url}: pushed ${r.pushed}, pulled ${r.pulled}` : `${r.url}: error — ${r.error}`,
           )
           .join("\n"),
       );
+      if (results.some((r) => !r.ok)) markExitCode("network");
+      return;
     }
     if (args.dst == null) {
       const result = await peerSync(db, args.src, args.token);

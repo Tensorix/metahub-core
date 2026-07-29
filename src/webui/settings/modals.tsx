@@ -3,7 +3,7 @@
 // extraction): Edge deploy, bucket connect/activate, add-device enrollment
 // (QR / CLI / server pairing), key rotation and the recovery-code card.
 import type { ComponentChild } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { S3Config } from "../../core/sync/storage.ts";
 import { encodeEnroll } from "../../core/sync/enroll.ts";
@@ -41,6 +41,12 @@ export function EdgeDeployModal({
   // OAuth flow state.
   const [authState, setAuthState] = useState<"idle" | "authing" | "ready" | "error">("idle");
   const [flowId, setFlowId] = useState<string | null>(null);
+  // Cleanup must observe the latest flow without re-running whenever authState
+  // changes. The previous dependency-based effect cancelled a flow while the
+  // modal was still mounted: authing → ready ran the old cleanup and deleted
+  // the server-side token immediately before deploy consumed it.
+  const flowRef = useRef<string | null>(null);
+  const flowConsumedRef = useRef(false);
   const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([]);
   const [authErr, setAuthErr] = useState("");
   const [workerName, setWorkerName] = useState(
@@ -109,15 +115,20 @@ export function EdgeDeployModal({
   // Tear down an unconsumed flow if the modal unmounts mid-auth.
   useEffect(
     () => () => {
-      if (flowId && authState !== "idle") api.cancelEdgeOAuth(flowId).catch(() => {});
+      const id = flowRef.current;
+      if (id && !flowConsumedRef.current) api.cancelEdgeOAuth(id).catch(() => {});
     },
-    [flowId, authState],
+    [],
   );
 
   const signIn = async () => {
     setAuthErr("");
     try {
+      if (flowRef.current && !flowConsumedRef.current)
+        await api.cancelEdgeOAuth(flowRef.current).catch(() => {});
       const { flowId: id, authUrl } = await api.beginEdgeOAuth();
+      flowRef.current = id;
+      flowConsumedRef.current = false;
       setFlowId(id);
       setAuthState("authing");
       // In the desktop app the consent page must open in the real browser (the
@@ -170,6 +181,8 @@ export function EdgeDeployModal({
       }
       setApiToken("");
       // The flow's token was consumed server-side; forget it locally.
+      flowConsumedRef.current = true;
+      flowRef.current = null;
       setFlowId(null);
       setAuthState("idle");
       toast(
@@ -256,7 +269,11 @@ export function EdgeDeployModal({
           <button
             class="btn btn-secondary"
             onClick={() => {
-              if (flowId && authState !== "idle") api.cancelEdgeOAuth(flowId).catch(() => {});
+              if (flowRef.current && !flowConsumedRef.current) {
+                flowConsumedRef.current = true;
+                api.cancelEdgeOAuth(flowRef.current).catch(() => {});
+                flowRef.current = null;
+              }
               closeModal();
             }}
           >
@@ -351,7 +368,7 @@ export function EdgeDeployModal({
           onChange={(e) => setWithR2((e.currentTarget as HTMLInputElement).checked)}
         />
         <span>
-          顺便创建 <b>R2 同步桶</b>（云端备份 + 多设备免服务器同步；免费 10GB）
+          同时创建 <b>R2 同步桶</b>（创建桶后仍需单独生成 S3 凭据）
         </span>
       </label>
       {withR2 && (
@@ -865,7 +882,7 @@ function originEnrollUrl(base: string, token: string | null): string {
  *  COS uses virtual-hosted addressing (auto-detected when the endpoint host
  *  starts with the bucket name — see storage-s3-bun §13). */
 const S3_PROVIDERS = [
-  { id: "r2", name: "Cloudflare R2", region: "auto", ph: "https://<账户ID>.r2.cloudflarestorage.com", hint: "R2 控制台 → 管理 R2 API 令牌,创建 S3 凭据;区域填 auto。免费额度 10GB。" },
+  { id: "r2", name: "Cloudflare R2", region: "auto", ph: "https://<账户ID>.r2.cloudflarestorage.com", hint: "R2 控制台 → 管理 R2 API 令牌，创建仅限目标桶的对象读写凭据；区域填 auto。价格与额度以 Cloudflare 控制台为准。" },
   { id: "s3", name: "Amazon S3", region: "us-east-1", ph: "https://s3.<区域>.amazonaws.com", hint: "IAM 用户的访问密钥;区域如 us-east-1。" },
   { id: "minio", name: "MinIO", region: "us-east-1", ph: "https://minio.你的域名", hint: "自建 MinIO 的访问地址与 access / secret key。" },
   { id: "cos", name: "腾讯云 COS", region: "ap-shanghai", ph: "https://<桶名-APPID>.cos.<区域>.myqcloud.com", hint: "桶名须含 APPID,用虚拟主机风格地址(host 以桶名开头)。" },
@@ -968,7 +985,7 @@ export function AddStorageModal({
     >
       <div class="set-hint" style={{ marginTop: 0, marginBottom: 12 }}>
         {toServer
-          ? "连接后,云端工作区负责把整库同步到这个桶;这台设备和其他设备都从它同步。"
+          ? "连接后，工作区主节点负责把整库同步到这个桶；这台设备和其他设备都从它同步。"
           : "连接后,这台设备(本机)把整库同步到这个桶;新设备扫码加入即可一起用。"}
       </div>
       <div class="field-label">存储服务商</div>

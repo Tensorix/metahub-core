@@ -16,7 +16,6 @@ import {
   listSites,
   deleteSite,
   resolveSite,
-  isSitePublic,
   setSitePublicGrants,
   putFile,
   publishDirectory,
@@ -40,10 +39,40 @@ import { errorCode, MhError } from "../../core/errors.ts";
 import { print, table, guard, warn } from "../output.ts";
 import { FRESH_ARGS, freshDb } from "../fresh.ts";
 import { localServerBase } from "../local-base.ts";
+import { getServerConfig } from "../../core/config.ts";
+import { getNodeId } from "../../core/node.ts";
+import {
+  isSitePublicConfigured,
+  putSiteChannel,
+  putSiteChannelObservation,
+  revokeAllSiteChannels,
+  revokePublicSiteChannels,
+  setPublicSiteChannelPolicies,
+} from "../../core/site-channel-store.ts";
+import { reconcileSiteChannels } from "../../core/sync/site-channel-reconcile.ts";
 
 /** The URL a site is served at by this node's server. */
 function siteUrl(db: DbDriver, name: string): string {
-  return `${localServerBase(db)}/sites/${name}/`;
+  const base = getServerConfig(db).publicBaseUrl ?? localServerBase(db);
+  return `${base}/sites/${encodeURIComponent(name)}/`;
+}
+
+/** CLI visibility is a local-device publish action. Record that topology
+ * explicitly so another synced node cannot accidentally inherit public serve
+ * authority from the legacy visibility register. */
+function recordCliPublicChannel(db: DbDriver, site: SiteRow): void {
+  const channel = putSiteChannel(db, {
+    siteId: site.id,
+    audience: "public",
+    hosting: "device",
+    targetRef: getNodeId(db),
+    canonicalUrl: siteUrl(db, site.name),
+    policy: parseGrantSet(site.public_grants),
+  });
+  putSiteChannelObservation(db, {
+    channelId: channel.id,
+    status: "legacy_unverified",
+  });
 }
 
 const create = defineCommand({
@@ -61,14 +90,18 @@ const create = defineCommand({
     const site = createSite(db, {
       name: args.name,
       title: args.title,
-      visibility: args.public ? "public" : undefined,
+      // Explicit channel below is the authority; the legacy synced register
+      // stays private so older peers cannot expose the site by accident.
+      visibility: "private",
     });
+    if (args.public) recordCliPublicChannel(db, site);
     const url = siteUrl(db, site.name);
+    const visibility = args.public ? "public" : "private";
     print(
-      { id: site.id, name: site.name, visibility: site.visibility ?? "private", url },
+      { id: site.id, name: site.name, visibility, url },
       () =>
-        `${site.id}\t${site.name}${site.visibility === "public" ? "\t(public)" : ""}\n` +
-        `next: mh site publish ${site.name} <dir>`,
+        `${site.id}\t${site.name}${visibility === "public" ? "\t(public)" : ""}\n` +
+        `next: mh site upload ${site.name} <dir>`,
     );
   }),
 });
@@ -97,11 +130,18 @@ const update = defineCommand({
     const site = resolveSite(db, args.site);
     const updated = updateSite(db, site.id, {
       // Core validates the enum (invalid values → MhError invalid_input).
-      visibility: args.visibility as "public" | "private" | undefined,
+      visibility:
+        args.visibility === "public"
+          ? "private"
+          : args.visibility as "private" | undefined,
       spa: args.spa,
       title: args.title,
     });
-    const visibility = updated.visibility === "public" ? "public" : "private";
+    if (args.visibility === "public") recordCliPublicChannel(db, updated);
+    if (args.visibility === "private") revokePublicSiteChannels(db, updated.id);
+    const visibility = isSitePublicConfigured(db, updated)
+      ? "public"
+      : "private";
     const url = siteUrl(db, updated.name);
     print(
       { id: updated.id, name: updated.name, visibility, spa: updated.spa === 1, title: updated.title, url },
@@ -126,7 +166,7 @@ export async function scaffoldSiteDir(
   if (!opts.force && (await Bun.file(target).exists()))
     throw new MhError("conflict", `${target} already exists — pass --force to overwrite`);
   await Bun.write(target, STARTER_HTML); // creates the directory chain
-  return { dir, created: ["index.html"], next: `mh site publish <name> ${dir} --create` };
+  return { dir, created: ["index.html"], next: `mh site upload <name> ${dir} --create` };
 }
 
 const scaffold = defineCommand({
@@ -172,9 +212,9 @@ const put = defineCommand({
   }),
 });
 
-const publish = defineCommand({
+const upload = defineCommand({
   meta: {
-    name: "publish",
+    name: "upload",
     description:
       "Upload every file in a directory to a site (--create to create a missing site; --prune mirrors deletes)",
   },
@@ -268,12 +308,22 @@ const list = defineCommand({
   args: { ...FRESH_ARGS },
   run: guard(async (args) => {
     const db = await freshDb(args);
-    const rows = listSites(db).map((r) => ({
-      ...r,
-      state: siteReachability(db, r.id).state,
-    }));
+    const rows = listSites(db).map((r) => {
+      const reachability = siteReachability(db, r.id);
+      return {
+        ...r,
+        state: reachability.state,
+        channels: reachability.channels,
+      };
+    });
     print(rows, () =>
-      table(rows.map((r) => ({ id: r.id, name: r.name, title: r.title ?? "", state: r.state }))),
+      table(rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        title: r.title ?? "",
+        state: r.state,
+        channels: r.channels.length,
+      }))),
     );
   }),
 });
@@ -319,9 +369,9 @@ function grantsOut(db: DbDriver, site: SiteRow) {
   }));
 }
 
-/** Grants only take effect on a public site — say so instead of silently arming. */
-function grantEffectNote(site: SiteRow): string | null {
-  return isSitePublic(site)
+/** Grants only take effect on a public channel — say so instead of silently arming. */
+function grantEffectNote(db: DbDriver, site: SiteRow): string | null {
+  return isSitePublicConfigured(db, site)
     ? null
     : `grants are stored but NOT in effect — the site is private; run: mh site update ${site.name} --visibility public`;
 }
@@ -417,13 +467,15 @@ const grant = defineCommand({
     }
 
     const updated = setSitePublicGrants(db, site.id, set.tables.length ? set : null);
+    setPublicSiteChannelPolicies(db, updated.id, parseGrantSet(updated.public_grants));
     if (args.clear) setDropKnobs(db, site.id, null);
     else await applyGrantKnobs(db, site.id, args);
     // Auto-wire the write-inbox: create grant + configured edge → publish/update
     // mh-drop.json + register the drop; last create grant gone → tear both down.
     const wire = await wireDrop(db, updated.id);
     const rows = grantsOut(db, updated);
-    const note = grantEffectNote(updated);
+    const effective = isSitePublicConfigured(db, updated);
+    const note = grantEffectNote(db, updated);
     if (note) warn(note);
     const transport = transportLine(db, updated);
     print(
@@ -431,14 +483,14 @@ const grant = defineCommand({
         site: updated.id,
         name: updated.name,
         grants: rows,
-        effective: isSitePublic(updated),
+        effective,
         ...(wire ? { transport: wire.transport, drop: { file: wire.file, registered: wire.registered } } : {}),
       },
       () =>
         (rows.length
           ? rows.map((r) => `${r.name} (${r.db}): ${r.ops.join(",")}`).join("\n")
           : "no grants") +
-        `\napi: /sites/${updated.name}/api/records?db=<db> (anonymous, ${isSitePublic(updated) ? "ACTIVE" : "inactive until public"})` +
+        `\napi: /sites/${updated.name}/api/records?db=<db> (anonymous, ${effective ? "ACTIVE" : "inactive until public"})` +
         (transport ? `\n${transport}` : ""),
     );
   }),
@@ -454,10 +506,11 @@ const grants = defineCommand({
     const db = await freshDb(args);
     const site = resolveSite(db, args.site);
     const rows = grantsOut(db, site);
-    const note = rows.length ? grantEffectNote(site) : null;
+    const effective = isSitePublicConfigured(db, site);
+    const note = rows.length ? grantEffectNote(db, site) : null;
     if (note) warn(note);
     print(
-      { site: site.id, name: site.name, grants: rows, effective: isSitePublic(site) },
+      { site: site.id, name: site.name, grants: rows, effective },
       () =>
         rows.length
           ? table(rows.map((r) => ({ database: r.name, id: r.db, ops: r.ops.join(",") })))
@@ -469,10 +522,12 @@ const grants = defineCommand({
 const del = defineCommand({
   meta: { name: "delete", description: "Delete a whole site and its files" },
   args: { site: { type: "positional", required: true, description: "Site ref (id/name)" } },
-  run: guard((args) => {
+  run: guard(async (args) => {
     const db = openMetahub();
     const site = resolveSite(db, args.site);
+    revokeAllSiteChannels(db, site.id);
     deleteSite(db, site.id);
+    await reconcileSiteChannels(db);
     print({ ok: true, deleted: site.id });
   }),
 });
@@ -483,8 +538,7 @@ export default defineCommand({
     description:
       "Manage static sites served at /sites/<name>/ (pages call /api/* or import /metahub-sdk.js same-origin)",
   },
-  // `upload` is an alias for `publish`: the verb "publish" here means "upload
-  // files" (visibility is a separate axis via `update --visibility`), and the
-  // alias lets docs/skills use the unambiguous verb.
-  subCommands: { create, update, scaffold, put, publish, upload: publish, list, files, rm, grant, grants, delete: del },
+  // `publish` is rewritten to `upload` with a deprecation warning in index.ts,
+  // keeping existing scripts alive without advertising two competing verbs.
+  subCommands: { create, update, scaffold, put, upload, list, files, rm, grant, grants, delete: del },
 });

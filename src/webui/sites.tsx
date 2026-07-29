@@ -19,7 +19,6 @@ import {
   type SiteChannel,
 } from "./site-status.ts";
 import { openShareModal, SHARES_CHANGED } from "./share-modal.tsx";
-import { isNoOrigin } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
 import {
   openMenu,
@@ -254,10 +253,10 @@ export function SitesView() {
     const refreshPublishState = () => {
       loadShares();
       reload();
-      if (!isNoOrigin()) reloadHosting();
+      reloadHosting();
     };
     loadShares();
-    if (!isNoOrigin()) reloadHosting();
+    reloadHosting();
     document.addEventListener(SHARES_CHANGED, refreshPublishState);
     return () => document.removeEventListener(SHARES_CHANGED, refreshPublishState);
   }, []);
@@ -307,9 +306,6 @@ export function SitesView() {
     await reload();
     setPeek(target);
   };
-
-  // Default-deny, same rule as core isSitePublic: only exactly "public" counts.
-  const isPublic = (s: Site) => s.visibility === "public";
 
   const toggleSpa = async (s: Site) => {
     try {
@@ -446,11 +442,19 @@ export function SitesView() {
           <div class="sites-grid">
             {sites.map((s, i) => (
               (() => {
-                const ownShares = shares.filter((x) => x.target_id === s.id);
                 const pendingRollback = hostingInfo?.pendingRollbacks.find((x) => x.siteId === s.id);
                 // One shared derivation (core site-channels) — cards, the peek
                 // drawer and the publish dialog must answer identically.
-                const state = SITE_STATE_LABEL[siteState(siteChannelInput(s, shares, hostingInfo))];
+                const input = siteChannelInput(s, shares, hostingInfo);
+                const channels = siteChannels(input);
+                const state = SITE_STATE_LABEL[siteState(input)];
+                const liveUrls = channels.filter(
+                  (channel) =>
+                    channel.status === "ready" &&
+                    channel.desiredState !== "revoked" &&
+                    !!channel.url,
+                );
+                const primary = liveUrls.length === 1 ? liveUrls[0]!.url : null;
                 return (
               <div class="site-card" key={s.id} style={`--i:${i}`} onClick={() => setPeek(s)}>
                 <div class="site-card-head">
@@ -461,7 +465,7 @@ export function SitesView() {
                     <div class="slug">{s.name}</div>
                     <div class={"ttl" + (s.title ? "" : " muted")}>{s.title || "未命名站点"}</div>
                   </div>
-                  {(isPublic(s) || ownShares.length > 0) && (
+                  {channels.length > 0 && (
                     <span
                       class="share-badge"
                       title={state}
@@ -474,14 +478,27 @@ export function SitesView() {
                 <div class="muted" style={{ fontSize: 12, marginBottom: 4 }}>{state}</div>
                 <button
                   class="site-addr"
-                  title="点击复制访问地址"
+                  title={
+                    primary
+                      ? "点击复制唯一已验证的发布地址"
+                      : liveUrls.length > 1
+                        ? "存在多个发布地址；打开详情选择"
+                        : "点击复制本机预览地址"
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
-                    copyText(siteUrl(s.name));
+                    if (liveUrls.length > 1) setPeek(s);
+                    else copyText(primary ?? siteUrl(s.name));
                   }}
                 >
                   <Icon name="link" cls="ico sm" />
-                  <span>{siteUrlShort(s.name)}</span>
+                  <span>
+                    {primary
+                      ? primary
+                      : liveUrls.length > 1
+                        ? `${liveUrls.length} 个发布地址`
+                        : `本机预览 · ${siteUrlShort(s.name)}`}
+                  </span>
                 </button>
                 <div class="site-card-meta">
                   <span>
@@ -526,7 +543,7 @@ export function SitesView() {
                     }}
                   >
                     <Icon name="link" cls="ico sm" />
-                    {pendingRollback ? "重试回滚" : ownShares.length || isPublic(s) ? "管理" : "发布"}
+                    {pendingRollback ? "重试回滚" : channels.length ? "管理" : "发布"}
                   </button>
                   <button
                     class="iconbtn"
@@ -870,6 +887,10 @@ function SitePeek({
         <div class="peek-body">
           <h2 style={{ margin: "0 0 20px" }}>{site.title || site.name}</h2>
 
+          <div class="files-head" style={{ marginTop: 0 }}>
+            <span>本机预览</span>
+            <span>仅用于这台设备上的检查</span>
+          </div>
           <div class="acc-link">
             <span class="url">{urlShort}</span>
             <button title="复制地址" onClick={() => copyText(url)}>
@@ -888,7 +909,7 @@ function SitePeek({
           </div>
 
           <div class="files-head">
-            <span>访问渠道</span>
+            <span>发布地址与访问渠道</span>
             <span>{channels.length || ""}</span>
           </div>
           {channels.length === 0 ? (
@@ -906,7 +927,11 @@ function SitePeek({
                   <span
                     class={
                       "chan-status" +
-                      (c.status === "rollback_pending" || c.status === "cleanup_pending" || c.status === "expired"
+                      (c.status === "rollback_pending" ||
+                      c.status === "cleanup_pending" ||
+                      c.status === "waiting_controller" ||
+                      c.status === "error" ||
+                      c.status === "expired"
                         ? " warn"
                         : c.status === "ready"
                           ? ""

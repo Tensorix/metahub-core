@@ -41,6 +41,10 @@ export const SyncResponseSchema = z.object({
 export const HealthResponseSchema = z.object({
   ok: z.boolean(),
   node: z.string().describe("Server's node id"),
+  capabilities: z
+    .array(z.string())
+    .optional()
+    .describe("Optional protocol features supported by this server"),
 });
 
 // Pairing handshake (see ./pairing.ts). The caller (device B) presents a

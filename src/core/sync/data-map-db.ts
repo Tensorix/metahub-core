@@ -24,6 +24,20 @@ export interface DataMap {
 }
 
 export function dataMap(db: DbDriver): DataMap {
+  const selfNodeId = getNodeId(db);
+  const high = db
+    .query(
+      "SELECT MAX(seq) AS global_seq, MAX(CASE WHEN node_id = ? THEN seq END) AS own_seq FROM crdt_changes",
+    )
+    .get(selfNodeId) as { global_seq: number | null; own_seq: number | null };
+  const interval = db
+    .query("SELECT value FROM meta WHERE key = 'cfg_sync_interval'")
+    .get() as { value: string } | null;
+  const syncIntervalMs = Number(interval?.value);
+  const staleAfterMs = Math.max(
+    15 * 60 * 1000,
+    Number.isFinite(syncIntervalMs) && syncIntervalMs > 0 ? syncIntervalMs * 3 : 0,
+  );
   const peers: DataMapPeerInput[] = listPeers(db)
     .filter((p) => p.kind === "http" || p.kind === "s3")
     .map((p) => {
@@ -47,18 +61,22 @@ export function dataMap(db: DbDriver): DataMap {
         lastSuccessAt: p.last_success_at,
         lastStatus: p.last_status,
         lastError: p.last_error,
+        pushCursor: p.push_cursor,
         bucket,
         publish,
       };
     });
   const pending = pendingBlobs(db);
   const input: DataMapInput = {
-    selfNodeId: getNodeId(db),
+    selfNodeId,
     selfLabel: getNodeLabel(db),
     peers,
     pendingBlobCount: pending.length,
     pendingBlobBytes: pending.reduce((sum, b) => sum + b.size, 0),
     blobFullNodes: readPolicy(db).fullNodes,
+    globalHighWaterSeq: high.global_seq ?? 0,
+    ownHighWaterSeq: high.own_seq ?? 0,
+    staleAfterMs,
   };
   return { state: dataMapState(input), places: dataPlaces(input) };
 }

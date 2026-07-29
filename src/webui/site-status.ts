@@ -10,7 +10,11 @@ import {
   type SiteChannelInput,
   type SiteState,
 } from "../core/site-channels.ts";
-import type { Site, ShareListItem, SiteHostingInfo } from "./api.ts";
+import type {
+  Site,
+  ShareListItem,
+  SiteHostingInfo,
+} from "./api.ts";
 
 export { siteChannels, siteState };
 export type { SiteChannel, SiteChannelInput, SiteState };
@@ -19,6 +23,7 @@ export type { SiteChannel, SiteChannelInput, SiteState };
 export const SITE_STATE_LABEL: Record<SiteState, string> = {
   rollback_pending: "回滚待确认",
   cleanup_pending: "撤销待确认",
+  error: "发布失败",
   provisioning: "正在创建 Edge 渠道",
   room_live: "已上线 · Edge 始终在线",
   device_live: "已上线 · 设备托管",
@@ -35,6 +40,8 @@ export const CHANNEL_STATUS_LABEL: Record<SiteChannel["status"], string> = {
   provisioning: "正在创建",
   rollback_pending: "回滚待确认",
   cleanup_pending: "撤销待确认",
+  waiting_controller: "等待控制设备",
+  error: "失败",
   expired: "已过期",
 };
 
@@ -62,5 +69,20 @@ export function siteChannelInput(
         .filter((r) => r.siteId === site.id)
         .map((r) => ({ peerUrl: r.peerUrl, targetUrl: r.targetUrl, lastError: r.lastError })) ?? [],
     shares: shares.filter((s) => s.target_id === site.id && s.kind === "site"),
+    storedChannels:
+      hosting?.channels
+        .filter((channel) => channel.siteId === site.id)
+        .map((channel) => ({
+          id: channel.id,
+          audience: channel.audience,
+          hosting: channel.hosting,
+          controllerNodeId: channel.controllerNodeId,
+          targetRef: channel.targetRef,
+          canonicalUrl: channel.canonicalUrl,
+          policyJson: channel.policyJson,
+          desiredState: channel.desiredState,
+          status: channel.status,
+          lastError: channel.lastError,
+        })) ?? [],
   };
 }

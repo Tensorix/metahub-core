@@ -5,6 +5,11 @@ import { parseGrantSet } from "../../core/grants-core.ts";
 import { createSite, resolveSite, setSitePublicGrants } from "../../core/sites.ts";
 import { addPeer } from "../../core/sync/peers.ts";
 import type { RouteCtx } from "../../core/sync/routes.ts";
+import {
+  listSiteChannelRows,
+  listSiteChannelViews,
+  putSiteChannel,
+} from "../../core/site-channel-store.ts";
 import { pollSite, siteHostingRoutes } from "./site-hosting-routes.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -97,6 +102,19 @@ describe("site hosting routes", () => {
       { db: d, node: "node-host", allowRemoteSiteHosting: true },
     );
     expect(oversized.status).toBe(502);
+
+    globalThis.fetch = (async () =>
+      Response.json({ ok: true, node: "node-host" })) as typeof fetch;
+    const oldTarget = await call(
+      "POST",
+      "/api/site-hosting/verify",
+      { url: "https://old-target.example" },
+      { db: d, node: "node-host", allowRemoteSiteHosting: true },
+    );
+    expect(oldTarget.status).toBe(409);
+    expect((await oldTarget.json()) as { error: string }).toMatchObject({
+      error: expect.stringContaining("升级"),
+    });
   });
 
   test("publishes only after node verification and returns a complete reachable URL", async () => {
@@ -105,7 +123,11 @@ describe("site hosting routes", () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/health")
-        return Response.json({ ok: true, node: "node-host" });
+        return Response.json({
+          ok: true,
+          node: "node-host",
+          capabilities: ["site_channels"],
+        });
       if (url.pathname === "/sites/demo/") return new Response("<h1>ok</h1>");
       throw new Error(`unexpected request ${url}`);
     }) as typeof fetch;
@@ -128,7 +150,20 @@ describe("site hosting routes", () => {
       url: "https://public.example/sites/demo/",
       host: "https://public.example",
     });
-    expect(resolveSite(d, site.id).visibility).toBe("public");
+    // New publications never use the legacy global-public register: it would
+    // let a mixed-version peer ignore the selected host and serve too.
+    expect(resolveSite(d, site.id).visibility).toBe("private");
+    expect(listSiteChannelRows(d, site.id)).toEqual([
+      expect.objectContaining({
+        audience: "public",
+        hosting: "device",
+        controller_node_id: "node-host",
+        target_ref: "node-host",
+        canonical_url: "https://public.example/sites/demo/",
+        desired_state: "active",
+      }),
+    ]);
+    expect(listSiteChannelViews(d, site.id)[0]!.status).toBe("ready");
     const hosting = await route("GET", "/api/site-hosting").handler(
       new Request("http://local.test/api/site-hosting"),
       { db: d, node: "node-host", allowRemoteSiteHosting: true },
@@ -159,7 +194,11 @@ describe("site hosting routes", () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/health")
-        return Response.json({ ok: true, node: "peer-node" });
+        return Response.json({
+          ok: true,
+          node: "peer-node",
+          capabilities: ["site_channels"],
+        });
       if (url.pathname === "/sync")
         return Response.json({ error: "sync interrupted" }, { status: 500 });
       throw new Error(`unexpected request ${url}`);
@@ -187,6 +226,14 @@ describe("site hosting routes", () => {
       v: 1,
       tables: [{ db: "db_before", ops: ["read"] }],
     });
+    expect(listSiteChannelRows(d, site.id)[0]).toMatchObject({
+      controller_node_id: "peer-node",
+      target_ref: "peer-node",
+      desired_state: "revoked",
+    });
+    expect(listSiteChannelViews(d, site.id)[0]!.status).toBe(
+      "rollback_pending",
+    );
     const hosting = await route("GET", "/api/site-hosting").handler(
       new Request("http://local.test/api/site-hosting"),
       { db: d, node: "node-host", allowRemoteSiteHosting: true },
@@ -210,6 +257,78 @@ describe("site hosting routes", () => {
     expect(await recovered.json()).toMatchObject({ status: "private" });
   });
 
+  test("revoking the final public channel also closes legacy visibility", async () => {
+    const d = db();
+    const site = createSite(d, {
+      name: "public",
+      visibility: "public",
+    });
+    const first = putSiteChannel(d, {
+      siteId: site.id,
+      audience: "public",
+      hosting: "device",
+      targetRef: "node-host",
+      canonicalUrl: "http://local.test/sites/public/",
+      policy: { v: 1, tables: [] },
+    });
+    const res = await call(
+      "PATCH",
+      "/api/site/channel",
+      { id: first.id, desiredState: "revoked" },
+      { db: d, node: "node-host" },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      desiredState: "revoked",
+      status: "revoked",
+    });
+    expect(resolveSite(d, site.id).visibility).toBe("private");
+  });
+
+  test("remote unpublish reports cleanup pending when the host cannot sync", async () => {
+    const d = db();
+    const site = createSite(d, {
+      name: "remote-public",
+      visibility: "public",
+    });
+    const channel = putSiteChannel(d, {
+      siteId: site.id,
+      audience: "public",
+      hosting: "device",
+      controllerNodeId: "peer-node",
+      targetRef: "peer-node",
+      canonicalUrl: "https://peer-public.example/sites/remote-public/",
+      policy: { v: 1, tables: [] },
+    });
+    addPeer(d, {
+      url: "https://peer.example",
+      token: "peer-token",
+      node_id: "peer-node",
+    });
+    globalThis.fetch = (async () =>
+      Response.json({ error: "offline" }, { status: 503 })) as typeof fetch;
+
+    const res = await call(
+      "POST",
+      "/api/site/publish",
+      { siteId: site.id, access: "private" },
+      { db: d, node: "node-host" },
+    );
+    expect(await res.json()).toMatchObject({
+      access: "private",
+      status: "cleanup_pending",
+      error: expect.stringContaining("sync failed"),
+    });
+    expect(resolveSite(d, site.id).visibility).toBe("private");
+    expect(listSiteChannelViews(d, site.id)).toEqual([
+      expect.objectContaining({
+        id: channel.id,
+        desiredState: "revoked",
+        status: "cleanup_pending",
+      }),
+    ]);
+  });
+
   test("refuses a paired device whose node identity was not saved", async () => {
     const d = db();
     const site = createSite(d, { name: "missing-node" });
@@ -217,7 +336,11 @@ describe("site hosting routes", () => {
     let fetched = false;
     globalThis.fetch = (async () => {
       fetched = true;
-      return Response.json({ ok: true, node: "peer-node" });
+      return Response.json({
+        ok: true,
+        node: "peer-node",
+        capabilities: ["site_channels"],
+      });
     }) as typeof fetch;
     const res = await call(
       "POST",
@@ -241,7 +364,11 @@ describe("site hosting routes", () => {
     let fetched = false;
     globalThis.fetch = (async () => {
       fetched = true;
-      return Response.json({ ok: true, node: "node-host" });
+      return Response.json({
+        ok: true,
+        node: "node-host",
+        capabilities: ["site_channels"],
+      });
     }) as typeof fetch;
     const res = await call(
       "POST",

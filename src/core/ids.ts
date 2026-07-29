@@ -27,7 +27,7 @@ export function makeId(name: string, fallback = "item"): string {
 }
 
 /** Entity kinds whose ids carry a type prefix. */
-export type Kind = "db" | "prop" | "rec" | "doc" | "blk" | "site" | "sf";
+export type Kind = "db" | "prop" | "rec" | "doc" | "blk" | "site" | "sf" | "chan";
 
 const KINDS: ReadonlySet<string> = new Set<Kind>([
   "db",
@@ -37,6 +37,7 @@ const KINDS: ReadonlySet<string> = new Set<Kind>([
   "blk",
   "site",
   "sf",
+  "chan",
 ]);
 
 /**

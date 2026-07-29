@@ -7,6 +7,8 @@ import { scaffoldSiteDir } from "./site.ts";
 import { createClient } from "../../sdk/client.ts";
 import { errorCode } from "../../core/errors.ts";
 
+const CLI = new URL("../index.ts", import.meta.url).pathname;
+
 // ---- template ↔ SDK drift guard ----------------------------------------------
 
 test("starter template only calls methods the SDK actually exports", () => {
@@ -36,7 +38,7 @@ test("scaffold: creates dir + index.html and reports the publish next-step", asy
     expect(res).toEqual({
       dir,
       created: ["index.html"],
-      next: `mh site publish <name> ${dir} --create`,
+      next: `mh site upload <name> ${dir} --create`,
     });
     expect(await Bun.file(join(dir, "index.html")).text()).toBe(STARTER_HTML);
   } finally {
@@ -67,5 +69,22 @@ test("scaffold: --force overwrites an existing index.html", async () => {
     expect(await Bun.file(join(dir, "index.html")).text()).toBe(STARTER_HTML);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("legacy site publish remains a warned alias for upload", () => {
+  const home = mkdtempSync(join(tmpdir(), "mh-site-alias-"));
+  try {
+    const result = Bun.spawnSync(
+      ["bun", CLI, "site", "publish", "--help"],
+      { env: { ...process.env, METAHUB_HOME: home } },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toContain(
+      "`mh site publish` is deprecated",
+    );
+    expect(result.stdout.toString()).toContain("Upload every file");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });

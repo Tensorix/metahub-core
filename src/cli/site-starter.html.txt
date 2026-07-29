@@ -38,7 +38,7 @@
 <h1>Metahub starter</h1>
 <p class="muted">
   This page is served by your hub and talks to it same-origin. Edit
-  <code>index.html</code>, then re-run <code>mh site publish</code>.
+  <code>index.html</code>, then re-run <code>mh site upload</code>.
 </p>
 
 <h2 style="font-size:1.05rem">Databases in this hub</h2>

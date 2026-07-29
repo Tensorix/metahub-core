@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // The tools-vs-configuration namespace contract: daily tools stay top-level,
-// everything long-lived lives under `mh config <server|device|backup|edge>`,
+// configuration lives under `mh config <server|device|backup>`; Edge has one
+// operational home (`mh edge`) and config edge remains a deprecated alias.
 // and the pre-namespace spellings (`config peer/grant/set`) keep working as
 // hidden aliases so agent scripts never break.
 
@@ -65,7 +66,7 @@ test("unknown actions name the documented tree", () => {
 
   const section = mh("config", "nope");
   expect(section.exit).toBe(2);
-  expect(section.out.error).toContain("server | device | backup | edge");
+  expect(section.out.error).toContain("server | device | backup");
 });
 
 test("sync with no args and no peers fails loudly with the new guidance", () => {
@@ -81,4 +82,29 @@ test("backup anchors redundancy validates its value", () => {
   const ok = mh("config", "backup", "anchors", "redundancy", "any");
   expect(ok.exit).toBe(0);
   expect(ok.out.redundancy).toBe("any");
+});
+
+test("config help is scoped and Edge has one canonical command home", () => {
+  const backup = Bun.spawnSync(
+    ["bun", CLI, "config", "backup", "connect", "--help"],
+    { env: { ...process.env, METAHUB_HOME: home } },
+  ).stdout.toString();
+  expect(backup).toContain("--access-key");
+  expect(backup).not.toContain("--account-id");
+  expect(backup).not.toContain("--port");
+
+  const root = Bun.spawnSync(["bun", CLI, "config", "--help"], {
+    env: { ...process.env, METAHUB_HOME: home },
+  }).stdout.toString();
+  expect(root).toContain("mh edge --help");
+  expect(root).not.toContain("config edge deploy");
+});
+
+test("deprecated config edge alias still works and points to mh edge", () => {
+  const r = Bun.spawnSync(["bun", CLI, "config", "edge", "status", "--json"], {
+    env: { ...process.env, METAHUB_HOME: home },
+  });
+  // status is not part of the old alias surface, but the warning must still
+  // make the canonical home unambiguous before its validation error.
+  expect(r.stderr.toString()).toContain("mh edge");
 });

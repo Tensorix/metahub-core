@@ -85,7 +85,11 @@ const syncRoutes: Route[] = [
     summary: "Health check",
     response: HealthResponseSchema,
     handler(_req, { node }) {
-      return Response.json({ ok: true, node });
+      return Response.json({
+        ok: true,
+        node,
+        capabilities: ["site_channels"],
+      });
     },
   },
 ];

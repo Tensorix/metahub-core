@@ -131,6 +131,8 @@ export const localSites = {
   deleteSite: (id: string) => rpc("deleteSite", id),
   getSiteGrants: (id: string) => rpc("getSiteGrants", id),
   setSiteGrants: (id: string, grants: unknown) => rpc("setSiteGrants", id, grants),
+  getSiteHosting: () => rpc("siteHosting"),
+  revokeSiteChannel: (id: string) => rpc("revokeSiteChannel", id),
   deleteSiteFile: (site: string, path: string) => rpc("deleteSiteFile", site, path),
   uploadSiteFile: async (site: string, path: string, file: Blob) =>
     rpc("putSiteFile", site, path, await file.arrayBuffer(), file.type || undefined),

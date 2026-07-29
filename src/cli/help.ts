@@ -84,8 +84,9 @@ COMMANDS
     site update <site> [--visibility public|private] [--spa|--no-spa] [--title]
     site scaffold <dir> [--force]     Write a starter index.html (SDK import + working example)
     site put <site> <path> --from <file> | --content <txt|@file|@->
-    site publish <site> <dir>         Upload a directory (alias: upload; --create to create; --prune mirrors deletes)
-    site list | files <site>
+    site upload <site> <dir>          Upload a directory (--create to create; --prune mirrors deletes)
+    site list                         List state + channel count (JSON includes addresses)
+    site files <site>
     site grant <site> <db>:<ops>      Anonymous data access for a PUBLIC site's api/ (ops: read,create,update; --revoke <db>; --clear)
     site grants <site>                Show a site's public data grants
     site rm <site> <path> | delete <site>
@@ -109,16 +110,16 @@ COMMANDS
                                       --debug a token guards every request; it
                                       persists in ~/.metahub (30d TTL, 7d grace;
                                       METAHUB_TOKEN / _TTL / _GRACE tune it).
-  configuration  (everything long-lived lives under ONE command — see 'mh config --help')
-    config                            Interactive wizard (server/device/backup/edge)
+  configuration
+    config                            Interactive wizard (server/device/backup)
     config server --port … --host …   Server settings
     config device add|code|list|revoke
                                       Pair devices, inspect the roster, cut one off
     config backup connect|list|rotate|recovery|anchors
                                       Cloud backup bucket (S3/R2), key rotation,
                                       printable recovery code, blob anchors
-    config edge deploy|connect|rotate-keys
-                                      Your own Cloudflare Worker+D1 (or compatible host)
+    edge deploy|connect|status|pull|rotate
+                                      Deploy and operate your Edge subsystem
   shell
     completion <bash|zsh|fish>        Print a completion script
 
@@ -199,13 +200,13 @@ const EXAMPLES: Record<string, string[]> = {
     "echo '<h1>hi</h1>' | mh site put blog index.html --content @-",
   ],
   "site scaffold": [
-    "mh site scaffold ./app                 # starter index.html, then: mh site publish myapp ./app --create",
+    "mh site scaffold ./app                 # starter index.html, then: mh site upload myapp ./app --create",
     "mh site scaffold ./app --force         # overwrite an existing index.html",
   ],
-  "site publish": [
-    "mh site publish blog ./dist --create   # first publish creates the site",
-    "mh site publish blog ./dist            # re-publish (the site must exist)",
-    "mh site publish blog ./dist --prune    # mirror: also delete remote files gone locally",
+  "site upload": [
+    "mh site upload blog ./dist --create   # first upload creates the site",
+    "mh site upload blog ./dist            # update files (the site must exist)",
+    "mh site upload blog ./dist --prune    # mirror: also delete remote files gone locally",
   ],
   "site files": ["mh site files blog"],
   "site grant": [
@@ -235,7 +236,6 @@ const EXAMPLES: Record<string, string[]> = {
     "mh config backup rotate                          # lost device: new keys / passphrase",
     "mh config backup recovery                        # printable master-key card",
     "mh config backup anchors redundancy any",
-    "mh config edge deploy --yes                      # own Cloudflare Worker+D1",
   ],
   "edge deploy": [
     "mh edge deploy --account-id <id> --api-token <token> --yes",

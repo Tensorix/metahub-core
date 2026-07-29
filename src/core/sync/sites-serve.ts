@@ -2,12 +2,15 @@ import type { DbDriver } from "../driver.ts";
 import type { RouteCtx } from "./routes.ts";
 import {
   resolveSite,
-  isSitePublic,
   getFileMetaForServe,
   decodeFileRow,
   siteCacheControl,
   type SiteRow,
 } from "../sites.ts";
+import {
+  isSitePublicOnThisNode,
+  publicSiteChannelOnThisNode,
+} from "../site-channel-store.ts";
 import { publicGuestNode } from "../grants-core.ts";
 import { policyForSite } from "../access-policy.ts";
 import { serveGrantedApi, grantedDepsFromPolicy } from "./grants-routes.ts";
@@ -30,7 +33,7 @@ import {
 // does not own (so the caller can fall through to 404).
 //
 // The route is AUTONOMOUS: /sites/ sits on server.ts's token-exempt list and
-// this module runs its own access decision per site (isSitePublic, default-deny):
+// this module runs its own channel-aware access decision per site (default-deny):
 //   - public site   → served raw with `public, …` cache headers and NO runtime
 //                     injection (the master-token runtime must never reach an
 //                     anonymous reader; same red line as /share/, server.ts).
@@ -84,6 +87,10 @@ export async function serveSite(
   } catch {
     site = null;
   }
+  const publicHere = !!site && isSitePublicOnThisNode(ctx.db, site);
+  const publicChannel = site
+    ? publicSiteChannelOnThisNode(ctx.db, site.id)
+    : null;
 
   // Reserved data-API namespace: /sites/<name>/api/* never resolves to files.
   //   - a valid token  → in-process rewrite to the FULL main API (the page a
@@ -97,7 +104,7 @@ export async function serveSite(
       const fwd = new Request(`${url.origin}/${filePath}${url.search}`, req);
       return opts.forwardApi(fwd);
     }
-    if (site && isSitePublic(site)) {
+    if (site && publicHere) {
       const siteId = site.id;
       const key = `${opts.ip ?? "?"}:${siteId}`;
       // One policy → one deps builder → serveGrantedApi. The write gate
@@ -105,7 +112,15 @@ export async function serveSite(
       // grantedDepsFromPolicy, so this realtime write path and the write-inbox
       // enforce the SAME gate (a page not sending x-drop-pass/x-turnstile-token
       // gets 401 here; the SDK supplies those proofs on the live request).
-      const policy = policyForSite({ publicGrants: site.public_grants, knobs: getDropKnobs(ctx.db, siteId) });
+      const policy = policyForSite({
+        // Once a v2 channel exists its policy snapshot is authoritative. Null
+        // or malformed channel policy is default-deny; falling back to the
+        // legacy global grants register would silently widen access.
+        publicGrants: publicChannel
+          ? publicChannel.policy_json
+          : site.public_grants,
+        knobs: getDropKnobs(ctx.db, siteId),
+      });
       return serveGrantedApi(
         req,
         filePath.slice("api/".length),
@@ -126,7 +141,7 @@ export async function serveSite(
 
   // Public site: token-free, shared-cacheable, and NEVER runtime-injected —
   // the page an anonymous visitor sees is byte-identical to the owner's view.
-  if (site && isSitePublic(site)) {
+  if (site && publicHere) {
     return serveSiteFile(req, ctx.db, site.id, filePath, { spa: site.spa === 1, isPublic: true });
   }
 
