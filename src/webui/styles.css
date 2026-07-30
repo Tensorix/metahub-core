@@ -198,8 +198,22 @@
      ResizeObserver on .set-shell) — the app sidebar is resizable, so neither a
      viewport media query nor a CSS container query could stay in agreement
      with the conditional render tree. */
-  .set-page { display:flex; align-items:stretch; gap:36px; max-width:972px; margin:0 auto; padding:0 32px; }
-  .set-rail-col { flex:0 0 192px; min-width:0; padding-top:32px; }
+  /* The shell is a full-height flex column so .set-page (flex:1) fills the
+     scrollport: the rail column then stretches to the viewport bottom and the
+     version line pinned at its end lands at the bottom of the SCREEN, not just
+     under the nav. min-height:100% alone can't do this — a percentage on
+     .set-page would resolve against the shell's auto height and collapse. Inert
+     on mobile, where .content is overflow:visible (and narrow shells have no
+     rail anyway). .set-page keeps width:100% so the auto side margins still
+     center it at max-width once it is a flex item. */
+  .set-shell { display:flex; flex-direction:column; min-height:100%; }
+  .set-page { flex:1 1 auto; display:flex; align-items:stretch; gap:36px;
+    width:100%; max-width:972px; margin:0 auto; padding:0 32px; }
+  /* no bottom pad here: it belongs INSIDE the sticky version line (see
+     .set-footer.rail), so the line's pinned and resting positions coincide and
+     it never shifts as the scroll bottoms out. */
+  .set-rail-col { flex:0 0 192px; min-width:0; padding:32px 0 0;
+    display:flex; flex-direction:column; }
   .set-main { flex:1 1 auto; min-width:0; max-width:680px; padding:24px 0 64px; }
   .set-shell.narrow .set-page { display:block; max-width:680px; margin:0 auto; padding:24px 20px 48px; }
   /* Flat section (primitives.tsx SetSection): a small gray label over its rows
@@ -212,7 +226,7 @@
   /* Left rail: a real flex column. .set-rail-col stretches to the row height
      (align-items:stretch on .set-page) so the sticky nav has travel room;
      sticks 24px under the topbar while the page scrolls. */
-  .set-rail { position:sticky; top:24px; display:flex; flex-direction:column; gap:2px; padding-left:12px; }
+  .set-rail { flex:none; position:sticky; top:24px; display:flex; flex-direction:column; gap:2px; padding-left:12px; }
   /* full-height track + a single accent segment that slides to the active row
      (driven by --mark-y / --mark-h from JS, eased by CSS) */
   .set-rail::before { content:""; position:absolute; left:0; top:4px; bottom:4px;
@@ -327,9 +341,32 @@
     color:var(--fg-soft); font-size:var(--fs-sm); font-weight:550; transition:border-color .12s, background .12s, color .12s; }
   .provider-chip:hover { border-color:var(--muted); color:var(--fg); }
   .provider-chip.sel { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  /* Version line, flow variant (narrow shells only): centered, hairline-topped,
+     last thing in the page. */
   .set-footer { margin-top:40px; padding-top:20px; border-top:1px solid var(--line); display:flex;
     flex-wrap:wrap; justify-content:center; align-items:center; gap:7px; color:var(--muted); font-size:12px; }
   .set-footer-sep { opacity:.45; }
+  .set-ver-nums { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  /* Version line, rail variant (wide shells): pinned to the bottom of the rail
+     column — margin-top:auto parks it there, sticky keeps it in the bottom-left
+     corner while a long page scrolls. Two stacked lines (facts over action)
+     because the rail is 192px; closed by whitespace, no divider — the rail
+     already carries a 2px track and a second line would box it in.
+     Left pad 22 = .set-rail's 12 + a row's own 10, so the line hangs on the same
+     edge as the rail's group labels; bottom pad 12 (inside the sticky box, see
+     .set-rail-col) reads level with the app sidebar's own v<core> in .sb-footer
+     — two quiet version texts on one optical line. */
+  .set-footer.rail { margin:auto 0 0; padding:16px 10px 12px 22px; border-top:0;
+    position:sticky; bottom:0; flex-flow:column nowrap; align-items:flex-start;
+    justify-content:flex-start; gap:6px; font-size:var(--fs-micro); }
+  .set-footer.rail .ver-act { font-size:var(--fs-xs); }
+  /* the state line owns the rail's full content width, so the download bar can
+     flex to it instead of the fixed 120px tuned for the centered flow variant */
+  .set-footer.rail .ver-up { align-self:stretch; flex-wrap:wrap; }
+  .set-footer.rail .ver-dl .ver-bar { flex:1 1 auto; width:auto; min-width:60px; }
+  /* Short viewports: the sticky nav and the pinned version line would fight for
+     the same pixels — let the line scroll with the column instead. */
+  @media (max-height:600px) { .set-footer.rail { position:static; } }
   .ver-num { font-family:var(--mono); font-size:var(--fs-micro); color:var(--fg-soft); letter-spacing:-.01em; }
   .ver-up { display:inline-flex; align-items:center; gap:6px; }
   .ver-up.err .ver-msg { color:var(--danger); }

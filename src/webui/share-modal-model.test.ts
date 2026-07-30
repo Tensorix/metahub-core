@@ -4,6 +4,8 @@ import {
   legacyShareRowView,
   deviceOptionState,
   hostingPlan,
+  expiryIndexFor,
+  EXPIRY,
   type HostingPlanInput,
 } from "./share-modal-model.ts";
 import type { SiteChannel } from "../core/site-channels.ts";
@@ -197,4 +199,15 @@ test("no-origin + public → clear device block; edge stays open for links", () 
 test("edge loading (null) never flashes a warning", () => {
   const plan = hostingPlan(planInput({ hostingAuto: false, hosting: "edge", edge: null }));
   expect(plan.edgeBlocked).toBe("");
+});
+
+test("recreate pre-fill picks the smallest covering expiry, never 永不过期", () => {
+  const now = 1_000_000_000_000;
+  expect(expiryIndexFor(null, now)).toBe(0); // the link really was unbounded
+  // Already expired (remaining < 0): the shortest bounded bucket, not "never".
+  expect(EXPIRY[expiryIndexFor(now - 60_000, now)]!.label).toBe("1 小时");
+  expect(EXPIRY[expiryIndexFor(now + 2 * 3_600_000, now)]!.label).toBe("24 小时");
+  expect(EXPIRY[expiryIndexFor(now + 10 * 86_400_000, now)]!.label).toBe("30 天");
+  // Beyond the longest bucket: clamp to the longest, still bounded.
+  expect(EXPIRY[expiryIndexFor(now + 400 * 86_400_000, now)]!.label).toBe("30 天");
 });

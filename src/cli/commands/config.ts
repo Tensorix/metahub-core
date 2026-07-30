@@ -1207,6 +1207,23 @@ USAGE
     return `Deprecated compatibility alias.
 
 Use \`mh edge --help\` (deploy, connect, status, pull, rotate).`;
+  // Hidden aliases of the pre-namespace tree. They still DISPATCH (see the run
+  // body), so `--help` on them must answer — a working command whose --help
+  // says "unknown section" is a contract break, not a nudge.
+  if (section === "set")
+    return `Deprecated compatibility alias.
+
+Use \`mh config server --help\` (host, port, sync-interval, auto-sync, blob-quota).`;
+  if (section === "peer")
+    return `Deprecated compatibility alias.
+
+Devices (pairing):     \`mh config device --help\`
+Sync storage buckets:  \`mh config backup --help\`
+The old \`peer\` verbs keep working during the transition.`;
+  if (section === "grant")
+    return `Deprecated compatibility alias.
+
+Use \`mh config device --help\` (issued credentials are listed and revoked there).`;
   return null;
 }
 

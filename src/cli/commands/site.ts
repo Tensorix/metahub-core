@@ -347,6 +347,10 @@ const list = defineCommand({
         },
         /** Raw synced register — compatibility info, NOT the user-facing state. */
         legacy_visibility: r.visibility,
+        // Non-secret row facts scripts still read. Only the capability URLs and
+        // the grant policy left this output (the latter to `site access <site>`).
+        spa: r.spa === 1,
+        created_hlc: r.created_hlc,
         ...(pub.anomaly ? { public_config_anomaly: pub.anomaly } : {}),
         ...(args["show-links"] ? { channels } : {}),
       };
@@ -642,6 +646,10 @@ const access = defineCommand({
         access: pub.configured ? "public" : channels.length ? "link" : "private",
         state: r.state,
         ...(pub.anomaly ? { public_config_anomaly: pub.anomaly } : {}),
+        // The anonymous-read policy (which tables a public visitor may touch) —
+        // not a secret, and this per-site view is its home now that `site list`
+        // carries counts only.
+        public_grants: site.public_grants,
         channels,
       },
       () =>

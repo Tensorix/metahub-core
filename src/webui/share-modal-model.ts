@@ -16,6 +16,17 @@ export const EXPIRY: { label: string; ms: number | null }[] = [
   { label: "30 天", ms: 2_592_000_000 },
 ];
 
+/** The EXPIRY index to pre-select when re-creating a link from an expired row:
+ *  the smallest bucket that still covers what it had left (best-effort — the
+ *  original duration isn't stored, only the absolute expiry). "永不过期" is never
+ *  inferred: a bounded link must not silently become unbounded. */
+export function expiryIndexFor(expiresAt: number | null | undefined, now: number): number {
+  if (expiresAt == null) return 0;
+  const remaining = expiresAt - now;
+  const idx = EXPIRY.findIndex((e) => e.ms != null && e.ms >= remaining);
+  return idx === -1 ? EXPIRY.length - 1 : Math.max(1, idx);
+}
+
 /** Per-database grant edits for a site share: dbId → enabled ops. */
 export type GrantDraft = Map<string, Set<GrantOp>>;
 

@@ -20,6 +20,16 @@
    cookie 存在的理由（img、EventSource 等无法带 header 的子资源）全是 GET，
    不受影响。效果：站点脚本无法凭浏览器自动携带的 cookie 做写操作。
 
+   两个必须一起成立的配套点（缺任一条都会变成「破坏合法会话但没堵住洞」）：
+   - **`/sites/<name>/api/*` 同规则**：该前缀在 server.ts 的 token 豁免表上，
+     由 `forwardApi` 在进程内直接派发，不会再过顶层闸门 → 规则必须在
+     sites-serve.ts 里同样执行。cookie-only 的写不是错误：它落到公开
+     grant 受限面（或 401），即「站点自己的权限」，而不是 owner 全权。
+   - **cookie → localStorage 领养**：`?token=` 二维码登录的会话凭据只在
+     cookie 里（服务端 302 剥离了 URL），而 XHR 只发 localStorage 里的
+     Bearer。api.ts / runtime.ts 读 token 时领养 cookie，否则手机扫码进来
+     的页面会静默变成只读。
+
 ## 明确不做（及理由）
 
 - **子域源隔离**（`sites.example.com`）：localhost / 自托管场景没有泛域名与

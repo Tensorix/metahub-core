@@ -217,7 +217,12 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 
 ### 9.2 三版本号状态机(`src/webui/settings.tsx` `VersionFooter`)
 
-更新入口**不单起区块**,收进设置页底部版本行,克制呈现(等宽版本号 + 内联文字链接 + 全局唯一一处呼吸 accent 圆点)。由三个版本驱动:
+更新入口**不单起区块**,收进版本行,克制呈现(等宽版本号 + 安静文字链接 + 全局唯一一处呼吸 accent 圆点)。位置**不跟随分页内容浮动**,两种壳各挂一处(`variant`,同时只有一个实例):
+
+- **宽壳 `rail`**:钉在设置页左栏底部(Notion 设置侧栏做法)——`.set-rail-col` 撑满页高 + `margin-top:auto` + `position:sticky;bottom:0`,短页落在视口底部、长页滚动时留在左下角。rail 仅 192px,故**两行堆叠**:上行版本事实 `App I · Core R`,下行动作/状态;靠留白收尾不加分隔线(rail 已有 2px 轨道)。矮视口(`max-height:600px`)退回静态,避免与 sticky nav 抢像素。
+- **窄壳 `flow`**:无 rail,退回正文最末的居中流式一行(带 hairline)。移动端是文档流滚动,**不做 fixed 底栏**。
+
+跨 760px 断点会重挂载:挂载即重读 R/I,`I > R` 自愈回 staged,无状态可丢。由三个版本驱动:
 
 - **R = 运行中**:边车 `/api/version`(= footer 里显示的 `Core` 版本)
 - **I = 已暂存**:IPC `coreUpdate.installedVersion()` 读 `version.json`(下次启动会用的)
@@ -241,7 +246,7 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 ### 9.4 涉及文件
 
 - 桌面:`apps/desktop/src/{preload,main}.ts`(`coreUpdate` 桥 + `core:*` IPC);既有 `core-updater.ts` / `version-util.ts` 复用不改。
-- 前端:`src/webui/settings.tsx`(`VersionFooter` 折叠状态机)、`src/webui/app.tsx`(共享 `updatePending` + 无联网探测)、`src/webui/sidebar.tsx`(设置入口红点)、`src/webui/desktop.d.ts`(桥类型声明)、`src/core/sync/webui.ts`(footer 内联 CSS:`.ver-*` / `.nav-dot`)。
+- 前端:`src/webui/settings.tsx`(`VersionFooter` 折叠状态机 + `SettingsNav` 的 `foot` 槽位)、`src/webui/app.tsx`(共享 `updatePending` + 无联网探测)、`src/webui/sidebar.tsx`(设置入口红点)、`src/webui/desktop.d.ts`(桥类型声明)、`src/webui/styles.css`(`.set-footer`/`.set-footer.rail` 与 `.ver-*` / `.nav-dot`;`.set-shell`/`.set-rail-col` 的撑满页高)。
 
 ## 10. 主窗口窗框(macOS 无标题栏)
 

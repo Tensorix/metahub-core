@@ -36,6 +36,7 @@ import {
   legacyShareRowView,
   grantSetToDraft,
   EXPIRY,
+  expiryIndexFor,
   type ChannelRowAction,
   type ChannelRowView,
   type GrantDraft,
@@ -233,7 +234,11 @@ function ChannelRow({
       </div>
       {view.warnLine && <div class="mhshare-warn">{view.warnLine}</div>}
       <div class="mhshare-li-actions">
-        {view.actions.map((a) =>
+        {/* An action with no handler in this host is not rendered: a visible
+            button that does nothing is worse than an absent one. */}
+        {view.actions
+          .filter((a) => (a === "open" && view.url) || on[a])
+          .map((a) =>
           a === "open" && view.url ? (
             <a key={a} href={view.url} target="_blank" rel="noreferrer">
               打开
@@ -545,6 +550,11 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
               onDone={afterCreate}
               onPending={(msg) => afterCreate(msg)}
               onError={setError}
+              onRefreshState={() => {
+                notifySharesChanged();
+                refreshShares();
+                refreshSiteState();
+              }}
               onRefreshTargets={reloadTargets}
               gotoSettings={gotoSettings}
             />
@@ -578,6 +588,21 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
   useEffect(() => {
     refreshShares();
   }, []);
+
+  // "重新创建链接" on an expired row: pre-fill the form above it. The password
+  // is deliberately NOT carried over (it isn't recoverable, and silently
+  // dropping it would publish an unprotected link).
+  const recreateFrom = (s: ShareListItem) => {
+    setPermission(s.permission === "edit" ? "edit" : "view");
+    setPassword("");
+    setExpiryIdx(expiryIndexFor(s.expiresAt, Date.now()));
+    setError("");
+    setFlash(
+      s.hasPassword
+        ? "已按过期链接预填上方表单；原口令无法恢复，请重新设置。"
+        : "已按过期链接预填上方表单。",
+    );
+  };
 
   const sel = targets.find((t) => t.id === selId) ?? targets[0];
   const s3 = sel?.kind === "bucket";
@@ -679,7 +704,14 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
           </div>
 
           <div class="mhshare-section">已有分享（{shares.length}）</div>
-          <ShareRows shares={shares} reload={refreshShares} onFlash={setFlash} onError={setError} empty="还没有分享这个对象。" />
+          <ShareRows
+            shares={shares}
+            reload={refreshShares}
+            onFlash={setFlash}
+            onError={setError}
+            onRecreate={recreateFrom}
+            empty="还没有分享这个对象。"
+          />
         </div>
       </div>
     </div>
@@ -693,12 +725,16 @@ function ShareRows({
   reload,
   onFlash,
   onError,
+  onRecreate,
   empty,
 }: {
   shares: ShareListItem[];
   reload: () => void;
   onFlash: (s: string) => void;
   onError: (s: string) => void;
+  /** Pre-fill the host's create form from an expired row. Hosts without a form
+   *  omit it and ChannelRow then hides the action instead of showing a dead one. */
+  onRecreate?: (s: ShareListItem) => void;
   empty: string;
 }) {
   const legacy = useShareActions(reload, onFlash, onError);
@@ -714,6 +750,7 @@ function ShareRows({
             renewLink: () => legacy.renew(s),
             refreshExport: () => legacy.refreshExport(s),
             revokeShare: () => legacy.revoke(s),
+            ...(onRecreate ? { recreate: () => onRecreate(s) } : {}),
           }}
         />
       ))}

@@ -36,17 +36,34 @@ function saveToken(t: string): void {
   document.cookie = `${TOKEN_KEY}=${encodeURIComponent(t)}; path=/; SameSite=Strict; Max-Age=31536000`;
 }
 
+/** localStorage token, adopting the `?token=` cookie the server persisted (and
+ *  then stripped from the URL) when that's this session's only credential.
+ *  Cookie authority is read-only server-side, so an explicit Bearer is the only
+ *  way a QR-opened page can write. */
+function readToken(): string | null {
+  try {
+    const t = localStorage.getItem(TOKEN_KEY);
+    if (t) return t;
+  } catch {
+    /* private mode */
+  }
+  for (const part of document.cookie.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === TOKEN_KEY) {
+      const c = decodeURIComponent(v.join("=")) || null;
+      if (c) saveToken(c);
+      return c;
+    }
+  }
+  return null;
+}
+
 if (!g.__mhFetchShim) {
   g.__mhFetchShim = true;
   const orig = window.fetch.bind(window);
   const shimmed = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     init = init ?? {};
-    let token: string | null = null;
-    try {
-      token = localStorage.getItem(TOKEN_KEY);
-    } catch {
-      /* private mode */
-    }
+    const token: string | null = readToken();
     let url: URL | null = null;
     try {
       url = new URL(

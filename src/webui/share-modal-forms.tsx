@@ -21,6 +21,7 @@ import {
   deviceOptionState,
   draftToGrantSet,
   EXPIRY,
+  expiryIndexFor,
   hostingPlan,
   type GrantDraft,
 } from "./share-modal-model.ts";
@@ -267,13 +268,9 @@ export function LinkShareForm({
 }) {
   const [permission, setPermission] = useState<"view" | "edit">(initial?.permission ?? "view");
   const [password, setPassword] = useState("");
-  const [expiryIdx, setExpiryIdx] = useState(() => {
-    if (initial?.expiresAt == null) return 0;
-    const remaining = initial.expiresAt - Date.now();
-    // Closest bucket that covers what the expired link had (best-effort).
-    const idx = EXPIRY.findIndex((e) => e.ms != null && e.ms >= remaining);
-    return idx === -1 ? EXPIRY.length - 1 : Math.max(1, idx);
-  });
+  const [expiryIdx, setExpiryIdx] = useState(() =>
+    expiryIndexFor(initial?.expiresAt, Date.now()),
+  );
   const [hostingAuto, setHostingAuto] = useState(true);
   const [hosting, setHosting] = useState<"device" | "edge">(isNoOrigin() ? "edge" : "device");
   const [selId, setSelId] = useState("server");
@@ -418,6 +415,7 @@ export function PublicPublishForm({
   onDone,
   onPending,
   onError,
+  onRefreshState,
   onRefreshTargets,
   gotoSettings,
 }: {
@@ -434,6 +432,9 @@ export function PublicPublishForm({
   onDone: (flash: string, url?: string) => void;
   onPending: (flash: string) => void;
   onError: (msg: string) => void;
+  /** Re-read channels/hosting WITHOUT closing this form — a failed publish can
+   *  still have left a channel behind, and the user must be able to see it. */
+  onRefreshState: () => void;
   onRefreshTargets: () => void;
   gotoSettings: (sec: string) => void;
 }) {
@@ -481,6 +482,9 @@ export function PublicPublishForm({
         targetBase,
       });
       if (published.status === "rollback_pending") {
+        // The channel may still be serving publicly: surface it in the list so
+        // "当前访问渠道" matches reality and offers a revoke entry point.
+        onRefreshState();
         onError(
           `发布失败，目标设备的回滚尚未确认；在确认前它可能仍可公开访问。${published.error ? ` ${published.error}` : ""}`,
         );
@@ -490,6 +494,7 @@ export function PublicPublishForm({
       if (published.status === "ready") onDone("站点已上线，地址已复制", published.url);
       else onPending("正在同步到目标设备；确认地址可访问后才会视为发布成功");
     } catch (e) {
+      onRefreshState(); // a mid-flight failure may still have changed channels
       onError((e as Error).message || "发布失败");
     } finally {
       setBusy(false);

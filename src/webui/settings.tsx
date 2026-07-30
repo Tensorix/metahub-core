@@ -173,8 +173,12 @@ function DeviceGroupName() {
 /** Left rail (wide shells only — see useShellNarrow): two labelled groups from
  *  GROUPS. The device group's header is the renamable device name; the
  *  workspace group's header is static. The single accent bar slides to the
- *  active row — active is the current page, no scroll-spy. */
-function SettingsNav({ page }: { page: PageId }) {
+ *  active row — active is the current page, no scroll-spy.
+ *
+ *  `foot` is the rail column's bottom-pinned slot (the version line). It is a
+ *  SIBLING of <nav>, never inside it: the accent-bar ResizeObserver watches the
+ *  nav, and a growing/shrinking footer inside it would retrigger placement. */
+function SettingsNav({ page, foot }: { page: PageId; foot?: ComponentChildren }) {
   const navRef = useRef<HTMLElement>(null);
 
   // Slide the single accent bar to the active row via CSS vars; CSS transitions
@@ -223,6 +227,7 @@ function SettingsNav({ page }: { page: PageId }) {
           );
         })}
       </nav>
+      {foot}
     </div>
   );
 }
@@ -319,10 +324,21 @@ export function SettingsView({ onUpdatePending, focusSec }: { onUpdatePending?: 
     window.scrollTo(0, 0);
   }, [page, showIndex]);
 
+  // The version line lives at the BOTTOM OF THE RAIL (pinned) on wide shells —
+  // one fixed spot instead of trailing whatever page happens to be open. Narrow
+  // shells have no rail, so it falls back to the flow position at the very end
+  // of the page (no fixed bar: mobile scrolls the document, see the iOS glass
+  // chrome finding). Exactly one of the two mounts; crossing the breakpoint
+  // remounts it, which is harmless — mount re-reads running/installed and a
+  // staged update (I > R) re-surfaces itself with no network call.
+  const versionLine = (
+    <VersionFooter variant={narrow ? "flow" : "rail"} onUpdatePending={onUpdatePending} />
+  );
+
   return (
     <div class={"set-shell" + (narrow ? " narrow" : "")} ref={shellRef}>
       <div class="set-page">
-        {!narrow && <SettingsNav page={page} />}
+        {!narrow && <SettingsNav page={page} foot={versionLine} />}
         <div class="set-main">
           {showIndex ? (
             <>
@@ -351,7 +367,7 @@ export function SettingsView({ onUpdatePending, focusSec }: { onUpdatePending?: 
             </>
           )}
 
-          <VersionFooter onUpdatePending={onUpdatePending} />
+          {narrow && versionLine}
         </div>
       </div>
     </div>
@@ -1488,16 +1504,28 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
 type UpdateState = "idle" | "checking" | "available" | "downloading" | "staged" | "error";
 
 /**
- * The version line in the settings footer, doubling as the (desktop-only) core
- * update entry. Quiet by design — a mono version line with an inline update
- * affordance, not a card. Driven by three versions: R = running (sidecar's
+ * The version line, doubling as the (desktop-only) core update entry. Quiet by
+ * design — a mono version line with a text update affordance, not a card.
+ *
+ * Two placements, same state machine (see SettingsView): `rail` pins it to the
+ * bottom of the settings rail, Notion-style, stacked over two lines because the
+ * rail is only 192px wide; `flow` is the narrow-shell fallback, one centered
+ * line at the very end of the page.
+ *
+ * Driven by three versions: R = running (sidecar's
  * /api/version), I = installed/staged on disk (next launch), L = latest on
  * GitHub (manual check). `I > R` means an update is already downloaded and only
  * waiting for a restart — surfaced with no network call, since the app's startup
  * auto-updater may have staged it silently. In the plain browser (CLI server)
  * there is no `metahubDesktop` bridge, so only the core version shows.
  */
-function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void }) {
+function VersionFooter({
+  variant = "flow",
+  onUpdatePending,
+}: {
+  variant?: "rail" | "flow";
+  onUpdatePending?: (p: boolean) => void;
+}) {
   const cu = typeof window !== "undefined" ? window.metahubDesktop?.coreUpdate : undefined;
   const [appVer, setAppVer] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null); // R, also the "Core" version shown
@@ -1642,13 +1670,21 @@ function VersionFooter({ onUpdatePending }: { onUpdatePending?: (p: boolean) => 
   // bundle, so the footer is never empty. Fallback only: it stays hidden whenever
   // App or Core is available (desktop, live server).
   const webFallback = !appVer && !running && WEBUI_VERSION;
-  return (
-    <div class="set-footer">
+  const rail = variant === "rail";
+  // The version facts, one group so the rail can stack them over the action.
+  const nums = (
+    <span class="set-ver-nums">
       {appVer && <span>App <span class="ver-num">{appVer}</span></span>}
       {appVer && running && <span class="set-footer-sep">·</span>}
       {running && <span>Core <span class="ver-num">{running}</span></span>}
       {webFallback && <span class="ver-num">v{WEBUI_VERSION}</span>}
-      {update && (running || appVer || webFallback) && <span class="set-footer-sep">·</span>}
+    </span>
+  );
+  return (
+    <div class={"set-footer" + (rail ? " rail" : "")}>
+      {nums}
+      {/* rail stacks (CSS column) — no interpunct between the two lines */}
+      {!rail && update && (running || appVer || webFallback) && <span class="set-footer-sep">·</span>}
       {update}
     </div>
   );

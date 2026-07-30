@@ -157,6 +157,16 @@ test("config show --help is real help (exit 0); unknown section fails exit 2", (
   expect(bogus.exit).toBe(2);
   expect(bogus.out.code).toBe("invalid_input");
   expect(bogus.out.error).toContain("bakcup");
+
+  // Hidden aliases still dispatch (`config peer add …` works), so their --help
+  // must answer instead of claiming the section doesn't exist.
+  for (const alias of ["set", "peer", "grant"]) {
+    const r = Bun.spawnSync(["bun", CLI, "config", alias, "--help"], {
+      env: { ...process.env, METAHUB_HOME: home },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString()).toContain("mh config");
+  }
 });
 
 test("sync-all preserves per-target JSON but exits 7 when any target fails", () => {

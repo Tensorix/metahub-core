@@ -77,7 +77,16 @@ export async function reconcileSiteChannels(db: DbDriver): Promise<void> {
       (channel) =>
         channel.controller_node_id === self &&
         channel.desired_state === "revoked" &&
-        channel.audience === "link",
+        channel.audience === "link" &&
+        // A confirmed Edge destroy is TERMINAL: the Room record is gone, so a
+        // second teardown attempt would report "absent" and demote the honest
+        // "revoked" back to cleanup_pending on every later reconcile. Device
+        // hosting has no such memory problem — its terminal condition is the
+        // missing share row, which the branches below already read directly.
+        !(
+          channel.hosting === "edge" &&
+          getSiteChannelObservation(db, channel.id)?.status === "revoked"
+        ),
     );
   for (const channel of pending) {
     const share = getShare(db, channel.target_ref);

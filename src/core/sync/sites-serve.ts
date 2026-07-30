@@ -20,6 +20,8 @@ import { rateLimiter, PUBLIC_READ_LIMIT, PUBLIC_WRITE_LIMIT } from "./rate-limit
 import { escapeHtml } from "./share-render.ts";
 import {
   type AuthConfig,
+  authActive,
+  explicitToken,
   hasValidToken,
   wantsHtml,
   unlockPage,
@@ -98,7 +100,17 @@ export async function serveSite(
   //   - no token + public site → the grant-scoped guest surface;
   //   - anything else  → uniform 401 (private and nonexistent identical).
   if (filePath === "api" || filePath.startsWith("api/")) {
-    if (hasValidToken(req, url, auth)) {
+    // Owner surface = a valid token, and for state-changing methods it must be
+    // presented EXPLICITLY (Bearer/query). The cookie rides every same-origin
+    // fetch, so a site page could otherwise mutate the whole workspace on the
+    // owner's ambient authority — the same rule server.ts applies to root /api,
+    // enforced here because forwardApi dispatches without re-entering that gate.
+    // A cookie-only write is not an error: it falls through to the public
+    // grant-scoped surface below (or 401), i.e. exactly the site's own rights.
+    const mutating = req.method !== "GET" && req.method !== "HEAD";
+    const ambientOnly =
+      mutating && authActive(auth) && explicitToken(req, url) == null;
+    if (!ambientOnly && hasValidToken(req, url, auth)) {
       if (!site) return notFoundResponse("站点不存在", `没有名为 “${escapeHtml(name)}” 的站点。`);
       if (!opts.forwardApi) return new Response("not found", { status: 404 });
       const fwd = new Request(`${url.origin}/${filePath}${url.search}`, req);

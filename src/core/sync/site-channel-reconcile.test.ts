@@ -8,6 +8,7 @@ import {
   listSiteChannelRows,
   listSiteChannelViews,
   putSiteChannel,
+  putSiteChannelObservation,
   setSiteChannelDesiredState,
 } from "../site-channel-store.ts";
 import { createShare, deleteShare, getShare } from "../shares.ts";
@@ -163,4 +164,54 @@ test("edge revoke without a local Room record stays cleanup_pending, share intac
   expect(getShare(a, share.slug)).not.toBeNull();
   const obs = getSiteChannelObservation(a, channel.id);
   expect(obs?.status).toBe("cleanup_pending");
+});
+
+test("a confirmed edge destroy is terminal: later reconciles keep 'revoked'", async () => {
+  const a = node("node-a");
+  const site = createSite(a, { name: "edge-destroyed" });
+  const channel = putSiteChannel(a, {
+    siteId: site.id,
+    audience: "link",
+    hosting: "edge",
+    targetRef: "slug-already-destroyed",
+    canonicalUrl: "https://edge.test/r/slug-already-destroyed",
+  });
+  setSiteChannelDesiredState(a, channel.id, "revoked");
+  // State after a successful teardown: Room destroyed (peer row removed), share
+  // deleted, observation revoked.
+  putSiteChannelObservation(a, {
+    channelId: channel.id,
+    status: "revoked",
+    lastVerifiedAt: Date.now(),
+  });
+
+  await reconcileSiteChannels(a);
+  await reconcileSiteChannels(a);
+  // A second teardown attempt would report "absent" and demote this to
+  // cleanup_pending forever ("撤销已请求，等待…" reappearing after every sync).
+  expect(getSiteChannelObservation(a, channel.id)?.status).toBe("revoked");
+});
+
+test("the terminal guard is edge-only: a device revoke still deletes its share", async () => {
+  const a = node("node-a");
+  const site = createSite(a, { name: "device-revoke" });
+  const share = createShare(a, { kind: "site", target_id: site.id, permission: "view" });
+  const channel = putSiteChannel(a, {
+    siteId: site.id,
+    audience: "link",
+    hosting: "device",
+    targetRef: share.slug,
+    canonicalUrl: `http://a.test/share/${share.slug}`,
+  });
+  // requestChannelRevocation records "revoked" up front for a channel served by
+  // THIS device — the share row is still here and must still be removed.
+  setSiteChannelDesiredState(a, channel.id, "revoked");
+  putSiteChannelObservation(a, {
+    channelId: channel.id,
+    status: "revoked",
+    lastVerifiedAt: Date.now(),
+  });
+
+  await reconcileSiteChannels(a);
+  expect(getShare(a, share.slug)).toBeNull();
 });

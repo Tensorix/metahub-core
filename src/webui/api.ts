@@ -388,12 +388,41 @@ function touchesNav(method: string, path: string): boolean {
 const TOKEN_KEY = "mh_token";
 const RENEW_PATH = "/auth/token";
 
+/** The token cookie the server sets for a `?token=` navigation (QR "open on your
+ *  phone"). Not HttpOnly by design — see adoption below. */
+function cookieToken(): string | null {
+  try {
+    for (const part of document.cookie.split(";")) {
+      const [k, ...v] = part.trim().split("=");
+      if (k === TOKEN_KEY) return decodeURIComponent(v.join("=")) || null;
+    }
+  } catch {
+    /* no document (worker) */
+  }
+  return null;
+}
+
 function storedToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    const t = localStorage.getItem(TOKEN_KEY);
+    if (t) return t;
   } catch {
-    return null;
+    return cookieToken(); // private mode: cookie only, no adoption possible
   }
+  // A `?token=` navigation is persisted as a cookie by the server, which then
+  // strips the token from the URL — so this session's only credential lives in
+  // the cookie. Cookie authority is READ-ONLY server-side
+  // (cookieMutationRejection), so adopt it into localStorage: without this the
+  // whole app silently becomes read-only after a QR login.
+  const c = cookieToken();
+  if (c) {
+    try {
+      localStorage.setItem(TOKEN_KEY, c);
+    } catch {
+      /* private mode */
+    }
+  }
+  return c;
 }
 
 function saveToken(t: string): void {

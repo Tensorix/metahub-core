@@ -441,3 +441,49 @@ test("creating a private share link does NOT un-publish a legacy-public site", a
   expect(after.status).toBe(200);
   expect(await after.text()).toContain("legacy public");
 });
+
+test("a site page cannot mutate the workspace on the owner's ambient cookie", async () => {
+  const ctx = makeCtx();
+  const s = createSite(ctx.db, { name: "demo" });
+  await putFile(ctx.db, s.id, "index.html", { data: "<h1>hi</h1>" });
+
+  let forwarded = 0;
+  const forwardApi = async () => {
+    forwarded++;
+    return new Response("ok");
+  };
+  const cookie = { cookie: `mh_token=${TOKEN}` };
+
+  // GET on the cookie alone keeps working: sub-resources (img, EventSource)
+  // cannot carry a header, and reads are what the cookie is for.
+  const read = (await serveSite(req("/sites/demo/api/nodes", cookie), ctx, AUTH_TOKEN, {
+    forwardApi,
+  }))!;
+  expect(read.status).toBe(200);
+  expect(forwarded).toBe(1);
+
+  // A WRITE presented only as a cookie must not reach the owner API at all.
+  // /sites/<name>/api/* is forwarded in-process, so the top-level gate in
+  // server.ts never sees it — the rule has to be enforced here.
+  const write = (await serveSite(
+    new Request("http://x/sites/demo/api/record", { method: "POST", headers: cookie }),
+    ctx,
+    AUTH_TOKEN,
+    { forwardApi },
+  ))!;
+  expect(write.status).toBe(401);
+  expect(forwarded).toBe(1); // never dispatched
+
+  // The same write with an explicit Bearer (what the injected runtime sends) works.
+  const explicit = (await serveSite(
+    new Request("http://x/sites/demo/api/record", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    }),
+    ctx,
+    AUTH_TOKEN,
+    { forwardApi },
+  ))!;
+  expect(explicit.status).toBe(200);
+  expect(forwarded).toBe(2);
+});
