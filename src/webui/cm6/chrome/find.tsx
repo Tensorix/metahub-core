@@ -13,7 +13,7 @@
 import { render } from "preact";
 import { Decoration, EditorView, ViewPlugin, keymap } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
-import { StateEffect, StateField, type Extension } from "@codemirror/state";
+import { Prec, StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
 import { consumeKey } from "../../keys.ts";
 import { findInText, collectMatches, applyHighlights, clearHighlights, type FindOpts } from "../../find.ts";
@@ -125,7 +125,17 @@ export const findField = StateField.define<FindState | null>({
     }
     return value;
   },
-  provide: (f) => EditorView.decorations.from(f, (v) => v?.deco ?? Decoration.none),
+  // Prec.high wraps ONLY the decoration provider, never find()/findField as a
+  // whole (that would also lift the Mod-f/Escape keymap above the other
+  // default-precedence Escape handlers, e.g. the slash menu). In CM6 the DOM
+  // nesting of mark decorations IS the decoration-source precedence: the
+  // highest-precedence mark ends up innermost, so it paints last and wins. At
+  // default precedence find() sits after baseExtensions, so a match span wrapped
+  // .cm-code / .cm-link from the OUTSIDE — the inline chip's opaque background
+  // covered the highlight while cm-find-cur's inherited color came through, i.e.
+  // white glyphs on a pale grey chip. Don't give other decoration sources
+  // Prec.high or the nesting flips back.
+  provide: (f) => Prec.high(EditorView.decorations.from(f, (v) => v?.deco ?? Decoration.none)),
 });
 
 /** Scroll the current match into view — called from event handlers only (a fresh
