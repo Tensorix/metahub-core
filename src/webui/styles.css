@@ -547,6 +547,9 @@
   .doc { max-width:740px; margin:0 auto; padding:60px 60px 36vh; }
   .doc-title { font-size:38px; font-weight:700; letter-spacing:-.02em; outline:none; line-height:1.15; margin-bottom:4px; }
   .doc-title:empty::before { content:"无标题"; color:var(--muted); }
+  /* Backstop for the plain-text titles (see plain-edit.ts): should markup ever
+     slip into one of these hosts, its inline font-size can't shrink the title. */
+  .doc-title *, .db-title * { font:inherit; color:inherit; background:none; }
   .doc-meta { display:flex; gap:14px; color:var(--muted); font-size:var(--fs-sm); margin-bottom:22px; }
   .doc-meta span { display:inline-flex; align-items:center; gap:5px; }
   /* Save-conflict banner: the doc changed elsewhere; auto-save is paused until

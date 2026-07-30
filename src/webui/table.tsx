@@ -36,6 +36,7 @@ import {
   positionGhost,
 } from "./pointer-drag.ts";
 import { type CellPos, type CellSel, normRect, edgeShadow } from "./cell-select.ts";
+import { plainPasteHandlers } from "./plain-edit.ts";
 
 const VIEW_TABS: [string, string][] = [
   ["表格", "list"],
@@ -425,6 +426,7 @@ export function DatabaseView({
           <div
             class="db-title"
             contentEditable
+            {...plainPasteHandlers()}
             onBlur={(e) => {
               const name = (e.target as HTMLElement).textContent?.trim() || db.name;
               if (name !== db.name) guard(async () => { await api.updateDatabase(db.id, { name }); });
@@ -1049,7 +1051,11 @@ function RecordPeek({
             <RecordHistoryView rec={rec} props={props} onReverted={onReverted} />
           ) : (
             <>
-              <h2 contentEditable onBlur={(e) => titleProp && onCommit(titleProp, (e.target as HTMLElement).textContent ?? "")}>
+              <h2
+                contentEditable
+                {...plainPasteHandlers()}
+                onBlur={(e) => titleProp && onCommit(titleProp, (e.target as HTMLElement).textContent ?? "")}
+              >
                 {titleProp ? String(rec.cells[titleProp.id] ?? "无标题") : "无标题"}
               </h2>
               {props.map((p) => (

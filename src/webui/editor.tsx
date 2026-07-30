@@ -15,6 +15,7 @@ import { mediaFilesFrom, uploadFilesAt } from "./cm6/chrome/upload-paste.tsx";
 import { openDocFind } from "./cm6/chrome/find.tsx";
 import { previewAnchor, setPreviewAnchor } from "./cm6/chrome/preview-anchor.ts";
 import { blockToText, type Block } from "./blocks.ts";
+import { flattenToText, plainPasteHandlers } from "./plain-edit.ts";
 import { ImageLightbox } from "./media/image-lightbox.tsx";
 
 export type DocMode = "blocks" | "source";
@@ -169,9 +170,12 @@ export function DocView({
   // (both bump `version`). Writing textContent keeps the title uncontrolled —
   // no innerHTML, no framework-managed children — so a synced title can never
   // inject HTML (stored XSS) and typing never triggers a caret-resetting render.
+  // The `firstElementChild` arm also clears any markup that slipped in: after a
+  // rich paste the text matches but the DOM still carries the styled spans, so
+  // a textContent-only comparison would never reseed.
   useEffect(() => {
     const el = titleElRef.current;
-    if (el && el.textContent !== titleRef.current) el.textContent = titleRef.current;
+    if (el && (el.textContent !== titleRef.current || el.firstElementChild)) el.textContent = titleRef.current;
   }, [version]);
 
   // Unsaved work (debounce window, failed save being retried) shouldn't be
@@ -378,7 +382,17 @@ export function DocView({
         class="doc-title"
         contentEditable
         ref={titleElRef}
-        onInput={(e) => { titleRef.current = (e.target as HTMLElement).textContent ?? ""; scheduleSave(); }}
+        {...plainPasteHandlers()}
+        onInput={(e) => {
+          const el = e.target as HTMLElement;
+          // Safety net for injection paths the paste/drop handlers don't see
+          // (spellcheck replacement, extensions, autofill): the title is a
+          // plain string, so nested markup only ever hijacks its font size.
+          // Never during composition — flattening would break IME input.
+          if (!e.isComposing) flattenToText(el);
+          titleRef.current = el.textContent ?? "";
+          scheduleSave();
+        }}
         onKeyDown={(e) => {
           if (e.isComposing || e.keyCode === 229) return;
           if (e.key === "Enter") { e.preventDefault(); enterBody(); return; }
