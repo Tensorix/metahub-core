@@ -614,7 +614,7 @@ function App() {
           {view.kind === "search" && (
             <SearchView q={view.q} onOpenDoc={(id) => navigate({ kind: "doc", id })} onOpenDb={(id) => navigate({ kind: "db", id })} />
           )}
-          {view.kind === "settings" && <SettingsView onUpdatePending={setUpdatePending} focusSec={view.sec} />}
+          {view.kind === "settings" && <SettingsView onUpdatePending={setUpdatePending} updatePending={updatePending} focusSec={view.sec} />}
           {view.kind === "sites" && <SitesView />}
           {view.kind === "shares" && <ShareView onNavigate={navigate} />}
         </div>

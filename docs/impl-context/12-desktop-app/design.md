@@ -215,26 +215,44 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 
 `maybeUpdateCore()`:拉最新 core release(`v*`,排除 `desktop-v*`)→ 比 `version.json` 已暂存版本 → 下载对应平台边车、校验 SHA256(对 `SHA256SUMS-sidecars.txt`)→ 原子写入缓存 + `version.json`。全程吞错、绝不阻塞启动;`main.ts` 在窗口首帧后(**仅打包态**)后台触发一次。
 
-### 9.2 三版本号状态机(`src/webui/settings.tsx` `VersionFooter`)
+### 9.2 「关于」页与三版本号状态机(`src/webui/settings.tsx` `AboutPage`)
 
-更新入口**不单起区块**,收进版本行,克制呈现(等宽版本号 + 安静文字链接 + 全局唯一一处呼吸 accent 圆点)。位置**不跟随分页内容浮动**,两种壳各挂一处(`variant`,同时只有一个实例):
+版本事实与更新入口整体住在设置的**「关于」页**——`nav.ts` GROUPS 的第三个**无头分组**
+(`{ key:"app", pages:[about] }`,cube 图标即产品标记);组头按 key 渲染
+(device=设备名 / workspace=工作区 / app=无)。宽壳里关于行**钉在 rail 底部**
+(`.set-rail-foot`:渲染在 `<nav>` 之外、`margin-top:auto` + sticky bottom,底 pad 在
+sticky 盒内避免滚动到底时跳动;矮视口 `max-height:600px` 退回 static)——accent 滑块只
+服务 nav 内的行,关于激活时滑块收起(`--mark-h:0`),行自身的 active 色承担指示;窄壳
+索引里它是末尾的无头组。全局微指示不变:app 侧栏 `.sbf-ver` 的 `v<core>` 与设置入口
+`.nav-dot` 红点保持原样,`updatePending` 时关于行/索引行的图标角上亮同一颗 `.nav-dot`
+(红点轨迹:侧栏 → 关于行 → 更新行)。
 
-- **宽壳 `rail`**:钉在设置页左栏底部(Notion 设置侧栏做法)——`.set-rail-col` 撑满页高 + `margin-top:auto` + `position:sticky;bottom:0`,短页落在视口底部、长页滚动时留在左下角。rail 仅 192px,故**两行堆叠**:上行版本事实 `App I · Core R`,下行动作/状态;靠留白收尾不加分隔线(rail 已有 2px 轨道)。矮视口(`max-height:600px`)退回静态,避免与 sticky nav 抢像素。
-- **窄壳 `flow`**:无 rail,退回正文最末的居中流式一行(带 hairline)。移动端是文档流滚动,**不做 fixed 底栏**。
+页面结构:`about-hero` 产品身份块(44px cube 铭牌 + Metahub + mono 版本行——桌面
+`App I · Core R`、浏览器/CLI 仅 `Core R`、PWA/桶壳 `Web WEBUI_VERSION` 兜底)→
+「更新」SetSection(**仅桌面壳**,无桥整节不渲染)→「资源」SetSection
+(GitHub 仓库 / 更新日志,`REPO_URL` 与 core-updater.ts `REPO` 同源,`window.open` 外开)。
 
-跨 760px 断点会重挂载:挂载即重读 R/I,`I > R` 自愈回 staged,无状态可丢。由三个版本驱动:
+由三个版本驱动:
 
-- **R = 运行中**:边车 `/api/version`(= footer 里显示的 `Core` 版本)
+- **R = 运行中**:边车 `/api/version`(= hero 里显示的 `Core` 版本)
 - **I = 已暂存**:IPC `coreUpdate.installedVersion()` 读 `version.json`(下次启动会用的)
 - **L = GitHub 最新**:IPC `coreUpdate.check()`(**仅手动触发**,不下载)
 
-| 状态 | 条件 | footer 文案 | 动作 |
+更新 SetRow(标题「软件更新」)按状态换 caption/control,SetRow 给了状态机应有的空间
+——完整错误详情、全宽进度条:
+
+| 状态 | 条件 | caption | control |
 |---|---|---|---|
-| idle | `I ≤ R` | `检查更新` | 手动检查 |
-| checking / downloading | — | `检查中… / 下载中…` | 置灰 |
-| available | `L > max(I,R)` | `● 新版本 L  下载` | 下载暂存 |
-| staged | `I > R` | `● I 待重启  重启` | relaunch 生效 |
-| error | 失败 | `检查失败  重试` | 重试 |
+| idle | `I ≤ R` | 从 GitHub Releases 获取核心更新 | `检查更新` |
+| checking | — | 正在检查… | 置灰 |
+| downloading | — | 下载中 · N%(detail 区放全宽 `.ver-bar`) | 置灰 |
+| available | `L > max(I,R)` | `●` 新版本 vL 可用 | accent `下载` |
+| staged | `I > R` | `●` vI 已就绪,重启后生效 | accent `重启` |
+| error | 失败 | **完整 errMsg**(danger 色) | `重试` |
+
+桌面外壳同时给主窗/预览窗/快速笔记窗装了 `setWindowOpenHandler`:`http(s)` 外链一律
+`shell.openExternal` 到系统浏览器、其余 deny——修掉 `target="_blank"` 弹无边框
+Electron 子窗的旧问题(站点/分享链接一并受益)。
 
 **关键**:`staged`(已下载待重启)**无需联网**即可判定——只比 `I > R`,因此 §9.1 的启动静默暂存会被自动 surface 成提醒。手动「检查更新」只负责发现 *更新于 I* 的版本;`download` 复用 `maybeUpdateCore()`,返回 null(已是最新/重复点击)则回退 staged/idle 并 toast,不报错。
 
@@ -245,8 +263,8 @@ export function setWebuiBundle(js: string): void { cachedJs = js; }
 
 ### 9.4 涉及文件
 
-- 桌面:`apps/desktop/src/{preload,main}.ts`(`coreUpdate` 桥 + `core:*` IPC);既有 `core-updater.ts` / `version-util.ts` 复用不改。
-- 前端:`src/webui/settings.tsx`(`VersionFooter` 折叠状态机 + `SettingsNav` 的 `foot` 槽位)、`src/webui/app.tsx`(共享 `updatePending` + 无联网探测)、`src/webui/sidebar.tsx`(设置入口红点)、`src/webui/desktop.d.ts`(桥类型声明)、`src/webui/styles.css`(`.set-footer`/`.set-footer.rail` 与 `.ver-*` / `.nav-dot`;`.set-shell`/`.set-rail-col` 的撑满页高)。
+- 桌面:`apps/desktop/src/{preload,main}.ts`(`coreUpdate` 桥 + `core:*` IPC + `routeExternalLinks` 外链外开);既有 `core-updater.ts` / `version-util.ts` 复用不改。
+- 前端:`src/webui/settings/nav.ts`(`about` 页注册,第三无头分组)、`src/webui/settings.tsx`(`AboutPage` 状态机 + 组头按 key)、`src/webui/app.tsx`(共享 `updatePending` 值/回调 + 无联网探测)、`src/webui/sidebar.tsx`(设置入口红点)、`src/webui/desktop.d.ts`(桥类型声明)、`src/webui/styles.css`(`.about-*` 与 `.ver-num`/`.ver-dot`/`.ver-bar*`、rail/索引图标上的 `.nav-dot`)。
 
 ## 10. 主窗口窗框(macOS 无标题栏)
 

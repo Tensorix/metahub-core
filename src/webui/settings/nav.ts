@@ -5,11 +5,11 @@
 import { isNoOrigin } from "../data/replica.ts";
 import { isDesktop } from "./shared.ts";
 
-export type PageId = "appearance" | "quicknote" | "offline" | "backup" | "devices" | "hosting";
+export type PageId = "appearance" | "quicknote" | "offline" | "backup" | "devices" | "hosting" | "about";
 
 export interface PageDef { id: PageId; label: string; icon: string; show: () => boolean }
 
-export const GROUPS: { key: "device" | "workspace"; pages: PageDef[] }[] = [
+export const GROUPS: { key: "device" | "workspace" | "app"; pages: PageDef[] }[] = [
   { key: "device", pages: [
     { id: "appearance", label: "外观", icon: "sun", show: () => true },
     { id: "quicknote", label: "快速笔记", icon: "pin", show: () => !!(window as any).metahubDesktop?.quicknote },
@@ -21,6 +21,11 @@ export const GROUPS: { key: "device" | "workspace"; pages: PageDef[] }[] = [
     { id: "backup", label: "数据与备份", icon: "cloudCheck", show: () => true },
     { id: "devices", label: "设备", icon: "monitor", show: () => !isNoOrigin() },
     { id: "hosting", label: "站点与发布", icon: "globe", show: () => true },
+  ]},
+  // Headless group (no .set-rail-group-head): the app itself, last in the list.
+  // The cube is the product mark, so the row carries the product identity.
+  { key: "app", pages: [
+    { id: "about", label: "关于", icon: "cube", show: () => true },
   ]},
 ];
 

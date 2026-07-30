@@ -59,7 +59,7 @@ import {
   replicaUnsupportedReason,
   type StoragePeerView,
 } from "./settings/shared.ts";
-import { GROUPS, resolvePage, pageLabel, type PageId } from "./settings/nav.ts";
+import { GROUPS, resolvePage, pageLabel, type PageId, type PageDef } from "./settings/nav.ts";
 import { SetRow, Switch, SetSection, PageHeader, DangerZone, RowMenu } from "./settings/primitives.tsx";
 import { CacheRingHero, type RingState } from "./settings/cache-ring.tsx";
 
@@ -170,26 +170,39 @@ function DeviceGroupName() {
   );
 }
 
-/** Left rail (wide shells only — see useShellNarrow): two labelled groups from
- *  GROUPS. The device group's header is the renamable device name; the
- *  workspace group's header is static. The single accent bar slides to the
- *  active row — active is the current page, no scroll-spy.
- *
- *  `foot` is the rail column's bottom-pinned slot (the version line). It is a
- *  SIBLING of <nav>, never inside it: the accent-bar ResizeObserver watches the
- *  nav, and a growing/shrinking footer inside it would retrigger placement. */
-function SettingsNav({ page, foot }: { page: PageId; foot?: ComponentChildren }) {
+/** A group's header: the device group's is the renamable device name, the
+ *  workspace group's is static, the app group is headless (关于 needs no label
+ *  over it — the row itself carries the product mark). */
+function groupHead(key: "device" | "workspace" | "app") {
+  if (key === "device") return <DeviceGroupName />;
+  if (key === "workspace") return <span class="set-rail-group-name">工作区</span>;
+  return null;
+}
+
+/** Left rail (wide shells only — see useShellNarrow): the labelled groups from
+ *  GROUPS in the nav, and the app group (关于) pinned to the BOTTOM of the rail
+ *  column — sticky in the bottom-left corner while a long page scrolls, outside
+ *  <nav> so the accent-bar ResizeObserver never watches it. The single accent
+ *  bar slides to the active nav row; 关于 sits off the nav's 2px track, so when
+ *  it is active the bar hides and the row's own active color carries the state.
+ *  `updatePending` lights the 关于 row's .nav-dot, continuing the sidebar
+ *  settings icon's dot trail into the page. */
+function SettingsNav({ page, updatePending }: { page: PageId; updatePending?: boolean }) {
   const navRef = useRef<HTMLElement>(null);
 
   // Slide the single accent bar to the active row via CSS vars; CSS transitions
   // it. Re-place on any nav resize — the device label loading or the rename
-  // input swapping in shifts every row's offset.
+  // input swapping in shifts every row's offset. A page whose row lives outside
+  // the nav (关于, in the pinned foot) collapses the bar instead.
   useEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
     const place = () => {
       const row = nav.querySelector<HTMLElement>(`.set-rail-row[data-sec="${page}"]`);
-      if (!row) return;
+      if (!row) {
+        nav.style.setProperty("--mark-h", "0px");
+        return;
+      }
       nav.style.setProperty("--mark-y", `${row.offsetTop}px`);
       nav.style.setProperty("--mark-h", `${row.offsetHeight}px`);
     };
@@ -199,56 +212,63 @@ function SettingsNav({ page, foot }: { page: PageId; foot?: ComponentChildren })
     return () => ro.disconnect();
   }, [page]);
 
+  const row = (p: PageDef) => (
+    <button
+      key={p.id}
+      data-sec={p.id}
+      class={"set-rail-row" + (p.id === page ? " active" : "")}
+      aria-current={p.id === page ? "page" : undefined}
+      onClick={() => gotoPage(p.id)}
+    >
+      <span class="set-rail-ico">
+        <Icon name={p.icon} />
+        {p.id === "about" && updatePending && <span class="nav-dot" title="有可用更新" />}
+      </span>
+      <span class="set-rail-label">{p.label}</span>
+    </button>
+  );
+
+  const foot = GROUPS.find((g) => g.key === "app")?.pages.filter((p) => p.show()) ?? [];
   return (
     <div class="set-rail-col">
       <nav class="set-rail" ref={navRef} aria-label="设置">
         <span class="set-rail-mark" />
-        {GROUPS.map((g) => {
+        {GROUPS.filter((g) => g.key !== "app").map((g) => {
           const pages = g.pages.filter((p) => p.show());
           if (pages.length === 0) return null;
+          const head = groupHead(g.key);
           return (
             <div class="set-rail-group" key={g.key}>
-              <div class="set-rail-group-head">
-                {g.key === "device" ? <DeviceGroupName /> : <span class="set-rail-group-name">工作区</span>}
-              </div>
-              {pages.map((p) => (
-                <button
-                  key={p.id}
-                  data-sec={p.id}
-                  class={"set-rail-row" + (p.id === page ? " active" : "")}
-                  aria-current={p.id === page ? "page" : undefined}
-                  onClick={() => gotoPage(p.id)}
-                >
-                  <span class="set-rail-ico"><Icon name={p.icon} /></span>
-                  <span class="set-rail-label">{p.label}</span>
-                </button>
-              ))}
+              {head && <div class="set-rail-group-head">{head}</div>}
+              {pages.map(row)}
             </div>
           );
         })}
       </nav>
-      {foot}
+      {foot.length > 0 && <div class="set-rail-foot">{foot.map(row)}</div>}
     </div>
   );
 }
 
-/** Narrow shells, bare #/settings: the two groups as a flat tappable index
+/** Narrow shells, bare #/settings: the groups as a flat tappable index
  *  (iOS-settings style drill-down). Rows push ?sec=<page>; the opened page's
  *  way back to this index is the topbar breadcrumb's 设置 segment. */
-function SettingsIndex() {
+function SettingsIndex({ updatePending }: { updatePending?: boolean }) {
   return (
     <nav class="set-index" aria-label="设置">
       {GROUPS.map((g) => {
         const pages = g.pages.filter((p) => p.show());
         if (pages.length === 0) return null;
+        const head = groupHead(g.key);
         return (
           <section class="set-index-group" key={g.key}>
-            <div class="set-index-head">
-              {g.key === "device" ? <DeviceGroupName /> : <span class="set-rail-group-name">工作区</span>}
-            </div>
+            {head && <div class="set-index-head">{head}</div>}
             {pages.map((p) => (
               <button key={p.id} class="set-index-row" onClick={() => gotoPage(p.id)}>
-                <span class="set-index-ico"><Icon name={p.icon} /></span>
+                <span class="set-index-ico">
+                  <Icon name={p.icon} />
+                  {p.id === "about" && updatePending && <span class="nav-dot" title="有可用更新" />}
+                </span>
                 <span class="set-index-label">{p.label}</span>
                 <span class="set-index-chev"><Icon name="chevron" /></span>
               </button>
@@ -306,7 +326,7 @@ function AppearanceSettings() {
   );
 }
 
-export function SettingsView({ onUpdatePending, focusSec }: { onUpdatePending?: (p: boolean) => void; focusSec?: string } = {}) {
+export function SettingsView({ onUpdatePending, updatePending, focusSec }: { onUpdatePending?: (p: boolean) => void; updatePending?: boolean; focusSec?: string } = {}) {
   // Fully URL-driven page selection (#/settings?sec=<page>); legacy sec values
   // from old deep links map via nav.ts LEGACY_SEC.
   const [shellRef, narrow] = useShellNarrow();
@@ -324,26 +344,15 @@ export function SettingsView({ onUpdatePending, focusSec }: { onUpdatePending?: 
     window.scrollTo(0, 0);
   }, [page, showIndex]);
 
-  // The version line lives at the BOTTOM OF THE RAIL (pinned) on wide shells —
-  // one fixed spot instead of trailing whatever page happens to be open. Narrow
-  // shells have no rail, so it falls back to the flow position at the very end
-  // of the page (no fixed bar: mobile scrolls the document, see the iOS glass
-  // chrome finding). Exactly one of the two mounts; crossing the breakpoint
-  // remounts it, which is harmless — mount re-reads running/installed and a
-  // staged update (I > R) re-surfaces itself with no network call.
-  const versionLine = (
-    <VersionFooter variant={narrow ? "flow" : "rail"} onUpdatePending={onUpdatePending} />
-  );
-
   return (
     <div class={"set-shell" + (narrow ? " narrow" : "")} ref={shellRef}>
       <div class="set-page">
-        {!narrow && <SettingsNav page={page} foot={versionLine} />}
+        {!narrow && <SettingsNav page={page} updatePending={updatePending} />}
         <div class="set-main">
           {showIndex ? (
             <>
               <PageHeader title="设置" />
-              <SettingsIndex />
+              <SettingsIndex updatePending={updatePending} />
             </>
           ) : (
             <>
@@ -364,10 +373,10 @@ export function SettingsView({ onUpdatePending, focusSec }: { onUpdatePending?: 
               {page === "devices" && <DevicesPanel />}
 
               {page === "hosting" && <SiteHostingSettings />}
+
+              {page === "about" && <AboutPage onUpdatePending={onUpdatePending} />}
             </>
           )}
-
-          {narrow && versionLine}
         </div>
       </div>
     </div>
@@ -1499,33 +1508,28 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
   );
 }
 
-// ---- version footer (+ core update, desktop only) -------------------------
+// ---- 关于 page (product identity + version facts + core update) ------------
 
 type UpdateState = "idle" | "checking" | "available" | "downloading" | "staged" | "error";
 
+/** Mirrors REPO in apps/desktop/src/core-updater.ts — the updater's source of
+ *  releases is also where the 资源 links point. */
+const REPO_URL = "https://github.com/Tensorix/metahub-core";
+
 /**
- * The version line, doubling as the (desktop-only) core update entry. Quiet by
- * design — a mono version line with a text update affordance, not a card.
+ * The 关于 page: product identity hero (the cube mark finally gets a proper
+ * home), the version facts, the (desktop-only) core update flow with room for
+ * full error details, and outbound resource links.
  *
- * Two placements, same state machine (see SettingsView): `rail` pins it to the
- * bottom of the settings rail, Notion-style, stacked over two lines because the
- * rail is only 192px wide; `flow` is the narrow-shell fallback, one centered
- * line at the very end of the page.
- *
- * Driven by three versions: R = running (sidecar's
- * /api/version), I = installed/staged on disk (next launch), L = latest on
- * GitHub (manual check). `I > R` means an update is already downloaded and only
- * waiting for a restart — surfaced with no network call, since the app's startup
- * auto-updater may have staged it silently. In the plain browser (CLI server)
- * there is no `metahubDesktop` bridge, so only the core version shows.
+ * The update flow is driven by three versions: R = running (sidecar's
+ * /api/version, the Core version shown), I = installed/staged on disk (next
+ * launch), L = latest on GitHub (manual check only). `I > R` means an update is
+ * already downloaded and only waiting for a restart — surfaced with no network
+ * call, since the app's startup auto-updater may have staged it silently. In
+ * the plain browser (CLI server) there is no `metahubDesktop` bridge, so the
+ * 更新 section is absent and only the core version shows.
  */
-function VersionFooter({
-  variant = "flow",
-  onUpdatePending,
-}: {
-  variant?: "rail" | "flow";
-  onUpdatePending?: (p: boolean) => void;
-}) {
+function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void }) {
   const cu = typeof window !== "undefined" ? window.metahubDesktop?.coreUpdate : undefined;
   const [appVer, setAppVer] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null); // R, also the "Core" version shown
@@ -1611,82 +1615,91 @@ function VersionFooter({
     }
   };
 
-  // The inline update affordance — a quiet text link, with the page's only
-  // accent dot when something is actionable. Desktop only.
-  let update: ComponentChildren = null;
-  if (cu) {
-    switch (state) {
-      case "checking":
-        update = <span class="ver-act" aria-disabled="true">检查中…</span>;
-        break;
-      case "downloading": {
-        const pct =
-          progress && progress.total > 0
-            ? Math.min(100, Math.round((progress.received / progress.total) * 100))
-            : null;
-        update = (
-          <span class="ver-up ver-dl">
-            <span class={`ver-bar${pct == null ? " indet" : ""}`}>
-              <span class="ver-bar-fill" style={pct != null ? { width: `${pct}%` } : undefined} />
-            </span>
-            <span class="ver-num">{pct != null ? `${pct}%` : "下载中…"}</span>
+  // The update row, caption/control per state. The SetRow finally gives the
+  // machine room: full error details in the caption, a full-width progress bar
+  // in the detail area. Desktop only (needs the coreUpdate bridge).
+  let caption: ComponentChildren = "从 GitHub Releases 获取核心更新";
+  let control: ComponentChildren = <button class="btn btn-secondary" onClick={check}>检查更新</button>;
+  let detail: ComponentChildren = null;
+  switch (state) {
+    case "checking":
+      caption = "正在检查…";
+      control = <button class="btn btn-secondary" disabled>检查更新</button>;
+      break;
+    case "downloading": {
+      const pct =
+        progress && progress.total > 0
+          ? Math.min(100, Math.round((progress.received / progress.total) * 100))
+          : null;
+      caption = pct != null ? `下载中 · ${pct}%` : "下载中…";
+      control = <button class="btn btn-secondary" disabled>下载</button>;
+      detail = (
+        <div class="about-dl">
+          <span class={`ver-bar${pct == null ? " indet" : ""}`}>
+            <span class="ver-bar-fill" style={pct != null ? { width: `${pct}%` } : undefined} />
           </span>
-        );
-        break;
-      }
-      case "available":
-        update = (
-          <span class="ver-up">
-            <span class="ver-dot pulse" />
-            <span>新版本 <span class="ver-num">{latest}</span></span>
-            <button class="ver-act accent" onClick={download} title={`下载并更新到 v${latest}`}>下载</button>
-          </span>
-        );
-        break;
-      case "staged":
-        update = (
-          <span class="ver-up">
-            <span class="ver-dot pulse" />
-            <span><span class="ver-num">{installed}</span> 待重启</span>
-            <button class="ver-act accent" onClick={() => void cu.restart()} title={`重启应用以更新到 v${installed}`}>重启</button>
-          </span>
-        );
-        break;
-      case "error":
-        update = (
-          <span class="ver-up err">
-            <span class="ver-msg">检查失败</span>
-            <button class="ver-act" onClick={check} title={errMsg || "重试"}>重试</button>
-          </span>
-        );
-        break;
-      default:
-        update = <button class="ver-act" onClick={check}>检查更新</button>;
+        </div>
+      );
+      break;
     }
+    case "available":
+      caption = <span><span class="ver-dot pulse" /> 新版本 <span class="ver-num">v{latest}</span> 可用</span>;
+      control = <button class="btn btn-primary" onClick={download} title={`下载并更新到 v${latest}`}>下载</button>;
+      break;
+    case "staged":
+      caption = <span><span class="ver-dot pulse" /> <span class="ver-num">v{installed}</span> 已就绪，重启后生效</span>;
+      control = <button class="btn btn-primary" onClick={() => void cu!.restart()} title={`重启应用以更新到 v${installed}`}>重启</button>;
+      break;
+    case "error":
+      caption = <span class="about-err">{errMsg || "检查失败"}</span>;
+      control = <button class="btn btn-secondary" onClick={check}>重试</button>;
+      break;
   }
 
   // PWA / bucket-only shell: no desktop bridge (appVer) and no server to answer
   // /api/version (running) — fall back to the build version stamped into the
-  // bundle, so the footer is never empty. Fallback only: it stays hidden whenever
-  // App or Core is available (desktop, live server).
+  // bundle, so the hero always states something true.
   const webFallback = !appVer && !running && WEBUI_VERSION;
-  const rail = variant === "rail";
-  // The version facts, one group so the rail can stack them over the action.
-  const nums = (
-    <span class="set-ver-nums">
-      {appVer && <span>App <span class="ver-num">{appVer}</span></span>}
-      {appVer && running && <span class="set-footer-sep">·</span>}
-      {running && <span>Core <span class="ver-num">{running}</span></span>}
-      {webFallback && <span class="ver-num">v{WEBUI_VERSION}</span>}
-    </span>
-  );
+  const open = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
   return (
-    <div class={"set-footer" + (rail ? " rail" : "")}>
-      {nums}
-      {/* rail stacks (CSS column) — no interpunct between the two lines */}
-      {!rail && update && (running || appVer || webFallback) && <span class="set-footer-sep">·</span>}
-      {update}
-    </div>
+    <>
+      <PageHeader title={pageLabel("about")} />
+      <div class="about-hero">
+        <span class="about-mark"><Icon name="cube" /></span>
+        <div class="about-id">
+          <div class="about-name">Metahub</div>
+          <div class="about-vers">
+            {appVer && <span>App <span class="ver-num">{appVer}</span></span>}
+            {appVer && running && <span class="about-sep">·</span>}
+            {running && <span>Core <span class="ver-num">{running}</span></span>}
+            {webFallback && <span>Web <span class="ver-num">{WEBUI_VERSION}</span></span>}
+          </div>
+        </div>
+      </div>
+
+      {cu && (
+        <SetSection label="更新">
+          <SetRow title="软件更新" caption={caption} control={control}>
+            {detail}
+          </SetRow>
+        </SetSection>
+      )}
+
+      <SetSection label="资源">
+        <SetRow
+          title="GitHub 仓库"
+          caption="源代码与问题反馈"
+          onClick={() => open(REPO_URL)}
+          control={<span class="about-ext"><Icon name="externalLink" cls="ico sm" /></span>}
+        />
+        <SetRow
+          title="更新日志"
+          caption="各版本的发布说明"
+          onClick={() => open(`${REPO_URL}/releases`)}
+          control={<span class="about-ext"><Icon name="externalLink" cls="ico sm" /></span>}
+        />
+      </SetSection>
+    </>
   );
 }
 

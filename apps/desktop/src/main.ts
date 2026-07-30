@@ -253,6 +253,19 @@ function closeSplash(): void {
   splashWin = null;
 }
 
+/**
+ * Route target="_blank" links to the system browser. Without this Electron
+ * opens a bare chrome-less child window for every external link the WebUI
+ * renders (关于 page resources, site/share URLs). Only web URLs escape; anything
+ * else is denied.
+ */
+function routeExternalLinks(win: BrowserWindow): void {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+}
+
 function createWindow(port: number): void {
   const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
@@ -278,6 +291,7 @@ function createWindow(port: number): void {
     },
   });
   mainWin = win;
+  routeExternalLinks(win);
   win.on("closed", () => {
     if (mainWin === win) mainWin = null;
   });
@@ -335,6 +349,7 @@ function openPreview(p: { src: string; name?: string; blockId: string }): void {
     },
   });
   previewWin = win;
+  routeExternalLinks(win);
   win.on("closed", () => {
     if (previewWin === win) previewWin = null;
   });
@@ -422,6 +437,7 @@ function createQuickNoteWindow(): BrowserWindow {
     });
   }
 
+  routeExternalLinks(win);
   quickReady = false;
   void win.loadURL(`http://127.0.0.1:${serverPort}/#quick`);
   // Decouple create from show: ready-to-show only reveals the window if a show
