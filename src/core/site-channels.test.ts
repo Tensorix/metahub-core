@@ -73,9 +73,9 @@ test("room lifecycle: active → room_live; provisioning/cleanup_pending surface
   expect(siteState(base({ shares: [share({ hosting: "room", lifecycle: "cleanup_pending" })] }))).toBe("cleanup_pending");
 });
 
-test("plain link share → link_only; expired share does not count as live", () => {
+test("plain link share → link_only; expired share is not live but stays findable", () => {
   expect(siteState(base({ shares: [share()] }))).toBe("link_only");
-  expect(siteState(base({ shares: [share({ expiresAt: 999 })] }))).toBe("private");
+  expect(siteState(base({ shares: [share({ expiresAt: 999 })] }))).toBe("expired_link");
 });
 
 test("rooms sort ahead of plain links in the channel list", () => {
@@ -208,5 +208,48 @@ test("a synced link policy becomes expired without relying on a local share row"
     ],
   });
   expect(siteChannels(input)[0]!.status).toBe("expired");
+  // Expired is a card-visible state, not "private" — the row stays manageable
+  // (renewable), so the summary must lead the user back to it.
+  expect(siteState(input)).toBe("expired_link");
+});
+
+test("an expired link alongside a live one stays link_only", () => {
+  const input = base({
+    now: 2_000,
+    shares: [share({ slug: "live1", url: "http://h/share/live1" })],
+    storedChannels: [
+      {
+        id: "chan_expired",
+        audience: "link",
+        hosting: "edge",
+        controllerNodeId: "node-a",
+        targetRef: "slug",
+        canonicalUrl: "https://edge.example/room/slug",
+        policyJson: JSON.stringify({ permission: "view", hasPassword: false, expiresAt: 1_000 }),
+        desiredState: "active",
+        status: "ready",
+      },
+    ],
+  });
+  expect(siteState(input)).toBe("link_only");
+});
+
+test("an expired link that was revoked collapses to private", () => {
+  const input = base({
+    now: 2_000,
+    storedChannels: [
+      {
+        id: "chan_expired_revoked",
+        audience: "link",
+        hosting: "edge",
+        controllerNodeId: "node-a",
+        targetRef: "slug",
+        canonicalUrl: "https://edge.example/room/slug",
+        policyJson: JSON.stringify({ permission: "view", hasPassword: false, expiresAt: 1_000 }),
+        desiredState: "revoked",
+        status: "revoked",
+      },
+    ],
+  });
   expect(siteState(input)).toBe("private");
 });

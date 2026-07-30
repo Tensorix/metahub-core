@@ -22,6 +22,8 @@ import { decodeRecoveryCode } from "./recovery.ts";
 import { encodeEnroll } from "./enroll.ts";
 import { toB64, fromB64, unwrapMasterKey } from "./e2ee.ts";
 import { clearCoveredSiteRollbacks } from "./site-publish-recovery.ts";
+import { HEALTH_PATH, HealthResponseSchema, type HealthResponse } from "./protocol.ts";
+import pkg from "../../../package.json" with { type: "json" };
 
 const PEER_COLS =
   "url, pull_cursor, push_cursor, token, label, node_id, enabled, last_sync_at, last_success_at, last_status, last_error, kind, config";
@@ -460,6 +462,9 @@ export interface PeerSyncOutcome {
   pulled?: number;
   pendingPush?: boolean;
   error?: string;
+  /** Non-fatal follow-up problems (e.g. channel maintenance) after a
+   * SUCCESSFUL data sync. Never flips `ok` and never sets a network error. */
+  warnings?: string[];
 }
 
 /** Sync once with a single peer, recording status. Errors are captured, not
@@ -482,6 +487,34 @@ export async function syncPeer(
   });
   byUrl.set(url, run);
   return run;
+}
+
+/** Mixed-version workspace warning, from a peer's /health handshake. A peer
+ *  without the site_channels capability treats v2 channel rows as malformed
+ *  (validRow fail-closed), so publish/share changes silently do nothing there
+ *  — that deserves a loud line, not a shrug. Pure for tests. */
+export function versionWarning(local: string, health: HealthResponse | null): string | null {
+  if (!health) return null; // old peer without /health data — nothing to claim
+  if (health.capabilities && !health.capabilities.includes("site_channels"))
+    return `对端未升级（不支持站点渠道）：站点发布/分享的变更在它升级前不会生效`;
+  if (health.version && health.version !== local)
+    return `对端运行 core ${health.version}，本机为 ${local}；混合版本工作区的新功能可能不生效`;
+  return null;
+}
+
+/** Best-effort /health probe after a successful HTTP sync (5s cap, never
+ *  throws). Old servers without the fields → null → no warning (don't guess). */
+async function probePeerHealth(url: string): Promise<HealthResponse | null> {
+  try {
+    const res = await fetch(new URL(HEALTH_PATH, url), {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return null;
+    const parsed = HealthResponseSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 async function syncPeerOnce(
@@ -513,10 +546,30 @@ async function syncPeerOnce(
       result = await syncWithPeer(db, url, { timeoutMs: opts?.timeoutMs });
     }
     updatePeerStatus(db, url, "ok", null);
-    if (peer?.kind !== "s3" && peer?.kind !== "room") clearCoveredSiteRollbacks(db, url);
-    const { reconcileSiteChannels } = await import("./site-channel-reconcile.ts");
-    await reconcileSiteChannels(db);
-    return { url, ok: true, pushed: result.pushed, pulled: result.pulled, pendingPush: result.pendingPush };
+    // The data sync SUCCEEDED past this point: local follow-up work (rollback
+    // bookkeeping, channel reconcile) must never rewrite the peer status to
+    // "error" or flip the outcome — it degrades to warnings instead.
+    const warnings: string[] = [];
+    try {
+      if (peer?.kind !== "s3" && peer?.kind !== "room") clearCoveredSiteRollbacks(db, url);
+    } catch (e) {
+      warnings.push(`site rollback bookkeeping failed: ${(e as Error).message}`);
+    }
+    if (peer?.kind !== "s3" && peer?.kind !== "room") {
+      const mixed = versionWarning(pkg.version, await probePeerHealth(url));
+      if (mixed) warnings.push(`${url}: ${mixed}`);
+    }
+    const { reconcileSiteChannelsQuietly } = await import("./site-channel-reconcile.ts");
+    const reconcileError = await reconcileSiteChannelsQuietly(db);
+    if (reconcileError) warnings.push(`site channel reconcile failed: ${reconcileError}`);
+    return {
+      url,
+      ok: true,
+      pushed: result.pushed,
+      pulled: result.pulled,
+      pendingPush: result.pendingPush,
+      ...(warnings.length ? { warnings } : {}),
+    };
   } catch (e) {
     const error = (e as Error).message;
     updatePeerStatus(db, url, "error", error);

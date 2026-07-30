@@ -151,6 +151,45 @@ test("syncPeer coalesces concurrent rounds for the same peer", async () => {
   expect(bucket.puts).toBe(2); // HEAD + one segment, not doubled by the second caller
 });
 
+test("reconcile failure after a successful data sync degrades to warnings, not an error", async () => {
+  const db = makeDb();
+  db.query("INSERT INTO meta (key, value) VALUES ('node_id', ?)").run("nodeAAAA");
+  const bucket = new TestBucket();
+  setStorageClientFactory(() => bucket);
+  const url = "s3://bucket/metahub";
+  addStoragePeer(db, { url, config: s3Config(), label: "bucket" });
+  createDatabase(db, { name: "Tasks" });
+  // Force channel maintenance to blow up while the data sync itself succeeds.
+  db.exec("DROP TABLE site_channels");
+
+  const outcome = await syncPeer(db, url);
+  expect(outcome.ok).toBe(true);
+  expect(outcome.error).toBeUndefined();
+  expect(outcome.warnings?.length).toBeGreaterThan(0);
+  expect(outcome.warnings![0]).toContain("reconcile failed");
+  // The peer status stays "ok": the data really is synced.
+  const row = db
+    .query("SELECT last_status, last_success_at FROM peers WHERE url = ?")
+    .get(url) as { last_status: string; last_success_at: number | null };
+  expect(row.last_status).toBe("ok");
+  expect(typeof row.last_success_at).toBe("number");
+});
+
+test("a failed data sync reports the error without warnings noise", async () => {
+  const db = makeDb();
+  db.query("INSERT INTO meta (key, value) VALUES ('node_id', ?)").run("nodeAAAA");
+  const bucket = new TestBucket();
+  bucket.failList = true;
+  setStorageClientFactory(() => bucket);
+  const url = "s3://bucket/metahub";
+  addStoragePeer(db, { url, config: s3Config(), label: "bucket" });
+
+  const outcome = await syncPeer(db, url);
+  expect(outcome.ok).toBe(false);
+  expect(outcome.error).toBeTruthy();
+  expect(outcome.warnings).toBeUndefined();
+});
+
 test("addAndSyncStoragePeer fails fast and removes a new peer when first sync fails", async () => {
   const db = makeDb();
   const bucket = new TestBucket();

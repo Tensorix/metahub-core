@@ -14,7 +14,6 @@ import { safeDecode } from "./http-util.ts";
 import { randomSuffix } from "../ids.ts";
 import {
   getShare,
-  deleteShare,
   shareExpired,
   verifySharePassword,
   type ShareRow,
@@ -72,10 +71,10 @@ export async function serveShare(
   const share = getShare(ctx.db, slug);
   if (!share) return notFound();
   if (share.transport !== "server") return notFound(); // s3 shares aren't served here
-  if (shareExpired(share)) {
-    deleteShare(ctx.db, slug);
-    return gone();
-  }
+  // Expired = access refused, share row untouched: the row stays manageable
+  // (renewable) per the "expired" status contract; only explicit revoke/delete
+  // removes it.
+  if (shareExpired(share)) return gone();
 
   // Password gate (the unlock endpoint authenticates inside itself).
   if (sub === "unlock" && req.method === "POST") return handleUnlock(ctx, req, share, url);

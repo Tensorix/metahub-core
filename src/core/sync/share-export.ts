@@ -61,6 +61,10 @@ export interface BucketShareMeta {
   key: string;
   /** base64 salt (password shares); the link carries this, viewer derives the key. */
   salt?: string;
+  /** epoch ms the snapshot CONTENT was last (re-)exported. Distinct from
+   *  presign_exp: re-signing the link does not touch this. Older metas lack the
+   *  field — readers fall back to created_at. */
+  content_updated_at?: number;
 }
 
 export interface BucketShareLink {
@@ -225,6 +229,7 @@ export async function createBucketShare(
     objects,
     key: toB64(shareKey),
     salt: saltB64,
+    content_updated_at: Date.now(),
   };
   await storageClientFor(opts.config).put(metaKey(sharesRoot(opts.config.prefix), opts.slug), await metaBytes(opts.config, meta), {
     contentType: "application/octet-stream",
@@ -256,11 +261,75 @@ export async function renewBucketShare(
     expiresSec: exp,
   });
   const presignExp = Date.now() + exp * 1000;
-  const next: BucketShareMeta = { ...meta, title, presign_exp: presignExp, objects };
+  const next: BucketShareMeta = {
+    ...meta,
+    title,
+    presign_exp: presignExp,
+    objects,
+    content_updated_at: Date.now(),
+  };
   await storageClientFor(config).put(metaKey(sharesRoot(config.prefix), slug), await metaBytes(config, next), {
     contentType: "application/octet-stream",
   });
   return { manifestUrl, presignExp, keyB64: meta.has_password ? undefined : meta.key, saltB64: meta.salt, title };
+}
+
+/** Rewrite ONLY the presigned blob URLs inside a decrypted manifest — content
+ *  untouched. Pure over the presign callback (unit-testable). */
+export async function refreshManifestUrls(
+  manifest: ShareManifest,
+  presign: (hash: string) => Promise<string>,
+): Promise<ShareManifest> {
+  if (!manifest.blobs) return manifest;
+  const blobs: Record<string, { url: string; ct: string }> = {};
+  for (const [hash, entry] of Object.entries(manifest.blobs))
+    blobs[hash] = { ...entry, url: await presign(hash) };
+  return { ...manifest, blobs };
+}
+
+/** Re-presign an object-storage share WITHOUT touching its content: decrypt
+ *  the stored manifest, refresh the embedded blob URLs, re-encrypt in place.
+ *  No live data is read and no blob bytes are re-uploaded — recipients keep
+ *  seeing the same snapshot (content_updated_at stays put). This is what
+ *  "renew the link" means; re-exporting current data is a separate, explicit
+ *  action (renewBucketShare). */
+export async function represignBucketShare(
+  config: S3Config,
+  slug: string,
+  expiresSec = MAX_PRESIGN_SECONDS,
+): Promise<BucketShareLink> {
+  const meta = await readMeta(config, slug);
+  if (!meta) throw new MhError("not_found", `no such bucket share: ${slug}`);
+  const client = storageClientFor(config);
+  const root = sharesRoot(config.prefix);
+  const shareKey = fromB64(meta.key);
+  const exp = clampExpiry(expiresSec);
+
+  const mKey = manifestKeyOf(root, slug);
+  const raw = await client.get(mKey).catch(() => null);
+  if (!raw) throw new MhError("not_found", `bucket share ${slug} has no manifest`);
+  const manifest = JSON.parse(
+    new TextDecoder().decode(await decryptBytes(shareKey, raw)),
+  ) as ShareManifest;
+  const refreshed = await refreshManifestUrls(manifest, (hash) =>
+    presignGet(config, blobKeyOf(root, slug, hash), exp),
+  );
+  await client.put(
+    mKey,
+    await encryptBytes(shareKey, new TextEncoder().encode(JSON.stringify(refreshed))),
+    { contentType: "application/octet-stream" },
+  );
+  const presignExp = Date.now() + exp * 1000;
+  await client.put(metaKey(root, slug), await metaBytes(config, { ...meta, presign_exp: presignExp }), {
+    contentType: "application/octet-stream",
+  });
+  return {
+    manifestUrl: await presignGet(config, mKey, exp),
+    presignExp,
+    keyB64: meta.has_password ? undefined : meta.key,
+    saltB64: meta.salt,
+    title: meta.title,
+  };
 }
 
 /** List all object-storage shares in a bucket (decrypts each meta.json). */

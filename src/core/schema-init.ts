@@ -383,17 +383,33 @@ export function migrateSitesAccess(db: DbDriver): void {
  * and retained in its oplog while ignoring the unknown dataset. runSchema has
  * created the table by this point; replaying existing winners is idempotent
  * because applyChange re-materializes even when INSERT OR IGNORE is a no-op. */
+const SITE_CHANNELS_REPLAY_KEY = "site_channels_replay_seq";
+
 export function migrateSiteChannels(db: DbDriver): void {
   if (!tableExists(db, "site_channels")) return;
+  // Incremental: only the oplog tail past the stored watermark is replayed.
+  // Downgrade-then-upgrade stays safe: an old binary neither knows the key nor
+  // materializes site_channels, but everything it ingests lands ABOVE the
+  // watermark, so the next upgraded open replays exactly that tail. compact
+  // never physically deletes site_channels rows (tombstones survive), so the
+  // watermark can never point past retained history. Deleting the meta key
+  // degrades to a full (idempotent) replay.
+  const wm = db
+    .query("SELECT value FROM meta WHERE key = ?")
+    .get(SITE_CHANNELS_REPLAY_KEY) as { value: string } | null;
+  const since = wm ? Number(wm.value) : 0;
   const changes = db
     .query(
-      `SELECT ${CHANGE_SELECT} FROM crdt_changes
-       WHERE dataset = 'site_channels' ORDER BY seq`,
+      `SELECT seq, ${CHANGE_SELECT} FROM crdt_changes
+       WHERE dataset = 'site_channels' AND seq > ? ORDER BY seq`,
     )
-    .all() as Change[];
+    .all(since) as (Change & { seq: number })[];
   if (changes.length === 0) return;
-  db.transaction((rows: Change[]) => {
+  db.transaction((rows: (Change & { seq: number })[]) => {
     for (const change of rows) applyChange(db, change);
+    db.query(
+      "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(SITE_CHANNELS_REPLAY_KEY, String(rows[rows.length - 1]!.seq));
   })(changes);
 }
 

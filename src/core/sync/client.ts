@@ -1,6 +1,6 @@
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
-import { ingest, changesAfterSeq } from "../crdt.ts";
+import { ingest, changesAfterSeq, type Change } from "../crdt.ts";
 import { type SyncResponse, SYNC_PATH } from "./protocol.ts";
 import { MhError } from "../errors.ts";
 
@@ -45,6 +45,34 @@ export interface SyncOpts {
   /** Hard transport budget. Every sync is bounded even when the peer accepts
    * the TCP connection but never replies. */
   timeoutMs?: number;
+}
+
+const changeKey = (c: Pick<Change, "hlc" | "node_id" | "dataset" | "row_id" | "col">): string =>
+  `${c.hlc}\0${c.node_id}\0${c.dataset}\0${c.row_id}\0${c.col}`;
+
+/** After a pull, advance the push cursor across the CONTIGUOUS prefix of
+ * newly-appended oplog rows that came out of this round's response: the peer
+ * obviously holds what it just sent us, so those rows must not count as
+ * "unpushed" (they made status surfaces flash BEHIND after every successful
+ * pull, until the next round skipped them). The walk stops at the first row
+ * NOT in the response — e.g. a concurrent local write — which genuinely is
+ * unpushed and must keep the peer looking behind. Exported for tests. */
+export function advanceAckedPrefix(db: DbDriver, fromSeq: number, received: Change[]): number {
+  if (received.length === 0) return fromSeq;
+  const keys = new Set(received.map(changeKey));
+  const rows = db
+    .query(
+      "SELECT rowid AS seq, hlc, node_id, dataset, row_id, col FROM crdt_changes WHERE rowid > ? ORDER BY rowid",
+    )
+    .all(fromSeq) as (Pick<Change, "hlc" | "node_id" | "dataset" | "row_id" | "col"> & {
+    seq: number;
+  })[];
+  let cursor = fromSeq;
+  for (const row of rows) {
+    if (!keys.has(changeKey(row))) break;
+    cursor = row.seq;
+  }
+  return cursor;
 }
 
 /**
@@ -92,7 +120,12 @@ export async function syncWithPeer(
   // storage path; keeps the auto-sync backoff honest). `received` carries the
   // response page size separately so paginated hydration can break on it.
   const pulled = ingest(db, changes);
-  setPeer(db, url, { pull_cursor: data.cursor, push_cursor: toPush.cursor });
+  setPeer(db, url, {
+    pull_cursor: data.cursor,
+    // Rows this round just ingested came FROM the peer — advance past them so
+    // a successful pull never reads as "this peer is behind".
+    push_cursor: advanceAckedPrefix(db, toPush.cursor, changes),
+  });
 
   return { pushed: toPush.changes.length, pulled, received: changes.length };
 }

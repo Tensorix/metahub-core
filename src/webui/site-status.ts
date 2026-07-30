@@ -30,7 +30,8 @@ export const SITE_STATE_LABEL: Record<SiteState, string> = {
   device_syncing: "正在同步 · 设备托管",
   public_unverified: "已设公开 · 入口未验证",
   link_only: "链接分享中",
-  private: "仅本机预览",
+  expired_link: "链接已过期",
+  private: "私有预览",
 };
 
 export const CHANNEL_STATUS_LABEL: Record<SiteChannel["status"], string> = {
@@ -50,6 +51,42 @@ export const channelAudienceLabel = (c: SiteChannel): string =>
 
 export const channelHostingLabel = (c: SiteChannel): string =>
   c.hosting === "room" ? "Edge" : "设备";
+
+/** Public address vs secret capability link, at a glance. */
+export const channelAudienceIcon = (c: Pick<SiteChannel, "audience">): "globe" | "lock" =>
+  c.audience === "anyone" ? "globe" : "lock";
+
+/** What the site card's address slot shows — the four-rule decision:
+ *  1. exactly one ready public URL → show + copy it;
+ *  2. several public addresses → count, details on click;
+ *  3. only private links → COUNT ONLY. A capability URL grants access, so the
+ *     card never displays or copies it as if it were a public address;
+ *  4. nothing live → the private preview address. */
+export type SiteCardAddress =
+  | { kind: "public"; url: string }
+  | { kind: "public_multi"; count: number }
+  | { kind: "links_only"; count: number }
+  | { kind: "preview" };
+
+export function siteCardAddress(channels: SiteChannel[]): SiteCardAddress {
+  const publicLive = channels.filter(
+    (c) =>
+      c.audience === "anyone" &&
+      c.status === "ready" &&
+      c.desiredState !== "revoked" &&
+      !!c.url,
+  );
+  if (publicLive.length === 1) return { kind: "public", url: publicLive[0]!.url! };
+  if (publicLive.length > 1) return { kind: "public_multi", count: publicLive.length };
+  const privateLive = channels.filter(
+    (c) =>
+      c.audience === "link" &&
+      (c.status === "ready" || c.status === "syncing") &&
+      c.desiredState !== "revoked",
+  );
+  if (privateLive.length > 0) return { kind: "links_only", count: privateLive.length };
+  return { kind: "preview" };
+}
 
 /** Assemble the core derivation input from the data the panes already hold
  *  (aggregated shares, this node's hosting info — null in replica mode). */

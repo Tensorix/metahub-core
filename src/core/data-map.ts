@@ -94,6 +94,18 @@ export type DataMapStateKind =
   | "stale" // cursors are current but confirmation is too old
   | "healthy"; // every enabled place has synced
 
+/** One concrete problem, kept alongside the single headline `state` so
+ *  concurrent issues (a failing peer AND unsynced changes) are never masked by
+ *  precedence — the headline picks one, `issues` lists them all. */
+export interface DataMapIssue {
+  kind: "no_backup" | "peer_error" | "never_synced" | "behind" | "stale" | "pending_blobs";
+  /** Peer url the issue is about; null for workspace-level issues. */
+  placeUrl: string | null;
+  placeLabel: string | null;
+  /** peer_error carries lastError; others null. */
+  message: string | null;
+}
+
 export interface DataMapState {
   state: DataMapStateKind;
   /** Places that actually hold data now (self + successfully-synced peers). */
@@ -106,6 +118,9 @@ export interface DataMapState {
   /** Oldest last-success among enabled synced places — the freshness anchor
    *  (null when self is the only place). */
   oldestSyncedAt: number | null;
+  /** Every concurrent problem, most severe first (same order as the headline
+   *  precedence). Empty when healthy. */
+  issues: DataMapIssue[];
 }
 
 const hostOf = (url: string): string => {
@@ -132,17 +147,20 @@ function placeOf(
     kind: isBucket ? "bucket" : "device",
     url: p.url,
     label: p.label ?? (isBucket ? (p.bucket ?? hostOf(p.url)) : hostOf(p.url)),
+    // Error outranks "never": a target that keeps failing must say so, not
+    // hide behind "first sync hasn't completed yet" (misconfigured bucket /
+    // wrong token is exactly the never+error combination).
     freshness: !p.enabled
       ? "disabled"
-      : p.lastSuccessAt == null
-        ? "never"
       : p.lastStatus === "error"
         ? "error"
-        : lag > 0
-          ? "behind"
-          : now - p.lastSuccessAt > staleAfterMs
-            ? "stale"
-            : "current",
+        : p.lastSuccessAt == null
+          ? "never"
+          : lag > 0
+            ? "behind"
+            : now - p.lastSuccessAt > staleAfterMs
+              ? "stale"
+              : "current",
     syncedAt: p.lastSuccessAt,
     error: p.lastStatus === "error" ? (p.lastError ?? null) : null,
     acknowledgedSeq: p.pushCursor,
@@ -219,17 +237,39 @@ export function dataMapState(input: DataMapInput): DataMapState {
       )
     : null;
   const pendingChanges = enabled.reduce((max, p) => Math.max(max, p.lag), 0);
+  // Collect EVERY concurrent problem (most severe first) — the headline state
+  // below picks one by precedence, but nothing gets masked.
+  const issues: DataMapIssue[] = [];
+  if (enabled.length === 0)
+    issues.push({ kind: "no_backup", placeUrl: null, placeLabel: null, message: null });
+  for (const p of enabled)
+    if (p.freshness === "error")
+      issues.push({ kind: "peer_error", placeUrl: p.url, placeLabel: p.label, message: p.error });
+  if (input.pendingBlobCount > 0)
+    issues.push({ kind: "pending_blobs", placeUrl: null, placeLabel: null, message: null });
+  for (const p of enabled)
+    if (p.freshness === "behind")
+      issues.push({ kind: "behind", placeUrl: p.url, placeLabel: p.label, message: null });
+  for (const p of enabled)
+    if (p.freshness === "never")
+      issues.push({ kind: "never_synced", placeUrl: p.url, placeLabel: p.label, message: null });
+  for (const p of enabled)
+    if (p.freshness === "stale")
+      issues.push({ kind: "stale", placeUrl: p.url, placeLabel: p.label, message: null });
   const base = {
     places: 1 + current.length,
     pendingBlobCount: input.pendingBlobCount,
     pendingBlobBytes: input.pendingBlobBytes,
     pendingChanges,
     oldestSyncedAt: oldest,
+    issues,
   };
+  // Headline precedence: a FAILING target outranks in-flight/pending signals —
+  // "still syncing" or "changes pending" must never mask a hard error.
   if (enabled.length === 0) return { state: "no_backup", ...base };
+  if (enabled.some((p) => p.freshness === "error")) return { state: "peer_error", ...base };
   if (input.pendingBlobCount > 0) return { state: "pending_blobs", ...base };
   if (pendingChanges > 0) return { state: "unsynced_changes", ...base };
-  if (enabled.some((p) => p.freshness === "error")) return { state: "peer_error", ...base };
   if (enabled.some((p) => p.freshness === "never")) return { state: "syncing", ...base };
   if (enabled.some((p) => p.freshness === "stale")) return { state: "stale", ...base };
   return { state: "healthy", ...base };

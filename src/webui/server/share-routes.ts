@@ -207,13 +207,16 @@ export const shareRoutes: Route[] = [
   {
     method: "POST",
     path: "/api/share/renew",
-    summary: "Re-presign an object-storage share and return a fresh link. Query: ?slug=<slug>",
+    summary:
+      "Re-presign an object-storage share and return a fresh link (content untouched). Query: ?slug=<slug>&refresh_content=1 to re-export current data",
     response: CreatedShareRes,
     handler: async (req, { db }) => {
       try {
-        const slug = new URL(req.url).searchParams.get("slug");
+        const url = new URL(req.url);
+        const slug = url.searchParams.get("slug");
         if (!slug) throw new MhError("invalid_input", "slug required");
-        return Response.json(await renewShareAction(db, slug));
+        const refreshContent = url.searchParams.get("refresh_content") === "1";
+        return Response.json(await renewShareAction(db, slug, undefined, { refreshContent }));
       } catch (e) {
         return errorResponse(e);
       }

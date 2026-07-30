@@ -35,6 +35,11 @@ CREATE INDEX IF NOT EXISTS idx_changes_txn ON crdt_changes(txn)
 -- Receipt GC is age-based and runs on every intent/sync maintenance path.
 CREATE INDEX IF NOT EXISTS idx_changes_intent_receipt_hlc ON crdt_changes(hlc)
   WHERE dataset = 'intent_receipts';
+-- migrateSiteChannels replays only the tail past its watermark on every open;
+-- partial index keeps that probe off a full-table scan (site_channels rows are
+-- a tiny minority of the oplog).
+CREATE INDEX IF NOT EXISTS idx_changes_site_channels_seq ON crdt_changes(seq)
+  WHERE dataset = 'site_channels';
 -- Serves history's "every block ever attached to this doc" lookup. Partial so
 -- it never indexes the large values other datasets carry (e.g. site file bodies).
 CREATE INDEX IF NOT EXISTS idx_changes_docref ON crdt_changes(value)

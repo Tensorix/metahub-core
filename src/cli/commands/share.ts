@@ -198,12 +198,27 @@ const revoke = defineCommand({
 });
 
 const renew = defineCommand({
-  meta: { name: "renew", description: "Re-presign an object-storage share and print a fresh link" },
-  args: { slug: { type: "positional", required: true, description: "Share slug" } },
+  meta: {
+    name: "renew",
+    description:
+      "Re-generate the access link for an object-storage share (snapshot content unchanged; --refresh-content re-exports current data)",
+  },
+  args: {
+    slug: { type: "positional", required: true, description: "Share slug" },
+    "refresh-content": {
+      type: "boolean",
+      description: "Also re-export CURRENT data into the snapshot (recipients see the new version)",
+    },
+  },
   run: guard(async (args) => {
     const db = openMetahub();
-    const out = await renewShareAction(db, args.slug);
-    print(out, () => `${out.url}\n通过：${out.source}`);
+    const refreshContent = !!args["refresh-content"];
+    const out = await renewShareAction(db, args.slug, undefined, { refreshContent });
+    print(out, () =>
+      refreshContent
+        ? `${out.url}\n通过：${out.source}\n已更新快照内容并重新生成链接。`
+        : `${out.url}\n通过：${out.source}\n已重新生成访问链接；快照内容保持不变（要更新内容用 --refresh-content）。`,
+    );
   }),
 });
 

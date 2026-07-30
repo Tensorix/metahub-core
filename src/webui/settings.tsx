@@ -18,8 +18,10 @@ import {
 } from "./api.ts";
 import {
   dataMapHeadline,
+  dataMapIssueLines,
   dataMapTone,
   placeCaption,
+  selfPlaceCopy,
   PLACE_KIND_LABEL,
   PLACE_ROLE_LABEL,
 } from "./data-map-status.ts";
@@ -603,6 +605,9 @@ function SyncHealthLine() {
   }, []);
   if (!map) return null;
   const tone = dataMapTone(map);
+  // In window mode the map came from the server — its "self" is the workspace
+  // primary, not this browser.
+  const selfCopy = selfPlaceCopy(clientMode());
   return (
     <div class="sync-health">
       <button class="sync-health-line" onClick={() => setOpen((o) => !o)}>
@@ -613,12 +618,27 @@ function SyncHealthLine() {
           <Icon name="chevronDown" />
         </span>
       </button>
+      {dataMapIssueLines(map).length > 1 && (
+        <div class="sync-health-issues">
+          {dataMapIssueLines(map).map((line) => (
+            <div class="sync-health-issue" key={line}>
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
       {open && (
         <div class="sync-health-places">
           {map.places.map((p) => (
             <div class="sync-health-place" key={p.url ?? "self"}>
-              <span class="sync-health-place-kind">{PLACE_KIND_LABEL[p.kind]}</span>
-              <span class="sync-health-place-label">{p.label}</span>
+              <span class="sync-health-place-kind">
+                {p.kind === "self" ? selfCopy.kindLabel : PLACE_KIND_LABEL[p.kind]}
+              </span>
+              <span class="sync-health-place-label">
+                {p.kind === "self" && p.label === "本机"
+                  ? (selfCopy.labelOverride ?? p.label)
+                  : p.label}
+              </span>
               <span class="sync-health-place-cap">{placeCaption(p)}</span>
               {p.roles.includes("blob_anchor") && (
                 <span class="sync-health-role">{PLACE_ROLE_LABEL.blob_anchor}</span>
@@ -651,6 +671,9 @@ function BackupPage() {
   const [serverPeers, setServerPeers] = useState<S3Peer[] | null>(null);
   const [localPeers, setLocalPeers] = useState<StoragePeerView[] | null>(null);
   const [edge, setEdge] = useState<EdgeStatus | null>(null);
+  // Bucket roles from the data map (工作区同步 / 附件长期保存 / 发布快照) —
+  // same derivation the sync header uses, keyed by peer url.
+  const [rolesByUrl, setRolesByUrl] = useState<Map<string, string[]>>(() => new Map());
 
   const reloadLocal = () => {
     if (replicaEnabled()) {
@@ -670,6 +693,18 @@ function BackupPage() {
         .catch((e) => toast(`加载失败：${(e as Error).message}`));
       api.getEdgeStatus().then(setEdge).catch(() => setEdge(null));
     }
+    api
+      .syncHealth()
+      .then((m) =>
+        setRolesByUrl(
+          new Map(
+            m.places
+              .filter((pl) => pl.url != null && pl.kind === "bucket")
+              .map((pl) => [pl.url!, pl.roles.map((r) => PLACE_ROLE_LABEL[r])]),
+          ),
+        ),
+      )
+      .catch(() => undefined);
   };
   useEffect(() => {
     reload();
@@ -723,9 +758,9 @@ function BackupPage() {
 
   const removeBucket = async (url: string, name: string) => {
     const ok = await confirmDialog({
-      title: "移除存储桶",
-      message: `确定移除 ${name}？将停止与该存储桶同步（桶内数据不受影响）。`,
-      confirmLabel: "移除",
+      title: "停止使用此同步存储桶",
+      message: `确定停止使用 ${name}？将停止与该存储桶同步（桶内数据不受影响，可随时重新连接）。`,
+      confirmLabel: "停止使用",
       danger: true,
     });
     if (!ok) return;
@@ -740,9 +775,9 @@ function BackupPage() {
 
   const detachHere = async (url: string, name: string) => {
     const ok = await confirmDialog({
-      title: "取消本设备直连",
-      message: `这台设备将不再直连 ${name}（存储桶仍在服务器上;本设备在线时照常经服务器同步）。`,
-      confirmLabel: "取消直连",
+      title: "停止此浏览器直连同步",
+      message: `此浏览器将不再直连 ${name}（存储桶仍在服务器上；此浏览器在线时照常经服务器同步）。`,
+      confirmLabel: "停止直连",
       danger: true,
     });
     if (!ok) return;
@@ -857,25 +892,28 @@ function BackupPage() {
                   title={name}
                   caption={rowCaption(
                     p,
-                    noOrigin ? "本机发布" : onDevice ? "本机已直连" : undefined,
+                    [
+                      ...(rolesByUrl.get(p.url) ?? []),
+                      ...(noOrigin ? ["本机发布"] : onDevice ? ["此浏览器已直连"] : []),
+                    ].join(" · ") || undefined,
                   )}
                   control={
                     <RowMenu
                       items={[
                         { icon: "cloudUp", label: "立即同步", onClick: () => void syncBucket(p.url) },
                         ...(!noOrigin && replicaOn && !onDevice
-                          ? [{ icon: "link", label: "在本设备直连", sublabel: "服务器不可达时也能同步", onClick: () => activateHere(sp) }]
+                          ? [{ icon: "link", label: "让此浏览器可离线同步", sublabel: "服务器不可达时也能同步", onClick: () => activateHere(sp) }]
                           : []),
                         ...(onDevice
-                          ? [{ icon: "link", label: "取消本设备直连", onClick: () => void detachHere(p.url, name) }]
+                          ? [{ icon: "link", label: "停止此浏览器直连同步", onClick: () => void detachHere(p.url, name) }]
                           : []),
                         ...(!noOrigin
                           ? [
-                              { icon: "lock", label: "轮换存储密钥…", sublabel: "手机丢了 / 密钥泄露时", onClick: () => rotateBucket(sp) },
+                              { icon: "lock", label: "更换存储访问密钥…", sublabel: "手机丢了 / 密钥泄露时", onClick: () => rotateBucket(sp) },
                               { icon: "copy", label: "导出恢复码…", onClick: () => recoveryBucket(sp) },
                             ]
                           : []),
-                        { icon: "trash", label: "移除存储桶", danger: true, onClick: () => void removeBucket(p.url, name) },
+                        { icon: "trash", label: "停止使用此同步存储桶", danger: true, onClick: () => void removeBucket(p.url, name) },
                       ]}
                     />
                   }
@@ -1174,7 +1212,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     try {
       await enableReplicaFromServer();
       setEnabled(true);
-      toast("离线副本已启用，正在下载数据…");
+      toast("已开始在此浏览器保存完整副本，正在下载数据…");
     } catch (e) {
       toast(`启用失败：${(e as Error).message}`);
     } finally {
@@ -1184,11 +1222,11 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
 
   const disable = async () => {
     const ok = await confirmDialog({
-      title: noOrigin ? "断开同步备份？" : "停用离线副本",
+      title: noOrigin ? "停止使用此同步存储桶？" : "切回在线模式",
       message: noOrigin
-        ? "此页面没有在线主节点可回退。断开后会返回「连接同步备份」；已下载的数据仍保留在浏览器里，重新连接后可从断点继续。若要同时删除本地数据，请使用下方「重置本地副本」。"
-        : "此浏览器将恢复纯在线模式。已下载的本地数据保留在浏览器里，重新启用后从断点续传。",
-      confirmLabel: noOrigin ? "断开" : "停用",
+        ? "此页面没有在线主节点可回退。停止后会返回「连接同步存储桶」；已下载的数据仍保留在此浏览器里，重新连接后可从断点继续。若要同时删除本地数据，请使用下方「删除此浏览器的副本」。"
+        : "此浏览器将恢复纯在线模式。已下载的本地数据保留在此浏览器里，重新启用后从断点续传。",
+      confirmLabel: noOrigin ? "停止使用" : "切回在线模式",
       danger: true,
     });
     if (!ok) return;
@@ -1204,7 +1242,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     try {
       await disableReplica();
       setEnabled(false);
-      toast(noOrigin ? "已断开，请重新连接同步备份" : "已停用离线副本");
+      toast(noOrigin ? "已停止，请重新连接同步存储桶" : "已切回在线模式");
       if (hadSw) location.reload();
     } finally {
       setBusy(false);
@@ -1214,10 +1252,10 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
   const reset = async () => {
     const bucketOnly = isNoOrigin();
     const ok = await confirmDialog({
-      title: "重置本地副本",
+      title: "删除此浏览器的副本",
       message: bucketOnly
-        ? "将删除此浏览器里的本地副本并返回「连接同步备份」。存储桶中已完成同步的数据不受影响；尚未同步的本地修改和本地附件会丢失。建议先确认上方显示“当前版本已确认”。"
-        : "将删除此浏览器里的全部本地数据并停用离线副本。工作区主节点的数据不受影响；尚未同步的本地修改会丢失。建议先「立即同步」。",
+        ? "将删除此浏览器的副本并返回「连接同步存储桶」。\n① 已同步到存储桶的内容不会丢；\n② 尚未同步的本地编辑会丢失；\n③ 尚未上传的本地附件会丢失；\n④ 建议先确认上方显示“当前版本已确认”。"
+        : "将删除此浏览器里的全部本地数据并切回在线模式。\n① 已同步的内容仍在工作区主节点，不会丢；\n② 尚未同步的本地编辑会丢失；\n③ 尚未上传的本地附件会丢失；\n④ 建议先「立即同步」。",
       confirmLabel: "删除并重置",
       danger: true,
     });
@@ -1226,7 +1264,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     try {
       await resetReplica();
       setEnabled(false);
-      toast(bucketOnly ? "本地副本已重置，请重新连接同步备份" : "本地副本已重置");
+      toast(bucketOnly ? "已删除此浏览器的副本，请重新连接同步存储桶" : "已删除此浏览器的副本");
     } catch (e) {
       toast(`重置失败：${(e as Error).message}`);
     } finally {
@@ -1248,7 +1286,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
   };
 
   const caption = unsupported
-    ? `此设备暂不支持在本机保存：${unsupported}`
+    ? `此浏览器暂不支持保存完整副本：${unsupported}`
     : statusLine() +
       (enabled && st.node ? ` · 节点 ${st.node}` : "") +
       (enabled && usage ? ` · 本地占用 ${usage} MB` : "");
@@ -1257,7 +1295,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     <>
       <SetSection label="离线副本">
         <SetRow
-          title="在此设备保存离线副本"
+          title="在此浏览器保存完整副本"
           caption={caption}
           control={
             <Switch
@@ -1285,11 +1323,11 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
         <DangerZone>
           <SetRow
             danger
-            title="重置本地副本"
-            caption="删除此浏览器里的全部本地数据并停用离线副本；未同步的本地修改会丢失。"
+            title="删除此浏览器的副本"
+            caption="删除此浏览器里的全部本地数据并切回在线模式；未同步的编辑和未上传的附件会丢失。"
             control={
               <button class="btn btn-ghost device-danger" disabled={busy} onClick={reset}>
-                重置
+                删除副本
               </button>
             }
           />
@@ -1319,6 +1357,8 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
   const [pending, setPending] = useState<{ count: number; bytes: number }>({ count: 0, bytes: 0 });
   const [usage, setUsage] = useState<number | null>(null);
   const [persisted, setPersisted] = useState<boolean | null>(null);
+  // Distinguishes "never asked" from "asked and the browser declined".
+  const [persistDenied, setPersistDenied] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
@@ -1377,7 +1417,8 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
     try {
       const ok = await navigator.storage.persist();
       setPersisted(ok);
-      toast(ok ? "已设为常驻，系统不会自动清理" : "浏览器暂未授予常驻");
+      if (!ok) setPersistDenied(true);
+      toast(ok ? "本地数据已受保护，系统不会自动清理" : "浏览器暂未授予保护");
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -1413,11 +1454,13 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
         />
       )}
       <SetRow
-        title="常驻存储"
+        title="防止浏览器自动清理"
         caption={
           persisted
             ? "已开启：系统空间紧张时不会自动清掉本地数据。"
-            : "开启后，系统空间紧张时也不会自动清掉本地数据。"
+            : persistDenied
+              ? "浏览器未授予保护；系统空间紧张时可能清理本地数据。可稍后重试，或保持定期同步。"
+              : "开启后，系统空间紧张时也不会自动清掉本地数据。浏览器授予与否由其自行决定。"
         }
         control={
           persisted !== true ? (
@@ -1426,7 +1469,7 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
               disabled={busy || !navigator.storage?.persist}
               onClick={() => void requestPersist()}
             >
-              请求常驻
+              {persistDenied ? "重试" : "请求保留本地数据"}
             </button>
           ) : undefined
         }
@@ -1813,7 +1856,7 @@ function DevicesPanel() {
   };
   const revokeGrantRef = async (prefix: string, deviceName: string) => {
     const ok = await confirmDialog({
-      title: "吊销接入凭据",
+      title: "吊销设备凭据",
       message: `吊销后，${deviceName} 将无法再同步进本机。它此前已同步的数据仍留在该设备上，无法远程删除。`,
       confirmLabel: "吊销",
       danger: true,
@@ -1904,31 +1947,31 @@ function DevicesPanel() {
                           <span class="device-ch-actions">
                             <button class="btn btn-ghost" onClick={() => syncNow(c.ref)}>立即同步</button>
                             <button class="btn btn-ghost" onClick={() => togglePeer(c.ref)}>
-                              {peers.find((x) => x.url === c.ref)?.enabled ? "禁用" : "启用"}
+                              {peers.find((x) => x.url === c.ref)?.enabled ? "暂停同步" : "恢复同步"}
                             </button>
-                            <button class="btn btn-ghost device-danger" onClick={() => removePeerRow(c.ref)}>移除</button>
+                            <button class="btn btn-ghost device-danger" onClick={() => removePeerRow(c.ref)}>移除连接</button>
                           </span>
                         )}
                         {c.kind === "grant_in" && !d.self && (
                           <span class="device-ch-actions">
-                            <button class="btn btn-ghost device-danger" onClick={() => revokeGrantRef(c.ref, deviceName(d))}>吊销</button>
+                            <button class="btn btn-ghost device-danger" onClick={() => revokeGrantRef(c.ref, deviceName(d))}>吊销设备凭据</button>
                           </span>
                         )}
                       </div>
                     ))}
                     {!d.self && d.revocable === "bucket_rotate" && (
                       <div class="device-detail-note">
-                        已在以下同步备份中确认该设备：
+                        已在以下同步存储桶中确认该设备：
                         <code>{d.revocationSources.join("、")}</code>。这些设备共用存储凭据，无法单独移除。
                         要让丢失的设备失去后续访问：先在存储服务商停用旧钥匙，再到「数据与备份」对应桶的菜单里选
-                        「轮换存储密钥」。<b>它已下载的数据无法追回。</b>
+                        「更换存储访问密钥」。<b>它已下载的数据无法追回。</b>
                       </div>
                     )}
                     {!d.self && d.revocable === "unknown" && (
                       <div class="device-detail-note">
                         {presenceRefreshing
-                          ? "正在核对已连接的同步备份…"
-                          : "只能确认这个节点曾写入工作区，无法确认它来自历史直连、已移除的备份，还是当前存储桶。为避免轮换错误的密钥，这里不会给出破坏性操作；请先检查该设备和各存储服务的访问记录。"}
+                          ? "正在核对已连接的同步存储桶…"
+                          : "只能确认这个节点曾写入工作区，无法确认它来自历史直连、已移除的存储桶，还是当前存储桶。为避免轮换错误的密钥，这里不会给出破坏性操作；请先检查该设备和各存储服务的访问记录。"}
                       </div>
                     )}
                   </div>

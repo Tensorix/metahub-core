@@ -251,7 +251,7 @@ function waitReady(timeoutMs = 30_000): Promise<void> {
 export async function enableReplicaFromServer(): Promise<void> {
   if (isNoOrigin())
     throw new ReplicaError(
-      "此页面没有工作区主节点，不能使用服务器配对；请重新连接同步备份。",
+      "此页面没有工作区主节点，不能使用服务器配对；请重新连接同步存储桶。",
       "invalid_input",
     );
   startReplica();

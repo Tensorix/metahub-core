@@ -134,6 +134,45 @@ export function mapApiRequest(
       return text ? { op: "search", args: [text, num(q.get("limit"))] } : null;
     }
 
+    // sites (management ops the replica owns; file UPLOAD and publish/hosting
+    // configuration stay server-only — no local counterpart, deliberate null)
+    case "GET /api/sites":
+      return { op: "listSites", args: [] };
+    case "GET /api/site/files": {
+      const site = q.get("site");
+      return site ? { op: "listSiteFiles", args: [site] } : null;
+    }
+    case "POST /api/sites":
+      return { op: "createSite", args: [b] };
+    case "PATCH /api/site":
+      return id ? { op: "updateSite", args: [id, b] } : null;
+    case "DELETE /api/site":
+      return id ? { op: "deleteSite", args: [id] } : null;
+    case "GET /api/site/grants":
+      return id ? { op: "getSiteGrants", args: [id] } : null;
+    case "PUT /api/site/grants":
+      return id ? { op: "setSiteGrants", args: [id, b] } : null;
+    case "GET /api/site-hosting":
+      return { op: "siteHosting", args: [] };
+    case "PATCH /api/site/channel": {
+      const cid = (b as { id?: string }).id;
+      return cid ? { op: "revokeSiteChannel", args: [cid] } : null;
+    }
+    case "DELETE /api/site/file": {
+      const site = q.get("site");
+      const path = q.get("path");
+      return site && path ? { op: "deleteSiteFile", args: [site, path] } : null;
+    }
+
+    // shares (this node's own rows; peer-aggregated management stays online)
+    case "GET /api/shares":
+      return { op: "listLocalShares", args: [q.get("target") ?? undefined] };
+    case "POST /api/share":
+      return { op: "createLocalShare", args: [b] };
+    case "DELETE /api/share":
+    case "DELETE /api/share/managed":
+      return q.get("slug") ? { op: "revokeLocalShare", args: [q.get("slug")] } : null;
+
     default:
       return null;
   }

@@ -55,6 +55,7 @@ export type SiteState =
   | "device_syncing"
   | "public_unverified"
   | "link_only"
+  | "expired_link" // only expired (still manageable/renewable) links remain
   | "private";
 
 export interface SiteChannelInput {
@@ -251,5 +252,10 @@ export function siteState(input: SiteChannelInput): SiteState {
     return "public_unverified";
   }
   if (live.length > 0) return "link_only";
+  // Expired ≠ gone: the status contract says the row stays manageable, so the
+  // card must not collapse it into "private" (users could never find the link
+  // they might want to renew).
+  if (channels.some((c) => c.status === "expired" && c.desiredState !== "revoked"))
+    return "expired_link";
   return "private";
 }

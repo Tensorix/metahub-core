@@ -8,14 +8,14 @@ import {
 } from "./schema-init.ts";
 import { createSite, deleteSite, updateSite } from "./sites-core.ts";
 import {
-  isSitePublicConfigured,
-  isSitePublicOnThisNode,
+  applySiteUpdate,
   listSiteChannelRows,
   listSiteChannelViews,
   putSiteChannel,
   putSiteChannelObservation,
   setPublicSiteChannelPolicies,
   setSiteChannelDesiredState,
+  sitePublicAccessState,
   updatePublicSiteChannelUrls,
 } from "./site-channel-store.ts";
 import { reconcileSiteChannels } from "./sync/site-channel-reconcile.ts";
@@ -50,12 +50,15 @@ test("a public channel serves only on its target node and revocation converges",
 
   const first = changesAfterSeq(a, 0);
   ingest(b, first.changes);
-  expect(isSitePublicConfigured(a, site)).toBe(true);
-  expect(isSitePublicOnThisNode(a, site)).toBe(false);
+  expect(sitePublicAccessState(a, site)).toMatchObject({
+    configured: true,
+    serving: false,
+    anomaly: null,
+  });
   const remoteSite = b
     .query("SELECT id,visibility FROM sites WHERE id = ?")
     .get(site.id) as { id: string; visibility: string };
-  expect(isSitePublicOnThisNode(b, remoteSite)).toBe(true);
+  expect(sitePublicAccessState(b, remoteSite).serving).toBe(true);
   // Readiness is node-local; B knows the desired URL but does not fabricate A's
   // successful observation as its own.
   expect(listSiteChannelViews(b, site.id)[0]!.status).toBe("unverified");
@@ -67,8 +70,10 @@ test("a public channel serves only on its target node and revocation converges",
     "waiting_controller",
   );
   ingest(b, changesAfterSeq(a, first.cursor).changes);
-  expect(isSitePublicConfigured(b, remoteSite)).toBe(false);
-  expect(isSitePublicOnThisNode(b, remoteSite)).toBe(false);
+  expect(sitePublicAccessState(b, remoteSite)).toMatchObject({
+    configured: false,
+    serving: false,
+  });
   expect(listSiteChannelViews(b, site.id)[0]!.status).toBe("revoked");
 });
 
@@ -100,19 +105,138 @@ test("grant edits and site renames update live public channel metadata", () => {
   ]);
 });
 
-test("malformed v2 rows disable legacy public fallback", () => {
+test("non-public channel rows never flip a legacy-public site to v2 semantics", () => {
   const d = node("node-a");
   const site = createSite(d, {
     name: "legacy-public",
     visibility: "public",
+  });
+  // A share link (audience='link') and an unknown-audience row both appear —
+  // neither is a public channel, so the legacy register keeps serving.
+  const share = createShare(d, { kind: "site", target_id: site.id, permission: "view" });
+  putSiteChannel(d, {
+    siteId: site.id,
+    audience: "link",
+    hosting: "device",
+    targetRef: share.slug,
+    canonicalUrl: `http://a.test/share/${share.slug}`,
   });
   d.query(
     `INSERT INTO site_channels
        (id,site_id,audience,hosting,controller_node_id,target_ref,desired_state,created_hlc)
      VALUES ('chan_bad',?,'future-audience','device','node-a','node-a','active','1')`,
   ).run(site.id);
-  expect(isSitePublicOnThisNode(d, site)).toBe(false);
-  expect(listSiteChannelRows(d, site.id)).toEqual([]);
+  const access = sitePublicAccessState(d, site);
+  expect(access.serving).toBe(true);
+  expect(access.configured).toBe(true);
+  expect(access.anomaly).toBeNull();
+  // The unknown-audience row stays filtered out of channel listings.
+  expect(listSiteChannelRows(d, site.id).map((c) => c.audience)).toEqual(["link"]);
+});
+
+test("a malformed PUBLIC row migrates the site and fails closed with an anomaly", () => {
+  const d = node("node-a");
+  const site = createSite(d, {
+    name: "legacy-public-broken",
+    visibility: "public",
+  });
+  d.query(
+    `INSERT INTO site_channels
+       (id,site_id,audience,hosting,controller_node_id,target_ref,desired_state,created_hlc)
+     VALUES ('chan_pub_bad',?,'public','device','node-a','node-a','suspended','1')`,
+  ).run(site.id);
+  const access = sitePublicAccessState(d, site);
+  expect(access.serving).toBe(false);
+  expect(access.configured).toBe(false);
+  expect(access.anomaly).toBe("malformed_public_channel");
+});
+
+test("a failing site update rolls back completely: channels and oplog untouched", () => {
+  const d = node("node-a");
+  createSite(d, { name: "taken" });
+  const site = createSite(d, { name: "victim" });
+  const channel = putSiteChannel(d, {
+    siteId: site.id,
+    audience: "public",
+    hosting: "device",
+    targetRef: "node-a",
+    canonicalUrl: "http://a.test/sites/victim/",
+    policy: { v: 1, tables: [] },
+  });
+
+  const before = (d.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n;
+  // Rename collides AND asks to go private — the revocation must not survive
+  // the validation failure.
+  expect(() =>
+    applySiteUpdate(d, site.id, { name: "taken", visibility: "private" }),
+  ).toThrow(/already exists/);
+  const after = (d.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n;
+  expect(after).toBe(before);
+  expect(listSiteChannelRows(d, site.id)[0]).toMatchObject({
+    id: channel.id,
+    desired_state: "active",
+  });
+
+  // A failure AFTER updateSite already emitted (hook throws) also rolls the
+  // whole group back — this is the SQL transaction, not just check-first order.
+  expect(() =>
+    applySiteUpdate(
+      d,
+      site.id,
+      { visibility: "public", title: "poked" },
+      {
+        recordPublic: () => {
+          throw new Error("publish target unavailable");
+        },
+      },
+    ),
+  ).toThrow("publish target unavailable");
+  expect((d.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n).toBe(
+    before,
+  );
+  expect((d.query("SELECT title FROM sites WHERE id = ?").get(site.id) as { title: string | null }).title).toBeNull();
+});
+
+test("putSiteChannel skips unchanged columns: same-values republish emits nothing", () => {
+  const d = node("node-a");
+  const site = createSite(d, { name: "skip-unchanged" });
+  const input = {
+    siteId: site.id,
+    audience: "public" as const,
+    hosting: "device" as const,
+    targetRef: "node-a",
+    canonicalUrl: "http://a.test/sites/skip-unchanged/",
+    policy: { v: 1, tables: [] },
+  };
+  putSiteChannel(d, input);
+  const count = () =>
+    (d.query("SELECT COUNT(*) AS n FROM crdt_changes WHERE dataset='site_channels'").get() as {
+      n: number;
+    }).n;
+  const before = count();
+  putSiteChannel(d, input); // identical republish
+  expect(count()).toBe(before);
+
+  putSiteChannel(d, { ...input, canonicalUrl: "http://b.test/sites/skip-unchanged/" });
+  expect(count()).toBe(before + 1); // exactly the one changed column
+});
+
+test("revoked-only public rows keep the site migrated and private, no anomaly", () => {
+  const d = node("node-a");
+  const site = createSite(d, { name: "was-public", visibility: "public" });
+  const channel = putSiteChannel(d, {
+    siteId: site.id,
+    audience: "public",
+    hosting: "device",
+    targetRef: "node-a",
+    canonicalUrl: "http://a.test/sites/was-public/",
+    policy: { v: 1, tables: [] },
+  });
+  setSiteChannelDesiredState(d, channel.id, "revoked");
+  const access = sitePublicAccessState(d, site);
+  expect(access.serving).toBe(false);
+  expect(access.configured).toBe(false);
+  expect(access.anomaly).toBeNull();
 });
 
 test("reconciler revokes an orphaned link left by an older site delete", async () => {

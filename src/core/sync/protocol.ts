@@ -45,6 +45,10 @@ export const HealthResponseSchema = z.object({
     .array(z.string())
     .optional()
     .describe("Optional protocol features supported by this server"),
+  version: z
+    .string()
+    .optional()
+    .describe("Core version, for mixed-version workspace warnings"),
 });
 
 // Pairing handshake (see ./pairing.ts). The caller (device B) presents a

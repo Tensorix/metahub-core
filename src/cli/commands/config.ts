@@ -42,7 +42,6 @@ import {
 } from "../../core/sync/cf-oauth.ts";
 import { anchorsDispatch } from "./cache.ts";
 import { runEdgeDeploy, runEdgeConnect, runEdgeRotateKeys } from "./edge.ts";
-import { getEdgeConfig } from "../../core/sync/edge-config.ts";
 import { putBucketCors } from "../../core/sync/storage-s3-bun.ts";
 import { MhError } from "../../core/errors.ts";
 import { print, table, guard, warn } from "../output.ts";
@@ -872,7 +871,7 @@ async function serverWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
   }
 }
 
-/** One implementation, two wizard scopes: 设备 (pairing/roster) vs 云端备份
+/** One implementation, two wizard scopes: 设备 (pairing/roster) vs 同步存储桶
  *  (buckets/rotation/recovery). Branches outside a scope's menu are simply
  *  never selectable there. */
 async function peerWizard(
@@ -882,7 +881,7 @@ async function peerWizard(
   const node = getNodeId(db);
   for (;;) {
     const action = await p.select({
-      message: scope === "device" ? "设备" : "云端备份",
+      message: scope === "device" ? "设备" : "同步存储桶",
       options:
         scope === "device"
           ? [
@@ -1104,51 +1103,6 @@ async function grantWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
   }
 }
 
-async function edgeWizard(db: ReturnType<typeof openMetahub>): Promise<void> {
-  for (;;) {
-    const cfg = getEdgeConfig(db);
-    const action = await p.select({
-      message: "Edge",
-      options: [
-        {
-          value: "deploy",
-          label: cfg?.cf ? "升级部署到 Cloudflare" : "部署到 Cloudflare",
-          hint: "浏览器登录或 API Token",
-        },
-        { value: "connect", label: "连接已有 Edge", hint: "endpoint + owner token" },
-        { value: "rotate", label: "轮换收件密钥" },
-        { value: "back", label: "返回" },
-      ],
-    });
-    if (cancelled(action) || action === "back") return;
-    try {
-      if (action === "deploy") {
-        const ok = await p.confirm({
-          message:
-            "将在你的 Cloudflare 账户创建/更新 Worker、D1 与 workers.dev 入口(断开时不会自动删除)。继续?",
-          initialValue: false,
-        });
-        if (cancelled(ok) || !ok) continue;
-        await runEdgeDeploy({ yes: true });
-      } else if (action === "connect") {
-        const endpoint = await p.text({
-          message: "Edge 端点",
-          placeholder: "https://….workers.dev",
-          validate: required,
-        });
-        if (cancelled(endpoint)) continue;
-        const token = await p.password({ message: "Owner token (drt_…)", validate: required });
-        if (cancelled(token)) continue;
-        await runEdgeConnect({ endpoint, token });
-      } else if (action === "rotate") {
-        await runEdgeRotateKeys({});
-      }
-    } catch (e) {
-      p.note(`✗ ${(e as Error).message}`, "错误");
-    }
-  }
-}
-
 async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
   p.intro("Metahub 配置");
   for (;;) {
@@ -1157,7 +1111,7 @@ async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
       options: [
         { value: "server", label: "服务器设置", hint: "host / port / 同步间隔 / auto-sync" },
         { value: "device", label: "设备", hint: "配对 / 列出 / 移除 / 吊销凭据" },
-        { value: "backup", label: "云端备份", hint: "存储桶 / 轮换密钥 / 恢复码" },
+        { value: "backup", label: "同步存储桶", hint: "存储桶 / 更换密钥 / 恢复码" },
         { value: "exit", label: "退出" },
       ],
     });
@@ -1173,18 +1127,27 @@ async function wizard(db: ReturnType<typeof openMetahub>): Promise<void> {
 
 /** Scoped usage for the positional compatibility dispatcher. index.ts
  * intercepts `mh config [section [action]] --help` before citty renders the
- * monolithic root arg set, so each surface shows only relevant concepts. */
-export function configScopedHelp(section?: string, action?: string): string {
+ * monolithic root arg set, so each surface shows only relevant concepts.
+ * Returns null for an UNKNOWN section — the caller must then fail with
+ * invalid_input (exit 2, stderr), never print the error as successful help. */
+export function configScopedHelp(section?: string, action?: string): string | null {
   if (!section) {
     return `Configure the workspace
 
 USAGE
   mh config                         Interactive server/device/backup wizard
+  mh config show                    Print the effective configuration
   mh config server [OPTIONS]        Server settings
   mh config device <ACTION>         Pair, inspect, or revoke a device
   mh config backup <ACTION>         Connect and manage sync backups
 
 Edge is an operational subsystem: use \`mh edge --help\`.`;
+  }
+  if (section === "show") {
+    return `Print the effective configuration
+
+USAGE
+  mh config show`;
   }
   if (section === "server") {
     return `Configure the workspace main node
@@ -1244,7 +1207,7 @@ USAGE
     return `Deprecated compatibility alias.
 
 Use \`mh edge --help\` (deploy, connect, status, pull, rotate).`;
-  return `Unknown config section '${section}'. Use server, device, or backup.`;
+  return null;
 }
 
 export default defineCommand({

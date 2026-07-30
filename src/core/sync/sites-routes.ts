@@ -8,22 +8,19 @@ import {
   fileCounts,
   resolveSite,
   createSite,
-  updateSite,
-  deleteSite,
   setSitePublicGrants,
   putFile,
   deleteFile,
 } from "../sites.ts";
 import { parseGrantSet, type GrantSet } from "../grants-core.ts";
 import {
+  applySiteDelete,
+  applySiteUpdate,
   putSiteChannel,
   putSiteChannelObservation,
-  revokeAllSiteChannels,
-  revokePublicSiteChannels,
   setPublicSiteChannelPolicies,
-  updatePublicSiteChannelUrls,
 } from "../site-channel-store.ts";
-import { reconcileSiteChannels } from "./site-channel-reconcile.ts";
+import { reconcileSiteChannelsQuietly } from "./site-channel-reconcile.ts";
 import { getServerConfig } from "../config.ts";
 import { getNodeId } from "../node.ts";
 import type { SiteRow } from "../sites-core.ts";
@@ -164,15 +161,9 @@ export const sitesRoutes: Route[] = [
     response: SiteSchema,
     handler: handle(async (req, { db }) => {
       const body = UpdateSiteBody.parse(await req.json());
-      const site = updateSite(db, need(req, "id"), {
-        ...body,
-        visibility:
-          body.visibility === "public" ? "private" : body.visibility,
+      return applySiteUpdate(db, need(req, "id"), body, {
+        recordPublic: (site) => recordPublicChannel(req, db, site),
       });
-      if (body.visibility === "private") revokePublicSiteChannels(db, site.id);
-      if (body.visibility === "public") recordPublicChannel(req, db, site);
-      if (body.name !== undefined) updatePublicSiteChannelUrls(db, site.id, site.name);
-      return site;
     }),
   },
   {
@@ -181,10 +172,10 @@ export const sitesRoutes: Route[] = [
     summary: "Delete a site and its files. Query: ?id=<id>",
     response: z.object({ ok: z.boolean() }),
     handler: handle(async (req, { db }) => {
-      const id = need(req, "id");
-      revokeAllSiteChannels(db, id);
-      const ok = deleteSite(db, id);
-      await reconcileSiteChannels(db);
+      const ok = applySiteDelete(db, need(req, "id"));
+      // The delete is committed; failing local channel cleanup must not turn
+      // the response into a 500 (it retries on every future sync).
+      await reconcileSiteChannelsQuietly(db);
       return { ok };
     }),
   },

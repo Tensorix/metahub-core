@@ -71,7 +71,9 @@ const PeerSyncRes = z.object({
   ok: z.boolean(),
   pushed: z.number().optional(),
   pulled: z.number().optional(),
+  pendingPush: z.boolean().optional(),
   error: z.string().optional(),
+  warnings: z.array(z.string()).optional(),
 });
 const AddS3PeerReq = z.object({
   endpoint: z.string(),
@@ -136,6 +138,21 @@ const DataMapSchema = z.object({
     pendingBlobBytes: z.number(),
     pendingChanges: z.number(),
     oldestSyncedAt: z.number().nullable(),
+    issues: z.array(
+      z.object({
+        kind: z.enum([
+          "no_backup",
+          "peer_error",
+          "never_synced",
+          "behind",
+          "stale",
+          "pending_blobs",
+        ]),
+        placeUrl: z.string().nullable(),
+        placeLabel: z.string().nullable(),
+        message: z.string().nullable(),
+      }),
+    ),
   }),
   places: z.array(DataPlaceSchema),
 });

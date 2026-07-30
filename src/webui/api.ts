@@ -111,7 +111,10 @@ export interface PeerSyncOutcome {
   ok: boolean;
   pushed?: number;
   pulled?: number;
+  pendingPush?: boolean;
   error?: string;
+  /** Non-fatal follow-ups (channel maintenance) after a successful data sync. */
+  warnings?: string[];
 }
 export interface Grant {
   token: string;
@@ -205,6 +208,8 @@ export interface ShareListItem {
   /** server: ready-to-copy link; s3: omitted (use renewShare to mint one). */
   url?: string;
   lifecycle?: "active" | "provisioning" | "cleanup_pending";
+  /** s3 only: when the snapshot content was last exported (≠ link expiry). */
+  contentUpdatedAt?: number;
 }
 export interface CreateShareBody {
   kind: "doc" | "database" | "site";
@@ -859,7 +864,11 @@ const httpApi = {
       "DELETE",
       `/api/share/managed?slug=${q(slug)}${via ? `&via=${q(via)}` : ""}`,
     ),
-  renewShare: (slug: string) => req<ShareCreateResult>("POST", `/api/share/renew?slug=${q(slug)}`),
+  renewShare: (slug: string, opts?: { refreshContent?: boolean }) =>
+    req<ShareCreateResult>(
+      "POST",
+      `/api/share/renew?slug=${q(slug)}${opts?.refreshContent ? "&refresh_content=1" : ""}`,
+    ),
 
   // Edge hosting
   getEdgeStatus: () => req<EdgeStatus>("GET", "/api/edge"),

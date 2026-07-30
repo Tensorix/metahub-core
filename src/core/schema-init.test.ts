@@ -353,3 +353,73 @@ test("migrateSitesAccess backfills from the max-HLC winning oplog change", () =>
   const n = db.query("SELECT spa FROM sites WHERE id='site_n'").get() as { spa: number };
   expect(n.spa).toBe(0);
 });
+
+// ── migrateSiteChannels: incremental watermark ────────────────────────────────
+
+import { migrateSiteChannels } from "./schema-init.ts";
+import { createSite } from "./sites-core.ts";
+import { putSiteChannel } from "./site-channel-store.ts";
+
+function seedChannelDb(): Database {
+  const db = new Database(":memory:");
+  initSchema(db);
+  db.query("INSERT INTO meta (key,value) VALUES ('node_id','node-a')").run();
+  const site = createSite(db, { name: "wm-demo" });
+  putSiteChannel(db, {
+    siteId: site.id,
+    audience: "public",
+    hosting: "device",
+    targetRef: "node-a",
+    canonicalUrl: "http://a/sites/wm-demo/",
+    policy: { v: 1, tables: [] },
+  });
+  return db;
+}
+
+const watermark = (db: Database): number =>
+  Number(
+    (db.query("SELECT value FROM meta WHERE key='site_channels_replay_seq'").get() as {
+      value: string;
+    } | null)?.value ?? 0,
+  );
+
+test("migrateSiteChannels advances a watermark and skips already-replayed history", () => {
+  const db = seedChannelDb();
+  migrateSiteChannels(db);
+  const wm = watermark(db);
+  const max = (db.query("SELECT MAX(seq) AS m FROM crdt_changes WHERE dataset='site_channels'").get() as { m: number }).m;
+  expect(wm).toBe(max);
+
+  // Corrupt a materialized column: a re-open must NOT repair it (the tail was
+  // already replayed — nothing below the watermark is rescanned).
+  db.query("UPDATE site_channels SET canonical_url = 'corrupted' ").run();
+  migrateSiteChannels(db);
+  expect(
+    (db.query("SELECT canonical_url AS u FROM site_channels").get() as { u: string }).u,
+  ).toBe("corrupted");
+
+  // Deleting the watermark degrades to the idempotent full replay → repaired.
+  db.query("DELETE FROM meta WHERE key='site_channels_replay_seq'").run();
+  migrateSiteChannels(db);
+  expect(
+    (db.query("SELECT canonical_url AS u FROM site_channels").get() as { u: string }).u,
+  ).toBe("http://a/sites/wm-demo/");
+});
+
+test("changes ingested past the watermark (old-binary window) are replayed on next open", () => {
+  const db = seedChannelDb();
+  migrateSiteChannels(db);
+  const before = watermark(db);
+  // Simulate an old binary appending a synced change without materializing it.
+  db.query(
+    `INSERT INTO crdt_changes (hlc, node_id, dataset, row_id, col, value)
+     SELECT '9999999999999-0000-peerbbbb', 'peerbbbb', 'site_channels', id, 'desired_state', '"revoked"'
+     FROM site_channels LIMIT 1`,
+  ).run();
+  db.query("UPDATE site_channels SET desired_state='active'").run(); // not yet applied
+  migrateSiteChannels(db);
+  expect(watermark(db)).toBeGreaterThan(before);
+  expect(
+    (db.query("SELECT desired_state AS d FROM site_channels").get() as { d: string }).d,
+  ).toBe("revoked");
+});

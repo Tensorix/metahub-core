@@ -303,7 +303,8 @@ export function confirmDialog(opts: {
           </>
         }
       >
-        <div class="muted">{opts.message}</div>
+        {/* pre-line so multi-line consequence lists (\n) render as lists */}
+        <div class="muted cfm-msg">{opts.message}</div>
       </Modal>,
     );
   });

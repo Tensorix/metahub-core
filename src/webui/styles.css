@@ -400,6 +400,11 @@
   .row-chev { flex:none; color:var(--muted); display:flex; transition:transform .15s; }
   .row-chev .ico { width:14px; height:14px; }
   .row-chev.open { transform:rotate(180deg); }
+  /* confirm dialogs: keep \n line breaks (consequence lists) */
+  .cfm-msg { white-space: pre-line; }
+  /* concurrent problems under the headline (only when >1, else redundant) */
+  .sync-health-issues { padding:2px 0 4px; }
+  .sync-health-issue { font-size:12px; color:var(--muted); padding:2px 0 2px 18px; }
   .sync-health-places { padding:4px 0 2px; }
   .sync-health-place { display:flex; align-items:baseline; gap:8px; padding:8px 0; min-width:0; }
   .sync-health-place + .sync-health-place { border-top:1px solid var(--line); }

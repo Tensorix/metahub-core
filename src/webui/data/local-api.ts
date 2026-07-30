@@ -145,4 +145,22 @@ export const localSites = {
   listLocalShares: (opts: { target?: string } = {}) => rpc("listLocalShares", opts.target),
   createShare: (body: unknown) => rpc("createLocalShare", body),
   revokeShare: (slug: string) => rpc("revokeLocalShare", slug),
+  // Bucket credentials live IN the replica in no-origin mode, so re-signing an
+  // s3 share works right here (browser → bucket over the existing CORS path).
+  renewShare: (slug: string, opts?: { refreshContent?: boolean }) =>
+    rpc("renewLocalShare", slug, opts),
+  // Structurally unavailable without an online server: explicit refusals
+  // instead of a silent fetch against an origin that doesn't exist.
+  publishSite: () =>
+    Promise.reject(
+      new ApiError("此设备通过同步存储桶交换数据，不支持设备托管发布；请在在线主节点操作", "invalid_input", 400),
+    ),
+  recoverSitePublish: () =>
+    Promise.reject(
+      new ApiError("此设备通过同步存储桶交换数据，不支持设备托管发布；请在在线主节点操作", "invalid_input", 400),
+    ),
+  setSiteHosting: () =>
+    Promise.reject(new ApiError("此设备没有可配置的托管入口", "invalid_input", 400)),
+  verifySiteHosting: () =>
+    Promise.reject(new ApiError("此设备没有可配置的托管入口", "invalid_input", 400)),
 };

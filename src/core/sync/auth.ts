@@ -70,6 +70,18 @@ export function extractToken(req: Request, url: URL): string | null {
   return cookieToken(req) ?? url.searchParams.get("token");
 }
 
+/** An EXPLICITLY presented credential (Bearer header or ?token=) — never the
+ *  ambient cookie. State-changing /api requests require this: /sites/ pages
+ *  run same-origin, so their fetches ride the owner's mh_token cookie
+ *  automatically; requiring an explicit token closes that ambient-authority
+ *  write path without touching cookie-only GET sub-resources (img,
+ *  EventSource) that cannot carry headers. */
+export function explicitToken(req: Request, url: URL): string | null {
+  const auth = req.headers.get("authorization");
+  if (auth?.startsWith("Bearer ")) return auth.slice(7);
+  return url.searchParams.get("token");
+}
+
 /** Whether auth is on at all (so the gate runs and the fetch shim is injected). */
 export function authActive(cfg: AuthConfig): boolean {
   return !cfg.debug && (cfg.staticToken != null || cfg.db != null);
@@ -131,7 +143,13 @@ export function wantsHtml(req: Request): boolean {
   return req.method === "GET" && (req.headers.get("accept") ?? "").includes("text/html");
 }
 
-const HTML_HEADERS = { "content-type": "text/html; charset=utf-8" };
+// referrer-policy: same-origin on every HTML surface — with sites and shares
+// sharing this origin, a full URL (potentially carrying ?token= or a secret
+// /share/<slug> path) must never leak to external destinations via Referer.
+const HTML_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  "referrer-policy": "same-origin",
+};
 
 // The metahub cube mark + eye glyphs, copied as literal path data from
 // src/webui/icons.tsx (CUBE_OUTER/CUBE_INNER, eye/eyeOff) — the unlock page is
@@ -375,11 +393,45 @@ export async function withShim(
   if (!ct.includes("text/html")) return res;
   const html = injectRuntimeTag(await res.text());
   const headers = new Headers(res.headers);
+  headers.set("referrer-policy", "same-origin");
   if (req && url) {
     const cookie = queryTokenCookie(req, url, cfg);
     if (cookie) headers.append("set-cookie", cookie);
   }
   return new Response(html, { status: res.status, headers });
+}
+
+/** A `?token=` navigation must not leave the credential in the address bar
+ *  (bookmarks, screenshots, same-origin Referer, logs): persist the cookie,
+ *  then 302 to the same URL with the token stripped. Only HTML navigations —
+ *  API calls carrying ?token= are left alone. Returns null when not applicable. */
+export function tokenStripRedirect(req: Request, url: URL, cfg: AuthConfig): Response | null {
+  if (!wantsHtml(req)) return null;
+  if (!url.searchParams.has("token")) return null;
+  if (!hasValidToken(req, url, cfg)) return null; // let the gate answer
+  const headers = new Headers();
+  const cookie = queryTokenCookie(req, url, cfg);
+  if (cookie) headers.append("set-cookie", cookie);
+  const clean = new URL(url);
+  clean.searchParams.delete("token");
+  headers.set("location", clean.toString());
+  return new Response(null, { status: 302, headers });
+}
+
+/** Cookie ambient authority is READ-ONLY: a state-changing /api request must
+ *  present its credential explicitly (Bearer/query). Same-origin site pages
+ *  otherwise mutate the workspace on the owner's cookie without ever holding
+ *  the token. Returns the 401 to serve, or null to continue. */
+export function cookieMutationRejection(
+  req: Request,
+  url: URL,
+  cfg: AuthConfig,
+): Response | null {
+  if (!authActive(cfg)) return null;
+  if (req.method === "GET" || req.method === "HEAD") return null;
+  if (!url.pathname.startsWith("/api/")) return null;
+  if (explicitToken(req, url) != null) return null; // validity checked by the gate
+  return unauthorized();
 }
 
 export function unauthorized(): Response {

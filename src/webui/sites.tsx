@@ -12,6 +12,7 @@ import {
   siteChannelInput,
   siteChannels,
   siteState,
+  siteCardAddress,
   SITE_STATE_LABEL,
   CHANNEL_STATUS_LABEL,
   channelAudienceLabel,
@@ -322,7 +323,7 @@ export function SitesView() {
       <>
         <MenuItem
           icon="externalLink"
-          label="复制本机预览地址"
+          label="复制私有预览地址"
           onClick={() => {
             close();
             copyText(siteUrl(s.name));
@@ -448,13 +449,10 @@ export function SitesView() {
                 const input = siteChannelInput(s, shares, hostingInfo);
                 const channels = siteChannels(input);
                 const state = SITE_STATE_LABEL[siteState(input)];
-                const liveUrls = channels.filter(
-                  (channel) =>
-                    channel.status === "ready" &&
-                    channel.desiredState !== "revoked" &&
-                    !!channel.url,
-                );
-                const primary = liveUrls.length === 1 ? liveUrls[0]!.url : null;
+                // Four-rule address slot (site-status.ts): a capability link is
+                // an access-granting SECRET and never appears as the card
+                // address — only counts.
+                const addr = siteCardAddress(channels);
                 return (
               <div class="site-card" key={s.id} style={`--i:${i}`} onClick={() => setPeek(s)}>
                 <div class="site-card-head">
@@ -471,7 +469,13 @@ export function SitesView() {
                       title={state}
                       style={{ marginLeft: "auto" }}
                     >
-                      <Icon name="globe" />
+                      <Icon
+                        name={
+                          addr.kind === "public" || addr.kind === "public_multi"
+                            ? "globe"
+                            : "lock"
+                        }
+                      />
                     </span>
                   )}
                 </div>
@@ -479,25 +483,39 @@ export function SitesView() {
                 <button
                   class="site-addr"
                   title={
-                    primary
-                      ? "点击复制唯一已验证的发布地址"
-                      : liveUrls.length > 1
-                        ? "存在多个发布地址；打开详情选择"
-                        : "点击复制本机预览地址"
+                    addr.kind === "public"
+                      ? "点击复制公开地址"
+                      : addr.kind === "public_multi"
+                        ? "存在多个公开地址；打开详情选择"
+                        : addr.kind === "links_only"
+                          ? "私密链接不在卡片显示；打开详情管理"
+                          : "点击复制私有预览地址"
                   }
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (liveUrls.length > 1) setPeek(s);
-                    else copyText(primary ?? siteUrl(s.name));
+                    if (addr.kind === "public") copyText(addr.url);
+                    else if (addr.kind === "preview") copyText(siteUrl(s.name));
+                    else setPeek(s);
                   }}
                 >
-                  <Icon name="link" cls="ico sm" />
+                  <Icon
+                    name={
+                      addr.kind === "public" || addr.kind === "public_multi"
+                        ? "globe"
+                        : addr.kind === "links_only"
+                          ? "lock"
+                          : "link"
+                    }
+                    cls="ico sm"
+                  />
                   <span>
-                    {primary
-                      ? primary
-                      : liveUrls.length > 1
-                        ? `${liveUrls.length} 个发布地址`
-                        : `本机预览 · ${siteUrlShort(s.name)}`}
+                    {addr.kind === "public"
+                      ? addr.url
+                      : addr.kind === "public_multi"
+                        ? `${addr.count} 个公开地址`
+                        : addr.kind === "links_only"
+                          ? `${addr.count} 个私密链接`
+                          : `私有预览 · ${siteUrlShort(s.name)}`}
                   </span>
                 </button>
                 <div class="site-card-meta">
@@ -888,8 +906,8 @@ function SitePeek({
           <h2 style={{ margin: "0 0 20px" }}>{site.title || site.name}</h2>
 
           <div class="files-head" style={{ marginTop: 0 }}>
-            <span>本机预览</span>
-            <span>仅用于这台设备上的检查</span>
+            <span>私有预览</span>
+            <span>仅你和已配对设备可打开</span>
           </div>
           <div class="acc-link">
             <span class="url">{urlShort}</span>

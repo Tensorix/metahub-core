@@ -19,8 +19,9 @@ import {
   listSitePublishStates,
 } from "./site-publish-recovery.ts";
 import {
-  isSitePublicConfigured,
   listSiteChannelViews,
+  sitePublicAccessState,
+  type SitePublicAccessState,
 } from "../site-channel-store.ts";
 
 export interface SiteReachability {
@@ -28,6 +29,8 @@ export interface SiteReachability {
   visibility: "public" | "private";
   state: SiteState;
   channels: SiteChannel[];
+  /** Unified public-access decision (serve/config/anomaly) for this node. */
+  publicAccess: SitePublicAccessState;
 }
 
 export function siteReachability(db: DbDriver, siteId: string): SiteReachability {
@@ -40,10 +43,12 @@ export function siteReachability(db: DbDriver, siteId: string): SiteReachability
     shares: listServerSharesLocal(db, siteId).filter((s) => s.kind === "site"),
     storedChannels: listSiteChannelViews(db, siteId),
   };
+  const publicAccess = sitePublicAccessState(db, site);
   return {
     siteId,
-    visibility: isSitePublicConfigured(db, site) ? "public" : "private",
+    visibility: publicAccess.configured ? "public" : "private",
     state: siteState(input),
     channels: siteChannels(input),
+    publicAccess,
   };
 }

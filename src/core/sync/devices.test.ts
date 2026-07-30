@@ -114,3 +114,17 @@ test("self with own ops keeps 'none' and carries oplog activity", () => {
   expect(self.revocable).toBe("none");
   expect(self.lastActivityAt).toBe(9_000);
 });
+
+test("revocationSources never carry a full grant token — 8-char prefix only", () => {
+  const db = makeNode("selfnode");
+  addPeer(db, { url: "http://box:7777", label: "盒子", node_id: "boxnode1" });
+  const token = mintGrant(db, "http://box:7777", "boxnode1");
+  expect(token.length).toBeGreaterThan(8);
+
+  const box = listDevices(db).find((d) => d.nodeId === "boxnode1")!;
+  const grantSource = box.revocationSources.find((s) => s !== "http://box:7777")!;
+  expect(grantSource).toBe(token.slice(0, 8));
+  // The SOURCES field must never serialize the full credential. (channels[]
+  // still carries it for grant-level callers; routes mask that separately.)
+  expect(JSON.stringify(box.revocationSources)).not.toContain(token);
+});

@@ -13,6 +13,7 @@ import { sitesRoutes } from "./sites-routes.ts";
 import { peersRoutes } from "./peers-routes.ts";
 import { blobRoutes } from "./blob-routes.ts";
 import { errorCode, type MhErrorCode } from "../errors.ts";
+import pkg from "../../../package.json" with { type: "json" };
 
 /** Injected at server startup; handlers reuse the open DB connection. */
 export interface RouteCtx {
@@ -89,6 +90,7 @@ const syncRoutes: Route[] = [
         ok: true,
         node,
         capabilities: ["site_channels"],
+        version: pkg.version,
       });
     },
   },

@@ -8,6 +8,7 @@ import { ingest, changesSince } from "../crdt.ts";
 import { createSite, updateSite, putFile, writeFileRow, getFileMetaForServe } from "../sites.ts";
 import { setSitePublicGrants } from "../sites-core.ts";
 import { putSiteChannel } from "../site-channel-store.ts";
+import { createShare } from "../shares.ts";
 import { createDatabase } from "../databases.ts";
 import { addProperty } from "../properties.ts";
 import { serveSite } from "./sites-serve.ts";
@@ -412,4 +413,31 @@ test("two-node smoke: a malicious sites change (unknown column) doesn't break in
   expect(res.status).toBe(200); // real changes all landed
   const cols = (b.db.query("PRAGMA table_info(sites)").all() as { name: string }[]).map((c) => c.name);
   expect(cols).not.toContain("grant_all_the_things");
+});
+
+test("creating a private share link does NOT un-publish a legacy-public site", async () => {
+  const ctx = makeCtx();
+  const s = createSite(ctx.db, { name: "legacy" });
+  await putFile(ctx.db, s.id, "index.html", { data: "<h1>legacy public</h1>" });
+  // Pre-channel client behavior: only the synced visibility register, no
+  // public channel row was ever recorded.
+  updateSite(ctx.db, s.id, { visibility: "public" });
+
+  const before = (await serveSite(req("/sites/legacy/"), ctx, AUTH_TOKEN))!;
+  expect(before.status).toBe(200);
+
+  // Sharing the site auto-records an audience='link' channel row.
+  const share = createShare(ctx.db, { kind: "site", target_id: s.id, permission: "view" });
+  putSiteChannel(ctx.db, {
+    siteId: s.id,
+    audience: "link",
+    hosting: "device",
+    targetRef: share.slug,
+    canonicalUrl: `http://x/share/${share.slug}`,
+  });
+
+  // The public address must keep serving anonymously.
+  const after = (await serveSite(req("/sites/legacy/"), ctx, AUTH_TOKEN))!;
+  expect(after.status).toBe(200);
+  expect(await after.text()).toContain("legacy public");
 });

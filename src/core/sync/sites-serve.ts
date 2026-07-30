@@ -8,8 +8,8 @@ import {
   type SiteRow,
 } from "../sites.ts";
 import {
-  isSitePublicOnThisNode,
   publicSiteChannelOnThisNode,
+  sitePublicAccessState,
 } from "../site-channel-store.ts";
 import { publicGuestNode } from "../grants-core.ts";
 import { policyForSite } from "../access-policy.ts";
@@ -87,7 +87,7 @@ export async function serveSite(
   } catch {
     site = null;
   }
-  const publicHere = !!site && isSitePublicOnThisNode(ctx.db, site);
+  const publicHere = !!site && sitePublicAccessState(ctx.db, site).serving;
   const publicChannel = site
     ? publicSiteChannelOnThisNode(ctx.db, site.id)
     : null;
@@ -199,7 +199,13 @@ export async function serveSiteFile(
   body.set(bytes);
   return new Response(body.buffer, {
     status: meta.status, // 404 when serving the site's own 404.html
-    headers: { ...headers, "content-type": meta.row.content_type },
+    headers: {
+      ...headers,
+      "content-type": meta.row.content_type,
+      // Site pages share the WebUI origin: URLs (paths, ?token= on owner
+      // navigations) must never leak off-origin via Referer.
+      "referrer-policy": "same-origin",
+    },
   });
 }
 

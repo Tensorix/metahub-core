@@ -61,6 +61,8 @@ export interface DeviceView {
    *  an unrelated configured bucket from being blamed for a historical oplog
    *  author. */
   revocationConfidence: "confirmed" | "unknown" | "none";
+  /** What a revoke would act on: peer url, bucket url, or a grant-token PREFIX
+   *  (8 chars — never the full credential; masked at the source). */
   revocationSources: string[];
 }
 
@@ -137,10 +139,13 @@ export function listDevices(db: DbDriver): DeviceView[] {
       lastActivityAt: last,
       revocable,
       revocationConfidence: v.self ? "none" : direct ? "confirmed" : "unknown",
+      // grant_in refs are FULL grant tokens — mask at the source so no
+      // serialization path (HTTP devices routes, CLI JSON) can leak them.
+      // 8 chars match the unique-prefix contract DELETE /api/grant accepts.
       revocationSources: direct
         ? v.channels
             .filter((c) => c.kind === "paired_out" || c.kind === "grant_in")
-            .map((c) => c.ref)
+            .map((c) => (c.kind === "grant_in" ? c.ref.slice(0, 8) : c.ref))
         : [],
     };
   });

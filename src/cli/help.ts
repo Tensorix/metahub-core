@@ -81,11 +81,12 @@ COMMANDS
     edit <ref> [--vscode]             Open in $EDITOR (interactive, for humans)
   static sites  (host agent-authored HTML/CSS/JS, served by --server at /sites/<name>/)
     site create <name> [--title] [--public]  Create a site (a named set of files)
-    site update <site> [--visibility public|private] [--spa|--no-spa] [--title]
+    site access <site> [public|private]  Show or change who can access (--show-links for capability URLs)
+    site update <site> [--spa|--no-spa] [--title]  (--visibility is deprecated; use site access)
     site scaffold <dir> [--force]     Write a starter index.html (SDK import + working example)
     site put <site> <path> --from <file> | --content <txt|@file|@->
     site upload <site> <dir>          Upload a directory (--create to create; --prune mirrors deletes)
-    site list                         List state + channel count (JSON includes addresses)
+    site list                         List computed access + state (--show-links for capability URLs)
     site files <site>
     site grant <site> <db>:<ops>      Anonymous data access for a PUBLIC site's api/ (ops: read,create,update; --revoke <db>; --clear)
     site grants <site>                Show a site's public data grants

@@ -17,7 +17,9 @@ import {
   activeToken,
   hasValidToken,
   acceptsSyncToken,
+  cookieMutationRejection,
   renewToken,
+  tokenStripRedirect,
   wantsHtml,
   unlockPage,
   withShim,
@@ -190,6 +192,16 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
         req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
         srv.requestIP(req)?.address ||
         null;
+
+      // Cookie ambient authority is read-only: state-changing /api requests
+      // must present the token explicitly (same-origin site pages otherwise
+      // mutate the workspace on the owner's cookie without holding the token).
+      const mutationRejection = cookieMutationRejection(req, url, auth);
+      if (mutationRejection) return mutationRejection;
+      // A ?token= navigation persists the cookie then redirects with the token
+      // stripped, so the credential never lingers in the address bar.
+      const stripped = tokenStripRedirect(req, url, auth);
+      if (stripped) return stripped;
 
       // /sync now requires the master token OR a per-peer grant from pairing
       // (the old open trusted-peer model is gone; pairing distributes the

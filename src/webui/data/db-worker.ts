@@ -31,7 +31,8 @@ import {
 } from "../../core/sync/peers.ts";
 import { storageUrl } from "../../core/sync/storage-url.ts";
 import { dataMap } from "../../core/sync/data-map-db.ts";
-import { reconcileSiteChannels } from "../../core/sync/site-channel-reconcile.ts";
+import { reconcileSiteChannelsQuietly } from "../../core/sync/site-channel-reconcile.ts";
+import { requestChannelRevocation } from "../../core/site-channel-lifecycle.ts";
 import {
   provisionMasterKey,
   storageClientFor,
@@ -102,7 +103,6 @@ import {
   listFiles,
   createSite,
   updateSite,
-  deleteSite,
   setSitePublicGrants,
   deleteFile,
   putFileInline,
@@ -112,16 +112,15 @@ import {
   type FileEncoding,
 } from "../../core/sites-core.ts";
 import {
-  isSitePublicOnThisNode,
+  applySiteDelete,
+  applySiteUpdate,
   listSiteChannelRows,
   listSiteChannelViews,
   putSiteChannel,
+  sitePublicAccessState,
   putSiteChannelObservation,
-  revokeAllSiteChannels,
-  revokePublicSiteChannels,
   setPublicSiteChannelPolicies,
   setSiteChannelDesiredState,
-  updatePublicSiteChannelUrls,
 } from "../../core/site-channel-store.ts";
 import { parseGrantSet, type GrantSet } from "../../core/grants-core.ts";
 import {
@@ -498,7 +497,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
     // so gating on `originOk` rather than "origin unconfigured" also covers the
     // configured-but-offline case where doc changes still reached the bucket.)
     if (!originOk && hasBuckets) await drainSpoolToBuckets(d);
-    await reconcileSiteChannels(d);
+    await reconcileSiteChannelsQuietly(d);
 
     const bucketDirty = hasBuckets ? hasPendingBucketPush(d) : false;
     if (bucketDirty && bucketErrors.length === 0) scheduleBucketFlush();
@@ -900,6 +899,13 @@ const ops: Record<string, Op> = {
       });
     return { ok: deleted, status: "revoked" };
   },
+  // s3 shares in no-origin mode: the bucket credentials are replica-local, so
+  // re-signing (and explicit content refresh) works from the browser directly.
+  renewLocalShare: async (slug: string, opts?: { refreshContent?: boolean }) => {
+    const d = requireDb();
+    const { renewShareAction } = await import("../../core/sync/share-actions.ts");
+    return renewShareAction(d, slug, undefined, opts);
+  },
 
   // databases
   listDatabases: () => listDatabases(db!),
@@ -1016,7 +1022,7 @@ const ops: Record<string, Op> = {
     return {
       ...hit.row,
       status: hit.status,
-      public: isSitePublicOnThisNode(d, site),
+      public: sitePublicAccessState(d, site).serving,
     };
   },
 
@@ -1072,18 +1078,17 @@ const ops: Record<string, Op> = {
         "invalid_input",
         "此浏览器通过同步存储桶交换数据、不驻留在线；请在在线主节点管理公开发布",
       );
-    if (b.visibility === "private") revokePublicSiteChannels(db!, id);
-    const updated = updateSite(db!, id, b);
-    if (b.name !== undefined) updatePublicSiteChannelUrls(db!, id, updated.name);
+    // Validation and channel side effects commit or roll back together — a
+    // failed rename must not leave a replicated revocation behind.
+    const updated = applySiteUpdate(db!, id, b);
     return {
       ...updated,
       file_count: fileCount(db!, id),
     };
   },
   deleteSite: async (id: string) => {
-    revokeAllSiteChannels(db!, id);
-    const ok = deleteSite(db!, id);
-    await reconcileSiteChannels(db!);
+    const ok = applySiteDelete(db!, id);
+    await reconcileSiteChannelsQuietly(db!);
     return { ok };
   },
   getSiteGrants: (id: string) => ({
@@ -1105,17 +1110,11 @@ const ops: Record<string, Op> = {
   }),
   revokeSiteChannel: async (id: string) => {
     const d = requireDb();
-    const channel = setSiteChannelDesiredState(d, id, "revoked");
-    if (
-      channel.audience === "public" &&
-      !listSiteChannelRows(d, channel.site_id).some(
-        (item) =>
-          item.audience === "public" &&
-          item.desired_state === "active",
-      )
-    )
-      updateSite(d, channel.site_id, { visibility: "private" });
-    await reconcileSiteChannels(d);
+    // Shared request-side state machine (core/site-channel-lifecycle) — the
+    // worker previously skipped the observation branches entirely, so revoking
+    // a channel someone else controls never showed 等待控制设备.
+    const { needsReconcile } = requestChannelRevocation(d, id);
+    if (needsReconcile) await reconcileSiteChannelsQuietly(d);
     const view = listSiteChannelViews(d).find((channel) => channel.id === id);
     if (!view) throw new MhError("not_found", `no such site channel: ${id}`);
     return view;

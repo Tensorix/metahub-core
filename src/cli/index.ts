@@ -104,7 +104,15 @@ if (scopedConfigHelp) {
   const parts = argv
     .slice(1)
     .filter((arg) => arg !== "--help" && arg !== "-h");
-  console.log(configScopedHelp(parts[0], parts[1]));
+  const text = configScopedHelp(parts[0], parts[1]);
+  // Unknown section = a user error, not help: stderr + exit 2 (invalid_input),
+  // never a "successful" error message on stdout that scripts would trust.
+  if (text == null)
+    fail(
+      `unknown config section '${parts[0]}' — use server, device, backup or show`,
+      "invalid_input",
+    );
+  console.log(text);
 } else if (argv.includes("--server")) {
   // Pass a flag only when present; startServer falls back to persisted config
   // (mh config) then built-in defaults, so explicit flags keep top priority.

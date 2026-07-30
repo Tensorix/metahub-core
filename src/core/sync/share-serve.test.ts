@@ -6,7 +6,7 @@ import { createDatabase } from "../databases.ts";
 import { addProperty } from "../properties.ts";
 import { createRecord } from "../records.ts";
 import { createSite, putFile } from "../sites.ts";
-import { createShare, deleteShare, hashSharePassword } from "../shares.ts";
+import { createShare, deleteShare, getShare, hashSharePassword } from "../shares.ts";
 import { serveShare } from "./share-serve.ts";
 
 function makeCtx(node = "hostnode") {
@@ -32,12 +32,20 @@ test("view share renders the live doc and carries no master-token runtime", asyn
   expect(html).not.toContain("/mh-runtime.js");
 });
 
-test("expired share is 410 Gone and is removed", async () => {
+test("expired share is 410 Gone but the row stays manageable (renewable)", async () => {
   const ctx = makeCtx();
   const doc = createDocument(ctx.db, { title: "T", body: "x" });
   const share = createShare(ctx.db, { kind: "doc", target_id: doc.id, expiresAt: Date.now() - 1000 });
   const res = (await serveShare(htmlReq(`/share/${share.slug}`), ctx))!;
   expect(res.status).toBe(410);
+  // Expiry refuses access only — the slug/password/permission survive so the
+  // owner can renew instead of losing the link.
+  expect(getShare(ctx.db, share.slug)).not.toBeNull();
+
+  // Renewal (a fresh expiry) restores access with the same slug.
+  ctx.db.query("UPDATE shares SET expires_at = ? WHERE slug = ?").run(Date.now() + 60_000, share.slug);
+  const again = (await serveShare(htmlReq(`/share/${share.slug}`), ctx))!;
+  expect(again.status).toBe(200);
 });
 
 test("password share prompts, unlocks, then serves", async () => {

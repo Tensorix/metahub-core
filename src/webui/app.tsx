@@ -374,8 +374,8 @@ function App() {
     saveState === "share"
       ? "分享"
       : saveState === "error"
-        ? `保存到同步备份失败：${replicaSt.bucketError ?? ""}`
-        : `保存到同步备份${saveHint}`;
+        ? `保存到同步存储桶失败：${replicaSt.bucketError ?? ""}`
+        : `保存到同步存储桶${saveHint}`;
 
   // Quiet success / loud failure: success rides on the inline "已保存" flash
   // (saveFlash, see above), so no success toast — we only shout on failure.
@@ -386,7 +386,7 @@ function App() {
       await syncReplicaNow();
       const st = replicaStatus();
       if (st.bucketError) throw new Error(st.bucketError);
-      if (st.bucketDirty) throw new Error("仍有改动尚未保存到同步备份");
+      if (st.bucketDirty) throw new Error("仍有改动尚未保存到同步存储桶");
     } catch (err) {
       toast(`保存失败：${(err as Error).message}`);
     }
@@ -745,7 +745,7 @@ function Root() {
   if (mode === "detecting") return <Splash text="加载中…" />;
   if (mode === "enroll")
     return <Enroll onDone={() => setMode(replicaActive() ? "app" : "hydrating")} />;
-  if (mode === "hydrating") return <Splash text="正在从同步备份恢复本地副本…" />;
+  if (mode === "hydrating") return <Splash text="正在从同步存储桶恢复本地副本…" />;
   return <App />;
 }
 

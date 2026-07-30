@@ -42,7 +42,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
     return () => document.removeEventListener(SHARES_CHANGED, reload);
   }, []);
 
-  const { copyShare, revoke, renew } = useShareActions(reload, toast, toast);
+  const { copyShare, revoke, renew, refreshExport } = useShareActions(reload, toast, toast);
 
   const shown = useMemo(() => {
     const list = shares ?? [];
@@ -135,7 +135,18 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
                 <div class="shv-actions">
                   <button class="btn btn-secondary" onClick={() => copyShare(s)}>复制链接</button>
                   {s.transport === "s3" && (
-                    <button class="btn btn-secondary" onClick={() => renew(s)}>续期</button>
+                    <>
+                      <button class="btn btn-secondary" title="重新生成访问链接；快照内容不变" onClick={() => renew(s)}>
+                        延长有效期
+                      </button>
+                      <button
+                        class="btn btn-secondary"
+                        title="用当前最新数据覆盖快照并生成新链接"
+                        onClick={() => refreshExport(s)}
+                      >
+                        更新内容并续期
+                      </button>
+                    </>
                   )}
                   {s.url && (
                     <a class="btn btn-secondary" href={s.url} target="_blank" rel="noreferrer">打开</a>

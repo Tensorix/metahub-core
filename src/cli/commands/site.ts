@@ -11,10 +11,8 @@ import type { DbDriver } from "../../core/driver.ts";
 import { openMetahub } from "../../core/db.ts";
 import {
   createSite,
-  updateSite,
   getSiteByName,
   listSites,
-  deleteSite,
   resolveSite,
   setSitePublicGrants,
   putFile,
@@ -42,14 +40,14 @@ import { localServerBase } from "../local-base.ts";
 import { getServerConfig } from "../../core/config.ts";
 import { getNodeId } from "../../core/node.ts";
 import {
-  isSitePublicConfigured,
+  applySiteDelete,
+  applySiteUpdate,
+  sitePublicAccessState,
   putSiteChannel,
   putSiteChannelObservation,
-  revokeAllSiteChannels,
-  revokePublicSiteChannels,
   setPublicSiteChannelPolicies,
 } from "../../core/site-channel-store.ts";
-import { reconcileSiteChannels } from "../../core/sync/site-channel-reconcile.ts";
+import { reconcileSiteChannelsQuietly } from "../../core/sync/site-channel-reconcile.ts";
 
 /** The URL a site is served at by this node's server. */
 function siteUrl(db: DbDriver, name: string): string {
@@ -126,20 +124,23 @@ const update = defineCommand({
         "invalid_input",
         "nothing to update — pass --visibility public|private, --spa/--no-spa and/or --title",
       );
+    if (args.visibility !== undefined)
+      warn("--visibility is deprecated; use `mh site access <site> public|private`");
     const db = openMetahub();
     const site = resolveSite(db, args.site);
-    const updated = updateSite(db, site.id, {
-      // Core validates the enum (invalid values → MhError invalid_input).
-      visibility:
-        args.visibility === "public"
-          ? "private"
-          : args.visibility as "private" | undefined,
-      spa: args.spa,
-      title: args.title,
-    });
-    if (args.visibility === "public") recordCliPublicChannel(db, updated);
-    if (args.visibility === "private") revokePublicSiteChannels(db, updated.id);
-    const visibility = isSitePublicConfigured(db, updated)
+    // Core validates the enum (invalid values → MhError invalid_input); the
+    // update and its channel side effects commit or roll back together.
+    const updated = applySiteUpdate(
+      db,
+      site.id,
+      {
+        visibility: args.visibility as "public" | "private" | undefined,
+        spa: args.spa,
+        title: args.title,
+      },
+      { recordPublic: (s) => recordCliPublicChannel(db, s) },
+    );
+    const visibility = sitePublicAccessState(db, updated).configured
       ? "public"
       : "private";
     const url = siteUrl(db, updated.name);
@@ -267,7 +268,8 @@ const upload = defineCommand({
         return (
           out +
           `site: ${url}\n` +
-          `data: pages fetch('/api/*') same-origin; typed SDK at /metahub-sdk.js; REST docs at /docs.json`
+          `data: pages fetch('/api/*') same-origin; typed SDK at /metahub-sdk.js; REST docs at /docs.json\n` +
+          `注意：站点页面与管理界面同源运行，站点内脚本可以以你的身份读写整个工作区；只发布你信任的代码。`
         );
       },
     );
@@ -304,26 +306,72 @@ function resolveSiteForPublish(db: DbDriver, ref: string, create: boolean) {
 }
 
 const list = defineCommand({
-  meta: { name: "list", description: "List sites with their reachability state" },
-  args: { ...FRESH_ARGS },
+  meta: {
+    name: "list",
+    description:
+      "List sites with computed access + reachability state (--show-links to include capability URLs)",
+  },
+  args: {
+    "show-links": {
+      type: "boolean",
+      description:
+        "Include full channel details (capability URLs are SECRETS — they grant access)",
+    },
+    ...FRESH_ARGS,
+  },
   run: guard(async (args) => {
     const db = await freshDb(args);
+    // Capability URLs are access-granting secrets: the default output carries
+    // counts + state only, so `site list` can land in logs, scripts and agent
+    // context without leaking them. `--show-links` is the explicit opt-in.
     const rows = listSites(db).map((r) => {
       const reachability = siteReachability(db, r.id);
+      const channels = reachability.channels;
+      const links = channels.filter(
+        (c) => c.audience === "link" && c.desiredState !== "revoked",
+      );
+      const activeLinks = links.filter((c) => c.status !== "expired").length;
+      const pub = reachability.publicAccess;
       return {
-        ...r,
+        id: r.id,
+        name: r.name,
+        title: r.title,
+        access: pub.configured ? "public" : activeLinks > 0 ? "link" : "private",
         state: reachability.state,
-        channels: reachability.channels,
+        public_channels: channels.filter(
+          (c) => c.audience === "anyone" && c.desiredState !== "revoked",
+        ).length,
+        private_links: {
+          active: activeLinks,
+          expired: links.length - activeLinks,
+        },
+        /** Raw synced register — compatibility info, NOT the user-facing state. */
+        legacy_visibility: r.visibility,
+        ...(pub.anomaly ? { public_config_anomaly: pub.anomaly } : {}),
+        ...(args["show-links"] ? { channels } : {}),
       };
     });
     print(rows, () =>
-      table(rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        title: r.title ?? "",
-        state: r.state,
-        channels: r.channels.length,
-      }))),
+      table(
+        rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          title: r.title ?? "",
+          access: r.access + (r.public_config_anomaly ? " (公开配置异常)" : ""),
+          state: r.state,
+          links: `${r.public_channels} public, ${r.private_links.active} link${r.private_links.expired ? ` (+${r.private_links.expired} expired)` : ""}`,
+        })),
+      ) +
+        (args["show-links"]
+          ? "\n" +
+            rows
+              .flatMap((r) =>
+                (r.channels ?? []).map(
+                  (c) => `${r.name}\t${c.audience}/${c.hosting}\t${c.status}\t${c.url ?? "-"}`,
+                ),
+              )
+              .join("\n")
+          : ""),
     );
   }),
 });
@@ -371,7 +419,7 @@ function grantsOut(db: DbDriver, site: SiteRow) {
 
 /** Grants only take effect on a public channel — say so instead of silently arming. */
 function grantEffectNote(db: DbDriver, site: SiteRow): string | null {
-  return isSitePublicConfigured(db, site)
+  return sitePublicAccessState(db, site).configured
     ? null
     : `grants are stored but NOT in effect — the site is private; run: mh site update ${site.name} --visibility public`;
 }
@@ -474,7 +522,7 @@ const grant = defineCommand({
     // mh-drop.json + register the drop; last create grant gone → tear both down.
     const wire = await wireDrop(db, updated.id);
     const rows = grantsOut(db, updated);
-    const effective = isSitePublicConfigured(db, updated);
+    const effective = sitePublicAccessState(db, updated).configured;
     const note = grantEffectNote(db, updated);
     if (note) warn(note);
     const transport = transportLine(db, updated);
@@ -506,7 +554,7 @@ const grants = defineCommand({
     const db = await freshDb(args);
     const site = resolveSite(db, args.site);
     const rows = grantsOut(db, site);
-    const effective = isSitePublicConfigured(db, site);
+    const effective = sitePublicAccessState(db, site).configured;
     const note = rows.length ? grantEffectNote(db, site) : null;
     if (note) warn(note);
     print(
@@ -519,15 +567,109 @@ const grants = defineCommand({
   }),
 });
 
+const access = defineCommand({
+  meta: {
+    name: "access",
+    description:
+      "Show or change who can access a site: `access <site>` shows, `access <site> public|private` changes",
+  },
+  args: {
+    site: { type: "positional", required: true, description: "Site ref (id/name)" },
+    action: {
+      type: "positional",
+      required: false,
+      description: "public | private (omit to show current access)",
+    },
+    "show-links": {
+      type: "boolean",
+      description: "Include full capability URLs (they are SECRETS — they grant access)",
+    },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = args.action ? openMetahub() : await freshDb(args);
+    const site = resolveSite(db, args.site);
+
+    if (args.action === "public" || args.action === "private") {
+      const updated = applySiteUpdate(
+        db,
+        site.id,
+        { visibility: args.action },
+        { recordPublic: (s) => recordCliPublicChannel(db, s) },
+      );
+      // Revocations need the reconciler to run teardown; problems degrade to a
+      // warning (the desired state is committed and retries on every sync).
+      const reconcileError = await reconcileSiteChannelsQuietly(db);
+      if (reconcileError) warn(`site channel cleanup incomplete: ${reconcileError}`);
+      const r = siteReachability(db, updated.id);
+      const pendingCleanup = r.channels.filter(
+        (c) => c.status === "cleanup_pending" || c.status === "waiting_controller",
+      ).length;
+      const accessNow = r.publicAccess.configured ? "public" : "private";
+      print(
+        { id: updated.id, name: updated.name, access: accessNow, state: r.state, pendingCleanup },
+        () =>
+          args.action === "public"
+            ? `${updated.name} is now PUBLIC at ${siteUrl(db, updated.name)}\n` +
+              "注意：站点页面与管理界面同源运行，站点内脚本可以以你的身份读写整个工作区；只发布你信任的代码。"
+            : `${updated.name} is now private` +
+              (pendingCleanup ? ` (${pendingCleanup} channel(s) awaiting remote cleanup)` : ""),
+      );
+      return;
+    }
+    if (args.action !== undefined)
+      throw new MhError("invalid_input", `unknown access action '${args.action}' — use public or private`);
+
+    const r = siteReachability(db, site.id);
+    const pub = r.publicAccess;
+    const channels = r.channels.map((c) => {
+      const base = {
+        audience: c.audience,
+        hosting: c.hosting,
+        status: c.status,
+        ...(c.desiredState ? { desiredState: c.desiredState } : {}),
+      };
+      // Capability URLs are secrets: masked by default, whole URL only on
+      // explicit --show-links.
+      if (c.audience === "link" && !args["show-links"])
+        return { ...base, urlMasked: c.slug ? `${c.slug.slice(0, 8)}…` : null };
+      return { ...base, url: c.url ?? null };
+    });
+    print(
+      {
+        id: site.id,
+        name: site.name,
+        access: pub.configured ? "public" : channels.length ? "link" : "private",
+        state: r.state,
+        ...(pub.anomaly ? { public_config_anomaly: pub.anomaly } : {}),
+        channels,
+      },
+      () =>
+        `${site.id}\t${site.name}\naccess: ${pub.configured ? "public" : "private"}\tstate: ${r.state}\n` +
+        (channels.length
+          ? table(
+              channels.map((c) => ({
+                audience: c.audience,
+                hosting: c.hosting,
+                status: c.status,
+                url: ("url" in c ? c.url : c.urlMasked) ?? "-",
+              })),
+            )
+          : "(no channels)"),
+    );
+  }),
+});
+
 const del = defineCommand({
   meta: { name: "delete", description: "Delete a whole site and its files" },
   args: { site: { type: "positional", required: true, description: "Site ref (id/name)" } },
   run: guard(async (args) => {
     const db = openMetahub();
     const site = resolveSite(db, args.site);
-    revokeAllSiteChannels(db, site.id);
-    deleteSite(db, site.id);
-    await reconcileSiteChannels(db);
+    applySiteDelete(db, site.id);
+    // Delete is committed; cleanup problems are warnings, not failures.
+    const reconcileError = await reconcileSiteChannelsQuietly(db);
+    if (reconcileError) warn(`site channel cleanup incomplete: ${reconcileError}`);
     print({ ok: true, deleted: site.id });
   }),
 });
@@ -540,5 +682,5 @@ export default defineCommand({
   },
   // `publish` is rewritten to `upload` with a deprecation warning in index.ts,
   // keeping existing scripts alive without advertising two competing verbs.
-  subCommands: { create, update, scaffold, put, upload, list, files, rm, grant, grants, delete: del },
+  subCommands: { create, update, access, scaffold, put, upload, list, files, rm, grant, grants, delete: del },
 });

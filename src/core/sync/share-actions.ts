@@ -32,6 +32,7 @@ import {
 import {
   createBucketShare,
   renewBucketShare,
+  represignBucketShare,
   listBucketShares,
   deleteBucketShareObjects,
 } from "./share-export.ts";
@@ -121,6 +122,8 @@ export interface ShareListItem {
   /** server: ready-to-copy link; s3: omitted (use renew to mint a fresh one). */
   url?: string;
   lifecycle?: "active" | "provisioning" | "cleanup_pending";
+  /** s3 only: when the snapshot content was last exported (≠ link expiry). */
+  contentUpdatedAt?: number;
 }
 
 function recordSiteLinkChannel(
@@ -581,6 +584,7 @@ export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<
         hosting: "s3",
         expiresAt: m.presign_exp,
         hasPassword: m.has_password,
+        contentUpdatedAt: m.content_updated_at ?? m.created_at,
       });
     }
   }
@@ -717,15 +721,25 @@ export async function revokeShareAction(db: DbDriver, slug: string): Promise<Rev
   return { ok: false, status: "not_found" };
 }
 
-/** Renew an s3 share (re-presign, mint a fresh ≤7d link). */
-export async function renewShareAction(db: DbDriver, slug: string, viewerBaseOverride?: string): Promise<CreatedShare> {
+/** Renew an s3 share's LINK. Default is re-presign only — the snapshot content
+ *  is untouched, so "renew" means exactly what it says. Pass
+ *  `refreshContent: true` for the explicit "update the snapshot from current
+ *  data AND renew" action (the old implicit behavior). */
+export async function renewShareAction(
+  db: DbDriver,
+  slug: string,
+  viewerBaseOverride?: string,
+  opts?: { refreshContent?: boolean },
+): Promise<CreatedShare> {
   for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
     const config = JSON.parse(p.config!) as S3Config;
     const metas = await listBucketShares(config).catch(() => []);
     const m = metas.find((x) => x.slug === slug);
     if (!m) continue;
     const base = viewerBase(db, viewerBaseOverride);
-    const out = await renewBucketShare(db, config, slug);
+    const out = opts?.refreshContent
+      ? await renewBucketShare(db, config, slug)
+      : await represignBucketShare(config, slug);
     return {
       slug,
       kind: m.kind,

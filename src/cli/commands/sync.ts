@@ -75,10 +75,15 @@ export default defineCommand({
       print(results, () =>
         results
           .map((r) =>
-            r.ok ? `${r.url}: pushed ${r.pushed}, pulled ${r.pulled}` : `${r.url}: error — ${r.error}`,
+            r.ok
+              ? `${r.url}: pushed ${r.pushed}, pulled ${r.pulled}` +
+                (r.warnings?.length ? `\n  warning: ${r.warnings.join("\n  warning: ")}` : "")
+              : `${r.url}: error — ${r.error}`,
           )
           .join("\n"),
       );
+      // Warnings (channel maintenance) never affect the exit code — only a
+      // failed data sync is a network error.
       if (results.some((r) => !r.ok)) markExitCode("network");
       return;
     }

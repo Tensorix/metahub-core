@@ -31,7 +31,8 @@ import {
   setPublicSiteChannelPolicies,
   setSiteChannelDesiredState,
 } from "../../core/site-channel-store.ts";
-import { reconcileSiteChannels } from "../../core/sync/site-channel-reconcile.ts";
+import { reconcileSiteChannelsQuietly } from "../../core/sync/site-channel-reconcile.ts";
+import { requestChannelRevocation } from "../../core/site-channel-lifecycle.ts";
 
 const GrantSetSchema = z.object({
   v: z.literal(1),
@@ -628,46 +629,12 @@ export const siteHostingRoutes: Route[] = [
       desiredState: z.literal("revoked"),
     }),
     response: SiteChannelViewSchema,
-    handler: jsonHandler(async (req, { db, node }) => {
+    handler: jsonHandler(async (req, { db }) => {
       const body = z
         .object({ id: z.string(), desiredState: z.literal("revoked") })
         .parse(await req.json());
-      const channel = setSiteChannelDesiredState(
-        db,
-        body.id,
-        body.desiredState,
-      );
-      if (
-        channel.audience === "public" &&
-        !listSiteChannelRows(db, channel.site_id).some(
-          (item) =>
-            item.audience === "public" &&
-            item.desired_state === "active",
-        )
-      ) {
-        // Dual-write the legacy register until every client is channel-aware.
-        // Otherwise an older synced node could keep serving after the final v2
-        // public channel was revoked.
-        updateSite(db, channel.site_id, { visibility: "private" });
-      }
-      if (
-        channel.hosting === "device" &&
-        channel.target_ref === node
-      ) {
-        putSiteChannelObservation(db, {
-          channelId: channel.id,
-          status: "revoked",
-          lastVerifiedAt: Date.now(),
-        });
-      } else if (channel.controller_node_id === node) {
-        await reconcileSiteChannels(db);
-      } else {
-        putSiteChannelObservation(db, {
-          channelId: channel.id,
-          status: "cleanup_pending",
-          lastError: "等待控制设备上线并应用撤销",
-        });
-      }
+      const { channel, needsReconcile } = requestChannelRevocation(db, body.id);
+      if (needsReconcile) await reconcileSiteChannelsQuietly(db);
       const view = listSiteChannelViews(db).find(
         (item) => item.id === channel.id,
       );

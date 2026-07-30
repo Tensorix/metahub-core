@@ -177,6 +177,22 @@ export function getSite(db: DbDriver, id: string): SiteRow | null {
     .get(id) as SiteRow | null;
 }
 
+export type SiteLifecycle = "live" | "tombstoned" | "absent";
+
+/** Three-state existence probe. Repair/reconcile logic must act on positive
+ * tombstone evidence only: `absent` can mean the row simply has not replicated
+ * to this node yet, so destructive reactions to it would tear down state that
+ * is alive elsewhere. A half-materialized row (columns still NULL from
+ * out-of-order ingest) reads as `live` — the conservative answer for
+ * revocation decisions. */
+export function siteLifecycle(db: DbDriver, id: string): SiteLifecycle {
+  const row = db.query("SELECT __deleted AS d FROM sites WHERE id = ?").get(id) as {
+    d: number;
+  } | null;
+  if (!row) return "absent";
+  return row.d ? "tombstoned" : "live";
+}
+
 /** Most recently created live site with this name (URL routing). */
 export function getSiteByName(db: DbDriver, name: string): SiteRow | null {
   // Normalize so lookups, dedup, and URL routing all key off the canonical slug

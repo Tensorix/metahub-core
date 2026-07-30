@@ -1,9 +1,15 @@
 import type { DbDriver } from "./driver.ts";
-import { emit, grouped } from "./crdt.ts";
+import { emit, grouped, withChangeGroup } from "./crdt.ts";
 import { MhError } from "./errors.ts";
 import { newId } from "./ids.ts";
 import { getNodeId } from "./node.ts";
-import { getSite, isSitePublic, type SiteRow } from "./sites-core.ts";
+import {
+  deleteSite,
+  getSite,
+  isSitePublic,
+  updateSite,
+  type SiteRow,
+} from "./sites-core.ts";
 import type { ColumnsOf } from "./sqlcols.ts";
 
 export type SiteChannelAudience = "public" | "link";
@@ -163,29 +169,32 @@ export const putSiteChannel = grouped(function putSiteChannel(
       `${input.audience}-${input.hosting}-${input.siteId}`,
       "channel",
     );
-  if (!existing) {
-    const first = emit(db, "site_channels", id, "site_id", input.siteId);
-    emit(db, "site_channels", id, "created_hlc", first.hlc);
-  }
-  emit(db, "site_channels", id, "audience", input.audience);
-  emit(db, "site_channels", id, "hosting", input.hosting);
-  emit(db, "site_channels", id, "controller_node_id", controller);
-  emit(db, "site_channels", id, "target_ref", input.targetRef);
-  emit(db, "site_channels", id, "canonical_url", input.canonicalUrl ?? null);
-  emit(
-    db,
-    "site_channels",
-    id,
-    "policy_json",
-    input.policy == null ? null : JSON.stringify(input.policy),
-  );
-  emit(
-    db,
-    "site_channels",
-    id,
-    "desired_state",
-    input.desiredState ?? "active",
-  );
+  // One channel = several LWW columns; a mid-write failure must not leave a
+  // half-written row behind (grouped() only labels, it does not roll back).
+  // Unchanged columns are NOT re-emitted: a same-values republish would
+  // otherwise add 7 oplog rows per call AND re-stamp every column with a fresh
+  // HLC — clobbering not-yet-ingested remote edits with stale local values.
+  // (Skip-unchanged shrinks that clobber window to the columns actually being
+  // changed; true fix would be compare-HLC-and-swap, out of scope here.)
+  const desired: Record<string, string | number | null> = {
+    audience: input.audience,
+    hosting: input.hosting,
+    controller_node_id: controller,
+    target_ref: input.targetRef,
+    canonical_url: input.canonicalUrl ?? null,
+    policy_json: input.policy == null ? null : JSON.stringify(input.policy),
+    desired_state: input.desiredState ?? "active",
+  };
+  db.transaction(() => {
+    if (!existing) {
+      const first = emit(db, "site_channels", id, "site_id", input.siteId);
+      emit(db, "site_channels", id, "created_hlc", first.hlc);
+    }
+    for (const [col, value] of Object.entries(desired)) {
+      if (existing && (existing as unknown as Record<string, unknown>)[col] === value) continue;
+      emit(db, "site_channels", id, col, value);
+    }
+  })();
   return getSiteChannelRow(db, id)!;
 });
 
@@ -296,6 +305,55 @@ export function updatePublicSiteChannelUrls(
   return changed;
 }
 
+export interface ApplySiteUpdateOpts {
+  name?: string;
+  title?: string;
+  visibility?: "public" | "private";
+  spa?: boolean;
+}
+
+/** All-or-nothing site update, shared by HTTP route, CLI and replica worker.
+ * Order inside ONE SQL transaction + change group: ① updateSite (all
+ * validation — not_found, duplicate rename, bad enum) ② visibility side
+ * effects ③ canonical-URL refresh on rename. A validation failure therefore
+ * rolls back completely: a replica must never sync out a revocation for an
+ * update the user was told did not happen. The legacy register never stores
+ * "public" (v2 channels are the authority); callers pass `recordPublic` to
+ * mint the explicit channel for their surface. */
+export function applySiteUpdate(
+  db: DbDriver,
+  siteId: string,
+  opts: ApplySiteUpdateOpts,
+  hooks?: { recordPublic?: (site: SiteRow) => void },
+): SiteRow {
+  return db.transaction(() =>
+    withChangeGroup("site.update", () => {
+      const updated = updateSite(db, siteId, {
+        ...opts,
+        visibility: opts.visibility === "public" ? "private" : opts.visibility,
+      });
+      if (opts.visibility === "private") revokePublicSiteChannels(db, siteId);
+      if (opts.visibility === "public") hooks?.recordPublic?.(updated);
+      if (opts.name !== undefined)
+        updatePublicSiteChannelUrls(db, siteId, updated.name);
+      return getSite(db, siteId)!;
+    }),
+  )();
+}
+
+/** All-or-nothing site delete: tombstone + channel revocations commit
+ * together, and a missing site revokes nothing. Callers run the (async)
+ * reconciler AFTER this returns — never inside the transaction. */
+export function applySiteDelete(db: DbDriver, siteId: string): boolean {
+  return db.transaction(() =>
+    withChangeGroup("site.delete", () => {
+      if (!deleteSite(db, siteId)) return false;
+      revokeAllSiteChannels(db, siteId);
+      return true;
+    }),
+  )();
+}
+
 /** Site deletion first requests teardown for every channel. Link controllers
  * can then remove capability state asynchronously after the site row is gone. */
 export function revokeAllSiteChannels(db: DbDriver, siteId: string): number {
@@ -336,6 +394,12 @@ export function putSiteChannelObservation(
     lastVerifiedAt: input.lastVerifiedAt ?? null,
     lastError: input.lastError ?? null,
   };
+}
+
+/** Drop a node-local observation (e.g. once a missing share row reappears).
+ * Observations are not synced, so this is a plain DELETE with no CRDT echo. */
+export function clearSiteChannelObservation(db: DbDriver, channelId: string): void {
+  db.query("DELETE FROM site_channel_observations WHERE channel_id = ?").run(channelId);
 }
 
 export function getSiteChannelObservation(
@@ -412,47 +476,47 @@ export function listSiteChannelViews(
   });
 }
 
-/** Channel-aware public serve decision. Once any v2 channel exists for a site,
- * legacy visibility is no longer enough: only this node's active public device
- * target may serve token-free. Sites not migrated yet retain legacy behavior. */
-export function isSitePublicOnThisNode(
-  db: DbDriver,
-  site: Pick<SiteRow, "id" | "visibility">,
-): boolean {
-  const channels = listSiteChannelRows(db, site.id);
-  const hasChannelRows = !!db
-    .query(
-      "SELECT 1 AS ok FROM site_channels WHERE site_id = ? AND __deleted = 0 LIMIT 1",
-    )
-    .get(site.id);
-  // Only a truly unmigrated site may use the legacy register. A malformed or
-  // partially-understood v2 row is evidence that channel semantics apply, and
-  // therefore fails closed instead of reopening global public access.
-  if (!hasChannelRows) return isSitePublic(site);
-  const self = getNodeId(db);
-  return channels.some(
-    (channel) =>
-      channel.audience === "public" &&
-      channel.hosting === "device" &&
-      channel.desired_state === "active" &&
-      channel.target_ref === self,
-  );
+export interface SitePublicAccessState {
+  /** Serve-path decision: this node may serve the site token-free right now. */
+  serving: boolean;
+  /** Management decision: public access is configured (on any node). */
+  configured: boolean;
+  /** Public rows exist but at least one is malformed. Serving fails closed on
+   * such rows; management surfaces must show the anomaly instead of a healthy
+   * "public". */
+  anomaly: "malformed_public_channel" | null;
 }
 
-/** Logical access state for management surfaces. Legacy rows with no channel
- * keep their global visibility behavior; once channel semantics exist, only an
- * active explicit public channel counts as configured public access. */
-export function isSitePublicConfigured(
+/** The single public-access decision for every surface (serve routes, CLI,
+ * WebUI, grants). A site migrates from the legacy `visibility` register to v2
+ * channel semantics when its FIRST `audience='public'` row appears — even a
+ * malformed one, which then fails closed. Link rows, revoked links, and
+ * unknown-audience rows never flip the public decision, so creating a private
+ * share link cannot un-publish a legacy-public site. */
+export function sitePublicAccessState(
   db: DbDriver,
   site: Pick<SiteRow, "id" | "visibility">,
-): boolean {
-  const channels = listSiteChannelRows(db, site.id);
-  if (channels.length === 0) return isSitePublic(site);
-  return channels.some(
-    (channel) =>
-      channel.audience === "public" &&
-      channel.desired_state === "active",
-  );
+): SitePublicAccessState {
+  const rawPublic = db
+    .query(
+      `SELECT ${SELECT} FROM site_channels
+       WHERE site_id = ? AND audience = 'public' AND __deleted = 0 ORDER BY created_hlc, id`,
+    )
+    .all(site.id) as SiteChannelRow[];
+  if (rawPublic.length === 0) {
+    const legacy = isSitePublic(site);
+    return { serving: legacy, configured: legacy, anomaly: null };
+  }
+  const valid = rawPublic.filter(validRow);
+  const active = valid.filter((channel) => channel.desired_state === "active");
+  const self = getNodeId(db);
+  return {
+    serving: active.some(
+      (channel) => channel.hosting === "device" && channel.target_ref === self,
+    ),
+    configured: active.length > 0,
+    anomaly: rawPublic.length > valid.length ? "malformed_public_channel" : null,
+  };
 }
 
 export function publicSiteChannelOnThisNode(

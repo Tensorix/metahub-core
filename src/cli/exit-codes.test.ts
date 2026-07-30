@@ -97,6 +97,68 @@ test("CLI public visibility records and revokes an explicit local channel", () =
   db.close();
 });
 
+test("site list masks capability URLs by default; --show-links opts in", () => {
+  // A private share link on a site — its /share/<slug> URL grants access and
+  // must never appear in the default listing (logs, scripts, agent context).
+  const site = mh("site", "create", "list-mask");
+  expect(site.exit).toBe(0);
+  const shared = mh("share", "create", "list-mask", "--kind", "site");
+  expect(shared.exit).toBe(0);
+  expect(shared.out.url).toContain("/share/");
+
+  const plain = mh("site", "list", "--offline");
+  expect(plain.exit).toBe(0);
+  const row = (plain.out as Record<string, unknown>[]).find((r) => r.name === "list-mask")!;
+  expect(row.access).toBe("link");
+  expect(row.private_links).toMatchObject({ active: 1, expired: 0 });
+  expect(row.legacy_visibility).toBe("private");
+  expect(row.channels).toBeUndefined();
+  expect(JSON.stringify(plain.out)).not.toContain("/share/");
+
+  const withLinks = mh("site", "list", "--show-links", "--offline");
+  expect(withLinks.exit).toBe(0);
+  expect(JSON.stringify(withLinks.out)).toContain("/share/");
+});
+
+test("site access shows masked links by default and flips public/private", () => {
+  mh("site", "create", "acc-demo");
+  mh("share", "create", "acc-demo", "--kind", "site");
+
+  const shown = mh("site", "access", "acc-demo", "--offline");
+  expect(shown.exit).toBe(0);
+  expect(shown.out.access).toBe("link");
+  expect(JSON.stringify(shown.out)).not.toContain("/share/");
+  expect(shown.out.channels[0].urlMasked).toMatch(/…$/);
+
+  const withLinks = mh("site", "access", "acc-demo", "--show-links", "--offline");
+  expect(JSON.stringify(withLinks.out)).toContain("/share/");
+
+  const pub = mh("site", "access", "acc-demo", "public");
+  expect(pub.exit).toBe(0);
+  expect(pub.out.access).toBe("public");
+
+  const priv = mh("site", "access", "acc-demo", "private");
+  expect(priv.exit).toBe(0);
+  expect(priv.out.access).toBe("private");
+
+  const bogus = mh("site", "access", "acc-demo", "everyone");
+  expect(bogus.exit).toBe(2);
+  expect(bogus.out.code).toBe("invalid_input");
+});
+
+test("config show --help is real help (exit 0); unknown section fails exit 2", () => {
+  const help = Bun.spawnSync(["bun", CLI, "config", "show", "--help"], {
+    env: { ...process.env, METAHUB_HOME: home },
+  });
+  expect(help.exitCode).toBe(0);
+  expect(help.stdout.toString()).toContain("mh config show");
+
+  const bogus = mh("config", "bakcup", "--help");
+  expect(bogus.exit).toBe(2);
+  expect(bogus.out.code).toBe("invalid_input");
+  expect(bogus.out.error).toContain("bakcup");
+});
+
 test("sync-all preserves per-target JSON but exits 7 when any target fails", () => {
   const db = new Database(join(home, "metahub.db"));
   db.query(
