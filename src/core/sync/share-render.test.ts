@@ -23,3 +23,25 @@ test("the ) separator and multi-digit numbers work", () => {
 test("unordered items carry no value attribute", () => {
   expect(renderMarkdown("- a\n- b")).toBe("<ul><li>a</li><li>b</li></ul>");
 });
+
+test("a doclink renders as INERT text on share pages (never a capability leak)", () => {
+  // With a resolver: live title, but a <span>, not a link.
+  const withResolver = renderMarkdown("see [[doc_notes-abc123]]", {
+    resolveDocLink: (id) => (id === "doc_notes-abc123" ? { title: "会议纪要" } : null),
+  });
+  expect(withResolver).toBe('<p>see <span class="mh-doclink">会议纪要</span></p>');
+  expect(withResolver).not.toContain("<a");
+  // Explicit alias wins over the resolved title.
+  expect(
+    renderMarkdown("[[doc_notes-abc123|别名]]", { resolveDocLink: () => ({ title: "会议纪要" }) }),
+  ).toContain(">别名</span>");
+  // No resolver (static E2EE viewer) degrades to the id; unresolved ids too.
+  expect(renderMarkdown("[[doc_notes-abc123]]")).toContain(">doc_notes-abc123</span>");
+  expect(renderMarkdown("[[doc_gone-zzz999]]", { resolveDocLink: () => null })).toContain(
+    ">doc_gone-zzz999</span>",
+  );
+  // A hostile "title" from a renamed doc is escaped.
+  expect(
+    renderMarkdown("[[doc_notes-abc123]]", { resolveDocLink: () => ({ title: '<img onerror=x>' }) }),
+  ).not.toContain("<img");
+});

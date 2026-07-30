@@ -10,6 +10,7 @@ import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { baseExtensions, richCompartment, richLayer, sourceLayer } from "./editor-view";
 import { slashMenu } from "./chrome/slash-menu";
+import { doclinkSuggest } from "./chrome/doclink-suggest";
 import { uploadPaste, pickAndUpload } from "./chrome/upload-paste";
 import { uploadField, stripStaleUploadLines } from "./chrome/upload-field";
 import { copyRich } from "./chrome/copy-rich";
@@ -100,6 +101,8 @@ export function CmDocBody(props: CmDocBodyProps) {
           slashMenu({
             onUpload: (type, v, pos) => pickAndUpload(v, pos, acceptFor(type), (m) => onErrorRef.current?.(m)),
           }),
+          doclinkSuggest(), // "[[" internal-link picker
+
           uploadPaste({ onError: (m) => onErrorRef.current?.(m) }),
           copyRich(), // text/html flavor via the shared share renderer
           uploadField, // always on (outside richCompartment): pending uploads must survive source mode

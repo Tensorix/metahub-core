@@ -2,6 +2,7 @@
 import { render } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type Hit, NAV_INVALIDATE } from "./api.ts";
+import { primeDocTitles } from "./doc-titles.ts";
 import {
   resumeReplicaIfEnabled,
   replicaActive,
@@ -103,6 +104,7 @@ function App() {
     const [d, o] = await Promise.all([api.listDatabases(), api.listDocuments()]);
     setDatabases(d);
     setDocs(o);
+    primeDocTitles(o, d); // free ride for [[doclink]] title resolution
     setNavReady(true);
   }, []);
 
@@ -324,6 +326,16 @@ function App() {
             .then(() => toast("链接已复制"))
             .catch((err) => onError(String(err.message)));
         }} />
+        {(view.kind === "doc" || view.kind === "db") && (
+          <MenuItem icon="file" label="复制内链" onClick={() => {
+            close();
+            // `[[id]]` — origin-free internal reference; pasting it into any
+            // document renders a live link to this target on every device.
+            navigator.clipboard.writeText(`[[${view.id}]]`)
+              .then(() => toast("内链已复制，可粘贴到任意文档"))
+              .catch((err) => onError(String(err.message)));
+          }} />
+        )}
         {view.kind === "doc" && activeDoc && (
           <MenuItem icon="link" label="通过设备分享…" onClick={() => { close(); openShareModal({ kind: "doc", ref: activeDoc.id, title: activeDoc.title }); }} />
         )}

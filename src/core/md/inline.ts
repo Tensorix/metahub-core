@@ -11,6 +11,7 @@
 // Semantics (deliberately simple, single level — no nested emphasis):
 //   `code`   — content is literal; protects its interior from every other rule
 //   ![a](u)  — inline image; MUST outrank the link rule (it contains one)
+//   [[doc_x]] / [[doc_x|alias]] — internal doc/db reference (id-shaped only)
 //   **b**/__b__  ~~d~~  *i*/_i_  [t](u)
 // Candidates are collected per pattern and selected greedily left-to-right with
 // a priority rank on start-ties, exactly like the CM6 editor always did — so a
@@ -21,17 +22,21 @@
 // no unescaping pass. Escapes do not apply inside code spans (CommonMark-like).
 
 export interface InlineToken {
-  kind: "code" | "image" | "strong" | "em" | "del" | "link";
+  kind: "code" | "image" | "strong" | "em" | "del" | "link" | "doclink";
   /** Token span in the source string (end exclusive), delimiters included. */
   start: number;
   end: number;
-  /** Content span (code text, emphasis body, link text, image alt). */
+  /** Content span (code text, emphasis body, link text, image alt, doclink alias/id). */
   innerFrom: number;
   innerTo: number;
   /** link / image only. */
   url?: string;
   /** image only (may be ""). */
   alt?: string;
+  /** doclink only: the referenced doc/db id. */
+  id?: string;
+  /** doclink only: display text override from `[[id|alias]]`. */
+  alias?: string;
 }
 
 interface Pattern {
@@ -50,6 +55,11 @@ interface Pattern {
 const PATTERNS: Pattern[] = [
   { kind: "code", re: /(?<!\\)`([^`\n]+)`/g, delim: 1, rank: 0 },
   { kind: "image", re: /(?<!\\)!\[([^\]\n]*)\]\(([^)\s]+)\)/g, delim: 0, rank: 1 },
+  // Internal doc/db reference `[[doc_x]]` / `[[doc_x|alias]]` — id shape is
+  // pinned to newId() output ([a-z0-9-] slug + base36 suffix) so arbitrary
+  // `[[text]]` stays literal prose. Must outrank the link rule: both start at
+  // `[`, and `[[id]](x)` should read as a doclink followed by literal `(x)`.
+  { kind: "doclink", re: /(?<!\\)\[\[((?:doc|db)_[a-z0-9][a-z0-9-]*)(?:\|([^\]\n|]+))?\]\]/g, delim: 0, rank: 2 },
   { kind: "strong", re: /(?<!\\)\*\*([^*\n]+?)(?<!\\)\*\*/g, delim: 2, rank: 2 },
   { kind: "strong", re: /(?<!\\)__([^_\n]+?)(?<!\\)__/g, delim: 2, rank: 2 },
   { kind: "del", re: /(?<!\\)~~([^~\n]+?)(?<!\\)~~/g, delim: 2, rank: 3 },
@@ -76,7 +86,16 @@ export function tokenizeInline(text: string): InlineToken[] {
       let innerTo: number;
       let url: string | undefined;
       let alt: string | undefined;
-      if (p.kind === "link") {
+      let id: string | undefined;
+      let alias: string | undefined;
+      if (p.kind === "doclink") {
+        id = m[1]!;
+        alias = m[2];
+        // Content span = what the token displays as plain text (alias if given,
+        // else the id), so stripInlineTokens flattens doclinks for free.
+        innerFrom = alias !== undefined ? start + 2 + id.length + 1 : start + 2;
+        innerTo = end - 2;
+      } else if (p.kind === "link") {
         innerFrom = start + 1;
         innerTo = start + 1 + m[1]!.length;
         url = m[2]!;
@@ -90,7 +109,7 @@ export function tokenizeInline(text: string): InlineToken[] {
         innerTo = end - p.delim;
         if (innerTo <= innerFrom) continue;
       }
-      cands.push({ kind: p.kind, start, end, innerFrom, innerTo, url, alt, rank: p.rank });
+      cands.push({ kind: p.kind, start, end, innerFrom, innerTo, url, alt, id, alias, rank: p.rank });
     }
   }
   // Greedy left-to-right, single level: earliest start wins; on a start-tie the
@@ -109,6 +128,8 @@ export function tokenizeInline(text: string): InlineToken[] {
       innerTo: c.innerTo,
       ...(c.url !== undefined ? { url: c.url } : {}),
       ...(c.alt !== undefined ? { alt: c.alt } : {}),
+      ...(c.id !== undefined ? { id: c.id } : {}),
+      ...(c.alias !== undefined ? { alias: c.alias } : {}),
     });
   }
   return out;

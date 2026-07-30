@@ -207,6 +207,24 @@ export const editorTheme = EditorView.baseTheme({
     padding: "1px 5px",
   },
   ".cm-link": { color: "var(--accent)", textDecoration: "underline", cursor: "pointer" },
+  // Internal `[[doc_x]]` reference pill (collapsed) and its revealed source.
+  ".cm-doclink": {
+    background: "var(--surface-2)",
+    border: "1px solid var(--line)",
+    borderRadius: "6px",
+    padding: "0 5px",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  ".cm-doclink::before": { content: '"📄"', fontSize: "0.85em", marginRight: "3px" },
+  ".cm-doclink:hover": { background: "var(--hover)" },
+  ".cm-doclink-missing": {
+    color: "var(--muted)",
+    borderStyle: "dashed",
+    textDecoration: "line-through",
+    cursor: "default",
+  },
+  ".cm-doclink-src": { color: "var(--accent)", cursor: "pointer" },
   // Revealed markdown delimiters (`**`, `` ` ``, `# `, `> `, link brackets…): keep
   // them visually quiet while the caret edits inside the span/line.
   ".cm-md-mark": { color: "var(--muted)" },

@@ -982,6 +982,10 @@
   .doc-td b, .doc-td strong { font-weight:700; }
   .doc-td code { font-family:var(--mono); background:var(--surface-2); padding:1px 5px; border-radius:4px; font-size:.9em; }
   .doc-td a { color:var(--accent); }
+  /* Internal [[doc_x]] reference pill (table cells & contenteditable bridge). */
+  a.mh-doclink { color:inherit; text-decoration:none; background:var(--surface-2);
+    border:1px solid var(--line); border-radius:6px; padding:0 5px; white-space:nowrap; }
+  a.mh-doclink::before { content:"📄"; font-size:.85em; margin-right:3px; }
   .doc-col-resizer { position:absolute; top:0; right:-4px; width:7px; height:100%; cursor:col-resize; z-index:3; touch-action:none; }
   /* Row/column pill handles (Notion-style): one per axis, tracked onto the
      active cell (hovered on desktop, focused on touch) by JS. They live on

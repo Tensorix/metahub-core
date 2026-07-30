@@ -32,6 +32,19 @@ export function viewToHash(v: View): string {
   }
 }
 
+/** A pasted doc/db URL → the `[[id]]` internal reference, or null.
+ *  Matches on the hash route only and IGNORES the origin — a link copied on
+ *  another device (different host/port, same hub) still converts. The id must
+ *  be doclink-shaped (same alphabet the inline grammar accepts) and live under
+ *  the segment matching its own prefix. */
+export function doclinkFromUrl(text: string): string | null {
+  const m = text.trim().match(/^(?:https?:\/\/\S*?)?#\/(doc|db)\/((?:doc|db)_[a-z0-9][a-z0-9-]*)\/?$/);
+  if (!m) return null;
+  const [, seg, id] = m;
+  if (id!.startsWith(`${seg}_`)) return `[[${id}]]`;
+  return null;
+}
+
 /** Inverse of viewToHash; anything unrecognized (or with malformed escapes) is
  *  the empty view, so a hand-mangled URL degrades to the home screen. */
 export function parseHash(h: string): View {

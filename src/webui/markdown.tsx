@@ -55,6 +55,14 @@ export function inlineToHtml(src: string): string {
       case "del":
         out += `<del>${escapeHtml(inner)}</del>`;
         break;
+      case "doclink": {
+        // Internal reference. Shown as alias/id (NOT the live title): this HTML
+        // is read back by htmlToInline, so the visible text must round-trip to
+        // the exact `[[id]]` / `[[id|alias]]` source.
+        const route = t.id!.startsWith("db_") ? "#/db/" : "#/doc/";
+        out += `<a href="${route}${encodeURIComponent(t.id!)}" class="mh-doclink" data-doclink="${escapeHtml(t.id!)}">${escapeHtml(inner)}</a>`;
+        break;
+      }
     }
   }
   out += emitText(src.slice(pos));
@@ -93,6 +101,11 @@ function walk(node: Node): string {
     else if (tag === "del" || tag === "s" || tag === "strike") out += inner ? `~~${inner}~~` : "";
     else if (tag === "code") out += inner ? "`" + inner + "`" : "";
     else if (tag === "a") {
+      const doclink = n.getAttribute("data-doclink");
+      if (doclink) {
+        out += inner && inner !== doclink ? `[[${doclink}|${inner}]]` : `[[${doclink}]]`;
+        return;
+      }
       const href = n.getAttribute("href") || "";
       out += href ? `[${inner}](${href})` : inner;
     } else if (tag === "div" || tag === "p") out += (out && !out.endsWith("\n") ? "\n" : "") + inner;

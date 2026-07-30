@@ -14,6 +14,15 @@ test("inlineToHtml renders bold, italic, code and links", () => {
   );
 });
 
+test("inlineToHtml renders a doclink as an in-app <a data-doclink>", () => {
+  expect(inlineToHtml("[[doc_notes-abc123]]")).toBe(
+    '<a href="#/doc/doc_notes-abc123" class="mh-doclink" data-doclink="doc_notes-abc123">doc_notes-abc123</a>',
+  );
+  expect(inlineToHtml("[[db_tasks-7q1zzb|任务表]]")).toBe(
+    '<a href="#/db/db_tasks-7q1zzb" class="mh-doclink" data-doclink="db_tasks-7q1zzb">任务表</a>',
+  );
+});
+
 test("code spans are opaque to other inline rules", () => {
   // the * inside the code span must not become italic
   expect(inlineToHtml("`a*b*c`")).toBe("<code>a*b*c</code>");

@@ -21,6 +21,13 @@ test("htmlToInline maps semantic and legacy tags to markdown", () => {
   expect(htmlToInline("<s>d</s>")).toBe("~~d~~"); // execCommand strikeThrough output
 });
 
+test("doclink round-trips through the contenteditable bridge losslessly", () => {
+  // No-alias form: visible text IS the id, so it reads back bare.
+  expect(htmlToInline(inlineToHtml("[[doc_notes-abc123]]"))).toBe("[[doc_notes-abc123]]");
+  // Alias form: visible text differs from the id, so the pipe survives.
+  expect(htmlToInline(inlineToHtml("[[db_tasks-7q1zzb|任务表]]"))).toBe("[[db_tasks-7q1zzb|任务表]]");
+});
+
 test("NBSP from contentEditable normalizes to a plain space", () => {
   // Browsers serialize a trailing space as &nbsp; — it must not reach the
   // saved markdown (find/grep would miss it).

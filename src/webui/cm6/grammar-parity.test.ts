@@ -219,6 +219,7 @@ function inlineOracle(src: string): string {
       case "del": out += `<del>${escapeHtml(inner)}</del>`; break;
       case "link": out += `<a href="${escapeHtml(safeUrl(raw))}" target="_blank" rel="noreferrer noopener">${escapeHtml(inner)}</a>`; break;
       case "image": out += `<img src="${escapeHtml(safeUrl(raw, { allowData: true }))}" alt="${escapeHtml(t.alt ?? "")}" loading="lazy">`; break;
+      case "doclink": out += `<span class="mh-doclink">${escapeHtml(t.alias ?? t.id!)}</span>`; break;
     }
     pos = t.end;
   }
@@ -251,6 +252,11 @@ const INLINE_CORPUS = [
   "*",
   "****",
   "[no url]()",
+  "[[doc_notes-abc123]]",
+  "[[doc_notes-abc123|我的笔记]]",
+  "see [[db_tasks-7q1zzb]] and [[doc_a1]](tail)",
+  "[[not an id]]",
+  "\\[[doc_escaped-abc123]]",
 ];
 
 for (const s of INLINE_CORPUS) {

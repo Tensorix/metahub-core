@@ -17,6 +17,7 @@ import { blockToText, mediaKindFromMime, type Block } from "../../blocks.ts";
 import { htmlToMarkdown } from "../../html-md.ts";
 import { startUpload, updateUpload, finishUpload, toast } from "../../ui.tsx";
 import { addUpload, removeUpload, uploadField, beginUpload, endUpload, embedAnchor } from "./upload-field";
+import { doclinkFromUrl } from "../../view.ts";
 
 export interface UploadDeps {
   onError?: (message: string) => void;
@@ -141,6 +142,16 @@ export function uploadPaste(deps: UploadDeps = {}): Extension {
       if (files.length) {
         event.preventDefault();
         uploadFilesAt(view, view.state.selection.main.head, files, deps.onError);
+        return true;
+      }
+      // A pasted doc/db URL (from 分享 → 复制链接, any origin) becomes an
+      // internal `[[id]]` reference — origin-free, so it stays live on every
+      // device instead of dying with the copying device's host:port.
+      const plain = event.clipboardData?.getData("text/plain") ?? "";
+      const doclink = doclinkFromUrl(plain);
+      if (doclink) {
+        event.preventDefault();
+        view.dispatch(view.state.replaceSelection(doclink));
         return true;
       }
       // No files: convert pasted HTML to Markdown (plain text falls through to

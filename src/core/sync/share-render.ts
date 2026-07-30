@@ -34,6 +34,11 @@ export { escapeHtml };
 export interface RenderOpts {
   /** Rewrite a `/blob/<hash>` URL to a reachable one (scoped endpoint or data URL). */
   rewriteBlob?: (url: string) => string;
+  /** Resolve a `[[doc_x]]` internal reference to its current title. Absent (or
+   *  returning null) the reference renders as its alias/id. Share pages render
+   *  doclinks as inert text either way: auto-linking to the target's own share
+   *  would extend one share's capability with another's. */
+  resolveDocLink?: (id: string) => { title: string } | null;
 }
 
 /** Inline Markdown → HTML: a pure function of the shared tokenizer. Gaps are
@@ -72,6 +77,13 @@ export function renderInline(src: string, opts: RenderOpts = {}): string {
       case "image": {
         const imgSrc = escapeHtml(safeUrl(rawUrl, { allowData: true }));
         out += `<img src="${imgSrc}" alt="${escapeHtml(t.alt ?? "")}" loading="lazy">`;
+        break;
+      }
+      case "doclink": {
+        // Inert on share pages (see RenderOpts.resolveDocLink). Label precedence:
+        // explicit alias > live title > raw id.
+        const label = t.alias ?? opts.resolveDocLink?.(t.id!)?.title ?? t.id!;
+        out += `<span class="mh-doclink">${escapeHtml(label)}</span>`;
         break;
       }
     }

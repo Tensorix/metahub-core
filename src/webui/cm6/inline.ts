@@ -26,12 +26,14 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
-import type { Extension, Range, EditorSelection } from "@codemirror/state";
+import { StateEffect, type Extension, type Range, type EditorSelection } from "@codemirror/state";
 import { docModel } from "./doc-model";
 import { tokenizeInline, type InlineToken } from "../inline-tokens";
 import { safeUrl } from "../../core/md/grammar.ts";
+import { docLinkTitle, onDocTitleChange } from "../doc-titles.ts";
+import { toast } from "../ui.tsx";
 
-const CLASS: Record<Exclude<InlineToken["kind"], "image">, string> = {
+const CLASS: Record<Exclude<InlineToken["kind"], "image" | "doclink">, string> = {
   code: "cm-code",
   strong: "cm-strong",
   em: "cm-em",
@@ -73,6 +75,51 @@ class InlineImgWidget extends WidgetType {
     return false;
   }
 }
+
+/** Collapsed `[[doc_x]]` — an internal-reference pill showing the live title. */
+class DocLinkWidget extends WidgetType {
+  constructor(
+    readonly id: string,
+    readonly label: string,
+    readonly missing: boolean,
+  ) {
+    super();
+  }
+
+  override eq(other: DocLinkWidget): boolean {
+    return other.id === this.id && other.label === this.label && other.missing === this.missing;
+  }
+
+  override toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = this.missing ? "cm-doclink cm-doclink-missing" : "cm-doclink";
+    el.setAttribute("data-doclink", this.id);
+    if (this.missing) el.setAttribute("data-doclink-missing", "1");
+    el.textContent = this.label;
+    return el;
+  }
+
+  // Clicks are handled by linkClicks (navigate / toast); CM must not also turn
+  // them into a selection change that would reveal the source mid-click.
+  override ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+/** Display label for a `[[id|alias]]` token: explicit alias > live title > id.
+ *  While the title map is still loading the id doubles as a readable fallback
+ *  (it embeds the title's slug); a known-missing target keeps the id and gets
+ *  the broken-link style. */
+function docLinkLabel(id: string, alias: string | undefined): { label: string; missing: boolean } {
+  if (alias) return { label: alias, missing: docLinkTitle(id) === null };
+  const title = docLinkTitle(id);
+  if (title === null) return { label: id, missing: true };
+  if (title === undefined) return { label: id, missing: false };
+  return { label: title || "无标题", missing: false };
+}
+
+/** Rebuild signal for open editors when a referenced title changes. */
+const docTitlesChanged = StateEffect.define<null>();
 
 /** Does the selection touch [from, to] (endpoints inclusive)? → reveal delimiters. */
 function touches(sel: EditorSelection, from: number, to: number): boolean {
@@ -125,6 +172,26 @@ function build(view: EditorView, cache: TokenCache, next: TokenCache): Decoratio
           continue;
         }
 
+        if (t.kind === "doclink") {
+          if (!revealed) {
+            const { label, missing } = docLinkLabel(t.id!, t.alias);
+            out.push(
+              Decoration.replace({ widget: new DocLinkWidget(t.id!, label, missing) }).range(absStart, absEnd),
+            );
+          } else {
+            // Revealed: `[[id|alias]]` source; delimiters muted, target styled.
+            out.push(
+              Decoration.mark({
+                class: "cm-doclink-src",
+                attributes: { "data-doclink": t.id!, "data-md-revealed": "1" },
+              }).range(absInnerFrom, absInnerTo),
+            );
+            if (absInnerFrom > absStart) out.push(Decoration.mark({ class: "cm-md-mark" }).range(absStart, absInnerFrom));
+            if (absEnd > absInnerTo) out.push(Decoration.mark({ class: "cm-md-mark" }).range(absInnerTo, absEnd));
+          }
+          continue;
+        }
+
         const mark =
           t.kind === "link"
             ? Decoration.mark({
@@ -155,8 +222,22 @@ const inlinePlugin = ViewPlugin.fromClass(
     deco: DecorationSet;
     cache: TokenCache = new Map();
     stale = false;
+    dead = false;
+    unsubTitles: () => void;
     constructor(view: EditorView) {
       this.deco = this.run(view);
+      // A doclink's label is resolved at build time; when a referenced title
+      // changes (rename synced in, nav reload) the tokens are identical, so
+      // nudge a rebuild through a dedicated effect.
+      this.unsubTitles = onDocTitleChange(() => {
+        queueMicrotask(() => {
+          if (!this.dead) view.dispatch({ effects: docTitlesChanged.of(null) });
+        });
+      });
+    }
+    destroy() {
+      this.dead = true;
+      this.unsubTitles();
     }
     update(u: ViewUpdate) {
       if (u.view.composing) {
@@ -170,7 +251,8 @@ const inlinePlugin = ViewPlugin.fromClass(
         }
         return;
       }
-      if (this.stale || u.docChanged || u.selectionSet || u.viewportChanged) {
+      const titlesChanged = u.transactions.some((tr) => tr.effects.some((e) => e.is(docTitlesChanged)));
+      if (this.stale || u.docChanged || u.selectionSet || u.viewportChanged || titlesChanged) {
         this.stale = false;
         this.deco = this.run(u.view);
       }
@@ -190,6 +272,22 @@ const inlinePlugin = ViewPlugin.fromClass(
 const linkClicks = EditorView.domEventHandlers({
   mousedown(e, view) {
     if (e.button !== 0) return false;
+    // Internal `[[doc_x]]` reference: navigate in-app via the hash router
+    // (hashchange is the app's single back/forward listener). A revealed one
+    // needs Mod, like external links, so a plain click can place the caret.
+    const dl = (e.target as HTMLElement | null)?.closest?.("[data-doclink]");
+    if (dl instanceof HTMLElement && view.dom.contains(dl)) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (dl.hasAttribute("data-md-revealed") && !mod) return false; // caret placement
+      e.preventDefault();
+      const id = dl.getAttribute("data-doclink")!;
+      if (dl.hasAttribute("data-doclink-missing") || docLinkTitle(id) === null) {
+        toast("文档不存在或未同步");
+        return true;
+      }
+      location.hash = `#/${id.startsWith("db_") ? "db" : "doc"}/${encodeURIComponent(id)}`;
+      return true;
+    }
     const el = (e.target as HTMLElement | null)?.closest?.("[data-href]");
     if (!(el instanceof HTMLElement) || !view.dom.contains(el)) return false;
     const mod = e.metaKey || e.ctrlKey;

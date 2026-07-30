@@ -59,6 +59,36 @@ test("image with empty alt still tokenizes (inner is empty)", () => {
   expect(t).toMatchObject({ kind: "image", start: 0, end: 16, innerFrom: 2, innerTo: 2, alt: "" });
 });
 
+test("doclink: bare id, inner is the id", () => {
+  const s = "see [[doc_notes-abc123]] here";
+  const [t] = tokenizeInline(s);
+  expect(t).toMatchObject({ kind: "doclink", start: 4, end: 24, id: "doc_notes-abc123" });
+  expect(inner(s, t!)).toBe("doc_notes-abc123");
+  expect(t!.alias).toBeUndefined();
+});
+
+test("doclink: alias form, inner is the alias", () => {
+  const s = "[[db_tasks-7q1zzb|任务表]]";
+  const [t] = tokenizeInline(s);
+  expect(t).toMatchObject({ kind: "doclink", start: 0, end: s.length, id: "db_tasks-7q1zzb", alias: "任务表" });
+  expect(inner(s, t!)).toBe("任务表");
+});
+
+test("doclink: only id-shaped doc/db targets tokenize", () => {
+  expect(kinds("[[not an id]]")).toEqual([]);
+  expect(kinds("[[doc notes]]")).toEqual([]);
+  expect(kinds("[[site_blog-a0b1c2]]")).toEqual([]); // no route for sites in docs
+  expect(kinds("[[Doc_Upper-abc123]]")).toEqual([]);
+  expect(kinds("\\[[doc_escaped-abc123]]")).toEqual([]);
+});
+
+test("doclink outranks link; trailing (x) stays literal", () => {
+  const s = "[[doc_a1]](tail)";
+  const tokens = tokenizeInline(s);
+  expect(tokens.map((t) => t.kind)).toEqual(["doclink"]);
+  expect(tokens[0]!.end).toBe(10);
+});
+
 // --- full-line mixed tokenization ------------------------------------------
 
 test("full line: every kind side by side, non-overlapping and sorted", () => {
@@ -163,6 +193,11 @@ test("urls with whitespace are not link/image targets", () => {
 
 test("stripInlineTokens flattens every kind to plain text", () => {
   expect(stripInlineTokens("**a** `b` ~~c~~ _d_ [e](u) ![f](/g.png)")).toBe("a b c d e f");
+});
+
+test("stripInlineTokens flattens doclinks to alias/id", () => {
+  expect(stripInlineTokens("[[doc_notes-abc123]]")).toBe("doc_notes-abc123");
+  expect(stripInlineTokens("[[doc_notes-abc123|我的笔记]]")).toBe("我的笔记");
 });
 
 test("stripInlineTokens runs to a fixed point on nested syntax", () => {
