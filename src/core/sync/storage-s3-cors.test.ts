@@ -3,7 +3,7 @@
 // second origin attach the same bucket without clobbering the first's CORS.
 
 import { test, expect } from "bun:test";
-import { buildCorsXml } from "./storage-s3-bun.ts";
+import { buildCorsXml } from "./storage-s3-sign.ts";
 
 const A = "https://homelab.example";
 const B = "https://mh.tensorix.org";

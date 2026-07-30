@@ -12,16 +12,17 @@
 // DELETE) — the one setup step that lets a phone talk to the bucket directly;
 // the settings page surfaces a clear message when it's missing.
 
-import { AwsClient } from "aws4fetch";
 import { MhError } from "../../core/errors.ts";
 import {
   setStorageClientFactory,
-  isVirtualHostedStyle,
   type StorageClient,
   type StorageObject,
   type StoragePutOpts,
   type S3Config,
 } from "../../core/sync/storage.ts";
+// Signer + addressing come from the shared runtime-neutral module, so a fix
+// there can't land on one runtime and 403 the other.
+import { awsSigner, bucketBase, objectUrlOf } from "../../core/sync/storage-s3-sign.ts";
 
 function decodeXmlEntities(s: string): string {
   return s
@@ -33,22 +34,12 @@ function decodeXmlEntities(s: string): string {
 }
 
 function makeClient(config: S3Config): StorageClient {
-  const aws = new AwsClient({
-    accessKeyId: config.accessKeyId,
-    secretAccessKey: config.secretAccessKey,
-    region: config.region || "auto", // R2 uses "auto"
-    service: "s3",
-  });
-  const origin = new URL(config.endpoint).origin;
+  const aws = awsSigner(config);
   // Path-style is `<host>/<bucket>/<key>`; virtual-hosted (COS) is `<host>/<key>`
   // with the bucket already in the host. The base for bucket-level ops (list)
   // follows the same split.
-  const vhost = isVirtualHostedStyle(config);
-  const bucketBase = vhost ? origin : `${origin}/${config.bucket}`;
-  // Encode each key segment but keep the slashes; aws4fetch decodes then
-  // canonically re-encodes for the signature, so a valid URL round-trips.
-  const objectUrl = (key: string) =>
-    `${bucketBase}/${key.split("/").map(encodeURIComponent).join("/")}`;
+  const base = bucketBase(config);
+  const objectUrl = (key: string) => objectUrlOf(config, key);
 
   async function fail(res: Response, what: string): Promise<never> {
     const detail = await res.text().catch(() => "");
@@ -60,7 +51,7 @@ function makeClient(config: S3Config): StorageClient {
       const out: StorageObject[] = [];
       let continuationToken: string | undefined;
       do {
-        const u = new URL(bucketBase);
+        const u = new URL(base);
         u.searchParams.set("list-type", "2");
         u.searchParams.set("prefix", prefix);
         u.searchParams.set("max-keys", "1000");

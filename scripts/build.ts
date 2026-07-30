@@ -19,6 +19,27 @@ if (!libResult.success) {
   throw new Error("Library build failed");
 }
 
+/**
+ * A browser bundle must not depend on the Bun runtime. `import ... from "bun"`
+ * already fails the build, but a bare `Bun.CryptoHasher` / `Bun.Glob` /
+ * `Bun.file` global bundles fine and only explodes when that code path runs —
+ * exactly how a server-only module (core/blobs.ts, core/sites.ts) sneaks in
+ * through one import edge. Fail here, named, instead of at some user's click.
+ */
+async function assertBrowserSafe(name: string): Promise<void> {
+  const js = await Bun.file(`${outdir}/${name}`).text();
+  if (/\bBun\.[A-Za-z]/.test(js)) {
+    throw new Error(
+      `${name} references the Bun global — a Bun-only module leaked into a browser bundle ` +
+        `(use the runtime-adapter seams: storage.ts setStorageClientFactory / setBucketCorsAdmin, ` +
+        `blobs-core.ts setBlobBytesResolver, and import the *-core.ts halves)`,
+    );
+  }
+  if (/from\s*["'](node|bun):/.test(js) || /require\(["'](node|bun):/.test(js)) {
+    throw new Error(`${name} leaked a node:/bun: import — it cannot run in a browser`);
+  }
+}
+
 // Browser WebUI bundle (Preact). Self-hosted so the UI works offline, and kept
 // as its own entrypoint so it never enters the CLI's startup import graph.
 const webuiResult = await Bun.build({
@@ -34,6 +55,7 @@ if (!webuiResult.success) {
   console.error(webuiResult.logs);
   throw new Error("WebUI build failed");
 }
+await assertBrowserSafe("webui.js");
 
 // Service worker (PWA offline shell). Separate classic-script bundle: it must
 // not share module scope with the app, and the server stamps a version hash
@@ -51,6 +73,7 @@ if (!swResult.success) {
   console.error(swResult.logs);
   throw new Error("Service worker build failed");
 }
+await assertBrowserSafe("sw.js");
 
 // Browser-replica DB worker (sqlite-wasm host) + the wasm binary it loads,
 // the injected page runtime, and the sites data SDK.
@@ -72,6 +95,7 @@ for (const [entry, name] of browserBundles) {
     console.error(r.logs);
     throw new Error(`${name} build failed`);
   }
+  await assertBrowserSafe(name);
 }
 
 // Edge worker (write-inbox host script `mh edge deploy` uploads to the user's

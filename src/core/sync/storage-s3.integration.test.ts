@@ -23,7 +23,8 @@ import { createDatabase } from "../databases.ts";
 import { generateMasterKey, toB64 } from "./e2ee.ts";
 import { syncWithStorage, storageClientFor, provisionMasterKey, type S3Config } from "./storage.ts";
 import "./storage-s3-bun.ts"; // registers the Bun.S3Client factory (side effect)
-import { putBucketCors, getBucketCors } from "./storage-s3-bun.ts";
+import { putBucketCors } from "./storage-s3-bun.ts";
+import { getBucketCors } from "./storage-s3-sign.ts";
 
 const E = process.env;
 const HAVE_BUCKET =

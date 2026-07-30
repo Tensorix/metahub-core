@@ -25,6 +25,7 @@ import {
   readPolicy,
   setAnchored,
   writeBlobVerifiedAt,
+  setBlobBytesResolver,
 } from "./blobs-core.ts";
 
 export * from "./blobs-core.ts";
@@ -102,6 +103,12 @@ export async function resolveBlob(db: DbDriver, hash: string): Promise<Uint8Arra
   }
   return null;
 }
+
+// This is the Bun runtime's blob-bytes resolver (see blobs-core.ts
+// setBlobBytesResolver): importing this module registers it, so runtime-neutral
+// callers — share-export.ts, which the browser replica also loads — get real
+// bytes here and the browser's own resolver there.
+setBlobBytesResolver(resolveBlob);
 
 // ---- on-demand presence verify (drives isClearable's `anchored`) -------------
 

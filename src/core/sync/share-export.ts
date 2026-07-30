@@ -19,9 +19,12 @@ import { getDocument } from "../documents.ts";
 import { getDatabase } from "../databases.ts";
 import { listProperties } from "../properties.ts";
 import { listRecords } from "../records.ts";
-import { resolveBlob, blobContentType } from "../blobs.ts";
-import { storageClientFor, type S3Config } from "./storage.ts";
-import { presignGet, putBucketCors, MAX_PRESIGN_SECONDS } from "./storage-s3-bun.ts";
+// blobs-core.ts, not blobs.ts: this module is loaded by the browser replica too
+// (db-worker renewLocalShare → share-actions), and blobs.ts is the node:fs /
+// Bun.file half. Bytes come from whichever resolver the runtime registered.
+import { resolveBlobBytes, hasBlobBytesResolver, blobContentType } from "../blobs-core.ts";
+import { storageClientFor, bucketCorsAdmin, type S3Config } from "./storage.ts";
+import { presignGet, MAX_PRESIGN_SECONDS } from "./storage-s3-sign.ts";
 import {
   encryptBytes,
   decryptBytes,
@@ -146,8 +149,14 @@ async function writeShareObjects(
 
   const objects: string[] = [];
   const blobs: Record<string, { url: string; ct: string }> = {};
+  // An individually unreachable blob is skipped (below) — that's expected. But a
+  // runtime that registered NO resolver would skip EVERY blob and quietly ship a
+  // share with broken images, so that wiring mistake fails loudly instead.
+  if (refHashes.length > 0 && !hasBlobBytesResolver()) {
+    throw new MhError("network", "no blob-bytes resolver is registered for this runtime");
+  }
   for (const hash of refHashes) {
-    const bytes = await resolveBlob(db, hash);
+    const bytes = await resolveBlobBytes(db, hash);
     if (!bytes) continue;
     const key = blobKeyOf(root, opts.slug, hash);
     await client.put(key, await encryptBytes(opts.shareKey, bytes), { contentType: "application/octet-stream" });
@@ -171,8 +180,15 @@ async function writeShareObjects(
  *  (cross-origin presigned GET is CORS-gated). Non-fatal — surfaced as a warning. */
 async function mergeViewerCors(config: S3Config, viewerOrigin?: string): Promise<void> {
   if (!viewerOrigin) return;
+  const putCors = bucketCorsAdmin();
+  if (!putCors) {
+    // Browser replica: it can't open a bucket's CORS for itself (see
+    // storage.ts BucketCorsAdmin). Say so rather than implying we did.
+    console.warn(`share: this runtime cannot open bucket CORS; run it from a device that holds the bucket credentials so the viewer origin ${viewerOrigin} is allowed`);
+    return;
+  }
   try {
-    await putBucketCors(config, [viewerOrigin], { merge: true });
+    await putCors(config, [viewerOrigin], { merge: true });
   } catch (e) {
     console.warn(`share: could not add viewer origin to bucket CORS (${(e as Error).message}); the viewer may be blocked until CORS allows ${viewerOrigin}`);
   }

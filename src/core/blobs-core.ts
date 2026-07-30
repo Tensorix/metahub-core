@@ -19,6 +19,36 @@ import { getNodeId, getNodeLabel } from "./node.ts";
 
 export const POLICY_ID = "default";
 
+/** Fetch a blob's bytes by content hash, from wherever this runtime can reach
+ *  them. Registered per runtime (same adapter shape as room-peer.ts's
+ *  registerRoomBlobResolver): Bun resolves local cache → HTTP peers → buckets
+ *  (blobs.ts resolveBlob), the browser replica resolves OPFS spool → buckets
+ *  (db-worker.ts browserRoomBlob). Declared here, in the driver-only half, so
+ *  runtime-neutral callers reachable from BOTH the server and the browser
+ *  (share-export.ts) can ask for bytes without importing blobs.ts — which would
+ *  drag node:fs / Bun.file into the browser bundle. */
+export type BlobBytesResolver = (db: DbDriver, hash: string) => Promise<Uint8Array | null>;
+let blobBytesResolver: BlobBytesResolver | null = null;
+
+/** `null` unregisters (tests restoring global state; a runtime tearing down). */
+export function setBlobBytesResolver(f: BlobBytesResolver | null): void {
+  blobBytesResolver = f;
+}
+
+/** Bytes for `hash`, or null when unreachable — or when no resolver is
+ *  registered (treated like "unreachable": callers already skip blobs they
+ *  can't fetch rather than failing the whole operation). */
+export function resolveBlobBytes(db: DbDriver, hash: string): Promise<Uint8Array | null> {
+  return blobBytesResolver ? blobBytesResolver(db, hash) : Promise.resolve(null);
+}
+
+/** Whether this runtime wired up a resolver at all. Callers that would otherwise
+ *  read "no resolver" as "every blob is unreachable" check this first, so a
+ *  wiring mistake fails loudly instead of silently shipping a blob-less result. */
+export function hasBlobBytesResolver(): boolean {
+  return blobBytesResolver !== null;
+}
+
 export type Redundancy = "all" | "any";
 
 export interface BlobPolicy {

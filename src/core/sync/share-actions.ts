@@ -14,7 +14,10 @@ import { z } from "zod";
 import { MhError } from "../errors.ts";
 import { randomSuffix } from "../ids.ts";
 import { resolveEntity } from "../resolve.ts";
-import { resolveSite, getSite } from "../sites.ts";
+// sites-core.ts, not sites.ts: the browser replica loads this module, and
+// sites.ts is the Bun.Glob / Bun.file / blob-store half (see sites-core.ts's
+// header). These two lookups are driver-only.
+import { resolveSite, getSite } from "../sites-core.ts";
 import { getDocument } from "../documents.ts";
 import { getDatabase } from "../databases.ts";
 import { listPeers, getPeer } from "./peers.ts";
@@ -36,7 +39,7 @@ import {
   listBucketShares,
   deleteBucketShareObjects,
 } from "./share-export.ts";
-import { MAX_PRESIGN_SECONDS } from "./storage-s3-bun.ts";
+import { MAX_PRESIGN_SECONDS } from "./storage-s3-sign.ts";
 import type { S3Config } from "./storage.ts";
 import { edgeCapabilities, getEdgeConfig } from "./edge-config.ts";
 import { roomUrlOf } from "./room-url.ts";

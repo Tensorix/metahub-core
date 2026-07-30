@@ -19,7 +19,7 @@ import { getNodeId, getNodeLabel, setNodeLabel, displayNodes } from "../../core/
 import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
 import { changesAfterSeq } from "../../core/crdt.ts";
-import { referencedHashes } from "../../core/blobs-core.ts";
+import { referencedHashes, setBlobBytesResolver } from "../../core/blobs-core.ts";
 import { syncWithPeer } from "../../core/sync/client.ts";
 import {
   addPeer,
@@ -290,6 +290,10 @@ async function browserRoomBlob(_driver: DbDriver, hash: string): Promise<Uint8Ar
   return null;
 }
 registerRoomBlobResolver(browserRoomBlob);
+// Same resolver for the runtime-neutral blob seam (blobs-core.ts): it's what
+// lets an s3 share's "refresh content" re-upload image blobs from the browser
+// replica, where core's Bun-side resolveBlob can't run.
+setBlobBytesResolver(browserRoomBlob);
 
 function hasPendingBucketPush(d: DbDriver): boolean {
   const node = getNodeId(d);

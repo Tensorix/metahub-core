@@ -135,6 +135,29 @@ export function storageClientFor(config: S3Config): StorageClient {
   return factory(config);
 }
 
+/** Open a bucket's CORS for browser origins (PutBucketCors). Same runtime-adapter
+ *  shape as the client factory, but unlike list/get/put/del this one has NO
+ *  browser implementation and never will: PutBucketCors needs a Content-MD5 that
+ *  WebCrypto can't produce, and the call would itself be a cross-origin request
+ *  the bucket hasn't whitelisted yet. So a device holding the credentials opens
+ *  CORS on the browser's behalf (see storage-s3-bun.ts). */
+export type BucketCorsAdmin = (
+  config: S3Config,
+  origins: string[],
+  opts?: { merge?: boolean },
+) => Promise<void>;
+let corsAdmin: BucketCorsAdmin | null = null;
+
+export function setBucketCorsAdmin(f: BucketCorsAdmin): void {
+  corsAdmin = f;
+}
+
+/** null on runtimes that structurally can't do this (the browser replica) —
+ *  callers report that honestly instead of pretending CORS was opened. */
+export function bucketCorsAdmin(): BucketCorsAdmin | null {
+  return corsAdmin;
+}
+
 // ---- bucket key layout ----------------------------------------------------------
 
 /** Reserved cursor key for "which snapshots have we already ingested". Real node

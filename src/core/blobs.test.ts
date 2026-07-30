@@ -15,7 +15,12 @@ import {
   cacheStats,
   knownNodes,
 } from "./blobs-core.ts";
-import { knownBuckets } from "./blobs.ts";
+import {
+  hasBlobBytesResolver,
+  resolveBlobBytes,
+  setBlobBytesResolver,
+} from "./blobs-core.ts";
+import { knownBuckets, resolveBlob } from "./blobs.ts";
 import { addStoragePeer } from "./sync/peers.ts";
 import type { S3Config } from "./sync/storage.ts";
 
@@ -167,6 +172,31 @@ test("knownBuckets lists attached s3 peers (empty without)", () => {
   expect(bs[0]).toMatchObject({ url: "s3://bucket/metahub", label: "Home", bucket: "mybucket" });
   // s3 peer never pollutes the node roster
   expect(knownNodes(db).some((n) => n.nodeId === "s3://bucket/metahub")).toBe(false);
+});
+
+// The blob-bytes seam (blobs-core.ts) that lets runtime-neutral callers reachable
+// from BOTH the server and the browser replica — share-export.ts — fetch bytes
+// without importing this node:fs / Bun.file half. A runtime that forgets to
+// register would read as "every blob is unreachable", so pin both halves.
+test("importing blobs.ts registers the Bun blob-bytes resolver", () => {
+  expect(hasBlobBytesResolver()).toBe(true);
+});
+
+test("resolveBlobBytes routes to the registered resolver", async () => {
+  const db = makeNode("n1");
+  const bytes = new Uint8Array([1, 2, 3]);
+  const seen: string[] = [];
+  try {
+    setBlobBytesResolver(async (_db, hash) => {
+      seen.push(hash);
+      return hash === H1 ? bytes : null;
+    });
+    expect(await resolveBlobBytes(db, H1)).toEqual(bytes);
+    expect(await resolveBlobBytes(db, H2)).toBeNull();
+    expect(seen).toEqual([H1, H2]);
+  } finally {
+    setBlobBytesResolver(resolveBlob); // restore the real one for other tests
+  }
 });
 
 test("bucket url is a valid full-blob anchor without affecting node judgments", () => {
