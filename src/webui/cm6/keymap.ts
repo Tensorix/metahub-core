@@ -11,17 +11,24 @@ import {
   outdentCommand,
   smartHome,
   makeExitTop,
+  makeMergeTop,
   makeVoidExit,
   arrowIntoCodeBelow,
   arrowIntoCodeAbove,
 } from "./structure";
 import { duplicateBlock, selectStaged } from "./block-range";
 
-export function structureKeymap(opts: { onExitTop?: () => void } = {}): Extension {
+export function structureKeymap(
+  opts: { onExitTop?: () => void; onMergeTop?: (text: string) => boolean } = {},
+): Extension {
   return Prec.highest(
     keymap.of([
       { key: "Enter", run: enterCommand },
       { key: "Backspace", run: backspaceCommand },
+      // At the very start of the document the "block above" is the title — merge
+      // into it (the delete-direction counterpart of the ArrowUp handoff below).
+      // backspaceCommand always declines at offset 0, so the two never compete.
+      { key: "Backspace", run: makeMergeTop(opts.onMergeTop) },
       { key: "Tab", run: indentCommand, shift: outdentCommand },
       { key: "Home", run: smartHome },
       { key: "Mod-ArrowLeft", run: smartHome },

@@ -82,6 +82,9 @@ function topbarClearance(): number {
 export interface EditorOpts {
   /** ArrowUp on the first visual row hands focus to the title. */
   onExitTop?: () => void;
+  /** Backspace at offset 0 hands the first line's content to the title, which
+   *  appends it and takes the caret. False = no title host, key falls through. */
+  onMergeTop?: (text: string) => boolean;
 }
 
 /** The WYSIWYG layer that "source mode" removes: void widgets, decorations, and

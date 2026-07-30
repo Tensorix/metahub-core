@@ -17,7 +17,7 @@ import { afterAll, test, expect } from "bun:test";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { docModelField } from "./doc-model";
-import { backspaceCommand } from "./structure";
+import { backspaceCommand, makeMergeTop } from "./structure";
 import { markerAtomsField } from "./marker-atoms";
 
 afterAll(() => GlobalRegistrator.unregister());
@@ -71,4 +71,81 @@ test("a whitespace-only line still whole-run-deletes (existing branch wins)", ()
   expect(backspaceCommand(v)).toBe(true);
   expect(v.state.doc.toString()).toBe("a\n"); // whole run gone, not one level
   expect(v.state.selection.main.head).toBe(2);
+});
+
+// Backspace at offset 0 (makeMergeTop): the block above the first line is the
+// TITLE, so the line merges into it — the host takes the text, the line goes.
+// backspaceCommand declines at offset 0, which is what leaves room for this.
+
+/** Collects what the title host was handed; `ok` fakes "a title is mounted". */
+function mkMerge(ok = true) {
+  const seen: string[] = [];
+  return {
+    seen,
+    cmd: makeMergeTop((text) => {
+      seen.push(text);
+      return ok;
+    }),
+  };
+}
+
+test("Backspace at offset 0 hands the first line to the title and deletes it", () => {
+  const m = mkMerge();
+  const v = mkView("first\nsecond", 0);
+  expect(m.cmd(v)).toBe(true);
+  expect(m.seen).toEqual(["first"]);
+  expect(v.state.doc.toString()).toBe("second"); // line AND its newline
+});
+
+test("an empty first line merges nothing and just disappears", () => {
+  const m = mkMerge();
+  const v = mkView("\nbody", 0);
+  expect(m.cmd(v)).toBe(true);
+  expect(m.seen).toEqual([""]);
+  expect(v.state.doc.toString()).toBe("body");
+});
+
+test("the merged text is the line's CONTENT — the marker dies with the block", () => {
+  const m = mkMerge();
+  const v = mkView("1. foo\nbar", 0);
+  expect(m.cmd(v)).toBe(true);
+  expect(m.seen).toEqual(["foo"]); // not "1. foo"
+  expect(v.state.doc.toString()).toBe("bar");
+});
+
+test("a single-line document merges and leaves an empty body", () => {
+  const m = mkMerge();
+  const v = mkView("only", 0);
+  expect(m.cmd(v)).toBe(true);
+  expect(m.seen).toEqual(["only"]);
+  expect(v.state.doc.toString()).toBe("");
+});
+
+test("a void opening the document keeps its own Backspace", () => {
+  const m = mkMerge();
+  const doc = "```js\nx\n```\ntail";
+  const v = mkView(doc, 0);
+  expect(m.cmd(v)).toBe(false);
+  expect(m.seen).toEqual([]);
+  expect(v.state.doc.toString()).toBe(doc);
+});
+
+test("no merge away from offset 0, on a selection, or without a title host", () => {
+  const away = mkMerge();
+  expect(away.cmd(mkView("first\nsecond", 1))).toBe(false);
+
+  const ranged = mkMerge();
+  expect(ranged.cmd(mkView("first\nsecond", 0, 3))).toBe(false);
+
+  const noHost = mkMerge(false); // host declined (no title mounted)
+  const v = mkView("first\nsecond", 0);
+  expect(noHost.cmd(v)).toBe(false);
+  expect(v.state.doc.toString()).toBe("first\nsecond"); // nothing deleted
+
+  expect(makeMergeTop(undefined)(mkView("first", 0))).toBe(false);
+});
+
+test("backspaceCommand itself still declines at offset 0 (the two don't compete)", () => {
+  expect(backspaceCommand(mkView("# h\nbody", 0))).toBe(false);
+  expect(backspaceCommand(mkView("para", 0))).toBe(false);
 });

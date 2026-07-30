@@ -614,3 +614,32 @@ export function makeExitTop(onExitTop?: () => void) {
     return false;
   };
 }
+
+/** Backspace at the very start of the document: the block ABOVE the first line is
+ *  the title, so the line merges INTO it — the host appends the text and parks the
+ *  caret at the seam, and the line (plus its newline) goes away. Same title/body
+ *  seam as makeExitTop (ArrowUp), delete direction.
+ *
+ *  What merges is the line's CONTENT, not its raw text: a block absorbed by the
+ *  block above loses its own type, so `1. foo` hands over `foo` and the marker
+ *  dies with the line. Deliberately coords-free (unlike makeExitTop) — position 0
+ *  is unambiguously the first visual row, so the command stays headless-testable. */
+export function makeMergeTop(onMergeTop?: (text: string) => boolean) {
+  return function mergeTop(view: EditorView): boolean {
+    if (!onMergeTop || view.composing) return false;
+    const sel = view.state.selection.main;
+    if (!sel.empty || sel.head !== 0) return false;
+    const model = docModel(view.state);
+    // A void opening the document owns its own Backspace (select, then delete).
+    if (voidAt(model, 0)) return false;
+    const line = model.lines[0];
+    if (!line) return false;
+    const text = view.state.sliceDoc(line.contentFrom, line.to);
+    if (!onMergeTop(text)) return false; // no title host — hand the key back
+    const to = Math.min(view.state.doc.length, line.to + 1); // take the newline too
+    if (to > 0) {
+      view.dispatch({ changes: { from: 0, to, insert: "" }, selection: { anchor: 0 }, userEvent: "delete" });
+    }
+    return true;
+  };
+}

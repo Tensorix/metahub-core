@@ -42,6 +42,9 @@ export interface CmDocBodyProps {
   onChange?: () => void;
   onReady?: (h: CmHandle) => void;
   onExitTop?: () => void;
+  /** Backspace at offset 0: the first line's content merges into the title.
+   *  Returns false when there is no title host (key falls through to CM). */
+  onMergeTop?: (text: string) => boolean;
   onError?: (message: string) => void;
   /** Open the image preview (desktop native window / in-page lightbox — owned
    *  by the host DocView). Reaches the image widgets via the voidDeps facet. */
@@ -73,10 +76,12 @@ export function CmDocBody(props: CmDocBodyProps) {
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(props.onChange);
   const onExitTopRef = useRef(props.onExitTop);
+  const onMergeTopRef = useRef(props.onMergeTop);
   const onErrorRef = useRef(props.onError);
   const onPreviewImageRef = useRef(props.onPreviewImage);
   onChangeRef.current = props.onChange;
   onExitTopRef.current = props.onExitTop;
+  onMergeTopRef.current = props.onMergeTop;
   onErrorRef.current = props.onError;
   onPreviewImageRef.current = props.onPreviewImage;
 
@@ -84,7 +89,10 @@ export function CmDocBody(props: CmDocBodyProps) {
     const parent = hostRef.current;
     if (!parent) return;
 
-    const opts = { onExitTop: () => onExitTopRef.current?.() };
+    const opts = {
+      onExitTop: () => onExitTopRef.current?.(),
+      onMergeTop: (text: string) => onMergeTopRef.current?.(text) ?? false,
+    };
     const view = new EditorView({
       parent,
       state: EditorState.create({

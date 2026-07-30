@@ -15,7 +15,7 @@ import { mediaFilesFrom, uploadFilesAt } from "./cm6/chrome/upload-paste.tsx";
 import { openDocFind } from "./cm6/chrome/find.tsx";
 import { previewAnchor, setPreviewAnchor } from "./cm6/chrome/preview-anchor.ts";
 import { blockToText, type Block } from "./blocks.ts";
-import { flattenToText, plainPasteHandlers } from "./plain-edit.ts";
+import { flattenToText, insertPlainText, plainPasteHandlers } from "./plain-edit.ts";
 import { ImageLightbox } from "./media/image-lightbox.tsx";
 
 export type DocMode = "blocks" | "source";
@@ -314,17 +314,42 @@ export function DocView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Focus the document title (the contentEditable above the body), caret at end.
-  const focusTitle = () => {
-    const el = document.querySelector(".doc-title") as HTMLElement | null;
+  // Focus the document title (the contentEditable above the body). Caret at the
+  // end by default, or at `offset` characters in (the merge seam below). Goes
+  // through titleElRef, never a global `.doc-title` lookup: quicknote embeds a
+  // second DocView, and a document-wide selector would grab whichever came first.
+  const focusTitle = (offset?: number) => {
+    const el = titleElRef.current;
     if (!el) return;
     el.focus();
     const r = document.createRange();
     r.selectNodeContents(el);
     r.collapse(false); // caret to the end of the title
+    const node = el.firstChild;
+    if (offset != null && node?.nodeType === Node.TEXT_NODE) {
+      r.setStart(node, Math.min(offset, node.textContent?.length ?? 0));
+      r.collapse(true);
+    }
     const s = getSelection();
     s?.removeAllRanges();
     s?.addRange(r);
+  };
+
+  // Backspace at the very start of the body: the title is the block above, so the
+  // first line merges into it — its text lands at the title's end and the caret
+  // parks at the seam. insertPlainText (execCommand) is the one insertion that
+  // joins the contentEditable's native undo stack, so the merge stays undoable on
+  // the title side. False = no title mounted, CM keeps the key.
+  const mergeIntoTitle = (text: string): boolean => {
+    const el = titleElRef.current;
+    if (!el) return false;
+    const seam = (el.textContent ?? "").length;
+    focusTitle(); // caret at the end, where the merged text goes
+    if (text) insertPlainText(text); // fires onInput (flatten + titleRef + save)
+    focusTitle(seam);
+    titleRef.current = el.textContent ?? ""; // the Range fallback emits no input
+    scheduleSave();
+    return true;
   };
 
   if (loading) return <div class="empty">加载中…</div>;
@@ -418,7 +443,8 @@ export function DocView({
           source={mode === "source"}
           onChange={scheduleSave}
           onReady={(h) => { cmRef.current = h; }}
-          onExitTop={focusTitle}
+          onExitTop={() => focusTitle()}
+          onMergeTop={mergeIntoTitle}
           onError={onError}
           onPreviewImage={openImagePreview}
         />
