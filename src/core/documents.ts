@@ -376,13 +376,20 @@ export const updateDocument = grouped(function updateDocument(
   fields: { title?: string; body?: string; database_id?: string; parent_id?: string | null },
   opts: { ifMatch?: string } = {},
 ): DocumentRow {
-  if (!getDocument(db, id)) throw new MhError("not_found", `no such document: ${id}`);
+  const doc = getDocument(db, id);
+  if (!doc) throw new MhError("not_found", `no such document: ${id}`);
   // Same staleness backstop as editDocument: a version from documentVersion()
   // rejects the write if the doc changed since the caller read it.
   if (opts.ifMatch !== undefined && documentVersion(db, id) !== opts.ifMatch)
     throw new MhError("stale", `stale: document changed since ${opts.ifMatch}; re-read first`);
-  if (fields.title !== undefined) emit(db, "documents", id, "title", fields.title);
-  if (fields.database_id !== undefined) emit(db, "documents", id, "database_id", fields.database_id);
+  // Only emit registers that actually change. Editors send the full field set
+  // on every autosave; re-asserting an unchanged value would bloat the oplog
+  // AND advance the register's HLC, letting a no-op save on one device beat a
+  // real concurrent edit from another in the LWW merge.
+  if (fields.title !== undefined && fields.title !== (doc.title ?? ""))
+    emit(db, "documents", id, "title", fields.title);
+  if (fields.database_id !== undefined && fields.database_id !== (doc.database_id ?? null))
+    emit(db, "documents", id, "database_id", fields.database_id);
   if (fields.parent_id !== undefined) {
     // Reparenting moves the document into a new sibling scope, so its order_key
     // must be reassigned too — placeInSiblings keeps both consistent (and guards

@@ -129,6 +129,7 @@ import type {
   DocRevision,
   RecordRevision,
   FieldChange,
+  FieldHistoryEntry,
   DatabaseActivityEntry,
   DocumentVersionState as DocVersionState,
   RecordVersionState,
@@ -140,6 +141,7 @@ export type {
   DocRevision,
   RecordRevision,
   FieldChange,
+  FieldHistoryEntry,
   DatabaseActivityEntry,
   DocVersionState,
   RecordVersionState,
@@ -768,6 +770,8 @@ const httpApi = {
     ),
   recordAt: (id: string, version: string) =>
     req<RecordVersionState>("GET", `/api/record/at?id=${q(id)}&version=${q(version)}`),
+  recordFieldHistory: (id: string, prop: string) =>
+    req<FieldHistoryEntry[]>("GET", `/api/record/field-history?id=${q(id)}&prop=${q(prop)}`),
   revertRecord: (id: string, to: string) =>
     req<RevertRecordResult>("POST", `/api/record/revert?id=${q(id)}`, { to }),
   nodes: () => req<NodeInfo[]>("GET", "/api/nodes"),

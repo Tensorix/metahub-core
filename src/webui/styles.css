@@ -1362,6 +1362,7 @@
   .proprow { display:flex; gap:8px; align-items:flex-start; margin:1px 0; }
   .proprow .k { width:160px; flex:none; color:var(--muted); display:flex; align-items:center; gap:7px; font-size:13px; padding:7px 8px; border-radius:var(--radius-sm); }
   .proprow .k:hover { background:var(--hover); }
+  .peek .proprow .k { cursor:pointer; }
   .proprow .v { flex:1; padding:7px 8px; border-radius:var(--radius-sm); cursor:text; min-height:33px; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
   .proprow .v:hover { background:var(--hover); }
   .peek-divider { height:1px; background:var(--line); margin:22px 0 18px; }
@@ -1372,7 +1373,7 @@
   .hist-toggle { display:flex; align-items:center; gap:5px; font-size:var(--fs-sm); color:var(--muted); cursor:pointer; user-select:none; white-space:nowrap; }
   .hist-toggle input { accent-color:var(--accent); }
   .hist-split { display:flex; flex:1; min-height:0; }
-  .hist-list { width:252px; flex:none; overflow:auto; border-right:1px solid var(--line); padding:8px; }
+  .hist-list { width:252px; flex:none; overflow:auto; border-right:1px solid var(--line); padding:8px; user-select:none; }
   .hist-item { padding:8px 10px; border-radius:var(--radius-sm); cursor:pointer; }
   .hist-item:hover { background:var(--hover); }
   .hist-item.sel { background:var(--accent-soft); }
@@ -1388,14 +1389,6 @@
   .hist-now { font-size:var(--fs-xs); padding:1px 6px; border-radius:99px; background:var(--accent); color:var(--accent-fg); }
   .hist-preview { flex:1; overflow:auto; padding:20px 24px; }
   .hist-doc-title { font-size:21px; font-weight:700; letter-spacing:-.02em; margin-bottom:14px; }
-  .hist-block { white-space:pre-wrap; font-size:var(--fs-body); line-height:1.65; padding:2px 6px; border-radius:4px; margin:0 -6px 12px; }
-  /* line-level diff rows (git-like): pale full-line tint, darker tint on the
-     intra-line changed segment; strikethrough only on the deleted segment. */
-  .hist-line { white-space:pre-wrap; font-size:var(--fs-body); line-height:1.6; padding:1px 6px; margin:0 -6px; border-radius:3px; }
-  .hist-line.add { background:color-mix(in srgb, var(--success) 13%, transparent); }
-  .hist-line.del { background:var(--danger-soft); }
-  .hist-line.add .seg { background:color-mix(in srgb, var(--success) 32%, transparent); border-radius:2px; }
-  .hist-line.del .seg { background:color-mix(in srgb, var(--danger) 28%, transparent); border-radius:2px; text-decoration:line-through; }
   .hist-foot { display:flex; justify-content:flex-end; padding:12px 16px; border-top:1px solid var(--line); }
   .pad { padding:12px; }
   .hist-rec-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
@@ -1412,6 +1405,95 @@
   .hist-field .arr { color:var(--muted); }
   .hist-field .new { font-weight:500; }
   .hist-restore { margin-top:8px; align-self:flex-start; }
+  /* mode switch (变更 / 预览 / 源码) */
+  .hist-modes { display:flex; gap:2px; background:var(--surface-2); border-radius:var(--radius-sm); padding:2px; }
+  .hist-mode { border:0; background:none; font-size:var(--fs-sm); color:var(--muted); padding:3px 10px; border-radius:calc(var(--radius-sm) - 2px); cursor:pointer; white-space:nowrap; }
+  .hist-mode:hover { color:var(--fg); }
+  .hist-mode.on { background:var(--bg); color:var(--fg); font-weight:500; box-shadow:var(--shadow-sm); }
+  /* timeline: sticky date-group headers + folded minor-edit clusters */
+  .hist-group { position:sticky; top:-8px; z-index:1; background:var(--bg); font-size:var(--fs-xs); font-weight:600; color:var(--muted); padding:8px 10px 3px; }
+  .hist-cluster .row1 .when { font-weight:500; color:var(--muted); }
+  .hist-cluster-kids { border-left:2px solid var(--line); margin-left:10px; padding-left:4px; }
+  /* pinned compare base */
+  .hist-pin { border:0; background:none; color:var(--muted); padding:2px; border-radius:var(--radius-sm); cursor:pointer; display:none; line-height:0; }
+  .hist-item:hover .hist-pin, .hist-item.is-base .hist-pin { display:block; }
+  .hist-pin:hover { color:var(--fg); background:var(--hover-2); }
+  .hist-item.is-base { box-shadow:inset 3px 0 var(--accent); }
+  .hist-item.is-base .hist-pin { color:var(--accent); }
+  .hist-basechip { display:inline-flex; align-items:center; gap:4px; font-size:var(--fs-sm); color:var(--accent); background:var(--accent-soft); border-radius:99px; padding:2px 6px 2px 10px; margin-bottom:12px; }
+  .hist-basechip button { border:0; background:none; color:inherit; cursor:pointer; line-height:0; padding:2px; border-radius:99px; }
+  .hist-basechip button:hover { background:color-mix(in srgb, var(--accent) 18%, transparent); }
+  /* preview banners / hints */
+  .hist-banner { font-size:var(--fs-sm); color:var(--danger); background:var(--danger-soft); border-radius:var(--radius-sm); padding:6px 10px; margin-bottom:12px; }
+  .hist-hint { font-size:var(--fs-sm); color:var(--muted); background:var(--surface-2); border-radius:var(--radius-sm); padding:6px 10px; margin-bottom:12px; }
+  .hist-tag { display:inline-block; font-size:var(--fs-xs); color:var(--muted); border:1px solid var(--line); border-radius:99px; padding:1px 8px; margin-bottom:10px; }
+  .hist-doc-title del { color:var(--muted); font-weight:500; text-decoration-color:var(--danger); }
+  .hist-title-arr { color:var(--muted); font-weight:400; margin:0 8px; }
+  /* rendered markdown (preview mode) — editor-adjacent typography */
+  .hist-md { font-size:var(--fs-body); line-height:1.65; overflow-wrap:break-word; }
+  .hist-md h1 { font-size:24px; font-weight:700; letter-spacing:-.02em; margin:8px 0; }
+  .hist-md h2 { font-size:19px; font-weight:700; letter-spacing:-.01em; margin:6px 0; }
+  .hist-md h3 { font-size:16px; font-weight:600; margin:5px 0; }
+  .hist-md p { margin:0 0 10px; }
+  .hist-md ul, .hist-md ol { margin:0 0 10px; padding-left:24px; }
+  .hist-md li { margin:2px 0; }
+  .hist-md pre { background:var(--code-bg, var(--surface-2)); border-radius:var(--radius-sm); padding:10px 12px; overflow-x:auto; font-family:var(--mono); font-size:var(--fs-sm); margin:0 0 10px; }
+  .hist-md code { font-family:var(--mono); font-size:.92em; background:var(--surface-2); border-radius:3px; padding:1px 4px; }
+  .hist-md pre code { background:none; padding:0; }
+  .hist-md blockquote { border-left:3px solid var(--line-strong); margin:0 0 10px; padding:2px 0 2px 12px; color:var(--fg-soft); }
+  .hist-md table { border-collapse:collapse; margin:0 0 10px; font-size:var(--fs-sm); }
+  .hist-md th, .hist-md td { border:1px solid var(--line); padding:4px 10px; text-align:left; }
+  .hist-md img, .hist-md video { max-width:100%; border-radius:var(--radius-sm); }
+  .hist-md hr { border:0; border-top:1px solid var(--line); margin:14px 0; }
+  .hist-md a { color:var(--accent); }
+  .hist-md .mh-doclink { color:var(--accent); border-bottom:1px dashed color-mix(in srgb, var(--accent) 45%, transparent); }
+  /* GitHub-style unified diff (changes mode): number gutters, +/- markers,
+     pale full-line tint, darker tint on the intra-line changed segment. Prose
+     lines read in the document's body font; only fenced-code lines go mono. */
+  .hist-gh { font-size:var(--fs-body); line-height:1.65; border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; }
+  .hist-dl { display:flex; align-items:baseline; }
+  .hist-dl .no { flex:none; width:26px; text-align:right; padding-right:5px; color:color-mix(in srgb, var(--muted) 72%, transparent); font-family:var(--mono); font-size:var(--fs-micro); user-select:none; }
+  .hist-dl .mark { flex:none; width:14px; text-align:center; color:var(--muted); font-family:var(--mono); font-size:var(--fs-sm); user-select:none; }
+  .hist-dl .txt { flex:1; min-width:0; white-space:pre-wrap; word-break:break-word; padding-right:10px; }
+  .hist-dl.mono .txt { font-family:var(--mono); font-size:var(--fs-sm); line-height:1.7; }
+  .hist-dl.add { background:color-mix(in srgb, var(--success) 11%, transparent); }
+  .hist-dl.add .no { background:color-mix(in srgb, var(--success) 20%, transparent); }
+  .hist-dl.add .mark { color:var(--success); }
+  .hist-dl.del { background:var(--danger-soft); }
+  .hist-dl.del .no { background:color-mix(in srgb, var(--danger) 16%, transparent); }
+  .hist-dl.del .mark { color:var(--danger); }
+  .hist-dl.add .seg { background:color-mix(in srgb, var(--success) 32%, transparent); border-radius:2px; }
+  .hist-dl.del .seg { background:color-mix(in srgb, var(--danger) 26%, transparent); border-radius:2px; }
+  .hist-fold { display:flex; align-items:center; gap:6px; width:100%; text-align:left; background:color-mix(in srgb, var(--accent) 7%, transparent); color:var(--muted); font-size:var(--fs-xs); padding:4px 12px; cursor:pointer; border:0; font-family:var(--ui); }
+  .hist-fold:hover { background:color-mix(in srgb, var(--accent) 13%, transparent); color:var(--fg); }
+  /* rich-text diff (changes mode): the rendered document with word-level marks;
+     whole added/removed blocks get a wash + edge bar, removed text is struck. */
+  .hist-rich .rd { border-radius:6px; padding:3px 10px; margin:0 -10px 2px; }
+  .hist-rich .rd > :last-child { margin-bottom:0; }
+  .hist-rich .rd.add { background:color-mix(in srgb, var(--success) 9%, transparent); box-shadow:inset 3px 0 var(--success); }
+  .hist-rich .rd.del { background:var(--danger-soft); box-shadow:inset 3px 0 var(--danger); opacity:.78;
+    text-decoration:line-through; text-decoration-color:color-mix(in srgb, var(--danger) 50%, transparent); }
+  .hist-rich del.rdx { background:color-mix(in srgb, var(--danger) 16%, transparent); border-radius:2px;
+    text-decoration:line-through; text-decoration-color:color-mix(in srgb, var(--danger) 55%, transparent); }
+  .hist-rich ins.rdi { background:color-mix(in srgb, var(--success) 24%, transparent); border-radius:2px; text-decoration:none; }
+  .hist-rich .hist-fold { border-radius:6px; margin:2px 0 4px; }
+  /* activity feed filters */
+  .hist-filters { display:flex; gap:8px; align-items:center; padding:8px 24px; border-bottom:1px solid var(--line); }
+  .hist-filters select { font-size:var(--fs-sm); color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm); padding:3px 6px; max-width:180px; }
+  .hist-clear { border:0; background:none; color:var(--muted); font-size:var(--fs-sm); cursor:pointer; }
+  .hist-clear:hover { color:var(--fg); }
+  button.hist-recname { border:0; background:none; padding:0; color:inherit; cursor:pointer; }
+  button.hist-recname:hover { color:var(--accent); }
+  /* cell-level write trail modal */
+  .hist-fh { display:flex; flex-direction:column; }
+  .hist-fh-row { display:flex; gap:10px; align-items:baseline; padding:7px 2px; border-bottom:1px solid var(--line); font-size:var(--fs-sm); }
+  .hist-fh-row:last-child { border-bottom:0; }
+  .hist-fh-row .when { flex:none; width:90px; font-weight:500; }
+  .hist-fh-row .who { flex:none; width:80px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hist-fh-row .val { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hist-fh-row .val.cleared { color:var(--muted); text-decoration:line-through; }
+  button.fname.link { border:0; background:none; padding:0; text-align:left; cursor:pointer; font-size:inherit; }
+  button.fname.link:hover { color:var(--accent); text-decoration:underline; text-decoration-style:dashed; }
 
   /* menu / popover */
   .menu-layer { position:fixed; inset:0; z-index:115; }

@@ -73,6 +73,7 @@ export const localApi = {
   deleteRecord: (id: string) => rpc("deleteRecord", id),
   recordHistory: (id: string) => rpc("listRecordRevisions", id),
   recordAt: (id: string, version: string) => rpc("recordAtVersion", id, version),
+  recordFieldHistory: (id: string, prop: string) => rpc("recordFieldHistory", id, prop),
   revertRecord: (id: string, to: string) => rpc("revertRecord", id, to),
 
   // documents

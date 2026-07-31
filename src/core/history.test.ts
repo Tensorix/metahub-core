@@ -65,6 +65,50 @@ test("document history clusters saves into revisions, newest first", () => {
   expect(revs[0]!.version).toBe(documentVersion(db, doc.id));
 });
 
+test("unchanged fields on save don't pollute history", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "Spec", body: "alpha" });
+
+  // Editor-style autosave: full field set, title untouched. Must not emit a
+  // title register write (a same-value re-assert would also advance the LWW
+  // clock and beat a real concurrent rename from another device).
+  advanceClock(db, 10_000);
+  updateDocument(db, doc.id, { title: "Spec", body: "alpha\n\nbeta" });
+  // Pure no-op save: nothing changed → no revision at all.
+  advanceClock(db, 10_000);
+  updateDocument(db, doc.id, { title: "Spec" });
+
+  const revs = listDocumentRevisions(db, doc.id);
+  expect(revs.length).toBe(2);
+  expect(revs[0]!.title_changed).toBe(false);
+  expect(revs[0]!.blocks_changed).toBe(1);
+});
+
+test("legacy same-value title writes don't flag title_changed", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "Spec", body: "alpha" });
+  // Simulate the old unconditional-emit behavior via a raw register write.
+  advanceClock(db, 10_000);
+  emit(db, "documents", doc.id, "title", "Spec");
+  emit(db, "doc_blocks", listBlockIds(db, doc.id)[0]!, "text", "alpha2");
+  advanceClock(db, 10_000);
+  // A revision that is ONLY a no-op re-assert disappears from the list.
+  emit(db, "documents", doc.id, "title", "Spec");
+
+  const revs = listDocumentRevisions(db, doc.id);
+  expect(revs.length).toBe(2);
+  expect(revs[0]!.title_changed).toBe(false);
+  expect(revs[0]!.blocks_changed).toBe(1);
+});
+
+function listBlockIds(db: Database, docId: string): string[] {
+  return (
+    db
+      .query("SELECT id FROM doc_blocks WHERE doc_id = ? ORDER BY order_key")
+      .all(docId) as { id: string }[]
+  ).map((r) => r.id);
+}
+
 test("documentAtVersion reconstructs each past state exactly", () => {
   const db = makeNode("aaaa");
   // Extra blank lines exercise blank_after round-tripping through history.

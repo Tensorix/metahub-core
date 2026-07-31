@@ -3,29 +3,38 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   api,
   ApiError,
-  type DatabaseActivityEntry,
   type Doc,
   type DocRevision,
   type DocVersionState,
   type NodeInfo,
-  type Prop,
-  type Rec,
-  type RecordRevision,
-  type RecordVersionState,
   type RevisionKind,
 } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { timeAgo } from "./date.ts";
 import { confirmDialog, toast, useDrawerTransition } from "./ui.tsx";
+import { renderMarkdown, type RenderOpts } from "../core/sync/share-render.ts";
+import { docLinkTitle } from "./doc-titles.ts";
+import {
+  buildDocTimeline,
+  diffLines,
+  foldSame,
+  richDiffSections,
+  type DiffLine,
+  type TimelineEntry,
+} from "./hist-diff.ts";
 
-// Version history UI. Reads the oplog-backed /api/*/history endpoints; restore
-// is a forward write on the server (the revert itself becomes a new revision),
-// so nothing here ever rewrites history.
+// Document version history drawer. Reads the oplog-backed /api/document/*
+// endpoints; restore is a forward write on the server (the revert itself
+// becomes a new revision), so nothing here ever rewrites history.
+//
+// Diff semantics are GitHub-like: a revision diffs against its PREVIOUS
+// revision by default ("what did this edit change"), against a pinned base
+// when the user picks one. Record/activity panels live in history-record.tsx.
 
 const KIND_LABEL: Record<RevisionKind, string> = { user: "", repair: "修复", revert: "回滚" };
 
 /** node_id -> display name ("本设备" / pairing label / short id). */
-function useNodeNames(): (id: string) => string {
+export function useNodeNames(): (id: string) => string {
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   useEffect(() => {
     api.nodes().then(setNodes).catch(() => {});
@@ -37,93 +46,21 @@ function useNodeNames(): (id: string) => string {
   };
 }
 
-function KindBadge({ kind }: { kind: RevisionKind }) {
+export function KindBadge({ kind }: { kind: RevisionKind }) {
   if (kind === "user") return null;
   return <span class={"hist-kind " + kind}>{KIND_LABEL[kind]}</span>;
 }
 
-// ---- block diff (display-only) ----------------------------------------------
-
-/** Longest common subsequence pairs — same alignment rule the core reconcile
- *  uses, re-implemented here for display only (core/blocks.ts isn't bundled). */
-function lcs(a: string[], b: string[]): [number, number][] {
-  const dp: number[][] = Array.from({ length: a.length + 1 }, () =>
-    new Array<number>(b.length + 1).fill(0),
-  );
-  for (let i = a.length - 1; i >= 0; i--)
-    for (let j = b.length - 1; j >= 0; j--)
-      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
-  const pairs: [number, number][] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      pairs.push([i, j]);
-      i++;
-      j++;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) i++;
-    else j++;
-  }
-  return pairs;
+export function fmtVal(v: unknown): string {
+  if (v === undefined) return "（空）";
+  if (v === null) return "（空）";
+  if (typeof v === "string") return v === "" ? "（空）" : v;
+  return JSON.stringify(v);
 }
 
-/** Blank-line blocks — only for the read-only (non-diff) preview rendering. */
-const splitBlocks = (body: string): string[] => (body ? body.split(/\n{2,}/) : []);
-
-/** Diff units are LINES (git-like), inside code fences too. Blank lines are
- *  separators, not content — letting them match each other only manufactures
- *  false alignments between unrelated regions. */
-const splitLines = (body: string): string[] =>
-  body ? body.split("\n").filter((l) => l.trim() !== "") : [];
-
-type DiffRow = {
-  kind: "same" | "add" | "del";
-  text: string;
-  /** Intra-line emphasis: [unchanged prefix, changed middle, unchanged suffix]. */
-  seg?: [string, string, string];
-};
-
-/**
- * GitHub-style intra-line marks: the i-th deleted line in a gap pairs with the
- * i-th added line; stripping their common prefix/suffix leaves the middle that
- * actually changed. Lines that share too little read as a rewrite, not an
- * in-place edit — no marks for those (a fully-dark line is just noise).
- */
-function markSegments(dels: DiffRow[], adds: DiffRow[]): void {
-  for (let i = 0; i < Math.min(dels.length, adds.length); i++) {
-    const o = dels[i]!.text;
-    const n = adds[i]!.text;
-    let p = 0;
-    while (p < o.length && p < n.length && o[p] === n[p]) p++;
-    let s = 0;
-    while (s < o.length - p && s < n.length - p && o[o.length - 1 - s] === n[n.length - 1 - s]) s++;
-    if (p + s < Math.max(o.length, n.length) * 0.3) continue;
-    dels[i]!.seg = [o.slice(0, p), o.slice(p, o.length - s), o.slice(o.length - s)];
-    adds[i]!.seg = [n.slice(0, p), n.slice(p, n.length - s), n.slice(n.length - s)];
-  }
-}
-
-/** What restoring `target` over `current` would do: del = lines that vanish,
- *  add = lines that come back. */
-function diffLines(current: string, target: string): DiffRow[] {
-  const a = splitLines(current);
-  const b = splitLines(target);
-  const keep = lcs(a, b);
-  const rows: DiffRow[] = [];
-  let ai = 0;
-  let bi = 0;
-  for (const [ka, kb] of [...keep, [a.length, b.length] as [number, number]]) {
-    const dels: DiffRow[] = [];
-    const adds: DiffRow[] = [];
-    for (; ai < ka; ai++) dels.push({ kind: "del", text: a[ai]! });
-    for (; bi < kb; bi++) adds.push({ kind: "add", text: b[bi]! });
-    markSegments(dels, adds);
-    rows.push(...dels, ...adds);
-    if (ka < a.length) rows.push({ kind: "same", text: a[ka]! });
-    ai = ka + 1;
-    bi = kb + 1;
-  }
-  return rows;
+/** HLC version token -> wall-clock millis (first 15 digits). */
+export function timeFromVersion(version: string): number {
+  return Number(version.slice(0, 15)) || Date.now();
 }
 
 // ---- document history drawer -------------------------------------------------
@@ -138,6 +75,92 @@ function docSummary(r: DocRevision): string {
   return parts.join("、") || "元数据";
 }
 
+type Mode = "changes" | "source" | "preview";
+const MODE_LABEL: Record<Mode, string> = { changes: "变更", source: "源码", preview: "预览" };
+
+/** Rendered rich-text diff for non-technical reading: the document as it looks,
+ *  with word-level <del>/<ins> marks and washed added/removed blocks. Long
+ *  unchanged runs fold behind an expander. Remounted (keyed) per comparison so
+ *  fold state resets with the selection. */
+function RichDiff({
+  base,
+  target,
+  render,
+}: {
+  base: string;
+  target: string;
+  render: (md: string) => string;
+}) {
+  const [opened, setOpened] = useState<Set<number>>(new Set());
+  const sections = useMemo(() => richDiffSections(base, target, render), [base, target, render]);
+  return (
+    <div class="hist-md hist-rich">
+      {sections.map((s, i) =>
+        s.kind === "rows" || opened.has(i) ? (
+          <div key={i} dangerouslySetInnerHTML={{ __html: s.html }} />
+        ) : (
+          <button
+            key={"f" + i}
+            class="hist-fold"
+            onClick={() => setOpened(new Set(opened).add(i))}
+          >
+            <Icon name="chevronDown" cls="ico sm" />
+            展开 {s.blocks} 个未变更块
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** GitHub-style unified diff: line-number gutters, +/- markers, intra-line
+ *  emphasis, long unchanged runs folded behind an expander. Remounted (keyed)
+ *  per comparison so fold state resets with the selection. */
+function GhDiff({ rows }: { rows: DiffLine[] }) {
+  const [opened, setOpened] = useState<Set<number>>(new Set());
+  const sections = useMemo(() => foldSame(rows), [rows]);
+  const line = (r: DiffLine, i: number) => (
+    <div key={i} class={"hist-dl " + r.kind + (r.mono ? " mono" : "")}>
+      <span class="no">{r.oldNo ?? ""}</span>
+      <span class="no">{r.newNo ?? ""}</span>
+      <span class="mark">{r.kind === "add" ? "+" : r.kind === "del" ? "−" : ""}</span>
+      <span class="txt">
+        {r.seg ? (
+          <>
+            {r.seg[0]}
+            <span class="seg">{r.seg[1]}</span>
+            {r.seg[2]}
+          </>
+        ) : (
+          // A real blank line still needs row height.
+          r.text || " "
+        )}
+      </span>
+    </div>
+  );
+  return (
+    <div class="hist-gh">
+      {sections.map((s, si) =>
+        s.kind === "rows" || opened.has(si) ? (
+          s.rows.map(line)
+        ) : (
+          <button
+            key={"f" + si}
+            class="hist-fold"
+            onClick={() => setOpened(new Set(opened).add(si))}
+          >
+            <Icon name="chevronDown" cls="ico sm" />
+            展开 {s.rows.length} 行未变更内容
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** Cache slot: a fetched version state, or "missing" (compacted away). */
+type CachedState = DocVersionState | "missing";
+
 export function DocHistoryPanel({
   docId,
   onClose,
@@ -151,10 +174,17 @@ export function DocHistoryPanel({
   const [revs, setRevs] = useState<DocRevision[] | null>(null);
   const [cur, setCur] = useState<Doc | null>(null);
   const [sel, setSel] = useState<string | null>(null);
-  const [preview, setPreview] = useState<DocVersionState | null>(null);
+  /** Net-diff override set when a collapsed cluster is selected as a whole. */
+  const [selBase, setSelBase] = useState<string | null>(null);
+  /** User-pinned compare base (shift-click / pin button); beats selBase. */
+  const [pinnedBase, setPinnedBase] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("changes");
   const [showAll, setShowAll] = useState(false);
-  const [diff, setDiff] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [openClusters, setOpenClusters] = useState<Set<string>>(new Set());
+  const states = useRef(new Map<string, CachedState>());
+  const inflight = useRef(new Set<string>());
+  const [, bump] = useState(0);
   const nodeName = useNodeNames();
 
   const load = () =>
@@ -162,29 +192,134 @@ export function DocHistoryPanel({
       .then(([r, d]) => {
         setRevs(r);
         setCur(d);
+        // Seed the cache with HEAD — opening the drawer selects it, no extra
+        // /document/at round-trip needed.
+        if (d.version)
+          states.current.set(d.version, {
+            id: d.id,
+            title: d.title ?? "",
+            body: d.body ?? "",
+            deleted: false,
+            version: d.version,
+          });
         setSel((s) => s ?? r[0]?.version ?? null);
       })
       .catch((e) => toast(String((e as Error).message)));
   useEffect(() => {
+    states.current.clear();
+    setSel(null);
+    setSelBase(null);
+    setPinnedBase(null);
     load();
   }, [docId]);
 
-  useEffect(() => {
-    if (!sel) return setPreview(null);
-    api.documentAt(docId, sel).then(setPreview).catch(() => setPreview(null));
-  }, [docId, sel]);
+  const fetchState = (version: string) => {
+    if (states.current.has(version) || inflight.current.has(version)) return;
+    inflight.current.add(version);
+    api
+      .documentAt(docId, version)
+      .then((s) => states.current.set(version, s))
+      .catch(() => states.current.set(version, "missing"))
+      .finally(() => {
+        inflight.current.delete(version);
+        bump((n) => n + 1);
+      });
+  };
 
   const visible = useMemo(
     () => (revs ?? []).filter((r) => showAll || r.kind !== "repair"),
     [revs, showAll],
   );
+  const timeline = useMemo(() => buildDocTimeline(visible), [visible]);
+
+  const idxOf = (v: string | null) =>
+    v == null ? -1 : (revs ?? []).findIndex((r) => r.version === v);
+
+  // Default base = the next-older revision in the FULL list (repairs included:
+  // hiding them must not re-attribute their changes to the next user edit).
+  const selIdx = idxOf(sel);
+  const defaultBase = selIdx >= 0 ? (revs![selIdx + 1]?.version ?? null) : null;
+  // Pinned comparisons always diff old → new regardless of click order.
+  let targetV = sel;
+  let baseV = pinnedBase ?? selBase ?? defaultBase;
+  if (pinnedBase && sel && pinnedBase > sel) {
+    targetV = pinnedBase;
+    baseV = sel;
+  }
+
+  useEffect(() => {
+    if (targetV) fetchState(targetV);
+    if (baseV) fetchState(baseV);
+  }, [targetV, baseV]);
+
+  const EMPTY = useMemo<DocVersionState>(
+    () => ({ id: docId, title: "", body: "", deleted: false, version: "" }),
+    [docId],
+  );
+  const rawTarget = targetV ? states.current.get(targetV) : undefined;
+  const rawBase = baseV ? states.current.get(baseV) : undefined;
+  const target = rawTarget === "missing" ? EMPTY : rawTarget;
+  const base = baseV == null || rawBase === "missing" ? EMPTY : rawBase;
+  const loading =
+    (targetV != null && rawTarget === undefined) || (baseV != null && rawBase === undefined);
+  const baseMissing = rawBase === "missing";
   const isHead = sel != null && revs?.[0]?.version === sel;
+  const selRev = selIdx >= 0 ? revs![selIdx] : undefined;
+  const isOldest = selIdx >= 0 && selIdx === revs!.length - 1;
+  /** Oldest revision that isn't the document's creation: older history was
+   *  compacted away — the "vs previous" diff degrades to "vs empty". */
+  const compactEdge = baseMissing || (isOldest && !!selRev && !selRev.created && baseV == null);
+  /** Pinned base equals the selection — a diff would be trivially empty. Only
+   *  meaningful in the two diff modes; preview renders the snapshot anyway. */
+  const sameCmp = pinnedBase != null && pinnedBase === sel && mode !== "preview";
+  const pinnedRev = pinnedBase ? revs?.find((r) => r.version === pinnedBase) : undefined;
+
+  const mdOpts = useMemo<RenderOpts>(
+    () => ({
+      resolveDocLink: (id) => {
+        const t = docLinkTitle(id);
+        return t ? { title: t } : null;
+      },
+    }),
+    [],
+  );
+  const md = (text: string) => ({ __html: renderMarkdown(text, mdOpts) });
+  const renderMd = useMemo(() => (text: string) => renderMarkdown(text, mdOpts), [mdOpts]);
+
+  const lineRows = useMemo(
+    () => (mode === "source" && base && target ? diffLines(base.body, target.body) : null),
+    [mode, base, target],
+  );
+
+  const select = (v: string) => {
+    setSel(v);
+    setSelBase(null);
+  };
+  const togglePin = (v: string) => setPinnedBase((p) => (p === v ? null : v));
+
+  /** Base for a cluster's net diff: the revision just before its oldest member. */
+  const clusterNetBase = (revsInCluster: DocRevision[]) => {
+    const oldest = revsInCluster[revsInCluster.length - 1]!;
+    const i = idxOf(oldest.version);
+    return i >= 0 ? (revs![i + 1]?.version ?? null) : null;
+  };
+  const toggleCluster = (c: Extract<TimelineEntry, { type: "cluster" }>) => {
+    const key = c.revs[0]!.version;
+    const next = new Set(openClusters);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setOpenClusters(next);
+    // Either way, select the cluster's net change (newest member vs the state
+    // before the run began) — collapsing keeps that as the collapsed row's diff.
+    setSel(key);
+    setSelBase(clusterNetBase(c.revs));
+  };
 
   const restore = async () => {
-    if (!sel || !preview) return;
+    if (!sel || !target) return;
     const ok = await confirmDialog({
       title: "恢复到此版本？",
-      message: `标题和正文将恢复到 ${new Date(preview.version ? timeFromVersion(preview.version) : Date.now()).toLocaleString()} 的状态。此操作会作为一次新修订记录，任何版本都仍可从历史找回。`,
+      message: `标题和正文将恢复到 ${new Date(timeFromVersion(sel)).toLocaleString()} 的状态。此操作会作为一次新修订记录，任何版本都仍可从历史找回。`,
       confirmLabel: "恢复",
     });
     if (!ok) return;
@@ -197,6 +332,7 @@ export function DocHistoryPanel({
     } catch (e) {
       if (e instanceof ApiError && e.code === "stale") {
         toast("文档刚被其他端修改，已刷新，请重试");
+        states.current.clear();
         await load();
       } else {
         toast(String((e as Error).message));
@@ -205,6 +341,71 @@ export function DocHistoryPanel({
       setBusy(false);
     }
   };
+
+  const revRow = (r: DocRevision) => (
+    <div
+      key={r.version}
+      class={
+        "hist-item" +
+        (sel === r.version ? " sel" : "") +
+        (pinnedBase === r.version ? " is-base" : "")
+      }
+      onClick={(ev) => (ev.shiftKey ? togglePin(r.version) : select(r.version))}
+    >
+      <div class="row1">
+        <span class="when" title={new Date(r.at).toLocaleString()}>
+          {timeAgo(r.at)}
+        </span>
+        <KindBadge kind={r.kind} />
+        {revs?.[0]?.version === r.version && <span class="hist-now">当前</span>}
+        <div style={{ flex: 1 }} />
+        <button
+          class="hist-pin"
+          title={pinnedBase === r.version ? "取消对比基准" : "设为对比基准（Shift+点击）"}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            togglePin(r.version);
+          }}
+        >
+          <Icon name="pin" cls="ico sm" />
+        </button>
+      </div>
+      <div class="row2">
+        <span class="who">{nodeName(r.node_id)}</span>
+        <span class="what">{docSummary(r)}</span>
+      </div>
+    </div>
+  );
+
+  const clusterRow = (c: Extract<TimelineEntry, { type: "cluster" }>) => {
+    const key = c.revs[0]!.version;
+    const isOpen = openClusters.has(key);
+    const selInside = c.revs.some((r) => r.version === sel);
+    return (
+      <div key={"c" + key}>
+        <div
+          class={"hist-item hist-cluster" + (!isOpen && selInside ? " sel" : "")}
+          onClick={() => toggleCluster(c)}
+        >
+          <div class="row1">
+            <span class="when" title={new Date(c.revs[0]!.at).toLocaleString()}>
+              {timeAgo(c.revs[0]!.at)}
+            </span>
+            <div style={{ flex: 1 }} />
+            <Icon name={isOpen ? "chevronDown" : "chevron"} cls="ico sm" />
+          </div>
+          <div class="row2">
+            <span class="who">{nodeName(c.revs[0]!.node_id)}</span>
+            <span class="what">{c.revs.length} 次连续小修改</span>
+          </div>
+        </div>
+        {isOpen && <div class="hist-cluster-kids">{c.revs.map(revRow)}</div>}
+      </div>
+    );
+  };
+
+  const titleChanged =
+    mode !== "preview" && !!baseV && !baseMissing && !!base && !!target && base.title !== target.title;
 
   return (
     <>
@@ -219,10 +420,17 @@ export function DocHistoryPanel({
             版本历史
           </span>
           <div style={{ flex: 1 }} />
-          <label class="hist-toggle">
-            <input type="checkbox" checked={diff} onInput={() => setDiff(!diff)} />
-            对比当前
-          </label>
+          <div class="hist-modes">
+            {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
+              <button
+                key={m}
+                class={"hist-mode" + (mode === m ? " on" : "")}
+                onClick={() => setMode(m)}
+              >
+                {MODE_LABEL[m]}
+              </button>
+            ))}
+          </div>
           <label class="hist-toggle">
             <input type="checkbox" checked={showAll} onInput={() => setShowAll(!showAll)} />
             显示修复
@@ -231,319 +439,89 @@ export function DocHistoryPanel({
         <div class="hist-split">
           <div class="hist-list">
             {revs === null && <div class="muted pad">加载中…</div>}
-            {visible.map((r) => (
-              <div
-                key={r.version}
-                class={"hist-item" + (sel === r.version ? " sel" : "")}
-                onClick={() => setSel(r.version)}
-              >
-                <div class="row1">
-                  <span class="when" title={new Date(r.at).toLocaleString()}>
-                    {timeAgo(r.at)}
-                  </span>
-                  <KindBadge kind={r.kind} />
-                  {revs?.[0]?.version === r.version && <span class="hist-now">当前</span>}
-                </div>
-                <div class="row2">
-                  <span class="who">{nodeName(r.node_id)}</span>
-                  <span class="what">{docSummary(r)}</span>
-                </div>
+            {timeline.map((g, gi) => (
+              <div key={gi + ":" + g.label}>
+                <div class="hist-group">{g.label}</div>
+                {g.entries.map((e) => (e.type === "rev" ? revRow(e.rev) : clusterRow(e)))}
               </div>
             ))}
           </div>
           <div class="hist-preview">
-            {preview && (
+            {pinnedRev && (
+              <div class="hist-basechip">
+                对比基准：{timeAgo(pinnedRev.at)}
+                <button title="清除基准" onClick={() => setPinnedBase(null)}>
+                  <Icon name="x" cls="ico sm" />
+                </button>
+              </div>
+            )}
+            {target && target.deleted && <div class="hist-banner">此修订删除了文档</div>}
+            {mode !== "preview" && selRev?.created && isOldest && (
+              <div class="hist-tag">初始版本</div>
+            )}
+            {mode !== "preview" && compactEdge && !sameCmp && (
+              <div class="hist-hint">更早的修订已被存储压缩合并，此处按整篇新增显示</div>
+            )}
+            {sameCmp && <div class="muted pad">两个版本相同。</div>}
+            {!sameCmp && target && !loading && (
               <>
-                <div class="hist-doc-title">{preview.title || "无标题"}</div>
-                {diff && !isHead
-                  ? diffLines(cur?.body ?? "", preview.body).map((row, i) => (
-                      <div key={i} class={"hist-line " + row.kind}>
-                        {row.seg ? (
-                          <>
-                            {row.seg[0]}
-                            <span class="seg">{row.seg[1]}</span>
-                            {row.seg[2]}
-                          </>
-                        ) : (
-                          row.text
-                        )}
-                      </div>
-                    ))
-                  : splitBlocks(preview.body).map((text, i) => (
-                      <div key={i} class="hist-block">
-                        {text}
-                      </div>
-                    ))}
-                {!preview.body && <div class="muted">（空文档）</div>}
+                <div class="hist-doc-title">
+                  {titleChanged ? (
+                    <>
+                      <del>{base!.title || "无标题"}</del>
+                      <span class="hist-title-arr">→</span>
+                      {target.title || "无标题"}
+                    </>
+                  ) : (
+                    target.title || "无标题"
+                  )}
+                </div>
+                {mode === "preview" &&
+                  (target.body ? (
+                    <div class="hist-md" dangerouslySetInnerHTML={md(target.body)} />
+                  ) : (
+                    <div class="muted">（空文档）</div>
+                  ))}
+                {mode === "changes" &&
+                  base &&
+                  (base.body === target.body ? (
+                    target.body ? (
+                      <div class="muted">此修订未改动正文。</div>
+                    ) : (
+                      <div class="muted">（空文档）</div>
+                    )
+                  ) : (
+                    <RichDiff
+                      key={(baseV ?? "") + "→" + (targetV ?? "")}
+                      base={base.body}
+                      target={target.body}
+                      render={renderMd}
+                    />
+                  ))}
+                {mode === "source" &&
+                  lineRows &&
+                  (lineRows.some((r) => r.kind !== "same") ? (
+                    <GhDiff key={(baseV ?? "") + "→" + (targetV ?? "")} rows={lineRows} />
+                  ) : lineRows.length === 0 ? (
+                    <div class="muted">（空文档）</div>
+                  ) : (
+                    <div class="muted">此修订未改动正文。</div>
+                  ))}
               </>
             )}
-            {!preview && sel && <div class="muted pad">加载中…</div>}
+            {loading && sel && <div class="muted pad">加载中…</div>}
           </div>
         </div>
         <div class="hist-foot">
-          <button class="btn btn-primary" disabled={!sel || isHead || busy} onClick={restore}>
+          <button
+            class="btn btn-primary"
+            disabled={!sel || isHead || busy || !target || target.deleted}
+            onClick={restore}
+          >
             恢复到此版本
           </button>
         </div>
       </div>
     </>
-  );
-}
-
-/** HLC version token -> wall-clock millis (first 15 digits). */
-function timeFromVersion(version: string): number {
-  return Number(version.slice(0, 15)) || Date.now();
-}
-
-// ---- database activity (read-only feed across all records) -------------------
-
-/** Status word for an activity entry; plain edits let the value diffs speak. */
-function activityStatus(e: DatabaseActivityEntry): string {
-  if (e.deleted) return "已删除";
-  if (e.created) return "创建";
-  if (e.moved && !e.diffs.length) return "调整排序";
-  return "";
-}
-
-const ACTIVITY_DIFF_PREVIEW = 3;
-
-/** "What happened in this table lately" — a read-only drawer with inline
- *  old→new value diffs. Titles come from the server's per-revision snapshot,
- *  so deleted records still show their last title. */
-export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () => void }) {
-  const { open, close } = useDrawerTransition(onClose);
-  const [entries, setEntries] = useState<DatabaseActivityEntry[] | null>(null);
-  const [names, setNames] = useState<Map<string, string>>(new Map());
-  const [showAll, setShowAll] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const nodeName = useNodeNames();
-
-  useEffect(() => {
-    Promise.all([api.databaseActivity(dbId), api.listProperties(dbId)])
-      .then(([acts, props]) => {
-        setEntries(acts);
-        setNames(new Map(props.map((p) => [p.id, p.name])));
-      })
-      .catch((e) => toast(String((e as Error).message)));
-  }, [dbId]);
-
-  const visible = (entries ?? []).filter((e) => showAll || e.kind !== "repair");
-
-  return (
-    <>
-      <div class={"scrim" + (open ? " open" : "")} onClick={close} />
-      <div class={"peek" + (open ? " open" : "")}>
-        <div class="peek-head">
-          <button class="iconbtn" onClick={close}>
-            <Icon name="x" />
-          </button>
-          <span class="hist-title">
-            <Icon name="history" cls="ico sm" />
-            最近动态
-          </span>
-          <div style={{ flex: 1 }} />
-          <label class="hist-toggle">
-            <input type="checkbox" checked={showAll} onInput={() => setShowAll(!showAll)} />
-            显示修复
-          </label>
-        </div>
-        <div class="peek-body hist-feed">
-          {entries === null && <div class="muted pad">加载中…</div>}
-          {entries !== null && visible.length === 0 && <div class="muted pad">暂无动态。</div>}
-          {visible.map((e) => {
-            const key = e.record_id + e.version;
-            const all = expanded.has(key);
-            const diffs = all ? e.diffs : e.diffs.slice(0, ACTIVITY_DIFF_PREVIEW);
-            const status = activityStatus(e);
-            return (
-              <div key={key} class="hist-item static">
-                <div class="row1">
-                  <span class="when" title={new Date(e.at).toLocaleString()}>
-                    {timeAgo(e.at)}
-                  </span>
-                  <KindBadge kind={e.kind} />
-                  <span class="hist-recname">{e.record_title || e.record_id}</span>
-                  {status && <span class="hist-status">{status}</span>}
-                </div>
-                <div class="row2">
-                  <span class="who">{nodeName(e.node_id)}</span>
-                </div>
-                {diffs.length > 0 && (
-                  <div class="hist-fields">
-                    {diffs.map((d) => (
-                      <div key={d.prop} class="hist-field">
-                        <span class="fname">{names.get(d.prop) ?? "（已删字段）"}</span>
-                        {!e.created && (
-                          <span class="old" title={fmtVal(d.before)}>
-                            {fmtVal(d.before)}
-                          </span>
-                        )}
-                        {!e.created && <span class="arr">→</span>}
-                        <span class="new" title={fmtVal(d.after)}>
-                          {fmtVal(d.after)}
-                        </span>
-                      </div>
-                    ))}
-                    {e.diffs.length > ACTIVITY_DIFF_PREVIEW && !all && (
-                      <button
-                        class="hist-more"
-                        onClick={() => setExpanded(new Set(expanded).add(key))}
-                      >
-                        …还有 {e.diffs.length - ACTIVITY_DIFF_PREVIEW} 项
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ---- record history (rendered inside the record peek) ------------------------
-
-function recSummary(r: RecordRevision, names: Map<string, string>): string {
-  const parts: string[] = [];
-  if (r.created) parts.push("创建");
-  if (r.deleted) parts.push("删除");
-  if (r.fields.length)
-    parts.push(r.fields.map((f) => names.get(f) ?? "（已删字段）").join("、"));
-  if (r.moved && !parts.length) parts.push("排序");
-  return parts.join("；") || "元数据";
-}
-
-function fmtVal(v: unknown): string {
-  if (v === undefined) return "（空）";
-  if (v === null) return "（空）";
-  if (typeof v === "string") return v === "" ? "（空）" : v;
-  return JSON.stringify(v);
-}
-
-export function RecordHistoryView({
-  rec,
-  props,
-  onReverted,
-}: {
-  rec: Rec;
-  props: Prop[];
-  onReverted: () => void;
-}) {
-  const [revs, setRevs] = useState<RecordRevision[] | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  const states = useRef(new Map<string, RecordVersionState>());
-  const [, bump] = useState(0);
-  const nodeName = useNodeNames();
-  const names = useMemo(() => new Map(props.map((p) => [p.id, p.name])), [props]);
-
-  const load = () =>
-    api
-      .recordHistory(rec.id)
-      .then(setRevs)
-      .catch((e) => toast(String((e as Error).message)));
-  useEffect(() => {
-    load();
-  }, [rec.id]);
-
-  const stateAt = async (version: string): Promise<RecordVersionState> => {
-    const hit = states.current.get(version);
-    if (hit) return hit;
-    const s = await api.recordAt(rec.id, version);
-    states.current.set(version, s);
-    bump((n) => n + 1);
-    return s;
-  };
-
-  const expand = (r: RecordRevision, prev: RecordRevision | undefined) => {
-    if (expanded === r.version) return setExpanded(null);
-    setExpanded(r.version);
-    void stateAt(r.version);
-    if (prev) void stateAt(prev.version);
-  };
-
-  const restore = async (r: RecordRevision) => {
-    const ok = await confirmDialog({
-      title: "恢复到此版本？",
-      message: "记录字段将恢复到该修订时的值。此操作会作为一次新修订记录。",
-      confirmLabel: "恢复",
-    });
-    if (!ok) return;
-    try {
-      await api.revertRecord(rec.id, r.version);
-      toast("已恢复");
-      states.current.clear();
-      onReverted();
-      await load();
-    } catch (e) {
-      toast(String((e as Error).message));
-    }
-  };
-
-  const visible = (revs ?? []).filter((r) => showAll || r.kind !== "repair");
-
-  return (
-    <div class="hist-rec">
-      <div class="hist-rec-head">
-        <span class="hist-title">
-          <Icon name="history" cls="ico sm" />
-          修改历史
-        </span>
-        <label class="hist-toggle">
-          <input type="checkbox" checked={showAll} onInput={() => setShowAll(!showAll)} />
-          显示修复
-        </label>
-      </div>
-      {revs === null && <div class="muted pad">加载中…</div>}
-      {revs !== null && visible.length === 0 && <div class="muted pad">暂无历史。</div>}
-      {visible.map((r, i) => {
-        const prev = visible[i + 1];
-        const curState = states.current.get(r.version);
-        const prevState = prev ? states.current.get(prev.version) : undefined;
-        const fields = r.created && curState ? Object.keys(curState.data) : r.fields;
-        return (
-          <div key={r.version} class="hist-item static">
-            <div class="row1" onClick={() => expand(r, prev)}>
-              <span class="when" title={new Date(r.at).toLocaleString()}>
-                {timeAgo(r.at)}
-              </span>
-              <KindBadge kind={r.kind} />
-              {i === 0 && <span class="hist-now">当前</span>}
-              <div style={{ flex: 1 }} />
-              <Icon name={expanded === r.version ? "chevronDown" : "chevron"} cls="ico sm" />
-            </div>
-            <div class="row2" onClick={() => expand(r, prev)}>
-              <span class="who">{nodeName(r.node_id)}</span>
-              <span class="what">{recSummary(r, names)}</span>
-            </div>
-            {expanded === r.version && (
-              <div class="hist-fields">
-                {!curState && <div class="muted">加载中…</div>}
-                {curState &&
-                  fields.map((f) => {
-                    const before = prevState ? prevState.data[f] : undefined;
-                    const after = curState.data[f];
-                    return (
-                      <div key={f} class="hist-field">
-                        <span class="fname">{names.get(f) ?? "（已删字段）"}</span>
-                        {prev && <span class="old">{fmtVal(before)}</span>}
-                        {prev && <span class="arr">→</span>}
-                        <span class="new">{fmtVal(after)}</span>
-                      </div>
-                    );
-                  })}
-                {curState && i !== 0 && (
-                  <button class="btn btn-secondary hist-restore" onClick={() => restore(r)}>
-                    恢复到此版本
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
   );
 }

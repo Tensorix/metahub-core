@@ -23,7 +23,7 @@ import {
 } from "./ui.tsx";
 import { SYNCED_EVENT } from "./data/replica.ts";
 import { Chip, CellDisplay, coerceInput, cellText } from "./cells.tsx";
-import { RecordHistoryView } from "./history.tsx";
+import { openFieldHistory, RecordHistoryView } from "./history-record.tsx";
 import { BoardView } from "./board.tsx";
 import { CalendarView } from "./calendar.tsx";
 import { TimelineView } from "./timeline.tsx";
@@ -1060,7 +1060,14 @@ function RecordPeek({
               </h2>
               {props.map((p) => (
                 <div key={p.id} class="proprow">
-                  <div class="k"><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span></div>
+                  <div
+                    class="k"
+                    onClick={(e) =>
+                      openMenu(e, (close) => (
+                        <MenuItem icon="history" label="字段修改历史" onClick={() => { close(); openFieldHistory(rec.id, p.id, p.name); }} />
+                      ))
+                    }
+                  ><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span></div>
                   <PeekValue
                     prop={p}
                     rec={rec}

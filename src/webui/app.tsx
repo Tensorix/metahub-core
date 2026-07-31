@@ -33,7 +33,8 @@ import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { ImagePreviewWindow } from "./media/image-preview-window.tsx";
-import { DocHistoryPanel, DbActivityPanel } from "./history.tsx";
+import { DocHistoryPanel } from "./history.tsx";
+import { DbActivityPanel } from "./history-record.tsx";
 import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
 import {
   UiHost,

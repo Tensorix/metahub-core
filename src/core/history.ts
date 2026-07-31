@@ -153,39 +153,58 @@ export interface DocRevision {
 export function listDocumentRevisions(db: DbDriver, id: string): DocRevision[] {
   const changes = docChanges(db, id);
   if (!changes.length) throw new MhError("not_found", `no such document: ${id}`);
-  return clusterRevisions(changes)
-    .map((group) => {
-      const changedBlocks = new Set<string>();
-      const deletedBlocks = new Set<string>();
-      let created = false;
-      let deleted = false;
-      let titleChanged = false;
-      for (const c of group) {
-        if (c.dataset === "documents") {
-          if (c.col === "created_hlc") created = true;
-          else if (c.col === "title") titleChanged = true;
-          else if (c.col === "__deleted") deleted = flagSet(c.value);
-        } else if (c.col === "__deleted" && flagSet(c.value)) {
-          deletedBlocks.add(c.row_id);
-        } else if (c.col === "text") {
-          changedBlocks.add(c.row_id);
-        }
+  // Running values of the doc-level registers, so flags reflect VALUE changes,
+  // not mere register writes. Historical oplogs are full of same-value title
+  // re-asserts (autosave used to send the title unconditionally); comparing
+  // values keeps those from flagging every revision as "title changed", and a
+  // group that changes nothing at all (only no-op re-asserts) is dropped.
+  const reg = new Map<string, string | null>();
+  const out: DocRevision[] = [];
+  for (const group of clusterRevisions(changes)) {
+    const changedBlocks = new Set<string>();
+    const deletedBlocks = new Set<string>();
+    const docWrites = new Map<string, string | null>(); // col -> last value in group
+    let created = false;
+    let deleted = false;
+    let blockWrites = 0;
+    for (const c of group) {
+      if (c.dataset === "documents") {
+        docWrites.set(c.col, c.value);
+        if (c.col === "created_hlc") created = true;
+        else if (c.col === "__deleted") deleted = flagSet(c.value);
+      } else {
+        blockWrites++;
+        if (c.col === "__deleted" && flagSet(c.value)) deletedBlocks.add(c.row_id);
+        else if (c.col === "text") changedBlocks.add(c.row_id);
       }
-      const last = group[group.length - 1]!;
-      return {
-        version: last.hlc,
-        at: hlcIso(last.hlc),
-        node_id: last.node_id,
-        kind: revisionKind(last.txn),
-        changes: group.length,
-        created,
-        deleted,
-        title_changed: titleChanged,
-        blocks_changed: changedBlocks.size,
-        blocks_deleted: deletedBlocks.size,
-      };
-    })
-    .reverse();
+    }
+    let titleChanged = false;
+    let docEffects = 0;
+    for (const [col, value] of docWrites) {
+      // Unknown prior value (first sight, or compacted-away history) counts as
+      // a change — dropping a revision must never be a guess.
+      const changed = !reg.has(col) || reg.get(col) !== value;
+      reg.set(col, value);
+      if (!changed) continue;
+      docEffects++;
+      if (col === "title") titleChanged = true;
+    }
+    if (docEffects === 0 && blockWrites === 0) continue;
+    const last = group[group.length - 1]!;
+    out.push({
+      version: last.hlc,
+      at: hlcIso(last.hlc),
+      node_id: last.node_id,
+      kind: revisionKind(last.txn),
+      changes: group.length,
+      created,
+      deleted,
+      title_changed: titleChanged,
+      blocks_changed: changedBlocks.size,
+      blocks_deleted: deletedBlocks.size,
+    });
+  }
+  return out.reverse();
 }
 
 export interface DocumentVersionState {
