@@ -220,6 +220,76 @@ function mergeWords(oldText: string, newText: string): { merged: string; dels: n
   return { merged, dels, adds };
 }
 
+/** Leading block-structure markers: list bullets / ordered numbers (with an
+ *  optional todo box), heading hashes, quote arrows — possibly nested. */
+const MARKER_RE = /^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?|#{1,6}\s+|>\s*)+/;
+const markerOf = (line: string): string => MARKER_RE.exec(line)?.[0] ?? "";
+const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
+
+/**
+ * Line-structured sentinel merge of a paired (edited) block. Marks never span
+ * a line, so they can never straddle rendered element boundaries (the failure
+ * that used to knock a 12-item list back to a stacked whole-block diff when
+ * two items were appended). Structure markers stay OUTSIDE the marks so the
+ * grammar still recognizes each line; lines align by their marker-stripped
+ * text, so inserting one list item doesn't flag every renumbered neighbour —
+ * they silently adopt their new number. Returns null for table blocks: a
+ * wrapped row no longer parses as a row, those pairs render stacked.
+ */
+function mergeBlock(
+  oldText: string,
+  newText: string,
+): { merged: string; dels: number; adds: number } | null {
+  if (/^\s*\|/.test(oldText) || /^\s*\|/.test(newText)) return null;
+  const fence = FENCE_LINE.test(oldText) || FENCE_LINE.test(newText);
+  const a = oldText.split("\n");
+  const b = newText.split("\n");
+  const strip = (l: string) => (fence ? l : l.slice(markerOf(l).length));
+  const keep = lcs(a.map(strip), b.map(strip));
+  const out: string[] = [];
+  let dels = 0;
+  let adds = 0;
+  // Whole added/removed line: wrap its content, keep the marker bare. Fence
+  // markers / blank / marker-only lines carry structure, not words — unmarked.
+  const wrapLine = (line: string, open: string, close: string): string | null => {
+    if (!line.trim() || FENCE_LINE.test(line)) return null;
+    const m = fence ? "" : markerOf(line);
+    const rest = line.slice(m.length);
+    if (!rest.trim()) return null;
+    return m + open + rest + close;
+  };
+  let ai = 0;
+  let bi = 0;
+  for (const [ka, kb] of [...keep, [a.length, b.length] as [number, number]]) {
+    const gapA = a.slice(ai, ka);
+    const gapB = b.slice(bi, kb);
+    const n = Math.min(gapA.length, gapB.length);
+    for (let i = 0; i < n; i++) {
+      const om = fence ? "" : markerOf(gapA[i]!);
+      const nm = fence ? "" : markerOf(gapB[i]!);
+      const r = mergeWords(gapA[i]!.slice(om.length), gapB[i]!.slice(nm.length));
+      out.push(nm + r.merged);
+      dels += r.dels;
+      adds += r.adds;
+    }
+    for (let i = n; i < gapA.length; i++) {
+      const w = wrapLine(gapA[i]!, DEL_O, DEL_C);
+      if (w != null) dels++;
+      out.push(w ?? gapA[i]!);
+    }
+    for (let i = n; i < gapB.length; i++) {
+      const w = wrapLine(gapB[i]!, ADD_O, ADD_C);
+      if (w != null) adds++;
+      out.push(w ?? gapB[i]!);
+    }
+    // Same by stripped key — adopt the NEW line (its marker may have changed).
+    if (ka < a.length) out.push(b[kb] ?? a[ka]!);
+    ai = ka + 1;
+    bi = kb + 1;
+  }
+  return { merged: out.join("\n"), dels, adds };
+}
+
 const VOID_TAGS = new Set(["img", "br", "hr", "input", "source", "track", "wbr", "area", "col", "embed"]);
 
 /** True when every sentinel survived rendering as swappable text: right
@@ -298,9 +368,10 @@ export function richDiffSections(
     const oldHtml = render(oldText);
     const newHtml = render(newText);
     if (firstTag(oldHtml) !== firstTag(newHtml)) return stacked(oldText, newText);
-    const { merged, dels, adds } = mergeWords(oldText, newText);
-    const html = render(merged);
-    if (firstTag(html) !== firstTag(newHtml) || !sentinelsSafe(html, dels, adds))
+    const mb = mergeBlock(oldText, newText);
+    if (!mb) return stacked(oldText, newText);
+    const html = render(mb.merged);
+    if (firstTag(html) !== firstTag(newHtml) || !sentinelsSafe(html, mb.dels, mb.adds))
       return stacked(oldText, newText);
     return wrap(
       "edit",

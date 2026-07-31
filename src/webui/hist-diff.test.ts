@@ -141,6 +141,39 @@ describe("richDiffSections", () => {
     expect(addOnly).toContain('<div class="rd add"><p>b</p></div>');
   });
 
+  test("appending items to a long list marks only the new items", () => {
+    const oldList = "硬边界\n\n1. 只接派单。\n2. 先澄清。\n3. 先自检。\n4. 密钥零回显。";
+    const newList = oldList + "\n5. 沙盒命令一次一条。\n6. 长任务定期小结。";
+    const out = html(oldList, newList);
+    expect(out).toContain('class="rd edit"');
+    expect(out).not.toContain('class="rd del"'); // the old items must NOT read as deleted-and-rewritten
+    expect(out).not.toContain("<del");
+    expect(out).toContain('<ins class="rdi">沙盒命令一次一条。</ins>');
+    expect(out).toContain('<ins class="rdi">长任务定期小结。</ins>');
+  });
+
+  test("inserting mid-list doesn't flag the renumbered neighbours", () => {
+    const out = html("1. 甲\n2. 乙\n3. 丙", "1. 甲\n2. 新\n3. 乙\n4. 丙");
+    expect(out).toContain('class="rd edit"');
+    expect(out).toContain('<ins class="rdi">新</ins>');
+    expect(out).not.toContain("<del"); // 乙/丙 only changed number — silent
+  });
+
+  test("editing one line of a multi-line block marks just that line", () => {
+    const out = html("第一行\n第二行旧\n第三行", "第一行\n第二行新\n第三行");
+    expect(out).toContain('class="rd edit"');
+    expect(out).toContain('<del class="rdx">旧</del>');
+    expect(out).toContain('<ins class="rdi">新</ins>');
+    expect((out.match(/<ins/g) ?? []).length).toBe(1);
+  });
+
+  test("table block edits fall back to stacked", () => {
+    const out = html("| a | b |\n| - | - |\n| 1 | 2 |", "| a | b |\n| - | - |\n| 1 | 3 |");
+    expect(out).toContain('class="rd del"');
+    expect(out).toContain('class="rd add"');
+    expect(out).not.toContain('class="rd edit"');
+  });
+
   test("code fence edits keep the fence rendered as code", () => {
     const out = html("```ts\nconst a = 1;\n```", "```ts\nconst a = 2;\n```");
     expect(out).toContain("<pre>");
