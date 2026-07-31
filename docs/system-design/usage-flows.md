@@ -219,7 +219,9 @@ mh restore backup.mhpack --reset --force
 
 ```bash
 mh --server --port 7777
-mh sync http://host:7777
+mh sync                        # 立即同步:每台已配置设备 + 每个桶
+mh sync http://host:7777       # 只对某个服务器跑一轮
+mh status                      # 数据在哪几处、每处有多新、首要问题是什么
 
 # 也可与本地文件互导（同一条命令，双参数即进入导出/导入）
 mh sync architecture arch.md   # 文档 → markdown
@@ -227,18 +229,21 @@ mh sync tasks tasks.csv        # 数据表 → CSV
 mh sync arch.md architecture   # markdown → 文档（反向导入）
 
 # 设备接入:HTTP 配对码,或对象存储桶 enroll(离线转发,两端无需同时在线)
-mh config peer code                          # A 机生成一次性配对码
-mh config peer add --url http://A:7777 --code <code> --self-url http://B:7777   # B 机配对
-mh config peer add --enroll <code>           # 用 enroll 码/扫码挂对象存储桶(S3 转发)
+mh config device code                        # A 机生成一次性配对码
+mh config device add --url http://A:7777 --code <code>    # B 机配对
+mh config backup connect --enroll <code>     # 用 enroll 码/扫码挂对象存储桶(S3 转发)
 
 # 公开分享:把文档/数据库/站点发布成能力链接
 mh share create <ref> --permission view [--password <pw>] [--expires 7d]
 mh share list | mh share revoke <slug>
 ```
 
+> 命令分层:日常**工具**在顶层(`sync`/`status`/`cache`/`doctor`/`compact`/`edge status|pull`),改**长期状态**的都在 `mh config <server|device|backup|edge>` 下;旧的 `config peer` / `config grant` 拼写仍作隐藏别名可用。
+
 当前体验结论:
 
 - 可用于备份、迁移和简单多节点同步;HTTP 对等直连,或经对象存储桶做离线 store-and-forward;设备接入支持配对码与扫码 enroll。
+- `mh status` 给出一句话的"我的数据安全吗"(纯本地派生、离线可答),并列出每处副本的新鲜度与对症建议。
 - 公开分享:`view` 只读 SSR / `edit` 接受 guest 写入,可加密码与过期;WebUI 顶栏「分享」弹窗同款能力。
 - 命令形态偏工程化。
 - 对普通用户还缺少状态解释、冲突说明和同步历史。
@@ -264,10 +269,33 @@ mh share revoke <slug>                           # 撤销(别名 rm;--via <peer>
 **B. s3 传输(预签名静态导出,只读)**
 
 ```bash
-mh config peer add --s3 --endpoint <url> --bucket <name> --access-key <id> --secret-key <key>
+mh config backup connect --endpoint <url> --bucket <name> --access-key <id> --secret-key <key>
 mh share create 架构说明 --transport s3          # 预签名静态链接(最长 7 天)
 mh share renew <slug>                            # 过期续期
 ```
+
+**C. Edge 房间(站点分享;所有者设备离线也可访问)**
+
+```bash
+mh edge deploy --yes                             # 或「用 Cloudflare 登录」;部署到你自己的账号
+mh share create <site> --kind site --room        # 分区推进房间,链接常在线
+mh share revoke <slug>                           # 撤销 = 销毁房间(数据仍在 CRDT 这边)
+```
+
+### 发布一个站点(受众优先)
+
+```bash
+mh site scaffold ./app                     # 起步 index.html(带 SDK 引入与可运行示例)
+mh site upload blog ./app --create         # 首次上传即建站
+mh site access blog public                 # 谁可以访问:任何人(免 token)
+mh site grant blog guestbook:read,create --turnstile <sitekey> --turnstile-secret <s>
+mh site grants blog                        # 复核这个站点开出去的匿名数据授权
+mh site list                               # 每个站点的计算访问状态(--show-links 才打印能力 URL)
+```
+
+- **访问与托管是两根轴**:`site access` 只决定"谁可以访问";"在哪托管"(某台设备在线 / Edge 常在线)由渠道派生,WebUI 发布对话框把它显示成可展开的摘要行。
+- 匿名写入(如留言板 `create`)在所有者设备**离线时**照样能收:访客的提交被封装成密文进 Edge 写信箱,所有者设备下次上线拉回、校验、入库(约 1 分钟一轮)。
+- 授权用 `--revoke <db>` 逐条撤、`--clear` 全撤;`site access blog private` 立刻关掉公开面。
 
 ### 接入一台新设备
 
@@ -275,10 +303,10 @@ mh share renew <slug>                            # 过期续期
 
 ```bash
 # 设备 A
-mh config peer code                              # 打印一次性配对码(默认 10min)
+mh config device code                            # 打印一次性配对码(默认 10min)
 # 设备 B
-mh config peer add --url http://A:7777 --code <code> --self-url http://B:7777
-mh config peer list                              # 确认已配对;之后 --server 定时器自动双向同步
+mh config device add --url http://A:7777 --code <code>
+mh config device list                            # 设备名册:怎么加入的、最后活跃、能否吊销
 ```
 
 **B. 对象存储桶 enroll(离线转发,两端无需同时在线)**
@@ -286,10 +314,22 @@ mh config peer list                              # 确认已配对;之后 --serv
 ```bash
 # 设备 A(已挂桶):在 WebUI 设置页生成 enroll 二维码 / 深链(#enroll=<token>,只带访问描述符)
 # 设备 B:应用内扫码取景器扫一下,或复制码走 CLI:
-mh config peer add --s3 --enroll <code>          # 从码里解出桶端点/凭据/前缀,挂桶并同步
+mh config backup connect --enroll <code>         # 从码里解出桶端点/凭据/前缀,挂桶并同步
 ```
 
-- enroll token 只携带**访问描述符**(桶端点/凭据/前缀/可选口令),由 WebUI(`settings.tsx` `encodeEnroll`)铸出、`enroll.tsx` 或 CLI `--enroll` 消费;深链片段连上后即清除。挂桶后各设备把 oplog 变更推到桶、按 `storage_cursors` 拉,无需两端同时在线。
+- enroll token 只携带**访问描述符**(桶端点/凭据/前缀/可选口令),由 WebUI 铸出、`enroll.tsx` 或 CLI `--enroll` 消费;深链片段连上后即清除。挂桶后各设备把 oplog 变更推到桶、按 `storage_cursors` 拉,无需两端同时在线。
+
+### 丢了一台设备 / 忘了密码短语
+
+```bash
+mh config device list --refresh        # 先看名册:谁还在、谁只在桶里留过痕
+mh config device revoke <device>       # 断开它(连带吊销签发给它的凭据)
+mh config backup rotate                # 换桶密钥 + 换密码短语(丢的设备再也读不到新数据)
+mh config backup recovery              # 打印恢复码卡:MH1-XXXX-…(14 组 4 字符)
+```
+
+- **可吊销判定是诚实的**:纯靠桶加入的设备,单删一行没用——名册会直说"要靠换钥"。
+- **恢复码 = 最后兜底**:能重置密码短语,也能让新设备在不知短语时加入。**持码即可读全部数据**,卡面明写这一点;校验位能抓住任意单字符手抄错。
 
 ## WebUI 当前流程
 
@@ -321,7 +361,9 @@ mh --server --port 7777
 - 点选文档 → 标题 + CM6 编辑器。悬停行左侧 gutter 出「+」与 grip 拖拽(改类型/重排);输入 `/` 唤出**块类型菜单**;选中文字弹**行内格式条**(粗/斜/删除线/代码/链接),行内标记(粗体/链接/代码/行内图)实时预览、光标进入才露出原始 Markdown。
 - Markdown 快捷输入(空格/回车提交 marker):`# `/`## ` 标题、`- `/`* `/`+ ` 无序、`1. `/`5. ` 有序(**字面序号权威**)、`- [ ] ` 待办、`> ` 引用、```` ``` ```` / ```` ```python ```` + Enter 转代码块。列表 Enter 续行、空列表项 Enter 退出、Tab/Shift+Tab 缩进。
 - **void 区块**:图片/视频/音频/文件/**GFM 表格**/代码/HTML 作为原子或 reveal-to-edit 组件。代码块含语法高亮、行号、语言选择、软换行开关与**一键格式化**(懒加载 prettier/wasm);表格支持 Notion 式行列 pill 手柄、autofit 与多选;图片支持标注与 lightbox。粘贴/拖拽图片自动上传成媒体块。
+- **内链**:输入 `[[` 弹出全部文档/数据库标题的选择器(本地标题表、无网络),Enter 插入规范 `[[doc_xxx]]`;渲染成显示实时标题的胶囊,点击应用内跳转;`[[id|别名]]` 可改显示文本;粘贴站内链接自动转成内链。
 - **source/blocks 模式** `⌘/` 切换(同一 CM view reconfig);**⌘F 文档内查找**、右侧 **TOC** + 滚动高亮、右下**字数 pill**。
+- 标题与正文是**一体的**:正文首行按 Backspace 会并入标题(光标停在接缝处);标题只接受纯文本粘贴,不会被外部应用的字号/样式污染。
 - **撤销/重做**为原生 CM6(所有结构操作都是普通文本 transaction);IME 合成友好(行内装饰跨合成 remap、表格/代码 void 合成期不逐字提交)。
 - 编辑防抖保存(700ms):整篇 Markdown body(`getDoc()`)→ `PATCH /api/document`,服务端 `reconcileBody` 按 core block 规则保留 CRDT 身份;标题走 `textContent` 播种(非 innerHTML,XSS 安全)。
 - 顶栏(文档与数据库视图同款):「分享」打开**能力分享弹窗**(选本机 server / 已配对 peer / 对象存储桶、权限 view|edit、可选密码 + 过期,并管理/撤销已有分享),另可复制链接与导出(文档=Markdown、数据库=CSV);「…」菜单含**创建副本**(`POST /api/document|database/duplicate`,服务端原子复制)、视图切换、版本历史、重命名、删除。
@@ -329,6 +371,12 @@ mh --server --port 7777
 ### 5. 搜索
 
 - 侧栏搜索框回车 → `GET /api/search`,结果点击跳转到对应文档或记录所在库。
+
+### 6. 设置(两组六页)
+
+- **设备**组:外观 / 快速笔记(仅桌面) / 离线与缓存(桌面隐藏);**工作区**组:数据与备份 / 设备 / 站点与发布;末尾是**关于**(版本、检查更新)。
+- 「数据与备份」顶部就是**数据地图**一句话结论(数据在几处、有没有只在本机的附件),下面是桶接入、换钥、恢复码;「设备」是名册(怎么加入的、最后活跃、能否吊销);「站点与发布」管托管目标与入口验证。
+- 任何地方都能用 `#/settings?sec=<page>` 深链跳到具体一页——发布对话框里"去配置 Edge"之类的引导块就是靠它,不再是提交时才抛错的死胡同。
 
 当前体验结论:
 

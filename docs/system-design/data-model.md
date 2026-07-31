@@ -11,6 +11,8 @@ peers
 peer_grants
 pairing_codes
 storage_cursors
+room_rows                    -- 房间分区影子(node-local)
+drop_rejects                 -- 写信箱被拒信封台账(node-local)
 shares
 databases
 properties
@@ -18,6 +20,8 @@ records
 documents
 doc_blocks
 sites
+site_channels                -- 站点可达渠道的期望态(同步)
+site_channel_observations    -- 本节点对渠道的实际观测(node-local)
 site_files
 blob_cache
 blob_policy
@@ -35,7 +39,14 @@ search_fts
 - `search_seq`: 搜索索引(`search_fts`)已处理到的 `crdt_changes.rowid` 增量游标;`search_index_version`: 索引逻辑版本号(规则变更时 bump → 触发全量重建)。两者取代旧的 `search_hlc`(见 [14-incremental-search-index](../impl-context/14-incremental-search-index/design.md))。
 - `current_db`: 「当前数据库」指针(本机 UI 上下文,不进 oplog、不随 sync)。读取时惰性校验所指库是否仍存在,失效则自动清除(见 `src/core/context.ts`)。
 - `auth_token` / `auth_token_exp` / `auth_token_prev` / `auth_token_prev_exp`: 持久化的服务器鉴权 token、其过期时刻(epoch ms)、上一代 token 及其可被交换的截止时刻(本机服务器密钥,不进 oplog、不随 sync;见 `src/core/sync/token.ts`、[10-persistent-token](../impl-context/10-persistent-token/design.md))。
-- `cfg_host` / `cfg_port` / `cfg_sync_interval` / `cfg_auto_sync`: `mh config` 持久化的服务器级设置(绑定地址、端口、自动同步间隔 ms、自动同步开关),`--server` 启动时作默认值(CLI flag 覆盖);本机配置,不进 oplog、不随 sync(见 `src/core/config.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。
+- `cfg_host` / `cfg_port` / `cfg_sync_interval` / `cfg_auto_sync` / `cfg_blob_quota` / `cfg_public_base_url`: `mh config` 持久化的服务器级设置(绑定地址、端口、自动同步间隔 ms、自动同步开关、blob 配额、对外可达 base URL),`--server` 启动时作默认值(CLI flag 覆盖);本机配置,不进 oplog、不随 sync(见 `src/core/config.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。
+- `node_label`: 本设备的人类可读名字(设备名册显示用;对端在它自己的 `peers.label` 里另存一份对我的称呼)。
+- `edge_config` / `edge_deploy_progress` / `edge_r2_provision_progress`: Edge 子系统(自有 Cloudflare Worker + D1)的部署身份与断点续做进度;`drop_knobs:<site_id>`: 某站点写信箱的 Turnstile/密码开关。见 `src/core/sync/edge-config.ts`。
+- `drop_keys`: 写信箱收件人 keyring(P-256 私钥;挂桶时桶里的 `keys/drop.json` 才是权威,此处为缓存)。见 `src/core/sync/drop-keys.ts`。
+- `site_publish_states` / `site_publish_rollbacks`: 站点发布的本机运行态与「已本地回滚、目标尚未确认」的补偿记录(`src/core/sync/site-publish-recovery.ts`)。
+- `blob_verified_at`: 上次 blob presence 校验时刻。
+
+以上均为 node-local:`meta` 表整体不进 oplog、不随 sync。
 
 ## ID 与引用
 
@@ -43,10 +54,10 @@ search_fts
 
 ```text
 db_tasks-a3f9   prop_status-x7p2   rec_fix-login-bug-k2p9   doc_design-9fk3   blk_intro-m4x8
-site_blog-7q2k   sf_index-html-9fk3
+site_blog-7q2k   sf_index-html-9fk3   chan_public-device-site-blog-7q2k-3m1x
 ```
 
-- 前缀↔dataset: `db`/`prop`/`rec`/`doc`/`blk`/`site`/`sf` 对应 `databases`/`properties`/`records`/`documents`/`doc_blocks`/`sites`/`site_files`。
+- 前缀↔dataset: `db`/`prop`/`rec`/`doc`/`blk`/`site`/`sf`/`chan` 对应 `databases`/`properties`/`records`/`documents`/`doc_blocks`/`sites`/`site_files`/`site_channels`。
 - `slugify` 只产出 `[a-z0-9-]`、`randomSuffix` 只产出 base36——两者都不含 `_`,故 id 中首个 `_` 必是类型分隔符,`idKind` 据此恢复类型;**旧的无前缀 id(无 `_`)读作 null,与新 id 共存**,无需迁移。
 - 前缀只是把类型显式带到人/AI/日志眼前;`crdt_changes.row_id`、`records.data` 的 JSON key、`crdt_changes.col` 对 id 不透明,加前缀对 oplog/sync/快照/搜索零影响。
 
@@ -87,7 +98,9 @@ interface Change {
 
 `txn` 由 `withChangeGroup`/`grouped()`(`crdt.ts`)在公开变更函数边界盖戳,**随 sync 复制**(各端历史聚簇一致);label 前缀 `repair:`/`revert:` 用于推导修订 kind(user/repair/revert)。存量行/旧 peer 的 change 为 NULL,历史聚簇退回 (node_id + 1.5s 间隙) 启发式。存量库经 `migrateOplog`(schema-init.ts)补列。
 
-索引:`idx_changes_hlc(hlc)`;局部索引 `idx_changes_docref(value) WHERE dataset='doc_blocks' AND col='doc_id'` 服务历史的按文档找块(局部是为了不给携带大 value 的 site_files 行建索引)。
+索引:`idx_changes_hlc(hlc)`;局部索引 `idx_changes_docref(value) WHERE dataset='doc_blocks' AND col='doc_id'` 服务历史的按文档找块(局部是为了不给携带大 value 的 site_files 行建索引)。另有三个**局部**索引服务访客写入与渠道迁移的热路径,都刻意把稀疏/NULL 的大多数排除在外:`idx_changes_txn(txn) WHERE txn IS NOT NULL`(每次访客写入按 txn 前缀查幂等)、`idx_changes_intent_receipt_hlc(hlc) WHERE dataset='intent_receipts'`(按年龄 GC 回执)、`idx_changes_site_channels_seq(seq) WHERE dataset='site_channels'`(每次打开只重放水位线之后的尾巴)。
+
+**oplog-only 数据集**:`intent_receipts` 没有物化表——它只作为 CRDT 寄存器活在 oplog 里,是访客写入(GuestIntent)的**幂等回执**。选它而不是查业务单元格的 txn,是因为历史压缩可能在重放窗口内抹掉后者;选它而不是新建一张 node-local 表,是因为那会让幂等状态在不同运行时之间分裂。协议 GC 在有界窗口后删除回执,复制过滤防止其复活(`src/core/intent-retention.ts`)。
 
 **压缩**(`mh compact`,`src/core/compact.ts`):保留窗口(默认 90 天)外每 register 只留"截止点胜者",删除被取代的输家;墓碑胜者必存活、`MAX(rowid)` 行受保护(防 SQLite rowid 复用使 peer 游标跳过新变更)、纯本地不复制。头部物化状态压缩前后逐字节不变;窗口外历史坍缩为基线,配套 blob GC + VACUUM。
 
@@ -223,12 +236,24 @@ peers(url PK, kind, config, pull_cursor, push_cursor, token, label, node_id, ena
 peer_grants(token PK, peer_url, node_id, created_at)
 pairing_codes(code PK, exp, used, created_at)
 storage_cursors(peer_url, node_id, last_key)     -- S3 转发的每桶/每远端节点拉取进度
+room_rows(peer_key, dataset, row_id) PK(peer_key,dataset,row_id)  -- 房间分区影子
 ```
 
-- `peers`(出站):我会同步去的对端。`kind`(默认 `'http'`;`'s3'` = 对象存储桶转发)选传输,`config`(JSON)持该传输的参数(桶端点/前缀等,S3 用)。`pull_cursor`/`push_cursor` 是基于 `crdt_changes.seq` 的复制游标;`token` 是对端配对时签发给我、我出站 `/sync` 时出示的凭据;`enabled` 决定是否进自动同步定时器;`last_sync_at` 是最近尝试,`last_success_at` 是最近成功(读前 freshness 只看它),`last_status/error` 为状态。老库经 `migratePeers` 幂等补列(含 `kind`/`config`)。
+- `peers`(出站):我会同步去的对端。`kind`(默认 `'http'`;`'s3'` = 对象存储桶转发;`'room'` = 一个分享的 Edge 房间)选传输,`config`(JSON)持该传输的参数(桶端点/前缀等,S3 用;房间用 `base`/`slug`/`ownerSecret`/`guestBase` + `lifecycle`,peer key 按约定是 `room://<slug>`)。`pull_cursor`/`push_cursor` 是基于 `crdt_changes.seq` 的复制游标;`token` 是对端配对时签发给我、我出站 `/sync` 时出示的凭据;`enabled` 决定是否进自动同步定时器;`last_sync_at` 是最近尝试,`last_success_at` 是最近成功(读前 freshness 只看它),`last_status/error` 为状态。老库经 `migratePeers` 幂等补列(含 `kind`/`config`)。
 - `storage_cursors`(S3 store-and-forward):挂了对象存储桶(`kind='s3'`)时,按**每桶 × 每远端节点**记拉取进度 `last_key`——桶是数据盲的转发中继,各设备把变更推上去、按 key 拉下来,无需两端同时在线。见 [17-s3-storage-sync](../impl-context/17-s3-storage-sync/design.md)。
 - `peer_grants`(入站):我签发、并在 `/sync` 上接受的长期 bearer 凭据(`acceptsSyncToken` = 主 token 或命中此表)。`peer_url` 记签发对象,`removePeer` 据此连带吊销;单向配对产生的 `peer_url` 为 null,需 `grant revoke`。**目前无过期**。
 - `pairing_codes`:一次性配对码(随机 12 位 base36,默认 10min)。兑换是单条原子 `UPDATE ... WHERE used=0 AND 未过期`(防 TOCTOU 双兑换);生成时清理过期/已用码。
+- `room_rows`(房间分区影子):本节点上次告诉某个 `kind='room'` 对端的 `(dataset,row_id)` 集合。**故意不进 `DOMAIN`、永不同步**——每台设备各自持影子,跨设备影子分裂由房间协议的 `need_baseline`/digest 层自愈,而不是靠同步影子。见 `src/core/sync/partition.ts`。
+
+## drop_rejects
+
+写信箱(write drop)ingest 隔离层拒收的信封台账(node-local,不进 oplog):
+
+```text
+drop_rejects(id AUTOINCREMENT, drop_id, envelope_id, reason, created_at)
+```
+
+记下原因后信封立即从 Edge 主机删除——**无效邮件不许占用信箱容量,也永不触碰 oplog**。见 `src/core/sync/drop-pull.ts`。
 
 ## shares
 
@@ -236,12 +261,15 @@ storage_cursors(peer_url, node_id, last_key)     -- S3 转发的每桶/每远端
 
 ```text
 shares(slug PK, kind, target_id, permission, transport, pw_salt, pw_hash,
-       expires_at, guest_node_id, served_base, created_at, s3_* …)
+       expires_at, guest_node_id, served_base, created_at,
+       request_id, grants, s3_* …)
 ```
 
 - `kind ∈ {doc, database, site}` + `target_id` 指向被分享实体;`permission ∈ {view, edit}`(`edit` 仅 `transport='server'`);`transport ∈ {server, s3}`。
 - `pw_salt`/`pw_hash`:可选密码(base64 PBKDF2 verifier,server 路径);`expires_at`:过期 epoch ms(null=永不)。
 - `guest_node_id`:edit 分享给 guest 写入用的合成 node id(view 为 null,guest 写入归属独立节点)。`served_base`:创建时选定的可达 base URL(链接/来源标签)。
+- `request_id`:远端建分享的幂等键(WebUI/CLI 让配对 server 代建时,重试不会造出第二个 slug)。
+- `grants`:该分享 `/share/<slug>/api/*` 的序列化 `GrantSet`(表×操作授权)。与整行同为 node-local——**撤销分享即连带作废授权**。
 - `s3_*` 列为遗留字段(s3 分享实际活在桶里,不在此表)。SSR 渲染见 `share-render.ts`/`share-serve.ts`(`/share/<slug>`)。
 
 ## sites
@@ -249,11 +277,31 @@ shares(slug PK, kind, target_id, permission, transport, pw_salt, pw_hash,
 站点表示一个命名的静态文件桶(由 `mh --server` 在 `/sites/<name>/` serve,见 [08-agent-sites](../impl-context/08-agent-sites/design.md)):
 
 ```text
-sites(id, name, title, created_hlc, __deleted)
+sites(id, name, title, created_hlc, visibility, spa, public_grants, __deleted)
 ```
 
 - `name` 是 URL slug,`getSiteByName` 取最近创建的未删除站点(同名跨节点合并时按 `created_hlc` 取新)。
 - create/list/get/delete(软删),delete 级联软删其下 `site_files`。
+- `visibility`:**恰好等于 `'public'`** 才是免 token 访问,其余一切值(含 null)都判私有(`isSitePublic`)——单一公开判定,不给"看起来像公开"的字符串留缝。
+- `spa`:1 = 无扩展名的 miss 回退 `index.html`(单页应用路由)。
+- `public_grants`:匿名访客经 `/sites/<name>/api/*` 能做什么的序列化 `GrantSet`。这是**同步寄存器**,任何对端都能往里写任意字符串,所以读取方**必须**过 `parseGrantSet`——解析是 default-deny,任何畸形输入都退化成空集(授权为零)。见 `src/core/grants-core.ts`。
+
+## site_channels / site_channel_observations
+
+站点「可达渠道」的控制面。**访问策略与托管是两根独立的轴**,期望态同步、运行态不同步:
+
+```text
+site_channels(id PK, site_id, audience, hosting, controller_node_id,
+              target_ref, canonical_url, policy_json, desired_state,
+              created_hlc, __deleted)              -- 进 oplog、随 sync
+site_channel_observations(channel_id PK, status, last_verified_at, last_error)
+                                                   -- node-local,永不复制
+```
+
+- `audience ∈ {public, link}`(任何人 / 有链接的人)、`hosting ∈ {device, edge}`(某台设备在线才可达 / Edge 常在线)。
+- `controller_node_id`:持有该渠道 node-local 秘密(分享行、Edge 账号凭据)的节点。**别的设备也能吊销一条 Edge 链接**——它们只写 `desired_state='revoked'` 并同步,控制器下次上线时执行真正的拆除(`site-channel-reconcile.ts`)。
+- `target_ref`:device 渠道 = 提供服务的 node id;edge 渠道 = 能力 slug。`canonical_url` 是可直接打开的地址,`policy_json` 是该渠道的访问策略快照。
+- 观测表记录**本节点**实际把期望态执行到哪一步(`status`/`last_error`)。就绪与错误是节点相对的事实,同步它只会互相污染;所以卡片上的"就绪/同步中/待清理"由 `core/site-channels.ts` 把这两张表 + 分享行 + 发布态**折算**出来,而不是任何一张表直接存着。
 
 ## site_files
 

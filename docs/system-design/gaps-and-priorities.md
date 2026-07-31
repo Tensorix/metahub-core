@@ -68,6 +68,20 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 
 仍未做(编辑侧):文档数学公式/脚注/callout、按 block id 或行号的精确编辑、返回具体 changed block、浏览器副本**离线**取图。
 
+## 已改善: 对外发布、访客写入与信任面(0.4.x)
+
+0.4.x 版本线把"发布出去"从"要么全公开、要么设备得一直开着"变成了有档位的能力,并把"我的数据安全吗"变成能直接回答的问题(见 [architecture.md](./architecture.md) 的访客面/Edge/信任面三节、[23-sites-experience](../impl-context/23-sites-experience/design.md)、[24-sites-ux-refresh](../impl-context/24-sites-ux-refresh/design.md)、[25-trust-and-settings](../impl-context/25-trust-and-settings/design.md)):
+
+- **访客面三原语**:`GrantSet`(表×操作、无 delete、default-deny、反枚举)、`AccessPolicy`(三套存储的只读投影,一个访客服务路径)、`GuestIntent`(访客提交意图,运行时负责鉴权/时钟/幂等)。公开站点与分享链接共用**同一份**访客数据面实现。
+- **Edge 子系统(用户自己的 Cloudflare 账号)**:写信箱让所有者离线时也能收到访客投稿(密文,主机只见 ciphertext);DO 房间让站点分享**常在线**。一条 `mh edge deploy`,支持"用 Cloudflare 登录"(PKCE,无官方后端居中)。
+- **站点渠道控制面**:期望态同步、观测态本地;卡片/对话框/CLI 的"现在谁能访问、依赖什么在线"由**一份**派生给出;非控制器设备也能吊销。
+- **发布体验受众优先**:第一屏只问"谁可以访问",托管自动推导且可展开修改;死胡同报错换成内联引导 + 设置深链。首次发布的必答决策从 5-6 个降到 1 个。
+- **信任三件套**:数据地图(`mh status` / 设置页同一份派生,离线可答)、设备名册(离线优先,诚实的可吊销判定)、换钥 + 恢复码(丢设备/忘短语的最后兜底)。
+- **设置页 Notion 化**:两组六页 + `SetRow` 原语 + `?sec=` 深链约定,取代原先越长越乱的单页堆叠。
+- **文档内链 `[[doc_id]]`**:一等行内语法,往返无损,CLI/agent 直接写即可;分享页惰性渲染不泄露未分享目标。
+
+仍未做:访客写入的用量/滥用可视化(目前只有拒收台账);房间的多分享共用与配额面板;`AccessPolicy` 的存储合一(现为只读门面);shares-view 尚未并入"渠道"概念。
+
 ## P0: 当前体验硬伤
 
 ### 友好参数错误

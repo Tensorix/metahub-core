@@ -71,16 +71,19 @@ mh --server --port 7777
 mh sync http://a-host:7777
 ```
 
-配对一次后即可后台**周期性自动双向同步**，不必每次手敲 `mh sync`。同一条 `sync` 命令也能在「单个文档 / 数据表」与本地文件之间导入导出（文档 ↔ markdown、数据表 ↔ CSV）。原理详见[系统设计文档](./docs/system-design/)。
+配对一次（`mh config device code` / `mh config device add`）后即可后台**周期性自动双向同步**，不必每次手敲 `mh sync`。`mh status` 只凭本地状态就能回答「我的数据存在哪几处、每处有多新」，因此离线也答得出。同一条 `sync` 命令也能在「单个文档 / 数据表」与本地文件之间导入导出（文档 ↔ markdown、数据表 ↔ CSV）。原理详见[系统设计文档](./docs/system-design/)。
 
 ## WebUI、API 与 Agent 站点
 
-`mh --server` 在根路径 `/` 内置浏览器 **WebUI**（浏览 / 行内编辑数据表、**CodeMirror 6** 所见即所得 Markdown 编辑器——斜杠菜单、文档表格、媒体嵌入、代码块一键格式化、源码/块模式切换、查找、TOC、全文搜索、管理 agent 站点）。同一服务端还暴露：
+`mh --server` 在根路径 `/` 内置浏览器 **WebUI**（浏览 / 行内编辑数据表、**CodeMirror 6** 所见即所得 Markdown 编辑器——斜杠菜单、文档表格、媒体嵌入、`[[…]]` 文档内链、代码块一键格式化、源码/块模式切换、查找、TOC、全文搜索、管理 agent 站点）。同一服务端还暴露：
 
 - `/api/*` —— REST 接口，读写本库的数据表与文档。
 - `/docs` —— 自动生成的 OpenAPI 文档。
-- `/sites/<name>/` —— `mh site publish` 托管 agent 生成的 HTML/CSS/JS；页面同源调用 `/api/*` 即可读本库数据（一个本地 mini-Supabase）。
-- `/share/<slug>` —— `mh share` 把文档/数据库/站点发布成公开链接（view = 只读 SSR，edit = 接受 guest 写入；可加密码 + 过期），经 server 或 S3 桶。
+- `/sites/<name>/` —— `mh site upload` 托管 agent 生成的 HTML/CSS/JS；页面同源调用 `/api/*` 即可读本库数据（一个本地 mini-Supabase）。
+- `/sites/<name>/api/*` —— **公开**站点的访客数据面：匿名访客只拿到你用 `mh site grant` 明确开出的「表 × 操作」权限（`read`/`create`/`update`，**没有 delete**），可再加密码或 Turnstile。
+- `/share/<slug>` —— `mh share` 把文档/数据库/站点发布成公开链接（view = 只读 SSR，edit = 接受 guest 写入；可加密码 + 过期），经 server、S3 桶，或你自己 Cloudflare 边缘上的常在线房间。
+
+**设备离线时也想让别人访问**是可选能力，且完全跑在**你自己的** Cloudflare 账号里：`mh edge deploy`（用 Cloudflare 登录，或粘贴 API token）部署一个 Worker、两个命名空间——**写信箱**收下访客的密文投稿，你的设备下次同步时再解密入库；**房间**（Durable Object）让分享出去的站点在你所有设备都休眠时依然实时可用。metahub 自己不运营任何后端：边缘上要么只有密文信封，要么只有你明确分享出去的那一小块分区。
 
 每个请求由单 token 守护（持久化在 `~/.metahub`）。服务端默认只绑 `127.0.0.1`；`--host 0.0.0.0` 才对外，此时凭据以明文 Bearer 传输，请置于可信网络或前置 TLS。细节见[系统设计文档](./docs/system-design/)。
 
@@ -110,17 +113,23 @@ mh sync http://a-host:7777
 | `mh doctor` | 只读体检：列出逻辑完整性问题（孤儿引用/单元格、重复路径、文档环、重名等）+ oplog/磁盘统计 |
 | `mh repair [--dry-run]` | 确定性、幂等修复可自动修的问题（改动随 oplog 复制）；`--dry-run` 仅预览（等价 doctor） |
 | `mh compact [--keep <天数>] [--dry-run]` | 清理保留窗口（默认 90 天）之外的 oplog 历史 + 回收无引用 blob + VACUUM。纯本地操作；当前数据不变，窗口外历史坍缩为基线（无法再回滚到更早版本） |
-| `mh site create\|put\|publish\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去 |
-| `mh share create\|list\|servers\|link\|renew\|revoke` | 把文档/数据库/站点发布成公开链接（`/share/<slug>`）：server SSR 或 S3 导出、view/edit 权限、可选密码 + 过期 |
+| `mh site create\|scaffold\|put\|upload\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去。`scaffold` 写一份起步页；`upload <目录>` 镜像整个目录（首次加 `--create`，`--prune` 连带删除本地已不存在的文件） |
+| `mh site access <site> [public\|private]` | 查看 / 修改「谁可以访问这个站点」。public = 免 token；private 的响应与「不存在」完全一致。`--show-links` 才打印能力 URL（链接本身即密钥） |
+| `mh site grant <site> <db>:<ops>` / `mh site grants <site>` | 给公开站点的 `api/` 开匿名数据授权（`read,create,update`，无 delete），可用 `--password` / `--turnstile` 加门；`--revoke <db>` / `--clear` 收回 |
+| `mh share create\|list\|servers\|link\|renew\|revoke` | 把文档/数据库/站点发布成公开链接（`/share/<slug>`）：server SSR、S3 导出，或 `--room` 上你自己的边缘；view/edit 权限、可选密码 + 过期、可选 `--grant <db>:<ops>` 数据面 |
+| `mh edge deploy\|status\|pull\|rotate\|connect` | 你自己的 Cloudflare Worker + D1（+ Durable Object）：部署（用 Cloudflare 登录或 API token）、查健康、手动拉一轮写信箱、轮换收件密钥、把第二台设备接到既有 edge |
 | `mh blob add <file>` / `mh blob get <hash>` | 把本地文件存成内容寻址 `/blob/<hash>` URL（嵌入文档）/ 取回字节（本地 cache → peer → 桶） |
 | `mh cache [status\|clear\|gc\|full-device\|redundancy\|pin\|unpin]` | 查看/管理本地 blob 缓存；指定「全量设备」（durable 锚）使图片可安全清理 |
 | `mh token [show\|refresh]` | 查看 / 轮换持久化的服务器鉴权 token（存于 `~/.metahub`，默认 30 天到期轮换） |
 | `mh completion <bash\|zsh\|fish>` | 打印补全脚本：`eval "$(mh completion zsh)"` |
-| `mh sync <url>` | 与服务端同步一轮（CRDT 推/拉）；`/sync` 受保护时按已存凭据直连，否则在交互终端提示输入 token 并记住（`--token` 非交互） |
+| `mh sync` | 立即同步：对每一台已配置的设备与每一个桶各跑一轮 |
+| `mh sync <url>` | 与指定服务端同步一轮（CRDT 推/拉）；`/sync` 受保护时按已存凭据直连，否则在交互终端提示输入 token 并记住（`--token` 非交互） |
 | `mh sync <src> <dst>` | 单个文档/数据表与文件互导：文档↔markdown、数据表↔CSV；方向按参数判别（哪侧是库内实体） |
-| `mh config` | 配置服务器与同步设备：无参进交互向导，`--flag` 直配（`--host/--port/--sync-interval/--auto-sync`） |
-| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | 多设备配对与管理：生成一次性配对码 / 配对 / 列出 / 立即同步 / 启停 / 移除（连带吊销签发给对方的凭据）。`peer add --s3` / `--enroll <code>` 挂对象存储桶做离线 store-and-forward |
-| `mh config grant list\|revoke` | 列出 / 吊销本机签发的入站同步凭据（`revoke --token` 支持精确或前缀） |
+| `mh status` | 数据在哪几处、每处有多新、当前最要紧的问题是什么、该怎么办。纯本地派生，离线可答 |
+| `mh config` | 交互向导，覆盖下面全部（`server` / `device` / `backup` / `edge`）。日常**工具**留在顶层，凡改**长期状态**的都收在 `config` 下 |
+| `mh config server --port … --host … --sync-interval …` | 持久化服务器设置到 `~/.metahub`（启动时 CLI flag 仍优先） |
+| `mh config device code\|add\|list\|revoke` | 用一次性码配对设备、查看设备名册（怎么加入的、最后活跃、能否吊销；`--refresh` 追加桶在场性）、断开某台设备 |
+| `mh config backup connect\|list\|rotate\|recovery\|anchors` | 挂云端桶（S3/R2）做离线 store-and-forward——直填凭据、`--enroll` 码/二维码，或 `--provision-r2` 先替你建桶。`rotate` 丢设备后换钥换短语；`recovery` 打印可手抄的恢复码卡；`anchors` 设 blob 冗余判定 |
 | `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync]` | 启动服务端：`/sync`（主 token 或配对凭据）+ 根路径 WebUI + `/api/*` REST + `/docs`（OpenAPI）+ 静态站点 `/sites/<name>/` + token 交换 `/auth/token` + 配对 `/api/pair`；内置定时器自动同步已配对 peer |
 
 </details>

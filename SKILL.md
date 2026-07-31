@@ -181,6 +181,13 @@ clobbered):
 3. `mh doc edit <ref> --old ... --new ... --if-match <version>` (or `--edits`).
 4. On exit 5 (`stale`), re-read and retry from step 1.
 
+**Internal links.** `[[doc_x]]`, `[[db_x]]`, or `[[doc_x|display text]]` in a body
+is a first-class inline token: it renders as a live link showing the target's
+current title (so renaming the target never breaks the text), round-trips through
+`doc read` / `doc edit` verbatim, and carries no origin — it keeps working on every
+device. Only real ids match, so ordinary `[[bracketed prose]]` stays literal. Use
+it instead of pasting a URL when you cross-reference another doc or table.
+
 ## Media & attachments (images / video / audio / files)
 
 Binary media lives as content-addressed **blobs**; a document body only carries a
@@ -294,9 +301,25 @@ token travels as plaintext Bearer — only do that on a trusted network/TLS.
 
   ```bash
   mh site scaffold ./app                  # starter page (SDK import + working example)
-  mh site publish myapp ./app --create    # first publish creates the site
-  mh site publish myapp ./app --prune     # re-publish; --prune deletes remote files gone locally
+  mh site upload myapp ./app --create     # first upload creates the site
+  mh site upload myapp ./app --prune      # re-upload; --prune deletes remote files gone locally
   ```
+
+  Who can reach it, and what anonymous visitors may do with the data, are two
+  separate decisions:
+
+  ```bash
+  mh site access myapp                    # show current access (private by default)
+  mh site access myapp public             # token-free at /sites/myapp/ (private ≡ nonexistent to outsiders)
+  mh site grant  myapp guestbook:read,create      # anonymous api/ access: read + add rows
+  mh site grant  myapp guestbook:create --turnstile <sitekey> --turnstile-secret <secret>
+  mh site grants myapp                    # review what this site exposes
+  mh site grant  myapp guestbook --revoke # take one back (--clear removes all)
+  ```
+
+  Grants are per table × operation (`read,create,update` — **never delete**), keyed
+  by database id, and default-deny: anything unrecognized authorizes nothing, and
+  "not granted" is indistinguishable from "does not exist" (401 either way).
 
   Pages read/write hub data same-origin: plain `fetch('/api/records?db=tasks')`
   just works (the injected runtime attaches the auth token), or use the typed
@@ -305,12 +328,16 @@ token travels as plaintext Bearer — only do that on a trusted network/TLS.
   The full REST surface self-describes at `GET /docs.json` (OpenAPI).
 - `mh share create <ref> [--permission view|edit] [--password ..] [--expires 7d]` —
   publish a doc/database/site as a public link (`/share/<slug>`, view = read-only
-  SSR, edit = server-only, accepts guest writes). `mh share list|link|revoke|renew`.
-- `mh edge status|pull` (tools) + `mh config edge deploy|connect|rotate-keys` (setup) —
-  optional write-inbox on your own Cloudflare Worker + D1: public sites with a
-  `create` grant collect anonymous form submissions asynchronously (sealed to your
-  key at the edge — the host only ever sees ciphertext; ingested on the next sync
-  round, ~1 min).
+  SSR, edit = server-only, accepts guest writes). `--grant <db>:<ops>` adds a
+  grant-scoped `api/` surface to the link; `--room` (site shares) keeps it live
+  from your edge even when every device of yours is offline.
+  `mh share list|link|revoke|renew`.
+- `mh edge deploy|status|pull|rotate|connect` (also spelled `mh config edge …` for
+  the setup half) — one Worker in **your own** Cloudflare account, two namespaces:
+  a **write inbox** (public sites with a `create` grant collect anonymous
+  submissions asynchronously — sealed to your key at the edge, the host only ever
+  sees ciphertext, ingested on the next sync round, ~1 min) and **rooms** (Durable
+  Objects that serve a shared site live while your devices are asleep).
 
 ## Sync across machines / files
 

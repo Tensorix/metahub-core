@@ -100,7 +100,25 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 `blockDecorations`(ViewPlugin)把每可见行的 role 变成 Notion 式块样式,**全程光标感知**:标题给字号类并折叠 `# `、引用给竖线并折叠 `> `、divider 渲成 `<hr>`、列表隐藏前导空白 + 按级 padding 缩进、bullet 出字形、有序项出**字面序号**(源码权威,编辑器**从不**给已有项重编号)、todo 出可点复选框。光标落到某行,其原始 marker 复现以便编辑真实文本。全部是 line/mark/inline-replace 装饰(**绝不** `block:true`),故来自 ViewPlugin;空文档占位符 `PLACEHOLDER`。
 
 ### 3.2 行内 `cm6/inline.ts`
-`inlineDecorations` 渲染 `**b**`/`__b__`、`*i*`/`_i_`、`` `code` ``、`~~del~~`、`[t](u)`、行内 `![alt](u)`:给内容上样式并**折叠定界符**,光标进入该 span 则标记复现(reveal-to-edit 的行内版)。viewport 作用域、**IME 合成期不重建**(合成中把装饰 `map` 过 change 保持偏移诚实、事后 `stale` 重建,见提交 `b39d301`)。语法来自 `webui/inline-tokens.ts`(= `core/md/inline.ts` `tokenizeInline` 的 re-export,和表格桥/TOC 共用),单层无嵌套、转义感知(`\*x\*` 保持字面)。`linkClicks` 打开链接前过 `safeUrl`(挡 `javascript:`/`data:text/html`)。
+`inlineDecorations` 渲染 `**b**`/`__b__`、`*i*`/`_i_`、`` `code` ``、`~~del~~`、`[t](u)`、行内 `![alt](u)`、以及**内链** `[[doc_x]]`:给内容上样式并**折叠定界符**,光标进入该 span 则标记复现(reveal-to-edit 的行内版)。viewport 作用域、**IME 合成期不重建**(合成中把装饰 `map` 过 change 保持偏移诚实、事后 `stale` 重建,见提交 `b39d301`)。语法来自 `webui/inline-tokens.ts`(= `core/md/inline.ts` `tokenizeInline` 的 re-export,和表格桥/TOC 共用),单层无嵌套、转义感知(`\*x\*` 保持字面)。`linkClicks` 打开链接前过 `safeUrl`(挡 `javascript:`/`data:text/html`)。
+
+### 3.3 文档内链 `[[doc_id]]`
+
+> 设计与决策全文见 [26-doc-internal-links](../impl-context/26-doc-internal-links/design.md)。
+
+**语法在 core**(`core/md/inline.ts` 的 `doclink` token,与其它行内标记同一套贪心选择):
+
+- 形状 `[[(doc|db)_<slug>-<rand>]]`,可带 `|别名`。id 形状**钉死为 `newId()` 的产物**,所以任意 `[[普通文本]]` 仍是字面散文——不会把用户的双方括号笔记吃掉。
+- **优先级高于 link**:两者都以 `[` 开头,`[[id]](x)` 必须读成"内链 + 字面 `(x)`"。
+- 内容跨度取"显示成的纯文本"(有别名取别名、否则取 id),于是 `stripInlineTokens`(TOC/搜索/摘要)不用特判就能把内链摊平。
+
+**编辑器侧**三块:
+
+- `webui/doc-titles.ts` —— **同步**的 id→标题表(CM6 装饰必须同步构建,不能等网络)。`App.reloadNav()` 顺手用它已经取到的导航列表 `primeDocTitles` 喂进来;没有完整应用外壳的场景(快速笔记窗口、测试)首次查找时惰性自刷新。`NAV_INVALIDATE`(任何成功变更,含改名)只把表标记为 stale——**stale 期间继续供旧标题**(自动保存时不闪),真的变了才通知订阅者。
+- `cm6/chrome/doclink-suggest.tsx` —— 输入 `[[` 弹出的选择器,结构对齐 `slash-menu.tsx`(`.pop` 挂 document.body + **捕获阶段** keydown 拦截导航键,菜单开着时结构 keymap 收不到)。触发判定:最后一个 `[[` 与光标之间没有闭合/嵌套括号;打了 `|` 就退出(此后是在写别名,不是在搜标题)。插入的永远是**规范 id**。
+- `cm6/inline.ts` 的渲染 —— 折叠态是显示实时标题的胶囊(`.cm-doclink`,`data-doclink=<id>`),目标不存在时 `.cm-doclink-missing`;光标进入则露出 `[[id|alias]]` 源码(定界符变灰)。点击经 hash 路由**应用内跳转**,缺失目标不跳。标题在装饰构建时解析,故标题表变化要触发重建。
+
+**其它面**:`webui/markdown.tsx`(表格单元格桥)渲染成带 `data-doclink` 的应用内 `<a>`,DOM→Markdown 回写时还原成**原样的** `[[id]]`/`[[id|alias]]`(无损往返);分享渲染器 `share-render.ts` 把内链渲成**惰性 `<span>`**——自动链到目标的分享页会泄露没被分享的东西,所以只留文字。粘贴站内链接时 `upload-paste.tsx` 经 `view.ts` 的 `doclinkFromUrl` 把它转成内链——内链**不带 origin**,所以换设备/换域名后依然有效。
 
 ---
 
@@ -142,8 +160,10 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 渲染:`<div class="doc">` → `.doc-title`(contentEditable) + `.doc-meta`(`<SyncStamp/>` + 已分享徽标) + `<CmDocBody>`。
 - **标题是 contentEditable、不是块、无 data-bid**。它经 effect 用 `el.textContent = titleRef.current` **播种**(`titleElRef`,依赖 `[version]`——加载/远端合并才 bump);**写 textContent 不是 innerHTML**,故同步来的标题永不注入 HTML(消除存储型 XSS),打字也不触发重渲染重置光标。
 - **保存**:`scheduleSave`(700ms 防抖)→ 串行 `save` 链 → `doSave` → `api.updateDocument(docId,{title, body:snapshotMarkdown()})`;`snapshotMarkdown()` = `cmRef.getDoc()`。
-- **标题↔正文导航**:`focusTitle()`;`enterBody()`→ `enterDocTop(view)`(文档以 void 开头时先开空行);标题 `onKeyDown` 里 Enter/↓ 末行 → `enterBody`;正文首行再上 → `onExitTop`=`focusTitle`(CmDocBody 的 `structureKeymap({onExitTop})`)。`caretLineEdge` 现在**只**服务标题的首/末行判定。
-- **IME**:标题处理器仍 `if (e.isComposing || e.keyCode===229) return`;正文侧 IME 在 CM 层(inline 装饰跨合成 remap、表格/代码 void 的 composing 守卫)。
+- **标题↔正文导航**:`focusTitle(offset?)`;`enterBody()`→ `enterDocTop(view)`(文档以 void 开头时先开空行);标题 `onKeyDown` 里 Enter/↓ 末行 → `enterBody`;正文首行再上 → `onExitTop`=`focusTitle`(CmDocBody 的 `structureKeymap({onExitTop})`)。`caretLineEdge` 现在**只**服务标题的首/末行判定。
+- **正文首行 Backspace 并入标题**(`onMergeTop`→`mergeIntoTitle`):文档最开头按 Backspace 时,"上一个块"就是标题——首行文本接到标题末尾,光标停在**接缝处**(`focusTitle(seam)`)。实现要点:一律经 `titleElRef` 拿元素(**不用全局 `.doc-title` 查询**——快速笔记窗口里也嵌着同一套组件);插入走 `insertPlainText` 以触发 `onInput`(顺带完成扁平化 + `titleRef` + 保存);Range 兜底路径不发 input 事件,所以要手动同步 `titleRef.current`。没挂标题时返回 false,让 CM 自己处理这个键。
+- **标题只吃纯文本**(`webui/plain-edit.ts`):标题类可编辑宿主(文档标题、数据库名、记录 peek 标题)存的是纯字符串,但裸 contentEditable 会把剪贴板的 `text/html` 原样插进来——Word/Excel/Numbers 带来的 `<span style="font-size:11pt">`/`<font>` 内联样式会盖过宿主的类选择器(inline style 赢、font-size 还继承),标题当场变小;更糟的是某些 flavor 携带 `<style>` 元素,一旦落进页面就是**全文档**生效。对策是根本不让 markup 进来:取 `text/plain`、按文本插入,单行宿主再把换行折成空格。
+- **IME**:标题处理器仍 `if (e.isComposing || e.keyCode===229) return`;正文侧 IME 在 CM 层(inline 装饰跨合成 remap、表格/代码 void 的 composing 守卫)。拼写替换/扩展/自动填充这类**不发 input 事件**的外部改写,靠播种 effect 里的一致性检查兜回 `titleRef`。
 
 **core 侧**:`reconcileBody`(`documents.ts`)对 body 做**文本级 diff**,只对变化块 emit `doc_blocks`(text/blank_after/__deleted);**无 `documents/body` 寄存器**。本地 replica 路径不带 `if_match`(单本地写者;远端经 `/sync` 块级合并),HTTP 模式才有 stale/`409`。
 
@@ -173,6 +193,9 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 9. **URL 一律过 `safeUrl`** 再进 `href`/`window.open`(编辑器 `inline.ts` 与分享渲染都要;HTML 属性上下文还需 `escapeHtml`)。
 10. **纯空嵌套块不往返**、富字段不入库——改往返规则要同时验证 `blocksFromBody`↔`bodyFromBlocks` 双向 + `grammar-parity.test.ts`。
 11. **构建**:dev(from-source)刷新即热重建;dist/编译产物需 rebuild+restart(记忆 `webui-frontend-edits-need-rebuild`)。
+12. **标题类宿主一律走 `plain-edit.ts`**(粘贴/拖放只取 `text/plain`);新加一个 contentEditable 标题就得接上,否则外部样式会渗进来。
+13. **内链只认 id 形状**——放宽 `[[…]]` 的匹配等于把用户的普通方括号笔记变成断链;要改先想清楚 `stripInlineTokens` 与分享页惰性渲染两处的连带影响。
+14. **`[[` 选择器读的是本地标题表**(`doc-titles.ts`),不是网络:装饰是同步构建的,任何"顺手加一次 fetch"都会闪。
 
 ---
 
@@ -185,7 +208,9 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 | 块装饰 / 行内预览 | `cm6/block-deco.ts` `blockDecorations`;`cm6/inline.ts` `inlineDecorations`+`linkClicks`;主题 `cm6/editor-theme.ts` |
 | void 组件 | `cm6/voids/void-field.tsx`(StateField + atomicRanges);写回 `blockToText`(blocks.ts)+ `cm6/min-diff.ts` |
 | 结构编辑 / 转换 / keymap | `cm6/structure.ts`(`enterCommand`/`backspaceCommand`/`indentCommand`/`outdentCommand`/`smartHome`/`makeVoidExit`/`enterDocTop`)、`cm6/convert.ts`(`turnInto`/`turnIntoChanges`)、`cm6/keymap.ts`(`structureKeymap`) |
-| chrome | `cm6/chrome/` slash-menu / find / format-bar / toc / word-count / gutter / copy-rich / upload-paste / upload-field / preview-anchor |
+| chrome | `cm6/chrome/` slash-menu / find / format-bar / toc / word-count / gutter / copy-rich / upload-paste / upload-field / preview-anchor / **doclink-suggest** |
+| 文档内链 | 语法 `core/md/inline.ts`(`doclink` token);标题表 `webui/doc-titles.ts`(`primeDocTitles`/`allDocTitles`/`onDocTitleChange`);选择器 `cm6/chrome/doclink-suggest.tsx`;渲染 `cm6/inline.ts` `.cm-doclink`;粘贴转换 `view.ts` `doclinkFromUrl`;分享页惰性渲染 `core/sync/share-render.ts` |
+| 标题纯文本纪律 | `src/webui/plain-edit.ts`(`plainTextFrom`/`insertPlainText`),文档标题/数据库名/记录 peek 标题共用 |
 | 共享语法(core) | `src/core/md/grammar.ts`(`RE`/`matchListLine`/`matchQuoteLine`/`matchMediaEmbed`/`safeUrl`/`HTML_FENCE`)、`src/core/md/inline.ts`(`tokenizeInline`)、`src/core/md/heal.ts`(`healLegacyMarkdown`);parity `cm6/grammar-parity.test.ts` |
 | 保存解析器 / 序列化 | `src/webui/blocks.ts` `blocksFromBody`/`bodyFromBlocks`/`parseLeafBlock`/`parseTableBlock`/`renderBlock`/`renderListBlock`/`shouldPersist`/`startsLeafBlock`/`fenceFor`/`blockToText`;行内桥 `src/webui/markdown.tsx`(现仅表格单元格 contenteditable 用) |
 | 编辑器外壳 / 保存 | `src/webui/editor.tsx` `DocView`、`.doc-title`(textContent 播种)、`scheduleSave`/`save`/`snapshotMarkdown`(=getDoc)、`focusTitle`/`enterBody`;`src/webui/api.ts` `updateDocument`;`src/core/documents.ts` `updateDocument`/`reconcileBody`/`liveBlocks` |

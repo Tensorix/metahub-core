@@ -138,6 +138,7 @@ mh doc revert <doc-ref> --to <version> [--if-match] # 恢复;对已删文档(完
 - `doc read` 返回正文和 version token。
 - `doc edit` 要求 old text 精确匹配,适合 AI read-before-edit。
 - 文档正文按 block 存储,不同 block 的并发编辑可以保留。
+- **内链是普通 Markdown**:`[[doc_xxx]]` / `[[db_xxx]]` / `[[doc_xxx|别名]]` 是行内语法的一等 token(`src/core/md/inline.ts`),agent 直接写进正文即可,往返无损。id 形状被钉死为 `newId()` 的产物(`(doc|db)_<slug>-<rand>`),所以任意 `[[普通文本]]` 仍是字面散文。见 [26-doc-internal-links](../impl-context/26-doc-internal-links/design.md)。
 
 ## 人类编辑器
 
@@ -167,6 +168,7 @@ mh edit <ref> --editor zed
 ```bash
 mh share create <ref> [--kind doc|database|site] [--transport server|s3]
                       [--permission view|edit] [--password <pw>] [--expires 24h|7d]
+                      [--grant <db>:<ops>] [--room]
                       [--via <peer-url|base-url>] [--bucket <url>] [--viewer <url>]
 mh share list [<target>]     # 汇总:本机 + 已配对 server + 桶上的分享
 mh share servers             # 可发布目标:本机 server + 已挂载对象存储桶
@@ -177,9 +179,59 @@ mh share revoke <slug>       # 撤销(别名 mh share rm;可 --via 让配对 ser
 
 当前能力:
 - 目标可是**文档 / 数据库 / 站点**(`--kind` 省略时按类型化 id 推断)。
-- 两种传输:`server`(`mh --server` 在 `/share/<slug>` 实时 SSR;权限 `view`/`edit`,**edit 仅 server**、接受 guest 节点写入)与 `s3`(预签名对象存储静态导出 + 独立解密 viewer,只读,`view` only,过期上限 7 天)。
-- 可选**密码**与**过期**;`view` 分享 SSR 只读渲染(走共享语法 + `safeUrl` 净化 URL、按 kind 渲染媒体)。
+- 三种传输:`server`(`mh --server` 在 `/share/<slug>` 实时 SSR;权限 `view`/`edit`,**edit 仅 server**、接受 guest 节点写入)、`s3`(预签名对象存储静态导出 + 独立解密 viewer,只读,`view` only,过期上限 7 天),以及 `--room`(**站点分享专用**:把分区推进你自己 Cloudflare 账号的 Durable Object 房间,所有者设备离线时链接照样可用;需先 `mh edge deploy`)。
+- 可选**密码**与**过期**;`view` 分享 SSR 只读渲染(走共享语法 + `safeUrl` 净化 URL、按 kind 渲染媒体、`[[内链]]` 渲成惰性文本)。
+- `--grant <db>:<ops>`(可重复,ops ∈ `read,create,update`,**仅 server 传输**)给这条分享开一个 `/share/<slug>/api/*` 访客数据面;授权随分享行走,**撤销分享即作废授权**。
 - `/share/<slug>` 在 token 门禁**之前**命中并原样返回(公开访问,不套 token shim)。
+- 非法组合(如 s3 ⇒ 只读、room ⇒ 仅站点)只在 `assertShareCombo` 一处声明,CLI / WebUI / 远端代建同路径校验。
+
+## 站点:访问与数据授权
+
+已实现(见 [23-sites-experience](../impl-context/23-sites-experience/design.md) / [24-sites-ux-refresh](../impl-context/24-sites-ux-refresh/design.md)):
+
+```bash
+mh site create <name> [--title <t>] [--public]
+mh site scaffold <dir> [--force]        # 写一份起步 index.html(带 SDK 引入与可运行示例)
+mh site upload <site> <dir> [--create] [--prune]   # 上传目录(publish 为弃用别名)
+mh site put <site> <path> --from <file> | --content <txt|@file|@->
+mh site list [--show-links]             # 列出站点 + 计算出的访问状态
+mh site access <site> [public|private] [--show-links]   # 看/改「谁可以访问」
+mh site update <site> [--spa|--no-spa] [--title <t>]
+mh site files <site> | mh site rm <site> <path> | mh site delete <site>
+
+mh site grant <site> <db>:<ops>         # 匿名访客数据授权(ops: read,create,update)
+mh site grant <site> <db>:create --password <pw> | --turnstile <sitekey> --turnstile-secret <s>
+mh site grant <site> <db> --revoke  |  mh site grant <site> --clear
+mh site grants <site>                   # 查看该站点的公开数据授权
+```
+
+当前能力:
+
+- **访问是一根轴,托管是另一根**:`site access` 只回答"谁可以访问"(public = 免 token,private = 需要 token 且**与不存在的响应完全一致**);托管在哪(某台设备 / Edge 房间)由渠道派生,见下「站点渠道」。
+- `--spa`:无扩展名的 miss 回退 `index.html`(前端路由)。
+- **数据授权 `site grant`**:给**公开**站点的 `/sites/<name>/api/*` 开表×操作授权,`ops ∈ read,create,update`——**没有 delete**。按 database **id** 记录(改名不影响授权),读取一律经 default-deny 解析;"未授权"与"不存在"返回同一个 401(反枚举)。
+- **写入门**:`--password` / `--turnstile` 由 Edge 写信箱与 server 实时面**共用同一个门**强制,不会一条路生效、另一条被跳过。
+- `--show-links` 才打印完整能力 URL——链接本身即密钥,默认不往终端/日志里洒。
+
+## Edge(你自己的 Cloudflare 账号)
+
+已实现(见 [23-sites-experience §5-6](../impl-context/23-sites-experience/design.md)):
+
+```bash
+mh edge deploy [--account-id <id>] [--api-token <tok>] [--yes]   # 或「用 Cloudflare 登录」(OAuth+PKCE)
+mh edge status [--json]      # Edge 健康:Worker 版本是否与本地对齐 + 各站点信箱积压/配额
+mh edge pull                 # 手动跑一轮信箱拉取(自动同步约每 60s 一次)
+mh edge rotate [--purge-retired]   # 轮换收件人密钥(旧密钥保留以解在途信封)
+mh edge connect --endpoint <url> --token drt_...   # 接入既有 Edge(第二台设备)
+# 同一组操作也有配置态别名:mh config edge deploy|connect|rotate-keys
+```
+
+当前能力:
+
+- **一条命令、一个 Worker、两个命名空间**:`/v1/inbox/*` 写信箱(D1),`/r/<slug>/*` 分享房间(Durable Object)。部署到**用户自己的**账号,metahub 没有中间人后端。
+- **写信箱**:访客把预签名的操作**封装**给所有者公钥,Edge 只存密文;所有者设备拉回解密→隔离校验→ingest→ack 删除。所有者设备离线时投稿照收,回来再落库(约 1 分钟一轮)。
+- **房间**:一个站点分享的常在线服务面,含 WebSocket 实时推送(Hibernation API)。房间零出站凭据、从不外呼,`evict` 是本地物理删除、绝不产生 op。
+- 所有者用独立的 `drt_` secret 认证,**不是主 token**;CF API token 只在部署那一刻使用、**从不持久化**。
 
 ## 搜索
 
@@ -307,8 +359,12 @@ mh cache pin <hash> | unpin <hash>     # 用户"离线保留",永不自动淘汰
 
 ```bash
 mh --server --port 7777
-mh sync http://host:7777
+mh sync                      # 立即同步:已配置的每台设备 + 每个桶
+mh sync http://host:7777     # 对某个服务器跑一轮
+mh status [--json]           # 数据在哪几处、每处有多新
 ```
+
+**命令分层(0.4 起)**:日常**工具**留在顶层(`sync` / `status` / `cache` / `doctor` / `compact` / `edge status|pull`),凡是改**长期状态**的都收进 `mh config <server|device|backup|edge>`;旧的 `config peer` / `config grant` / `config set` 写法保留为**隐藏别名**。
 
 当前能力:
 
@@ -318,23 +374,49 @@ mh sync http://host:7777
 - **多设备配对 + 自动同步**:一次性配对码引导、交换长期 per-peer 凭据,server 内置定时器周期性双向同步已配对 peer(默认 30s);`/sync` 鉴权(主 token 或配对凭据)。统一入口 `mh config`(方向键交互向导 `@clack/prompts` + `--flag`)/ WebUI 设置页。撤销:`peer rm`(连带吊销)/ `grant revoke`。见 [11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md)。
 - **浏览器离线副本(PWA)**:WebUI 设置页一键启用——自助配对(页面持主 token 自己铸码兑换凭据,在「已授权设备」可单独吊销)、按 `limit` 分页水合全量 oplog 至 OPFS、之后读写走本地 + 后台 `syncWithPeer()`,离线可查看编辑全部内容(含托管站点页的读写),回网块级合并。需 HTTPS(secure context)+ OPFS(Safari 17+);不满足时设置页显示原因并自动回落纯在线模式。见 [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
 - **同步分页**:`/sync` 请求可带 `limit`(分页拉取)与 `exclude_datasets`(部分副本;协议就绪,设置 UI 未开),游标保证永不回退。
-- **对象存储(S3)store-and-forward**:除 HTTP 对等外,可挂一个 S3 兼容桶作**数据盲的转发中继**——各设备把 oplog 变更推到桶、从桶拉,无需两端同时在线(离线转发)。桶 peer 记为 `peers.kind='s3'` + `peers.config`,拉取进度按 `storage_cursors`(每桶/每远端节点)。挂桶用 `--s3`(直填凭据)或 `--enroll <code>`(扫码/深链 `#enroll=`,只带访问描述符);`mh config peer cors` 自动配桶 CORS 以便浏览器直连。见 [17-s3-storage-sync](../impl-context/17-s3-storage-sync/design.md) / [21-enroll-code-onboarding](../impl-context/21-enroll-code-onboarding/design.md)。
+- **对象存储(S3)store-and-forward**:除 HTTP 对等外,可挂一个 S3 兼容桶作**数据盲的转发中继**——各设备把 oplog 变更推到桶、从桶拉,无需两端同时在线(离线转发)。桶 peer 记为 `peers.kind='s3'` + `peers.config`,拉取进度按 `storage_cursors`(每桶/每远端节点)。挂桶用 `--s3`(直填凭据)或 `--enroll <code>`(扫码/深链 `#enroll=`,只带访问描述符);`mh config backup cors` 自动配桶 CORS 以便浏览器直连。见 [17-s3-storage-sync](../impl-context/17-s3-storage-sync/design.md) / [21-enroll-code-onboarding](../impl-context/21-enroll-code-onboarding/design.md)。
 
 ```bash
-mh config peer code                                          # 生成一次性配对码(HTTP 对等)
-mh config peer add --url http://host:7777 --code <code> --self-url <self>
-mh config peer add --s3 ...                                  # 挂对象存储桶(直填凭据)
-mh config peer add --enroll <code>                           # 用 enroll 码/深链挂桶(只带访问描述符)
-mh config peer cors                                          # 为桶配置 CORS(浏览器直连)
-mh config peer list|sync|enable|disable|rm   |   mh config grant list|revoke
+mh config                                     # 交互向导(server / device / backup / edge)
+mh config server --port 7777 --host 127.0.0.1 --sync-interval 30s
+
+mh config device code                         # 生成一次性配对码(HTTP 对等)
+mh config device add --url http://host:7777 --code <code>
+mh config device list [--refresh]             # 设备名册(--refresh 追加桶在场性)
+mh config device revoke <device>              # 断开某台设备(连带吊销签发给它的凭据)
+
+mh config backup connect --endpoint <s3-url> --bucket <name> --access-key … --secret-key …
+mh config backup connect --enroll <code>      # 用 enroll 码/扫码加入别人的桶
+mh config backup connect --provision-r2 --bucket <name> --yes    # 先替你建好 R2 桶
+mh config backup list | rotate | recovery     # 桶列表 / 换钥换短语 / 打印恢复码卡
+mh config backup anchors redundancy all|any   # blob 锚点冗余判定
 ```
 
 当前未实现:
 
 - 冲突解释或用户可见 diff。
 - blob **离线**取图(浏览器侧 Cache Storage LRU + OPFS spool;字节**按需**跨机传输已实现,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。
-- 配对凭据过期(目前靠撤销管理)、`/api/pair` 限频。
+- 配对凭据过期(目前靠撤销管理)。
 - TLS 已可由 `--tls-cert/--tls-key` 直出或反代承担;裸 HTTP 下凭据仍是明文 Bearer,需可信网络。
+
+## 信任面:数据在哪、谁碰得到、丢了怎么办
+
+已实现(见 [25-trust-and-settings](../impl-context/25-trust-and-settings/design.md)):
+
+```bash
+mh status [--json]                    # 数据地图:每处副本 + 新鲜度 + 首要问题 + 对症建议
+mh config device list [--refresh]     # 设备名册:怎么加入的、最后活跃、能否吊销
+mh config backup rotate               # 丢设备:换密钥 / 换密码短语
+mh config backup recovery             # 打印恢复码卡(MH1-… 56 字符)
+```
+
+当前能力:
+
+- **数据地图**:把 peers + 同步状态 + blob pending + 同步策略折成"地点列表 + 一个总状态"。`mh status` 与 WebUI 设置页共用同一份派生与优先级——**并发多个问题时,标题点名优先级最高的那个并指向清单**,不会遮蔽其它;建议语句对症(某个目标一直失败时提示去查它的配置,而不是让你再 `mh sync` 一遍已知坏掉的对端)。**纯本地、零网络**,离线照样答得出。
+- **设备名册**:本地 oplog 即名册(凡变更到过本机的节点都有行,最大 HLC 就是真实最后活跃时间),因此**离线可列**;`--refresh` 才去查桶在场性(段流是否存在、发布者心跳是否活)。每台设备给出**诚实的可吊销判定**——纯靠桶加入的设备,吊销要靠换钥而不是删一行。
+- **换钥 / 恢复码**:`rotate` 换掉桶密钥与密码短语;`recovery` 打印可手抄的恢复码卡——能重置密码短语,也能让新设备在不知短语时加入。**持码 = 可读全部数据**,卡面明写。校验位抓单字符笔误,字母表去掉 I/L/O/U。
+
+当前未实现:自动定时的备份体检提醒;恢复码的"已打印/已确认"状态跟踪。
 
 ### 文件导出/导入
 
@@ -396,16 +478,40 @@ POST   /api/document/revert    /api/record/revert    /api/property/revert    # ?
 GET    /api/nodes              # 本机 + 已配对 peer 的 node_id→设备名映射（历史列表显示用）
 
 GET    /api/sites            POST /api/sites                # 站点列表（含 file_count）/ 建站
-GET    /api/site/files       PATCH/DELETE /api/site          # 文件清单（?site=）/ 改名·改标题·删站（?id=）
+GET    /api/site/files       PATCH/DELETE /api/site          # 文件清单（?site=）/ 改名·改标题·可见性·SPA·删站（?id=）
 POST   /api/site/file        DELETE /api/site/file          # 上传(裸字节)/删文件（?site=&path=）
-GET    /sites/<name>/<path>  # 托管的静态站点（HTML/CSS/JS，agent 经 mh site 发布）
+GET/PUT /api/site/grants                                    # 站点公开数据授权（GrantSet）
+GET/POST/DELETE /api/site-hosting    POST /api/site-hosting/verify   # 托管目标与入口验证
+POST   /api/site/publish     POST /api/site/publish/recover  DELETE /api/site/channel  # 发布 / 发布恢复 / 撤渠道
+GET    /sites/<name>/<path>  # 托管的静态站点（public=免 token 原样返回；private=自带 token 门禁且与不存在同响应）
+*      /sites/<name>/api/*   # 访客数据面（匿名按 GrantSet；持 token 的同源请求进程内转发回 /api/*）
 
 GET    /share/<slug>         # 公开分享页 SSR（view 只读渲染 / edit 接受 guest 写入；在 token 门禁前，豁免、不套 shim）
+*      /share/<slug>/api/*   # 该分享的访客数据面（按 shares.grants）
 POST   /api/share            GET /api/shares    DELETE /api/share    # 分享创建 / 列表 / 撤销（WebUI 分享弹窗与 mh share --via 用）
+GET/DELETE /api/share/request   GET /api/share/servers   GET /api/share/buckets   GET /api/shares/all
+POST   /api/share/renew      GET /api/share/managed       # 续期 / 受管分享清单
 GET    /blob/<hash>          POST /api/blob     GET /api/blobs/has    # blob 取字节 / 上传 / 存在性探测（内容寻址）
-POST   /api/pair             # 设备配对握手（一次性配对码兑换长期凭据）
+POST   /api/pair             POST /api/pair/new   POST /api/peers/pair  # 设备配对握手 / 铸码 / 自助配对
+GET    /api/peers   GET/PATCH/DELETE /api/peer   POST /api/peer/sync   # 同步目标管理
+GET    /api/sync/health      GET /api/devices   POST /api/devices/refresh   # 数据地图 / 设备名册（+桶在场性）
+POST   /api/peer/s3   GET /api/peers/s3   GET /api/peer/s3/config
+POST   /api/peer/s3/rotate   GET /api/peer/s3/recovery     # 换钥 / 恢复码
+GET    /api/grants           DELETE /api/grant             # 本机签发的入站凭据
+GET/DELETE /api/edge         POST /api/edge/deploy   POST /api/edge/connect   POST /api/edge/r2
+POST   /api/edge/oauth/begin  GET /api/edge/oauth/status  DELETE /api/edge/oauth   # 用 Cloudflare 登录（PKCE）
+GET    /api/version          # 版本与更新状态（设置「关于」页）
 
 GET    /auth/token           # token 交换：持当前或宽限内旧 token → 返回 {token, exp}（无感续期；豁免门禁）
+```
+
+Edge 侧(部署在**用户自己**的 Cloudflare 账号上,不是本机 server 的路由):
+
+```text
+GET  /health   /owner/health           # 公开健康检查 / 所有者视角状态
+POST /v1/inbox/<drop_id>/envelopes     # 访客投递密文信封（Turnstile / 密码 / ≤64KiB / 容量在此强制）
+     /v1/inbox/<drop_id>[/stats]       # 所有者用 drt_ secret 拉取、ack、看容量
+     /r/<slug>/*                       # 房间：站点页 + unlock + api/* + ws（Durable Object，按 slug 路由）
 ```
 
 当前能力:
@@ -419,19 +525,23 @@ GET    /auth/token           # token 交换：持当前或宽限内旧 token →
     - **块**:光标感知的 reveal-to-edit——标题/引用/列表/待办/分隔线渲成块样式,光标进入则标记复现;`/` 斜杠菜单、悬停 gutter 的 +/grip 拖拽(改类型/重排)、选区浮动格式条、行内实时预览(粗体/斜体/代码/删除线/链接/行内图)。Typora 风格快捷输入(空格/回车提交 marker)、Tab/Shift+Tab 缩进、有序列表**字面序号权威**。
     - **void 区块**:图片/视频/音频/文件/**GFM 表格**/代码/HTML 作为原子或 reveal-to-edit 组件。代码块含语法高亮、行号、语言选择、软换行开关与**一键格式化**(懒加载 prettier/wasm 引擎,见 architecture.md 的 fmt 子系统);表格支持 Notion 式行列 pill 手柄 + autofit + 多选。
     - **source/blocks 模式** `⌘/` 切换(同一 CM view reconfig,非另起 textarea);**⌘F 文档内查找**、右侧 **TOC** + 滚动高亮、右下**字数 pill**、图片标注/lightbox。
+    - **文档内链 `[[doc_id]]`**:输入 `[[` 弹出标题选择器(本地标题表,无网络往返),插入的是**规范 id**;渲染成显示实时标题的胶囊,点击应用内跳转,目标不存在时显示为缺失态。支持 `[[id|别名]]`;从站内复制的链接粘贴进来会自动转成内链;分享页把内链渲成**惰性文本**(不外链到未被分享的目标)。见 [webui-editor.md](./webui-editor.md)。
     - **撤销/重做**为原生 CM6 `history()`(所有结构操作都是普通文本 transaction);粘贴/拖拽图片自动上传成 media void。
-    - 防抖保存(700ms)复用 `PATCH /api/document` 的按块 reconcile;标题走 `textContent` 播种(非 innerHTML,XSS 安全)。
+    - 防抖保存(700ms)复用 `PATCH /api/document` 的按块 reconcile;标题走 `textContent` 播种(非 innerHTML,XSS 安全),标题类可编辑区**只接受纯文本**粘贴/拖放(挡住 Word/Excel 带来的内联字号与 `<style>`);正文首行按 Backspace 会**并入标题**(光标落在接缝处)。
   - **版本历史**：文档「…」菜单 → 右侧抽屉（修订列表 + 任意版本只读预览 + 「对比当前」git 式行级 diff，行内改动深浅双层高亮）；记录 peek「…」菜单 → 历史视图（逐修订字段 diff、恢复）；数据库「…」菜单 →「最近动态」（表级活动流只读抽屉）。恢复带 `if_match`（409 stale → 提示刷新重试）；repair 修订默认隐藏（「显示修复」开关）；设备名经 `/api/nodes` 解析。
-  - **顶栏菜单**（v3.1+）：「分享」打开**能力分享弹窗**——选目标(本机 server / 已配对 peer server / 挂载的对象存储桶)、权限 view|edit(edit 仅 server)、可选密码 + 过期,并管理/撤销/续期已有分享(另有全局「分享」视图);此外仍可复制链接与导出(文档=Markdown、数据库=CSV)。「…」菜单含**创建副本**（文档=标题+全部块、数据库=属性列+全部记录，服务端 core 级原子复制、单一修订随 sync 收敛，完成后跳转副本；后缀「副本」是 WebUI 文案，core 不写死 locale）、视图切换、版本历史、重命名、删除。
+  - **设置页(Notion 化)**：两组 + 一个无头组、共六页(`settings/nav.ts` 是导航单一来源)——**设备**组:外观 / 快速笔记(仅桌面) / 离线与缓存(桌面隐藏);**工作区**组:数据与备份 / 设备 / 站点与发布;末尾无头的**关于**页(版本与更新)。原语是 `SetRow`(粗标题 + 灰副标 + 右对齐控件),一物一家、不重复摆放;`#/settings?sec=<page>` 是公共深链约定(旧的章节 id 经 `LEGACY_SEC` 映射)。见 [25-trust-and-settings](../impl-context/25-trust-and-settings/design.md)。
+  - **发布对话框(受众优先)**：站点分支第一屏只问**"谁可以访问？"**(有链接的人 / 任何人 / 仅自己),托管是**派生摘要行**("Edge 始终在线 — 你的设备离线也能访问 · 更改"),数据授权折叠进"高级"。站点卡片副标题与 SitePeek 的**访问渠道**区块由同一份派生给出(受众徽章 + 托管 + 状态 + URL + 复制/打开)。托管不可用时是**内联引导块 + 深链到设置**,不是提交时才抛错。见 [24-sites-ux-refresh](../impl-context/24-sites-ux-refresh/design.md)。
+  - **顶栏菜单**（v3.1+）：「分享」打开**能力分享弹窗**——选受众/目标(本机 server / 已配对 peer server / 挂载的对象存储桶 / Edge 房间)、权限 view|edit(edit 仅 server)、可选密码 + 过期 + 数据授权,并管理/撤销/续期已有分享(另有全局「分享」视图);此外仍可复制链接与导出(文档=Markdown、数据库=CSV)。「…」菜单含**创建副本**（文档=标题+全部块、数据库=属性列+全部记录，服务端 core 级原子复制、单一修订随 sync 收敛，完成后跳转副本；后缀「副本」是 WebUI 文案，core 不写死 locale）、视图切换、版本历史、重命名、删除。
   - 真实弹窗/菜单/SVG 图标（取代 `alert/prompt/confirm`）、明暗主题。
   - **移动端适配**（v3.0，触摸设备 + ≤768px）：首页变整页导航侧栏、点条目下钻到整屏内容、顶栏「←」返回；操作按钮无 hover 常显、≥16px 字号与触点（输入框 16px 防 iOS 放大）；状态栏 `theme-color` 随主题跟随、安全区适配。桌面端不受影响（判据含 `pointer:coarse`，拖窄桌面窗口不会切移动样式）。
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
 - REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
 - WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。
 - **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化；文档数学公式、脚注、callout（文档表格与 TOC 已实现）。
-- **静态站点托管**:AI agent 用 `mh site create|put|publish|list|files|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联;图片与大二进制走 `cache/` blob,字节不进 oplog、**按需**跨机取回,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
+- **静态站点托管**:AI agent 用 `mh site create|scaffold|put|upload|list|files|access|grant|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`,`--spa` 时无扩展名 miss 回退);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联;图片与大二进制走 `cache/` blob,字节不进 oplog、**按需**跨机取回,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
   - **WebUI「站点管理」页**(v2.9,2026-06-09):侧栏页脚入口 → 卡片列表 + 右侧 peek 文件抽屉(上传/预览/删除)+ 应用内 iframe 预览(直指已 serve 的 `/sites/<name>/`);配套补了 `POST/PATCH/DELETE /api/site*` HTTP 写接口(建站/改名·改标题/删站/传文件/删文件),仍是同一套 `emit()`。见 [08-agent-sites §6](../impl-context/08-agent-sites/design.md)。
   - **站点读写数据正式化 + 离线**(v3,2026-06-11):站点页同源调用 `/api/*` 的写路径纳入契约;可选 SDK `/metahub-sdk.js`(类型化方法 + code 化错误 + token 续期,裸 fetch 永远等价)。启用离线副本的浏览器里站点页**离线可打开**(含从未访问过的——站点文件随 oplog 在副本里,SW 网关从副本 serve,冷启动走自举壳页)、**离线可读写数据**,回网自动同步。信任模型显式化:站点同源=持有完整 hub 读写权限,只发布自产站点。见 [08-agent-sites v3](../impl-context/08-agent-sites/design.md) / [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
+  - **公开访问 + 匿名数据授权**(2026-07):站点有了独立的 `visibility`(public 免 token)与 `spa` 开关;公开站点可经 `mh site grant` 开出一条**窄的、表×操作**授权的访客数据面 `/sites/<name>/api/*`(read/create/update,无 delete,反枚举 401),写入受 Turnstile/密码统一门保护。所有者设备离线时,访客投稿可经 **Edge 写信箱**异步收下(密文),或经 **Edge 房间**实时读写。见 [23-sites-experience](../impl-context/23-sites-experience/design.md)。
 - **PWA 离线副本**:设置页「离线副本」开关(环境不满足时显示具体原因:HTTP 非安全上下文 / 无 OPFS);启用=自助配对+全量水合,之后本地优先(Proxy 门面,HTTP 回落永久保留)、离线编辑块级合并、离线 FTS 搜索、`synced` 事件驱动编辑器/表格原位合并刷新;「立即同步/停用/重置本地副本」与占用显示(`storage.estimate()`),水合后申请 `storage.persist()`。多标签 Web Locks 选主 + BroadcastChannel 代理。见 [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
 - **鉴权**:`--debug` 全开;否则单 token 守护每个请求,经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带;浏览器走解锁页(存 `localStorage`+cookie)+ 注入 `/mh-runtime.js` 页面运行时(token 套壳 + SW 注册 + 离线桥;PWA 安装元数据豁免门禁)。**token 默认持久化在 `~/.metahub`**(重启复用),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token [show|refresh]` 的 refresh 时轮换;轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 无感换新(解锁页静默续期 + 套壳 401 自动重试)。`--token`/`METAHUB_TOKEN` 则为固定、不持久化、不过期的静态覆盖。默认绑 `127.0.0.1`,`--host` 可改。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)。
 

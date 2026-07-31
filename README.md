@@ -78,16 +78,19 @@ mh --server --port 7777
 mh sync http://a-host:7777
 ```
 
-Pair two devices once and they sync both ways on a timer — no need to run `mh sync` each time. The same `sync` command also moves a single document or table to/from a local file (document ↔ Markdown, table ↔ CSV). See the [system-design docs](./docs/system-design/) for how it works.
+Pair two devices once (`mh config device code` / `mh config device add`) and they sync both ways on a timer — no need to run `mh sync` each time. `mh status` answers "where does my data live and how fresh is each copy" from local state alone, so it works offline. The same `sync` command also moves a single document or table to/from a local file (document ↔ Markdown, table ↔ CSV). See the [system-design docs](./docs/system-design/) for how it works.
 
 ## WebUI, API, and agent-hosted sites
 
-`mh --server` serves a browser **WebUI** at `/` (browse and inline-edit tables, a **CodeMirror 6** WYSIWYG Markdown editor — slash menu, doc tables, media embeds, one-click code-block formatting, source/blocks toggle, find, TOC — full-text search, manage agent sites). The same server also exposes:
+`mh --server` serves a browser **WebUI** at `/` (browse and inline-edit tables, a **CodeMirror 6** WYSIWYG Markdown editor — slash menu, doc tables, media embeds, `[[…]]` internal links, one-click code-block formatting, source/blocks toggle, find, TOC — full-text search, manage agent sites). The same server also exposes:
 
 - `/api/*` — REST endpoints over your tables and documents (read **and** write; hosted site pages call them same-origin).
 - `/docs` — auto-generated OpenAPI documentation.
-- `/sites/<name>/` — `mh site publish` hosts the HTML/CSS/JS an agent generates; pages call `/api/*` same-origin, or import the optional typed client at `/metahub-sdk.js` (a local mini-Supabase). Note the trust model: hosted pages are same-origin, so any published site effectively holds full hub access — publish only sites you or your agent authored.
-- `/share/<slug>` — `mh share` publishes a doc/database/site as a public link (view = read-only SSR, edit = accepts guest writes; optional password + expiry), over a server or an S3 bucket.
+- `/sites/<name>/` — `mh site upload` hosts the HTML/CSS/JS an agent generates; pages call `/api/*` same-origin, or import the optional typed client at `/metahub-sdk.js` (a local mini-Supabase). Note the trust model: hosted pages are same-origin, so any published site effectively holds full hub access — publish only sites you or your agent authored.
+- `/sites/<name>/api/*` — the **guest** data surface of a *public* site: anonymous visitors get exactly the table×operation access you granted with `mh site grant` (`read`/`create`/`update` — never delete), optionally behind a password or Turnstile.
+- `/share/<slug>` — `mh share` publishes a doc/database/site as a public link (view = read-only SSR, edit = accepts guest writes; optional password + expiry), over a server, an S3 bucket, or an always-on room on your own Cloudflare edge.
+
+**Publishing when your device is offline** is optional and runs entirely in *your* Cloudflare account: `mh edge deploy` (sign in with Cloudflare, or paste an API token) puts up one Worker with two namespaces — a **write inbox** that accepts sealed, encrypted visitor submissions your device ingests on its next sync round, and **rooms** (Durable Objects) that keep a shared site live and realtime while every device of yours is asleep. metahub itself operates no backend: the edge only ever holds ciphertext envelopes, or the partition you explicitly shared.
 
 Requests are guarded by a single token (persisted in `~/.metahub`). The server binds `127.0.0.1` by default; only `--host 0.0.0.0` exposes it, and credentials travel as plaintext Bearer — put it behind a trusted network or TLS (a reverse proxy like Caddy / Tailscale Serve, or `--tls-cert`/`--tls-key` to terminate TLS directly). Details in the [system-design docs](./docs/system-design/).
 
@@ -125,17 +128,23 @@ The WebUI is an installable PWA. Open **Settings → 离线副本** and this bro
 | `mh doctor` | Read-only health check: list integrity issues (orphan refs/cells, duplicate paths, doc cycles, name clashes) + oplog/disk stats |
 | `mh repair [--dry-run]` | Deterministic, idempotent repair of auto-fixable issues (changes replicate via oplog); `--dry-run` previews (same as doctor) |
 | `mh compact [--keep <days>] [--dry-run]` | Prune oplog history older than the retention window (default 90d) + GC blobs + VACUUM. Local-only; current data untouched, older history collapses to a baseline |
-| `mh site create\|put\|publish\|list\|files\|rm\|delete` | Host static sites (HTML/CSS/JS) an agent generates, served by `--server` at `/sites/<name>/` |
-| `mh share create\|list\|servers\|link\|renew\|revoke` | Publish a doc/database/site as a public link (`/share/<slug>`): server SSR or S3 export, view/edit permission, optional password + expiry |
+| `mh site create\|scaffold\|put\|upload\|list\|files\|rm\|delete` | Host static sites (HTML/CSS/JS) an agent generates, served by `--server` at `/sites/<name>/`. `scaffold` writes a starter page; `upload <dir>` mirrors a directory (`--create` on first upload, `--prune` to delete what's gone) |
+| `mh site access <site> [public\|private]` | Show or change who can reach a site. Public = token-free; private answers exactly like a nonexistent site. `--show-links` prints capability URLs (they *are* the secret) |
+| `mh site grant <site> <db>:<ops>` / `mh site grants <site>` | Anonymous data access for a public site's `api/` (`read,create,update` — no delete), optionally gated by `--password` / `--turnstile`; `--revoke <db>` / `--clear` to take it back |
+| `mh share create\|list\|servers\|link\|renew\|revoke` | Publish a doc/database/site as a public link (`/share/<slug>`): server SSR, S3 export, or `--room` on your own edge; view/edit permission, optional password + expiry, optional `--grant <db>:<ops>` data surface |
+| `mh edge deploy\|status\|pull\|rotate\|connect` | Your own Cloudflare Worker + D1 (+ Durable Objects): deploy it (sign in with Cloudflare or an API token), check health, pull the write inbox by hand, rotate recipient keys, or attach a second device to an existing edge |
 | `mh blob add <file>` / `mh blob get <hash>` | Store a local file as a content-addressed `/blob/<hash>` URL (embed in a doc) / resolve its bytes (local cache → peers → bucket) |
 | `mh cache [status\|clear\|gc\|full-device\|redundancy\|pin\|unpin]` | Inspect/manage the local blob cache; designate "full blob devices" (durable anchors) so images are safely clearable |
 | `mh token [show\|refresh]` | Show/rotate the persisted server auth token (stored in `~/.metahub`, rotates at 30-day expiry by default) |
 | `mh completion <bash\|zsh\|fish>` | Print a completion script: `eval "$(mh completion zsh)"` |
-| `mh sync <url>` | Sync one round with a server (CRDT push/pull); uses a stored credential when `/sync` is protected, otherwise prompts for a token in an interactive terminal and remembers it (`--token` for non-interactive) |
+| `mh sync` | Sync now: one round against every configured device and bucket |
+| `mh sync <url>` | Sync one round with a specific server (CRDT push/pull); uses a stored credential when `/sync` is protected, otherwise prompts for a token in an interactive terminal and remembers it (`--token` for non-interactive) |
 | `mh sync <src> <dst>` | Move a single document/table to/from a file: document ↔ Markdown, table ↔ CSV; direction inferred from which side is an in-repo entity |
-| `mh config` | Configure the server and sync devices: no args opens an interactive wizard, `--flag` sets directly (`--host/--port/--sync-interval/--auto-sync`) |
-| `mh config peer code\|add\|list\|sync\|enable\|disable\|rm` | Multi-device pairing and management: generate a one-time code / pair / list / sync now / enable-disable / remove (also revokes the credential issued to the peer). `peer add --s3` / `--enroll <code>` attaches an object-storage bucket for offline store-and-forward |
-| `mh config grant list\|revoke` | List/revoke inbound sync credentials this machine issued (`revoke --token` accepts an exact value or prefix) |
+| `mh status` | Where your data lives and how fresh each copy is: every device/bucket, its freshness, the one issue that matters most, and what to do about it. Purely local — it answers offline |
+| `mh config` | Interactive wizard over everything below (`server` / `device` / `backup` / `edge`). Daily *tools* stay top-level; anything that changes long-lived state lives under `config` |
+| `mh config server --port … --host … --sync-interval …` | Server settings persisted in `~/.metahub` (CLI flags still win at startup) |
+| `mh config device code\|add\|list\|revoke` | Pair devices with a one-time code, inspect the roster (how each joined, last activity, whether it can be cut off — `--refresh` adds bucket presence), or cut one off |
+| `mh config backup connect\|list\|rotate\|recovery\|anchors` | Attach a cloud bucket (S3/R2) for offline store-and-forward — direct keys, an `--enroll` code/QR, or `--provision-r2` to create the bucket first. `rotate` re-keys after losing a device; `recovery` prints a hand-copyable recovery card; `anchors` sets blob redundancy |
 | `mh --server [--port] [--host] [--debug] [--token] [--sync-interval] [--no-auto-sync] [--tls-cert --tls-key]` | Start the server: `/sync` (master token or pairing credential) + WebUI/PWA at `/` + `/api/*` REST + `/docs` (OpenAPI) + static sites `/sites/<name>/` + token exchange `/auth/token` + pairing `/api/pair`; a built-in timer auto-syncs paired peers; `--tls-*` serves https directly (PEM paths) |
 
 </details>
