@@ -56,11 +56,31 @@ oplog 是 sync 的真相源(peer 按 rowid 游标增量拉取),**绝不删改历
 
 **明确不做**:自动定时压缩(将来归 `mh config`);"彻底抹除已删数据"(需全 peer 墓碑确认,另立特性)。
 
-## 6. WebUI 历史面板与 diff 粒度教训
+## 6. WebUI 历史面板(2026-07 改版后形态)
 
-- 文档:"…"菜单 → 右侧抽屉(复用 `.peek` + `useDrawerTransition`),修订列表 + 只读预览 + "对比当前" diff;恢复带 `if_match`,`stale` → toast + 刷新(复用编辑器冲突处理模式);打开前 `flushSave`,恢复后 `DocViewHandle.reload()`。记录:RecordPeek 内切历史视图,逐修订字段 diff(相邻两版 `recordAt` 对比)。设备名经 `GET /api/nodes`(本机 + peers label)。
-- **diff 粒度教训**(一轮返工):初版 diff 沿用存储层"空行块"切分 + 精确匹配 LCS → 连续列表改一行整块红绿。根因是**把存储粒度误用作展示粒度**——存储要的是块身份(精确匹配正确),展示要的是人的阅读单位。修正为 git 式行级 LCS(代码围栏内同样按行,空行不参与匹配)+ GitHub 式行内深浅双层高亮(del/add 行配对取公共前缀/后缀,中段深色;公共部分 < 行长 30% 视为整行重写不标)。存储与同步零改动。
-- 桌面端坑:`body.desktop-mac .peek-head` 是窗口拖拽区,新增的 `.hist-toggle` 复选框需加入 no-drag 豁免。
+文档抽屉("…"菜单 → `.peek`,`src/webui/history.tsx` + 纯函数层 `src/webui/hist-diff.ts`):
+
+- **diff 语义 = 该版本 vs 上一版本**(GitHub 式,"这次修订改了什么")。基准取**全量修订列表**的邻居(含 repair)——若取"显示修复"过滤后的邻居,隐藏修复时会把 repair 的变更错误归到下一条用户修订头上。初版"选中 vs 当前 HEAD"语义被否决(选最新版本 diff 恒为空)。支持任选基准:行上 pin 按钮 / Shift+点击,方向按 HLC 归一(老→新)。
+- **三种模式并存,各管一类读者**:
+  - **变更**(默认)= 富文本渲染 diff:按块(fence 感知 `parseDocBlocks`)LCS 对齐,未变块正常渲染(长段折叠),增/删块加绿/红水洗,配对的编辑块**渲染一次**、词级 `<del>/<ins>` 融在文中(中文按字、拉丁按词)。实现是 **PUA 哨兵注入**:U+E000-E003 包住词级变更段 → `renderMarkdown`(哨兵不破坏 `**` 等 inline 标记)→ 渲染后换成真标签;换之前做**标签深度平衡检查**(哨兵对深度相等且中途不下穿),不安全(链接 URL 改动、块类型 `##`→`#` 变化)则回退为上红下绿整块。直接往 markdown 源注入真标签的方案不可行(破坏 token/围栏语法)。
+  - **源码** = git 式行级 unified diff:全行参与(含空行,行号必须真实),双行号栏 + +/− + 行内深浅双层高亮(del/add 配对取公共前后缀,公共 < 30% 视为重写不标),长未变段折叠(两侧留 3 行上下文);**围栏内的行等宽、正文行用正文字体**(逐行 fence 追踪打 mono 标)。
+  - **预览** = 该版本完整渲染快照。
+- 渲染复用 `core/sync/share-render.ts` 的 `renderMarkdown`(与编辑器同一套 grammar,早已进浏览器 bundle);`[[doc_id]]` 经 `docLinkTitle` 显示实时标题。
+- **时间线**:修订按 今天/昨天/本周/日期 分组(sticky 组头);同设备 10 分钟内连续 ≥4 条小修订(≤2 块、非 created/deleted/标题)折叠为一条,点击选中 = **整簇净变更**(最新成员 vs 簇前一版);HEAD 永不入簇。版本状态经 `states` ref 缓存(`documentAt` 每版只拉一次,打开时用 HEAD 预填省首次请求)。
+- 记录侧:RecordPeek 字段名菜单 + 修改历史字段名 → 单元格级流水弹窗(`recordFieldHistory`);「最近动态」支持按记录/设备筛选(选项从已加载 feed 派生,零额外请求)。**新增 api client 方法必须同步补 `data/local-api.ts` 同名方法**(api Proxy 按 `prop in localApi` 分发,漏了会在 replica 模式静默走 HTTP)。
+- **diff 粒度教训**(两轮返工):初版沿用存储层"空行块"切分 → 整块红绿(把存储粒度误用作展示粒度);二版块级渲染 diff 仍被否决(整段标红绿,粒度还是太粗)。终版 = 行级/词级两套并存。存储与同步零改动。
+- 桌面端坑:`body.desktop-mac .peek-head` 是窗口拖拽区,头部控件需 no-drag 豁免。
+
+### 6.1 no-op 写入修复(标题噪音的根因)
+
+现象:每条修订都标"标题",实际没人改过标题。机制链:编辑器自动保存(停笔 700ms)**总是发全量 `{title, body}`** → 旧版 `updateDocument` 对带上的字段**来者不拒地 emit**(不比对旧值)→ 每次保存追加一行同值 `documents.title` 寄存器写入(正文无此害:body 走块 reconcile,只 emit 真变化的块)→ 显示层只看"这组修订里有没有 title 写入" → 全部标"标题"。危害三层:显示噪音、oplog 膨胀(title 行数 ≈ 保存次数)、**LWW 正确性**——同值重写刷新寄存器 HLC,在线设备的无操作保存会在合并时盖掉离线设备的真实改名。
+
+修复双管齐下(`documents.ts` + `history.ts`):
+
+1. `updateDocument` 只 emit 值真正变化的寄存器(title/database_id 比对旧值;parent_id 原本就有此保护)。**给 core 写字段时永远先比对旧值再 emit** 是通用规则。
+2. `listDocumentRevisions` 沿修订流维护 doc 寄存器运行值,`title_changed` 按**值变化**判定,纯 no-op 修订组整组丢弃——存量 oplog 里的历史噪音从列表消失,无需清数据。运行值未知(首见/压缩边缘)保守按"有变化"处理,丢修订绝不猜。
+
+注意:存量同值行仍物理留在 `crdt_changes`(append-only),只是不再显示;要 `mh compact` 才真正删除——而 title 恰是 §5 所说压缩收益最大的"反复覆写型"寄存器。
 
 ## 7. 接口面
 
@@ -80,4 +100,4 @@ HTTP(自动进 /docs):`GET /api/{document,record,property}/history`、`GET /api/
 
 ## 8. 验证
 
-`src/core/history.test.ts`(16 例)+ `src/core/compact.test.ts`(7 例):任意时点重建一致、revert 后 `validateHub` 干净、双节点 sync 后历史视图与回滚结果收敛一致、txn 聚簇/kind、已删实体复活、prop revert 跳过策略、压缩四不变量(头部不变/墓碑保留/落后 peer 收敛/rowid 单调)、blob GC、dry-run 零改动。
+`src/core/history.test.ts`(18 例)+ `src/core/compact.test.ts`(7 例):任意时点重建一致、revert 后 `validateHub` 干净、双节点 sync 后历史视图与回滚结果收敛一致、txn 聚簇/kind、已删实体复活、prop revert 跳过策略、no-op 保存不产生写入/修订、存量同值写入不标 title_changed、压缩四不变量(头部不变/墓碑保留/落后 peer 收敛/rowid 单调)、blob GC、dry-run 零改动。前端纯函数 `src/webui/hist-diff.test.ts`(20 例):行级 diff 行号/围栏 mono 标记、折叠上下文、富文本 diff 词级合并/加粗内标记/URL 与块类型变化回退、时间线分组与聚簇边界。
