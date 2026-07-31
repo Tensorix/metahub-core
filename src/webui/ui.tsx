@@ -222,6 +222,47 @@ export function useDrawerTransition(onClose: () => void, durationMs = 240) {
   return { open, close };
 }
 
+/** Drag-to-resize for right-anchored drawers (.peek): render `handle` as the
+ *  drawer's first child and put `width` on its style. Width persists per
+ *  `storageKey`; null means "stylesheet default". Double-click resets. The
+ *  drawer is right-anchored, so width = viewport right edge − pointer x. */
+export function useDrawerResize(storageKey: string, min = 380) {
+  const [width, setWidth] = useState<number | null>(() => {
+    const v = Number(localStorage.getItem(storageKey) || "");
+    return Number.isFinite(v) && v >= min ? v : null;
+  });
+  const start = (e: PointerEvent) => {
+    e.preventDefault();
+    const t = e.currentTarget as HTMLElement;
+    t.setPointerCapture(e.pointerId);
+    let w: number | null = null;
+    const move = (ev: PointerEvent) => {
+      w = Math.max(min, Math.min(window.innerWidth - 64, window.innerWidth - ev.clientX));
+      setWidth(w);
+    };
+    const up = () => {
+      t.removeEventListener("pointermove", move);
+      t.removeEventListener("pointerup", up);
+      if (w != null) localStorage.setItem(storageKey, String(Math.round(w)));
+    };
+    t.addEventListener("pointermove", move);
+    t.addEventListener("pointerup", up);
+  };
+  const reset = () => {
+    localStorage.removeItem(storageKey);
+    setWidth(null);
+  };
+  const handle = (
+    <div
+      class="peek-resize"
+      title="拖动调整宽度，双击复原"
+      onPointerDown={start}
+      onDblClick={reset}
+    />
+  );
+  return { width, handle };
+}
+
 // ---- modal -----------------------------------------------------------------
 const modalStore = makeStore<VNode | null>(null);
 export function openModal(node: VNode) {

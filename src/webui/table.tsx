@@ -18,6 +18,7 @@ import {
   MenuLabel,
   MenuSep,
   confirmDialog,
+  useDrawerResize,
   useDrawerTransition,
   toast,
 } from "./ui.tsx";
@@ -1022,11 +1023,13 @@ function RecordPeek({
   const [editing, setEditing] = useState<string | null>(null);
   const [hist, setHist] = useState(false);
   const { open, close } = useDrawerTransition(onClose);
+  const { width, handle } = useDrawerResize("mh.peekW");
   const titleProp = props[0];
   return (
     <>
       <div class={"scrim" + (open ? " open" : "")} onClick={close} />
-      <div class={"peek" + (open ? " open" : "")}>
+      <div class={"peek" + (open ? " open" : "")} style={width != null ? { width: `${width}px` } : undefined}>
+        {handle}
         <div class="peek-head">
           <button class="iconbtn" onClick={close}><Icon name="x" /></button>
           {hist && (

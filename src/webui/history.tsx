@@ -11,7 +11,7 @@ import {
 } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { timeAgo } from "./date.ts";
-import { confirmDialog, toast, useDrawerTransition } from "./ui.tsx";
+import { confirmDialog, toast, useDrawerResize, useDrawerTransition } from "./ui.tsx";
 import { renderMarkdown, type RenderOpts } from "../core/sync/share-render.ts";
 import { docLinkTitle } from "./doc-titles.ts";
 import {
@@ -171,6 +171,7 @@ export function DocHistoryPanel({
   onReverted: () => void;
 }) {
   const { open, close } = useDrawerTransition(onClose);
+  const { width, handle } = useDrawerResize("mh.histPeekW", 480);
   const [revs, setRevs] = useState<DocRevision[] | null>(null);
   const [cur, setCur] = useState<Doc | null>(null);
   const [sel, setSel] = useState<string | null>(null);
@@ -410,7 +411,11 @@ export function DocHistoryPanel({
   return (
     <>
       <div class={"scrim" + (open ? " open" : "")} onClick={close} />
-      <div class={"peek hist-peek" + (open ? " open" : "")}>
+      <div
+        class={"peek hist-peek" + (open ? " open" : "")}
+        style={width != null ? { width: `${width}px` } : undefined}
+      >
+        {handle}
         <div class="peek-head">
           <button class="iconbtn" onClick={close}>
             <Icon name="x" />

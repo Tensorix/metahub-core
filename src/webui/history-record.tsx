@@ -11,7 +11,15 @@ import {
 } from "./api.ts";
 import { Icon } from "./icons.tsx";
 import { timeAgo } from "./date.ts";
-import { closeModal, confirmDialog, Modal, openModal, toast, useDrawerTransition } from "./ui.tsx";
+import {
+  closeModal,
+  confirmDialog,
+  Modal,
+  openModal,
+  toast,
+  useDrawerResize,
+  useDrawerTransition,
+} from "./ui.tsx";
 import { fmtVal, KindBadge, useNodeNames } from "./history.tsx";
 
 // Record-side history UIs: the database activity feed, the per-record revision
@@ -90,6 +98,7 @@ const ACTIVITY_DIFF_PREVIEW = 3;
  *  last title. */
 export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () => void }) {
   const { open, close } = useDrawerTransition(onClose);
+  const { width, handle } = useDrawerResize("mh.peekW");
   const [entries, setEntries] = useState<DatabaseActivityEntry[] | null>(null);
   const [names, setNames] = useState<Map<string, string>>(new Map());
   const [showAll, setShowAll] = useState(false);
@@ -130,7 +139,11 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
   return (
     <>
       <div class={"scrim" + (open ? " open" : "")} onClick={close} />
-      <div class={"peek" + (open ? " open" : "")}>
+      <div
+        class={"peek" + (open ? " open" : "")}
+        style={width != null ? { width: `${width}px` } : undefined}
+      >
+        {handle}
         <div class="peek-head">
           <button class="iconbtn" onClick={close}>
             <Icon name="x" />
