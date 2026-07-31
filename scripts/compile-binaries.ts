@@ -27,6 +27,18 @@ if (!existsSync("dist/webui.js")) {
   await $`bun run build`;
 }
 
+// Bake public build-time constants (MH_BUILD_*, e.g. the Cloudflare OAuth
+// client id) into the compiled binary as literals — the end user's machine has
+// no such env vars. Prefix-scoped so CI secrets can never ride along. Kept in a
+// variable so Bun's shell interpolates it as a plain argument (a bare `*` in
+// the template would be glob-expanded).
+const buildEnvPrefix = "MH_BUILD_*";
+console.log(
+  process.env.MH_BUILD_CF_OAUTH_CLIENT_ID
+    ? "  CF OAuth client id: baked in"
+    : "  CF OAuth client id: not set — 「用 Cloudflare 登录」 falls back to manual token entry",
+);
+
 const host = hostBunTarget();
 // HOST_ONLY=1 → compile just the runner's native target. Same compile + smoke
 // (version / WebUI serve / skill embed) as the full set, minus the cross-compiled
@@ -37,7 +49,7 @@ for (const target of targets) {
   const ext = platform.startsWith("windows") ? ".exe" : "";
   const outfile = `${outdir}/metahub-${platform}${ext}`;
   console.log(`▶ Building ${outfile}`);
-  await $`bun build --compile --target=${target} src/cli/compiled-entry.ts --outfile ${outfile}`;
+  await $`bun build --compile --target=${target} --env ${buildEnvPrefix} src/cli/compiled-entry.ts --outfile ${outfile}`;
   // Only the host-native target can run here; it proves the whole set's version
   // and that the embedded WebUI bundle is actually served (guards the 500 regression).
   if (target === host) {

@@ -17,6 +17,11 @@ concurrency:
   group: release-desktop-${{ github.ref }}
   cancel-in-progress: false
 
+# 打包内嵌的 core sidecar 同样要带上「用 Cloudflare 登录」的公有 client_id
+# （见 release.yml 里的说明；未配置则留空，回退到手填 API token）。
+env:
+  MH_BUILD_CF_OAUTH_CLIENT_ID: ${{ vars.MH_BUILD_CF_OAUTH_CLIENT_ID || secrets.MH_BUILD_CF_OAUTH_CLIENT_ID }}
+
 jobs:
   # ── 1. 校验 tag 并创建 draft Release ──────────────────────────────────────
   create:

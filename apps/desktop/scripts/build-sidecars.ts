@@ -55,11 +55,21 @@ if (targets.length === 0) {
 }
 console.log(buildAll ? "▶ building ALL sidecar targets" : `▶ building host (${process.platform}) sidecars`);
 
+// Same bake-in as the CLI binaries (scripts/compile-binaries.ts): MH_BUILD_*
+// constants become literals, since the sidecar runs on a user machine that has
+// no such env vars. Held in a variable so Bun's shell doesn't glob the `*`.
+const buildEnvPrefix = "MH_BUILD_*";
+console.log(
+  process.env.MH_BUILD_CF_OAUTH_CLIENT_ID
+    ? "  CF OAuth client id: baked in"
+    : "  CF OAuth client id: not set — 「用 Cloudflare 登录」 falls back to manual token entry",
+);
+
 const host = hostBunTarget();
 for (const t of targets) {
   const outfile = `${outdir}/${t.out}`;
   console.log(`▶ Building ${outfile}`);
-  await $`bun build --compile --target=${t.bun} ${entry} --outfile ${outfile}`;
+  await $`bun build --compile --target=${t.bun} --env ${buildEnvPrefix} ${entry} --outfile ${outfile}`;
   // Only the host-native target can run here; it proves the whole set's version.
   if (t.bun === host) await verifyBinaryVersion(join(repoRoot, outfile), { expected: pkg.version, kind: "sidecar" });
 }

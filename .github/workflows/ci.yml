@@ -19,6 +19,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true # 新提交顶掉同分支上还在跑的旧 run，省额度
 
+# 与 release.yml 同源：让 dry-run 走和真发版一模一样的注入路径（含 scripts/build.ts
+# 里「设了就必须内联成功」的守卫）。变量没配也不影响 —— 留空即回退。
+env:
+  MH_BUILD_CF_OAUTH_CLIENT_ID: ${{ vars.MH_BUILD_CF_OAUTH_CLIENT_ID }}
+
 jobs:
   # ── 快档：每次 push/PR ────────────────────────────────────────────────
   checks:

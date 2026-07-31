@@ -15,10 +15,23 @@
 import { MhError } from "../errors.ts";
 import { toB64url } from "./e2ee.ts";
 
-/** Registered OAuth client id. Overridable for self-hosters who register their
- *  own private client (see docs). Empty/placeholder → OAuth login is unavailable
- *  and callers fall back to manual token entry. */
-export const CF_OAUTH_CLIENT_ID = process.env.METAHUB_CF_OAUTH_CLIENT_ID || "";
+/** Registered OAuth client id, resolved from two layers in order:
+ *
+ *  1. `METAHUB_CF_OAUTH_CLIENT_ID` — a *runtime* env var. Self-hosters who
+ *     register their own private client set this on the machine; it works on
+ *     any install, shipped binaries included, and always wins.
+ *  2. `MH_BUILD_CF_OAUTH_CLIENT_ID` — *baked in at build time*. The bundler
+ *     inlines every `MH_BUILD_*` reference as a string literal (`--env
+ *     'MH_BUILD_*'` in scripts/build.ts, scripts/compile-binaries.ts and
+ *     apps/desktop/scripts/build-sidecars.ts), so official builds carry the id
+ *     even though the end user's machine has no such variable. It is a
+ *     deliberately *different* name from (1) — sharing one name would let the
+ *     inliner freeze the override into a constant and kill layer 1.
+ *
+ *  Both empty (a from-source run, or a fork that never registered a client) →
+ *  OAuth login is unavailable and callers fall back to manual token entry. */
+export const CF_OAUTH_CLIENT_ID =
+  process.env.METAHUB_CF_OAUTH_CLIENT_ID || process.env.MH_BUILD_CF_OAUTH_CLIENT_ID || "";
 
 const AUTH_ENDPOINT = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN_ENDPOINT = "https://dash.cloudflare.com/oauth2/token";

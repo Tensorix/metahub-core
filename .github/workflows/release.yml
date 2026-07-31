@@ -20,6 +20,14 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# 「用 Cloudflare 登录」的公有 OAuth client_id。非机密（PKCE 公有客户端，安全性靠
+# 回调白名单 + verifier），但不入库，改由构建时注入：Bun 的 --env 'MH_BUILD_*' 会把
+# 所有 MH_BUILD_* 引用内联成字面量，产物因此自带 client_id（用户机器上不存在这个变量）。
+# 在仓库 Settings → Secrets and variables → Actions 里配 Variable（或 Secret）
+# MH_BUILD_CF_OAUTH_CLIENT_ID；不配则留空 → 编辑器回退到手填 Account ID + API token。
+env:
+  MH_BUILD_CF_OAUTH_CLIENT_ID: ${{ vars.MH_BUILD_CF_OAUTH_CLIENT_ID || secrets.MH_BUILD_CF_OAUTH_CLIENT_ID }}
+
 jobs:
   # ── 1. 校验 tag 并创建 draft Release（后续 job 往里上传产物）──────────────
   create:

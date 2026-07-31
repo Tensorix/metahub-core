@@ -4,6 +4,17 @@ import { $ } from "bun";
 
 const outdir = "dist";
 
+/**
+ * Public, non-secret build-time constants get baked into the server/CLI bundles
+ * as string literals (today: MH_BUILD_CF_OAUTH_CLIENT_ID, the "Sign in with
+ * Cloudflare" client id — see core/sync/cf-oauth.ts). Without this the shipped
+ * artifact would read `process.env` on the *end user's* machine, where the
+ * variable never exists. Prefix-scoped on purpose: CI secrets (NPM_TOKEN, …)
+ * can never be inlined by accident. Unset at build time → the reference is left
+ * as a runtime lookup, which is exactly the fallback we want.
+ */
+const BUILD_ENV_PREFIX = "MH_BUILD_*" as const;
+
 await rm(outdir, { recursive: true, force: true });
 
 const libResult = await Bun.build({
@@ -12,6 +23,7 @@ const libResult = await Bun.build({
   target: "bun",
   format: "esm",
   sourcemap: "external",
+  env: BUILD_ENV_PREFIX,
 });
 
 if (!libResult.success) {
@@ -198,6 +210,7 @@ const cliResult = await Bun.build({
   format: "esm",
   sourcemap: "external",
   naming: "cli.js",
+  env: BUILD_ENV_PREFIX,
 });
 
 if (!cliResult.success) {
@@ -213,6 +226,21 @@ const cliContent = await Bun.file(cliPath).text();
 // the installers would silently write an empty skill — so fail the build loudly.
 if (!cliContent.includes("durable, syncable working memory")) {
   throw new Error("cli.js is missing the embedded SKILL.md body (mh init agent skills)");
+}
+
+// If the build machine supplied a bake-in constant, prove it actually landed as
+// a literal — a silent inlining regression would ship a build where "用
+// Cloudflare 登录" is mysteriously unavailable for every user.
+const cfClientId = process.env.MH_BUILD_CF_OAUTH_CLIENT_ID;
+if (cfClientId) {
+  if (!cliContent.includes(cfClientId)) {
+    throw new Error(
+      `cli.js did not inline MH_BUILD_CF_OAUTH_CLIENT_ID (Bun.build env: "${BUILD_ENV_PREFIX}" regressed)`,
+    );
+  }
+  console.log("  CF OAuth client id: baked in");
+} else {
+  console.log("  CF OAuth client id: not set — 「用 Cloudflare 登录」 falls back to manual token entry");
 }
 
 await Bun.write(cliPath, `#!/usr/bin/env bun\n${cliContent}`);
