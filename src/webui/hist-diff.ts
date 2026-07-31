@@ -183,10 +183,13 @@ const ADD_O = "\uE002";
 const ADD_C = "\uE003";
 const SENTINELS = /[\uE000-\uE003]/g;
 
-/** Word-level diff units: CJK per character, runs of other non-space, runs of
- *  whitespace — per-word marks for latin text, per-char for CJK prose. */
+/** Word-level diff units: whitespace runs; CJK ideographs/kana and CJK or
+ *  fullwidth punctuation per character; latin/digit words as runs; anything
+ *  else (ASCII punctuation, symbols) per character. Punctuation being its own
+ *  token is what keeps 全角标点相邻词 from reading as one giant changed word —
+ *  only the word that actually changed gets marked. */
 const wordTokens = (s: string): string[] =>
-  s.match(/[\u3400-\u9fff\uf900-\ufaff]|\s+|[^\s\u3400-\u9fff\uf900-\ufaff]+/g) ?? [];
+  s.match(/\s+|[\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]|[a-zA-Z0-9_]+|./g) ?? [];
 
 /** Merge old→new at word level with sentinel-wrapped del/ins runs. */
 function mergeWords(oldText: string, newText: string): { merged: string; dels: number; adds: number } {

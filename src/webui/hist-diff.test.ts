@@ -177,8 +177,27 @@ describe("richDiffSections", () => {
   test("code fence edits keep the fence rendered as code", () => {
     const out = html("```ts\nconst a = 1;\n```", "```ts\nconst a = 2;\n```");
     expect(out).toContain("<pre>");
-    expect(out).toContain('<del class="rdx">1;</del>');
-    expect(out).toContain('<ins class="rdi">2;</ins>');
+    expect(out).toContain('<del class="rdx">1</del>');
+    expect(out).toContain('<ins class="rdi">2</ins>');
+  });
+
+  test("fullwidth punctuation splits words — neighbours stay unmarked", () => {
+    const out = html(
+      "你是 Laplace AI123，AgenticOS 的调度者",
+      "你是 Laplace AI，AgenticOS 的调度者",
+    );
+    expect(out).toContain('<del class="rdx">AI123</del>');
+    expect(out).toContain('<ins class="rdi">AI</ins>');
+    expect(out).not.toContain("AgenticOS</del>");
+    expect(out).not.toContain("AgenticOS</ins>");
+  });
+
+  test("ascii punctuation splits words too", () => {
+    const out = html("hello world.", "hi world.");
+    expect(out).toContain('<del class="rdx">hello</del>');
+    expect(out).toContain('<ins class="rdi">hi</ins>');
+    expect(out).not.toContain("world.</del>"); // shared tail stays unmarked
+    expect(out).not.toContain("world.</ins>");
   });
 });
 
