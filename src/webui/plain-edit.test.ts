@@ -6,7 +6,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 GlobalRegistrator.register();
 
 import { afterAll, test, expect } from "bun:test";
-import { flattenToText, plainTextFrom } from "./plain-edit.ts";
+import { deletePlainSelection, flattenToText, plainTextFrom } from "./plain-edit.ts";
 
 afterAll(() => GlobalRegistrator.unregister());
 
@@ -37,6 +37,31 @@ test("CRLF normalizes and surrounding blank space is trimmed", () => {
 test("an empty or absent transfer yields an empty string", () => {
   expect(plainTextFrom(transfer({}))).toBe("");
   expect(plainTextFrom(null)).toBe("");
+});
+
+// The title's Enter cuts [caret, end] before handing the tail to the body. Under
+// happy-dom execCommand is unimplemented, so this exercises the Range fallback —
+// the path a browser without execCommand would take.
+test("deletePlainSelection removes the selected range, caret at the seam", () => {
+  const el = document.createElement("div");
+  el.textContent = "前半后半";
+  document.body.append(el);
+  const node = el.firstChild!;
+  const r = document.createRange();
+  r.setStart(node, 2);
+  r.setEnd(node, 4);
+  const sel = getSelection()!;
+  sel.removeAllRanges();
+  sel.addRange(r);
+
+  deletePlainSelection();
+  expect(el.textContent).toBe("前半");
+
+  // A collapsed selection is a no-op — Enter at the title's end must not eat a
+  // character on its way into the body.
+  deletePlainSelection();
+  expect(el.textContent).toBe("前半");
+  el.remove();
 });
 
 test("flattenToText collapses nested markup, leaves plain text alone", () => {

@@ -10,12 +10,12 @@ import { toast } from "./ui.tsx";
 import { CmDocBody, type CmHandle } from "./cm6/CmDocBody.tsx";
 import { handleClickBelow } from "./cm6/click-below.ts";
 import { docModel } from "./cm6/doc-model.ts";
-import { enterDocTop } from "./cm6/structure.ts";
+import { enterDocTop, splitDocTop } from "./cm6/structure.ts";
 import { mediaFilesFrom, uploadFilesAt } from "./cm6/chrome/upload-paste.tsx";
 import { openDocFind } from "./cm6/chrome/find.tsx";
 import { previewAnchor, setPreviewAnchor } from "./cm6/chrome/preview-anchor.ts";
 import { blockToText, type Block } from "./blocks.ts";
-import { flattenToText, insertPlainText, plainPasteHandlers } from "./plain-edit.ts";
+import { deletePlainSelection, flattenToText, insertPlainText, plainPasteHandlers } from "./plain-edit.ts";
 import { ImageLightbox } from "./media/image-lightbox.tsx";
 
 export type DocMode = "blocks" | "source";
@@ -352,6 +352,40 @@ export function DocView({
     return true;
   };
 
+  // Enter in the title: the title is the body's line above, so Enter breaks at
+  // the seam — everything right of the caret is CUT from the title and becomes
+  // the document's new first block, caret at its start. Exact inverse of
+  // mergeIntoTitle, so the two round-trip across the seam. Both ranges are built
+  // from the live selection (no character-offset math, so no assumption about
+  // the title's node structure); starting the cut at the selection's START and
+  // the moved text at its END means a non-collapsed selection is swallowed by
+  // the same cut, as Enter does anywhere else.
+  const splitTitleIntoBody = () => {
+    const el = titleElRef.current;
+    const v = cmRef.current?.view;
+    if (!el || !v) return;
+    const sel = getSelection();
+    const live = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+    let moved = "";
+    if (sel && live && el.contains(live.commonAncestorContainer)) {
+      const after = document.createRange();
+      after.setStart(live.endContainer, live.endOffset);
+      after.setEnd(el, el.childNodes.length);
+      moved = after.toString();
+      const cut = document.createRange();
+      cut.setStart(live.startContainer, live.startOffset);
+      cut.setEnd(el, el.childNodes.length);
+      if (!cut.collapsed) {
+        sel.removeAllRanges();
+        sel.addRange(cut);
+        deletePlainSelection(); // execCommand: joins the title's native undo stack
+        titleRef.current = el.textContent ?? ""; // the Range fallback emits no input
+        scheduleSave();
+      }
+    }
+    splitDocTop(v, moved);
+  };
+
   if (loading) return <div class="empty">加载中…</div>;
 
   // Move the caret to the very start of the body and focus it (title → body).
@@ -420,7 +454,7 @@ export function DocView({
         }}
         onKeyDown={(e) => {
           if (e.isComposing || e.keyCode === 229) return;
-          if (e.key === "Enter") { e.preventDefault(); enterBody(); return; }
+          if (e.key === "Enter") { e.preventDefault(); splitTitleIntoBody(); return; }
           if (e.key === "ArrowDown" && caretLineEdge(e.currentTarget as HTMLElement).last) { e.preventDefault(); enterBody(); }
         }}
       />

@@ -54,6 +54,26 @@ export function insertPlainText(text: string): void {
 }
 
 /**
+ * Delete the current selection. Same reasoning as insertPlainText: execCommand
+ * is deprecated but is the only deletion that participates in the browser's
+ * native undo stack for contentEditable; fall back to a Range edit.
+ */
+export function deletePlainSelection(): void {
+  const sel = getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.getRangeAt(0).collapsed) return;
+  try {
+    if (document.execCommand("delete")) return;
+  } catch {
+    // execCommand is absent (or threw) — fall through to the Range path.
+  }
+  const range = sel.getRangeAt(0);
+  range.deleteContents();
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/**
  * Collapse a host back to a single text node, caret at the end. Safety net for
  * the injection paths we don't intercept (spellcheck replacement, extensions,
  * autofill) — the handlers below cover paste and drop.

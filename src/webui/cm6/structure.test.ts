@@ -151,7 +151,7 @@ describe("fenceContinuation round-trip", () => {
 import { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { docModelField } from "./doc-model";
-import { enterDocTop } from "./structure";
+import { enterDocTop, splitDocTop } from "./structure";
 
 function stubView(doc: string) {
   let state = EditorState.create({ doc, extensions: [docModelField] });
@@ -196,6 +196,65 @@ describe("enterDocTop", () => {
     const { view, current } = stubView("| a |\n| --- |\n| 1 |");
     enterDocTop(view);
     expect(current().doc.toString()).toBe("\n| a |\n| --- |\n| 1 |");
+    expect(current().selection.main.head).toBe(0);
+  });
+});
+
+// ---- splitDocTop: Enter in the title, the text right of the caret comes down ----
+describe("splitDocTop", () => {
+  test("carried text becomes the new first block, caret at its start", () => {
+    const { view, current } = stubView("第一段");
+    splitDocTop(view, "后半");
+    expect(current().doc.toString()).toBe("后半\n第一段");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("empty doc: no trailing newline behind the carried text", () => {
+    const { view, current } = stubView("");
+    splitDocTop(view, "后半");
+    expect(current().doc.toString()).toBe("后半");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("caret at the title's end: an empty paragraph opens above the first block", () => {
+    const { view, current } = stubView("第一段");
+    splitDocTop(view, "");
+    expect(current().doc.toString()).toBe("\n第一段");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("caret at the end, top already blank: no second blank line stacks up", () => {
+    const { view, current } = stubView("\n第一段");
+    splitDocTop(view, "");
+    expect(current().doc.toString()).toBe("\n第一段");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("caret at the end, empty doc: nothing inserted", () => {
+    const { view, current } = stubView("");
+    splitDocTop(view, "");
+    expect(current().doc.toString()).toBe("");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("leading image void: paragraph lands above it, void source intact", () => {
+    const { view, current } = stubView("![a](blob:x.png)\ntail");
+    splitDocTop(view, "后半");
+    expect(current().doc.toString()).toBe("后半\n![a](blob:x.png)\ntail");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("leading code fence: fence not corrupted", () => {
+    const { view, current } = stubView("```js\nx()\n```");
+    splitDocTop(view, "后半");
+    expect(current().doc.toString()).toBe("后半\n```js\nx()\n```");
+    expect(current().selection.main.head).toBe(0);
+  });
+
+  test("leading table: paragraph above the header row", () => {
+    const { view, current } = stubView("| a |\n| --- |\n| 1 |");
+    splitDocTop(view, "后半");
+    expect(current().doc.toString()).toBe("后半\n| a |\n| --- |\n| 1 |");
     expect(current().selection.main.head).toBe(0);
   });
 });

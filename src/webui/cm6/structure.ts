@@ -126,6 +126,32 @@ export function enterDocTop(view: EditorView) {
   view.focus();
 }
 
+/** Title → body, the SPLIT direction: `text` (cut from the title at the caret)
+ *  becomes the document's new first block, caret at its start. Inverse of
+ *  makeMergeTop, so Enter-in-the-title and Backspace-at-doc-start round-trip.
+ *
+ *  Prepending is safe with no void special case: the new paragraph lands BEFORE
+ *  the first block, so a leading void (image/table/code) just shifts down whole,
+ *  and the caret parks on the new prose line rather than inside void source.
+ *  With nothing to carry over we fall back to enterDocTop — except that a title
+ *  caret at the end still opens an empty paragraph (Enter at a line's end does
+ *  that anywhere else in the document), unless the top is already blank, so
+ *  repeated presses can't stack blank lines. */
+export function splitDocTop(view: EditorView, text: string) {
+  const doc = view.state.doc;
+  if (!text && (doc.length === 0 || doc.line(1).length === 0)) {
+    enterDocTop(view);
+    return;
+  }
+  view.dispatch({
+    changes: { from: 0, insert: doc.length === 0 ? text : text + "\n" },
+    selection: { anchor: 0 },
+    userEvent: "input",
+    scrollIntoView: true,
+  });
+  view.focus();
+}
+
 /** Enter: continue a list/quote, exit an empty item, split at the caret; else let
  *  the default (newline, incl. code-void auto-indent) run. */
 export function enterCommand(view: EditorView): boolean {
