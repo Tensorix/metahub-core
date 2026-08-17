@@ -16,7 +16,12 @@
 //
 // Links: the styled span carries data-href; clicking a collapsed link (or
 // Mod-clicking a revealed one) opens the URL, a plain click on a revealed link
-// just places the caret.
+// just places the caret. Internal `[[doc_x]]` references follow the same rule
+// through openDocLink() — but note the collapsed form is a WIDGET, and a widget
+// whose ignoreEvent() returns true makes CM drop the event before any
+// domEventHandler runs (eventBelongsToEditor), i.e. the pill would be dead to
+// clicks. Suppressing caret placement is the handler's job (preventDefault +
+// return true), never ignoreEvent's.
 
 import {
   Decoration,
@@ -76,8 +81,9 @@ class InlineImgWidget extends WidgetType {
   }
 }
 
-/** Collapsed `[[doc_x]]` — an internal-reference pill showing the live title. */
-class DocLinkWidget extends WidgetType {
+/** Collapsed `[[doc_x]]` — an internal-reference pill showing the live title.
+ *  Exported for the ignoreEvent contract test. */
+export class DocLinkWidget extends WidgetType {
   constructor(
     readonly id: string,
     readonly label: string,
@@ -99,10 +105,13 @@ class DocLinkWidget extends WidgetType {
     return el;
   }
 
-  // Clicks are handled by linkClicks (navigate / toast); CM must not also turn
-  // them into a selection change that would reveal the source mid-click.
+  // MUST stay false: `true` means "this event does not belong to the editor",
+  // so CM bails out in eventBelongsToEditor() and linkClicks below never runs —
+  // the pill then swallows clicks silently (no navigation, no caret). The
+  // selection change is suppressed by linkClicks itself: plugin handlers run
+  // before CM's built-in mousedown, and returning true preventDefaults it.
   override ignoreEvent(): boolean {
-    return true;
+    return false;
   }
 }
 
@@ -267,25 +276,33 @@ const inlinePlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.deco },
 );
 
+/** Consume a click on a `[data-doclink]` element: navigate in-app via the hash
+ *  router (hashchange is the app's single back/forward listener), or toast when
+ *  the target is gone. Returns false when the click belongs to the editor
+ *  instead — a revealed `[[id]]` source clicked without Mod places the caret,
+ *  like an external link. Shared by the collapsed pill widget and the revealed
+ *  source span; exported for tests. */
+export function openDocLink(el: HTMLElement, mod: boolean): boolean {
+  if (el.hasAttribute("data-md-revealed") && !mod) return false; // caret placement
+  const id = el.getAttribute("data-doclink");
+  if (!id) return false;
+  if (el.hasAttribute("data-doclink-missing") || docLinkTitle(id) === null) {
+    toast("文档不存在或未同步");
+    return true;
+  }
+  location.hash = `#/${id.startsWith("db_") ? "db" : "doc"}/${encodeURIComponent(id)}`;
+  return true;
+}
+
 /** Open a collapsed link on click; a revealed link needs Mod (Cmd/Ctrl) so a
  *  plain click can place the caret in the source text. */
 const linkClicks = EditorView.domEventHandlers({
   mousedown(e, view) {
     if (e.button !== 0) return false;
-    // Internal `[[doc_x]]` reference: navigate in-app via the hash router
-    // (hashchange is the app's single back/forward listener). A revealed one
-    // needs Mod, like external links, so a plain click can place the caret.
     const dl = (e.target as HTMLElement | null)?.closest?.("[data-doclink]");
     if (dl instanceof HTMLElement && view.dom.contains(dl)) {
-      const mod = e.metaKey || e.ctrlKey;
-      if (dl.hasAttribute("data-md-revealed") && !mod) return false; // caret placement
+      if (!openDocLink(dl, e.metaKey || e.ctrlKey)) return false;
       e.preventDefault();
-      const id = dl.getAttribute("data-doclink")!;
-      if (dl.hasAttribute("data-doclink-missing") || docLinkTitle(id) === null) {
-        toast("文档不存在或未同步");
-        return true;
-      }
-      location.hash = `#/${id.startsWith("db_") ? "db" : "doc"}/${encodeURIComponent(id)}`;
       return true;
     }
     const el = (e.target as HTMLElement | null)?.closest?.("[data-href]");
