@@ -58,7 +58,7 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 ### 4.4 表格（`table.tsx`）
 
 - 单元格按类型行内编辑：text/number/url/date 用 `<input>`；checkbox 点击即切；select/multi_select 点击弹 `SelectMenu`（彩色 chip、多选不关菜单 + 清空）；relation 暂以逗号分隔文本 → core `resolveRelation` 按名/前缀解析。提交 `PATCH /api/record`。
-- 列头菜单 `ColMenu`（菜单内受控）：改名、改类型（含 select/multi 自动补默认选项）、选项增删、在右侧插入列、删除列（confirm）。改类型/选项即调 `PATCH /api/property` 并 `reload`。
+- 列头菜单 `ColMenu`（菜单内受控）：改名、改类型（含 select/multi 自动补默认选项）、选项管理（行内输入新增、点 chip/铅笔重命名、grip 拖拽排序、删除带 confirm）、在右侧插入列、删除列（confirm）。改类型/排序/新增走 `PATCH /api/property`（config 为键级合并 patch）；重命名/删除选项走 `POST /api/property/option/rename|remove` —— core 级联重写所有用旧值的单元格，避免孤儿值。
 - 加列类型选择器、行 ⋯ 菜单（打开/复制/删除）、底部多选操作条（复制/删除选中）、记录 peek 侧栏（属性逐项编辑 + 正文占位）。chip 颜色由字符串哈希到固定色相、`color-mix` 适配明暗。
 
 ### 4.5 侧边栏（`sidebar.tsx`）

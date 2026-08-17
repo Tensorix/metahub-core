@@ -62,6 +62,8 @@ import {
   updateProperty,
   setPropertyWidth,
   removeProperty,
+  renameSelectOption,
+  removeSelectOption,
   type PropType,
   type PropertyConfig,
 } from "../../core/properties.ts";
@@ -932,6 +934,9 @@ const ops: Record<string, Op> = {
   ) => updateProperty(db!, id, b),
   setPropertyWidth: (id: string, width: number) => setPropertyWidth(db!, id, width),
   removeProperty: (id: string) => ({ ok: removeProperty(db!, id) }),
+  renameSelectOption: (id: string, from: string, to: string) =>
+    renameSelectOption(db!, id, from, to),
+  removeSelectOption: (id: string, name: string) => removeSelectOption(db!, id, name),
   listPropertyRevisions: (id: string) => listPropertyRevisions(db!, id),
   revertProperty: (id: string, to: string) => revertProperty(db!, id, to),
 

@@ -138,14 +138,25 @@ export const updateProperty = grouped(function updateProperty(
   if (fields.type !== undefined && !PROP_TYPES.has(fields.type))
     throw new MhError("invalid_input", `unknown property type: ${fields.type}`);
 
-  // Validate config against whichever type will be in effect.
+  // `config` is a patch merged into the existing config server-side (a key set
+  // to null is removed), so a caller writing one key can't strip siblings —
+  // e.g. an options edit must not wipe the column width. Validate the merged
+  // result against whichever type will be in effect.
   const effectiveType = fields.type ?? cur.type;
-  if (fields.config !== undefined) validateConfig(effectiveType, fields.config);
-  else if (typeChanged) validateConfig(fields.type!, undefined);
+  let mergedConfig: PropertyConfig | undefined;
+  if (fields.config !== undefined) {
+    const merged: Record<string, unknown> = { ...(cur.config ?? {}) };
+    for (const [k, v] of Object.entries(fields.config)) {
+      if (v === null) delete merged[k];
+      else merged[k] = v;
+    }
+    mergedConfig = merged as PropertyConfig;
+    validateConfig(effectiveType, mergedConfig);
+  } else if (typeChanged) validateConfig(fields.type!, cur.config ?? undefined);
 
   if (fields.name !== undefined) emit(db, "properties", id, "name", fields.name);
   if (fields.type !== undefined) emit(db, "properties", id, "type", fields.type);
-  if (fields.config !== undefined) emit(db, "properties", id, "config", fields.config);
+  if (mergedConfig !== undefined) emit(db, "properties", id, "config", mergedConfig);
   if (fields.position !== undefined) emit(db, "properties", id, "position", fields.position);
 
   // A type change invalidates existing cell values (a number may not be a valid
@@ -172,6 +183,102 @@ export function setPropertyWidth(db: DbDriver, id: string, width: number): Prope
   const w = Math.max(80, Math.min(2000, Math.round(width)));
   return updateProperty(db, id, { config: { ...(cur.config ?? {}), width: w } });
 }
+
+/** Look up a select/multi_select property and its options, or throw. */
+function getSelectProperty(db: DbDriver, id: string): { prop: PropertyRow; options: string[] } {
+  const prop = getProperty(db, id);
+  if (!prop) throw new MhError("not_found", `no such property: ${id}`);
+  if (prop.type !== "select" && prop.type !== "multi_select")
+    throw new MhError("invalid_input", `${prop.type} property has no options`);
+  return { prop, options: prop.config?.options ?? [] };
+}
+
+// Rename one select/multi_select option and rewrite every cell holding the old
+// string — cell values store the option string literally, so a config-only
+// rename would orphan them (unchecked in menus, ungrouped on boards, rejected
+// by coerce on the next write). All emits share one change group, so history
+// clusters the rename into a single revision and revert restores cells too.
+export const renameSelectOption = grouped(function renameSelectOption(
+  db: DbDriver,
+  id: string,
+  from: string,
+  to: string,
+): { property: PropertyRow; renamed: number } {
+  const { prop, options } = getSelectProperty(db, id);
+  to = to.trim();
+  if (!to) throw new MhError("invalid_input", "option name must not be empty");
+  if (!options.includes(from)) throw new MhError("not_found", `no such option: ${from}`);
+  if (to === from) return { property: prop, renamed: 0 };
+  if (options.includes(to)) throw new MhError("conflict", `option already exists: ${to}`);
+
+  emit(db, "properties", id, "config", {
+    ...(prop.config ?? {}),
+    options: options.map((o) => (o === from ? to : o)),
+  });
+
+  let renamed = 0;
+  if (prop.type === "select") {
+    const rows = db
+      .query("SELECT id FROM records WHERE database_id = ? AND __deleted = 0 AND data ->> ? = ?")
+      .all(prop.database_id, id, from) as { id: string }[];
+    for (const r of rows) emit(db, "records", r.id, id, to);
+    renamed = rows.length;
+  } else {
+    const rows = db
+      .query(
+        "SELECT id, data ->> ? AS v FROM records WHERE database_id = ? AND __deleted = 0 AND data ->> ? IS NOT NULL",
+      )
+      .all(id, prop.database_id, id) as { id: string; v: string }[];
+    for (const r of rows) {
+      const vals = JSON.parse(r.v) as unknown;
+      if (!Array.isArray(vals) || !vals.includes(from)) continue;
+      // Dedupe in case a cell already holds the target name alongside the old one.
+      emit(db, "records", r.id, id, [...new Set(vals.map((v) => (v === from ? to : v)))]);
+      renamed++;
+    }
+  }
+  return { property: getProperty(db, id)!, renamed };
+});
+
+// Remove one option and clear it from every cell that uses it — mirrors the
+// cell cleanup removeProperty does, so no orphaned strings linger.
+export const removeSelectOption = grouped(function removeSelectOption(
+  db: DbDriver,
+  id: string,
+  name: string,
+): { property: PropertyRow; cleared: number } {
+  const { prop, options } = getSelectProperty(db, id);
+  if (!options.includes(name)) throw new MhError("not_found", `no such option: ${name}`);
+  if (options.length === 1)
+    throw new MhError("invalid_input", "cannot remove the last option; delete the property instead");
+
+  emit(db, "properties", id, "config", {
+    ...(prop.config ?? {}),
+    options: options.filter((o) => o !== name),
+  });
+
+  let cleared = 0;
+  if (prop.type === "select") {
+    const rows = db
+      .query("SELECT id FROM records WHERE database_id = ? AND __deleted = 0 AND data ->> ? = ?")
+      .all(prop.database_id, id, name) as { id: string }[];
+    for (const r of rows) emit(db, "records", r.id, id, null);
+    cleared = rows.length;
+  } else {
+    const rows = db
+      .query(
+        "SELECT id, data ->> ? AS v FROM records WHERE database_id = ? AND __deleted = 0 AND data ->> ? IS NOT NULL",
+      )
+      .all(id, prop.database_id, id) as { id: string; v: string }[];
+    for (const r of rows) {
+      const vals = JSON.parse(r.v) as unknown;
+      if (!Array.isArray(vals) || !vals.includes(name)) continue;
+      emit(db, "records", r.id, id, vals.filter((v) => v !== name));
+      cleared++;
+    }
+  }
+  return { property: getProperty(db, id)!, cleared };
+});
 
 export const removeProperty = grouped(function removeProperty(db: DbDriver, id: string): boolean {
   const prop = getProperty(db, id);

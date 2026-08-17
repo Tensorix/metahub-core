@@ -103,9 +103,16 @@ const update = defineCommand({
   args: {
     id: { type: "positional", required: true, description: "Property ref (id/prefix/name)" },
     name: { type: "string" },
-    options: { type: "string", description: "Comma list for select/multi_select" },
+    options: {
+      type: "string",
+      description:
+        "Comma list for select/multi_select; replaces the option set without migrating cell values",
+    },
     target: { type: "string", description: "Target database ref for relation" },
-    config: { type: "string", description: "Raw config JSON (@file/@- ok)" },
+    config: {
+      type: "string",
+      description: "Config JSON patch, merged key-wise; a null key is removed (@file/@- ok)",
+    },
     position: { type: "string" },
   },
   run: guard(async (args) => {

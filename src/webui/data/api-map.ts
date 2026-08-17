@@ -55,6 +55,12 @@ export function mapApiRequest(
       return id ? { op: "updateProperty", args: [id, b] } : null;
     case "PATCH /api/property/width":
       return id ? { op: "setPropertyWidth", args: [id, (b as { width?: number }).width] } : null;
+    case "POST /api/property/option/rename": {
+      const { from, to } = b as { from?: string; to?: string };
+      return id ? { op: "renameSelectOption", args: [id, from, to] } : null;
+    }
+    case "POST /api/property/option/remove":
+      return id ? { op: "removeSelectOption", args: [id, (b as { name?: string }).name] } : null;
     case "DELETE /api/property":
       return id ? { op: "removeProperty", args: [id] } : null;
     case "GET /api/property/history":

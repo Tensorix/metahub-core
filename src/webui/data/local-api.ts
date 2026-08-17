@@ -60,6 +60,9 @@ export const localApi = {
   updateProperty: (id: string, b: unknown) => rpc("updateProperty", id, b),
   setColumnWidth: (id: string, width: number) => rpc("setPropertyWidth", id, width),
   deleteProperty: (id: string) => rpc("removeProperty", id),
+  renameSelectOption: (id: string, from: string, to: string) =>
+    rpc("renameSelectOption", id, from, to),
+  removeSelectOption: (id: string, name: string) => rpc("removeSelectOption", id, name),
 
   // records
   listRecords: (dbId: string, opts: { sort?: string; limit?: number } = {}) =>

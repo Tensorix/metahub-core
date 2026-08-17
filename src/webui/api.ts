@@ -721,6 +721,10 @@ const httpApi = {
   setColumnWidth: (id: string, width: number) =>
     req<Prop>("PATCH", `/api/property/width?id=${q(id)}`, { width }),
   deleteProperty: (id: string) => req<{ ok: boolean }>("DELETE", `/api/property?id=${q(id)}`),
+  renameSelectOption: (id: string, from: string, to: string) =>
+    req<{ property: Prop; renamed: number }>("POST", `/api/property/option/rename?id=${q(id)}`, { from, to }),
+  removeSelectOption: (id: string, name: string) =>
+    req<{ property: Prop; cleared: number }>("POST", `/api/property/option/remove?id=${q(id)}`, { name }),
 
   // records
   listRecords: (dbId: string, opts: { sort?: string; limit?: number } = {}) => {

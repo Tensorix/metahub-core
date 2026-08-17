@@ -9,6 +9,8 @@ import {
   updateProperty,
   setPropertyWidth,
   removeProperty,
+  renameSelectOption,
+  removeSelectOption,
 } from "./properties.ts";
 import { createRecord, getRecord } from "./records.ts";
 
@@ -75,6 +77,96 @@ test("setPropertyWidth persists, clamps, and preserves sibling config", () => {
 
   // non-finite is rejected
   expect(() => setPropertyWidth(db, p.id, NaN)).toThrow();
+});
+
+test("updateProperty merges config patches and preserves sibling keys", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const p = addProperty(db, d.id, { name: "Status", type: "select", config: { options: ["todo", "done"], width: 240 } });
+
+  // an options-only patch must not strip the column width
+  const patched = updateProperty(db, p.id, { config: { options: ["todo", "doing", "done"] } });
+  expect(patched.config?.options).toEqual(["todo", "doing", "done"]);
+  expect(patched.config?.width).toBe(240);
+
+  // a key explicitly set to null is removed
+  const cleared = updateProperty(db, p.id, { config: { width: null as unknown as number } });
+  expect(cleared.config?.width).toBeUndefined();
+  expect(cleared.config?.options).toEqual(["todo", "doing", "done"]);
+
+  // the merged result is validated: nulling options off a select is rejected
+  expect(() => updateProperty(db, p.id, { config: { options: null as unknown as string[] } })).toThrow(/options/);
+});
+
+test("renameSelectOption rewrites select cells and preserves config", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const p = addProperty(db, d.id, { name: "Status", type: "select", config: { options: ["todo", "done"], width: 240 } });
+  const r1 = createRecord(db, d.id, { Status: "todo" });
+  const r2 = createRecord(db, d.id, { Status: "done" });
+  const r3 = createRecord(db, d.id, {});
+
+  const res = renameSelectOption(db, p.id, "todo", "doing");
+  expect(res.renamed).toBe(1);
+  expect(res.property.config?.options).toEqual(["doing", "done"]); // order kept
+  expect(res.property.config?.width).toBe(240); // sibling key kept
+  expect(getRecord(db, r1.id)!.values.Status).toBe("doing");
+  expect(getRecord(db, r2.id)!.values.Status).toBe("done"); // untouched
+  expect(getRecord(db, r3.id)!.values.Status ?? null).toBeNull();
+});
+
+test("renameSelectOption rewrites multi_select array elements", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const p = addProperty(db, d.id, { name: "Tags", type: "multi_select", config: { options: ["a", "b", "c"] } });
+  const r1 = createRecord(db, d.id, { Tags: ["a", "b"] });
+  const r2 = createRecord(db, d.id, { Tags: ["c"] });
+
+  const res = renameSelectOption(db, p.id, "a", "x");
+  expect(res.renamed).toBe(1);
+  expect(getRecord(db, r1.id)!.values.Tags).toEqual(["x", "b"]); // element replaced in place
+  expect(getRecord(db, r2.id)!.values.Tags).toEqual(["c"]);
+});
+
+test("renameSelectOption validates inputs", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const text = addProperty(db, d.id, { name: "Title", type: "text" });
+  const p = addProperty(db, d.id, { name: "Status", type: "select", config: { options: ["todo", "done"] } });
+
+  expect(() => renameSelectOption(db, "prop_missing", "a", "b")).toThrow(/no such property/);
+  expect(() => renameSelectOption(db, text.id, "a", "b")).toThrow(/has no options/);
+  expect(() => renameSelectOption(db, p.id, "nope", "b")).toThrow(/no such option/);
+  expect(() => renameSelectOption(db, p.id, "todo", "  ")).toThrow(/empty/);
+  expect(() => renameSelectOption(db, p.id, "todo", "done")).toThrow(/already exists/);
+  // no-op rename returns zero effect and leaves options untouched
+  const noop = renameSelectOption(db, p.id, "todo", "todo");
+  expect(noop.renamed).toBe(0);
+  expect(noop.property.config?.options).toEqual(["todo", "done"]);
+});
+
+test("removeSelectOption clears cells that used the option", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const sel = addProperty(db, d.id, { name: "Status", type: "select", config: { options: ["todo", "done"] } });
+  const tags = addProperty(db, d.id, { name: "Tags", type: "multi_select", config: { options: ["a", "b"] } });
+  const r1 = createRecord(db, d.id, { Status: "todo", Tags: ["a", "b"] });
+  const r2 = createRecord(db, d.id, { Status: "done", Tags: ["b"] });
+
+  const res = removeSelectOption(db, sel.id, "todo");
+  expect(res.cleared).toBe(1);
+  expect(res.property.config?.options).toEqual(["done"]);
+  expect(getRecord(db, r1.id)!.values.Status ?? null).toBeNull();
+  expect(getRecord(db, r2.id)!.values.Status).toBe("done");
+
+  const res2 = removeSelectOption(db, tags.id, "a");
+  expect(res2.cleared).toBe(1);
+  expect(getRecord(db, r1.id)!.values.Tags).toEqual(["b"]);
+  expect(getRecord(db, r2.id)!.values.Tags).toEqual(["b"]);
+
+  // the last option cannot be removed — a select must keep a non-empty set
+  expect(() => removeSelectOption(db, sel.id, "done")).toThrow(/last option/);
+  expect(() => removeSelectOption(db, sel.id, "gone")).toThrow(/no such option/);
 });
 
 test("removeProperty drops the column from listings", () => {

@@ -886,6 +886,7 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
   const [name, setName] = useState(prop.name);
   const [type, setType] = useState<PropType>(prop.type);
   const [options, setOptions] = useState<string[]>(prop.config?.options ?? []);
+  const [editing, setEditing] = useState<string | null>(null);
 
   const persist = (patch: { name?: string; type?: PropType; config?: PropConfig }) =>
     api.updateProperty(prop.id, patch).then(reload).catch((e) => toast(`更新属性失败：${(e as Error).message}`));
@@ -900,6 +901,59 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
     persist({ type: t, ...(t === "select" || t === "multi_select" ? { config: { options: opts } } : {}) });
   };
   const setOpts = (next: string[]) => { setOptions(next); persist({ config: { options: next } }); };
+
+  // Renames go through the dedicated cascade op — the server rewrites every
+  // cell holding the old string, so existing records follow the new name.
+  const renameOpt = (from: string, raw: string) => {
+    setEditing(null);
+    const to = raw.trim();
+    if (!to || to === from) return;
+    if (options.includes(to)) { toast("已存在同名选项"); return; }
+    const prev = options;
+    setOptions(prev.map((o) => (o === from ? to : o)));
+    api.renameSelectOption(prop.id, from, to).then(reload).catch((e) => {
+      setOptions(prev);
+      toast(`重命名选项失败：${(e as Error).message}`);
+    });
+  };
+
+  const removeOpt = async (o: string) => {
+    if (options.length === 1) { toast("至少保留一个选项"); return; }
+    close(); // 确认弹窗在菜单层之下，先收起菜单
+    const ok = await confirmDialog({ title: "删除选项？", message: `「${o}」将从所有使用它的记录中清除。`, confirmLabel: "删除", danger: true });
+    if (!ok) return;
+    api.removeSelectOption(prop.id, o).then(reload).catch((e) => toast(`删除选项失败：${(e as Error).message}`));
+  };
+
+  const addOpt = (input: HTMLInputElement) => {
+    const v = input.value.trim();
+    if (!v) return;
+    if (options.includes(v)) { toast("已存在同名选项"); return; }
+    input.value = "";
+    setOpts([...options, v]);
+  };
+
+  const startOptDrag = (e: any, o: string) => {
+    if (e.button !== 0) return;
+    const source = (e.currentTarget as HTMLElement).closest(".optrow") as HTMLElement | null;
+    if (!source) return;
+    startGhostDrag(e, {
+      source,
+      axis: "y",
+      ghostCls: "col-ghost",
+      ghostText: o,
+      targetSelector: ".optrow[data-opt]",
+      isSelf: (el) => el.dataset.opt === o,
+      onDrop: (el, where) => {
+        const next = options.filter((x) => x !== o);
+        let to = next.indexOf(el.dataset.opt!);
+        if (to < 0) return;
+        if (where === "after") to += 1;
+        next.splice(to, 0, o);
+        setOpts(next);
+      },
+    });
+  };
 
   return (
     <>
@@ -923,13 +977,41 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
         <>
           <MenuSep />
           <MenuLabel>选项</MenuLabel>
-          {options.map((o, i) => (
-            <div key={o + i} class="optrow">
-              <Chip text={o} />
-              <button class="x" onClick={() => setOpts(options.filter((_, j) => j !== i))}><Icon name="x" cls="ico sm" /></button>
+          {options.map((o) => (
+            <div key={o} class="optrow" data-opt={o}>
+              {editing === o ? (
+                <input
+                  class="field"
+                  defaultValue={o}
+                  ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
+                  onKeyDown={(e) => {
+                    const input = e.target as HTMLInputElement;
+                    if (e.key === "Enter") input.blur();
+                    else if (e.key === "Escape") { input.dataset.cancel = "1"; input.blur(); }
+                  }}
+                  onBlur={(e) => {
+                    const input = e.target as HTMLInputElement;
+                    if (input.dataset.cancel) setEditing(null);
+                    else renameOpt(o, input.value);
+                  }}
+                />
+              ) : (
+                <>
+                  <span class="grip" onPointerDown={(e) => startOptDrag(e, o)}><Icon name="grip" cls="ico sm" /></span>
+                  <button class="optlabel" title="重命名选项" onClick={() => setEditing(o)}><Chip text={o} /></button>
+                  <button class="x" title="重命名选项" onClick={() => setEditing(o)}><Icon name="pencil" cls="ico sm" /></button>
+                  <button class="x" title="删除选项" onClick={() => removeOpt(o)}><Icon name="x" cls="ico sm" /></button>
+                </>
+              )}
             </div>
           ))}
-          <MenuItem icon="plus" label="添加选项" onClick={() => setOpts([...options, "选项 " + (options.length + 1)])} />
+          <div class="optrow">
+            <input
+              class="field"
+              placeholder="添加选项…"
+              onKeyDown={(e) => { if (e.key === "Enter") addOpt(e.target as HTMLInputElement); }}
+            />
+          </div>
         </>
       )}
       <MenuSep />

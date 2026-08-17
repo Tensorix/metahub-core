@@ -14,6 +14,8 @@ import {
   updateProperty,
   setPropertyWidth,
   removeProperty,
+  renameSelectOption,
+  removeSelectOption,
   type PropType,
   type PropertyConfig,
 } from "../../core/properties.ts";
@@ -162,6 +164,8 @@ const UpdatePropertyReq = z.object({
   position: z.number().optional(),
 });
 const SetWidthReq = z.object({ width: z.number() });
+const RenameOptionReq = z.object({ from: z.string(), to: z.string() });
+const RemoveOptionReq = z.object({ name: z.string() });
 const RecordValuesReq = z
   .record(z.string(), z.any())
   .describe('Flat { column: value } cell patch (keyed by property name).');
@@ -520,7 +524,8 @@ export const webuiRoutes: Route[] = [
   {
     method: "PATCH",
     path: "/api/property",
-    summary: "Update a property: rename, change type, edit config/options, reorder. Query: ?id=<id>",
+    summary:
+      "Update a property: rename, change type, edit config, reorder. `config` is merged key-wise into the current config (set a key to null to remove it). Query: ?id=<id>",
     request: UpdatePropertyReq,
     response: PropertySchema,
     handler: handle(async (req, { db }) => {
@@ -531,6 +536,30 @@ export const webuiRoutes: Route[] = [
         position?: number;
       };
       return updateProperty(db, need(req, "id"), body);
+    }),
+  },
+  {
+    method: "POST",
+    path: "/api/property/option/rename",
+    summary:
+      "Rename a select/multi_select option and rewrite every cell using the old name. Query: ?id=<id>",
+    request: RenameOptionReq,
+    response: z.object({ property: PropertySchema, renamed: z.number() }),
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { from: string; to: string };
+      return renameSelectOption(db, need(req, "id"), body.from, body.to);
+    }),
+  },
+  {
+    method: "POST",
+    path: "/api/property/option/remove",
+    summary:
+      "Remove a select/multi_select option and clear it from every cell using it. Query: ?id=<id>",
+    request: RemoveOptionReq,
+    response: z.object({ property: PropertySchema, cleared: z.number() }),
+    handler: handle(async (req, { db }) => {
+      const body = (await req.json()) as { name: string };
+      return removeSelectOption(db, need(req, "id"), body.name);
     }),
   },
   {

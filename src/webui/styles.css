@@ -1530,8 +1530,13 @@
   .pop input.field:focus { border-color:var(--accent); }
   .optrow { display:flex; align-items:center; gap:6px; padding:3px 4px; }
   .optrow .chip { flex:1; }
-  .optrow .x { width:22px; height:22px; display:grid; place-items:center; color:var(--muted); border-radius:5px; }
-  .optrow .x:hover { background:var(--hover-2); color:var(--danger); }
+  .optrow .grip { width:18px; height:22px; display:grid; place-items:center; color:var(--muted); cursor:grab; touch-action:none; flex:none; }
+  .optrow .optlabel { flex:1; display:flex; min-width:0; text-align:left; cursor:pointer; }
+  .optrow .x { width:22px; height:22px; display:grid; place-items:center; color:var(--muted); border-radius:5px; flex:none; }
+  .optrow .x:hover { background:var(--hover-2); color:var(--fg); }
+  .optrow .x:last-child:hover { color:var(--danger); }
+  .optrow.drop-before { box-shadow:inset 0 2px 0 0 var(--accent); }
+  .optrow.drop-after { box-shadow:inset 0 -2px 0 0 var(--accent); }
 
   /* modal */
   .modal-scrim { position:fixed; inset:0; background:rgba(15,15,25,.4); z-index:100; display:flex; align-items:center; justify-content:center;
