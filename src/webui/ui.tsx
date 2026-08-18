@@ -264,9 +264,13 @@ export function useDrawerResize(storageKey: string, min = 380) {
 }
 
 // ---- modal -----------------------------------------------------------------
-const modalStore = makeStore<VNode | null>(null);
-export function openModal(node: VNode) {
-  modalStore.set(node);
+// aboveMenus raises this one modal's scrim over the menu layer (115) so a
+// dialog can stack on top of an open popover without dismissing it. Off by
+// default: some modals (blob manager) open menus of their own and rely on the
+// menu layer sitting above the scrim.
+const modalStore = makeStore<{ node: VNode; aboveMenus?: boolean } | null>(null);
+export function openModal(node: VNode, opts: { aboveMenus?: boolean } = {}) {
+  modalStore.set({ node, aboveMenus: opts.aboveMenus });
 }
 export function closeModal() {
   modalStore.set(null);
@@ -298,19 +302,19 @@ export function Modal({
 }
 
 function ModalHost() {
-  const node = modalStore.use();
+  const state = modalStore.use();
   useEffect(() => {
-    if (!node) return;
+    if (!state) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeModal();
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [node]);
+  }, [state]);
   return (
     <div
-      class={"modal-scrim" + (node ? " open" : "")}
+      class={"modal-scrim" + (state ? " open" : "") + (state?.aboveMenus ? " above-menus" : "")}
       onMouseDown={(e) => e.target === e.currentTarget && closeModal()}
     >
-      {node}
+      {state?.node}
     </div>
   );
 }
@@ -321,6 +325,8 @@ export function confirmDialog(opts: {
   message: string;
   confirmLabel?: string;
   danger?: boolean;
+  /** Stack this dialog above an open popover menu instead of under it. */
+  aboveMenus?: boolean;
 }): Promise<boolean> {
   return new Promise((resolve) => {
     const done = (v: boolean) => {
@@ -347,6 +353,7 @@ export function confirmDialog(opts: {
         {/* pre-line so multi-line consequence lists (\n) render as lists */}
         <div class="muted cfm-msg">{opts.message}</div>
       </Modal>,
+      { aboveMenus: opts.aboveMenus },
     );
   });
 }

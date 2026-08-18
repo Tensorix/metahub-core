@@ -839,12 +839,27 @@ function openSelectMenu(e: MouseEvent, prop: Prop, val: unknown, onCommit: (v: u
       multi={multi}
       options={options}
       value={val}
+      prop={prop}
       onPick={(v) => { onCommit(v); if (!multi) close(); }}
     />
-  ));
+  ), { minWidth: 220 });
 }
-function SelectMenu({ multi, options, value, onPick }: { multi: boolean; options: string[]; value: unknown; onPick: (v: unknown) => void }) {
+function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; options: string[]; value: unknown; onPick: (v: unknown) => void; prop: Prop }) {
+  const [opts, setOpts] = useState<string[]>(options);
   const [cur, setCur] = useState<unknown>(value);
+  const [query, setQuery] = useState("");
+  const [selIdx, setSelIdx] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const q = query.trim();
+  const filtered = q ? opts.filter((o) => o.toLowerCase().includes(q.toLowerCase())) : opts;
+  const canCreate = q.length > 0 && !opts.includes(q);
+  const rowCount = filtered.length + (canCreate ? 1 : 0);
+  const sel = Math.min(selIdx, Math.max(0, rowCount - 1));
+  useEffect(() => {
+    listRef.current?.querySelector(".item.sel")?.scrollIntoView({ block: "nearest" });
+  }, [sel, query]);
+
   const isOn = (o: string) => (multi ? (Array.isArray(cur) ? cur.includes(o) : false) : cur === o);
   const pick = (o: string) => {
     if (multi) {
@@ -853,20 +868,61 @@ function SelectMenu({ multi, options, value, onPick }: { multi: boolean; options
       const next = [...set];
       setCur(next);
       onPick(next);
+      setQuery("");
+      setSelIdx(0);
     } else {
       setCur(o);
       onPick(o);
     }
   };
+  // Creating a tag from the cell picker persists it into the property schema
+  // (config is a merge patch server-side, so sibling keys survive), then picks
+  // it right away — Notion-style type-to-create.
+  const create = () => {
+    if (!canCreate) return;
+    const v = q;
+    api.updateProperty(prop.id, { config: { options: [...opts, v] } })
+      .then(() => { setOpts((os) => [...os, v]); pick(v); })
+      .catch((e) => toast(`创建选项失败：${(e as Error).message}`));
+  };
+  const activate = (i: number) => { if (i < filtered.length) pick(filtered[i]!); else create(); };
+
   return (
     <>
-      <MenuLabel>{multi ? "多选 — 点选切换" : "单选"}</MenuLabel>
-      {options.map((o) => (
-        <button key={o} class="item" onClick={() => pick(o)}>
-          <Chip text={o} />
-          {isOn(o) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
-        </button>
-      ))}
+      <div class="selsearch">
+        <Icon name="search" cls="ico sm" />
+        <input
+          placeholder="搜索或创建选项"
+          value={query}
+          ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
+          onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, rowCount - 1)); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
+            else if (e.key === "Enter") { e.preventDefault(); activate(sel); }
+            else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
+          }}
+        />
+      </div>
+      <div ref={listRef}>
+        {filtered.map((o, i) => (
+          <button key={o} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(o)} onMouseEnter={() => setSelIdx(i)}>
+            <Chip text={o} />
+            {isOn(o) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
+          </button>
+        ))}
+        {canCreate && (
+          <button
+            class={"item" + (sel === filtered.length ? " sel" : "")}
+            onClick={create}
+            onMouseEnter={() => setSelIdx(filtered.length)}
+          >
+            <span class="lico plain"><Icon name="plus" cls="ico sm" /></span>
+            创建
+            <Chip text={q} />
+          </button>
+        )}
+      </div>
       {multi && Array.isArray(cur) && cur.length > 0 && (
         <>
           <MenuSep />
@@ -887,6 +943,7 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
   const [type, setType] = useState<PropType>(prop.type);
   const [options, setOptions] = useState<string[]>(prop.config?.options ?? []);
   const [editing, setEditing] = useState<string | null>(null);
+  const editRef = useRef<HTMLInputElement>(null); // only one row edits at a time
 
   const persist = (patch: { name?: string; type?: PropType; config?: PropConfig }) =>
     api.updateProperty(prop.id, patch).then(reload).catch((e) => toast(`更新属性失败：${(e as Error).message}`));
@@ -919,10 +976,15 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
 
   const removeOpt = async (o: string) => {
     if (options.length === 1) { toast("至少保留一个选项"); return; }
-    close(); // 确认弹窗在菜单层之下，先收起菜单
-    const ok = await confirmDialog({ title: "删除选项？", message: `「${o}」将从所有使用它的记录中清除。`, confirmLabel: "删除", danger: true });
+    // aboveMenus stacks the dialog over this popover, so the menu survives it
+    const ok = await confirmDialog({ title: "删除选项？", message: `「${o}」将从所有使用它的记录中清除。`, confirmLabel: "删除", danger: true, aboveMenus: true });
     if (!ok) return;
-    api.removeSelectOption(prop.id, o).then(reload).catch((e) => toast(`删除选项失败：${(e as Error).message}`));
+    const prev = options;
+    setOptions(prev.filter((x) => x !== o));
+    api.removeSelectOption(prop.id, o).then(reload).catch((e) => {
+      setOptions(prev);
+      toast(`删除选项失败：${(e as Error).message}`);
+    });
   };
 
   const addOpt = (input: HTMLInputElement) => {
@@ -981,13 +1043,15 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
             <div key={o} class="optrow" data-opt={o}>
               {editing === o ? (
                 <>
-                  {/* keep the grip slot so the row doesn't shift when editing starts */}
+                  {/* mirrors the display row element-for-element (grip + pill +
+                      two 22px buttons) so entering edit never changes the row's
+                      geometry — only the ring fades in */}
                   <span class="grip dim"><Icon name="grip" cls="ico sm" /></span>
                   <input
                     class="optedit"
                     style={{ ["--c" as any]: optColor(o) }}
                     defaultValue={o}
-                    ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
+                    ref={(el) => { editRef.current = el; if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
                     onKeyDown={(e) => {
                       const input = e.target as HTMLInputElement;
                       if (e.key === "Enter") input.blur();
@@ -999,13 +1063,28 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
                       else renameOpt(o, input.value);
                     }}
                   />
+                  {/* mousedown preventDefault keeps focus on the input so blur
+                      (= the commit/cancel path) fires exactly once, on our terms */}
+                  <button
+                    class="x ok" title="确认"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => editRef.current?.blur()}
+                  ><Icon name="check" cls="ico sm" /></button>
+                  <button
+                    class="x cancel" title="取消"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (editRef.current) editRef.current.dataset.cancel = "1";
+                      setEditing(null);
+                    }}
+                  ><Icon name="x" cls="ico sm" /></button>
                 </>
               ) : (
                 <>
                   <span class="grip" onPointerDown={(e) => startOptDrag(e, o)}><Icon name="grip" cls="ico sm" /></span>
                   <button class="optlabel" title="重命名选项" onClick={() => setEditing(o)}><Chip text={o} /></button>
                   <button class="x" title="重命名选项" onClick={() => setEditing(o)}><Icon name="pencil" cls="ico sm" /></button>
-                  <button class="x" title="删除选项" onClick={() => removeOpt(o)}><Icon name="x" cls="ico sm" /></button>
+                  <button class="x del" title="删除选项" onClick={() => removeOpt(o)}><Icon name="x" cls="ico sm" /></button>
                 </>
               )}
             </div>
