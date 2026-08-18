@@ -1531,12 +1531,29 @@
   .optrow { display:flex; align-items:center; gap:6px; padding:3px 4px; }
   .optrow .chip { flex:1; }
   .optrow .grip { width:18px; height:22px; display:grid; place-items:center; color:var(--muted); cursor:grab; touch-action:none; flex:none; }
+  .optrow .grip.dim { color:color-mix(in srgb,var(--muted) 40%,transparent); cursor:default; }
   .optrow .optlabel { flex:1; display:flex; min-width:0; text-align:left; cursor:pointer; }
   .optrow .x { width:22px; height:22px; display:grid; place-items:center; color:var(--muted); border-radius:5px; flex:none; }
   .optrow .x:hover { background:var(--hover-2); color:var(--fg); }
   .optrow .x:last-child:hover { color:var(--danger); }
   .optrow.drop-before { box-shadow:inset 0 2px 0 0 var(--accent); }
   .optrow.drop-after { box-shadow:inset 0 -2px 0 0 var(--accent); }
+  /* In-place pill editor: mirrors .chip metrics exactly (padding/radius/type)
+     so entering edit never changes the row's size — only a color-matched ring
+     appears. Caret and selection reuse the option's own hue. */
+  .optrow input.optedit { flex:1; min-width:0; margin:0; border:0; font:inherit; font-size:var(--fs-sm); font-weight:500;
+    padding:2px 8px; border-radius:5px; background:color-mix(in srgb,var(--c) 15%,transparent); color:var(--c);
+    caret-color:var(--c); outline:1.5px solid color-mix(in srgb,var(--c) 50%,transparent); outline-offset:0; }
+  .optrow input.optedit::selection { background:color-mix(in srgb,var(--c) 28%,transparent); }
+  :root[data-resolved="dark"] .optrow input.optedit { background:color-mix(in srgb,var(--c) 22%,transparent);
+    color:color-mix(in srgb,var(--c) 75%,#fff); caret-color:color-mix(in srgb,var(--c) 75%,#fff); }
+  /* Ghost add-row: quiet until it's needed — plus icon in the grip slot, a
+     bare borderless input; hover/focus tints the row like a menu item. */
+  .optrow.optadd { border-radius:var(--radius-sm); }
+  .optrow.optadd:hover, .optrow.optadd:focus-within { background:var(--hover-2); }
+  .optrow.optadd input { flex:1; min-width:0; margin:0; border:0; background:transparent; font:inherit;
+    font-size:var(--fs-sm); padding:2px 8px; color:var(--fg); outline:none; }
+  .optrow.optadd input::placeholder { color:var(--muted); }
 
   /* modal */
   .modal-scrim { position:fixed; inset:0; background:rgba(15,15,25,.4); z-index:100; display:flex; align-items:center; justify-content:center;

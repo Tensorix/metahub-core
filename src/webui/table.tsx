@@ -23,7 +23,7 @@ import {
   toast,
 } from "./ui.tsx";
 import { SYNCED_EVENT } from "./data/replica.ts";
-import { Chip, CellDisplay, coerceInput, cellText } from "./cells.tsx";
+import { Chip, CellDisplay, coerceInput, cellText, optColor } from "./cells.tsx";
 import { openFieldHistory, RecordHistoryView } from "./history-record.tsx";
 import { BoardView } from "./board.tsx";
 import { CalendarView } from "./calendar.tsx";
@@ -980,21 +980,26 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
           {options.map((o) => (
             <div key={o} class="optrow" data-opt={o}>
               {editing === o ? (
-                <input
-                  class="field"
-                  defaultValue={o}
-                  ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
-                  onKeyDown={(e) => {
-                    const input = e.target as HTMLInputElement;
-                    if (e.key === "Enter") input.blur();
-                    else if (e.key === "Escape") { input.dataset.cancel = "1"; input.blur(); }
-                  }}
-                  onBlur={(e) => {
-                    const input = e.target as HTMLInputElement;
-                    if (input.dataset.cancel) setEditing(null);
-                    else renameOpt(o, input.value);
-                  }}
-                />
+                <>
+                  {/* keep the grip slot so the row doesn't shift when editing starts */}
+                  <span class="grip dim"><Icon name="grip" cls="ico sm" /></span>
+                  <input
+                    class="optedit"
+                    style={{ ["--c" as any]: optColor(o) }}
+                    defaultValue={o}
+                    ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
+                    onKeyDown={(e) => {
+                      const input = e.target as HTMLInputElement;
+                      if (e.key === "Enter") input.blur();
+                      else if (e.key === "Escape") { input.dataset.cancel = "1"; input.blur(); }
+                    }}
+                    onBlur={(e) => {
+                      const input = e.target as HTMLInputElement;
+                      if (input.dataset.cancel) setEditing(null);
+                      else renameOpt(o, input.value);
+                    }}
+                  />
+                </>
               ) : (
                 <>
                   <span class="grip" onPointerDown={(e) => startOptDrag(e, o)}><Icon name="grip" cls="ico sm" /></span>
@@ -1005,10 +1010,10 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
               )}
             </div>
           ))}
-          <div class="optrow">
+          <div class="optrow optadd">
+            <span class="grip dim"><Icon name="plus" cls="ico sm" /></span>
             <input
-              class="field"
-              placeholder="添加选项…"
+              placeholder="添加选项"
               onKeyDown={(e) => { if (e.key === "Enter") addOpt(e.target as HTMLInputElement); }}
             />
           </div>
