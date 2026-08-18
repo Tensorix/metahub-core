@@ -40,6 +40,7 @@
     "@codemirror/commands": "6.10.4",
     "@codemirror/state": "6.7.0",
     "@codemirror/view": "6.43.4",
+    "@joplin/turndown-plugin-gfm": "^1.0.67",
     "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "aws4fetch": "^1.0.20",
     "citty": "^0.1.6",
@@ -48,7 +49,6 @@
     "preact": "^10.29.2",
     "qrcode-generator": "^2.0.4",
     "turndown": "^7.2.4",
-    "turndown-plugin-gfm": "^1.0.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

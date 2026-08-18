@@ -71,6 +71,47 @@ test("Cocoa clipboard <style> header is dropped, not pasted as prose", () => {
   expect(htmlToMarkdown(html)).toBe("```p111");
 });
 
+test("table with block elements inside cells stays one table block", () => {
+  // Real clipboard tables (ChatGPT etc.) wrap cell text in <div>/<p>/<br>. The
+  // original turndown-plugin-gfm emitted the nested blocks as newlines, tearing
+  // the pipe table into paragraphs; the Joplin fork flattens cells.
+  const html =
+    "<table><thead><tr><th><div><div>任务</div></div></th><th><span>状态</span></th></tr></thead>" +
+    "<tbody><tr><td>登录<br>页面</td><td><p>进行中</p></td></tr></tbody></table>";
+  const md = htmlToMarkdown(html);
+  expect(md).not.toContain("<br>"); // brInTableCell: break -> space, not literal HTML
+  const blocks = blocksFromBody(md);
+  expect(blocks.map((b) => b.type)).toEqual(["table"]);
+  expect(blocks[0]?.rows).toEqual([
+    ["任务", "状态"],
+    ["登录 页面", "进行中"],
+  ]);
+});
+
+test("headerless table converts instead of pasting raw HTML", () => {
+  // First row is all <td>: the original plugin kept the whole <table> verbatim.
+  const html = "<table><tbody><tr><td>甲</td><td>乙</td></tr><tr><td>a</td><td>b</td></tr></tbody></table>";
+  const md = htmlToMarkdown(html);
+  expect(md).not.toContain("<table>");
+  const blocks = blocksFromBody(md);
+  expect(blocks.map((b) => b.type)).toEqual(["table"]);
+  // Empty synthesized header, both source rows in the body.
+  expect(blocks[0]?.rows).toEqual([
+    ["", ""],
+    ["甲", "乙"],
+    ["a", "b"],
+  ]);
+});
+
+test("pipe inside a cell is escaped and round-trips", () => {
+  const html = "<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>x | y</td><td>z</td></tr></tbody></table>";
+  const md = htmlToMarkdown(html);
+  expect(md).toContain("x \\| y");
+  const blocks = blocksFromBody(md);
+  expect(blocks.map((b) => b.type)).toEqual(["table"]);
+  expect(blocks[0]?.rows?.[1]).toEqual(["x | y", "z"]);
+});
+
 test("mixed ChatGPT-style answer round-trips into structured blocks", () => {
   const html =
     "<p>可以，但分两档：</p>" +

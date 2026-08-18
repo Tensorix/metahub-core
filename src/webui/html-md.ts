@@ -6,7 +6,7 @@
 // structure, then `blocksFromBody` turns the Markdown into the editor's blocks.
 
 import TurndownService from "turndown";
-import { gfm } from "turndown-plugin-gfm";
+import { gfm } from "@joplin/turndown-plugin-gfm";
 
 /** Pull a code language out of a `language-xxx` / `lang-xxx` class, ignoring the
  *  other utility classes ChatGPT/highlight.js sprinkle on the element. */
@@ -42,6 +42,16 @@ function makeService(): TurndownService {
   // ("javascript" label + "Copy code" button); the default rule keys off
   // `pre > code` as the *first* child and would otherwise miss the language or
   // fold the toolbar text into the snippet.
+  // The gfm plugin turns a <br> inside a table cell into a literal "<br>" so
+  // the line break survives in Markdown, but our inline grammar has no HTML
+  // pass-through — it would render as visible "<br>" text. A space loses the
+  // break but keeps the cell readable. DOM-level match, so literal "<br>" text
+  // in code blocks is untouched.
+  td.addRule("brInTableCell", {
+    filter: (node) => node.nodeName === "BR" && !!node.parentElement?.closest("td,th"),
+    replacement: () => " ",
+  });
+
   td.addRule("fencedCodeWithLang", {
     filter: (node) => node.nodeName === "PRE" && !!node.querySelector("code"),
     replacement: (_content, node) => {
