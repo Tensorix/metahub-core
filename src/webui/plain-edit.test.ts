@@ -64,6 +64,29 @@ test("deletePlainSelection removes the selected range, caret at the seam", () =>
   el.remove();
 });
 
+// Regression: the title's Enter builds its cut range as (textNode, caret) →
+// (host, childNodes.length). With the caret at the very end that range holds
+// nothing, yet its boundaries live in different nodes, so `collapsed` is false
+// — the shape that made deletePlainSelection backspace the title's last
+// character. The guard must judge content, not boundary identity.
+test("an empty cross-node range deletes nothing", () => {
+  const el = document.createElement("div");
+  el.textContent = "标题";
+  document.body.append(el);
+  const node = el.firstChild!;
+  const r = document.createRange();
+  r.setStart(node, 2);
+  r.setEnd(el, el.childNodes.length);
+  expect(r.collapsed).toBe(false); // the trap: empty range, still not "collapsed"
+  const sel = getSelection()!;
+  sel.removeAllRanges();
+  sel.addRange(r);
+
+  deletePlainSelection();
+  expect(el.textContent).toBe("标题");
+  el.remove();
+});
+
 test("flattenToText collapses nested markup, leaves plain text alone", () => {
   const el = document.createElement("div");
   el.innerHTML = '<span style="font-size:11pt">v96</span><div>tail</div>';

@@ -60,7 +60,13 @@ export function insertPlainText(text: string): void {
  */
 export function deletePlainSelection(): void {
   const sel = getSelection();
-  if (!sel || sel.rangeCount === 0 || sel.getRangeAt(0).collapsed) return;
+  if (!sel || sel.rangeCount === 0) return;
+  // `collapsed` alone is not enough: a range whose boundaries sit in different
+  // nodes (text node → host element) reports collapsed=false even when it
+  // contains no text, and execCommand("delete") on such a caret-equivalent
+  // selection backspaces the preceding character instead of no-oping.
+  const current = sel.getRangeAt(0);
+  if (current.collapsed || current.toString() === "") return;
   try {
     if (document.execCommand("delete")) return;
   } catch {

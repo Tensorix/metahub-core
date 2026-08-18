@@ -375,7 +375,11 @@ export function DocView({
       const cut = document.createRange();
       cut.setStart(live.startContainer, live.startOffset);
       cut.setEnd(el, el.childNodes.length);
-      if (!cut.collapsed) {
+      // Not `cut.collapsed`: with the caret at the title's end the range spans
+      // (textNode, len) → (el, childCount) — distinct boundary nodes, so
+      // `collapsed` is false even though the range holds nothing, and the
+      // delete below would backspace the title's last character.
+      if (cut.toString() !== "") {
         sel.removeAllRanges();
         sel.addRange(cut);
         deletePlainSelection(); // execCommand: joins the title's native undo stack
