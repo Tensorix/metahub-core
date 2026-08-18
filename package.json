@@ -1,6 +1,6 @@
 {
   "name": "@tensorix/metahub",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Metahub core library and CLI",
   "license": "AGPL-3.0-only",
   "type": "module",
