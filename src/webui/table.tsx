@@ -942,6 +942,7 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
   const [name, setName] = useState(prop.name);
   const [type, setType] = useState<PropType>(prop.type);
   const [options, setOptions] = useState<string[]>(prop.config?.options ?? []);
+  const [target, setTarget] = useState<string | undefined>(prop.config?.database);
   const [editing, setEditing] = useState<string | null>(null);
   const editRef = useRef<HTMLInputElement>(null); // only one row edits at a time
 
@@ -950,6 +951,14 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
 
   const changeType = (t: PropType) => {
     setType(t);
+    if (t === "relation") {
+      // relation is only valid with a target database — without one, defer the
+      // persist to the target list below; with one (kept in config through
+      // type flips — config is a merge patch), re-attach it explicitly since
+      // the type change re-validates.
+      if (target) persist({ type: t, config: { database: target } });
+      return;
+    }
     let opts = options;
     if ((t === "select" || t === "multi_select") && opts.length === 0) {
       opts = ["选项 1", "选项 2"];
@@ -1098,6 +1107,20 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
           </div>
         </>
       )}
+      {type === "relation" && (
+        <>
+          <MenuSep />
+          <MenuLabel>{target ? "关联目标" : "选择关联的数据表"}</MenuLabel>
+          <DbTargetList
+            currentDb={dbId}
+            target={target}
+            onPick={(d) => {
+              setTarget(d.id);
+              persist({ type: "relation", config: { database: d.id } });
+            }}
+          />
+        </>
+      )}
       <MenuSep />
       <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => {
         close();
@@ -1127,19 +1150,60 @@ function uniquePropName(base: string, existing: Prop[]): string {
   }
 }
 
+/** Target-database list for relation properties. Every database is listed —
+ *  self-relation is legal, so the current table appears too, just labeled. */
+function DbTargetList({ currentDb, target, onPick }: { currentDb: string; target?: string; onPick: (d: Db) => void }) {
+  const [dbs, setDbs] = useState<Db[] | null>(null);
+  useEffect(() => { api.listDatabases().then(setDbs).catch(() => setDbs([])); }, []);
+  if (!dbs) return null;
+  return (
+    <>
+      {dbs.map((d) => (
+        <MenuItem
+          key={d.id}
+          icon="database"
+          label={d.name || "未命名数据库"}
+          sublabel={d.id === currentDb ? "当前表" : undefined}
+          checked={d.id === target}
+          onClick={() => onPick(d)}
+        />
+      ))}
+    </>
+  );
+}
+
 function openAddCol(e: MouseEvent, dbId: string, allProps: Prop[], reload: () => Promise<void>) {
   e.stopPropagation();
-  openMenu(e, (close) => (
+  openMenu(e, (close) => <AddColMenu dbId={dbId} allProps={allProps} reload={reload} close={close} />);
+}
+function AddColMenu({ dbId, allProps, reload, close }: { dbId: string; allProps: Prop[]; reload: () => Promise<void>; close: () => void }) {
+  // relation can't be created from the type alone — it needs a target database,
+  // so picking it swaps the menu to a second step instead of creating.
+  const [pickTarget, setPickTarget] = useState(false);
+  const create = (t: PropType, config: PropConfig | undefined, base: string) => {
+    close();
+    api.createProperty({ db: dbId, name: uniquePropName(base, allProps), type: t, config })
+      .then(reload)
+      .catch((e) => toast(`新建属性失败：${(e as Error).message}`));
+  };
+  if (pickTarget)
+    return (
+      <>
+        <MenuLabel>选择关联的数据表</MenuLabel>
+        <DbTargetList currentDb={dbId} onPick={(d) => create("relation", { database: d.id }, d.name || TYPE_META.relation.t)} />
+        <MenuSep />
+        <MenuItem icon="arrowLeft" label="返回" onClick={() => setPickTarget(false)} />
+      </>
+    );
+  return (
     <>
       <MenuLabel>新建属性 · 选择类型</MenuLabel>
       <div class="typegrid">
         {(Object.keys(TYPE_META) as PropType[]).map((t) => (
           <button key={t} class="item" onClick={() => {
-            close();
+            if (t === "relation") { setPickTarget(true); return; }
             const cfg = t === "select" || t === "multi_select" ? { options: ["选项 1", "选项 2"] } : undefined;
-            api.createProperty({ db: dbId, name: uniquePropName(TYPE_META[t].t, allProps), type: t, config: cfg })
-              .then(reload)
-              .catch((e) => toast(`新建属性失败：${(e as Error).message}`));
+            create(t, cfg, TYPE_META[t].t);
           }}>
             <span class="lico"><Icon name={TYPE_ICON[t]!} cls="ico sm" /></span>
             <span class="d">{TYPE_META[t].t}</span>
@@ -1147,7 +1211,7 @@ function openAddCol(e: MouseEvent, dbId: string, allProps: Prop[], reload: () =>
         ))}
       </div>
     </>
-  ));
+  );
 }
 
 function openSortMenu(e: MouseEvent, props: Prop[], cur: { id: string; desc: boolean } | null, setSort: (s: { id: string; desc: boolean } | null) => void) {
