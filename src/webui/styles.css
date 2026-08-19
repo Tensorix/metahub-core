@@ -510,6 +510,10 @@
   .crumb-sep { flex:none; color:var(--muted); font-weight:400; }
   .iconbtn { width:30px; height:30px; display:grid; place-items:center; border-radius:var(--radius-sm); color:var(--fg-soft); transition:background .12s; }
   .iconbtn:hover { background:var(--hover-2); color:var(--fg); }
+  /* Dead end of the history (topbar back/forward). pointer-events:none also
+     kills the hover background and, on desktop-mac, lets the button revert to
+     the topbar's drag region. */
+  .iconbtn:disabled { opacity:.35; pointer-events:none; }
   /* Reserve the classic-scrollbar gutter up front: view width never changes
      when content grows past one screen — no jump / rewrap flicker. stable
      ONLY (never both-edges): a left-edge gutter desyncs Chromium's composited

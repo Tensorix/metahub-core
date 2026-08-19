@@ -14,6 +14,7 @@ const PATHS: Record<string, string> = {
   chevron: '<path d="m9 6 6 6-6 6"/>',
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
   arrowLeft: '<path d="M15 18l-6-6 6-6"/>',
+  arrowRight: '<path d="M9 18l6-6-6-6"/>',
   arrowUp: '<path d="m6 15 6-6 6 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   pin: '<path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 16v5"/>',

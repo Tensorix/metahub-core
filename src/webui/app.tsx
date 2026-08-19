@@ -30,6 +30,7 @@ import { SitesView } from "./sites.tsx";
 import { openShareModal } from "./share-modal.tsx";
 import { ShareView } from "./shares-view.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
+import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { ImagePreviewWindow } from "./media/image-preview-window.tsx";
@@ -95,6 +96,10 @@ function App() {
   // it handled the key (caller then preventDefaults the browser "save page").
   const saveHotkeyRef = useRef<(() => boolean) | null>(null);
   const isMobile = useIsMobile();
+  // Desktop windows have no browser chrome, so the topbar grows back/forward
+  // buttons (and shortcuts below); the actual traversal is the browser's own.
+  const isDesktop = typeof window !== "undefined" && !!window.metahubDesktop;
+  const { canGoBack, canGoForward } = useHistoryNav();
 
   const onError = useCallback((m: string) => setError(m), []);
   const registerDocHandle = useCallback((handle: DocViewHandle | null) => {
@@ -261,6 +266,20 @@ function App() {
   // uses, see sidebar.tsx).
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
+      // ⌘[ / ⌘] (mac) 或 Alt+←/→ — desktop page back/forward, same traversal
+      // as the topbar nav buttons. Editors claim overlapping keys first (CM6
+      // binds Mod-[ to indent, Alt-Arrow to syntax moves) and preventDefault
+      // before this non-capture listener runs, so honor that.
+      if (isDesktop && !e.defaultPrevented) {
+        const mac = window.metahubDesktop?.platform === "darwin";
+        const back = mac ? e.metaKey && e.key === "[" : e.altKey && e.key === "ArrowLeft";
+        const fwd = mac ? e.metaKey && e.key === "]" : e.altKey && e.key === "ArrowRight";
+        if (back || fwd) {
+          e.preventDefault();
+          (back ? goBack : goForward)();
+          return;
+        }
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         document.querySelector<HTMLInputElement>(".sb-search input")?.focus();
@@ -552,6 +571,16 @@ function App() {
           >
             <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
           </button>
+          {isDesktop && !isMobile && (
+            <>
+              <button class="iconbtn navbtn" title="后退" disabled={!canGoBack} onClick={goBack}>
+                <Icon name="arrowLeft" />
+              </button>
+              <button class="iconbtn navbtn" title="前进" disabled={!canGoForward} onClick={goForward}>
+                <Icon name="arrowRight" />
+              </button>
+            </>
+          )}
           <div class="crumb">
             {view.kind === "doc" && <><span class="emoji"><Icon name="file" cls="ico sm" /></span><span>{activeDoc?.title || "无标题"}</span></>}
             {view.kind === "db" && <><span class="emoji">{activeDb?.icon || "🗂️"}</span><span>{activeDb?.name}</span></>}
