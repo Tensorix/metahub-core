@@ -283,3 +283,35 @@ test("scoped blob refuses a hash the target does not reference", async () => {
   ))!;
   expect(res.status).toBe(404);
 });
+
+test("database share SSR resolves relation titles for self and granted targets only", async () => {
+  const ctx = makeCtx();
+  const projects = createDatabase(ctx.db, { name: "Projects" });
+  addProperty(ctx.db, projects.id, { name: "Name", type: "text" });
+  const alpha = createRecord(ctx.db, projects.id, { Name: "Alpha" });
+
+  const tasks = createDatabase(ctx.db, { name: "Tasks" });
+  addProperty(ctx.db, tasks.id, { name: "Title", type: "text" });
+  addProperty(ctx.db, tasks.id, { name: "Peer", type: "relation", config: { database: tasks.id } });
+  addProperty(ctx.db, tasks.id, { name: "Project", type: "relation", config: { database: projects.id } });
+  const t1 = createRecord(ctx.db, tasks.id, { Title: "first" });
+  createRecord(ctx.db, tasks.id, { Title: "second", Peer: [t1.id], Project: [alpha.id] });
+
+  // Ungated share: self-relation shows the peer's title (the page shows the
+  // whole table anyway); the ungranted cross-db target stays a raw id.
+  const bare = createShare(ctx.db, { kind: "database", target_id: tasks.id });
+  const html1 = await (await serveShare(htmlReq(`/share/${bare.slug}`), ctx))!.text();
+  expect(html1).toContain('<span class="tag">first</span>');
+  expect(html1).toContain(`<span class="tag">${alpha.id}</span>`);
+  expect(html1).not.toContain('<span class="tag">Alpha</span>');
+
+  // Share carrying a grant on the target: cross-db titles resolve.
+  const granted = createShare(ctx.db, {
+    kind: "database",
+    target_id: tasks.id,
+    grants: JSON.stringify({ v: 1, tables: [{ db: projects.id, ops: ["read"] }] }),
+  });
+  const html2 = await (await serveShare(htmlReq(`/share/${granted.slug}`), ctx))!.text();
+  expect(html2).toContain('<span class="tag">Alpha</span>');
+  expect(html2).not.toContain(`<span class="tag">${alpha.id}</span>`);
+});

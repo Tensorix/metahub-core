@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { resolveEntity, type Candidate } from "../resolve.ts";
 import { getDocument, updateDocument } from "../documents.ts";
-import { listProperties } from "../properties.ts";
-import { listRecords, getRecord, createRecord, updateRecord } from "../records.ts";
+import { listProperties, type PropertyRow } from "../properties.ts";
+import { listRecords, getRecord, createRecord, updateRecord, recordTitleMap } from "../records.ts";
 import { toCsv, parseCsv } from "../csv.ts";
 import { MhError } from "../errors.ts";
 
@@ -39,6 +39,14 @@ function cellToString(value: unknown): string {
   return String(value);
 }
 
+/** Render a relation cell readably: target titles joined with ", ", raw id as
+ *  the per-value fallback (dangling ref / empty title / untitled target db).
+ *  The importer resolves either form back — see the relation branch below. */
+function relationToString(value: unknown, titles: Map<string, string>): string {
+  const arr = Array.isArray(value) ? value : value == null ? [] : [value];
+  return arr.map((v) => titles.get(String(v)) ?? String(v)).join(", ");
+}
+
 /** Decode a CSV cell back to a value: JSON for array/object literals, else raw. */
 function parseCell(text: string): unknown {
   const t = text.trim();
@@ -61,8 +69,22 @@ async function exportDoc(db: Database, id: string, path: string): Promise<FileSy
 async function exportDb(db: Database, id: string, path: string): Promise<FileSyncResult> {
   const props = listProperties(db, id);
   const recs = listRecords(db, id, {});
+  // One title map per relation target (deduped): relation cells export as
+  // titles — the form a human reads and edits — not raw record ids.
+  const relTitles = new Map<string, Map<string, string>>();
+  for (const p of props) {
+    const target = p.type === "relation" ? p.config?.database : undefined;
+    if (target && !relTitles.has(target)) relTitles.set(target, recordTitleMap(db, target));
+  }
   const header = ["id", ...props.map((p) => p.name)];
-  const rows = recs.map((r) => [r.id, ...props.map((p) => cellToString(r.values[p.name]))]);
+  const rows = recs.map((r) => [
+    r.id,
+    ...props.map((p) =>
+      p.type === "relation"
+        ? relationToString(r.cells[p.id], relTitles.get(p.config?.database ?? "") ?? new Map())
+        : cellToString(r.values[p.name]),
+    ),
+  ]);
   const csv = toCsv([header, ...rows]);
   await Bun.write(path, csv);
   return { direction: "export", kind: "db", id, path, rows: recs.length };
@@ -79,6 +101,15 @@ async function importDb(db: Database, id: string, path: string): Promise<FileSyn
   if (grid.length === 0) return { direction: "import", kind: "db", id, path, rows: 0 };
   const header = grid[0]!;
   const idCol = header.indexOf("id");
+  // Column name → prop, first live match wins (same aliasing as name-keyed
+  // `values`). Only relation columns need the type: their cells export as
+  // ", "-joined titles, which must split back before coerce resolves each
+  // element (ids pass through, titles resolve by name — loud on ambiguity or
+  // a miss). JSON arrays (ids or titles) come through parseCell whole. A title
+  // containing a literal comma mis-splits and fails loudly; the escape hatch
+  // is rewriting that one cell as a JSON array or record ids.
+  const propByName = new Map<string, PropertyRow>();
+  for (const p of listProperties(db, id)) if (!propByName.has(p.name)) propByName.set(p.name, p);
   let count = 0;
   for (let i = 1; i < grid.length; i++) {
     const cells = grid[i]!;
@@ -87,7 +118,10 @@ async function importDb(db: Database, id: string, path: string): Promise<FileSyn
       if (c === idCol) continue;
       const raw = cells[c];
       if (raw == null || raw === "") continue; // leave unset cells untouched
-      data[header[c]!] = parseCell(raw);
+      let v = parseCell(raw);
+      if (propByName.get(header[c]!)?.type === "relation" && typeof v === "string")
+        v = v.split(",").map((s) => s.trim()).filter(Boolean);
+      data[header[c]!] = v;
     }
     const rowId = idCol >= 0 ? cells[idCol]?.trim() : undefined;
     if (rowId && getRecord(db, rowId)) updateRecord(db, rowId, data);

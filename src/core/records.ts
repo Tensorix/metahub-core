@@ -4,7 +4,7 @@ import { emit, grouped } from "./crdt.ts";
 import { getDatabase } from "./databases.ts";
 import { listProperties, type PropertyRow } from "./properties.ts";
 import { maybeAutoIndex } from "./indexing.ts";
-import { resolveCandidates } from "./resolve.ts";
+import { resolveCandidates, titlePropId } from "./resolve.ts";
 import { keyBetween, keysBetween } from "./fracdex.ts";
 import { MhError } from "./errors.ts";
 
@@ -395,6 +395,23 @@ export function listRecords(
     if (opts.limit != null) rows = rows.slice(0, opts.limit);
   }
   return rows;
+}
+
+/** recId → non-empty title for every live record of a database — the shared
+ *  lookup for rendering relation values readably (CSV export, share SSR).
+ *  Records with an empty/missing title are omitted so consumers fall back to
+ *  the raw id — the only form that round-trips for them anyway. */
+export function recordTitleMap(db: DbDriver, databaseId: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const tp = titlePropId(db, databaseId);
+  if (!tp) return map;
+  const rows = db
+    .query(
+      `SELECT id, data ->> '${jsonKeyLit(tp)}' AS title FROM records WHERE database_id = ? AND __deleted = 0`,
+    )
+    .all(databaseId) as { id: string; title: string | null }[];
+  for (const r of rows) if (r.title) map.set(r.id, String(r.title));
+  return map;
 }
 
 export const moveRecord = grouped(function moveRecord(

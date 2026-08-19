@@ -35,7 +35,7 @@ import { QuickNote } from "./quicknote/quicknote.tsx";
 import { ImagePreviewWindow } from "./media/image-preview-window.tsx";
 import { DocHistoryPanel } from "./history.tsx";
 import { DbActivityPanel } from "./history-record.tsx";
-import { databaseToCsv, downloadText, safeFilename } from "./export.ts";
+import { databaseToCsv, relationTitleMaps, downloadText, safeFilename } from "./export.ts";
 import {
   UiHost,
   openMenu,
@@ -311,8 +311,12 @@ function App() {
   };
   const exportDbCsv = (db: Db) => {
     Promise.all([api.listProperties(db.id), api.listRecords(db.id)])
-      .then(([props, records]) =>
-        downloadText(safeFilename(db.name || db.id, ".csv"), databaseToCsv(props, records), "text/csv;charset=utf-8"),
+      .then(async ([props, records]) =>
+        downloadText(
+          safeFilename(db.name || db.id, ".csv"),
+          databaseToCsv(props, records, await relationTitleMaps(props)),
+          "text/csv;charset=utf-8",
+        ),
       )
       .catch((err) => onError(String(err.message)));
   };

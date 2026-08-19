@@ -38,8 +38,10 @@ type SqlValue = string;
 // prefix p under BINARY collation — a primary-key range scan, no LIKE wildcards.
 const HI = "{";
 
-/** The first text property's id for a database — a record's de-facto title. */
-function titlePropId(db: DbDriver, databaseId: string): string | null {
+/** The first text property's id for a database — a record's de-facto title.
+ *  Exported: name resolution here, records.recordTitleMap, and the WebUI's
+ *  relation-titles cache must all agree on the same title rule. */
+export function titlePropId(db: DbDriver, databaseId: string): string | null {
   const row = db
     .query(
       "SELECT id FROM properties WHERE database_id = ? AND type = 'text' AND __deleted = 0 ORDER BY position LIMIT 1",

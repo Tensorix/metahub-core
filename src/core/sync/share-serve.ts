@@ -21,7 +21,8 @@ import {
 import { getDocument, updateDocument, documentVersion } from "../documents.ts";
 import { getDatabase } from "../databases.ts";
 import { listProperties, type PropertyRow } from "../properties.ts";
-import { listRecords, updateRecord, getRecord } from "../records.ts";
+import { listRecords, updateRecord, getRecord, recordTitleMap } from "../records.ts";
+import { parseGrantSet, grantFor } from "../grants-core.ts";
 import { resolveSite, listFiles, getFileRow, putFile, deleteFile } from "../sites.ts";
 import { serveSiteFile } from "./sites-serve.ts";
 import { resolveBlob, blobContentType } from "../blobs.ts";
@@ -173,14 +174,16 @@ function docEditScript(slug: string, version: string, body: string): string {
 
 // ---- databases / tables -------------------------------------------------------
 
-function cellText(prop: PropertyRow, value: unknown): string {
+// `titles` is supplied only for relation columns the share may resolve (see
+// serveTable) — array elements map id → target-record title, id as fallback.
+function cellText(prop: PropertyRow, value: unknown, titles?: Map<string, string>): string {
   if (value === null || value === undefined) return "";
   if (prop.type === "checkbox") return value ? "✓" : "";
-  if (Array.isArray(value)) return value.map((v) => String(v)).join(", ");
+  if (Array.isArray(value)) return value.map((v) => titles?.get(String(v)) ?? String(v)).join(", ");
   return String(value);
 }
 
-function cellHtml(prop: PropertyRow, value: unknown): string {
+function cellHtml(prop: PropertyRow, value: unknown, titles?: Map<string, string>): string {
   if (value === null || value === undefined) return "";
   if (prop.type === "checkbox") return value ? "✓" : "";
   if (prop.type === "url") {
@@ -188,7 +191,9 @@ function cellHtml(prop: PropertyRow, value: unknown): string {
     return `<a href="${escapeHtml(s)}" target="_blank" rel="noreferrer noopener">${escapeHtml(s)}</a>`;
   }
   if (Array.isArray(value))
-    return value.map((v) => `<span class="tag">${escapeHtml(String(v))}</span>`).join(" ");
+    return value
+      .map((v) => `<span class="tag">${escapeHtml(titles?.get(String(v)) ?? String(v))}</span>`)
+      .join(" ");
   return escapeHtml(String(value));
 }
 
@@ -233,6 +238,24 @@ async function serveTable(
   if (sub !== "") return notFound();
 
   const records = listRecords(ctx.db, share.target_id);
+
+  // Relation cells resolve ids → target-record titles, but ONLY when the
+  // viewer could read the target anyway: the shared table itself (self-
+  // relation) or a database in this share's grant set. Mirrors the write-side
+  // relation policy (grants-core assertRelationAllowed) — titles of an
+  // unshared database are content, not decoration. Ungated shares therefore
+  // show raw ids for cross-database relations: a safe default, not a bug.
+  const grants = parseGrantSet(share.grants);
+  const relTitles = new Map<string, Map<string, string>>();
+  for (const p of props) {
+    const target = p.type === "relation" ? p.config?.database : undefined;
+    if (!target || relTitles.has(target)) continue;
+    if (target === share.target_id || grantFor(grants, target))
+      relTitles.set(target, recordTitleMap(ctx.db, target));
+  }
+  const titlesFor = (p: PropertyRow) =>
+    p.type === "relation" ? relTitles.get(p.config?.database ?? "") : undefined;
+
   const editable = share.permission === "edit";
   const head = props.map((p) => `<th>${escapeHtml(p.name)}</th>`).join("");
   const rows = records
@@ -245,7 +268,7 @@ async function serveTable(
               p.id,
             )}" data-type="${p.type}">${escapeHtml(cellText(p, v))}</td>`;
           }
-          return `<td>${cellHtml(p, v)}</td>`;
+          return `<td>${cellHtml(p, v, titlesFor(p))}</td>`;
         })
         .join("");
       return `<tr>${tds}</tr>`;

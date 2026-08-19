@@ -77,6 +77,46 @@ test("CSV round-trips multi_select arrays without duplicating rows", async () =>
   expect(rows[0]!.values.Tags).toEqual(["x", "y"]);
 });
 
+test("CSV exports relation cells as titles (id fallback) and imports them back", async () => {
+  const db = newDb();
+  const projects = createDatabase(db, { name: "Projects" });
+  addProperty(db, projects.id, { name: "Name", type: "text" });
+  const alpha = createRecord(db, projects.id, { Name: "Alpha" });
+  const beta = createRecord(db, projects.id, { Name: "Beta" });
+
+  const tasks = createDatabase(db, { name: "Tasks" });
+  addProperty(db, tasks.id, { name: "Title", type: "text" });
+  addProperty(db, tasks.id, { name: "Project", type: "relation", config: { database: projects.id } });
+  const rec = createRecord(db, tasks.id, { Title: "t1", Project: [alpha.id, "rec_ghost-000000"] });
+
+  const path = tmpPath("tasks.csv");
+  await syncFiles(db, tasks.id, path);
+  const csv = await Bun.file(path).text();
+  // titles joined with ", " (quoted by the CSV layer); dangling id falls back raw
+  expect(csv).toContain('"Alpha, rec_ghost-000000"');
+  expect(csv).not.toContain(alpha.id);
+
+  // Round-trip: same file back in — titles resolve to ids, count stays put.
+  const res = await syncFiles(db, path, tasks.id);
+  expect(res).toMatchObject({ direction: "import", kind: "db", rows: 1 });
+  expect(listRecords(db, tasks.id, {}).length).toBe(1);
+
+  // Human edit: retarget by title.
+  await Bun.write(path, `id,Title,Project\n${rec.id},t1,Beta\n`);
+  await syncFiles(db, path, tasks.id);
+  expect(listRecords(db, tasks.id, {})[0]!.values.Project).toEqual([beta.id]);
+
+  // Legacy JSON-array-of-ids cells still import.
+  await Bun.write(path, `id,Title,Project\n${rec.id},t1,"[""${alpha.id}""]"\n`);
+  await syncFiles(db, path, tasks.id);
+  expect(listRecords(db, tasks.id, {})[0]!.values.Project).toEqual([alpha.id]);
+
+  // Ambiguous titles fail loudly instead of guessing.
+  createRecord(db, projects.id, { Name: "Beta" });
+  await Bun.write(path, `id,Title,Project\n${rec.id},t1,Beta\n`);
+  await expect(syncFiles(db, path, tasks.id)).rejects.toThrow(/ambiguous/);
+});
+
 test("rejects refs that are neither doc nor table", async () => {
   const db = newDb();
   const t = createDatabase(db, { name: "Tasks" });
