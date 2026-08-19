@@ -164,6 +164,14 @@ export function DatabaseView({
       const detail = (e as CustomEvent).detail as { datasets?: string[] } | undefined;
       if (!detail?.datasets?.some((d) => d === "records" || d === "properties")) return;
       if (editingRef.current) return;
+      // Mid-drag (row/card reorder) or mid-rubber-band: replacing records would
+      // yank the DOM out from under the pointer. Skip; the drop's own commit
+      // reconciles, and external edits surface on the next poke.
+      if (
+        document.body.classList.contains("table-dragging") ||
+        document.body.classList.contains("cell-selecting")
+      )
+        return;
       reload().catch(() => {});
     };
     document.addEventListener(SYNCED_EVENT, onSynced);

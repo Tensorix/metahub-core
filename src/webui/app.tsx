@@ -33,6 +33,7 @@ import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
+import { ensureLive } from "./live.ts";
 import { ImagePreviewWindow } from "./media/image-preview-window.tsx";
 import { FileEditorWindow } from "./fileviewer/file-editor.tsx";
 import { DocHistoryPanel } from "./history.tsx";
@@ -787,6 +788,13 @@ function Root() {
     });
   }, []);
 
+  // Window (HTTP) mode: open the live change feed so CLI/agent writes refresh
+  // open views without a manual reload. ensureLive() itself no-ops for replica
+  // and no-origin holds.
+  useEffect(() => {
+    if (mode === "app") ensureLive();
+  }, [mode]);
+
   // Reset/disable can happen while <App> is already mounted. A no-origin shell
   // has no HTTP fallback, so transition immediately back to enrollment instead
   // of leaving a dead settings screen whose "enable" path calls /api/pair/new.
@@ -844,6 +852,7 @@ if (location.hash.startsWith("#preview")) {
   render(<FileEditorWindow />, document.getElementById("app")!);
 } else if (location.hash === "#quick" && clientMode().surface === "desktop") {
   document.body.classList.add("quicknote");
+  ensureLive(); // CLI/agent edits refresh the open note + note list
   render(<QuickNote />, document.getElementById("app")!);
 } else {
   render(<Root />, document.getElementById("app")!);

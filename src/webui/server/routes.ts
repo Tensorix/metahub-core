@@ -72,6 +72,7 @@ import {
 import type { DbDriver } from "../../core/driver.ts";
 import { getServerConfig } from "../../core/config.ts";
 import { shareRoutes } from "./share-routes.ts";
+import { changesRoutes } from "./changes-route.ts";
 import { siteHostingRoutes } from "./site-hosting-routes.ts";
 import { edgeRoutes } from "./edge-routes.ts";
 import pkg from "../../../package.json" with { type: "json" };
@@ -940,4 +941,5 @@ export const webuiRoutes: Route[] = [
   ...shareRoutes,
   ...siteHostingRoutes,
   ...edgeRoutes,
+  ...changesRoutes,
 ];

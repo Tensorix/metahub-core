@@ -526,6 +526,11 @@ sw.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== sw.location.origin) return;
 
+  // The live change feed is a never-ending SSE stream: handleApi would
+  // cache.put(res.clone()) it, buffering the stream in memory forever, and an
+  // idle-killed worker would sever the connection. Let the browser own it.
+  if (url.pathname === "/api/changes") return;
+
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(handleApi(event));
     return;
