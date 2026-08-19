@@ -21,9 +21,17 @@ import {
   useDrawerResize,
   useDrawerTransition,
   toast,
+  type MenuAnchor,
 } from "./ui.tsx";
 import { SYNCED_EVENT } from "./data/replica.ts";
-import { Chip, CellDisplay, coerceInput, cellText, optColor } from "./cells.tsx";
+import { Chip, CellDisplay, coerceInput, cellText, optColor, relationLabel } from "./cells.tsx";
+import {
+  relationTitleList,
+  relationTitleProp,
+  relationTitleState,
+  primeRelationTitle,
+  onRelationTitleChange,
+} from "./relation-titles.ts";
 import { openFieldHistory, RecordHistoryView } from "./history-record.tsx";
 import { BoardView } from "./board.tsx";
 import { CalendarView } from "./calendar.tsx";
@@ -48,9 +56,16 @@ const VIEW_TABS: [string, string][] = [
 
 export function DatabaseView({
   db,
+  rec,
+  onRecNav,
   onError,
 }: {
   db: Db;
+  /** Record deep link from the hash (#/db/<id>/<rec>); the peek mirrors it. */
+  rec: string | null;
+  /** Replace-navigate the hash when the peek opens/closes, so a chip click on
+   *  the SAME record still fires hashchange next time (same-hash clicks don't). */
+  onRecNav: (rec: string | null) => void;
   onError: (m: string) => void;
 }) {
   const [props, setProps] = useState<Prop[]>([]);
@@ -105,10 +120,12 @@ export function DatabaseView({
 
   const guard = (fn: () => Promise<void>) => fn().catch((e) => onError(String(e.message)));
 
+  const [loaded, setLoaded] = useState(false);
   const reload = async () => {
     const [p, r] = await Promise.all([api.listProperties(db.id), api.listRecords(db.id)]);
     setProps(p);
     setRecords(r);
+    setLoaded(true);
   };
   useEffect(() => {
     setSel(new Set());
@@ -118,6 +135,24 @@ export function DatabaseView({
     setEditing(null);
     reload().catch((e) => onError(String(e.message)));
   }, [db.id]);
+
+  // Peek ⇄ hash. Every internal open/close goes through these two so the hash
+  // always mirrors the drawer; the effect below covers the other direction
+  // (chip clicks, back/forward). Declared after the db.id reset effect so a
+  // deep-linked mount ends with the peek open, not reset.
+  const openPeek = (id: string) => { setPeek(id); onRecNav(id); };
+  const closePeek = () => { setPeek(null); onRecNav(null); };
+  useEffect(() => { setPeek(rec); }, [rec]);
+  // Dangling deep link (deleted record / forward reference): explain and clear —
+  // a silently dead drawer-less hash would make the chip look broken.
+  const recordsRef = useRef(records);
+  recordsRef.current = records;
+  useEffect(() => {
+    if (rec && loaded && !recordsRef.current.some((r) => r.id === rec)) {
+      toast("记录不存在或已被删除");
+      closePeek();
+    }
+  }, [rec, loaded]);
 
   // Local-replica mode: a background sync that touched records/properties may
   // concern this table — re-read from the local store (cheap). Skipped while a
@@ -162,7 +197,7 @@ export function DatabaseView({
       await Promise.all(ids.map((id) => api.deleteRecord(id)));
       setRecords((rs) => rs.filter((r) => !ids.includes(r.id)));
       setSel(new Set());
-      if (peek && ids.includes(peek)) setPeek(null);
+      if (peek && ids.includes(peek)) closePeek();
     });
 
   const duplicateRecord = (rec: Rec) =>
@@ -296,7 +331,10 @@ export function DatabaseView({
   };
 
   // ---- keyboard cell navigation / editing ----
-  const isEditable = (t: PropType) => t !== "checkbox" && t !== "select" && t !== "multi_select";
+  // "editable" = the free-text inline editor applies; checkbox toggles in
+  // place, select/multi_select/relation edit through their picker popovers.
+  const isEditable = (t: PropType) =>
+    t !== "checkbox" && t !== "select" && t !== "multi_select" && t !== "relation";
   const clampN = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
   const scrollCellIntoView = (r: number, c: number) =>
     requestAnimationFrame(() => {
@@ -319,6 +357,26 @@ export function DatabaseView({
     const nc = c + dc;
     if (nc < 0 || nc >= props.length) { selectCell(r, c); return; }
     startEditAt(r, nc);
+  };
+
+  /** Keyboard-opened record picker: anchor the popover at the cell's rect
+   *  (there is no MouseEvent to anchor to). */
+  const openRelationAt = (r: number, c: number, seed?: string) => {
+    const recRow = sorted[r];
+    const p = props[c];
+    if (!recRow || !p) return;
+    selectCell(r, c);
+    const td = document.querySelector(`td.cell-td[data-r="${r}"][data-c="${c}"]`);
+    const anchor: MenuAnchor = td
+      ? { rect: td.getBoundingClientRect() }
+      : { x: innerWidth / 2, y: innerHeight / 3 };
+    openRelationMenu(anchor, p, recRow.cells[p.id], (v) => commit(recRow, p, v), seed, () => relCreated(p));
+  };
+
+  /** The picker created a record in prop's target db — a self-relation means
+   *  the current table just grew a row it doesn't know about. */
+  const relCreated = (p: Prop) => {
+    if (p.config?.database === db.id) reload().catch(() => {});
   };
 
   // Apply a value to every cell in the current selection, batching all changed
@@ -399,12 +457,20 @@ export function DatabaseView({
         applyToSelection(() => null);
       } else if (single && (e.key === "Enter" || e.key === "F2")) {
         e.preventDefault();
-        startEditAt(r, c);
+        if (props[c]?.type === "relation") openRelationAt(r, c);
+        else startEditAt(r, c);
       } else if (single && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
         // Type-to-edit. Known limit: an IME composition's first key (keyCode 229)
         // can't seed the editor — enter editing via Enter / double-click first.
         const p = props[c];
-        if (!p || !isEditable(p.type) || p.type === "date") return; // date: Enter/F2 only
+        if (!p) return;
+        if (p.type === "relation") {
+          // seed the picker's search instead of the (removed) free-text editor
+          e.preventDefault();
+          openRelationAt(r, c, e.key);
+          return;
+        }
+        if (!isEditable(p.type) || p.type === "date") return; // date: Enter/F2 only
         if (p.type === "number" && !/[0-9.+-]/.test(e.key)) return;
         e.preventDefault();
         startEditAt(r, c, e.key);
@@ -472,7 +538,7 @@ export function DatabaseView({
           records={records}
           onCommitValue={commit}
           onCreate={createRecordWith}
-          onOpenRecord={setPeek}
+          onOpenRecord={openPeek}
           onMove={persistRecordMove}
         />
       ) : tab === 2 ? (
@@ -481,7 +547,7 @@ export function DatabaseView({
           records={records}
           onCommitValue={commit}
           onCreate={createRecordWith}
-          onOpenRecord={setPeek}
+          onOpenRecord={openPeek}
         />
       ) : tab === 3 ? (
         <TimelineView
@@ -489,7 +555,7 @@ export function DatabaseView({
           records={records}
           onCommitValue={commit}
           onCreate={createRecordWith}
-          onOpenRecord={setPeek}
+          onOpenRecord={openPeek}
         />
       ) : (
         <div
@@ -612,8 +678,9 @@ export function DatabaseView({
                               else if (end.reason === "shifttab") moveEditNeighbor(ri, ci, -1);
                               else if (end.reason === "enter") selectCell(clampN(ri + 1, 0, sorted.length - 1), ci);
                             }}
-                            onOpen={() => setPeek(rec.id)}
-                            onRowMenu={(e) => openRowMenu(e, rec, () => setPeek(rec.id), () => duplicateRecord(rec), () => deleteRecords([rec.id]))}
+                            onOpen={() => openPeek(rec.id)}
+                            onRelCreated={() => relCreated(p)}
+                            onRowMenu={(e) => openRowMenu(e, rec, () => openPeek(rec.id), () => duplicateRecord(rec), () => deleteRecords([rec.id]))}
                           />
                         </td>
                       );
@@ -669,11 +736,12 @@ export function DatabaseView({
           db={db}
           props={props}
           rec={peekRec}
-          onClose={() => setPeek(null)}
+          onClose={closePeek}
           onCommit={(p, v) => commit(peekRec, p, v)}
           onDelete={() => deleteRecords([peekRec.id])}
           onDuplicate={() => duplicateRecord(peekRec)}
           onReverted={() => reload().catch((e) => onError(String(e.message)))}
+          onRelCreated={relCreated}
         />
       )}
     </div>
@@ -688,8 +756,9 @@ type EditEnd =
   | { reason: "cancel" }
   | { reason: "blur" | "enter" | "tab" | "shifttab"; changed: boolean; value: unknown };
 
-/** Single-field inline editor for text/number/date/url/relation values.
- *  Shared by the grid cells and the record peek panel.
+/** Single-field inline editor for text/number/date/url values. Shared by the
+ *  grid cells and the record peek panel. relation never comes through here —
+ *  it edits via the record picker (openRelationMenu).
  *
  *  Uncontrolled on purpose: the DOM value is seeded once on mount. A controlled
  *  `value=` prop would be re-applied by any parent re-render that lands before
@@ -706,7 +775,7 @@ function InlineEditInput({
   captureTab?: boolean;
   onDone: (end: EditEnd) => void;
 }) {
-  const initial = Array.isArray(val) ? (val as string[]).join(", ") : val == null ? "" : String(val);
+  const initial = val == null ? "" : String(val);
   const ref = useRef<HTMLInputElement>(null);
   const done = useRef(false);
   useEffect(() => {
@@ -741,11 +810,11 @@ function InlineEditInput({
 }
 
 function CellView({
-  rec, prop, first, editing, seed, onEdit, onCommit, onDone, onOpen, onRowMenu,
+  rec, prop, first, editing, seed, onEdit, onCommit, onDone, onOpen, onRowMenu, onRelCreated,
 }: {
   rec: Rec; prop: Prop; first: boolean; editing: boolean; seed?: string;
   onEdit: () => void; onCommit: (v: unknown) => void; onDone: (end: EditEnd) => void;
-  onOpen: () => void; onRowMenu: (e: MouseEvent) => void;
+  onOpen: () => void; onRowMenu: (e: MouseEvent) => void; onRelCreated: () => void;
 }) {
   const val = rec.cells[prop.id];
 
@@ -760,6 +829,7 @@ function CellView({
   // Single click selects the cell (handled by the <td> pointer handler); double click edits.
   const onActivate = (e: MouseEvent) => {
     if (prop.type === "select" || prop.type === "multi_select") openSelectMenu(e, prop, val, onCommit);
+    else if (prop.type === "relation") openRelationMenu(e, prop, val, onCommit, undefined, onRelCreated);
     else onEdit();
   };
 
@@ -924,6 +994,136 @@ function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; o
         )}
       </div>
       {multi && Array.isArray(cur) && cur.length > 0 && (
+        <>
+          <MenuSep />
+          <MenuItem icon="x" label="清空" onClick={() => { setCur([]); onPick([]); }} />
+        </>
+      )}
+    </>
+  );
+}
+
+// ---- relation editor menu (record picker) ----
+/** Anchor is a real click from the grid/peek or a synthesized cell rect from
+ *  the keyboard path — only a MouseEvent needs its propagation stopped. */
+function openRelationMenu(
+  anchor: MenuAnchor,
+  prop: Prop,
+  val: unknown,
+  onCommit: (v: unknown) => void,
+  seed?: string,
+  onCreated?: () => void,
+) {
+  if (anchor instanceof MouseEvent) anchor.stopPropagation();
+  openMenu(anchor, () => (
+    <RelationMenu prop={prop} value={val} onPick={onCommit} seed={seed} onCreated={onCreated} />
+  ), { minWidth: 260 });
+}
+function RelationMenu({ prop, value, onPick, seed, onCreated }: {
+  prop: Prop; value: unknown; onPick: (v: unknown) => void;
+  /** type-to-edit: opens with this text in the search box */
+  seed?: string;
+  /** fired after a record is created in the TARGET db (self-relation reload) */
+  onCreated?: () => void;
+}) {
+  const target = prop.config?.database;
+  const [cur, setCur] = useState<string[]>(Array.isArray(value) ? (value as string[]) : []);
+  const [query, setQuery] = useState(seed ?? "");
+  const [selIdx, setSelIdx] = useState(0);
+  const [, bump] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const un = onRelationTitleChange(() => bump((n) => n + 1));
+    bump((n) => n + 1); // a fast load may have notified before we subscribed
+    return un;
+  }, []);
+
+  const state = target ? relationTitleState(target) : "error";
+  const all = target ? relationTitleList(target) : [];
+  const q = query.trim();
+  // Records legally share titles (unlike select options), so everything below
+  // keys and checks by record id, and "创建" stays available on an exact match.
+  const matches = q
+    ? all.filter((r) => (r.title ?? "").toLowerCase().includes(q.toLowerCase()))
+    : all;
+  const CAP = 50;
+  const shown = matches.slice(0, CAP);
+  // No text property in the target db → nowhere to write the new title.
+  const titleProp = target ? relationTitleProp(target) : null;
+  const canCreate = !!target && q.length > 0 && !!titleProp;
+  const rowCount = shown.length + (canCreate ? 1 : 0);
+  const sel = Math.min(selIdx, Math.max(0, rowCount - 1));
+  useEffect(() => {
+    listRef.current?.querySelector(".item.sel")?.scrollIntoView({ block: "nearest" });
+  }, [sel, query]);
+
+  const pick = (id: string) => {
+    const set = new Set(cur);
+    set.has(id) ? set.delete(id) : set.add(id);
+    const next = [...set];
+    setCur(next);
+    onPick(next);
+    setQuery("");
+    setSelIdx(0);
+  };
+  const create = () => {
+    if (!canCreate || !target || !titleProp) return;
+    const title = q;
+    api.createRecord(target, { [titleProp]: title })
+      .then((r) => {
+        // seed the cache so the new chip never flashes its raw id
+        primeRelationTitle(target, r.id, title);
+        onCreated?.();
+        pick(r.id);
+      })
+      .catch((e) => toast(`创建记录失败：${(e as Error).message}`));
+  };
+  const activate = (i: number) => { if (i < shown.length) pick(shown[i]!.id); else create(); };
+
+  return (
+    <>
+      <div class="selsearch">
+        <Icon name="search" cls="ico sm" />
+        <input
+          placeholder="搜索或创建记录"
+          value={query}
+          ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
+          onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, rowCount - 1)); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
+            else if (e.key === "Enter") { e.preventDefault(); activate(sel); }
+            else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
+          }}
+        />
+      </div>
+      <div ref={listRef} class="rellist">
+        {!target && <MenuLabel>该属性未设置关联目标</MenuLabel>}
+        {target && state === "loading" && <MenuLabel>加载中…</MenuLabel>}
+        {target && state === "error" && <MenuLabel>无法加载目标数据表</MenuLabel>}
+        {target && state !== "loading" && state !== "error" && all.length === 0 && (
+          <MenuLabel>目标数据表暂无记录</MenuLabel>
+        )}
+        {shown.map((r, i) => (
+          <button key={r.id} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(r.id)} onMouseEnter={() => setSelIdx(i)}>
+            <Chip text={relationLabel(target, r.id)} />
+            {cur.includes(r.id) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
+          </button>
+        ))}
+        {matches.length > CAP && <MenuLabel>还有 {matches.length - CAP} 条，继续输入过滤</MenuLabel>}
+        {canCreate && (
+          <button
+            class={"item" + (sel === shown.length ? " sel" : "")}
+            onClick={create}
+            onMouseEnter={() => setSelIdx(shown.length)}
+          >
+            <span class="lico plain"><Icon name="plus" cls="ico sm" /></span>
+            创建
+            <Chip text={q} />
+          </button>
+        )}
+      </div>
+      {cur.length > 0 && (
         <>
           <MenuSep />
           <MenuItem icon="x" label="清空" onClick={() => { setCur([]); onPick([]); }} />
@@ -1244,11 +1444,11 @@ function openRowMenu(e: MouseEvent, rec: Rec, onOpen: () => void, onDup: () => v
 
 // ---- record peek panel ----
 function RecordPeek({
-  db, props, rec, onClose, onCommit, onDelete, onDuplicate, onReverted,
+  db, props, rec, onClose, onCommit, onDelete, onDuplicate, onReverted, onRelCreated,
 }: {
   db: Db; props: Prop[]; rec: Rec;
   onClose: () => void; onCommit: (p: Prop, v: unknown) => void; onDelete: () => void; onDuplicate: () => void;
-  onReverted: () => void;
+  onReverted: () => void; onRelCreated: (p: Prop) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [hist, setHist] = useState(false);
@@ -1308,6 +1508,7 @@ function RecordPeek({
                     onEdit={() => setEditing(p.id)}
                     onCommit={(v) => { onCommit(p, v); setEditing(null); }}
                     onCloseEdit={() => setEditing(null)}
+                    onRelCreated={() => onRelCreated(p)}
                   />
                 </div>
               ))}
@@ -1319,15 +1520,19 @@ function RecordPeek({
   );
 }
 
-function PeekValue({ prop, rec, editing, onEdit, onCommit, onCloseEdit }: {
+function PeekValue({ prop, rec, editing, onEdit, onCommit, onCloseEdit, onRelCreated }: {
   prop: Prop; rec: Rec; editing: boolean;
   onEdit: () => void; onCommit: (v: unknown) => void; onCloseEdit: () => void;
+  onRelCreated: () => void;
 }) {
   const val = rec.cells[prop.id];
   if (prop.type === "checkbox")
     return <div class="v"><input type="checkbox" checked={!!val} style={{ width: 16, height: 16, accentColor: "var(--accent)" }} onChange={() => onCommit(!val)} /></div>;
   if (prop.type === "select" || prop.type === "multi_select")
     return <div class="v" onClick={(e) => openSelectMenu(e as unknown as MouseEvent, prop, val, onCommit)}><CellDisplay prop={prop} val={val} /></div>;
+  // Chip clicks navigate (the anchor stops propagation); empty-area clicks edit.
+  if (prop.type === "relation")
+    return <div class="v" onClick={(e) => openRelationMenu(e as unknown as MouseEvent, prop, val, onCommit, undefined, onRelCreated)}><CellDisplay prop={prop} val={val} /></div>;
   if (editing) {
     // No captureTab: in the peek panel Tab follows native focus order and the
     // resulting blur commits. onCommit closes the editor via the parent.

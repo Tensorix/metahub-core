@@ -7,7 +7,7 @@
 // server, not the data, and stay online-only.
 
 import { call, replicaActive, isNoOrigin } from "./replica.ts";
-import { ApiError, NAV_INVALIDATE } from "../api.ts";
+import { ApiError, NAV_INVALIDATE, REC_INVALIDATE } from "../api.ts";
 import { ReplicaError } from "./replica.ts";
 
 export { replicaActive, isNoOrigin };
@@ -28,11 +28,16 @@ function touchesNav(op: string): boolean {
   return /^(create|update|delete|move|duplicate|revert)(Database|Document)/.test(op);
 }
 
+function touchesRecords(op: string): boolean {
+  return /^(create|update|delete|move|revert)Record/.test(op);
+}
+
 /** RPC with HTTP-parity error translation + nav invalidation. */
 async function rpc<T>(op: string, ...args: unknown[]): Promise<T> {
   try {
     const out = await call<T>(op, ...args);
     if (touchesNav(op)) document.dispatchEvent(new CustomEvent(NAV_INVALIDATE));
+    if (touchesRecords(op)) document.dispatchEvent(new CustomEvent(REC_INVALIDATE));
     return out;
   } catch (e) {
     if (e instanceof ReplicaError) {

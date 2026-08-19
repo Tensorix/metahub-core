@@ -597,7 +597,13 @@ function App() {
         <div class="content">
           {view.kind === "empty" && <EmptyState onNewDoc={newEmptyDoc} />}
           {view.kind === "db" && activeDb && (
-            <DatabaseView key={activeDb.id} db={activeDb} onError={onError} />
+            <DatabaseView
+              key={activeDb.id}
+              db={activeDb}
+              rec={view.rec ?? null}
+              onRecNav={(r) => navigate({ kind: "db", id: activeDb.id, rec: r ?? undefined }, { replace: true })}
+              onError={onError}
+            />
           )}
           {view.kind === "db" && !activeDb && (
             <div class="empty">{navReady ? "数据库不存在或已被删除。" : "加载中…"}</div>

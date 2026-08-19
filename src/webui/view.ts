@@ -5,7 +5,7 @@
 
 export type View =
   | { kind: "empty" }
-  | { kind: "db"; id: string }
+  | { kind: "db"; id: string; rec?: string } // rec = record peek deep link
   | { kind: "doc"; id: string }
   | { kind: "search"; q: string }
   | { kind: "settings"; sec?: string }
@@ -22,7 +22,10 @@ export type Navigate = (v: View, opts?: { replace?: boolean }) => void;
 
 export function viewToHash(v: View): string {
   switch (v.kind) {
-    case "db": return `#/db/${encodeURIComponent(v.id)}`;
+    case "db":
+      return v.rec
+        ? `#/db/${encodeURIComponent(v.id)}/${encodeURIComponent(v.rec)}`
+        : `#/db/${encodeURIComponent(v.id)}`;
     case "doc": return `#/doc/${encodeURIComponent(v.id)}`;
     case "search": return `#/search?q=${encodeURIComponent(v.q)}`;
     case "settings": return v.sec ? `#/settings?sec=${encodeURIComponent(v.sec)}` : "#/settings";
@@ -50,9 +53,12 @@ export function doclinkFromUrl(text: string): string | null {
 export function parseHash(h: string): View {
   if (!h.startsWith("#/")) return { kind: "empty" };
   const [path = "", query = ""] = h.slice(2).split("?", 2);
-  const [kind, id = ""] = path.split("/", 2);
+  const [kind, id = "", rec = ""] = path.split("/", 3);
   try {
-    if (kind === "db" && id) return { kind: "db", id: decodeURIComponent(id) };
+    if (kind === "db" && id)
+      return rec
+        ? { kind: "db", id: decodeURIComponent(id), rec: decodeURIComponent(rec) }
+        : { kind: "db", id: decodeURIComponent(id) };
     if (kind === "doc" && id) return { kind: "doc", id: decodeURIComponent(id) };
     if (kind === "search") {
       const q = new URLSearchParams(query).get("q");

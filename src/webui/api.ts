@@ -378,6 +378,16 @@ function touchesNav(method: string, path: string): boolean {
   return method !== "GET" && (path.startsWith("/api/database") || path.startsWith("/api/document"));
 }
 
+/** Fired after any successful record mutation. relation-titles.ts subscribes to
+ *  keep cross-database title chips fresh in window (HTTP) mode, where no
+ *  SYNCED_EVENT exists. Views deliberately do NOT reload on this — the mutating
+ *  view already reconciles its own state. */
+export const REC_INVALIDATE = "mh-rec-invalidate";
+
+function touchesRecords(method: string, path: string): boolean {
+  return method !== "GET" && path.startsWith("/api/record");
+}
+
 // ---- auth -------------------------------------------------------------------
 // The app attaches the stored token itself instead of relying on the
 // server-injected fetch shim: a PWA shell served from the service worker cache
@@ -533,6 +543,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     );
   }
   if (touchesNav(method, path)) document.dispatchEvent(new CustomEvent(NAV_INVALIDATE));
+  if (touchesRecords(method, path)) document.dispatchEvent(new CustomEvent(REC_INVALIDATE));
   return data as T;
 }
 

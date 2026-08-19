@@ -1159,6 +1159,9 @@
     background:color-mix(in srgb,var(--c) 15%,transparent); color:var(--c); }
   /* data-resolved (not prefers-color-scheme): tracks a manual dark choice too. */
   :root[data-resolved="dark"] .chip { background:color-mix(in srgb,var(--c) 22%,transparent); color:color-mix(in srgb,var(--c) 75%,#fff); }
+  /* relation chip: an <a> that jumps to the target record */
+  a.chip.rel { text-decoration:none; cursor:pointer; }
+  a.chip.rel:hover { background:color-mix(in srgb,var(--c) 26%,transparent); text-decoration:underline; text-decoration-style:dashed; text-underline-offset:2px; }
   .addrow { display:flex; align-items:center; gap:7px; padding:9px 12px; color:var(--muted); font-size:13px; cursor:pointer; border-top:1px solid var(--line); }
   .addrow:hover { background:var(--hover); color:var(--fg-soft); }
   .gridfoot { display:flex; gap:18px; color:var(--muted); font-size:12px; padding:8px 2px; }
@@ -1535,6 +1538,9 @@
   .pop .selsearch input { flex:1; width:0; min-width:0; border:0; background:transparent; outline:none;
     font:inherit; font-size:var(--fs-ui); color:var(--fg); }
   .pop .selsearch input::placeholder { color:var(--muted); }
+  /* relation record picker: fixed-height list — the popover is positioned once
+     on open, so async-loaded rows must scroll instead of growing off-screen */
+  .pop .rellist { max-height:264px; overflow-y:auto; }
   .optrow { display:flex; align-items:center; gap:6px; padding:3px 4px; }
   .optrow .chip { flex:1; }
   .optrow .grip { width:18px; height:22px; display:grid; place-items:center; color:var(--muted); cursor:grab; touch-action:none; flex:none; }
