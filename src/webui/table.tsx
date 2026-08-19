@@ -1491,22 +1491,62 @@ function uniquePropName(base: string, existing: Prop[]): string {
 
 /** Target-database list for relation properties. Every database is listed —
  *  self-relation is legal, so the current table appears too, just labeled. */
-function DbTargetList({ currentDb, target, onPick }: { currentDb: string; target?: string; onPick: (d: Db) => void }) {
+function DbTargetList({ currentDb, target, autoFocus, onPick }: {
+  currentDb: string; target?: string;
+  /** steal focus only in the dedicated pick step — ColMenu has a rename input on top */
+  autoFocus?: boolean;
+  onPick: (d: Db) => void;
+}) {
   const [dbs, setDbs] = useState<Db[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [selIdx, setSelIdx] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => { api.listDatabases().then(setDbs).catch(() => setDbs([])); }, []);
+
+  const q = query.trim().toLowerCase();
+  const all = dbs ?? [];
+  const matches = q ? all.filter((d) => (d.name || "未命名数据库").toLowerCase().includes(q)) : all;
+  const CAP = 50;
+  const shown = matches.slice(0, CAP);
+  const sel = Math.min(selIdx, Math.max(0, shown.length - 1));
+  useEffect(() => {
+    listRef.current?.querySelector(".item.sel")?.scrollIntoView({ block: "nearest" });
+  }, [sel, query]);
+
   if (!dbs) return null;
   return (
     <>
-      {dbs.map((d) => (
-        <MenuItem
-          key={d.id}
-          icon="database"
-          label={d.name || "未命名数据库"}
-          sublabel={d.id === currentDb ? "当前表" : undefined}
-          checked={d.id === target}
-          onClick={() => onPick(d)}
+      <div class="selsearch">
+        <Icon name="search" cls="ico sm" />
+        <input
+          placeholder="搜索数据表"
+          value={query}
+          ref={autoFocus ? (el) => { if (el && document.activeElement !== el) el.focus(); } : undefined}
+          onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, shown.length - 1)); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
+            else if (e.key === "Enter") { e.preventDefault(); if (shown[sel]) onPick(shown[sel]); }
+            else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
+          }}
         />
-      ))}
+      </div>
+      <div ref={listRef} class="rellist">
+        {shown.length === 0 && <MenuLabel>无匹配结果</MenuLabel>}
+        {shown.map((d, i) => (
+          <MenuItem
+            key={d.id}
+            icon="database"
+            label={d.name || "未命名数据库"}
+            sublabel={d.id === currentDb ? "当前表" : undefined}
+            checked={d.id === target}
+            sel={i === sel}
+            onHover={() => setSelIdx(i)}
+            onClick={() => onPick(d)}
+          />
+        ))}
+        {matches.length > CAP && <MenuLabel>还有 {matches.length - CAP} 条，继续输入过滤</MenuLabel>}
+      </div>
     </>
   );
 }
@@ -1529,7 +1569,7 @@ function AddColMenu({ dbId, allProps, reload, close }: { dbId: string; allProps:
     return (
       <>
         <MenuLabel>选择关联的数据表</MenuLabel>
-        <DbTargetList currentDb={dbId} onPick={(d) => create("relation", { database: d.id }, d.name || TYPE_META.relation.t)} />
+        <DbTargetList currentDb={dbId} autoFocus onPick={(d) => create("relation", { database: d.id }, d.name || TYPE_META.relation.t)} />
         <MenuSep />
         <MenuItem icon="arrowLeft" label="返回" onClick={() => setPickTarget(false)} />
       </>

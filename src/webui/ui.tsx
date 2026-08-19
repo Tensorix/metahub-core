@@ -173,6 +173,8 @@ export function MenuItem({
   kbd,
   danger,
   checked,
+  sel,
+  onHover,
   onClick,
 }: {
   icon?: string;
@@ -181,10 +183,13 @@ export function MenuItem({
   kbd?: string;
   danger?: boolean;
   checked?: boolean;
+  /** keyboard-navigation highlight (search-driven lists) */
+  sel?: boolean;
+  onHover?: () => void;
   onClick: () => void;
 }) {
   return (
-    <button class={"item" + (danger ? " danger" : "")} onClick={onClick}>
+    <button class={"item" + (danger ? " danger" : "") + (sel ? " sel" : "")} onClick={onClick} onMouseEnter={onHover}>
       {icon && (
         <span class="lico plain">
           <Icon name={icon} cls="ico sm" />
