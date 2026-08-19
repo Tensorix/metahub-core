@@ -52,6 +52,23 @@ export interface MetahubDesktop {
   oauth?: {
     openExternal: (url: string) => Promise<boolean>;
   };
+  /**
+   * File-editor window bridge (the .txt/.md "open with" feature). read/write
+   * are restricted by the main process to paths it opened itself (file
+   * association / argv / open-file) — arbitrary paths reject. `setDirty` drives
+   * the native unsaved-changes state (macOS close-button dot + close-confirm);
+   * `onRequestSave` fires when the user picks 保存 in that confirm — write the
+   * file, then call `saveDone` so the window may close. `focusMain` raises the
+   * main window (used after 导入到 MetaHub).
+   */
+  file?: {
+    read: (path: string) => Promise<{ text: string; name: string }>;
+    write: (path: string, text: string) => Promise<void>;
+    setDirty: (path: string, dirty: boolean) => Promise<void>;
+    saveDone: () => Promise<void>;
+    focusMain: () => Promise<void>;
+    onRequestSave: (cb: () => void) => () => void;
+  };
 }
 
 declare global {

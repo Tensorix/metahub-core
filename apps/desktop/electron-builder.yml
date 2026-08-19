@@ -20,6 +20,21 @@ directories:
   output: release
   buildResources: build # build/icon.png → auto-derived icns/ico/png
 
+# Register Metahub as an "open with" handler for Markdown/plain-text files.
+# rank Alternate: appears in the打开方式 list without claiming default-handler
+# status. Opened files land in the standalone file-editor window (see
+# openFileWindow in src/main.ts). NB: the mac app is unsigned (identity: null),
+# so Launch Services may need a reinstall/lsregister pass to pick this up.
+fileAssociations:
+  - ext: [md, markdown]
+    name: Markdown
+    role: Editor
+    rank: Alternate
+  - ext: [txt]
+    name: Plain Text
+    role: Editor
+    rank: Alternate
+
 # Only the Electron shell goes inside the app bundle. The sidecar is a separate
 # self-contained binary shipped via extraResources (see below). The WebUI is
 # embedded in the sidecar binary, served over loopback HTTP — not bundled here.

@@ -34,6 +34,7 @@ import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { ImagePreviewWindow } from "./media/image-preview-window.tsx";
+import { FileEditorWindow } from "./fileviewer/file-editor.tsx";
 import { DocHistoryPanel } from "./history.tsx";
 import { DbActivityPanel } from "./history-record.tsx";
 import { databaseToCsv, relationTitleMaps, downloadText, safeFilename } from "./export.ts";
@@ -220,6 +221,20 @@ function App() {
     const on = () => setView(parseHash(location.hash));
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
+  }, []);
+
+  // The desktop file-editor window's 「在 MetaHub 中打开」: it broadcasts the id
+  // of the freshly imported document (same origin) and raises this window via
+  // IPC; deep-link straight to the doc.
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const ch = new BroadcastChannel("mh-open-doc");
+    ch.onmessage = (e) => {
+      const id = (e.data as { id?: unknown })?.id;
+      if (typeof id === "string" && id) navigate({ kind: "doc", id });
+    };
+    return () => ch.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const newEmptyDoc = () =>
@@ -822,6 +837,11 @@ if (typeof window !== "undefined" && window.metahubDesktop) {
 if (location.hash.startsWith("#preview")) {
   document.body.classList.add("preview-window");
   render(<ImagePreviewWindow />, document.getElementById("app")!);
+} else if (location.hash.startsWith("#file") && clientMode().surface === "desktop") {
+  // The desktop file-editor window (.txt/.md "open with") — standalone editor
+  // over an on-disk file; desktop-gated because it needs the preload file bridge.
+  document.body.classList.add("file-window");
+  render(<FileEditorWindow />, document.getElementById("app")!);
 } else if (location.hash === "#quick" && clientMode().surface === "desktop") {
   document.body.classList.add("quicknote");
   render(<QuickNote />, document.getElementById("app")!);

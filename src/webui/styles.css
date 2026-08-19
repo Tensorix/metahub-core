@@ -2099,6 +2099,26 @@
   .qn-key { line-height:1; }
   .qn-key.sym { font-size:1.15em; line-height:1; }  /* ⌘ ⇧ glyphs render smaller — bump to match letters */
 
+  /* File-editor window (desktop, loaded at #file?path=… — the .txt/.md "open
+     with" surface). Same shell idiom as quicknote: top bar = drag region with
+     opted-out buttons, single full-bleed column, popups clamped below the bar. */
+  body.file-window { --pop-top-inset:46px; }
+  body.file-window #app { display:block; width:100vw; height:100vh; height:100dvh; }
+  .fw { display:flex; flex-direction:column; width:100%; height:100vh; height:100dvh; overflow:hidden; background:var(--bg); }
+  .fw-bar { display:flex; align-items:center; gap:8px; padding:7px 12px;
+    user-select:none; -webkit-app-region:drag;
+    background:var(--surface); border-bottom:1px solid var(--line); }
+  /* macOS only: clear the inset traffic lights (frame is native elsewhere). */
+  body.desktop-mac .fw-bar { padding-left:84px; }
+  .fw-name { flex:1; min-width:0; font-size:13px; font-weight:600; color:var(--fg-soft);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fw-dirty { color:var(--accent); font-size:15px; }
+  .fw-actions { display:flex; align-items:center; gap:6px; -webkit-app-region:no-drag; }
+  .fw-actions .btn { padding:4px 10px; font-size:12px; }
+  .fw-body { flex:1; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; -webkit-app-region:no-drag; }
+  /* Bar is ~45px, not the main ~50px topbar the find bar assumes. */
+  body.file-window .find-bar { top:52px; }
+
   /* No-origin bootstrap: enroll screen + hydration splash (data-blind shell). */
   .enroll-splash { min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; }
   .enroll-spinner { width:26px; height:26px; border-radius:50%; border:2.5px solid var(--line-strong); border-top-color:var(--accent); animation:enroll-spin .8s linear infinite; }

@@ -35,6 +35,18 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
   preview: {
     open: (p: { src: string; name?: string; blockId: string }) => ipcRenderer.invoke("preview:open", p),
   },
+  file: {
+    read: (path: string) => ipcRenderer.invoke("file:read", path),
+    write: (path: string, text: string) => ipcRenderer.invoke("file:write", path, text),
+    setDirty: (path: string, dirty: boolean) => ipcRenderer.invoke("file:set-dirty", path, dirty),
+    saveDone: () => ipcRenderer.invoke("file:save-done"),
+    focusMain: () => ipcRenderer.invoke("file:focus-main"),
+    onRequestSave: (cb: () => void) => {
+      const l = () => cb();
+      ipcRenderer.on("file:request-save", l);
+      return () => ipcRenderer.removeListener("file:request-save", l);
+    },
+  },
   oauth: {
     // Open a Cloudflare consent URL in the system browser (main-process validated).
     openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke("oauth:open-external", url),

@@ -53,6 +53,11 @@ export interface CmDocBodyProps {
   /** Embedded host (record peek drawer): skip the viewport-fixed chrome (TOC,
    *  word count) that assumes the editor owns the main content area. */
   embedded?: boolean;
+  /** Host has no hub-blob destination for pasted/picked media (the desktop
+   *  file-editor window: uploading would write a loopback /blob URL into a
+   *  plain on-disk file). Drops the paste/drop upload handler and the slash
+   *  menu's upload handoff. */
+  disableUploads?: boolean;
 }
 
 const acceptFor = (type: BlockType): string =>
@@ -110,12 +115,17 @@ export function CmDocBody(props: CmDocBodyProps) {
           blockGutter(),
           formatBar(),
           find(),
-          slashMenu({
-            onUpload: (type, v, pos) => pickAndUpload(v, pos, acceptFor(type), (m) => onErrorRef.current?.(m)),
-          }),
+          slashMenu(
+            props.disableUploads
+              ? {}
+              : {
+                  onUpload: (type, v, pos) =>
+                    pickAndUpload(v, pos, acceptFor(type), (m) => onErrorRef.current?.(m)),
+                },
+          ),
           doclinkSuggest(), // "[[" internal-link picker
 
-          uploadPaste({ onError: (m) => onErrorRef.current?.(m) }),
+          ...(props.disableUploads ? [] : [uploadPaste({ onError: (m) => onErrorRef.current?.(m) })]),
           copyRich(), // text/html flavor via the shared share renderer
           uploadField, // always on (outside richCompartment): pending uploads must survive source mode
           previewAnchorField, // which image void the preview window has open (annotation routing)

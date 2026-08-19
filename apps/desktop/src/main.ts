@@ -10,6 +10,11 @@
  * always-on-top markdown window summoned by a global shortcut or the tray
  * icon. It loads the same WebUI bundle at `…/#quick` (see src/webui/app.tsx).
  * Shortcut / always-on-top / window bounds are persisted locally as JSON.
+ *
+ * And the file-editor windows: Metahub registers as an "open with" handler for
+ * .txt/.md (electron-builder fileAssociations); opened files get a standalone
+ * editor window at `…/#file?path=…` with an 导入到 MetaHub button. File I/O
+ * stays in this process (file: IPC, path-allowlisted).
  */
 import {
   app,
@@ -26,7 +31,7 @@ import {
 } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
   cachedBinaryPath,
   fetchLatestCoreRelease,
@@ -63,6 +68,30 @@ if (legacyServiceWorkerCleanup.warning) {
   );
 }
 
+// Single instance: a Win/Linux "打开方式" launch spawns a second process; forward
+// its file args to the running instance instead of booting a second sidecar /
+// tray / shortcut. The lock is scoped to userData, so an MH_TEST_USER_DATA
+// scratch instance (redirected above) still coexists with the real app.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", (_e, argv, workingDirectory) => {
+    // Relative paths in the forwarded argv are relative to the SECOND
+    // instance's cwd — resolve against it, not our own.
+    const files = fileArgsFrom(argv, workingDirectory);
+    if (files.length > 0) files.forEach(queueOpenFile);
+    else showMainWindow();
+  });
+}
+
+// macOS file-association / dock-drop opens. Fires before app.whenReady() for
+// launch-time opens, so this must be registered at module scope; paths queue
+// until the sidecar is healthy (drained at the end of startup).
+app.on("open-file", (e, path) => {
+  e.preventDefault();
+  queueOpenFile(path);
+});
+
 /**
  * Resolve a path inside the app bundle. NOTE: do not use `__dirname` here —
  * `bun build` inlines it to the *source* dir (apps/desktop/src) at build time,
@@ -86,6 +115,19 @@ let mainWin: BrowserWindow | null = null;
 let splashWin: BrowserWindow | null = null;
 let quickWin: BrowserWindow | null = null;
 let previewWin: BrowserWindow | null = null;
+// File-editor windows (the .txt/.md "open with" feature), one per absolute path.
+const fileWins = new Map<string, BrowserWindow>();
+const fileDirty = new Map<string, boolean>();
+// Paths the app itself opened (file association / argv / open-file). The
+// file:read/write IPC only accepts paths from this set, so a renderer can
+// never reach arbitrary files on disk.
+const allowedFilePaths = new Set<string>();
+// open-file fires before the sidecar port is known — queue and drain later.
+const pendingOpenFiles: string[] = [];
+// close-flow "保存" waits for the renderer's file:save-done, keyed by WebContents id.
+const saveWaiters = new Map<number, () => void>();
+// Windows whose dirty-confirm dialog already ran; close() proceeds unprompted.
+const forceClosing = new WeakSet<BrowserWindow>();
 let quickReady = false; // has the quick-note window painted at least once?
 let quickPendingShow = false; // reveal the quick-note window as soon as it paints
 let tray: Tray | null = null;
@@ -360,6 +402,134 @@ function openPreview(p: { src: string; name?: string; blockId: string }): void {
   void win.loadURL(url);
 }
 
+// ---- file-editor windows (.txt/.md "open with") ----------------------------
+
+const OPENABLE_EXT = /\.(md|markdown|txt)$/i;
+
+/** Pick real .md/.markdown/.txt paths out of a raw argv (drops flags/dirs).
+ *  `cwd` anchors relative paths (a forwarded second-instance argv is relative
+ *  to THAT instance's working directory, not ours). */
+function fileArgsFrom(argv: string[], cwd?: string): string[] {
+  return argv
+    .filter((a) => !a.startsWith("-") && OPENABLE_EXT.test(a))
+    .map((a) => resolve(cwd ?? process.cwd(), a))
+    .filter((a) => existsSync(a));
+}
+
+/** Open now if the server is up, else queue for the end-of-startup drain. */
+function queueOpenFile(p: string): void {
+  const abs = resolve(p);
+  if (serverPort) openFileWindow(abs);
+  else pendingOpenFiles.push(abs);
+}
+
+function drainPendingFiles(): void {
+  const files = pendingOpenFiles.splice(0);
+  files.forEach(openFileWindow);
+}
+
+function setFileDirty(path: string, dirty: boolean): void {
+  fileDirty.set(path, dirty);
+  const win = fileWins.get(path);
+  if (win && !win.isDestroyed() && process.platform === "darwin") win.setDocumentEdited(dirty);
+}
+
+/** Resolves when the renderer reports file:save-done, or after `ms`. */
+function waitForSaveDone(win: BrowserWindow, ms: number): Promise<void> {
+  return new Promise((done) => {
+    const id = win.webContents.id;
+    const t = setTimeout(() => {
+      saveWaiters.delete(id);
+      done();
+    }, ms);
+    saveWaiters.set(id, () => {
+      clearTimeout(t);
+      saveWaiters.delete(id);
+      done();
+    });
+  });
+}
+
+/**
+ * Open (or focus) the standalone file-editor window for a .txt/.md path. Loads
+ * the shared WebUI at `…/#file?path=…` (see src/webui/fileviewer) — same origin
+ * as the sidecar, so its 导入到 MetaHub button is a plain api.createDocument call.
+ * One window per file; Cmd+S saves back to disk via the file: IPC below.
+ */
+function openFileWindow(absPath: string): void {
+  if (!serverPort) {
+    pendingOpenFiles.push(absPath);
+    return;
+  }
+  allowedFilePaths.add(absPath);
+  const existing = fileWins.get(absPath);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const isMac = process.platform === "darwin";
+  const win = new BrowserWindow({
+    width: 960,
+    height: 720,
+    minWidth: 480,
+    minHeight: 360,
+    title: basename(absPath),
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff",
+    show: false,
+    // Same chrome policy as the main window: inset traffic lights on macOS
+    // (the .fw-bar reserves space for them), native frame elsewhere.
+    ...(isMac
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 18, y: 17 } }
+      : {}),
+    webPreferences: {
+      preload: appFile("dist", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  fileWins.set(absPath, win);
+  fileDirty.set(absPath, false);
+  if (isMac) win.setRepresentedFilename(absPath);
+  routeExternalLinks(win);
+
+  // Unsaved changes: intercept close with a native 保存/不保存/取消 sheet. "保存"
+  // asks the renderer to write (file:request-save → file:save-done) and closes
+  // once it reports back (3 s cap so a wedged renderer can't hold the window).
+  win.on("close", (e) => {
+    if (quitting || forceClosing.has(win) || !fileDirty.get(absPath)) return;
+    e.preventDefault();
+    void (async () => {
+      const { response } = await dialog.showMessageBox(win, {
+        type: "warning",
+        buttons: ["保存", "不保存", "取消"],
+        defaultId: 0,
+        cancelId: 2,
+        message: `是否保存对「${basename(absPath)}」的更改？`,
+        detail: "不保存将丢弃自上次保存以来的更改。",
+      });
+      if (response === 2 || win.isDestroyed()) return;
+      if (response === 0) {
+        win.webContents.send("file:request-save");
+        await waitForSaveDone(win, 3_000);
+      }
+      forceClosing.add(win);
+      if (!win.isDestroyed()) win.close();
+    })();
+  });
+  win.on("closed", () => {
+    fileWins.delete(absPath);
+    fileDirty.delete(absPath);
+  });
+  win.once("ready-to-show", () => {
+    win.show();
+    win.focus();
+  });
+  const params = new URLSearchParams({ path: absPath });
+  void win.loadURL(`http://127.0.0.1:${serverPort}/#file?${params.toString()}`);
+}
+
 /**
  * Bring the main window to the front, creating it if it was closed.
  * Used by the macOS dock-icon `activate` handler. Note: a hidden Quick Note
@@ -624,6 +794,33 @@ function registerIpc(): void {
   // Open the frameless image-preview window for a doc image (see openPreview).
   ipcMain.handle("preview:open", (_e, p: { src: string; name?: string; blockId: string }) => openPreview(p));
 
+  // File-editor window bridge. Reads/writes are gated on allowedFilePaths —
+  // only paths the main process itself opened (association/argv/open-file) —
+  // so the renderer cannot roam the filesystem.
+  const assertAllowed = (p: string): string => {
+    const abs = resolve(p);
+    if (!allowedFilePaths.has(abs)) throw new Error(`file not opened by Metahub: ${abs}`);
+    return abs;
+  };
+  ipcMain.handle("file:read", (_e, p: string) => {
+    const abs = assertAllowed(p);
+    return { text: readFileSync(abs, "utf8"), name: basename(abs) };
+  });
+  ipcMain.handle("file:write", (_e, p: string, text: string) => {
+    const abs = assertAllowed(p);
+    writeFileSync(abs, text, "utf8");
+    setFileDirty(abs, false);
+  });
+  ipcMain.handle("file:set-dirty", (_e, p: string, dirty: boolean) => {
+    setFileDirty(assertAllowed(p), dirty);
+  });
+  ipcMain.handle("file:save-done", (e) => {
+    saveWaiters.get(e.sender.id)?.();
+  });
+  // 导入到 MetaHub → raise the main window (the doc id travels renderer-to-
+  // renderer over BroadcastChannel("mh-open-doc"); see file-editor.tsx).
+  ipcMain.handle("file:focus-main", () => showMainWindow());
+
   // Open the Cloudflare OAuth consent page in the user's real browser (never an
   // in-app window). Restricted to the Cloudflare dash host so the renderer can't
   // drive the shell to arbitrary external URLs.
@@ -692,6 +889,14 @@ app.whenReady().then(async () => {
 
     // macOS: re-open / focus the main window when the dock icon is clicked.
     app.on("activate", () => showMainWindow());
+
+    // File-association opens: macOS Finder opens arrive via the early open-file
+    // handler (queued above); Win/Linux — and a CLI launch on ANY platform,
+    // e.g. `bun run dev file.md` (no Apple Event there) — pass the file in the
+    // launch argv. Scan both; openFileWindow dedupes per path, so a path that
+    // somehow arrives twice still gets one window. Server is healthy now — open.
+    fileArgsFrom(process.argv).forEach(queueOpenFile);
+    drainPendingFiles();
   } catch (err) {
     closeSplash();
     killSidecar();
