@@ -177,3 +177,16 @@ test("removeProperty drops the column from listings", () => {
   expect(getProperty(db, p.id)).toBeNull();
   expect(listProperties(db, d.id).length).toBe(0);
 });
+
+test("doc properties need no config and index eagerly", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const p = addProperty(db, d.id, { name: "参考文档", type: "doc" });
+  expect(p.type).toBe("doc");
+  expect(p.config).toBeNull();
+  // eager index exists (same policy as relation)
+  const idx = db
+    .query("SELECT 1 AS ok FROM sqlite_master WHERE type = 'index' AND sql LIKE ?")
+    .get(`%'${p.id}'%`);
+  expect(idx).not.toBeNull();
+});

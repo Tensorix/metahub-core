@@ -315,3 +315,23 @@ test("database share SSR resolves relation titles for self and granted targets o
   expect(html2).toContain('<span class="tag">Alpha</span>');
   expect(html2).not.toContain(`<span class="tag">${alpha.id}</span>`);
 });
+
+test("database share SSR never resolves doc-cell titles (grants cannot scope documents)", async () => {
+  const ctx = makeCtx();
+  const doc = createDocument(ctx.db, { title: "内部设计文档" });
+  const tasks = createDatabase(ctx.db, { name: "Tasks" });
+  addProperty(ctx.db, tasks.id, { name: "Title", type: "text" });
+  addProperty(ctx.db, tasks.id, { name: "Docs", type: "doc" });
+  createRecord(ctx.db, tasks.id, { Title: "t", Docs: [doc.id] });
+
+  // Even a share carrying db grants shows raw doc ids — the doc's title is
+  // content the viewer was never granted.
+  const share = createShare(ctx.db, {
+    kind: "database",
+    target_id: tasks.id,
+    grants: JSON.stringify({ v: 1, tables: [{ db: tasks.id, ops: ["read"] }] }),
+  });
+  const html = await (await serveShare(htmlReq(`/share/${share.slug}`), ctx))!.text();
+  expect(html).toContain(`<span class="tag">${doc.id}</span>`);
+  expect(html).not.toContain("内部设计文档");
+});

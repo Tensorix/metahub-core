@@ -25,12 +25,25 @@ export function downloadText(filename: string, text: string, type: string): void
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-/** propId → (recId → title) for every relation column, fetched fresh so the
- *  export is complete regardless of the relation-titles cache's warmth. A
- *  target that fails to load yields an empty map — those cells fall back to
- *  raw ids instead of failing the whole export. */
+/** propId → (targetId → title) for every relation/doc column, fetched fresh so
+ *  the export is complete regardless of the title caches' warmth. A target that
+ *  fails to load yields an empty map — those cells fall back to raw ids instead
+ *  of failing the whole export. Doc columns share one global document-title map. */
 export async function relationTitleMaps(props: readonly Prop[]): Promise<Map<string, Map<string, string>>> {
   const maps = new Map<string, Map<string, string>>();
+  let docTitles: Promise<Map<string, string>> | null = null;
+  for (const p of props) {
+    if (p.type !== "doc") continue;
+    docTitles ??= api
+      .listDocuments()
+      .then((docs) => {
+        const m = new Map<string, string>();
+        for (const d of docs) if (d.title) m.set(d.id, d.title);
+        return m;
+      })
+      .catch(() => new Map<string, string>());
+    maps.set(p.id, await docTitles);
+  }
   const byTarget = new Map<string, Promise<Map<string, string>>>();
   for (const p of props) {
     const target = p.type === "relation" ? p.config?.database : undefined;
@@ -64,7 +77,7 @@ export function databaseToCsv(
   const rows = records.map((r) => [
     r.id,
     ...props.map((p) =>
-      p.type === "relation"
+      p.type === "relation" || p.type === "doc"
         ? relationToString(r.cells[p.id], relTitles?.get(p.id))
         : cellToString(r.cells[p.id]),
     ),

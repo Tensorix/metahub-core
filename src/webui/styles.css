@@ -589,6 +589,11 @@
   /* wide mode (⋯ menu): lift the column cap; the 60px side padding stays as the
      reading gutter and keeps the fixed .doc-toc ticks off the text. */
   .doc.wide-mode { max-width:none; }
+  /* embedded in the record peek drawer: full width, compact padding, a small
+     tail instead of the main view's 36vh, and a smaller title (the row's
+     properties above it are the primary content). Same idiom as .qn-body .doc. */
+  .doc.doc-embed { max-width:none; margin:0; padding:4px 2px 12vh; }
+  .doc.doc-embed .doc-title { font-size:22px; }
   /* floating table of contents: a column of indented tick marks in the right
      gutter that expands to a labelled list on hover (Notion / Vercel-docs style).
      Fixed to the viewport so it never disturbs the centred .doc column. */
@@ -1162,6 +1167,9 @@
   /* relation chip: an <a> that jumps to the target record */
   a.chip.rel { text-decoration:none; cursor:pointer; }
   a.chip.rel:hover { background:color-mix(in srgb,var(--c) 26%,transparent); text-decoration:underline; text-decoration-style:dashed; text-underline-offset:2px; }
+  /* doc chip whose target is deleted/unsynced: muted + dashed, same cue as the
+     editor's .cm-doclink-missing pill */
+  a.chip.rel.doc-missing { background:transparent; color:var(--muted); outline:1px dashed var(--line-strong); outline-offset:-1px; }
   .addrow { display:flex; align-items:center; gap:7px; padding:9px 12px; color:var(--muted); font-size:13px; cursor:pointer; border-top:1px solid var(--line); }
   .addrow:hover { background:var(--hover); color:var(--fg-soft); }
   .gridfoot { display:flex; gap:18px; color:var(--muted); font-size:12px; padding:8px 2px; }
@@ -1373,6 +1381,14 @@
   .proprow .v { flex:1; padding:7px 8px; border-radius:var(--radius-sm); cursor:text; min-height:33px; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
   .proprow .v:hover { background:var(--hover); }
   .peek-divider { height:1px; background:var(--line); margin:22px 0 18px; }
+  /* linked-document tabs + embedded editor below the peek's property list */
+  .peekdocs-tabs { display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-bottom:6px; }
+  .peekdocs-tab { border:0; background:none; font:inherit; font-size:var(--fs-sm); font-weight:500; color:var(--muted);
+    padding:5px 10px; border-radius:var(--radius-sm); cursor:pointer; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .peekdocs-tab:hover { background:var(--hover); color:var(--fg-soft); }
+  .peekdocs-tab.active { background:var(--surface-2); color:var(--fg); }
+  .peekdocs-tab.missing { color:var(--muted); text-decoration:line-through; }
+  .peekdocs-open { flex:none; }
 
   /* version history (doc drawer + record peek view) */
   .hist-peek { width:760px; }

@@ -66,6 +66,24 @@ function resolveRelation(db: DbDriver, prop: PropertyRow, value: string): string
   throw new MhError("ambiguous", `${prop.name}: ambiguous relation "${value}" (${cands.length} matches); use a full id`);
 }
 
+/**
+ * Resolve one doc-cell value to a concrete document id. Documents are global
+ * (no target database), otherwise the rules mirror resolveRelation: full id /
+ * unique prefix / title, with a forward-reference escape valve for well-formed
+ * doc ids.
+ */
+function resolveDoc(db: DbDriver, prop: PropertyRow, value: string): string {
+  const cands = resolveCandidates(db, value, { kind: "doc" });
+  const exact = cands.find((c) => c.id === value);
+  if (exact) return exact.id;
+  if (cands.length === 1) return cands[0]!.id;
+  if (cands.length === 0) {
+    if (idKind(value) === "doc") return value; // forward reference to a full id
+    throw new MhError("not_found", `${prop.name}: no such document: ${value}`);
+  }
+  throw new MhError("ambiguous", `${prop.name}: ambiguous document "${value}" (${cands.length} matches); use a full id`);
+}
+
 /** Validate + normalize a value for a property's type. Throws on mismatch.
  *  Exported so grants-core delegates guest payload type checks to the ONE
  *  coercion implementation (spike ⑨) instead of rewriting it. */
@@ -108,6 +126,10 @@ export function coerce(db: DbDriver, prop: PropertyRow, value: unknown): unknown
     case "relation": {
       const arr = value === null ? [] : Array.isArray(value) ? value : [value];
       return arr.map((v) => resolveRelation(db, prop, String(v)));
+    }
+    case "doc": {
+      const arr = value === null ? [] : Array.isArray(value) ? value : [value];
+      return arr.map((v) => resolveDoc(db, prop, String(v)));
     }
   }
 }

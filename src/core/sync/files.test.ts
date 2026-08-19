@@ -129,3 +129,31 @@ test("errors when neither side resolves to an entity", async () => {
   const db = newDb();
   await expect(syncFiles(db, "nope", "also-nope.md")).rejects.toThrow(/neither/);
 });
+
+test("CSV exports doc cells as titles (id fallback) and imports them back", async () => {
+  const db = newDb();
+  const spec = createDocument(db, { title: "设计说明" });
+  const other = createDocument(db, { title: "会议纪要" });
+
+  const tasks = createDatabase(db, { name: "Tasks" });
+  addProperty(db, tasks.id, { name: "Title", type: "text" });
+  addProperty(db, tasks.id, { name: "Docs", type: "doc" });
+  const rec = createRecord(db, tasks.id, { Title: "t1", Docs: [spec.id, "doc_ghost-000000"] });
+
+  const path = tmpPath("tasks-docs.csv");
+  await syncFiles(db, tasks.id, path);
+  const csv = await Bun.file(path).text();
+  // titles joined with ", "; dangling id falls back raw
+  expect(csv).toContain('"设计说明, doc_ghost-000000"');
+  expect(csv).not.toContain(spec.id);
+
+  // Round-trip: titles resolve back to ids, count stays put.
+  const res = await syncFiles(db, path, tasks.id);
+  expect(res).toMatchObject({ direction: "import", kind: "db", rows: 1 });
+  expect(listRecords(db, tasks.id, {})[0]!.values.Docs).toEqual([spec.id, "doc_ghost-000000"]);
+
+  // Human edit: retarget by title.
+  await Bun.write(path, `id,Title,Docs\n${rec.id},t1,会议纪要\n`);
+  await syncFiles(db, path, tasks.id);
+  expect(listRecords(db, tasks.id, {})[0]!.values.Docs).toEqual([other.id]);
+});

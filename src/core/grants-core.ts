@@ -279,19 +279,35 @@ function liveRowCount(db: DbDriver, databaseId: string): number {
   ).n;
 }
 
-/** Relation policy by principal: public visitors never write relations (a
- *  relation resolve probes the target database — an enumeration oracle);
- *  share guests may, but only into databases that are themselves in the set. */
+/** Relation/doc policy by principal: public visitors never write reference
+ *  cells (a resolve probes the target collection — an enumeration oracle);
+ *  share guests may write relations, but only into databases that are
+ *  themselves in the set. Doc cells are never guest-writable at all: GrantSet
+ *  can only express database grants, so document access cannot be scoped —
+ *  revisit if grants ever learn documents. Callers run this BEFORE coerce()
+ *  so the policy rejection precedes any resolution probe. */
 function assertRelationAllowed(
   set: GrantSet,
   principalKind: GrantPrincipal["kind"],
   prop: PropertyRow,
 ): void {
   if (principalKind === "public")
-    throw new MhError("invalid_input", `${prop.name}: relation properties are not writable anonymously`);
+    throw new MhError("invalid_input", `${prop.name}: ${prop.type} properties are not writable anonymously`);
+  if (prop.type === "doc")
+    throw new MhError("invalid_input", `${prop.name}: doc properties are not writable via shares (grants cannot scope documents)`);
   const target = prop.config?.database;
   if (!target || !grantFor(set, target))
     throw new MhError("invalid_input", `${prop.name}: relation target database is not in this share's grants`);
+}
+
+/** A reference-typed cell value that actually links something (null / [] are
+ *  inert and always allowed — clearing must not require grants). */
+function isLiveRefValue(prop: PropertyRow, value: unknown): boolean {
+  return (
+    (prop.type === "relation" || prop.type === "doc") &&
+    value != null &&
+    !(Array.isArray(value) && value.length === 0)
+  );
 }
 
 /**
@@ -316,10 +332,12 @@ export function assertGuestPayload(
     throw new MhError("invalid_input", `too many cells (max ${limits.maxCells})`);
 
   const props = listProperties(db, database.id);
-  const resolved = resolveData(props, values).map(({ prop, value }) => ({
-    prop,
-    value: coerce(db, prop, value),
-  })); // unknown keys / ambiguous names / invalid values throw here
+  const resolved = resolveData(props, values).map(({ prop, value }) => {
+    // Policy before coercion: a disallowed relation/doc write must be rejected
+    // without ever running the resolve probe (enumeration oracle).
+    if (isLiveRefValue(prop, value)) assertRelationAllowed(set, principal.kind, prop);
+    return { prop, value: coerce(db, prop, value) };
+  }); // unknown keys / ambiguous names / invalid values throw here
 
   let total = 0;
   for (const { prop, value } of resolved) {
@@ -327,8 +345,6 @@ export function assertGuestPayload(
     if (size > limits.maxValueBytes)
       throw new MhError("invalid_input", `${prop.name}: value too large (max ${limits.maxValueBytes} bytes)`);
     total += size;
-    if (prop.type === "relation" && value != null && !(Array.isArray(value) && value.length === 0))
-      assertRelationAllowed(set, principal.kind, prop);
   }
   if (total > limits.maxBodyBytes)
     throw new MhError("invalid_input", `payload too large (max ${limits.maxBodyBytes} bytes)`);
@@ -501,8 +517,7 @@ export function checkGuestChanges(
       if (utf8Len(c.value ?? "") > limits.maxValueBytes)
         throw new MhError("invalid_input", `${prop.name}: value too large (max ${limits.maxValueBytes} bytes)`);
       const value = c.value == null ? null : (JSON.parse(c.value) as unknown);
-      if (prop.type === "relation" && value != null && !(Array.isArray(value) && value.length === 0))
-        assertRelationAllowed(set, principalKind, prop);
+      if (isLiveRefValue(prop, value)) assertRelationAllowed(set, principalKind, prop);
       coerce(db, prop, value); // throws invalid_input on type mismatch
     }
   }

@@ -55,6 +55,15 @@ export function docLinkTitle(id: string): string | null | undefined {
   return titles.get(id) ?? null;
 }
 
+/** Seed one known title (e.g. a document the doc-cell picker just created) so
+ *  its chip never flashes the raw id while the map refreshes. */
+export function primeDocTitle(id: string, title: string): void {
+  if (state === "empty") return; // the first load will include it anyway
+  titles.set(id, title);
+  if (state === "fresh") state = "stale";
+  for (const fn of listeners) fn();
+}
+
 async function refresh(): Promise<void> {
   if (inflight) return inflight;
   inflight = (async () => {

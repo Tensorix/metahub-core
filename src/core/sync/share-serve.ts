@@ -253,6 +253,10 @@ async function serveTable(
     if (target === share.target_id || grantFor(grants, target))
       relTitles.set(target, recordTitleMap(ctx.db, target));
   }
+  // Doc cells deliberately get NO title map: GrantSet cannot scope documents
+  // (mirrors the write-side doc policy in grants-core assertRelationAllowed),
+  // so a shared table shows raw doc ids — titles of unshared documents are
+  // content. A doc share itself renders through serveDoc, not this path.
   const titlesFor = (p: PropertyRow) =>
     p.type === "relation" ? relTitles.get(p.config?.database ?? "") : undefined;
 

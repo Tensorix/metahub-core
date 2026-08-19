@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { resolveEntity, type Candidate } from "../resolve.ts";
-import { getDocument, updateDocument } from "../documents.ts";
+import { getDocument, updateDocument, documentTitleMap } from "../documents.ts";
 import { listProperties, type PropertyRow } from "../properties.ts";
 import { listRecords, getRecord, createRecord, updateRecord, recordTitleMap } from "../records.ts";
 import { toCsv, parseCsv } from "../csv.ts";
@@ -70,18 +70,22 @@ async function exportDb(db: Database, id: string, path: string): Promise<FileSyn
   const props = listProperties(db, id);
   const recs = listRecords(db, id, {});
   // One title map per relation target (deduped): relation cells export as
-  // titles — the form a human reads and edits — not raw record ids.
+  // titles — the form a human reads and edits — not raw record ids. Doc cells
+  // do the same through one global document-title map.
   const relTitles = new Map<string, Map<string, string>>();
   for (const p of props) {
     const target = p.type === "relation" ? p.config?.database : undefined;
     if (target && !relTitles.has(target)) relTitles.set(target, recordTitleMap(db, target));
   }
+  const docTitles = props.some((p) => p.type === "doc") ? documentTitleMap(db) : new Map<string, string>();
+  const titlesFor = (p: PropertyRow) =>
+    p.type === "doc" ? docTitles : (relTitles.get(p.config?.database ?? "") ?? new Map<string, string>());
   const header = ["id", ...props.map((p) => p.name)];
   const rows = recs.map((r) => [
     r.id,
     ...props.map((p) =>
-      p.type === "relation"
-        ? relationToString(r.cells[p.id], relTitles.get(p.config?.database ?? "") ?? new Map())
+      p.type === "relation" || p.type === "doc"
+        ? relationToString(r.cells[p.id], titlesFor(p))
         : cellToString(r.values[p.name]),
     ),
   ]);
@@ -102,12 +106,12 @@ async function importDb(db: Database, id: string, path: string): Promise<FileSyn
   const header = grid[0]!;
   const idCol = header.indexOf("id");
   // Column name → prop, first live match wins (same aliasing as name-keyed
-  // `values`). Only relation columns need the type: their cells export as
+  // `values`). Only relation/doc columns need the type: their cells export as
   // ", "-joined titles, which must split back before coerce resolves each
   // element (ids pass through, titles resolve by name — loud on ambiguity or
   // a miss). JSON arrays (ids or titles) come through parseCell whole. A title
   // containing a literal comma mis-splits and fails loudly; the escape hatch
-  // is rewriting that one cell as a JSON array or record ids.
+  // is rewriting that one cell as a JSON array or ids.
   const propByName = new Map<string, PropertyRow>();
   for (const p of listProperties(db, id)) if (!propByName.has(p.name)) propByName.set(p.name, p);
   let count = 0;
@@ -119,7 +123,8 @@ async function importDb(db: Database, id: string, path: string): Promise<FileSyn
       const raw = cells[c];
       if (raw == null || raw === "") continue; // leave unset cells untouched
       let v = parseCell(raw);
-      if (propByName.get(header[c]!)?.type === "relation" && typeof v === "string")
+      const colType = propByName.get(header[c]!)?.type;
+      if ((colType === "relation" || colType === "doc") && typeof v === "string")
         v = v.split(",").map((s) => s.trim()).filter(Boolean);
       data[header[c]!] = v;
     }

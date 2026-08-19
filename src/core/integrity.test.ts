@@ -274,3 +274,90 @@ test("a healthy hub reports clean and repairs to a no-op", () => {
   expect(validateHub(db).ok).toBe(true);
   expect(repairHub(db).applied).toBe(0);
 });
+
+// --- dead cell references (relation/doc arrays) -----------------------------
+
+test("dead_cell_ref strips tombstoned targets from relation and doc cells", () => {
+  const db = makeNode("aaaa");
+  const people = createDatabase(db, { name: "People" });
+  addProperty(db, people.id, { name: "Name", type: "text" });
+  const tasks = createDatabase(db, { name: "Tasks" });
+  addProperty(db, tasks.id, { name: "Title", type: "text" });
+  const rel = addProperty(db, tasks.id, { name: "Owner", type: "relation", config: { database: people.id } });
+  const docs = addProperty(db, tasks.id, { name: "Docs", type: "doc" });
+
+  const alice = createRecord(db, people.id, { Name: "Alice" });
+  const bob = createRecord(db, people.id, { Name: "Bob" });
+  const spec = createDocument(db, { title: "Spec" });
+  const notes = createDocument(db, { title: "Notes" });
+  const t = createRecord(db, tasks.id, {
+    Title: "ship",
+    Owner: [alice.id, bob.id],
+    Docs: [spec.id, notes.id],
+  });
+
+  // delete one target of each kind
+  emit(db, "records", bob.id, "__deleted", 1);
+  deleteDocument(db, notes.id);
+
+  const report = validateHub(db);
+  expect(report.counts["dead_cell_ref"]).toBe(2);
+
+  const res = repairHub(db);
+  expect(res.fixed["dead_cell_ref"]).toBe(2);
+  const after = getRecord(db, t.id)!;
+  expect(after.cells[rel.id]).toEqual([alice.id]); // survivor kept
+  expect(after.cells[docs.id]).toEqual([spec.id]);
+
+  // fixpoint: a second repair applies nothing
+  expect(repairHub(db).applied).toBe(0);
+});
+
+test("dead_cell_ref: forward references to absent targets are tolerated", () => {
+  const db = makeNode("aaaa");
+  const d = createDatabase(db, { name: "Tasks" });
+  const rel = addProperty(db, d.id, { name: "Rel", type: "relation", config: { database: d.id } });
+  const docs = addProperty(db, d.id, { name: "Docs", type: "doc" });
+  const r = createRecord(db, d.id, {
+    Rel: ["rec_future-aaaaaa"],
+    Docs: ["doc_future-aaaaaa"],
+  });
+
+  // absent (never created) targets are potential in-flight forward references
+  expect(validateHub(db).counts["dead_cell_ref"] ?? 0).toBe(0);
+  expect(repairHub(db).applied).toBe(0);
+  const after = getRecord(db, r.id)!;
+  expect(after.cells[rel.id]).toEqual(["rec_future-aaaaaa"]);
+  expect(after.cells[docs.id]).toEqual(["doc_future-aaaaaa"]);
+});
+
+test("dead_cell_ref: an array losing every element repairs to []", () => {
+  const db = makeNode("aaaa");
+  const d = createDatabase(db, { name: "Tasks" });
+  const docs = addProperty(db, d.id, { name: "Docs", type: "doc" });
+  const doc = createDocument(db, { title: "Only" });
+  const r = createRecord(db, d.id, { Docs: [doc.id] });
+  deleteDocument(db, doc.id);
+
+  repairHub(db);
+  expect(getRecord(db, r.id)!.cells[docs.id]).toEqual([]);
+  expect(repairHub(db).applied).toBe(0);
+});
+
+test("dead_cell_ref repair converges across nodes", () => {
+  const a = makeNode("aaaa");
+  const d = createDatabase(a, { name: "Tasks" });
+  addProperty(a, d.id, { name: "Docs", type: "doc" });
+  const doc = createDocument(a, { title: "Shared" });
+  createRecord(a, d.id, { Docs: [doc.id] });
+  deleteDocument(a, doc.id);
+
+  const b = makeNode("bbbb");
+  sync(a, b);
+  repairHub(a);
+  repairHub(b);
+  sync(a, b);
+  expect(fullSnapshot(a)).toEqual(fullSnapshot(b));
+  expect(repairHub(a).applied).toBe(0);
+  expect(repairHub(b).applied).toBe(0);
+});

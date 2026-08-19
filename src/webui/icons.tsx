@@ -109,4 +109,5 @@ export const TYPE_ICON: Record<string, string> = {
   date: "calendar",
   url: "link",
   relation: "relation",
+  doc: "fileText",
 };

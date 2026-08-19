@@ -120,7 +120,7 @@ async function writeBlobs(blobs: Record<string, string>): Promise<number> {
 
 /**
  * Indexes are derived (not in the oplog), so replaying changes doesn't recreate
- * them. Rebuild the declared ones (relation fields + explicit indexed hint);
+ * them. Rebuild the declared ones (relation/doc fields + explicit indexed hint);
  * auto-indexes from query usage re-derive lazily on next query.
  */
 function rebuildDeclaredIndexes(db: Database): void {
@@ -137,7 +137,7 @@ function rebuildDeclaredIndexes(db: Database): void {
   for (const p of props) {
     if (!p.database_id) continue;
     const indexed = p.config ? (JSON.parse(p.config) as { indexed?: boolean }).indexed : false;
-    if (p.type === "relation" || indexed) ensurePropIndex(db, p.database_id, p.id);
+    if (p.type === "relation" || p.type === "doc" || indexed) ensurePropIndex(db, p.database_id, p.id);
   }
 }
 

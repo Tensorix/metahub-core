@@ -50,6 +50,9 @@ export interface CmDocBodyProps {
    *  by the host DocView). Reaches the image widgets via the voidDeps facet. */
   onPreviewImage?: (block: Block) => void;
   source?: boolean;
+  /** Embedded host (record peek drawer): skip the viewport-fixed chrome (TOC,
+   *  word count) that assumes the editor owns the main content area. */
+  embedded?: boolean;
 }
 
 const acceptFor = (type: BlockType): string =>
@@ -101,8 +104,9 @@ export function CmDocBody(props: CmDocBodyProps) {
           ...baseExtensions(opts),
           // Chrome (always on; reads the always-on docModelField so it survives
           // source mode). The slash menu's upload types open a native file picker.
-          docToc(),
-          wordCount(),
+          // TOC / word count position:fixed against the viewport — wrong (and
+          // z-fighting with the drawer) when the editor is embedded in a panel.
+          ...(props.embedded ? [] : [docToc(), wordCount()]),
           blockGutter(),
           formatBar(),
           find(),

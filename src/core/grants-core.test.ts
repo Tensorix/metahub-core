@@ -428,3 +428,21 @@ test("checkGuestChanges relation policy matches the sync path: public forbids, s
     ),
   ).toBe("invalid_input");
 });
+
+test("assertGuestPayload: doc cells are never guest-writable", () => {
+  const db = makeDb();
+  const tasks = createDatabase(db, { name: "Tasks" });
+  addProperty(db, tasks.id, { name: "Title", type: "text" });
+  addProperty(db, tasks.id, { name: "Docs", type: "doc" });
+  const set = grants({ db: tasks.id, ops: ["create", "update"] });
+
+  // both principals refused — GrantSet cannot scope documents
+  expect(code(() => assertGuestPayload(db, set, PUB, tasks, { Docs: ["doc_x-000000"] }))).toBe("invalid_input");
+  expect(code(() => assertGuestPayload(db, set, SHARE, tasks, { Docs: ["doc_x-000000"] }))).toBe("invalid_input");
+  // the rejection is policy, not resolution: an existing doc changes nothing
+  // (the policy check runs before any resolve probe)
+  expect(code(() => assertGuestPayload(db, set, SHARE, tasks, { Docs: "任意标题" }))).toBe("invalid_input");
+  // clearing (null / []) is fine for anyone
+  assertGuestPayload(db, set, PUB, tasks, { Docs: null });
+  assertGuestPayload(db, set, SHARE, tasks, { Docs: [] });
+});

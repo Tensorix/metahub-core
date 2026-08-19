@@ -3,7 +3,7 @@ import { newId } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
 import { MhError } from "./errors.ts";
 import { addProperty, listProperties, type PropertyConfig } from "./properties.ts";
-import { createRecord, listRecords } from "./records.ts";
+import { createRecord, listRecords, updateRecord } from "./records.ts";
 import type { ColumnsOf } from "./sqlcols.ts";
 
 export interface DatabaseRow {
@@ -87,19 +87,41 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
     if (Object.keys(meta).length) emit(db, "databases", dup.id, "meta", meta);
   }
   const propIdMap = new Map<string, string>();
+  const selfRelNew = new Set<string>(); // copy-side prop ids whose relation targets the copy
   for (const p of listProperties(db, id)) {
-    const config: PropertyConfig | undefined =
-      p.config?.database === id ? { ...p.config, database: dup.id } : (p.config ?? undefined);
+    const self = p.type === "relation" && p.config?.database === id;
+    const config: PropertyConfig | undefined = self
+      ? { ...p.config, database: dup.id }
+      : (p.config ?? undefined);
     const np = addProperty(db, dup.id, { name: p.name, type: p.type, config, position: p.position });
     propIdMap.set(p.id, np.id);
+    if (self) selfRelNew.add(np.id);
   }
-  for (const r of listRecords(db, id)) {
+  // Self-referential relation cells must point at the copy's rows, but those ids
+  // only exist once every row is created — so copy in two passes: rows first
+  // (deferring self-relation cells), then rewrite those cells through the
+  // old→new record id map. Ids that don't map (already dangling in the source)
+  // are kept verbatim.
+  const srcRecords = listRecords(db, id);
+  const recIdMap = new Map<string, string>();
+  for (const r of srcRecords) {
     const data: Record<string, unknown> = {};
     for (const [pid, v] of Object.entries(r.cells)) {
       const nid = propIdMap.get(pid);
-      if (nid) data[nid] = v;
+      if (!nid) continue;
+      if (selfRelNew.has(nid) && Array.isArray(v) && v.length > 0) continue; // pass 2
+      data[nid] = v;
     }
-    createRecord(db, dup.id, data);
+    recIdMap.set(r.id, createRecord(db, dup.id, data).id);
+  }
+  for (const r of srcRecords) {
+    const patch: Record<string, unknown> = {};
+    for (const [pid, v] of Object.entries(r.cells)) {
+      const nid = propIdMap.get(pid);
+      if (nid && selfRelNew.has(nid) && Array.isArray(v) && v.length > 0)
+        patch[nid] = v.map((x) => recIdMap.get(String(x)) ?? x);
+    }
+    if (Object.keys(patch).length) updateRecord(db, recIdMap.get(r.id)!, patch);
   }
   return getDatabase(db, dup.id)!;
 });

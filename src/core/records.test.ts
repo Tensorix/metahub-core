@@ -12,6 +12,7 @@ import {
   deleteRecord,
 } from "./records.ts";
 import { hasIndex } from "./indexing.ts";
+import { createDocument } from "./documents.ts";
 import { emit, ingest, changesSince } from "./crdt.ts";
 
 function newDb(node = "test-node"): Database {
@@ -264,4 +265,63 @@ test("duplicate property names: cells stay id-keyed and lossless; name-keyed acc
   addProperty(db, d.id, { name: "备注", type: "text" });
   updateRecord(db, rec.id, { 备注: "ok" });
   expect(getRecord(db, rec.id)!.values["备注"]).toBe("ok");
+});
+
+test("doc cells resolve by full id, unique prefix, and title", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const ref = addProperty(db, d.id, { name: "参考文档", type: "doc" });
+  const doc = createDocument(db, { title: "设计说明" });
+
+  // full id
+  const r1 = createRecord(db, d.id, { 参考文档: doc.id });
+  expect(getRecord(db, r1.id)!.cells[ref.id]).toEqual([doc.id]);
+
+  // title
+  const r2 = createRecord(db, d.id, { 参考文档: "设计说明" });
+  expect(getRecord(db, r2.id)!.cells[ref.id]).toEqual([doc.id]);
+
+  // unique id prefix
+  const prefix = doc.id.slice(0, doc.id.length - 2);
+  const r3 = createRecord(db, d.id, { 参考文档: prefix });
+  expect(getRecord(db, r3.id)!.cells[ref.id]).toEqual([doc.id]);
+
+  // scalar wraps into an array; null clears to []
+  updateRecord(db, r1.id, { 参考文档: null });
+  expect(getRecord(db, r1.id)!.cells[ref.id]).toEqual([]);
+});
+
+test("doc cells: forward reference passes, unknown title and ambiguity throw", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const ref = addProperty(db, d.id, { name: "docs", type: "doc" });
+
+  // well-formed doc id that doesn't exist yet passes through (forward reference)
+  const r = createRecord(db, d.id, { docs: ["doc_notyet-abc123"] });
+  expect(getRecord(db, r.id)!.cells[ref.id]).toEqual(["doc_notyet-abc123"]);
+
+  // a non-id reference matching nothing throws not_found
+  try {
+    createRecord(db, d.id, { docs: "没有这篇" });
+    expect.unreachable("unknown doc title should throw");
+  } catch (e) {
+    expect((e as { code?: string }).code).toBe("not_found");
+  }
+
+  // two documents with the same title → ambiguous
+  createDocument(db, { title: "周报" });
+  createDocument(db, { title: "周报" });
+  try {
+    createRecord(db, d.id, { docs: "周报" });
+    expect.unreachable("ambiguous doc title should throw");
+  } catch (e) {
+    expect((e as { code?: string }).code).toBe("ambiguous");
+  }
+});
+
+test("doc fields are indexed eagerly", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  const p = addProperty(db, d.id, { name: "docs", type: "doc" });
+  expect(hasIndex(db, d.id, p.id)).toBe(true);
 });

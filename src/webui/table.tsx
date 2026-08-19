@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import {
   api,
   TYPE_META,
@@ -24,7 +24,7 @@ import {
   type MenuAnchor,
 } from "./ui.tsx";
 import { SYNCED_EVENT } from "./data/replica.ts";
-import { Chip, CellDisplay, coerceInput, cellText, optColor, relationLabel } from "./cells.tsx";
+import { Chip, CellDisplay, coerceInput, cellText, optColor, relationLabel, docLabel } from "./cells.tsx";
 import {
   relationTitleList,
   relationTitleProp,
@@ -32,7 +32,9 @@ import {
   primeRelationTitle,
   onRelationTitleChange,
 } from "./relation-titles.ts";
+import { allDocTitles, onDocTitleChange, primeDocTitle } from "./doc-titles.ts";
 import { openFieldHistory, RecordHistoryView } from "./history-record.tsx";
+import { DocView, type DocViewHandle } from "./editor.tsx";
 import { BoardView } from "./board.tsx";
 import { CalendarView } from "./calendar.tsx";
 import { TimelineView } from "./timeline.tsx";
@@ -332,9 +334,9 @@ export function DatabaseView({
 
   // ---- keyboard cell navigation / editing ----
   // "editable" = the free-text inline editor applies; checkbox toggles in
-  // place, select/multi_select/relation edit through their picker popovers.
+  // place, select/multi_select/relation/doc edit through their picker popovers.
   const isEditable = (t: PropType) =>
-    t !== "checkbox" && t !== "select" && t !== "multi_select" && t !== "relation";
+    t !== "checkbox" && t !== "select" && t !== "multi_select" && t !== "relation" && t !== "doc";
   const clampN = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
   const scrollCellIntoView = (r: number, c: number) =>
     requestAnimationFrame(() => {
@@ -371,6 +373,19 @@ export function DatabaseView({
       ? { rect: td.getBoundingClientRect() }
       : { x: innerWidth / 2, y: innerHeight / 3 };
     openRelationMenu(anchor, p, recRow.cells[p.id], (v) => commit(recRow, p, v), seed, () => relCreated(p));
+  };
+
+  /** Keyboard-opened document picker — same cell-rect anchoring as openRelationAt. */
+  const openDocAt = (r: number, c: number, seed?: string) => {
+    const recRow = sorted[r];
+    const p = props[c];
+    if (!recRow || !p) return;
+    selectCell(r, c);
+    const td = document.querySelector(`td.cell-td[data-r="${r}"][data-c="${c}"]`);
+    const anchor: MenuAnchor = td
+      ? { rect: td.getBoundingClientRect() }
+      : { x: innerWidth / 2, y: innerHeight / 3 };
+    openDocMenu(anchor, recRow.cells[p.id], (v) => commit(recRow, p, v), seed);
   };
 
   /** The picker created a record in prop's target db — a self-relation means
@@ -458,6 +473,7 @@ export function DatabaseView({
       } else if (single && (e.key === "Enter" || e.key === "F2")) {
         e.preventDefault();
         if (props[c]?.type === "relation") openRelationAt(r, c);
+        else if (props[c]?.type === "doc") openDocAt(r, c);
         else startEditAt(r, c);
       } else if (single && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
         // Type-to-edit. Known limit: an IME composition's first key (keyCode 229)
@@ -468,6 +484,11 @@ export function DatabaseView({
           // seed the picker's search instead of the (removed) free-text editor
           e.preventDefault();
           openRelationAt(r, c, e.key);
+          return;
+        }
+        if (p.type === "doc") {
+          e.preventDefault();
+          openDocAt(r, c, e.key);
           return;
         }
         if (!isEditable(p.type) || p.type === "date") return; // date: Enter/F2 only
@@ -830,6 +851,7 @@ function CellView({
   const onActivate = (e: MouseEvent) => {
     if (prop.type === "select" || prop.type === "multi_select") openSelectMenu(e, prop, val, onCommit);
     else if (prop.type === "relation") openRelationMenu(e, prop, val, onCommit, undefined, onRelCreated);
+    else if (prop.type === "doc") openDocMenu(e, val, onCommit);
     else onEdit();
   };
 
@@ -1108,6 +1130,123 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
           <button key={r.id} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(r.id)} onMouseEnter={() => setSelIdx(i)}>
             <Chip text={relationLabel(target, r.id)} />
             {cur.includes(r.id) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
+          </button>
+        ))}
+        {matches.length > CAP && <MenuLabel>还有 {matches.length - CAP} 条，继续输入过滤</MenuLabel>}
+        {canCreate && (
+          <button
+            class={"item" + (sel === shown.length ? " sel" : "")}
+            onClick={create}
+            onMouseEnter={() => setSelIdx(shown.length)}
+          >
+            <span class="lico plain"><Icon name="plus" cls="ico sm" /></span>
+            创建
+            <Chip text={q} />
+          </button>
+        )}
+      </div>
+      {cur.length > 0 && (
+        <>
+          <MenuSep />
+          <MenuItem icon="x" label="清空" onClick={() => { setCur([]); onPick([]); }} />
+        </>
+      )}
+    </>
+  );
+}
+
+// ---- doc editor menu (document picker) ----
+// Mirrors the relation picker, but documents are global: no target database,
+// no per-db bucket state — the shared doc-title map (primed by App.reloadNav)
+// is the whole data source. Kept separate from RelationMenu on purpose: the
+// data-source shapes differ enough that an abstraction would obscure both.
+function openDocMenu(
+  anchor: MenuAnchor,
+  val: unknown,
+  onCommit: (v: unknown) => void,
+  seed?: string,
+) {
+  if (anchor instanceof MouseEvent) anchor.stopPropagation();
+  openMenu(anchor, () => <DocMenu value={val} onPick={onCommit} seed={seed} />, { minWidth: 260 });
+}
+function DocMenu({ value, onPick, seed }: {
+  value: unknown; onPick: (v: unknown) => void;
+  /** type-to-edit: opens with this text in the search box */
+  seed?: string;
+}) {
+  const [cur, setCur] = useState<string[]>(Array.isArray(value) ? (value as string[]) : []);
+  const [query, setQuery] = useState(seed ?? "");
+  const [selIdx, setSelIdx] = useState(0);
+  const [, bump] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const un = onDocTitleChange(() => bump((n) => n + 1));
+    bump((n) => n + 1); // a fast load may have notified before we subscribed
+    return un;
+  }, []);
+
+  // The title map also carries db entries (for [[db_x]] links) — docs only here.
+  const all = allDocTitles().filter((d) => d.id.startsWith("doc_"));
+  const q = query.trim();
+  // Documents legally share titles, so everything below keys and checks by doc
+  // id, and "创建" stays available on an exact match.
+  const matches = q
+    ? all.filter((d) => d.title.toLowerCase().includes(q.toLowerCase()))
+    : all;
+  const CAP = 50;
+  const shown = matches.slice(0, CAP);
+  const canCreate = q.length > 0;
+  const rowCount = shown.length + (canCreate ? 1 : 0);
+  const sel = Math.min(selIdx, Math.max(0, rowCount - 1));
+  useEffect(() => {
+    listRef.current?.querySelector(".item.sel")?.scrollIntoView({ block: "nearest" });
+  }, [sel, query]);
+
+  const pick = (id: string) => {
+    const set = new Set(cur);
+    set.has(id) ? set.delete(id) : set.add(id);
+    const next = [...set];
+    setCur(next);
+    onPick(next);
+    setQuery("");
+    setSelIdx(0);
+  };
+  const create = () => {
+    if (!canCreate) return;
+    const title = q;
+    api.createDocument({ title })
+      .then((d) => {
+        // seed the cache so the new chip never flashes its raw id
+        primeDocTitle(d.id, title);
+        pick(d.id);
+      })
+      .catch((e) => toast(`创建文档失败：${(e as Error).message}`));
+  };
+  const activate = (i: number) => { if (i < shown.length) pick(shown[i]!.id); else create(); };
+
+  return (
+    <>
+      <div class="selsearch">
+        <Icon name="search" cls="ico sm" />
+        <input
+          placeholder="搜索或创建文档"
+          value={query}
+          ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
+          onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, rowCount - 1)); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
+            else if (e.key === "Enter") { e.preventDefault(); activate(sel); }
+            else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
+          }}
+        />
+      </div>
+      <div ref={listRef} class="rellist">
+        {all.length === 0 && !canCreate && <MenuLabel>暂无文档，输入标题创建</MenuLabel>}
+        {shown.map((d, i) => (
+          <button key={d.id} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(d.id)} onMouseEnter={() => setSelIdx(i)}>
+            <Chip text={docLabel(d.id).label} />
+            {cur.includes(d.id) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
           </button>
         ))}
         {matches.length > CAP && <MenuLabel>还有 {matches.length - CAP} 条，继续输入过滤</MenuLabel>}
@@ -1512,10 +1651,72 @@ function RecordPeek({
                   />
                 </div>
               ))}
+              <PeekDocs props={props} rec={rec} />
             </>
           )}
         </div>
       </div>
+    </>
+  );
+}
+
+/** The row's linked documents (union of its doc-type cells), embedded below the
+ *  property list: a tab per document, the active one editable in place via a
+ *  compact DocView. Renders nothing when the row links no documents. */
+function PeekDocs({ props, rec }: { props: Prop[]; rec: Rec }) {
+  const [, bump] = useState(0);
+  useEffect(() => onDocTitleChange(() => bump((n) => n + 1)), []);
+  const linked: { id: string; propName: string }[] = [];
+  const seen = new Set<string>();
+  for (const p of props) {
+    if (p.type !== "doc") continue;
+    const v = rec.cells[p.id];
+    if (!Array.isArray(v)) continue;
+    for (const x of v) {
+      const id = String(x);
+      if (!seen.has(id)) { seen.add(id); linked.push({ id, propName: p.name }); }
+    }
+  }
+  const [sel, setSel] = useState<string | null>(null);
+  const handleRef = useRef<DocViewHandle | null>(null);
+  // DocView reports its handle on mount and null on unmount (tab/row switch,
+  // drawer close). Flushing on the null keeps the debounce window from
+  // swallowing the last edits — the editor's state outlives its DOM, so the
+  // snapshot is still exact.
+  const onHandle = useCallback((h: DocViewHandle | null) => {
+    if (h === null) void handleRef.current?.flushSave();
+    handleRef.current = h;
+  }, []);
+  if (linked.length === 0) return null;
+  const activeId = linked.some((d) => d.id === sel) ? sel! : linked[0]!.id;
+  const activeMissing = docLabel(activeId).missing;
+  return (
+    <>
+      <div class="peek-divider" />
+      <div class="peekdocs-tabs">
+        {linked.map((d) => {
+          const { label, missing } = docLabel(d.id);
+          return (
+            <button
+              key={d.id}
+              class={"peekdocs-tab" + (d.id === activeId ? " active" : "") + (missing ? " missing" : "")}
+              title={d.propName}
+              onClick={() => setSel(d.id)}
+            >{label}</button>
+          );
+        })}
+        <div style={{ flex: 1 }} />
+        {!activeMissing && (
+          <a class="iconbtn peekdocs-open" title="在主视图打开" href={`#/doc/${encodeURIComponent(activeId)}`}>
+            <Icon name="cornerUpRight" cls="ico sm" />
+          </a>
+        )}
+      </div>
+      {activeMissing ? (
+        <div class="empty">文档不存在或未同步</div>
+      ) : (
+        <DocView key={activeId} docId={activeId} embedded onError={(m) => toast(m)} onHandle={onHandle} />
+      )}
     </>
   );
 }
@@ -1533,6 +1734,8 @@ function PeekValue({ prop, rec, editing, onEdit, onCommit, onCloseEdit, onRelCre
   // Chip clicks navigate (the anchor stops propagation); empty-area clicks edit.
   if (prop.type === "relation")
     return <div class="v" onClick={(e) => openRelationMenu(e as unknown as MouseEvent, prop, val, onCommit, undefined, onRelCreated)}><CellDisplay prop={prop} val={val} /></div>;
+  if (prop.type === "doc")
+    return <div class="v" onClick={(e) => openDocMenu(e as unknown as MouseEvent, val, onCommit)}><CellDisplay prop={prop} val={val} /></div>;
   if (editing) {
     // No captureTab: in the peek panel Tab follows native focus order and the
     // resulting blur commits. onCommit closes the editor via the parent.

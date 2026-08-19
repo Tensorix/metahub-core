@@ -32,12 +32,17 @@ export interface DocViewHandle {
 export function DocView({
   docId,
   wide,
+  embedded,
   onError,
   onModeChange,
   onHandle,
 }: {
   docId: string;
   wide?: boolean;
+  /** Hosted inside a panel (record peek drawer) instead of the main content
+   *  area: compact layout, no meta row, no viewport-fixed chrome, and no
+   *  window-level Cmd+F fallback (the main view owns that). */
+  embedded?: boolean;
   onError: (m: string) => void;
   onModeChange?: (mode: DocMode) => void;
   onHandle?: (handle: DocViewHandle | null) => void;
@@ -301,6 +306,7 @@ export function DocView({
   // the key its keymap preventDefaulted, so the defaultPrevented check keeps the
   // two paths from double-firing. Modals own the keyboard while open.
   useEffect(() => {
+    if (embedded) return; // the drawer editor must not steal the main view's find
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== "f") return;
       if (e.defaultPrevented) return;
@@ -402,7 +408,7 @@ export function DocView({
   return (
     <div
       ref={docRootRef}
-      class={"doc" + (mode === "source" ? " source-mode" : "") + (wide ? " wide-mode" : "")}
+      class={"doc" + (mode === "source" ? " source-mode" : "") + (wide ? " wide-mode" : "") + (embedded ? " doc-embed" : "")}
       // Clicking the column's empty bottom padding (below the editor) drops the
       // caret on a trailing empty paragraph — see cm6/click-below.ts. Handler
       // lives on the .doc column (not document) so other UI is untouched.
@@ -462,7 +468,7 @@ export function DocView({
           if (e.key === "ArrowDown" && caretLineEdge(e.currentTarget as HTMLElement).last) { e.preventDefault(); enterBody(); }
         }}
       />
-      <div class="doc-meta">
+      {!embedded && <div class="doc-meta">
         <SyncStamp />
         {sharedTargets.has(docId) && (
           <button
@@ -473,12 +479,13 @@ export function DocView({
             <Icon name="link" cls="ico sm" />已分享
           </button>
         )}
-      </div>
+      </div>}
       {!loading && (
         <CmDocBody
           key={docId}
           initialDoc={sourceRef.current}
           source={mode === "source"}
+          embedded={embedded}
           onChange={scheduleSave}
           onReady={(h) => { cmRef.current = h; }}
           onExitTop={() => focusTitle()}

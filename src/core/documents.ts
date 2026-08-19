@@ -178,6 +178,20 @@ export function listDocuments(
   return db.query(`${cols} ${ORDER_BY}`).all() as DocumentSummary[];
 }
 
+/** docId → non-empty title for every live document — the shared lookup for
+ *  rendering doc-cell values readably (CSV export, CLI pretty output).
+ *  Documents with an empty title are omitted so consumers fall back to the raw
+ *  id — the only form that round-trips for them anyway (mirrors
+ *  records.recordTitleMap). */
+export function documentTitleMap(db: DbDriver): Map<string, string> {
+  const map = new Map<string, string>();
+  const rows = db
+    .query("SELECT id, title FROM documents WHERE __deleted = 0")
+    .all() as { id: string; title: string | null }[];
+  for (const r of rows) if (r.title) map.set(r.id, String(r.title));
+  return map;
+}
+
 // ---- sibling ordering (fractional index scoped per parent_id) --------------
 
 interface SiblingRow {

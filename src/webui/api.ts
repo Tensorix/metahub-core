@@ -1023,4 +1023,5 @@ export const TYPE_META: Record<PropType, { ic: string; t: string }> = {
   date: { ic: "calendar", t: "日期" },
   url: { ic: "link", t: "链接" },
   relation: { ic: "relation", t: "关联" },
+  doc: { ic: "fileText", t: "文档" },
 };

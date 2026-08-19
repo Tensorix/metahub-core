@@ -130,3 +130,46 @@ test("meta is a generic replicated JSON register (round-trip, clear, duplicate)"
   // non-object meta is rejected
   expect(() => updateDatabase(db, d.id, { meta: [1] as unknown as Record<string, unknown> })).toThrow();
 });
+
+test("duplicateDatabase remaps self-referential relation cells to the copy's rows", () => {
+  const db = newDb();
+  const src = createDatabase(db, { name: "People" });
+  const name = addProperty(db, src.id, { name: "Name", type: "text" });
+  const mgr = addProperty(db, src.id, { name: "Manager", type: "relation", config: { database: src.id } });
+
+  const boss = createRecord(db, src.id, { Name: "Boss" });
+  const dev = createRecord(db, src.id, { Name: "Dev", Manager: [boss.id] });
+  // an already-dangling id in the source stays verbatim in the copy
+  const ghost = createRecord(db, src.id, { Name: "Ghost", Manager: ["rec_gone-aaaaaa"] });
+
+  const dup = duplicateDatabase(db, src.id);
+  const dupProps = listProperties(db, dup.id);
+  const dupName = dupProps.find((p) => p.name === "Name")!;
+  const dupMgr = dupProps.find((p) => p.name === "Manager")!;
+  const byName = new Map(listRecords(db, dup.id).map((r) => [r.cells[dupName.id], r]));
+
+  const dupBoss = byName.get("Boss")!;
+  expect(byName.get("Dev")!.cells[dupMgr.id]).toEqual([dupBoss.id]);
+  expect(byName.get("Ghost")!.cells[dupMgr.id]).toEqual(["rec_gone-aaaaaa"]);
+
+  // source rows are untouched
+  const srcDev = listRecords(db, src.id).find((r) => r.cells[name.id] === "Dev")!;
+  expect(srcDev.cells[mgr.id]).toEqual([boss.id]);
+});
+
+test("duplicateDatabase keeps cross-database relation cells pointing at the original target", () => {
+  const db = newDb();
+  const people = createDatabase(db, { name: "People" });
+  addProperty(db, people.id, { name: "Name", type: "text" });
+  const alice = createRecord(db, people.id, { Name: "Alice" });
+
+  const tasks = createDatabase(db, { name: "Tasks" });
+  addProperty(db, tasks.id, { name: "Title", type: "text" });
+  const owner = addProperty(db, tasks.id, { name: "Owner", type: "relation", config: { database: people.id } });
+  createRecord(db, tasks.id, { Title: "ship", Owner: [alice.id] });
+
+  const dup = duplicateDatabase(db, tasks.id);
+  const dupOwner = listProperties(db, dup.id).find((p) => p.name === "Owner")!;
+  expect(dupOwner.config?.database).toBe(people.id);
+  expect(listRecords(db, dup.id)[0]!.cells[dupOwner.id]).toEqual([alice.id]);
+});

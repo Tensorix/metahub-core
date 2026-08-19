@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Prop, PropType } from "./api.ts";
 import { relationTitle, onRelationTitleChange } from "./relation-titles.ts";
+import { docLinkTitle, onDocTitleChange } from "./doc-titles.ts";
 
 // ---- option colors (stable per string) ----
 const HUES = [4, 28, 45, 130, 165, 200, 220, 255, 290, 330];
@@ -57,12 +58,51 @@ function RelChip({ dbId, recId }: { dbId: string | undefined; recId: string }) {
   );
 }
 
+/** Chip label for a doc value: the document's title, "无标题" for an existing
+ *  but untitled document, and a shortened raw id while loading / for dangling
+ *  refs (deleted or unsynced documents). */
+export function docLabel(docId: string): { label: string; missing: boolean } {
+  const t = docLinkTitle(docId);
+  if (t) return { label: t, missing: false };
+  if (t === "") return { label: "无标题", missing: false };
+  const short = docId.length > 15 ? `${docId.slice(0, 14)}…` : docId;
+  return { label: short, missing: t === null };
+}
+
+/** One doc chip: shows the document's title and links to it. Same anchor-based
+ *  navigation and self-subscription idiom as RelChip, but fed by the global
+ *  doc-title map (primed for free by App.reloadNav). A dangling ref renders in
+ *  the missing style instead of hiding — the id is the user's only handle. */
+function DocChip({ docId }: { docId: string }) {
+  const [, bump] = useState(0);
+  const { label, missing } = docLabel(docId);
+  const labelRef = useRef(label);
+  labelRef.current = label;
+  useEffect(() => {
+    const un = onDocTitleChange(() => bump((n) => n + 1));
+    if (docLabel(docId).label !== labelRef.current) bump((n) => n + 1);
+    return un;
+  }, []);
+  return (
+    <a
+      class={missing ? "chip rel doc-missing" : "chip rel"}
+      style={{ ["--c" as any]: optColor(label) }}
+      href={`#/doc/${encodeURIComponent(docId)}`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {label}
+    </a>
+  );
+}
+
 export function CellDisplay({ prop, val }: { prop: Prop; val: unknown }) {
   if (val == null || val === "" || (Array.isArray(val) && val.length === 0))
     return <span class="muted">&nbsp;</span>;
   if (prop.type === "select") return <Chip text={String(val)} />;
   if (prop.type === "relation")
     return <>{(val as unknown[]).map((x) => <RelChip key={String(x)} dbId={prop.config?.database} recId={String(x)} />)}</>;
+  if (prop.type === "doc")
+    return <>{(val as unknown[]).map((x) => <DocChip key={String(x)} docId={String(x)} />)}</>;
   if (prop.type === "multi_select")
     return <>{(val as unknown[]).map((x) => <Chip key={String(x)} text={String(x)} />)}</>;
   if (prop.type === "url")
@@ -71,7 +111,7 @@ export function CellDisplay({ prop, val }: { prop: Prop; val: unknown }) {
 }
 
 export function coerceInput(_type: PropType, raw: string): unknown {
-  // relation never reaches here — it edits through the record picker.
+  // relation/doc never reach here — they edit through their pickers.
   return raw;
 }
 
@@ -83,6 +123,8 @@ export function cellText(prop: Prop, val: unknown): string {
     // copied titles are for humans, not round-tripping.
     if (prop.type === "relation")
       return val.map((x) => relationTitle(prop.config?.database, String(x)) || String(x)).join(", ");
+    if (prop.type === "doc")
+      return val.map((x) => docLinkTitle(String(x)) || String(x)).join(", ");
     return val.join(", ");
   }
   return String(val);

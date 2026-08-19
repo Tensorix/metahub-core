@@ -60,7 +60,7 @@ const add = defineCommand({
   args: {
     name: { type: "positional", required: true, description: "Property name" },
     db: { type: "string", description: "Database ref (default: current)" },
-    type: { type: "string", required: true, description: "text|number|checkbox|select|multi_select|date|relation|url" },
+    type: { type: "string", required: true, description: "text|number|checkbox|select|multi_select|date|relation|doc|url" },
     options: { type: "string", description: "Comma list for select/multi_select" },
     target: { type: "string", description: "Target database ref for relation" },
     config: { type: "string", description: "Raw config JSON (@file/@- ok)" },

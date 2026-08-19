@@ -43,12 +43,12 @@ export function ensurePropIndex(db: DbDriver, databaseId: string, propId: string
 
 /**
  * Ensure an index for a field that a query filters/sorts on — but only when it
- * will pay off. relation fields are almost always query keys (cheap, index
+ * will pay off. relation/doc fields are almost always query keys (cheap, index
  * eagerly); other fields wait until the collection crosses the row threshold.
  */
 export function maybeAutoIndex(db: DbDriver, databaseId: string, prop: PropertyRow): void {
   if (hasIndex(db, databaseId, prop.id)) return;
-  if (prop.type !== "relation") {
+  if (prop.type !== "relation" && prop.type !== "doc") {
     const row = db
       .query(
         "SELECT COUNT(*) AS c FROM records WHERE database_id = ? AND __deleted = 0",

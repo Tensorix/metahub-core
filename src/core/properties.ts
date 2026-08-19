@@ -14,6 +14,7 @@ export type PropType =
   | "multi_select"
   | "date"
   | "relation"
+  | "doc"
   | "url";
 
 export const PROP_TYPES: ReadonlySet<string> = new Set([
@@ -24,6 +25,7 @@ export const PROP_TYPES: ReadonlySet<string> = new Set([
   "multi_select",
   "date",
   "relation",
+  "doc",
   "url",
 ]);
 
@@ -58,6 +60,7 @@ function validateConfig(type: PropType, config: PropertyConfig | undefined): voi
     if (typeof config?.database !== "string")
       throw new MhError("invalid_input", "relation requires config.database (target database id)");
   }
+  // "doc" needs no config: documents are global, there is no target to pick.
 }
 
 function nextPosition(db: DbDriver, databaseId: string): number {
@@ -101,7 +104,7 @@ export const addProperty = grouped(function addProperty(
   emit(db, "properties", id, "position", opts.position ?? nextPosition(db, databaseId));
 
   // Relations are almost always query keys; index eagerly. Honor explicit hint.
-  if (opts.type === "relation" || opts.indexed === true)
+  if (opts.type === "relation" || opts.type === "doc" || opts.indexed === true)
     ensurePropIndex(db, databaseId, id);
   return getProperty(db, id)!;
 });

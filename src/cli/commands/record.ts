@@ -6,7 +6,9 @@ import {
   getRecord,
   updateRecord,
   deleteRecord,
+  recordTitleMap,
 } from "../../core/records.ts";
+import { documentTitleMap } from "../../core/documents.ts";
 import {
   listRecordRevisions,
   revertRecord,
@@ -48,6 +50,33 @@ function flatten(r: { id: string; values: Record<string, unknown> }) {
   for (const [k, v] of Object.entries(r.values))
     out[k] = v != null && typeof v === "object" ? JSON.stringify(v) : v;
   return out;
+}
+
+/** Rewrite relation/doc id arrays in each `values` bag to ", "-joined target
+ *  titles (raw id fallback) — the TTY pretty path only; JSON output keeps raw
+ *  ids so scripted consumers are unaffected. Keyed by property name, matching
+ *  the name-keyed `values` these rows carry. */
+function titleize(
+  db: Database,
+  databaseId: string,
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  let docTitles: Map<string, string> | null = null;
+  const maps = new Map<string, Map<string, string>>();
+  for (const p of listProperties(db, databaseId)) {
+    if (p.type === "relation" && p.config?.database)
+      maps.set(p.name, recordTitleMap(db, p.config.database));
+    else if (p.type === "doc") maps.set(p.name, (docTitles ??= documentTitleMap(db)));
+  }
+  if (maps.size === 0) return rows;
+  return rows.map((values) => {
+    const out = { ...values };
+    for (const [name, m] of maps) {
+      const v = out[name];
+      if (Array.isArray(v)) out[name] = v.map((x) => m.get(String(x)) ?? String(x)).join(", ");
+    }
+    return out;
+  });
 }
 
 const create = defineCommand({
@@ -93,7 +122,10 @@ const list = defineCommand({
     });
     print(
       { database: databaseId, count: rows.length, records: rows },
-      () => table(rows.map(flatten)),
+      () => {
+        const titled = titleize(db, databaseId, rows.map((r) => r.values));
+        return table(rows.map((r, i) => flatten({ id: r.id, values: titled[i]! })));
+      },
     );
   }),
 });
@@ -106,7 +138,10 @@ const get = defineCommand({
   },
   run: guard(async (args) => {
     const db = await freshDb(args);
-    print(getRecord(db, resolveRef(db, args.id, { kind: "rec" })));
+    const row = getRecord(db, resolveRef(db, args.id, { kind: "rec" }))!;
+    print(row, () =>
+      table([flatten({ id: row.id, values: titleize(db, row.database_id, [row.values])[0]! })]),
+    );
   }),
 });
 
