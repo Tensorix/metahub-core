@@ -16,7 +16,10 @@ import type { DbDriver } from "../../core/driver.ts";
 // relation-titles) refreshes with zero changes.
 
 const POLL_MS = 1000;
-const HEARTBEAT_MS = 25_000;
+// Must undercut Bun.serve's default idleTimeout (10s): a quieter cadence gets
+// the socket reaped as idle mid-stream (ERR_INCOMPLETE_CHUNKED_ENCODING) and
+// the client burns a reconnect every 10s.
+const HEARTBEAT_MS = 8_000;
 const BATCH_LIMIT = 1000;
 const ROW_IDS_CAP = 500;
 

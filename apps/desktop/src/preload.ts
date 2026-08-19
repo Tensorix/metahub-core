@@ -32,6 +32,13 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     setAlwaysOnTop: (on: boolean) => ipcRenderer.invoke("qn:set-always-on-top", on),
     hide: () => ipcRenderer.invoke("qn:hide"),
   },
+  quickboard: {
+    getSettings: () => ipcRenderer.invoke("qb:get-settings"),
+    setShortcut: (accelerator: string) => ipcRenderer.invoke("qb:set-shortcut", accelerator),
+    getAlwaysOnTop: () => ipcRenderer.invoke("qb:get-always-on-top"),
+    setAlwaysOnTop: (on: boolean) => ipcRenderer.invoke("qb:set-always-on-top", on),
+    hide: () => ipcRenderer.invoke("qb:hide"),
+  },
   preview: {
     open: (p: { src: string; name?: string; blockId: string }) => ipcRenderer.invoke("preview:open", p),
   },

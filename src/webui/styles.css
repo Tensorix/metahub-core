@@ -2080,19 +2080,62 @@
     border-color:var(--accent);
     background:var(--accent) center/10px no-repeat
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5L20 7'/%3E%3C/svg%3E"); }
-  /* Compact menus inside the quick-note window only (dropdown + slash command
-     share .pop/.item/.lico with the main app; scope under body.quicknote so the
-     main app keeps its roomier density). */
-  body.quicknote .pop { padding:5px; border-radius:9px; }
-  body.quicknote .pop .lbl { padding:4px 8px 2px; font-size:10px; }
-  body.quicknote .pop .item { padding:5px 9px; gap:8px; font-size:var(--fs-sm); }
-  body.quicknote .pop .item .t { font-size:var(--fs-sm); }
-  body.quicknote .pop .item .d { font-size:10.5px; }
-  body.quicknote .pop .item .lico { width:22px; height:22px; }
-  body.quicknote .pop .item .lico.plain { width:20px; height:20px; }
-  body.quicknote .pop .sep { margin:4px 4px; }
+  /* Compact menus inside the quick windows only (dropdown + slash command
+     share .pop/.item/.lico with the main app; scope under the quick window
+     body classes so the main app keeps its roomier density). */
+  body.quicknote .pop, body.quickboard .pop { padding:5px; border-radius:9px; }
+  body.quicknote .pop .lbl, body.quickboard .pop .lbl { padding:4px 8px 2px; font-size:10px; }
+  body.quicknote .pop .item, body.quickboard .pop .item { padding:5px 9px; gap:8px; font-size:var(--fs-sm); }
+  body.quicknote .pop .item .t, body.quickboard .pop .item .t { font-size:var(--fs-sm); }
+  body.quicknote .pop .item .d, body.quickboard .pop .item .d { font-size:10.5px; }
+  body.quicknote .pop .item .lico, body.quickboard .pop .item .lico { width:22px; height:22px; }
+  body.quicknote .pop .item .lico.plain, body.quickboard .pop .item .lico.plain { width:20px; height:20px; }
+  body.quicknote .pop .sep, body.quickboard .pop .sep { margin:4px 4px; }
 
-  /* Quick Notes shortcut capture (desktop only). */
+  /* Quick Board window (desktop, loaded at #board). Same shell idiom as the
+     quick-note window above: transparent body so the macOS vibrancy shows,
+     top bar = drag region with opted-out buttons, popups clamped below the
+     bar. The board itself reuses the main .board-* styles at a compact
+     density scoped under body.quickboard. */
+  body.quickboard { background:transparent; --pop-top-inset:38px; }
+  html:has(body.quickboard) { background:transparent; }
+  body.quickboard #app { display:block; width:100vw; height:100vh; height:100dvh; }
+  .qb { display:flex; flex-direction:column; width:100%; height:100vh; height:100dvh; overflow:hidden;
+    background:color-mix(in srgb, var(--bg) 20%, transparent); }
+  .qb-bar { display:flex; align-items:center; gap:6px; padding:4px 10px;
+    user-select:none; -webkit-app-region:drag;
+    background:color-mix(in srgb, var(--surface) 30%, transparent); }
+  body.desktop-mac .qb-bar { padding-left:76px; }
+  /* The brand doubles as the database switcher — a button, so it opts out of
+     the drag region and gets a hover affordance. */
+  .qb-brand { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:60%;
+    font-size:12px; font-weight:600; color:var(--fg-soft);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    padding:3px 7px; border-radius:6px; -webkit-app-region:no-drag; }
+  .qb-brand:hover { background:var(--hover-2); }
+  .qb-brand svg { flex:none; color:var(--muted); }
+  .qb-actions { display:flex; gap:2px; margin-left:auto; -webkit-app-region:no-drag; }
+  .qb-actions .iconbtn { width:26px; height:26px; }
+  .qb-actions .iconbtn.active { color:var(--accent); background:var(--hover-2); }
+  .qb-body { flex:1; min-height:0; overflow:auto; scrollbar-width:thin;
+    -webkit-app-region:no-drag; padding:0 10px; }
+  .qb-body .empty { display:flex; align-items:center; justify-content:center; height:100%;
+    color:var(--muted); font-size:var(--fs-sm); text-align:center; padding:0 24px; }
+  /* Compact board density: narrower columns, columns stretch to the window
+     (not the main app's topbar-based calc), translucent surfaces so the
+     vibrancy reads through the gutters. */
+  body.quickboard .board-wrap { margin-top:0; }
+  body.quickboard .board-bar { padding:6px 0 8px; }
+  body.quickboard .board { min-height:0; padding-bottom:10px; }
+  body.quickboard .board-col { flex:0 0 232px; width:232px;
+    max-height:calc(100vh - 108px); max-height:calc(100dvh - 108px);
+    background:color-mix(in srgb, var(--surface) 72%, transparent); }
+  body.quickboard .kcard-title { font-size:var(--fs-sm); }
+  /* The record peek drawer shares its width preference with the main app
+     (mh.peekW) — cap it so it never swallows the whole small window. */
+  body.quickboard .peek { max-width:92vw; }
+
+  /* Quick-window shortcut capture (desktop only; shared by note + board). */
   .qn-shortcut { min-width:140px; justify-content:center; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; }
   .qn-shortcut.capturing { outline:2px solid var(--accent); color:var(--accent); }
   .qn-keys { display:inline-flex; align-items:center; gap:6px; }

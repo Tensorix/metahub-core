@@ -1703,9 +1703,10 @@ function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void
   );
 }
 
-// ---- quick notes (desktop only) -------------------------------------------
+// ---- quick windows (desktop only) ------------------------------------------
 
 const DEFAULT_SHORTCUT = "CommandOrControl+Shift+Space";
+const DEFAULT_BOARD_SHORTCUT = "CommandOrControl+Shift+B";
 
 /** Build an Electron accelerator from a keydown, or null for an invalid combo. */
 function toAccelerator(e: KeyboardEvent): string | null {
@@ -1743,14 +1744,26 @@ function prettyShortcut(accel: string): string {
   return shortcutTokens(accel).join(mac ? " " : "+");
 }
 
-function QuickNotesSettings() {
-  const qn = window.metahubDesktop!.quicknote!;
-  const [shortcut, setShortcut] = useState<string>(DEFAULT_SHORTCUT);
+/** One quick window's settings block (shortcut capture + default pin),
+ *  parameterized over its preload bridge — rendered once per window below. */
+function QuickWindowSection({
+  label,
+  bridge,
+  defaultShortcut,
+  pinCaption,
+}: {
+  label: string;
+  bridge: NonNullable<NonNullable<Window["metahubDesktop"]>["quicknote"]>;
+  defaultShortcut: string;
+  pinCaption: string;
+}) {
+  const [shortcut, setShortcut] = useState<string>(defaultShortcut);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [capturing, setCapturing] = useState(false);
 
   useEffect(() => {
-    qn.getSettings()
+    bridge
+      .getSettings()
       .then((s) => {
         setShortcut(s.shortcut);
         setAlwaysOnTop(s.alwaysOnTop);
@@ -1760,7 +1773,7 @@ function QuickNotesSettings() {
 
   const applyShortcut = async (accel: string) => {
     try {
-      const s = await qn.setShortcut(accel);
+      const s = await bridge.setShortcut(accel);
       setShortcut(s.shortcut);
       toast(`快捷键已设为 ${prettyShortcut(s.shortcut)}`);
     } catch (e) {
@@ -1784,7 +1797,7 @@ function QuickNotesSettings() {
     const next = !alwaysOnTop;
     setAlwaysOnTop(next);
     try {
-      setAlwaysOnTop(await qn.setAlwaysOnTop(next));
+      setAlwaysOnTop(await bridge.setAlwaysOnTop(next));
     } catch (e) {
       setAlwaysOnTop(!next);
       toast(`设置失败：${(e as Error).message}`);
@@ -1792,42 +1805,67 @@ function QuickNotesSettings() {
   };
 
   return (
-    <>
-      <PageHeader title={pageLabel("quicknote")} sub="用全局快捷键随时唤起小窗记录想法。小窗也可从菜单栏图标打开。" />
-      <SetSection label="小窗">
-        <SetRow
-          title="唤起快捷键"
-          caption="点击右侧按钮，然后按下你想用的组合键。"
-          control={
-            <>
-              {shortcut !== DEFAULT_SHORTCUT && (
-                <button class="btn btn-ghost" title="重置默认" onClick={() => void applyShortcut(DEFAULT_SHORTCUT)}>
-                  重置
-                </button>
-              )}
-              <button
-                class={"btn btn-secondary qn-shortcut" + (capturing ? " capturing" : "")}
-                onClick={() => setCapturing(true)}
-                onBlur={() => setCapturing(false)}
-                onKeyDown={capturing ? onCaptureKey : undefined}
-              >
-                {capturing ? "按下组合键…" : (
-                  <span class="qn-keys">
-                    {shortcutTokens(shortcut).map((k) => (
-                      <span class={"qn-key" + (MOD_GLYPHS.has(k) ? " sym" : "")}>{k}</span>
-                    ))}
-                  </span>
-                )}
+    <SetSection label={label}>
+      <SetRow
+        title="唤起快捷键"
+        caption="点击右侧按钮，然后按下你想用的组合键。"
+        control={
+          <>
+            {shortcut !== defaultShortcut && (
+              <button class="btn btn-ghost" title="重置默认" onClick={() => void applyShortcut(defaultShortcut)}>
+                重置
               </button>
-            </>
-          }
+            )}
+            <button
+              class={"btn btn-secondary qn-shortcut" + (capturing ? " capturing" : "")}
+              onClick={() => setCapturing(true)}
+              onBlur={() => setCapturing(false)}
+              onKeyDown={capturing ? onCaptureKey : undefined}
+            >
+              {capturing ? "按下组合键…" : (
+                <span class="qn-keys">
+                  {shortcutTokens(shortcut).map((k) => (
+                    <span class={"qn-key" + (MOD_GLYPHS.has(k) ? " sym" : "")}>{k}</span>
+                  ))}
+                </span>
+              )}
+            </button>
+          </>
+        }
+      />
+      <SetRow
+        title="默认始终置顶"
+        caption={pinCaption}
+        control={<Switch checked={alwaysOnTop} onChange={() => void toggleTop()} />}
+      />
+    </SetSection>
+  );
+}
+
+function QuickNotesSettings() {
+  const desktop = window.metahubDesktop!;
+  return (
+    <>
+      <PageHeader
+        title={pageLabel("quicknote")}
+        sub="用全局快捷键随时唤起小窗：记录想法，或瞄一眼任务看板。小窗也可从菜单栏图标打开。"
+      />
+      {desktop.quicknote && (
+        <QuickWindowSection
+          label="快速笔记"
+          bridge={desktop.quicknote}
+          defaultShortcut={DEFAULT_SHORTCUT}
+          pinCaption="小窗浮在其他窗口之上；也可在小窗内用 📌 按钮切换。"
         />
-        <SetRow
-          title="默认始终置顶"
-          caption="小窗浮在其他窗口之上；也可在小窗内用 📌 按钮切换。"
-          control={<Switch checked={alwaysOnTop} onChange={() => void toggleTop()} />}
+      )}
+      {desktop.quickboard && (
+        <QuickWindowSection
+          label="快速看板"
+          bridge={desktop.quickboard}
+          defaultShortcut={DEFAULT_BOARD_SHORTCUT}
+          pinCaption="看板小窗浮在其他窗口之上；AI 通过 CLI 更新任务时看板实时刷新。"
         />
-      </SetSection>
+      )}
     </>
   );
 }

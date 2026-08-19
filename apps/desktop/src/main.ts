@@ -48,7 +48,8 @@ const HEALTH_PATH = "/health"; // mirrors src/core/sync/protocol.ts
 const HEALTH_TIMEOUT_MS = 15_000;
 const HEALTH_INTERVAL_MS = 150;
 
-const DEFAULT_SHORTCUT = "CommandOrControl+Shift+Space";
+const DEFAULT_NOTE_SHORTCUT = "CommandOrControl+Shift+Space";
+const DEFAULT_BOARD_SHORTCUT = "CommandOrControl+Shift+B";
 
 // Test-only isolation: point userData at a scratch dir so a second instance
 // (integration debugging against a scratch METAHUB_HOME) never touches the
@@ -103,17 +104,10 @@ function appFile(...segments: string[]): string {
   return join(app.getAppPath(), ...segments);
 }
 
-interface QuickNoteSettings {
-  shortcut: string;
-  alwaysOnTop: boolean;
-  bounds?: { x: number; y: number; width: number; height: number };
-}
-
 let sidecar: ChildProcess | null = null;
 let serverPort = 0;
 let mainWin: BrowserWindow | null = null;
 let splashWin: BrowserWindow | null = null;
-let quickWin: BrowserWindow | null = null;
 let previewWin: BrowserWindow | null = null;
 // File-editor windows (the .txt/.md "open with" feature), one per absolute path.
 const fileWins = new Map<string, BrowserWindow>();
@@ -128,36 +122,8 @@ const pendingOpenFiles: string[] = [];
 const saveWaiters = new Map<number, () => void>();
 // Windows whose dirty-confirm dialog already ran; close() proceeds unprompted.
 const forceClosing = new WeakSet<BrowserWindow>();
-let quickReady = false; // has the quick-note window painted at least once?
-let quickPendingShow = false; // reveal the quick-note window as soon as it paints
 let tray: Tray | null = null;
-let currentShortcut: string | null = null;
 let quitting = false;
-let settings: QuickNoteSettings = { shortcut: DEFAULT_SHORTCUT, alwaysOnTop: false };
-
-// ---- persisted quick-note settings ----------------------------------------
-
-function settingsPath(): string {
-  return join(app.getPath("userData"), "quicknote-settings.json");
-}
-
-function loadSettings(): void {
-  try {
-    const raw = readFileSync(settingsPath(), "utf8");
-    settings = { ...settings, ...(JSON.parse(raw) as QuickNoteSettings) };
-  } catch {
-    // first run / unreadable — keep defaults
-  }
-  if (!settings.shortcut) settings.shortcut = DEFAULT_SHORTCUT;
-}
-
-function saveSettings(): void {
-  try {
-    writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
-  } catch (err) {
-    console.error("[quicknote] failed to save settings:", (err as Error).message);
-  }
-}
 
 // ---- sidecar ---------------------------------------------------------------
 
@@ -341,10 +307,11 @@ function createWindow(port: number): void {
     win.show();
     win.focus();
     closeSplash();
-    // Main window is up; quietly warm the quick-note window in the background
-    // so its first open is instant. Deferred so it never competes with the
-    // main window's first frame.
-    setTimeout(prewarmQuickNote, 0);
+    // Main window is up; quietly warm the mini windows in the background so
+    // their first open is instant. Deferred so they never compete with the
+    // main window's first frame (the board trails the note by a second).
+    setTimeout(() => quickNote.prewarm(), 0);
+    setTimeout(() => quickBoard.prewarm(), 1000);
     // Check for a newer core sidecar in the background; if found it's cached and
     // used on the NEXT launch (never hot-swapping the running one). Errors are
     // swallowed inside maybeUpdateCore — this must never disrupt the app.
@@ -546,156 +513,249 @@ function showMainWindow(): void {
   mainWin.focus();
 }
 
-/** Default bottom-right placement on the primary display's work area. */
-function defaultQuickBounds(): { x: number; y: number; width: number; height: number } {
-  const { workArea } = screen.getPrimaryDisplay();
-  const width = 420;
-  const height = 560;
-  const margin = 24;
-  return {
-    width,
-    height,
-    x: workArea.x + workArea.width - width - margin,
-    y: workArea.y + workArea.height - height - margin,
-  };
+// ---- mini windows (quick note / quick board) --------------------------------
+// Two hide-don't-close companion windows with one shared lifecycle: pre-warmed
+// hidden once the main window is up (first reveal = already painted, no white
+// flash), summoned by a global shortcut or the tray, hidden on close, really
+// destroyed only at quit. Per-window settings (shortcut / pin / bounds) live in
+// their own userData JSON — machine-local state, never in the CRDT.
+
+interface MiniWindowSettings {
+  shortcut: string;
+  alwaysOnTop: boolean;
+  bounds?: { x: number; y: number; width: number; height: number };
 }
 
-function createQuickNoteWindow(): BrowserWindow {
-  const isMac = process.platform === "darwin";
-  const bounds = settings.bounds ?? defaultQuickBounds();
+interface MiniWindowSpec {
+  title: string;
+  /** Bare-hash entry in the shared webui bundle (see src/webui/app.tsx). */
+  hash: string;
+  /** IPC channel prefix ("qn" keeps its historical name for compat). */
+  ipcPrefix: string;
+  defaultShortcut: string;
+  /** The note keeps quicknote-settings.json so existing installs migrate nothing. */
+  settingsFile: string;
+  defaultSize: { width: number; height: number };
+  minSize: { width: number; height: number };
+}
 
-  const win = new BrowserWindow({
-    ...bounds,
-    minWidth: 280,
-    minHeight: 240,
-    title: "快速笔记",
-    show: false,
-    resizable: true,
-    alwaysOnTop: settings.alwaysOnTop,
-    skipTaskbar: true,
-    fullscreenable: false,
-    // macOS: translucent vibrancy with a hidden-inset title bar (traffic lights
-    // float over the draggable top bar). Other platforms: a plain frameless window.
-    ...(isMac
-      ? {
-          // panel: non-activating NSPanel mask at runtime, so the window floats
-          // over other apps' full-screen spaces and joins all spaces WITHOUT
-          // activating Metahub (no jump back to the main window's desktop). The
-          // main app keeps its dock icon — only this window behaves like a panel.
-          type: "panel" as const,
-          vibrancy: "under-window" as const,
-          visualEffectState: "active" as const,
-          backgroundColor: "#00000000",
-          titleBarStyle: "hiddenInset" as const,
-        }
-      : { frame: false, backgroundColor: "#ffffff" }),
-    webPreferences: {
-      preload: appFile("dist", "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
+class MiniWindow {
+  win: BrowserWindow | null = null;
+  /** Currently registered global accelerator (null when registration failed). */
+  shortcut: string | null = null;
+  settings: MiniWindowSettings;
+  private ready = false; // has this window painted at least once?
+  private pendingShow = false; // reveal as soon as it paints
 
-  if (isMac) {
-    // screen-saver level floats above full-screened apps; visibleOnFullScreen +
-    // skipTransformProcessType keeps it on every space without the brief dock
-    // flicker that the default process-type transform would cause.
-    win.setAlwaysOnTop(settings.alwaysOnTop, "screen-saver");
-    win.setVisibleOnAllWorkspaces(true, {
-      visibleOnFullScreen: true,
-      skipTransformProcessType: true,
+  constructor(readonly spec: MiniWindowSpec) {
+    this.settings = { shortcut: spec.defaultShortcut, alwaysOnTop: false };
+  }
+
+  private settingsPath(): string {
+    return join(app.getPath("userData"), this.spec.settingsFile);
+  }
+
+  loadSettings(): void {
+    try {
+      const raw = readFileSync(this.settingsPath(), "utf8");
+      this.settings = { ...this.settings, ...(JSON.parse(raw) as MiniWindowSettings) };
+    } catch {
+      // first run / unreadable — keep defaults
+    }
+    if (!this.settings.shortcut) this.settings.shortcut = this.spec.defaultShortcut;
+  }
+
+  saveSettings(): void {
+    try {
+      writeFileSync(this.settingsPath(), JSON.stringify(this.settings, null, 2));
+    } catch (err) {
+      console.error(`[${this.spec.ipcPrefix}] failed to save settings:`, (err as Error).message);
+    }
+  }
+
+  /** Default bottom-right placement on the primary display's work area. */
+  private defaultBounds(): { x: number; y: number; width: number; height: number } {
+    const { workArea } = screen.getPrimaryDisplay();
+    const { width, height } = this.spec.defaultSize;
+    const margin = 24;
+    return {
+      width,
+      height,
+      x: workArea.x + workArea.width - width - margin,
+      y: workArea.y + workArea.height - height - margin,
+    };
+  }
+
+  private create(): BrowserWindow {
+    const isMac = process.platform === "darwin";
+    const bounds = this.settings.bounds ?? this.defaultBounds();
+
+    const win = new BrowserWindow({
+      ...bounds,
+      minWidth: this.spec.minSize.width,
+      minHeight: this.spec.minSize.height,
+      title: this.spec.title,
+      show: false,
+      resizable: true,
+      alwaysOnTop: this.settings.alwaysOnTop,
+      skipTaskbar: true,
+      fullscreenable: false,
+      // macOS: translucent vibrancy with a hidden-inset title bar (traffic lights
+      // float over the draggable top bar). Other platforms: a plain frameless window.
+      ...(isMac
+        ? {
+            // panel: non-activating NSPanel mask at runtime, so the window floats
+            // over other apps' full-screen spaces and joins all spaces WITHOUT
+            // activating Metahub (no jump back to the main window's desktop). The
+            // main app keeps its dock icon — only this window behaves like a panel.
+            type: "panel" as const,
+            vibrancy: "under-window" as const,
+            visualEffectState: "active" as const,
+            backgroundColor: "#00000000",
+            titleBarStyle: "hiddenInset" as const,
+          }
+        : { frame: false, backgroundColor: "#ffffff" }),
+      webPreferences: {
+        preload: appFile("dist", "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
     });
-  }
 
-  routeExternalLinks(win);
-  quickReady = false;
-  void win.loadURL(`http://127.0.0.1:${serverPort}/#quick`);
-  // Decouple create from show: ready-to-show only reveals the window if a show
-  // was actually requested. This lets us pre-warm it hidden at startup (render
-  // in the background) without it popping up — the first real open is instant.
-  win.once("ready-to-show", () => {
-    quickReady = true;
-    if (quickPendingShow && !win.isDestroyed()) revealQuickNote(win);
-  });
-
-  const persistBounds = debounce(() => {
-    if (!win.isDestroyed()) {
-      settings.bounds = win.getBounds();
-      saveSettings();
+    if (isMac) {
+      // screen-saver level floats above full-screened apps; visibleOnFullScreen +
+      // skipTransformProcessType keeps it on every space without the brief dock
+      // flicker that the default process-type transform would cause.
+      win.setAlwaysOnTop(this.settings.alwaysOnTop, "screen-saver");
+      win.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true,
+      });
     }
-  }, 400);
-  win.on("resize", persistBounds);
-  win.on("move", persistBounds);
 
-  // Closing just hides — the window stays warm for an instant reopen. It is
-  // really destroyed only when the whole app is quitting.
-  win.on("close", (e) => {
-    if (!quitting) {
-      e.preventDefault();
-      quickPendingShow = false;
-      win.hide();
+    routeExternalLinks(win);
+    this.ready = false;
+    void win.loadURL(`http://127.0.0.1:${serverPort}/${this.spec.hash}`);
+    // Decouple create from show: ready-to-show only reveals the window if a show
+    // was actually requested. This lets us pre-warm it hidden at startup (render
+    // in the background) without it popping up — the first real open is instant.
+    win.once("ready-to-show", () => {
+      this.ready = true;
+      if (this.pendingShow && !win.isDestroyed()) this.reveal(win);
+    });
+
+    const persistBounds = debounce(() => {
+      if (!win.isDestroyed()) {
+        this.settings.bounds = win.getBounds();
+        this.saveSettings();
+      }
+    }, 400);
+    win.on("resize", persistBounds);
+    win.on("move", persistBounds);
+
+    // Closing just hides — the window stays warm for an instant reopen. It is
+    // really destroyed only when the whole app is quitting.
+    win.on("close", (e) => {
+      if (!quitting) {
+        e.preventDefault();
+        this.pendingShow = false;
+        win.hide();
+      }
+    });
+    win.on("closed", () => {
+      if (this.win === win) {
+        this.win = null;
+        this.ready = false;
+      }
+    });
+
+    return win;
+  }
+
+  private reveal(win: BrowserWindow): void {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
+
+  /** Create hidden and render in the background; cheap no-op if already warm. */
+  prewarm(): void {
+    if (!this.win || this.win.isDestroyed()) this.win = this.create();
+  }
+
+  show(): void {
+    if (!this.win || this.win.isDestroyed()) this.win = this.create();
+    this.pendingShow = true;
+    // Pre-warmed at startup → already painted → reveal instantly. If the user is
+    // fast enough to beat first paint, the ready-to-show handler reveals it then.
+    if (this.ready) this.reveal(this.win);
+  }
+
+  toggle(): void {
+    if (this.win && !this.win.isDestroyed() && this.win.isVisible() && this.win.isFocused()) {
+      this.pendingShow = false;
+      this.win.hide();
+    } else {
+      this.show();
     }
-  });
-  win.on("closed", () => {
-    if (quickWin === win) {
-      quickWin = null;
-      quickReady = false;
+  }
+
+  hide(): void {
+    if (this.win && !this.win.isDestroyed()) this.win.hide();
+  }
+
+  setAlwaysOnTop(on: boolean): boolean {
+    this.settings.alwaysOnTop = on;
+    if (this.win && !this.win.isDestroyed()) {
+      // screen-saver level on macOS so the toggle keeps the window above
+      // full-screened apps, matching the panel's cross-space behavior.
+      this.win.setAlwaysOnTop(on, process.platform === "darwin" ? "screen-saver" : "normal");
     }
-  });
+    this.saveSettings();
+    return on;
+  }
 
-  return win;
-}
-
-/** Reveal the (already-rendered) quick-note window. */
-function revealQuickNote(win: BrowserWindow): void {
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
-}
-
-/**
- * Create the quick-note window hidden and let it render in the background, so
- * the first shortcut/tray open reveals an already-painted window with no white
- * flash. Called once the main window is up; a cheap no-op if already warm.
- */
-function prewarmQuickNote(): void {
-  if (!quickWin || quickWin.isDestroyed()) quickWin = createQuickNoteWindow();
-}
-
-function showQuickNote(): void {
-  if (!quickWin || quickWin.isDestroyed()) quickWin = createQuickNoteWindow();
-  quickPendingShow = true;
-  // Pre-warmed at startup → already painted → reveal instantly. If the user is
-  // fast enough to beat first paint, the ready-to-show handler reveals it then.
-  if (quickReady) revealQuickNote(quickWin);
-}
-
-function toggleQuickNote(): void {
-  if (quickWin && !quickWin.isDestroyed() && quickWin.isVisible() && quickWin.isFocused()) {
-    quickPendingShow = false;
-    quickWin.hide();
-  } else {
-    showQuickNote();
+  /** Register `accel` for this window, replacing its previous registration.
+   *  Refuses an accelerator the sibling window holds (same-app re-register
+   *  would silently steal it). Returns success. */
+  registerShortcut(accel: string): boolean {
+    if (miniWindows.some((m) => m !== this && m.shortcut === accel)) return false;
+    if (this.shortcut) {
+      globalShortcut.unregister(this.shortcut);
+      this.shortcut = null;
+    }
+    let ok = false;
+    try {
+      ok = globalShortcut.register(accel, () => this.toggle());
+    } catch {
+      ok = false;
+    }
+    if (ok) this.shortcut = accel;
+    return ok;
   }
 }
 
-// ---- global shortcut -------------------------------------------------------
+const quickNote = new MiniWindow({
+  title: "快速笔记",
+  hash: "#quick",
+  ipcPrefix: "qn",
+  defaultShortcut: DEFAULT_NOTE_SHORTCUT,
+  settingsFile: "quicknote-settings.json",
+  defaultSize: { width: 420, height: 560 },
+  minSize: { width: 280, height: 240 },
+});
 
-/** Register `accel`, replacing any previous registration. Returns success. */
-function registerShortcut(accel: string): boolean {
-  if (currentShortcut) {
-    globalShortcut.unregister(currentShortcut);
-    currentShortcut = null;
-  }
-  let ok = false;
-  try {
-    ok = globalShortcut.register(accel, toggleQuickNote);
-  } catch {
-    ok = false;
-  }
-  if (ok) currentShortcut = accel;
-  return ok;
-}
+const quickBoard = new MiniWindow({
+  title: "快速看板",
+  hash: "#board",
+  ipcPrefix: "qb",
+  defaultShortcut: DEFAULT_BOARD_SHORTCUT,
+  settingsFile: "quickboard-settings.json",
+  defaultSize: { width: 720, height: 560 },
+  minSize: { width: 400, height: 300 },
+});
+
+const miniWindows = [quickNote, quickBoard];
 
 // ---- tray ------------------------------------------------------------------
 
@@ -704,16 +764,17 @@ function createTray(): void {
   const image = nativeImage.createFromPath(iconPath);
   if (process.platform === "darwin") image.setTemplateImage(true);
   tray = new Tray(image);
-  tray.setToolTip("Metahub 快速笔记");
+  tray.setToolTip("Metahub");
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "快速笔记", click: () => showQuickNote() },
+      { label: "快速笔记", click: () => quickNote.show() },
+      { label: "快速看板", click: () => quickBoard.show() },
       { type: "separator" },
       { label: "退出 Metahub", click: () => app.quit() },
     ]),
   );
-  // Left-click toggles (context menu still available via right-click).
-  tray.on("click", () => toggleQuickNote());
+  // Left-click toggles the note (context menu still available via right-click).
+  tray.on("click", () => quickNote.toggle());
 }
 
 // ---- IPC (preload bridge) --------------------------------------------------
@@ -756,40 +817,35 @@ function registerIpc(): void {
     app.quit();
   });
 
-  ipcMain.handle("qn:get-settings", () => ({
-    shortcut: settings.shortcut,
-    alwaysOnTop: settings.alwaysOnTop,
-  }));
+  // One identical IPC surface per mini window ("qn:*" / "qb:*").
+  for (const m of miniWindows) {
+    const p = m.spec.ipcPrefix;
+    ipcMain.handle(`${p}:get-settings`, () => ({
+      shortcut: m.settings.shortcut,
+      alwaysOnTop: m.settings.alwaysOnTop,
+    }));
 
-  ipcMain.handle("qn:set-shortcut", (_e, accel: string) => {
-    const prev = currentShortcut;
-    if (!registerShortcut(accel)) {
-      if (prev) registerShortcut(prev); // restore the working binding
-      throw new Error(`快捷键「${accel}」无法注册（可能被占用）`);
-    }
-    settings.shortcut = accel;
-    saveSettings();
-    return { shortcut: settings.shortcut, alwaysOnTop: settings.alwaysOnTop };
-  });
+    ipcMain.handle(`${p}:set-shortcut`, (_e, accel: string) => {
+      const sibling = miniWindows.find((o) => o !== m && o.shortcut === accel);
+      if (sibling) throw new Error(`快捷键「${accel}」已被「${sibling.spec.title}」占用`);
+      const prev = m.shortcut;
+      if (!m.registerShortcut(accel)) {
+        if (prev) m.registerShortcut(prev); // restore the working binding
+        throw new Error(`快捷键「${accel}」无法注册（可能被占用）`);
+      }
+      m.settings.shortcut = accel;
+      m.saveSettings();
+      return { shortcut: m.settings.shortcut, alwaysOnTop: m.settings.alwaysOnTop };
+    });
 
-  ipcMain.handle("qn:get-always-on-top", () =>
-    quickWin && !quickWin.isDestroyed() ? quickWin.isAlwaysOnTop() : settings.alwaysOnTop,
-  );
+    ipcMain.handle(`${p}:get-always-on-top`, () =>
+      m.win && !m.win.isDestroyed() ? m.win.isAlwaysOnTop() : m.settings.alwaysOnTop,
+    );
 
-  ipcMain.handle("qn:set-always-on-top", (_e, on: boolean) => {
-    settings.alwaysOnTop = on;
-    if (quickWin && !quickWin.isDestroyed()) {
-      // screen-saver level on macOS so the toggle keeps the window above
-      // full-screened apps, matching the panel's cross-space behavior.
-      quickWin.setAlwaysOnTop(on, process.platform === "darwin" ? "screen-saver" : "normal");
-    }
-    saveSettings();
-    return on;
-  });
+    ipcMain.handle(`${p}:set-always-on-top`, (_e, on: boolean) => m.setAlwaysOnTop(on));
 
-  ipcMain.handle("qn:hide", () => {
-    if (quickWin && !quickWin.isDestroyed()) quickWin.hide();
-  });
+    ipcMain.handle(`${p}:hide`, () => m.hide());
+  }
 
   // Open the frameless image-preview window for a doc image (see openPreview).
   ipcMain.handle("preview:open", (_e, p: { src: string; name?: string; blockId: string }) => openPreview(p));
@@ -870,7 +926,7 @@ app.whenReady().then(async () => {
   // Windows/Linux: drop the default File/Edit/View… menu bar on every window.
   // macOS keeps its application menu (Cmd shortcuts live there).
   if (process.platform !== "darwin") Menu.setApplicationMenu(null);
-  loadSettings();
+  for (const m of miniWindows) m.loadSettings();
   // Branded feedback up front, before any slow startup work begins.
   createSplash();
   try {
@@ -880,11 +936,13 @@ app.whenReady().then(async () => {
     createWindow(serverPort);
     createTray();
 
-    if (!registerShortcut(settings.shortcut) && settings.shortcut !== DEFAULT_SHORTCUT) {
-      // Fall back to the default if a persisted custom shortcut is unavailable.
-      registerShortcut(DEFAULT_SHORTCUT);
-      settings.shortcut = DEFAULT_SHORTCUT;
-      saveSettings();
+    for (const m of miniWindows) {
+      if (!m.registerShortcut(m.settings.shortcut) && m.settings.shortcut !== m.spec.defaultShortcut) {
+        // Fall back to the default if a persisted custom shortcut is unavailable.
+        m.registerShortcut(m.spec.defaultShortcut);
+        m.settings.shortcut = m.spec.defaultShortcut;
+        m.saveSettings();
+      }
     }
 
     // macOS: re-open / focus the main window when the dock icon is clicked.

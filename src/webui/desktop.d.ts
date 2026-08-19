@@ -40,6 +40,16 @@ export interface MetahubDesktop {
     setAlwaysOnTop: (on: boolean) => Promise<boolean>;
     hide: () => Promise<void>;
   };
+  /** Same surface for the Quick Board window ("qb:*" IPC). Absent on older
+   *  Electron shells (the core auto-updater refreshes the webui without
+   *  repackaging the shell) — feature-detect before use. */
+  quickboard?: {
+    getSettings: () => Promise<QuickNoteSettings>;
+    setShortcut: (accelerator: string) => Promise<QuickNoteSettings>;
+    getAlwaysOnTop: () => Promise<boolean>;
+    setAlwaysOnTop: (on: boolean) => Promise<boolean>;
+    hide: () => Promise<void>;
+  };
   /** Open the image preview in a frameless native window (vs the in-page lightbox
    *  in a browser). The window flattens+re-uploads annotations itself and reports
    *  the new /blob URL back over BroadcastChannel("mh-doc-image"). */

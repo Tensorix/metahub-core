@@ -1630,7 +1630,7 @@ function openRowMenu(e: MouseEvent, rec: Rec, onOpen: () => void, onDup: () => v
 }
 
 // ---- record peek panel ----
-function RecordPeek({
+export function RecordPeek({
   db, props, rec, onClose, onCommit, onDelete, onDuplicate, onReverted, onRelCreated,
 }: {
   db: Db; props: Prop[]; rec: Rec;

@@ -12,7 +12,7 @@ export interface PageDef { id: PageId; label: string; icon: string; show: () => 
 export const GROUPS: { key: "device" | "workspace" | "app"; pages: PageDef[] }[] = [
   { key: "device", pages: [
     { id: "appearance", label: "外观", icon: "sun", show: () => true },
-    { id: "quicknote", label: "快速笔记", icon: "pin", show: () => !!(window as any).metahubDesktop?.quicknote },
+    { id: "quicknote", label: "快速小窗", icon: "pin", show: () => !!(window as any).metahubDesktop?.quicknote },
     // Desktop has no browser cache and no replica switch; the sidecar's bytes
     // are workspace storage (数据与备份 → 附件存储), so the page hides there.
     { id: "offline", label: "离线与缓存", icon: "database", show: () => !isDesktop() },

@@ -33,6 +33,7 @@ import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
+import { QuickBoard } from "./quickboard/quickboard.tsx";
 import { ensureLive } from "./live.ts";
 import { ImagePreviewWindow } from "./media/image-preview-window.tsx";
 import { FileEditorWindow } from "./fileviewer/file-editor.tsx";
@@ -854,6 +855,13 @@ if (location.hash.startsWith("#preview")) {
   document.body.classList.add("quicknote");
   ensureLive(); // CLI/agent edits refresh the open note + note list
   render(<QuickNote />, document.getElementById("app")!);
+} else if (location.hash === "#board" && clientMode().surface === "desktop") {
+  // The desktop Quick Board window — same bundle, same desktop-only gating as
+  // the Quick Notes window above. Live feed is its whole point: agent-driven
+  // `mh record update` calls move cards without a manual refresh.
+  document.body.classList.add("quickboard");
+  ensureLive();
+  render(<QuickBoard />, document.getElementById("app")!);
 } else {
   render(<Root />, document.getElementById("app")!);
 }
