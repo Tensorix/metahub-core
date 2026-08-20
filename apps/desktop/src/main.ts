@@ -306,18 +306,28 @@ function createWindow(port: number): void {
   win.once("ready-to-show", () => {
     win.show();
     win.focus();
-    closeSplash();
-    // Main window is up; quietly warm the mini windows in the background so
-    // their first open is instant. Deferred so they never compete with the
-    // main window's first frame (the board trails the note by a second).
-    setTimeout(() => quickNote.prewarm(), 0);
-    setTimeout(() => quickBoard.prewarm(), 1000);
-    // Check for a newer core sidecar in the background; if found it's cached and
-    // used on the NEXT launch (never hot-swapping the running one). Errors are
-    // swallowed inside maybeUpdateCore — this must never disrupt the app.
-    if (app.isPackaged) setTimeout(() => void maybeUpdateCore(), 3_000);
+    onFirstWindowShown();
   });
   void win.loadURL(`http://127.0.0.1:${port}/`);
+}
+
+// A file-only launch (opened via the .txt/.md file association) skips the main
+// window, so the post-first-paint work can't live in createWindow alone —
+// whichever window paints first (main or file editor) triggers it exactly once.
+let firstWindowShown = false;
+function onFirstWindowShown(): void {
+  if (firstWindowShown) return;
+  firstWindowShown = true;
+  closeSplash();
+  // First window is up; quietly warm the mini windows in the background so
+  // their first open is instant. Deferred so they never compete with that
+  // window's first frame (the board trails the note by a second).
+  setTimeout(() => quickNote.prewarm(), 0);
+  setTimeout(() => quickBoard.prewarm(), 1000);
+  // Check for a newer core sidecar in the background; if found it's cached and
+  // used on the NEXT launch (never hot-swapping the running one). Errors are
+  // swallowed inside maybeUpdateCore — this must never disrupt the app.
+  if (app.isPackaged) setTimeout(() => void maybeUpdateCore(), 3_000);
 }
 
 /**
@@ -492,6 +502,7 @@ function openFileWindow(absPath: string): void {
   win.once("ready-to-show", () => {
     win.show();
     win.focus();
+    onFirstWindowShown();
   });
   const params = new URLSearchParams({ path: absPath });
   void win.loadURL(`http://127.0.0.1:${serverPort}/#file?${params.toString()}`);
@@ -936,7 +947,15 @@ app.whenReady().then(async () => {
     serverPort = await startSidecar();
     await waitForHealth(serverPort);
     registerIpc();
-    createWindow(serverPort);
+    // File-only launch (opened as a .txt/.md handler): show just the file
+    // editor, not the whole app. Files arrive either in the launch argv
+    // (Win/Linux association, CLI on any platform) or via the early macOS
+    // open-file handler, which queued them before the sidecar was healthy.
+    // The main window stays lazy — dock/tray/「在 MetaHub 中打开」 all go
+    // through showMainWindow(), which creates it on demand.
+    const launchFiles = fileArgsFrom(process.argv);
+    const fileOnlyLaunch = launchFiles.length > 0 || pendingOpenFiles.length > 0;
+    if (!fileOnlyLaunch) createWindow(serverPort);
     createTray();
 
     for (const m of miniWindows) {
@@ -951,12 +970,9 @@ app.whenReady().then(async () => {
     // macOS: re-open / focus the main window when the dock icon is clicked.
     app.on("activate", () => showMainWindow());
 
-    // File-association opens: macOS Finder opens arrive via the early open-file
-    // handler (queued above); Win/Linux — and a CLI launch on ANY platform,
-    // e.g. `bun run dev file.md` (no Apple Event there) — pass the file in the
-    // launch argv. Scan both; openFileWindow dedupes per path, so a path that
-    // somehow arrives twice still gets one window. Server is healthy now — open.
-    fileArgsFrom(process.argv).forEach(queueOpenFile);
+    // Server is healthy now — open the launch files. openFileWindow dedupes
+    // per path, so a path that somehow arrives twice still gets one window.
+    launchFiles.forEach(queueOpenFile);
     drainPendingFiles();
   } catch (err) {
     closeSplash();
