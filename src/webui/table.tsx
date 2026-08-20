@@ -66,11 +66,7 @@ function PopOutBoard({ dbId }: { dbId: string }) {
     <button
       class="popout-btn"
       title="在浮窗中打开这个数据库的看板"
-      onClick={(e) => {
-        const el = e.currentTarget as HTMLElement;
-        el.classList.remove("fly");
-        void el.offsetWidth; // restart the flight animation on rapid re-clicks
-        el.classList.add("fly");
+      onClick={() => {
         // Point the quick-board window at this database: localStorage covers
         // a cold mount, the broadcast switches an already-warm hidden window
         // (listener in quickboard/quickboard.tsx).
