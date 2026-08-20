@@ -99,6 +99,25 @@ export function QuickBoard() {
     return () => document.removeEventListener(SYNCED_EVENT, onSynced);
   }, [reload, selectDb]);
 
+  // The main window's 浮窗看板 button targets a specific database: it persists
+  // the choice (for a cold mount) and broadcasts it here so an already-warm
+  // hidden window switches before it is revealed (sender in table.tsx; the
+  // Electron windows are same-origin, so BroadcastChannel crosses them).
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const ch = new BroadcastChannel("mh-quickboard");
+    ch.onmessage = (e: MessageEvent) => {
+      const dbId = (e.data as { dbId?: string } | null)?.dbId;
+      if (!dbId || dbId === dbRef.current?.id) return;
+      guard(async () => {
+        const list = await api.listDatabases();
+        setDbs(list);
+        await selectDb(list, dbId);
+      });
+    };
+    return () => ch.close();
+  }, [selectDb]);
+
   // Reflect the persisted always-on-top state on the pin button.
   useEffect(() => {
     qb?.getAlwaysOnTop().then(setPinned).catch(() => {});

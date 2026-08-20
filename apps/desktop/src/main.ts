@@ -845,6 +845,9 @@ function registerIpc(): void {
     ipcMain.handle(`${p}:set-always-on-top`, (_e, on: boolean) => m.setAlwaysOnTop(on));
 
     ipcMain.handle(`${p}:hide`, () => m.hide());
+
+    // Summon from another renderer (e.g. the main window's 浮窗看板 button).
+    ipcMain.handle(`${p}:show`, () => m.show());
   }
 
   // Open the frameless image-preview window for a doc image (see openPreview).

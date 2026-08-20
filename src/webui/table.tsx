@@ -56,6 +56,40 @@ const VIEW_TABS: [string, string][] = [
   ["时间轴", "timeline"],
 ];
 
+/** 「浮窗看板」— summon the desktop quick-board window on this database. Sits
+ *  at the right end of the row under the view tabs (table toolbar / board
+ *  bar), styled like its toolbar siblings (排序/分组). Renders nothing outside
+ *  the desktop shell or on an older shell without the qb:show bridge. */
+function PopOutBoard({ dbId }: { dbId: string }) {
+  if (!window.metahubDesktop?.quickboard?.show) return null;
+  return (
+    <button
+      class="popout-btn"
+      title="在浮窗中打开这个数据库的看板"
+      onClick={(e) => {
+        const el = e.currentTarget as HTMLElement;
+        el.classList.remove("fly");
+        void el.offsetWidth; // restart the flight animation on rapid re-clicks
+        el.classList.add("fly");
+        // Point the quick-board window at this database: localStorage covers
+        // a cold mount, the broadcast switches an already-warm hidden window
+        // (listener in quickboard/quickboard.tsx).
+        localStorage.setItem("mh-quickboard-db", dbId);
+        try {
+          const ch = new BroadcastChannel("mh-quickboard");
+          ch.postMessage({ dbId });
+          ch.close();
+        } catch {
+          /* no BroadcastChannel — the cold-mount path still applies */
+        }
+        void window.metahubDesktop!.quickboard!.show!();
+      }}
+    >
+      <Icon name="boardPop" />
+    </button>
+  );
+}
+
 export function DatabaseView({
   db,
   rec,
@@ -558,6 +592,8 @@ export function DatabaseView({
           <button class="tbtn" onClick={(e) => openSortMenu(e, props, sort, setSort)}>
             <Icon name="sort" cls="ico sm" />排序
           </button>
+          <div class="spacer" />
+          <PopOutBoard dbId={db.id} />
         </div>
       )}
 
@@ -569,6 +605,7 @@ export function DatabaseView({
           onCreate={createRecordWith}
           onOpenRecord={openPeek}
           onMove={persistRecordMove}
+          barExtra={<PopOutBoard dbId={db.id} />}
         />
       ) : tab === 2 ? (
         <CalendarView

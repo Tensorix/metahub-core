@@ -77,6 +77,12 @@ const PATHS: Record<string, string> = {
   cloudCheck: '<path d="M17 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 0 1 2.86 8"/><path d="m9 14 2 2 4-4"/>',
   cloudOff: '<path d="m2 2 20 20"/><path d="M5.78 5.78A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.3-.2"/><path d="M21.4 14.4A4.5 4.5 0 0 0 17.5 8h-1.8A7 7 0 0 0 9.4 4.6"/>',
   externalLink: '<path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+  // 浮窗看板: a window popping out (externalLink frame) with two staggered
+  // kanban cards inside; `.i-card` lets the top card lift on button hover.
+  boardPop:
+    '<path d="M14 4h6v6M20 4l-7 7M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>' +
+    '<rect class="i-card" x="7" y="9" width="3.6" height="3.6" rx="1" fill="currentColor" stroke="none"/>' +
+    '<rect x="12.4" y="13.2" width="3.6" height="3.6" rx="1" fill="currentColor" stroke="none"/>',
   // ---- media / file blocks + image lightbox & annotator ----
   image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-4.5-4.5L6 21"/>',
   video: '<rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="m16 10 5.2-3a.5.5 0 0 1 .8.4v9.2a.5.5 0 0 1-.8.4L16 14z"/>',

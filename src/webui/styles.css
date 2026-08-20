@@ -1074,6 +1074,29 @@
     border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .12s; }
   .view-tab.active { color:var(--fg); border-bottom-color:var(--accent); }
   .view-tab:hover { color:var(--fg); } .view-tab svg { width:14px; height:14px; }
+  /* 浮窗看板 (right end of the toolbar / board bar, desktop only): a quiet
+     Notion-style secondary pill — visible as a feature entry, never louder
+     than 新建. Hover lifts the pill and nudges the icon's top kanban card up
+     (.i-card, SVG user units); click flies the whole icon toward the floating
+     window as "sent" feedback. */
+  .popout-btn { display:inline-flex; align-items:center; justify-content:center;
+    width:28px; height:28px;
+    background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm);
+    box-shadow:var(--shadow-sm); color:var(--fg-soft); transition:all .15s ease; }
+  .popout-btn .ico { color:var(--muted); transition:color .15s; }
+  .popout-btn:hover { border-color:var(--line-strong); box-shadow:var(--shadow-md);
+    transform:translateY(-1px); color:var(--fg); }
+  .popout-btn:hover .ico { color:var(--fg); }
+  .popout-btn:active { transform:translateY(0); box-shadow:var(--shadow-sm); }
+  .popout-btn .i-card { transition:transform .18s ease; }
+  .popout-btn:hover .i-card { transform:translateY(-2px); }
+  .popout-btn.fly svg { animation:pop-fly .5s cubic-bezier(.3,.7,.4,1); }
+  @keyframes pop-fly {
+    0%   { transform:translate(0,0); opacity:1; }
+    45%  { transform:translate(9px,-9px); opacity:0; }
+    55%  { transform:translate(-7px,7px); opacity:0; }
+    100% { transform:translate(0,0); opacity:1; }
+  }
   .toolbar { display:flex; align-items:center; gap:2px; padding:10px 0; }
   .toolbar .spacer { flex:1; }
   .tbtn { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:var(--radius-sm); color:var(--fg-soft); font-size:13px; font-weight:500; }

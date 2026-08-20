@@ -39,6 +39,8 @@ export interface MetahubDesktop {
     getAlwaysOnTop: () => Promise<boolean>;
     setAlwaysOnTop: (on: boolean) => Promise<boolean>;
     hide: () => Promise<void>;
+    /** Summon the window from another renderer. Optional — absent on older preload builds. */
+    show?: () => Promise<void>;
   };
   /** Same surface for the Quick Board window ("qb:*" IPC). Absent on older
    *  Electron shells (the core auto-updater refreshes the webui without
@@ -49,6 +51,8 @@ export interface MetahubDesktop {
     getAlwaysOnTop: () => Promise<boolean>;
     setAlwaysOnTop: (on: boolean) => Promise<boolean>;
     hide: () => Promise<void>;
+    /** Summon the window from another renderer. Optional — absent on older preload builds. */
+    show?: () => Promise<void>;
   };
   /** Open the image preview in a frameless native window (vs the in-page lightbox
    *  in a browser). The window flattens+re-uploads annotations itself and reports
