@@ -1784,9 +1784,17 @@
   .board-count { color:var(--muted); font-size:12px; font-weight:600; }
   .board-col-head .iconbtn.sm { width:24px; height:24px; }
   .board-col-body { display:flex; flex-direction:column; gap:7px; padding:0 8px 8px; overflow-y:auto; }
-  .kcard { background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 10px; box-shadow:var(--shadow-sm);
+  .kcard { position:relative; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 10px; box-shadow:var(--shadow-sm);
     cursor:grab; display:flex; flex-direction:column; gap:5px; touch-action:none; transition:border-color .1s,box-shadow .1s; }
   .kcard:hover { border-color:var(--line-strong); }
+  /* hover-only open button, top-right — same pattern as the grid's .rowactions */
+  .kcard-actions { position:absolute; top:6px; right:6px; opacity:0; pointer-events:none; transition:opacity .1s; }
+  .kcard:hover .kcard-actions { opacity:1; pointer-events:auto; }
+  /* inline title editing: the same .kcard-title div made contentEditable, so a
+     wrapped title keeps its line count; negative margin swallows the padding so
+     the text doesn't shift on entering edit */
+  .kcard-title[contenteditable] { outline:1.5px solid var(--accent); border-radius:4px;
+    padding:2px 5px; margin:-2px -5px; background:var(--bg); cursor:text; }
   .kcard.drag-source { opacity:.4; }
   .kcard.dragging-ghost { position:fixed; left:0; top:0; z-index:120; pointer-events:none; cursor:grabbing;
     box-shadow:var(--shadow-lg); opacity:.95; transform:translate3d(-9999px,0,0); }
@@ -2021,6 +2029,7 @@
   @media (hover: none) {
     .code-tools { opacity:1; transform:none; pointer-events:auto; }
     .rowactions { opacity:1; pointer-events:auto; }
+    .kcard-actions { opacity:1; pointer-events:auto; }
     .cal-add, .filerow .facts,
     .navitem .acts { opacity:1; }
     /* the pill handles survive on touch (focus-driven, not hover-driven), but
