@@ -1530,12 +1530,15 @@ function uniquePropName(base: string, existing: Prop[]): string {
   }
 }
 
-/** Target-database list for relation properties. Every database is listed —
+/** Searchable database list for pick-a-database menus: relation targets here,
+ *  the quick board's switcher (quickboard.tsx). Every database is listed —
  *  self-relation is legal, so the current table appears too, just labeled. */
-function DbTargetList({ currentDb, target, autoFocus, onPick }: {
-  currentDb: string; target?: string;
+export function DbTargetList({ currentDb, target, autoFocus, placeholder = "搜索数据表", onPick }: {
+  /** labels the matching row 「当前表」 (relation pickers — self-relation cue) */
+  currentDb?: string; target?: string;
   /** steal focus only in the dedicated pick step — ColMenu has a rename input on top */
   autoFocus?: boolean;
+  placeholder?: string;
   onPick: (d: Db) => void;
 }) {
   const [dbs, setDbs] = useState<Db[] | null>(null);
@@ -1560,7 +1563,7 @@ function DbTargetList({ currentDb, target, autoFocus, onPick }: {
       <div class="selsearch">
         <Icon name="search" cls="ico sm" />
         <input
-          placeholder="搜索数据表"
+          placeholder={placeholder}
           value={query}
           ref={autoFocus ? (el) => { if (el && document.activeElement !== el) el.focus(); } : undefined}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
@@ -1571,6 +1574,16 @@ function DbTargetList({ currentDb, target, autoFocus, onPick }: {
             else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
           }}
         />
+        {query && (
+          <button
+            class="clear"
+            title="清空"
+            onMouseDown={(e) => e.preventDefault() /* keep the input focused */}
+            onClick={() => { setQuery(""); setSelIdx(0); }}
+          >
+            <Icon name="x" cls="ico sm" />
+          </button>
+        )}
       </div>
       <div ref={listRef} class="rellist">
         {shown.length === 0 && <MenuLabel>无匹配结果</MenuLabel>}

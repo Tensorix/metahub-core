@@ -1568,11 +1568,16 @@
   .pop input.field:focus { border-color:var(--accent); }
   /* select-cell picker: search/create input at the top of the popover */
   .pop .selsearch { display:flex; align-items:center; gap:7px; margin:2px 2px 6px; padding:6px 9px;
-    border:1px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); color:var(--muted); }
-  .pop .selsearch:focus-within { border-color:var(--accent); }
+    border:1px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); color:var(--muted);
+    transition:border-color .12s ease, box-shadow .12s ease, color .12s ease; }
+  .pop .selsearch:focus-within { border-color:var(--accent); color:var(--accent);
+    box-shadow:0 0 0 2.5px color-mix(in srgb, var(--accent) 16%, transparent); }
   .pop .selsearch input { flex:1; width:0; min-width:0; border:0; background:transparent; outline:none;
     font:inherit; font-size:var(--fs-ui); color:var(--fg); }
   .pop .selsearch input::placeholder { color:var(--muted); }
+  .pop .selsearch .clear { display:grid; place-items:center; width:18px; height:18px; margin:-2px -3px -2px 0;
+    border-radius:50%; color:var(--muted); flex:none; }
+  .pop .selsearch .clear:hover { background:var(--hover-2); color:var(--fg); }
   /* relation record picker: fixed-height list — the popover is positioned once
      on open, so async-loaded rows must scroll instead of growing off-screen */
   .pop .rellist { max-height:264px; overflow-y:auto; }
@@ -2115,6 +2120,11 @@
   body.quicknote .pop .item .lico, body.quickboard .pop .item .lico { width:22px; height:22px; }
   body.quicknote .pop .item .lico.plain, body.quickboard .pop .item .lico.plain { width:20px; height:20px; }
   body.quicknote .pop .sep, body.quickboard .pop .sep { margin:4px 4px; }
+  /* Search box inside quick-window popovers: compact glass field — translucent
+     fill over the vibrancy pane instead of the app's opaque surface. */
+  body.quicknote .pop .selsearch, body.quickboard .pop .selsearch { margin:1px 1px 5px; padding:5px 8px;
+    border-radius:7px; background:color-mix(in srgb, var(--surface) 60%, transparent); }
+  body.quicknote .pop .selsearch input, body.quickboard .pop .selsearch input { font-size:var(--fs-sm); }
 
   /* Quick Board window (desktop, loaded at #board). Same shell idiom as the
      quick-note window above: transparent body so the macOS vibrancy shows,

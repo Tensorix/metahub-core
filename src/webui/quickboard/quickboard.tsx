@@ -3,11 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type Prop, type Rec } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { BoardView } from "../board.tsx";
-import { RecordPeek } from "../table.tsx";
+import { RecordPeek, DbTargetList } from "../table.tsx";
 import { imeGhost } from "../keys.ts";
 import { SYNCED_EVENT } from "../data/replica.ts";
 import { LIVE_STATUS_EVENT, liveConnected } from "../live.ts";
-import { UiHost, openMenu, MenuItem, MenuLabel } from "../ui.tsx";
+import { UiHost, openMenu, MenuLabel } from "../ui.tsx";
 
 // The Quick Board window: the desktop's at-a-glance task board, mounted from
 // the shared webui bundle when the URL hash is `#board` (see app.tsx) — the
@@ -212,22 +212,24 @@ export function QuickBoard() {
       (close) => (
         <>
           <MenuLabel>切换数据库</MenuLabel>
-          {dbs.length === 0 && <div class="lbl">还没有数据库</div>}
-          {dbs.map((d) => (
-            <MenuItem
-              key={d.id}
-              icon="table"
-              label={d.name}
-              checked={d.id === db?.id}
-              onClick={() => {
+          {dbs.length === 0 ? (
+            <div class="lbl">还没有数据库</div>
+          ) : (
+            <DbTargetList
+              target={db?.id}
+              autoFocus
+              placeholder="搜索数据库"
+              onPick={(d) => {
                 close();
-                void guard(() => selectDb(dbs, d.id));
+                // The list DbTargetList fetched can be fresher than our SSE
+                // state — switch to exactly the picked database.
+                void guard(() => selectDb([d], d.id));
               }}
             />
-          ))}
+          )}
         </>
       ),
-      { minWidth: 220 },
+      { minWidth: 240 },
     );
   };
 
