@@ -2110,42 +2110,86 @@
   /* Quick Board window (desktop, loaded at #board). Same shell idiom as the
      quick-note window above: transparent body so the macOS vibrancy shows,
      top bar = drag region with opted-out buttons, popups clamped below the
-     bar. The board itself reuses the main .board-* styles at a compact
-     density scoped under body.quickboard. */
-  body.quickboard { background:transparent; --pop-top-inset:38px; }
+     bar. Design: a "desktop glass widget" — one pane of glass (no bar
+     divider), option-colored column washes, and the live feed made visible
+     (breathing dot; poke-touched cards pulse once). All scoped under
+     body.quickboard; the main app's board is untouched. */
+  body.quickboard { background:transparent; --pop-top-inset:44px; }
   html:has(body.quickboard) { background:transparent; }
   body.quickboard #app { display:block; width:100vw; height:100vh; height:100dvh; }
   .qb { display:flex; flex-direction:column; width:100%; height:100vh; height:100dvh; overflow:hidden;
     background:color-mix(in srgb, var(--bg) 20%, transparent); }
-  .qb-bar { display:flex; align-items:center; gap:6px; padding:4px 10px;
-    user-select:none; -webkit-app-region:drag;
-    background:color-mix(in srgb, var(--surface) 30%, transparent); }
+  .qb-bar { display:flex; align-items:center; gap:6px; padding:6px 10px;
+    user-select:none; -webkit-app-region:drag; }
   body.desktop-mac .qb-bar { padding-left:76px; }
-  /* The brand doubles as the database switcher — a button, so it opts out of
-     the drag region and gets a hover affordance. */
-  .qb-brand { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:60%;
-    font-size:12px; font-weight:600; color:var(--fg-soft);
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    padding:3px 7px; border-radius:6px; -webkit-app-region:no-drag; }
+  /* The brand doubles as the database switcher — a Notion-style page-switcher
+     chip (emoji + name + chevron); opts out of the drag region. */
+  .qb-brand { display:inline-flex; align-items:center; gap:5px; min-width:0; max-width:60%;
+    font-size:13px; font-weight:600; color:var(--fg);
+    padding:3px 8px; border-radius:var(--radius-sm); -webkit-app-region:no-drag;
+    transition:background .12s; }
   .qb-brand:hover { background:var(--hover-2); }
+  .qb-brand .qb-emoji { font-size:14px; line-height:1; flex:none; }
+  .qb-brand .qb-name { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .qb-brand svg { flex:none; color:var(--muted); }
-  .qb-actions { display:flex; gap:2px; margin-left:auto; -webkit-app-region:no-drag; }
+  .qb-actions { display:flex; align-items:center; gap:2px; margin-left:auto; -webkit-app-region:no-drag; }
   .qb-actions .iconbtn { width:26px; height:26px; }
   .qb-actions .iconbtn.active { color:var(--accent); background:var(--hover-2); }
+  /* Live-feed dot: green + breathing halo while the SSE stream is up, muted
+     and still while reconnecting — the one honest signal that AI edits will
+     appear by themselves. */
+  .qb-live { width:6px; height:6px; border-radius:50%; margin:0 8px 0 4px; flex:none;
+    background:var(--muted); }
+  .qb-live.on { background:var(--success); animation:qb-breathe 2s ease-out infinite; }
+  @keyframes qb-breathe {
+    0%   { box-shadow:0 0 0 0 color-mix(in srgb, var(--success) 40%, transparent); }
+    70%  { box-shadow:0 0 0 5px transparent; }
+    100% { box-shadow:0 0 0 0 transparent; }
+  }
   .qb-body { flex:1; min-height:0; overflow:auto; scrollbar-width:thin;
     -webkit-app-region:no-drag; padding:0 10px; }
-  .qb-body .empty { display:flex; align-items:center; justify-content:center; height:100%;
-    color:var(--muted); font-size:var(--fs-sm); text-align:center; padding:0 24px; }
-  /* Compact board density: narrower columns, columns stretch to the window
-     (not the main app's topbar-based calc), translucent surfaces so the
-     vibrancy reads through the gutters. */
+  /* Product-grade empty state (no databases yet / booting). */
+  .qb-empty { display:flex; flex-direction:column; align-items:center; justify-content:center;
+    height:100%; gap:4px; text-align:center; padding:0 32px; }
+  .qb-empty > svg { width:32px; height:32px; stroke-width:1.25; color:var(--muted); opacity:.55; margin-bottom:6px; }
+  .qb-empty-title { font-size:14px; font-weight:600; color:var(--fg-soft); }
+  .qb-empty-sub { font-size:var(--fs-sm); color:var(--muted); line-height:1.6; max-width:280px; }
+  body.quickboard .view-placeholder { display:flex; align-items:center; justify-content:center;
+    height:70%; text-align:center; color:var(--muted); border:0; background:none; }
+  /* Board at widget density: borderless columns washed with 6% of their
+     option color (--col-tint, set inline by board.tsx), stretched to the
+     window rather than the main app's topbar-based calc; vibrancy reads
+     through the gutters between the washes. */
   body.quickboard .board-wrap { margin-top:0; }
   body.quickboard .board-bar { padding:6px 0 8px; }
-  body.quickboard .board { min-height:0; padding-bottom:10px; }
+  body.quickboard .board { min-height:0; padding-bottom:10px; gap:10px; }
   body.quickboard .board-col { flex:0 0 232px; width:232px;
-    max-height:calc(100vh - 108px); max-height:calc(100dvh - 108px);
-    background:color-mix(in srgb, var(--surface) 72%, transparent); }
+    max-height:calc(100vh - 112px); max-height:calc(100dvh - 112px);
+    border:0; border-radius:var(--radius-lg);
+    background:color-mix(in srgb, var(--col-tint) 6%, transparent); }
+  body.quickboard .board-count { color:var(--col-tint); }
+  /* Cards: a lighter pane of the same glass (not opaque white — the column
+     wash and vibrancy read through), a 3px option-color edge, gentle hover
+     lift that also firms the pane up for reading. */
+  body.quickboard .kcard { background:color-mix(in srgb, var(--bg) 52%, transparent);
+    border-color:color-mix(in srgb, var(--line) 55%, transparent);
+    border-left:3px solid var(--col-tint);
+    padding-left:9px; transition:border-color .1s, box-shadow .12s, transform .12s, background .12s; }
+  body.quickboard .kcard:hover { transform:translateY(-1px); box-shadow:var(--shadow-md);
+    background:color-mix(in srgb, var(--bg) 78%, transparent); }
   body.quickboard .kcard-title { font-size:var(--fs-sm); }
+  body.quickboard .kcard-field { font-size:var(--fs-xs); }
+  /* The drag ghost is cloned onto <body> — outside any column, so --col-tint
+     is gone and a see-through pane over arbitrary content reads badly. Firm
+     it up and drop the edge tint while in flight. */
+  body.quickboard .kcard.dragging-ghost { background:color-mix(in srgb, var(--bg) 88%, transparent);
+    border-left-color:var(--line-strong); }
+  /* One-shot pulse on cards a live-feed poke just changed ("AI moved this"). */
+  body.quickboard .kcard.flash { animation:qb-card-flash 1.2s ease-out; }
+  @keyframes qb-card-flash {
+    0%   { background:var(--accent-soft); box-shadow:0 0 0 1.5px var(--accent); }
+    100% { background:color-mix(in srgb, var(--bg) 52%, transparent); box-shadow:var(--shadow-sm); }
+  }
   /* The record peek drawer shares its width preference with the main app
      (mh.peekW) — cap it so it never swallows the whole small window. */
   body.quickboard .peek { max-width:92vw; }

@@ -31,6 +31,22 @@ let backoff = BACKOFF_MIN_MS;
 let cursor: number | null = null;
 let currentAbort: AbortController | null = null;
 let hiddenTimer: number | null = null;
+let connected = false;
+
+/** Fired on `document` when the feed's connection state flips; detail is
+ *  `{connected: boolean}`. The quick-board window renders it as a live dot. */
+export const LIVE_STATUS_EVENT = "mh-live-status";
+
+/** Current connection state, for initializing UI before the first flip. */
+export function liveConnected(): boolean {
+  return connected;
+}
+
+function setConnected(on: boolean): void {
+  if (connected === on) return;
+  connected = on;
+  document.dispatchEvent(new CustomEvent(LIVE_STATUS_EVENT, { detail: { connected: on } }));
+}
 
 let pendDatasets = new Set<string>();
 let pendRowIds = new Set<string>();
@@ -77,6 +93,7 @@ function handleBlock(block: string): void {
     return;
   }
   backoff = BACKOFF_MIN_MS; // a parsed event proves the stream is healthy
+  setConnected(true);
   if (typeof data.cursor === "number") cursor = data.cursor;
   if (event === "changes") queue(data.datasets ?? [], data.rowIds ?? []);
 }
@@ -107,6 +124,7 @@ async function runLoop(gen: number): Promise<void> {
     } catch {
       /* aborted or network error — fall through to the retry delay */
     }
+    setConnected(false);
     if (gen !== generation) return;
     await new Promise((r) => setTimeout(r, backoff + Math.random() * 250));
     backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
@@ -162,6 +180,7 @@ export function ensureLive(): void {
 export function stopLive(): void {
   installed = false;
   stop();
+  setConnected(false);
   document.removeEventListener("visibilitychange", onVisibility);
   if (hiddenTimer != null) clearTimeout(hiddenTimer);
   hiddenTimer = null;

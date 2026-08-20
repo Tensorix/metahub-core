@@ -6,6 +6,7 @@ import { BoardView } from "../board.tsx";
 import { RecordPeek } from "../table.tsx";
 import { imeGhost } from "../keys.ts";
 import { SYNCED_EVENT } from "../data/replica.ts";
+import { LIVE_STATUS_EVENT, liveConnected } from "../live.ts";
 import { UiHost, openMenu, MenuItem, MenuLabel } from "../ui.tsx";
 
 // The Quick Board window: the desktop's at-a-glance task board, mounted from
@@ -30,6 +31,10 @@ export function QuickBoard() {
   const [peekId, setPeekId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [pinned, setPinned] = useState(false);
+  const [live, setLive] = useState(liveConnected);
+  // Cards a live-feed poke just changed — pulsed once, then cleared.
+  const [flash, setFlash] = useState<Set<string>>(() => new Set());
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const qb = typeof window !== "undefined" ? window.metahubDesktop?.quickboard : undefined;
   const dbRef = useRef(db);
@@ -93,11 +98,32 @@ export function QuickBoard() {
       if (!detail.datasets.some((d) => d === "records" || d === "properties")) return;
       if (document.body.classList.contains("table-dragging")) return;
       const cur = dbRef.current;
-      if (cur) reload(cur.id).catch(() => {});
+      if (!cur) return;
+      const rowIds = (detail as { rowIds?: string[] }).rowIds;
+      reload(cur.id)
+        .then(() => {
+          // Pulse the cards this poke touched — the "AI just moved this" cue.
+          // Ids of non-record rows simply match no card.
+          if (!rowIds?.length) return;
+          setFlash(new Set(rowIds));
+          clearTimeout(flashTimer.current);
+          flashTimer.current = setTimeout(() => setFlash(new Set()), 1500);
+        })
+        .catch(() => {});
     };
     document.addEventListener(SYNCED_EVENT, onSynced);
-    return () => document.removeEventListener(SYNCED_EVENT, onSynced);
+    return () => {
+      document.removeEventListener(SYNCED_EVENT, onSynced);
+      clearTimeout(flashTimer.current);
+    };
   }, [reload, selectDb]);
+
+  // Live-feed connection state → the breathing dot in the bar.
+  useEffect(() => {
+    const on = (e: Event) => setLive(!!(e as CustomEvent).detail?.connected);
+    document.addEventListener(LIVE_STATUS_EVENT, on);
+    return () => document.removeEventListener(LIVE_STATUS_EVENT, on);
+  }, []);
 
   // The main window's 浮窗看板 button targets a specific database: it persists
   // the choice (for a cold mount) and broadcasts it here so an already-warm
@@ -216,10 +242,15 @@ export function QuickBoard() {
     <div class="qb">
       <div class="qb-bar">
         <button class="qb-brand" onClick={openDbMenu} title="切换数据库">
-          {db?.name ?? "快速看板"}
+          <span class="qb-emoji">{db?.icon || "🗂️"}</span>
+          <span class="qb-name">{db?.name ?? "快速看板"}</span>
           <Icon name="chevronDown" cls="ico sm" />
         </button>
         <div class="qb-actions">
+          <span
+            class={"qb-live" + (live ? " on" : "")}
+            title={live ? "实时同步中——AI 通过 CLI 的修改会即时出现" : "连接中…"}
+          />
           <button class="iconbtn" title="新建记录" onClick={() => void createWith({})}>
             <Icon name="plus" />
           </button>
@@ -252,10 +283,17 @@ export function QuickBoard() {
             onMove={move}
             group={group}
             onGroupChange={onGroupChange}
+            highlight={flash}
           />
+        ) : loaded ? (
+          <div class="qb-empty">
+            <Icon name="group" />
+            <div class="qb-empty-title">还没有看板</div>
+            <div class="qb-empty-sub">在主窗口创建一个带「单选」属性的数据库，任务进度就会出现在这里。</div>
+          </div>
         ) : (
-          <div class="empty">
-            <div>{loaded ? "还没有数据库 — 在主窗口创建一个后再打开看板。" : "加载中…"}</div>
+          <div class="qb-empty">
+            <div class="qb-empty-sub">加载中…</div>
           </div>
         )}
       </div>
