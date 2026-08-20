@@ -634,10 +634,12 @@ class MiniWindow {
     });
 
     if (isMac) {
-      // screen-saver level floats above full-screened apps; visibleOnFullScreen +
-      // skipTransformProcessType keeps it on every space without the brief dock
-      // flicker that the default process-type transform would cause.
-      win.setAlwaysOnTop(this.settings.alwaysOnTop, "screen-saver");
+      // floating level (3) stays above normal windows but below the system IME
+      // candidate window (~pop-up-menu, 101) — screen-saver (1000) covered it.
+      // Fullscreen-space visibility comes from visibleOnFullScreen, not level;
+      // skipTransformProcessType avoids the brief dock flicker of the default
+      // process-type transform.
+      win.setAlwaysOnTop(this.settings.alwaysOnTop, "floating");
       win.setVisibleOnAllWorkspaces(true, {
         visibleOnFullScreen: true,
         skipTransformProcessType: true,
@@ -718,9 +720,9 @@ class MiniWindow {
   setAlwaysOnTop(on: boolean): boolean {
     this.settings.alwaysOnTop = on;
     if (this.win && !this.win.isDestroyed()) {
-      // screen-saver level on macOS so the toggle keeps the window above
-      // full-screened apps, matching the panel's cross-space behavior.
-      this.win.setAlwaysOnTop(on, process.platform === "darwin" ? "screen-saver" : "normal");
+      // floating level on macOS keeps the toggle above normal windows without
+      // covering the system IME candidate window (see window creation above).
+      this.win.setAlwaysOnTop(on, process.platform === "darwin" ? "floating" : "normal");
     }
     this.saveSettings();
     return on;
