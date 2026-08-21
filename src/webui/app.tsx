@@ -250,6 +250,20 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Same for the quick-board window's 「在主窗口中打开」: deep-link to the
+  // database, optionally requesting a view tab (consumed by DatabaseView).
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const ch = new BroadcastChannel("mh-open-db");
+    ch.onmessage = (e) => {
+      const d = e.data as { dbId?: unknown; view?: unknown } | null;
+      if (typeof d?.dbId === "string" && d.dbId)
+        navigate({ kind: "db", id: d.dbId, tab: d.view === "board" ? "board" : undefined });
+    };
+    return () => ch.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const newEmptyDoc = () =>
     api.createDocument({ title: "" })
       .then((d) => navigate({ kind: "doc", id: d.id }))
@@ -663,6 +677,8 @@ function App() {
               db={activeDb}
               rec={view.rec ?? null}
               onRecNav={(r) => navigate({ kind: "db", id: activeDb.id, rec: r ?? undefined }, { replace: true })}
+              tabReq={view.tab ?? null}
+              onTabReq={(t) => navigate({ kind: "db", id: activeDb.id, rec: view.rec, tab: t ?? undefined }, { replace: true })}
               onError={onError}
             />
           )}

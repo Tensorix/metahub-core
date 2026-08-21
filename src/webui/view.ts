@@ -3,9 +3,15 @@
 // lives in its own module so the sidebar can consume `view`/`navigate` without
 // importing app.tsx back (which would be circular).
 
+// Database view tabs, in the same order as table.tsx's VIEW_TABS (index = tab
+// number). Appears in the hash as `#/db/<id>?view=board` — a one-shot request
+// consumed by DatabaseView, not a mirror of the current tab.
+export const DB_TABS = ["table", "board", "calendar", "timeline"] as const;
+export type DbTab = (typeof DB_TABS)[number];
+
 export type View =
   | { kind: "empty" }
-  | { kind: "db"; id: string; rec?: string } // rec = record peek deep link
+  | { kind: "db"; id: string; rec?: string; tab?: DbTab } // rec = record peek deep link
   | { kind: "doc"; id: string }
   | { kind: "search"; q: string }
   | { kind: "settings"; sec?: string }
@@ -22,10 +28,12 @@ export type Navigate = (v: View, opts?: { replace?: boolean }) => void;
 
 export function viewToHash(v: View): string {
   switch (v.kind) {
-    case "db":
-      return v.rec
+    case "db": {
+      const path = v.rec
         ? `#/db/${encodeURIComponent(v.id)}/${encodeURIComponent(v.rec)}`
         : `#/db/${encodeURIComponent(v.id)}`;
+      return v.tab ? `${path}?view=${v.tab}` : path;
+    }
     case "doc": return `#/doc/${encodeURIComponent(v.id)}`;
     case "search": return `#/search?q=${encodeURIComponent(v.q)}`;
     case "settings": return v.sec ? `#/settings?sec=${encodeURIComponent(v.sec)}` : "#/settings";
@@ -55,10 +63,14 @@ export function parseHash(h: string): View {
   const [path = "", query = ""] = h.slice(2).split("?", 2);
   const [kind, id = "", rec = ""] = path.split("/", 3);
   try {
-    if (kind === "db" && id)
-      return rec
+    if (kind === "db" && id) {
+      const v: Extract<View, { kind: "db" }> = rec
         ? { kind: "db", id: decodeURIComponent(id), rec: decodeURIComponent(rec) }
         : { kind: "db", id: decodeURIComponent(id) };
+      const tab = new URLSearchParams(query).get("view");
+      if (tab && (DB_TABS as readonly string[]).includes(tab)) v.tab = tab as DbTab;
+      return v;
+    }
     if (kind === "doc" && id) return { kind: "doc", id: decodeURIComponent(id) };
     if (kind === "search") {
       const q = new URLSearchParams(query).get("q");

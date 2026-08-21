@@ -8,6 +8,7 @@ import { imeGhost } from "../keys.ts";
 import { SYNCED_EVENT } from "../data/replica.ts";
 import { LIVE_STATUS_EVENT, liveConnected } from "../live.ts";
 import { UiHost, openMenu, MenuLabel } from "../ui.tsx";
+import { viewToHash } from "../view.ts";
 
 // The Quick Board window: the desktop's at-a-glance task board, mounted from
 // the shared webui bundle when the URL hash is `#board` (see app.tsx) — the
@@ -195,6 +196,29 @@ export function QuickBoard() {
     });
   };
 
+  // 在主 app 里打开当前数据库的看板：the broadcast navigates an already-warm
+  // main window; openMain focuses it, or cold-creates it AT this hash (the
+  // broadcast is always lost during window creation). Older shells without
+  // openMain fall back to file.focusMain — warm windows still navigate via the
+  // broadcast, a cold one opens at home (degraded but usable).
+  const openInMain = () => {
+    const cur = dbRef.current;
+    if (!cur) return;
+    try {
+      const ch = new BroadcastChannel("mh-open-db");
+      ch.postMessage({ dbId: cur.id, view: "board" });
+      ch.close();
+    } catch {
+      /* no BroadcastChannel — openMain's hash path still covers it */
+    }
+    const d = window.metahubDesktop;
+    if (d?.quickboard?.openMain) void d.quickboard.openMain(viewToHash({ kind: "db", id: cur.id, tab: "board" }));
+    else void d?.file?.focusMain();
+    // Leaving for the main window — an always-on-top float covering it would
+    // defeat the point. Hide keeps the window warm for the next shortcut.
+    void qb?.hide();
+  };
+
   const togglePin = async () => {
     if (!qb) return;
     const next = !pinned;
@@ -253,8 +277,8 @@ export function QuickBoard() {
             class={"qb-live" + (live ? " on" : "")}
             title={live ? "实时同步中——AI 通过 CLI 的修改会即时出现" : "连接中…"}
           />
-          <button class="iconbtn" title="新建记录" onClick={() => void createWith({})}>
-            <Icon name="plus" />
+          <button class="iconbtn" title="在主窗口中打开" disabled={!db} onClick={openInMain}>
+            <Icon name="externalLink" />
           </button>
           {qb && (
             <button

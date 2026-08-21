@@ -17,6 +17,19 @@ test("doclinkFromUrl rejects non-doclink text", () => {
   expect(doclinkFromUrl("plain prose")).toBeNull();
 });
 
+test("db view-tab request round-trips, rejects unknown tabs", () => {
+  expect(viewToHash({ kind: "db", id: "db_a1", tab: "board" })).toBe("#/db/db_a1?view=board");
+  expect(parseHash("#/db/db_a1?view=board")).toEqual({ kind: "db", id: "db_a1", tab: "board" });
+  // rec + tab coexist
+  expect(parseHash(viewToHash({ kind: "db", id: "db_a1", rec: "rec_x", tab: "calendar" })))
+    .toEqual({ kind: "db", id: "db_a1", rec: "rec_x", tab: "calendar" });
+  // unknown/empty view params are silently dropped, not an error
+  expect(parseHash("#/db/db_a1?view=bogus")).toEqual({ kind: "db", id: "db_a1" });
+  expect(parseHash("#/db/db_a1?view=")).toEqual({ kind: "db", id: "db_a1" });
+  // a ?view= query never turns a pasted URL into a doclink
+  expect(doclinkFromUrl("http://x/#/db/db_a1?view=board")).toBeNull();
+});
+
 test("doclinkFromUrl accepts what viewToHash emits", () => {
   for (const id of ["doc_meeting-notes-k3f9a2", "db_tasks-7q1zzb"]) {
     const kind = id.startsWith("db_") ? ("db" as const) : ("doc" as const);

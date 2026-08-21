@@ -315,7 +315,7 @@ function routeExternalLinks(win: BrowserWindow): void {
   });
 }
 
-function createWindow(port: number): void {
+function createWindow(port: number, hash?: string): void {
   const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
     width: 1280,
@@ -352,7 +352,7 @@ function createWindow(port: number): void {
     onFirstWindowShown();
     prewarmMiniWindows();
   });
-  void win.loadURL(`http://127.0.0.1:${port}/`);
+  void win.loadURL(`http://127.0.0.1:${port}/${hash ?? ""}`);
 }
 
 // A file-only launch (opened via the .txt/.md file association) skips the main
@@ -594,10 +594,14 @@ function openFileWindow(absPath: string): void {
  * Used by the macOS dock-icon `activate` handler. Note: a hidden Quick Note
  * window keeps `getAllWindows()` non-empty, so we track the main window
  * explicitly rather than counting windows.
+ *
+ * `hash` only applies to the cold-create path (the "在主窗口中打开" flow, where
+ * the renderer's broadcast is necessarily lost during window creation); an
+ * existing window is just raised — its navigation rides BroadcastChannel.
  */
-function showMainWindow(): void {
+function showMainWindow(hash?: string): void {
   if (!mainWin || mainWin.isDestroyed()) {
-    createWindow(serverPort);
+    createWindow(serverPort, hash);
     return;
   }
   if (mainWin.isMinimized()) mainWin.restore();
@@ -1022,6 +1026,21 @@ function registerIpc(): void {
   ipcMain.handle("server:origin", () => {
     if (serverPort) return serverOrigin();
     return new Promise<string>((res) => serverOriginWaiters.push(res));
+  });
+
+  // The mini windows' 「在主窗口中打开」: raise the main window, cold-creating it
+  // AT the given hash — window creation is exactly when the renderer's
+  // BroadcastChannel navigation is lost, so the initial URL covers it. Hash is
+  // whitelisted to db routes (id alphabet mirrors view.ts doclinkFromUrl) so
+  // the renderer can't steer the shell anywhere else. Known residual race: a
+  // second request while the window is still loading only focuses it (the
+  // broadcast is lost and the hash isn't re-applied) — two clicks within the
+  // first paint, acceptable.
+  const MAIN_OPEN_HASH = /^#\/db\/db_[a-z0-9][a-z0-9-]*(\?view=(table|board|calendar|timeline))?$/;
+  ipcMain.handle("main:open-at", (_e, hash: unknown) => {
+    if (typeof hash !== "string" || !MAIN_OPEN_HASH.test(hash)) return false;
+    showMainWindow(hash);
+    return true;
   });
 
   // Open the Cloudflare OAuth consent page in the user's real browser (never an

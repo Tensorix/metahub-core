@@ -41,6 +41,11 @@ export interface MetahubDesktop {
     hide: () => Promise<void>;
     /** Summon the window from another renderer. Optional — absent on older preload builds. */
     show?: () => Promise<void>;
+    /** Open a db route in the MAIN window: focuses it if it exists (navigation
+     *  rides BroadcastChannel), else cold-creates it at this hash. The main
+     *  process whitelists the hash (db routes only); rejected → false.
+     *  Optional — absent on older preload builds. */
+    openMain?: (hash: string) => Promise<boolean>;
   };
   /** Same surface for the Quick Board window ("qb:*" IPC). Absent on older
    *  Electron shells (the core auto-updater refreshes the webui without
@@ -53,6 +58,8 @@ export interface MetahubDesktop {
     hide: () => Promise<void>;
     /** Summon the window from another renderer. Optional — absent on older preload builds. */
     show?: () => Promise<void>;
+    /** See quicknote.openMain — the quick board's 「在主窗口中打开」 button. */
+    openMain?: (hash: string) => Promise<boolean>;
   };
   /** Open the image preview in a frameless native window (vs the in-page lightbox
    *  in a browser). The window flattens+re-uploads annotations itself and reports

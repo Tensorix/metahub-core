@@ -24,6 +24,7 @@ import {
   type MenuAnchor,
 } from "./ui.tsx";
 import { SYNCED_EVENT } from "./data/replica.ts";
+import { DB_TABS, type DbTab } from "./view.ts";
 import { Chip, CellDisplay, coerceInput, cellText, optColor, relationLabel, docLabel } from "./cells.tsx";
 import {
   relationTitleList,
@@ -90,6 +91,8 @@ export function DatabaseView({
   db,
   rec,
   onRecNav,
+  tabReq,
+  onTabReq,
   onError,
 }: {
   db: Db;
@@ -98,6 +101,12 @@ export function DatabaseView({
   /** Replace-navigate the hash when the peek opens/closes, so a chip click on
    *  the SAME record still fires hashchange next time (same-hash clicks don't). */
   onRecNav: (rec: string | null) => void;
+  /** View-tab deep link from the hash (#/db/<id>?view=board) — a one-shot
+   *  request, consumed then cleared. Manual tab switches never write the hash. */
+  tabReq: DbTab | null;
+  /** Replace-navigate the hash to strip `?view=` once the request is consumed,
+   *  so a repeated request is always a null→value change and fires again. */
+  onTabReq: (t: DbTab | null) => void;
   onError: (m: string) => void;
 }) {
   const [props, setProps] = useState<Prop[]>([]);
@@ -175,6 +184,15 @@ export function DatabaseView({
   const openPeek = (id: string) => { setPeek(id); onRecNav(id); };
   const closePeek = () => { setPeek(null); onRecNav(null); };
   useEffect(() => { setPeek(rec); }, [rec]);
+  // Tab request → tab, consumed once then stripped from the hash (replace).
+  // Declared after the db.id reset effect so a deep-linked mount ends on the
+  // requested tab, not on the reset's 表格.
+  useEffect(() => {
+    if (!tabReq) return;
+    const i = DB_TABS.indexOf(tabReq);
+    if (i >= 0) setTab(i);
+    onTabReq(null);
+  }, [tabReq]);
   // Dangling deep link (deleted record / forward reference): explain and clear —
   // a silently dead drawer-less hash would make the chip look broken.
   const recordsRef = useRef(records);
