@@ -86,7 +86,10 @@ export interface MetahubDesktop {
     read: (path: string) => Promise<{ text: string; name: string }>;
     write: (path: string, text: string) => Promise<void>;
     setDirty: (path: string, dirty: boolean) => Promise<void>;
-    saveDone: () => Promise<void>;
+    /** Report the close-flow save outcome. The main process trusts its own
+     *  dirty flag to decide whether the window may close; `result` only feeds
+     *  the failure dialog's message. Zero-arg calls stay valid (older shells). */
+    saveDone: (result?: { ok: boolean; error?: string }) => Promise<void>;
     /** Raise the main window; with a doc id, also deep-link it there (the id is
      *  forwarded main-process-side as mh:open-doc — BroadcastChannel can't cross
      *  the file:// / http origins). Optional arg — older shells ignore it. */

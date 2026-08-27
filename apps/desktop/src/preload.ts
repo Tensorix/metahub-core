@@ -106,7 +106,8 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     read: (path: string) => ipcRenderer.invoke("file:read", path),
     write: (path: string, text: string) => ipcRenderer.invoke("file:write", path, text),
     setDirty: (path: string, dirty: boolean) => ipcRenderer.invoke("file:set-dirty", path, dirty),
-    saveDone: () => ipcRenderer.invoke("file:save-done"),
+    saveDone: (result?: { ok: boolean; error?: string }) =>
+      ipcRenderer.invoke("file:save-done", result),
     focusMain: (docId?: string) => ipcRenderer.invoke("file:focus-main", docId),
     onRequestSave: (cb: () => void) => {
       const l = () => cb();

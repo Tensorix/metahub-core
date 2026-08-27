@@ -40,14 +40,17 @@ export function FileEditorWindow() {
   const [importedFresh, setImportedFresh] = useState(false);
   const handleRef = useRef<CmHandle | null>(null);
 
-  const save = async (): Promise<void> => {
+  const save = async (): Promise<{ ok: boolean; error?: string }> => {
     const h = handleRef.current;
-    if (!h || !fs) return;
+    if (!h || !fs) return { ok: false, error: "编辑器尚未就绪" };
     try {
       await fs.write(path, h.getDoc());
       setDirty(false);
+      return { ok: true };
     } catch (e) {
-      setError(String((e as Error).message));
+      const msg = String((e as Error).message);
+      setError(msg);
+      return { ok: false, error: msg };
     }
   };
   const saveRef = useRef(save);
@@ -89,13 +92,15 @@ export function FileEditorWindow() {
     return () => removeEventListener("keydown", onKey);
   }, []);
 
-  // Close-confirm 保存 path: main asks us to write, saveDone lets it close.
+  // Close-confirm 保存 path: main asks us to write, saveDone reports back.
+  // Main rechecks its own dirty flag before closing — a failed write keeps the
+  // window (and the edits) alive; the result here only feeds its error dialog.
   useEffect(() => {
     if (!fs?.onRequestSave) return;
     return fs.onRequestSave(() => {
       void (async () => {
-        await saveRef.current();
-        await fs.saveDone();
+        const r = await saveRef.current();
+        await fs.saveDone(r);
       })();
     });
   }, [fs]);

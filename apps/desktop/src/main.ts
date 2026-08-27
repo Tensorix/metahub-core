@@ -136,8 +136,46 @@ function appFile(...segments: string[]): string {
 }
 
 let sidecar: ChildProcess | null = null;
-let serverPort = 0;
+
+// Sidecar readiness as an explicit state machine, not a port truthiness probe:
+// "booting" (spawn / health poll in flight — a known port is NOT usable yet),
+// "ready" (health passed — the only state where server URLs load), "failed"
+// (spawn or health error — final). whenReady() is the awaitable form: it
+// resolves with the healthy port and rejects on failure.
+type ServerPhase = "booting" | "ready" | "failed";
+const serverGate = (() => {
+  let resolve!: (port: number) => void;
+  let reject!: (err: Error) => void;
+  const promise = new Promise<number>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  promise.catch(() => {}); // a failure with zero waiters must not be an unhandled rejection
+  return {
+    phase: "booting" as ServerPhase,
+    port: 0,
+    failure: null as Error | null,
+    markReady(port: number): void {
+      this.phase = "ready";
+      this.port = port;
+      resolve(port);
+    },
+    markFailed(err: Error): void {
+      this.phase = "failed";
+      this.failure = err;
+      reject(err);
+    },
+    whenReady(): Promise<number> {
+      return promise;
+    },
+  };
+})();
+
 let mainWin: BrowserWindow | null = null;
+// A main-window request that arrived while the sidecar was still booting
+// (second instance, dock activate, 「在主窗口中打开」…). Coalesced — N requests
+// still yield one window, created when the server turns healthy.
+let pendingMainShow: { hash?: string; docId?: string } | null = null;
 let splashWin: BrowserWindow | null = null;
 let previewWin: BrowserWindow | null = null;
 // File-editor windows (the .txt/.md "open with" feature), one per absolute path.
@@ -149,15 +187,15 @@ const fileDirty = new Map<string, boolean>();
 const allowedFilePaths = new Set<string>();
 // open-file fires before the sidecar port is known — queue and drain later.
 const pendingOpenFiles: string[] = [];
-// server:origin IPC waiters — disk-loaded file-editor windows that asked for
-// the sidecar origin before it was healthy. Resolved at startup end; a failed
-// sidecar leaves them pending (the window's API features stay dormant).
-const serverOriginWaiters: Array<(origin: string) => void> = [];
 function serverOrigin(): string {
-  return `http://127.0.0.1:${serverPort}`;
+  return `http://127.0.0.1:${serverGate.port}`;
 }
 // close-flow "保存" waits for the renderer's file:save-done, keyed by WebContents id.
-const saveWaiters = new Map<number, () => void>();
+interface SaveResult {
+  ok: boolean;
+  error?: string;
+}
+const saveWaiters = new Map<number, (r?: SaveResult) => void>();
 // Windows whose dirty-confirm dialog already ran; close() proceeds unprompted.
 const forceClosing = new WeakSet<BrowserWindow>();
 let tray: Tray | null = null;
@@ -389,11 +427,11 @@ function prewarmMiniWindows(): void {
  * back to the editor over BroadcastChannel. No top bar on any platform.
  */
 function openPreview(p: { src: string; name?: string; blockId: string }): void {
-  if (!serverPort) return;
+  if (serverGate.phase !== "ready") return;
   const isMac = process.platform === "darwin";
   const params = new URLSearchParams({ src: p.src, bid: p.blockId });
   if (p.name) params.set("name", p.name);
-  const url = `http://127.0.0.1:${serverPort}/#preview?${params.toString()}`;
+  const url = `${serverOrigin()}/#preview?${params.toString()}`;
   if (previewWin && !previewWin.isDestroyed()) {
     void previewWin.loadURL(url);
     previewWin.focus();
@@ -455,11 +493,20 @@ function fileEditorShellPath(): string | null {
 }
 
 /** Open now if a window can be built (disk shell available, or server up),
- *  else queue for the end-of-startup drain. */
+ *  else queue for the post-health drain. Dev-without-a-build after a sidecar
+ *  failure has no way to ever open the window — say so instead of queueing
+ *  forever. */
 function queueOpenFile(p: string): void {
   const abs = resolve(p);
-  if (app.isReady() && (fileEditorShellPath() || serverPort)) openFileWindow(abs);
-  else pendingOpenFiles.push(abs);
+  if (app.isReady() && (fileEditorShellPath() || serverGate.phase === "ready")) {
+    openFileWindow(abs);
+    return;
+  }
+  if (app.isReady() && serverGate.phase === "failed" && !fileEditorShellPath()) {
+    notifyServerUnavailable();
+    return;
+  }
+  pendingOpenFiles.push(abs);
 }
 
 function drainPendingFiles(): void {
@@ -473,18 +520,19 @@ function setFileDirty(path: string, dirty: boolean): void {
   if (win && !win.isDestroyed() && process.platform === "darwin") win.setDocumentEdited(dirty);
 }
 
-/** Resolves when the renderer reports file:save-done, or after `ms`. */
-function waitForSaveDone(win: BrowserWindow, ms: number): Promise<void> {
+/** Resolves with the renderer's file:save-done report, or `undefined` after
+ *  `ms` (a wedged renderer must not hold the close flow forever). */
+function waitForSaveDone(win: BrowserWindow, ms: number): Promise<SaveResult | undefined> {
   return new Promise((done) => {
     const id = win.webContents.id;
     const t = setTimeout(() => {
       saveWaiters.delete(id);
-      done();
+      done(undefined);
     }, ms);
-    saveWaiters.set(id, () => {
+    saveWaiters.set(id, (r) => {
       clearTimeout(t);
       saveWaiters.delete(id);
-      done();
+      done(r);
     });
   });
 }
@@ -501,7 +549,7 @@ function waitForSaveDone(win: BrowserWindow, ms: number): Promise<void> {
  */
 function openFileWindow(absPath: string): void {
   const shell = fileEditorShellPath();
-  if (!shell && !serverPort) {
+  if (!shell && serverGate.phase !== "ready") {
     pendingOpenFiles.push(absPath);
     return;
   }
@@ -560,7 +608,21 @@ function openFileWindow(absPath: string): void {
       if (response === 2 || win.isDestroyed()) return;
       if (response === 0) {
         win.webContents.send("file:request-save");
-        await waitForSaveDone(win, 3_000);
+        const result = await waitForSaveDone(win, 3_000);
+        // file:write clears the dirty flag only on a successful write, so a
+        // still-dirty file here means the save failed or timed out. The user
+        // chose 保存 — closing anyway would silently discard their edits.
+        if (fileDirty.get(absPath)) {
+          if (!win.isDestroyed()) {
+            await dialog.showMessageBox(win, {
+              type: "error",
+              message: `无法保存「${basename(absPath)}」`,
+              detail: result?.error ?? "保存未在限定时间内完成，文件未写入磁盘。",
+              buttons: ["确定"],
+            });
+          }
+          return; // abort the close — the window (and the edits) stay
+        }
       }
       forceClosing.add(win);
       if (!win.isDestroyed()) win.close();
@@ -585,8 +647,30 @@ function openFileWindow(absPath: string): void {
     });
   } else {
     const params = new URLSearchParams({ path: absPath });
-    void win.loadURL(`http://127.0.0.1:${serverPort}/#file?${params.toString()}`);
+    void win.loadURL(`${serverOrigin()}/#file?${params.toString()}`);
   }
+}
+
+/** Non-fatal "server didn't start" notice for post-failure user actions that
+ *  need the main window or a mini window. */
+function notifyServerUnavailable(): void {
+  dialog.showErrorBox(
+    "Metahub 服务未启动",
+    `此窗口需要后台服务，但它未能启动：\n${serverGate.failure?.message ?? "未知错误"}\n\n` +
+      "文件编辑窗口不受影响；可从托盘菜单退出后重新启动 Metahub。",
+  );
+}
+
+/** Deliver a doc deep-link to the main window (mh:open-doc), waiting out a
+ *  fresh window's load so the renderer listener has mounted. */
+function sendOpenDoc(docId: string): void {
+  if (!mainWin || mainWin.isDestroyed()) return;
+  const wc = mainWin.webContents;
+  const send = () => {
+    if (!wc.isDestroyed()) wc.send("mh:open-doc", { id: docId });
+  };
+  if (wc.isLoading()) wc.once("did-finish-load", send);
+  else send();
 }
 
 /**
@@ -595,18 +679,34 @@ function openFileWindow(absPath: string): void {
  * window keeps `getAllWindows()` non-empty, so we track the main window
  * explicitly rather than counting windows.
  *
- * `hash` only applies to the cold-create path (the "在主窗口中打开" flow, where
- * the renderer's broadcast is necessarily lost during window creation); an
- * existing window is just raised — its navigation rides BroadcastChannel.
+ * While the sidecar is still booting the request is queued (coalesced) and
+ * honored when it turns healthy; after a failed boot it surfaces the failure
+ * instead of loading a dead URL. `hash`/`docId` only apply to the cold-create
+ * path (the "在主窗口中打开" / 导入 flows, where the renderer's broadcast is
+ * necessarily lost during window creation); an existing window is just raised —
+ * its navigation rides BroadcastChannel.
  */
-function showMainWindow(hash?: string): void {
-  if (!mainWin || mainWin.isDestroyed()) {
-    createWindow(serverPort, hash);
+function showMainWindow(hash?: string, docId?: string): void {
+  if (serverGate.phase === "booting") {
+    pendingMainShow = {
+      hash: hash ?? pendingMainShow?.hash,
+      docId: docId ?? pendingMainShow?.docId,
+    };
+    if (splashWin && !splashWin.isDestroyed()) splashWin.focus();
     return;
   }
-  if (mainWin.isMinimized()) mainWin.restore();
-  mainWin.show();
-  mainWin.focus();
+  if (serverGate.phase === "failed") {
+    notifyServerUnavailable();
+    return;
+  }
+  if (!mainWin || mainWin.isDestroyed()) {
+    createWindow(serverGate.port, hash);
+  } else {
+    if (mainWin.isMinimized()) mainWin.restore();
+    mainWin.show();
+    mainWin.focus();
+  }
+  if (docId) sendOpenDoc(docId);
 }
 
 // ---- mini windows (quick note / quick board) --------------------------------
@@ -733,7 +833,16 @@ class MiniWindow {
 
     routeExternalLinks(win);
     this.ready = false;
-    void win.loadURL(`http://127.0.0.1:${serverPort}/${this.spec.hash}`);
+    // Content loads once the sidecar is healthy (tray/shortcuts now exist
+    // before it is): the normal prewarm path runs post-health so this resolves
+    // immediately; a failed sidecar leaves the window blank-hidden and show()
+    // surfaces the failure instead.
+    void serverGate.whenReady().then(
+      (port) => {
+        if (!win.isDestroyed()) void win.loadURL(`http://127.0.0.1:${port}/${this.spec.hash}`);
+      },
+      () => {},
+    );
     // Decouple create from show: ready-to-show only reveals the window if a show
     // was actually requested. This lets us pre-warm it hidden at startup (render
     // in the background) without it popping up — the first real open is instant.
@@ -782,6 +891,10 @@ class MiniWindow {
   }
 
   show(): void {
+    if (serverGate.phase === "failed") {
+      notifyServerUnavailable();
+      return;
+    }
     if (!this.win || this.win.isDestroyed()) this.win = this.create();
     this.pendingShow = true;
     // Pre-warmed at startup → already painted → reveal instantly. If the user is
@@ -999,34 +1112,24 @@ function registerIpc(): void {
   ipcMain.handle("file:set-dirty", (_e, p: string, dirty: boolean) => {
     setFileDirty(assertAllowed(p), dirty);
   });
-  ipcMain.handle("file:save-done", (e) => {
-    saveWaiters.get(e.sender.id)?.();
+  ipcMain.handle("file:save-done", (e, r?: SaveResult) => {
+    saveWaiters.get(e.sender.id)?.(r);
   });
   // 导入到 MetaHub → raise the main window. The doc id also travels renderer-
   // to-renderer over BroadcastChannel("mh-open-doc") when same-origin (#file
   // route); the disk-loaded file:// window can't reach that channel, so the id
   // rides this IPC and is forwarded as mh:open-doc (both deliveries navigate
-  // to the same doc — idempotent).
+  // to the same doc — idempotent; a pre-health request queues with the show).
   ipcMain.handle("file:focus-main", (_e, docId?: unknown) => {
-    showMainWindow();
-    if (typeof docId !== "string" || !docId || !mainWin || mainWin.isDestroyed()) return;
-    const wc = mainWin.webContents;
-    const send = () => {
-      if (!wc.isDestroyed()) wc.send("mh:open-doc", { id: docId });
-    };
-    // A freshly created main window is still loading — deliver after its
-    // listener had a chance to mount.
-    if (wc.isLoading()) wc.once("did-finish-load", send);
-    else send();
+    showMainWindow(undefined, typeof docId === "string" && docId ? docId : undefined);
   });
 
   // Sidecar origin for the disk-loaded file-editor window: resolves once the
   // server is healthy. Never rejects — a failed sidecar leaves it pending and
   // the window's API-dependent features simply stay dormant.
-  ipcMain.handle("server:origin", () => {
-    if (serverPort) return serverOrigin();
-    return new Promise<string>((res) => serverOriginWaiters.push(res));
-  });
+  ipcMain.handle("server:origin", () =>
+    serverGate.whenReady().then(serverOrigin, () => new Promise<never>(() => {})),
+  );
 
   // The mini windows' 「在主窗口中打开」: raise the main window, cold-creating it
   // AT the given hash — window creation is exactly when the renderer's
@@ -1076,7 +1179,7 @@ function killSidecar(): void {
 
 // ---- lifecycle -------------------------------------------------------------
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   perf("app ready");
   if (legacyServiceWorkerCleanup.quarantined.length > 0) {
     void removeQuarantinedServiceWorkerStorage(legacyServiceWorkerCleanup.quarantined).then(
@@ -1096,7 +1199,7 @@ app.whenReady().then(async () => {
   for (const m of miniWindows) m.loadSettings();
   // IPC first: the disk-loaded file-editor windows below need file:read-sync
   // and server:origin before any sidecar exists. Nothing in here touches the
-  // server — handlers that need it (preview:open, …) guard on serverPort.
+  // server — handlers that need it (preview:open, …) guard on serverGate.
   registerIpc();
   // File-only launch (opened as a .txt/.md handler): show just the file
   // editor, not the whole app. Files arrive either in the launch argv
@@ -1115,48 +1218,88 @@ app.whenReady().then(async () => {
     // Branded feedback up front, before any slow startup work begins.
     createSplash();
   }
+  // The sidecar spawns synchronously inside this call (same startup timing as
+  // ever); health polling and the post-health window work continue async.
+  void bootServer({ fileOnlyLaunch, instantFileLaunch, launchFiles });
+
+  // Server-independent shell setup — deliberately OUTSIDE bootServer's
+  // try/catch: a failed sidecar must still leave a controllable app (tray
+  // 退出, global shortcuts, dock activate). The windows these summon load
+  // their content through serverGate and surface a boot failure themselves.
+  createTray();
+  registerMiniWindowShortcuts();
+  // macOS: re-open / focus the main window when the dock icon is clicked.
+  app.on("activate", () => showMainWindow());
+});
+
+interface BootOpts {
+  fileOnlyLaunch: boolean;
+  instantFileLaunch: boolean;
+  launchFiles: string[];
+}
+
+/** Spawn the sidecar, wait for health, and flip serverGate — the single writer
+ *  of the server state machine. */
+async function bootServer(opts: BootOpts): Promise<void> {
   try {
-    serverPort = await startSidecar();
-    await waitForHealth(serverPort);
+    const port = await startSidecar();
+    await waitForHealth(port);
     perf("server healthy");
-    // Wake the file-editor windows' deferred API features (导入 / doclinks).
-    for (const w of serverOriginWaiters.splice(0)) w(serverOrigin());
-    if (!fileOnlyLaunch) createWindow(serverPort);
-    createTray();
-
-    for (const m of miniWindows) {
-      if (!m.registerShortcut(m.settings.shortcut) && m.settings.shortcut !== m.spec.defaultShortcut) {
-        // Fall back to the default if a persisted custom shortcut is unavailable.
-        m.registerShortcut(m.spec.defaultShortcut);
-        m.settings.shortcut = m.spec.defaultShortcut;
-        m.saveSettings();
-      }
-    }
-
-    // macOS: re-open / focus the main window when the dock icon is clicked.
-    app.on("activate", () => showMainWindow());
-
-    // Open launch files still waiting on the server (fallback #file route —
-    // the instant path already opened them above). openFileWindow dedupes per
-    // path, so a path that somehow arrives twice still gets one window.
-    if (!instantFileLaunch) {
-      launchFiles.forEach(queueOpenFile);
-      drainPendingFiles();
-    }
+    serverGate.markReady(port);
+    onServerReady(opts);
   } catch (err) {
-    closeSplash();
-    killSidecar();
-    // A file-only session whose editor window(s) are already up must not be
-    // torn down because the background server failed — on-disk editing works
-    // fully without it (导入/doclink features just stay dormant).
-    if (instantFileLaunch && fileWins.size > 0) {
-      console.error("[desktop] sidecar failed to start:", (err as Error).message);
-    } else {
-      dialog.showErrorBox("Metahub failed to start", (err as Error).message);
-      app.quit();
+    serverGate.markFailed(err as Error);
+    onServerFailed(err as Error, opts);
+  }
+}
+
+function onServerReady({ fileOnlyLaunch, instantFileLaunch, launchFiles }: BootOpts): void {
+  // (server:origin waiters resolve through serverGate.whenReady — nothing to drain.)
+  const pending = pendingMainShow;
+  pendingMainShow = null;
+  if (!fileOnlyLaunch || pending) {
+    createWindow(serverGate.port, pending?.hash);
+    if (pending?.docId) sendOpenDoc(pending.docId);
+  }
+  // Open launch files still waiting on the server (fallback #file route — the
+  // instant path already opened them at startup). openFileWindow dedupes per
+  // path, so a path that somehow arrives twice still gets one window. The
+  // drain is unconditional: second-instance/open-file paths may have queued
+  // while the server booted.
+  if (!instantFileLaunch) launchFiles.forEach(queueOpenFile);
+  drainPendingFiles();
+}
+
+function onServerFailed(err: Error, { instantFileLaunch }: BootOpts): void {
+  closeSplash();
+  killSidecar();
+  pendingMainShow = null; // a queued show must not resurrect after failure
+  // A file-only session whose editor window(s) are already up must not be
+  // torn down because the background server failed — on-disk editing works
+  // fully without it (导入/doclink features just stay dormant). Tray, menu and
+  // shortcuts already exist, so the surviving session stays quittable.
+  if (instantFileLaunch && fileWins.size > 0) {
+    console.error("[desktop] sidecar failed to start:", err.message);
+  } else {
+    fatalStartupFailure(err);
+  }
+}
+
+function fatalStartupFailure(err: Error): void {
+  dialog.showErrorBox("Metahub failed to start", err.message);
+  app.quit();
+}
+
+function registerMiniWindowShortcuts(): void {
+  for (const m of miniWindows) {
+    if (!m.registerShortcut(m.settings.shortcut) && m.settings.shortcut !== m.spec.defaultShortcut) {
+      // Fall back to the default if a persisted custom shortcut is unavailable.
+      m.registerShortcut(m.spec.defaultShortcut);
+      m.settings.shortcut = m.spec.defaultShortcut;
+      m.saveSettings();
     }
   }
-});
+}
 
 // The Quick Notes window and tray mean the app intentionally outlives all
 // regular windows; do not quit on window-all-closed (even off macOS).
