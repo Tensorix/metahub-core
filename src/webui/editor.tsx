@@ -17,6 +17,7 @@ import { previewAnchor, setPreviewAnchor } from "./cm6/chrome/preview-anchor.ts"
 import { blockToText, type Block } from "./blocks.ts";
 import { deletePlainSelection, flattenToText, insertPlainText, plainPasteHandlers } from "./plain-edit.ts";
 import { ImageLightbox } from "./media/image-lightbox.tsx";
+import { autoTitleFor, isAutoTitleState } from "./quicknote/auto-title.ts";
 
 export type DocMode = "blocks" | "source";
 
@@ -33,6 +34,7 @@ export function DocView({
   docId,
   wide,
   embedded,
+  autoTitle,
   onError,
   onModeChange,
   onHandle,
@@ -43,6 +45,11 @@ export function DocView({
    *  area: compact layout, no meta row, no viewport-fixed chrome, and no
    *  window-level Cmd+F fallback (the main view owns that). */
   embedded?: boolean;
+  /** Quicknote only: while the title is auto-managed (empty / derived / date
+   *  fallback — see quicknote/auto-title.ts), each save re-derives it from the
+   *  body's first line. Hand-editing the title opts the note out permanently.
+   *  Main app and record peek never pass this — their behavior is unchanged. */
+  autoTitle?: boolean;
   onError: (m: string) => void;
   onModeChange?: (mode: DocMode) => void;
   onHandle?: (handle: DocViewHandle | null) => void;
@@ -69,6 +76,24 @@ export function DocView({
   const docRootRef = useRef<HTMLDivElement>(null);
   // In-page image lightbox (browser / PWA; the desktop app uses a native window).
   const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null);
+  // ---- auto-title state (quicknote only, see the autoTitle prop) ----
+  // autoMode is re-inferred statelessly from server data on every load/merge;
+  // manualTitle is the in-session latch that kills auto the instant the user
+  // touches the title, without waiting for a round-trip.
+  const createdHlcRef = useRef<string | null>(null);
+  const autoModeRef = useRef(false);
+  const manualTitleRef = useRef(false);
+  const inferAutoMode = (d: { title?: string | null; body?: string | null; created_hlc?: string | null }) => {
+    createdHlcRef.current = d.created_hlc ?? null;
+    // A remote hand-rename lands here via the SYNCED_EVENT re-read: it matches
+    // none of the inference arms, so this side stops deriving instead of
+    // clobbering it back. (Known limit: a remote FIRST-LINE edit while our
+    // title still holds the older derived text also reads as manual — the
+    // title freezes at the old value, which errs on the never-overwrite side.)
+    autoModeRef.current =
+      !!autoTitle && !manualTitleRef.current &&
+      isAutoTitleState(d.title ?? "", d.body ?? "", createdHlcRef.current);
+  };
 
   /** Rewrite the image void the user opened in the preview to point at `url`
    *  (annotation write-back). CM6 block ids are ephemeral, so the src string is
@@ -160,6 +185,7 @@ export function DocView({
         sourceRef.current = d.body ?? "";
         docVersionRef.current = d.version ?? null;
         dirtyRef.current = false;
+        inferAutoMode(d);
         setLoading(false);
         setVersion((v) => v + 1);
       })
@@ -216,6 +242,7 @@ export function DocView({
           cmRef.current?.setDoc(d.body ?? "");
           docVersionRef.current = d.version ?? null;
           dirtyRef.current = false;
+          inferAutoMode(d);
           setConflict(false);
           setVersion((v) => v + 1);
           toast("已合并其他设备的修改");
@@ -242,11 +269,27 @@ export function DocView({
   // and remote edits arrive through /sync where the CRDT merges at block
   // level — the stale/conflict machinery is an HTTP-mode concept. Remote
   // changes to the open doc surface via the SYNCED_EVENT refresh above.
-  const doSave = (opts: { force?: boolean } = {}) =>
-    api
+  const doSave = (opts: { force?: boolean } = {}) => {
+    const body = snapshotMarkdown();
+    // Auto-title (quicknote): derive here, not in scheduleSave — doSave runs
+    // serialized on the save chain and is the one place that reads the final
+    // body snapshot. Skipped while the title has focus so we never fight a
+    // caret; the next save catches up (unless the user typed there, which
+    // latches manual via onInput). Writing textContent directly follows the
+    // uncontrolled-title reseed convention above.
+    if (autoTitle && autoModeRef.current && !manualTitleRef.current
+        && document.activeElement !== titleElRef.current) {
+      const next = autoTitleFor(body, createdHlcRef.current);
+      if (next !== titleRef.current) {
+        titleRef.current = next;
+        const el = titleElRef.current;
+        if (el && el.textContent !== next) el.textContent = next;
+      }
+    }
+    return api
       .updateDocument(docId, {
         title: titleRef.current,
-        body: snapshotMarkdown(),
+        body,
         ...(opts.force || docVersionRef.current == null || replicaActive()
           ? {}
           : { if_match: docVersionRef.current }),
@@ -271,6 +314,7 @@ export function DocView({
         clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(save, retryDelayRef.current);
       });
+  };
   const save = (opts: { force?: boolean } = {}) =>
     (saveChainRef.current = saveChainRef.current.then(() => doSave(opts)));
   const flushSave = async () => {
@@ -349,6 +393,16 @@ export function DocView({
   const mergeIntoTitle = (text: string): boolean => {
     const el = titleElRef.current;
     if (!el) return false;
+    // Auto-title: a derived title is a mirror of the first line, not user
+    // data — merging that same line on top of it would double the text
+    // ("HelloHello"). Clear the mirror first, then latch manual: the user is
+    // deliberately promoting body text into the title.
+    if (autoModeRef.current) {
+      el.textContent = "";
+      titleRef.current = "";
+    }
+    manualTitleRef.current = true;
+    autoModeRef.current = false;
     const seam = (el.textContent ?? "").length;
     focusTitle(); // caret at the end, where the merged text goes
     if (text) insertPlainText(text); // fires onInput (flatten + titleRef + save)
@@ -370,6 +424,9 @@ export function DocView({
     const el = titleElRef.current;
     const v = cmRef.current?.view;
     if (!el || !v) return;
+    // Enter in the title is a deliberate title edit — leave auto-title mode.
+    manualTitleRef.current = true;
+    autoModeRef.current = false;
     const sel = getSelection();
     const live = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
     let moved = "";
@@ -459,6 +516,12 @@ export function DocView({
           // plain string, so nested markup only ever hijacks its font size.
           // Never during composition — flattening would break IME input.
           if (!e.isComposing) flattenToText(el);
+          // Any real input here (typing, paste, IME) means the user took over
+          // the title — auto-derivation must never overwrite it again. The
+          // derive path writes textContent directly, which fires no input
+          // event, so it can't trip this latch itself.
+          manualTitleRef.current = true;
+          autoModeRef.current = false;
           titleRef.current = el.textContent ?? "";
           scheduleSave();
         }}

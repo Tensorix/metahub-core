@@ -254,6 +254,7 @@ export function QuickNote() {
           <DocView
             key={activeId}
             docId={activeId}
+            autoTitle
             onError={setError}
             onHandle={(h) => (docHandleRef.current = h)}
           />
