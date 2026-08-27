@@ -51,6 +51,19 @@ function perf(event: string): void {
   console.log(`[perf] ${event} +${Date.now() - t0}ms`);
 }
 
+/** Per-window load milestones. Reading the segments:
+ *  created→did-start-loading ≈ renderer spawn + preload;
+ *  →dom-ready ≈ HTML + render-blocking CSS;
+ *  →did-finish-load ≈ all sync subresources (webui.js — in dev incl. the
+ *  server-side Bun.build); →ready-to-show ≈ JS execution + first frame. */
+function perfWindow(win: BrowserWindow, label: string): void {
+  perf(`${label} created`);
+  const wc = win.webContents;
+  wc.once("did-start-loading", () => perf(`${label} did-start-loading`));
+  wc.once("dom-ready", () => perf(`${label} dom-ready`));
+  wc.once("did-finish-load", () => perf(`${label} did-finish-load`));
+}
+
 const HEALTH_PATH = "/health"; // mirrors src/core/sync/protocol.ts
 const HEALTH_TIMEOUT_MS = 15_000;
 const HEALTH_INTERVAL_MS = 150;
@@ -61,7 +74,18 @@ const DEFAULT_BOARD_SHORTCUT = "CommandOrControl+Shift+B";
 // Test-only isolation: point userData at a scratch dir so a second instance
 // (integration debugging against a scratch METAHUB_HOME) never touches the
 // real profile. No effect unless the env var is set.
-if (process.env.MH_TEST_USER_DATA) app.setPath("userData", process.env.MH_TEST_USER_DATA);
+if (process.env.MH_TEST_USER_DATA) {
+  app.setPath("userData", process.env.MH_TEST_USER_DATA);
+} else if (!app.isPackaged) {
+  // Dev runs must NOT share the packaged app's userData (same package.json
+  // name → same default dir). A resident packaged Metahub owns that profile's
+  // cache databases; a dev instance that steals the stale single-instance lock
+  // (the packaged socket in /var/folders gets purged by macOS) then runs a
+  // SECOND Chromium against the same profile, and every dev renderer's first
+  // JS load stalls ~4s in cross-process cache-lock recovery. Separate dir —
+  // dev and the packaged app coexist cleanly, each with its own lock.
+  app.setPath("userData", `${app.getPath("userData")}-dev`);
+}
 
 // Older desktop releases registered a Service Worker for every random sidecar
 // port. Those origins share this Electron profile but cannot be enumerated from
@@ -265,6 +289,7 @@ function createSplash(): void {
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff",
   });
   splashWin = win;
+  perfWindow(win, "splash");
   win.on("closed", () => {
     if (splashWin === win) splashWin = null;
   });
@@ -315,6 +340,7 @@ function createWindow(port: number): void {
     },
   });
   mainWin = win;
+  perfWindow(win, "main window");
   routeExternalLinks(win);
   win.on("closed", () => {
     if (mainWin === win) mainWin = null;
@@ -511,6 +537,7 @@ function openFileWindow(absPath: string): void {
     },
   });
   fileWins.set(absPath, win);
+  perfWindow(win, "file window");
   fileDirty.set(absPath, false);
   if (isMac) win.setRepresentedFilename(absPath);
   routeExternalLinks(win);
@@ -848,6 +875,23 @@ function createTray(): void {
 
 function registerIpc(): void {
   ipcMain.handle("app:get-version", () => app.getVersion());
+
+  // Renderer paint milestones (see preload.ts): numbers are renderer-timeOrigin
+  // relative; the label resolves from the sending WebContents.
+  ipcMain.on("perf:renderer", (e, p: Record<string, number>) => {
+    let label = "window";
+    if (mainWin && e.sender === mainWin.webContents) label = "main window";
+    else if (splashWin && e.sender === splashWin.webContents) label = "splash";
+    else {
+      for (const w of fileWins.values()) {
+        if (w.webContents === e.sender) {
+          label = "file window";
+          break;
+        }
+      }
+    }
+    perf(`${label} renderer ${JSON.stringify(p)}`);
+  });
 
   // Core sidecar update (desktop-only; the WebUI's "软件更新" settings section).
   // `installed` is the version staged on disk (version.json) — what the NEXT

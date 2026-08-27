@@ -147,6 +147,10 @@ function bundleGetter(opts: {
 }): () => Promise<string> {
   let cached: string | null = null;
   let cachedMtime = 0;
+  // In-flight dedupe: without it, a request landing while a build is running
+  // (e.g. the sidecar's warmWebui() racing the window's first /webui.js hit)
+  // kicks off a SECOND concurrent full build of the same bundle.
+  let building: Promise<string> | null = null;
   return async () => {
     const fromBinary = injected[opts.key];
     if (fromBinary != null) return fromBinary;
@@ -157,14 +161,22 @@ function bundleGetter(opts: {
       for (const extra of opts.extraDirs ?? []) {
         newest = Math.max(newest, newestSourceMtime(fileURLToPath(new URL(extra, import.meta.url))));
       }
-      if (cached == null || newest > cachedMtime) {
-        const entry = fileURLToPath(new URL(opts.entry, import.meta.url));
-        const res = await Bun.build({ entrypoints: [entry], target: "browser" });
-        if (!res.success) throw new AggregateError(res.logs, `${opts.dist} build failed`);
-        cached = await res.outputs[0]!.text();
-        cachedMtime = newest;
+      if (cached != null && newest <= cachedMtime) return cached;
+      if (!building) {
+        building = (async () => {
+          const t = Date.now();
+          const entry = fileURLToPath(new URL(opts.entry, import.meta.url));
+          const res = await Bun.build({ entrypoints: [entry], target: "browser" });
+          if (!res.success) throw new AggregateError(res.logs, `${opts.dist} build failed`);
+          cached = await res.outputs[0]!.text();
+          cachedMtime = newest;
+          console.log(`[perf] ${opts.dist} dev build ${Date.now() - t}ms`);
+          return cached;
+        })().finally(() => {
+          building = null;
+        });
       }
-      return cached;
+      return building;
     }
 
     if (cached == null) {

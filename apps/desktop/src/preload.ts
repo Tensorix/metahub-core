@@ -10,16 +10,57 @@ import { contextBridge, ipcRenderer } from "electron";
 // synchronously HERE, before any page script runs, so the renderer's first
 // render already has the text (no 加载中 state). Path only in argv — content
 // travels over the allowlisted sync IPC (file:read-sync in main.ts).
+const preloadStart = Date.now();
 const openFileArg = process.argv.find((a) => a.startsWith("--mh-open-file="));
 let initialFile: { path: string; text: string; name: string } | null = null;
+let syncReadMs = -1;
 if (openFileArg) {
   const p = openFileArg.slice("--mh-open-file=".length);
   try {
+    const t = Date.now();
     initialFile = ipcRenderer.sendSync("file:read-sync", p) ?? null;
+    syncReadMs = Date.now() - t;
   } catch {
     initialFile = null; // fall back to the async read in file-editor.tsx
   }
 }
+
+// Renderer paint milestones → the main process's [perf] log (numbers are
+// relative to this renderer's timeOrigin). Sent once FCP is observed, or on a
+// timeout fallback for pages that never paint contentful frames.
+window.addEventListener("load", () => {
+  let sent = false;
+  const send = () => {
+    if (sent) return;
+    sent = true;
+    const nav = performance.getEntriesByType("navigation")[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    const paints = Object.fromEntries(
+      performance.getEntriesByType("paint").map((p) => [p.name, Math.round(p.startTime)]),
+    );
+    ipcRenderer.send("perf:renderer", {
+      dcl: nav ? Math.round(nav.domContentLoadedEventStart) : -1,
+      load: nav ? Math.round(nav.loadEventStart) : -1,
+      fp: paints["first-paint"] ?? -1,
+      fcp: paints["first-contentful-paint"] ?? -1,
+      preloadMs: Date.now() - preloadStart,
+      syncReadMs,
+    });
+  };
+  try {
+    const po = new PerformanceObserver(() => {
+      if (performance.getEntriesByType("paint").some((p) => p.name === "first-contentful-paint")) {
+        send();
+        po.disconnect();
+      }
+    });
+    po.observe({ type: "paint", buffered: true });
+  } catch {
+    /* paint timing unsupported — timeout fallback below */
+  }
+  setTimeout(send, 3000);
+});
 
 contextBridge.exposeInMainWorld("metahubDesktop", {
   platform: process.platform,
