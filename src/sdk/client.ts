@@ -351,7 +351,8 @@ export function createClient(opts: SdkOptions = {}) {
     const salt = manifest?.drop?.password_salt;
     if (opts.dropPassword && salt) {
       passwordProofP ??= deriveDropPasswordVerifier(opts.dropPassword, salt);
-      headers["x-drop-pass"] = await passwordProofP;
+      const proof = await passwordProofP;
+      if (proof) headers["x-drop-pass"] = proof;
     }
     return headers;
   };
