@@ -486,10 +486,21 @@ export const updateRecordPrepared = grouped(function updateRecordPrepared(
   cells: PreparedRecordCell[],
 ): RecordRow {
   const rec = db
-    .query("SELECT id, database_id FROM records WHERE id = ? AND __deleted = 0")
-    .get(id) as { id: string; database_id: string } | null;
+    .query("SELECT id, database_id, data FROM records WHERE id = ? AND __deleted = 0")
+    .get(id) as { id: string; database_id: string; data: string } | null;
   if (!rec) throw new MhError("not_found", `no such record: ${id}`);
-  for (const { prop, value } of cells) emit(db, "records", id, prop.id, value);
+  // Same-value writes are skipped, not re-emitted: a no-op emit would still
+  // mint a fresh HLC and could beat an offline device's REAL edit under LWW
+  // (and it floods history/audit with noise). Same rule as updateDocument.
+  const cur = JSON.parse(rec.data || "{}") as Record<string, unknown>;
+  for (const { prop, value } of cells) {
+    const exists = Object.hasOwn(cur, prop.id);
+    const same =
+      value === undefined
+        ? !exists
+        : exists && JSON.stringify(value) === JSON.stringify(cur[prop.id]);
+    if (!same) emit(db, "records", id, prop.id, value);
+  }
   return getRecord(db, id)!;
 });
 

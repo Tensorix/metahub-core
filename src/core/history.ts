@@ -22,14 +22,14 @@ function hlcMillis(hlc: string): number {
   return Number(hlc.slice(0, 15));
 }
 
-function hlcIso(hlc: string): string {
+export function hlcIso(hlc: string): string {
   return new Date(hlcMillis(hlc)).toISOString();
 }
 
 // A fully-read oplog row: Change with txn always present (CHANGE_SELECT
 // includes it; NULL for legacy rows). The reused select list keeps these
 // queries locked to the Change interface.
-interface RawChange {
+export interface RawChange {
   hlc: string;
   node_id: string;
   dataset: string;
@@ -42,10 +42,36 @@ interface RawChange {
 /** Where a revision came from, derived from its change-group label. */
 export type RevisionKind = "user" | "repair" | "revert";
 
+// Txn id grammar (see withChangeGroup in crdt.ts):
+//   [actor "/"] [kind-label ":"] suffix
+// e.g. "xxxxxxxx", "revert:xxxxxxxx", "ai/xxxxxxxx", "ai/revert:xxxxxxxx".
+// The actor segment says who drove the mutation (opaque tag, e.g. "ai" for an
+// agent-driven CLI), the label says what machinery wrote it. Older peers parse
+// unknown-prefixed txns as kind "user" — an acceptable display-only downgrade.
+export interface TxnInfo {
+  actor: string | null;
+  kind: RevisionKind;
+}
+
+/** Split a txn id into its actor and kind segments. */
+export function parseTxn(txn: string | null): TxnInfo {
+  let rest = txn ?? "";
+  let actor: string | null = null;
+  const slash = rest.indexOf("/");
+  if (slash > 0) {
+    actor = rest.slice(0, slash);
+    rest = rest.slice(slash + 1);
+  }
+  const kind: RevisionKind = rest.startsWith("repair:")
+    ? "repair"
+    : rest.startsWith("revert:")
+      ? "revert"
+      : "user";
+  return { actor, kind };
+}
+
 function revisionKind(txn: string | null): RevisionKind {
-  if (txn?.startsWith("repair:")) return "repair";
-  if (txn?.startsWith("revert:")) return "revert";
-  return "user";
+  return parseTxn(txn).kind;
 }
 
 /**
@@ -54,7 +80,7 @@ function revisionKind(txn: string | null): RevisionKind {
  * to author + wall-clock gap. Clustering depends only on oplog content, so
  * every synced node renders the same list.
  */
-function clusterRevisions(changes: RawChange[]): RawChange[][] {
+export function clusterRevisions(changes: RawChange[]): RawChange[][] {
   const groups: RawChange[][] = [];
   let cur: RawChange[] = [];
   for (const c of changes) {
@@ -75,7 +101,7 @@ function clusterRevisions(changes: RawChange[]): RawChange[][] {
 }
 
 /** True when a JSON-encoded oplog value is a truthy flag (e.g. __deleted = 1). */
-function flagSet(value: string | null): boolean {
+export function flagSet(value: string | null): boolean {
   return value !== null && value !== "0" && value !== "false" && value !== "null";
 }
 
@@ -141,6 +167,8 @@ export interface DocRevision {
   node_id: string;
   /** Source of the revision: a user edit, a repairHub fix, or a revert. */
   kind: RevisionKind;
+  /** Actor tag from the txn's actor segment (e.g. "ai"), null for untagged. */
+  actor: string | null;
   changes: number;
   created: boolean;
   deleted: boolean;
@@ -196,6 +224,7 @@ export function listDocumentRevisions(db: DbDriver, id: string): DocRevision[] {
       at: hlcIso(last.hlc),
       node_id: last.node_id,
       kind: revisionKind(last.txn),
+      actor: parseTxn(last.txn).actor,
       changes: group.length,
       created,
       deleted,
@@ -343,6 +372,8 @@ export interface RecordRevision {
   at: string;
   node_id: string;
   kind: RevisionKind;
+  /** Actor tag from the txn's actor segment (e.g. "ai"), null for untagged. */
+  actor: string | null;
   changes: number;
   created: boolean;
   deleted: boolean;
@@ -369,6 +400,7 @@ function recordRevisionOf(group: RawChange[]): RecordRevision {
     at: hlcIso(last.hlc),
     node_id: last.node_id,
     kind: revisionKind(last.txn),
+    actor: parseTxn(last.txn).actor,
     changes: group.length,
     created,
     deleted,
@@ -565,6 +597,8 @@ export interface PropertyRevision {
   at: string;
   node_id: string;
   kind: RevisionKind;
+  /** Actor tag from the txn's actor segment (e.g. "ai"), null for untagged. */
+  actor: string | null;
   changes: number;
   created: boolean;
   deleted: boolean;
@@ -604,6 +638,7 @@ export function listPropertyRevisions(db: DbDriver, id: string): PropertyRevisio
         at: hlcIso(last.hlc),
         node_id: last.node_id,
         kind: revisionKind(last.txn),
+        actor: parseTxn(last.txn).actor,
         changes: group.length,
         created,
         deleted,
@@ -735,7 +770,7 @@ export const revertProperty = grouped(function revertProperty(
     .all(id) as { row_id: string; hlc: string; value: string | null; txn: string | null }[];
 
   const isCascade = (txn: string | null): boolean =>
-    txn !== null && (schemaTxns.has(txn) || txn.startsWith("repair:"));
+    txn !== null && (schemaTxns.has(txn) || parseTxn(txn).kind === "repair");
 
   let restored = 0;
   let skipped = 0;

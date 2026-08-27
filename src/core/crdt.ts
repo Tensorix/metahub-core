@@ -35,6 +35,32 @@ export const CHANGE_SELECT = CHANGE_COLS.join(", ");
 // a module-level slot (set around each public mutator via grouped()) is enough.
 let currentTxn: string | null = null;
 
+// Process-wide actor tag baked into every minted txn id (`ai/xxxxxxxx`,
+// `ai/revert:xxxxxxxx`). Orthogonal to the kind label: the actor segment says
+// WHO drove the mutation, the label says WHAT machinery wrote it. Core carries
+// the tag as an opaque string — the CLI decides the value (e.g. "ai" when a
+// non-TTY agent is driving), the UI decides how to render it. It replicates
+// inside txn, so no schema or wire-format change is needed. Never set in
+// server mode: the desktop sidecar runs startServer() without a TTY and would
+// otherwise mis-attribute every WebUI write.
+let currentActor: string | null = null;
+
+/**
+ * Set the actor tag for all txns minted by this process from now on. Tags must
+ * be short lowercase slugs without "/" or ":" (those delimit txn segments).
+ */
+export function setActorTag(tag: string | null): void {
+  if (tag !== null && !/^[a-z0-9_-]{1,16}$/.test(tag)) {
+    throw new Error(`invalid actor tag: ${tag}`);
+  }
+  currentActor = tag;
+}
+
+/** Current process-wide actor tag (null = untagged / human). */
+export function actorTag(): string | null {
+  return currentActor;
+}
+
 // Optional node-id override for the next emits, same single-threaded-mutator
 // assumption as currentTxn above. Used by edit-share write handlers so a write
 // made through a public share is attributed to that share's synthetic "guest"
@@ -61,11 +87,14 @@ export function withNodeId<T>(node: string | null, fn: () => T): T {
 /**
  * Run `fn` with all emits stamped with one shared txn id. Nested calls keep the
  * outermost group (a revert that calls updateDocument is ONE revision). `label`
- * prefixes the id ("repair:", "revert:") so history can classify the source.
+ * prefixes the id ("repair:", "revert:") so history can classify the source,
+ * and the process actor tag (if set) prefixes both as its own segment
+ * ("ai/revert:xxxxxxxx") — see parseTxn() in history.ts for the grammar.
  */
 export function withChangeGroup<T>(label: string | null, fn: () => T): T {
   if (currentTxn !== null) return fn();
-  currentTxn = (label ? label + ":" : "") + randomSuffix(8);
+  currentTxn =
+    (currentActor ? currentActor + "/" : "") + (label ? label + ":" : "") + randomSuffix(8);
   try {
     return fn();
   } finally {

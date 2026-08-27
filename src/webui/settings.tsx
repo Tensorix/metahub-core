@@ -62,6 +62,7 @@ import {
 import { GROUPS, resolvePage, pageLabel, type PageId, type PageDef } from "./settings/nav.ts";
 import { SetRow, Switch, SetSection, PageHeader, DangerZone, RowMenu } from "./settings/primitives.tsx";
 import { CacheRingHero, type RingState } from "./settings/cache-ring.tsx";
+import { AuditPage } from "./settings/audit-page.tsx";
 
 const THEMES: { value: ThemeChoice; icon: string; name: string; desc: string }[] = [
   { value: "light", icon: "sun", name: "浅色", desc: "始终使用明亮界面" },
@@ -371,6 +372,10 @@ export function SettingsView({ onUpdatePending, updatePending, focusSec }: { onU
                   the page is hidden (nav.ts show()) and resolvePage never lands
                   here in a no-origin shell. */}
               {page === "devices" && <DevicesPanel />}
+
+              {/* The global change feed with actor attribution — AI (agent CLI)
+                  writes carry the "ai" txn tag and can be reverted per group. */}
+              {page === "audit" && <AuditPage />}
 
               {page === "hosting" && <SiteHostingSettings />}
 

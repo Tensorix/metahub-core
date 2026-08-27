@@ -44,6 +44,27 @@ export function mapApiRequest(
     case "GET /api/database/activity":
       return db ? { op: "listDatabaseActivity", args: [db, num(q.get("limit"))] } : null;
 
+    // audit
+    case "GET /api/audit":
+      return {
+        op: "listAuditEntries",
+        args: [
+          {
+            limit: num(q.get("limit")),
+            before: q.get("before") ?? undefined,
+            actor: q.get("actor") ?? undefined,
+          },
+        ],
+      };
+    case "GET /api/audit/entry": {
+      const txn = q.get("txn");
+      return txn ? { op: "auditEntryDetail", args: [txn] } : null;
+    }
+    case "POST /api/audit/revert": {
+      const txn = q.get("txn");
+      return txn ? { op: "revertChangeGroup", args: [txn] } : null;
+    }
+
     // properties
     case "GET /api/properties":
       return db ? { op: "listProperties", args: [db] } : null;

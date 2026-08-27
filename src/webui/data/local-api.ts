@@ -84,6 +84,12 @@ export const localApi = {
   recordFieldHistory: (id: string, prop: string) => rpc("recordFieldHistory", id, prop),
   revertRecord: (id: string, to: string) => rpc("revertRecord", id, to),
 
+  // audit
+  auditList: (opts?: { limit?: number; before?: string; actor?: string }) =>
+    rpc("listAuditEntries", opts),
+  auditEntry: (txn: string) => rpc("auditEntryDetail", txn),
+  auditRevert: (txn: string) => rpc("revertChangeGroup", txn),
+
   // documents
   listDocuments: (dbId?: string) =>
     rpc("listDocuments", dbId ? { database_id: dbId } : undefined),

@@ -97,6 +97,7 @@ import {
   revertProperty,
   listDatabaseActivity,
 } from "../../core/history.ts";
+import { listAuditEntries, auditEntryDetail, revertChangeGroup } from "../../core/audit.ts";
 import { search } from "../../core/search.ts";
 import {
   resolveSite,
@@ -923,6 +924,12 @@ const ops: Record<string, Op> = {
   deleteDatabase: (id: string) => ({ ok: deleteDatabase(db!, id) }),
   listDatabaseActivity: (dbId: string, limit?: number) =>
     listDatabaseActivity(db!, dbId, { limit }),
+
+  // audit
+  listAuditEntries: (opts?: { limit?: number; before?: string; actor?: string }) =>
+    listAuditEntries(db!, opts ?? {}),
+  auditEntryDetail: (txn: string) => auditEntryDetail(db!, txn),
+  revertChangeGroup: (txn: string) => revertChangeGroup(db!, txn),
 
   // properties
   listProperties: (dbId: string) => listProperties(db!, dbId),

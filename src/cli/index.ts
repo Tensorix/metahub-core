@@ -26,6 +26,8 @@ import cache from "./commands/cache.ts";
 import blob from "./commands/blob.ts";
 import config, { configScopedHelp } from "./commands/config.ts";
 import edge from "./commands/edge.ts";
+import audit from "./commands/audit.ts";
+import { setActorTag } from "../core/crdt.ts";
 import { parseDuration } from "../core/sync/token.ts";
 import { startServer } from "../core/sync/server.ts";
 import { errorCode } from "../core/errors.ts";
@@ -79,6 +81,7 @@ const main = defineCommand({
     blob,
     config,
     edge,
+    audit,
   },
 });
 
@@ -178,5 +181,26 @@ if (scopedConfigHelp) {
       }),
   );
 } else {
+  // Actor attribution for audit history: every txn this process mints carries
+  // an actor tag. MH_ACTOR wins ("human"/empty = untagged); otherwise a
+  // non-TTY stdout means an agent/script is driving (the same signal that
+  // switches output to JSON — SKILL.md documents that JSON mode IS the agent
+  // interface). Only in this direct-subcommand branch: the --server branch
+  // above must stay untagged or the desktop sidecar (non-TTY) would
+  // mis-attribute every WebUI edit as "ai".
+  const actorEnv = process.env.MH_ACTOR;
+  const actor =
+    actorEnv !== undefined
+      ? actorEnv === "" || actorEnv === "human"
+        ? null
+        : actorEnv
+      : process.stdout.isTTY
+        ? null
+        : "ai";
+  try {
+    setActorTag(actor);
+  } catch {
+    fail(`invalid MH_ACTOR value: ${actor}`, "invalid_input");
+  }
   runMain(main, { showUsage });
 }

@@ -5,7 +5,7 @@
 import { isNoOrigin } from "../data/replica.ts";
 import { isDesktop } from "./shared.ts";
 
-export type PageId = "appearance" | "quicknote" | "offline" | "backup" | "devices" | "hosting" | "about";
+export type PageId = "appearance" | "quicknote" | "offline" | "backup" | "devices" | "audit" | "hosting" | "about";
 
 export interface PageDef { id: PageId; label: string; icon: string; show: () => boolean }
 
@@ -20,6 +20,7 @@ export const GROUPS: { key: "device" | "workspace" | "app"; pages: PageDef[] }[]
   { key: "workspace", pages: [
     { id: "backup", label: "数据与备份", icon: "cloudCheck", show: () => true },
     { id: "devices", label: "设备", icon: "monitor", show: () => !isNoOrigin() },
+    { id: "audit", label: "操作审计", icon: "history", show: () => true },
     { id: "hosting", label: "站点与发布", icon: "globe", show: () => true },
   ]},
   // Headless group (no .set-rail-group-head): the app itself, last in the list.

@@ -49,6 +49,7 @@ import {
   revertProperty,
   listDatabaseActivity,
 } from "../../core/history.ts";
+import { listAuditEntries, auditEntryDetail, revertChangeGroup } from "../../core/audit.ts";
 import { search } from "../../core/search.ts";
 import { getNodeId, getNodeLabel, setNodeLabel, displayNodes } from "../../core/node.ts";
 import {
@@ -197,9 +198,60 @@ const RevisionBase = z.object({
   at: z.string().describe("Wall-clock time of the revision (ISO 8601)"),
   node_id: z.string(),
   kind: z.enum(["user", "repair", "revert"]).describe("Source of the revision"),
+  actor: z
+    .string()
+    .nullable()
+    .describe('Actor tag from the change group ("ai" = agent-driven CLI write)'),
   changes: z.number(),
   created: z.boolean(),
   deleted: z.boolean(),
+});
+const AuditEntitySchema = z.object({
+  dataset: z.string(),
+  id: z.string(),
+  label: z.string().nullable(),
+  database_id: z.string().nullable(),
+  database_label: z.string().nullable(),
+  created: z.boolean(),
+  deleted: z.boolean(),
+  fields: z.number(),
+  blocks_changed: z.number(),
+  blocks_deleted: z.number(),
+});
+const AuditEntryBase = z.object({
+  version: z.string(),
+  at: z.string(),
+  node_id: z.string(),
+  kind: z.enum(["user", "repair", "revert"]),
+  actor: z.string().nullable(),
+  txn: z.string().nullable().describe("Change-group id; null for legacy display-only entries"),
+  changes: z.number(),
+});
+const AuditPageSchema = z.object({
+  entries: z.array(AuditEntryBase.extend({ entities: z.array(AuditEntitySchema) })),
+  next: z.string().nullable().describe("Pass as `before` for the next (older) page"),
+});
+const AuditDiffSchema = z.object({
+  col: z.string(),
+  label: z.string(),
+  before: z.any().optional(),
+  after: z.any().optional(),
+});
+const AuditEntryDetailSchema = AuditEntryBase.extend({
+  entities: z.array(
+    AuditEntitySchema.extend({
+      diffs: z.array(AuditDiffSchema),
+      block_diffs: z.array(AuditDiffSchema),
+    }),
+  ),
+});
+const RevertGroupResultSchema = z.object({
+  txn: z.string(),
+  changed: z.boolean(),
+  restored_registers: z.number(),
+  skipped_registers: z.number(),
+  removed_rows: z.number(),
+  skipped_rows: z.number(),
 });
 const DocRevisionSchema = RevisionBase.extend({
   title_changed: z.boolean(),
@@ -498,6 +550,37 @@ export const webuiRoutes: Route[] = [
         limit: limit ? Number(limit) : undefined,
       });
     }),
+  },
+  {
+    method: "GET",
+    path: "/api/audit",
+    summary:
+      "The global audit feed: every change group across the whole hub, newest first. " +
+      "Query: ?limit=<n>&before=<cursor>&actor=<tag>",
+    response: AuditPageSchema,
+    handler: handle((req, { db }) => {
+      const limit = opt(req, "limit");
+      return listAuditEntries(db, {
+        limit: limit ? Number(limit) : undefined,
+        before: opt(req, "before") || undefined,
+        actor: opt(req, "actor") || undefined,
+      });
+    }),
+  },
+  {
+    method: "GET",
+    path: "/api/audit/entry",
+    summary: "Expand one audit entry with per-register before/after diffs. Query: ?txn=<id>",
+    response: AuditEntryDetailSchema,
+    handler: handle((req, { db }) => auditEntryDetail(db, need(req, "txn"))),
+  },
+  {
+    method: "POST",
+    path: "/api/audit/revert",
+    summary:
+      "Undo one change group as a new forward revision; registers overwritten since are kept. Query: ?txn=<id>",
+    response: RevertGroupResultSchema,
+    handler: handle((req, { db }) => revertChangeGroup(db, need(req, "txn"))),
   },
   {
     method: "GET",

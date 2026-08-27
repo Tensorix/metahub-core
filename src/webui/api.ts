@@ -148,6 +148,15 @@ export type {
   RevertDocResult,
   RevertRecordResult,
 };
+// Audit types likewise pass through verbatim from core (src/core/audit.ts).
+import type {
+  AuditPage,
+  AuditEntry,
+  AuditEntity,
+  AuditEntryDetail,
+  RevertGroupResult,
+} from "../core/audit.ts";
+export type { AuditPage, AuditEntry, AuditEntity, AuditEntryDetail, RevertGroupResult };
 
 // Server-shaped: assembled in routes.ts (no core row behind it).
 export interface NodeInfo {
@@ -789,6 +798,17 @@ const httpApi = {
     req<FieldHistoryEntry[]>("GET", `/api/record/field-history?id=${q(id)}&prop=${q(prop)}`),
   revertRecord: (id: string, to: string) =>
     req<RevertRecordResult>("POST", `/api/record/revert?id=${q(id)}`, { to }),
+  auditList: (opts?: { limit?: number; before?: string; actor?: string }) => {
+    const p = new URLSearchParams();
+    if (opts?.limit != null) p.set("limit", String(opts.limit));
+    if (opts?.before) p.set("before", opts.before);
+    if (opts?.actor) p.set("actor", opts.actor);
+    const qs = p.toString();
+    return req<AuditPage>("GET", `/api/audit${qs ? `?${qs}` : ""}`);
+  },
+  auditEntry: (txn: string) => req<AuditEntryDetail>("GET", `/api/audit/entry?txn=${q(txn)}`),
+  auditRevert: (txn: string) =>
+    req<RevertGroupResult>("POST", `/api/audit/revert?txn=${q(txn)}`),
   nodes: () => req<NodeInfo[]>("GET", "/api/nodes"),
   // Rename THIS node. Careful: through the api proxy the target flips with
   // replicaActive() (hydration timing) — a rename UI must pick one end
