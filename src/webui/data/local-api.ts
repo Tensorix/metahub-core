@@ -24,12 +24,16 @@ const CODE_STATUS: Record<string, number> = {
   network: 502,
 };
 
+// The audit revert can rewrite ANY dataset — databases, documents, records,
+// properties — so it invalidates both caches unconditionally.
+const TOUCHES_EVERYTHING = new Set(["revertChangeGroup"]);
+
 function touchesNav(op: string): boolean {
-  return /^(create|update|delete|move|duplicate|revert)(Database|Document)/.test(op);
+  return TOUCHES_EVERYTHING.has(op) || /^(create|update|delete|move|duplicate|revert)(Database|Document)/.test(op);
 }
 
 function touchesRecords(op: string): boolean {
-  return /^(create|update|delete|move|revert)Record/.test(op);
+  return TOUCHES_EVERYTHING.has(op) || /^(create|update|delete|move|revert)Record/.test(op);
 }
 
 /** RPC with HTTP-parity error translation + nav invalidation. */

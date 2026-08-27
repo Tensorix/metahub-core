@@ -45,12 +45,16 @@ let currentTxn: string | null = null;
 // otherwise mis-attribute every WebUI write.
 let currentActor: string | null = null;
 
+/** Legal actor tag: a short lowercase slug without "/" or ":" (those delimit
+ *  txn segments). Shared with the audit feed's actor filter. */
+export const ACTOR_TAG_RE = /^[a-z0-9_-]{1,16}$/;
+
 /**
  * Set the actor tag for all txns minted by this process from now on. Tags must
  * be short lowercase slugs without "/" or ":" (those delimit txn segments).
  */
 export function setActorTag(tag: string | null): void {
-  if (tag !== null && !/^[a-z0-9_-]{1,16}$/.test(tag)) {
+  if (tag !== null && !ACTOR_TAG_RE.test(tag)) {
     throw new Error(`invalid actor tag: ${tag}`);
   }
   currentActor = tag;

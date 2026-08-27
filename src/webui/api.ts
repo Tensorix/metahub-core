@@ -383,8 +383,15 @@ export class ApiError extends Error {
  *  manual refresh can't go stale. */
 export const NAV_INVALIDATE = "mh-nav-invalidate";
 
+// The audit revert (POST /api/audit/revert) can rewrite ANY dataset, so it
+// invalidates both nav and record caches unconditionally.
 function touchesNav(method: string, path: string): boolean {
-  return method !== "GET" && (path.startsWith("/api/database") || path.startsWith("/api/document"));
+  if (method === "GET") return false;
+  return (
+    path.startsWith("/api/database") ||
+    path.startsWith("/api/document") ||
+    path.startsWith("/api/audit/revert")
+  );
 }
 
 /** Fired after any successful record mutation. relation-titles.ts subscribes to
@@ -394,7 +401,8 @@ function touchesNav(method: string, path: string): boolean {
 export const REC_INVALIDATE = "mh-rec-invalidate";
 
 function touchesRecords(method: string, path: string): boolean {
-  return method !== "GET" && path.startsWith("/api/record");
+  if (method === "GET") return false;
+  return path.startsWith("/api/record") || path.startsWith("/api/audit/revert");
 }
 
 // ---- auth -------------------------------------------------------------------

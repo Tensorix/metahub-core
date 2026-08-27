@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runSchema } from "./db.ts";
-import { setActorTag } from "./crdt.ts";
+import { setActorTag, withTxnId, emit } from "./crdt.ts";
 import { parseTxn } from "./history.ts";
 import { createDatabase } from "./databases.ts";
 import { addProperty } from "./properties.ts";
@@ -217,6 +217,63 @@ test("reverting a document edit restores the body via doc_blocks", () => {
   const r = revertChangeGroup(db, txn);
   expect(r.changed).toBe(true);
   expect(getDocument(db, doc.id)!.body).toBe("hello");
+});
+
+test("actor filter treats '_' literally, not as a LIKE wildcard", () => {
+  const db = makeNode("nodeA");
+  const { rec } = seed(db);
+  setActorTag("my_bot");
+  updateRecord(db, rec.id, { title: "a" });
+  setActorTag("myxbot");
+  updateRecord(db, rec.id, { title: "b" });
+  setActorTag("my-bot");
+  updateRecord(db, rec.id, { title: "c" });
+  setActorTag(null);
+  const page = listAuditEntries(db, { actor: "my_bot" });
+  expect(page.entries.length).toBe(1);
+  expect(page.entries[0]!.actor).toBe("my_bot");
+});
+
+test("a txn larger than the fetch window lists whole, without cross-page duplicates", () => {
+  const db = makeNode("nodeA");
+  const { d } = seed(db);
+  const rec = createRecord(db, d.id, { title: "big" });
+  // 900 registers in one txn > the limit:1 fetch window (chunk = 800).
+  withTxnId("bigtxn00", () => {
+    for (let i = 0; i < 900; i++) emit(db, "records", rec.id, `p${i}`, i);
+  });
+  const p1 = listAuditEntries(db, { limit: 1 });
+  expect(p1.entries.length).toBe(1);
+  expect(p1.entries[0]!.txn).toBe("bigtxn00");
+  expect(p1.entries[0]!.changes).toBe(900); // completed, not cut at the window edge
+  const p2 = listAuditEntries(db, { limit: 100, before: p1.next! });
+  expect(p2.entries.length).toBeGreaterThan(0);
+  expect(p2.entries.some((e) => e.txn === "bigtxn00")).toBe(false);
+});
+
+test("revert and detail exclude protocol rows minted under the same txn", () => {
+  const db = makeNode("nodeA");
+  const { d } = seed(db);
+  // A share-guest intent: business write + intent receipt share one txn.
+  let recId = "";
+  withTxnId("intent:guest:i1:fp", () => {
+    recId = createRecord(db, d.id, { title: "From guest" }).id;
+    emit(db, "intent_receipts", "guest:i1", "result", { ok: true });
+  });
+
+  const detail = auditEntryDetail(db, "intent:guest:i1:fp");
+  expect(detail.entities.some((e) => e.dataset === "intent_receipts")).toBe(false);
+
+  const r = revertChangeGroup(db, "intent:guest:i1:fp");
+  expect(r.removed_rows).toBe(1); // the created record only, not the receipt
+  expect(getRecord(db, recId)).toBeNull();
+  // the receipt row is untouched: no tombstone register was minted for it
+  const junk = db
+    .query(
+      "SELECT COUNT(*) AS n FROM crdt_changes WHERE dataset = 'intent_receipts' AND col = '__deleted'",
+    )
+    .get() as { n: number };
+  expect(junk.n).toBe(0);
 });
 
 // ---- no-op hygiene (updateRecordPrepared) ------------------------------------
