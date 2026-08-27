@@ -4,6 +4,7 @@ import { getDocument, updateDocument, documentTitleMap } from "../documents.ts";
 import { listProperties, type PropertyRow } from "../properties.ts";
 import { listRecords, getRecord, createRecord, updateRecord, recordTitleMap } from "../records.ts";
 import { toCsv, parseCsv } from "../csv.ts";
+import { encodeRelationCell, decodeRelationCell } from "../relation-cells.ts";
 import { MhError } from "../errors.ts";
 
 export interface FileSyncResult {
@@ -37,14 +38,6 @@ function cellToString(value: unknown): string {
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
-}
-
-/** Render a relation cell readably: target titles joined with ", ", raw id as
- *  the per-value fallback (dangling ref / empty title / untitled target db).
- *  The importer resolves either form back — see the relation branch below. */
-function relationToString(value: unknown, titles: Map<string, string>): string {
-  const arr = Array.isArray(value) ? value : value == null ? [] : [value];
-  return arr.map((v) => titles.get(String(v)) ?? String(v)).join(", ");
 }
 
 /** Decode a CSV cell back to a value: JSON for array/object literals, else raw. */
@@ -85,7 +78,7 @@ async function exportDb(db: Database, id: string, path: string): Promise<FileSyn
     r.id,
     ...props.map((p) =>
       p.type === "relation" || p.type === "doc"
-        ? relationToString(r.cells[p.id], titlesFor(p))
+        ? encodeRelationCell(r.cells[p.id], titlesFor(p))
         : cellToString(r.values[p.name]),
     ),
   ]);
@@ -106,12 +99,10 @@ async function importDb(db: Database, id: string, path: string): Promise<FileSyn
   const header = grid[0]!;
   const idCol = header.indexOf("id");
   // Column name → prop, first live match wins (same aliasing as name-keyed
-  // `values`). Only relation/doc columns need the type: their cells export as
-  // ", "-joined titles, which must split back before coerce resolves each
-  // element (ids pass through, titles resolve by name — loud on ambiguity or
-  // a miss). JSON arrays (ids or titles) come through parseCell whole. A title
-  // containing a literal comma mis-splits and fails loudly; the escape hatch
-  // is rewriting that one cell as a JSON array or ids.
+  // `values`). Only relation/doc columns need the type: their cells decode via
+  // the relation-cell codec (quote-aware ", " title list; whole-cell JSON id
+  // arrays as the legacy/escape-hatch form), then coerce resolves each element
+  // — ids pass through, titles resolve by name, loud on ambiguity or a miss.
   const propByName = new Map<string, PropertyRow>();
   for (const p of listProperties(db, id)) if (!propByName.has(p.name)) propByName.set(p.name, p);
   let count = 0;
@@ -122,11 +113,9 @@ async function importDb(db: Database, id: string, path: string): Promise<FileSyn
       if (c === idCol) continue;
       const raw = cells[c];
       if (raw == null || raw === "") continue; // leave unset cells untouched
-      let v = parseCell(raw);
       const colType = propByName.get(header[c]!)?.type;
-      if ((colType === "relation" || colType === "doc") && typeof v === "string")
-        v = v.split(",").map((s) => s.trim()).filter(Boolean);
-      data[header[c]!] = v;
+      data[header[c]!] =
+        colType === "relation" || colType === "doc" ? decodeRelationCell(raw) : parseCell(raw);
     }
     const rowId = idCol >= 0 ? cells[idCol]?.trim() : undefined;
     if (rowId && getRecord(db, rowId)) updateRecord(db, rowId, data);

@@ -117,6 +117,37 @@ test("CSV exports relation cells as titles (id fallback) and imports them back",
   await expect(syncFiles(db, path, tasks.id)).rejects.toThrow(/ambiguous/);
 });
 
+test("relation titles containing commas round-trip without retargeting", async () => {
+  const db = newDb();
+  const projects = createDatabase(db, { name: "Projects" });
+  addProperty(db, projects.id, { name: "Name", type: "text" });
+  const combo = createRecord(db, projects.id, { Name: "Foo, Bar" });
+  const alpha = createRecord(db, projects.id, { Name: "Alpha" });
+  // Decoys: if "Foo, Bar" ever mis-split, these would silently absorb the halves.
+  createRecord(db, projects.id, { Name: "Foo" });
+  createRecord(db, projects.id, { Name: "Bar" });
+
+  const tasks = createDatabase(db, { name: "Tasks" });
+  addProperty(db, tasks.id, { name: "Title", type: "text" });
+  addProperty(db, tasks.id, { name: "Project", type: "relation", config: { database: projects.id } });
+  createRecord(db, tasks.id, { Title: "t1", Project: [combo.id, alpha.id] });
+
+  const path = tmpPath("comma.csv");
+  await syncFiles(db, tasks.id, path);
+  const csv = await Bun.file(path).text();
+  // codec quotes the comma title, then the CSV layer quotes the whole cell
+  expect(csv).toContain('""Foo, Bar""');
+
+  await syncFiles(db, path, tasks.id);
+  expect(listRecords(db, tasks.id, {})[0]!.values.Project).toEqual([combo.id, alpha.id]);
+
+  // Hand-authored quoted form resolves too (cell hand-written as CSV text).
+  const rec = listRecords(db, tasks.id, {})[0]!;
+  await Bun.write(path, `id,Title,Project\n${rec.id},t1,"Alpha, ""Foo, Bar"""\n`);
+  await syncFiles(db, path, tasks.id);
+  expect(listRecords(db, tasks.id, {})[0]!.values.Project).toEqual([alpha.id, combo.id]);
+});
+
 test("rejects refs that are neither doc nor table", async () => {
   const db = newDb();
   const t = createDatabase(db, { name: "Tasks" });

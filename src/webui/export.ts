@@ -1,4 +1,5 @@
 import { toCsv } from "../core/csv.ts";
+import { encodeRelationCell } from "../core/relation-cells.ts";
 import { api, type Prop, type Rec } from "./api.ts";
 import { recordTitle } from "./relation-titles.ts";
 
@@ -78,19 +79,11 @@ export function databaseToCsv(
     r.id,
     ...props.map((p) =>
       p.type === "relation" || p.type === "doc"
-        ? relationToString(r.cells[p.id], relTitles?.get(p.id))
+        ? encodeRelationCell(r.cells[p.id], relTitles?.get(p.id))
         : cellToString(r.cells[p.id]),
     ),
   ]);
   return toCsv([header, ...rows]);
-}
-
-/** Relation cells export as ", "-joined titles (id fallback per value) — the
- *  same readable form the CLI's CSV sync writes, and one its importer resolves
- *  back by name. */
-function relationToString(value: unknown, titles?: Map<string, string>): string {
-  const arr = Array.isArray(value) ? value : value == null ? [] : [value];
-  return arr.map((v) => titles?.get(String(v)) ?? String(v)).join(", ");
 }
 
 function cellToString(value: unknown): string {

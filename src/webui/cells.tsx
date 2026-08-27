@@ -115,6 +115,14 @@ export function coerceInput(_type: PropType, raw: string): unknown {
   return raw;
 }
 
+/** Types safely editable through a bare contentEditable (board card titles,
+ *  the peek <h2>). Only free-text types qualify: number/date rely on
+ *  `<input type=…>` shaping (coerceInput is identity), and checkbox/select/
+ *  multi_select/relation/doc edit through pickers. */
+export function isPlainTextEditable(t: PropType): boolean {
+  return t === "text" || t === "url";
+}
+
 export function cellText(prop: Prop, val: unknown): string {
   if (val == null) return "";
   if (Array.isArray(val)) {

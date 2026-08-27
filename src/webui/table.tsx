@@ -25,7 +25,7 @@ import {
 } from "./ui.tsx";
 import { SYNCED_EVENT } from "./data/replica.ts";
 import { DB_TABS, type DbTab } from "./view.ts";
-import { Chip, CellDisplay, coerceInput, cellText, optColor, relationLabel, docLabel } from "./cells.tsx";
+import { Chip, CellDisplay, coerceInput, cellText, optColor, relationLabel, docLabel, isPlainTextEditable } from "./cells.tsx";
 import {
   relationTitleList,
   relationTitleProp,
@@ -1706,6 +1706,9 @@ export function RecordPeek({
   const { open, close } = useDrawerTransition(onClose);
   const { width, handle } = useDrawerResize("mh.peekW");
   const titleProp = props[0];
+  // Free-text titles edit in place; other types edit through their proprow
+  // editors below (committing raw <h2> text would corrupt them).
+  const titleEditable = titleProp != null && isPlainTextEditable(titleProp.type);
   return (
     <>
       <div class={"scrim" + (open ? " open" : "")} onClick={close} />
@@ -1736,9 +1739,9 @@ export function RecordPeek({
           ) : (
             <>
               <h2
-                contentEditable
-                {...plainPasteHandlers()}
-                onBlur={(e) => titleProp && onCommit(titleProp, (e.target as HTMLElement).textContent ?? "")}
+                contentEditable={titleEditable}
+                {...(titleEditable ? plainPasteHandlers() : {})}
+                onBlur={titleEditable ? (e) => onCommit(titleProp, (e.target as HTMLElement).textContent ?? "") : undefined}
               >
                 {titleProp ? String(rec.cells[titleProp.id] ?? "无标题") : "无标题"}
               </h2>

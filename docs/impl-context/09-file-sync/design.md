@@ -37,8 +37,8 @@ tryResolve(db, ref): Candidate | null   // 包 resolveEntity：命中返回；"n
 
 - **文档 → markdown**：`Bun.write(path, getDocument(db,id)!.body ?? "")`。`body` 本就是块重算出的 markdown 物化缓存，逐字写出。
 - **markdown → 文档**：`updateDocument(db, id, { body: await Bun.file(path).text() })`，走块级 reconcile，与 `doc update --body` 同一路径。
-- **数据表 → CSV**：列序取 `listProperties`（按 `position`），表头 `["id", ...属性名]`，每行 `[rec.id, ...]`；`listRecords(...).values` 以**属性名**为键，正好对上表头。单元格编码 `cellToString`：null→`""`、boolean→`"true"/"false"`、数组/对象→`JSON.stringify`、其余 `String(v)`（与 `commands/record.ts` 的 `flatten` 一致）。
-- **CSV → 数据表**：`parseCsv` 后首行为表头；逐行构造 `{属性名: 值}`，空单元格跳过（不覆盖）。单元格以 `[`/`{` 开头者 `JSON.parse`（失败回退原文）以还原 multi_select/relation 数组，其余留作字符串交给 core `coerce` 还原。有 `id` 列且该记录存在 ⇒ `updateRecord`，否则 `createRecord` —— 故导出再导入按 id **upsert**，不产生重复行。
+- **数据表 → CSV**：列序取 `listProperties`（按 `position`），表头 `["id", ...属性名]`，每行 `[rec.id, ...]`；`listRecords(...).values` 以**属性名**为键，正好对上表头。单元格编码 `cellToString`：null→`""`、boolean→`"true"/"false"`、数组/对象→`JSON.stringify`、其余 `String(v)`（与 `commands/record.ts` 的 `flatten` 一致）。relation/doc 列例外：走 `src/core/relation-cells.ts` 的 codec，导出为 ", " 连接的目标标题（悬空引用回退原 id），标题含 `,`/`"`、以 `[`/`{` 开头或带首尾空白时按 CSV 规则加引号（`""` 翻倍）—— 人可读且机器可逆。
+- **CSV → 数据表**：`parseCsv` 后首行为表头；逐行构造 `{属性名: 值}`，空单元格跳过（不覆盖）。relation/doc 列经 `decodeRelationCell` 还原元素列表（整格 JSON id 数组 = 旧格式/逃生舱，否则引号感知的 ", " 切分），每个元素交 core 解析（id 直通、标题按名解析、歧义/未命中 loud 报错）；其余单元格以 `[`/`{` 开头者 `JSON.parse`（失败回退原文）以还原 multi_select 数组，剩下留作字符串交给 core `coerce` 还原。有 `id` 列且该记录存在 ⇒ `updateRecord`，否则 `createRecord` —— 故导出再导入按 id **upsert**，不产生重复行。
 
 ### 2.4 CSV 工具（`src/core/csv.ts`，无依赖）
 
@@ -52,7 +52,7 @@ tryResolve(db, ref): Candidate | null   // 包 resolveEntity：命中返回；"n
 - **导入只更新已解析到的现有实体**：导入侧 `dst` 必须先能 `resolveEntity` 命中，故从文件凭空新建文档/数据表不在 v1 内。
 - **一次一个实体**：不做整库 / 整目录批量导出。
 - **文档只写正文**：不带标题 / front-matter，换取 markdown 往返无损（标题仍由 doc 属性维护）。
-- 关系/多选数组靠 JSON 编码往返，对人手写 CSV 不算最友好，但保证机器往返一致。
+- 多选数组靠 JSON 编码往返；关系/文档列导出为带引号规则的标题列表（`relation-cells.ts` codec），可读且机器往返一致，整格 JSON id 数组仍被导入侧接受（逃生舱）。
 
 ## 4. 影响面
 
