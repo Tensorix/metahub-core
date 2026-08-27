@@ -25,7 +25,10 @@ setWebuiBundle({
   dbWorker: dbWorkerBundle,
   runtime: runtimeBundle,
   sdk: sdkBundle,
-  wasm: new Uint8Array(await Bun.file(wasmPath).arrayBuffer()),
+  // Loader, not bytes: desktop renderers never fetch /sqlite3.wasm (the replica
+  // is skipped on desktop), so the ~1MB read must not block server startup.
+  // Also keeps this module free of top-level await for --bytecode compilation.
+  wasm: () => Bun.file(wasmPath).bytes(),
 });
 setEdgeWorkerScript(edgeWorkerBundle);
 runSidecar();

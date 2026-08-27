@@ -38,6 +38,9 @@ fileAssociations:
 # Only the Electron shell goes inside the app bundle. The sidecar is a separate
 # self-contained binary shipped via extraResources (see below). The WebUI is
 # embedded in the sidecar binary, served over loopback HTTP — not bundled here.
+# Exception: dist/file-editor.{html,js,css} (the disk-loaded .md/.txt editor
+# shell, built by scripts/build-file-editor.ts) rides the asar so file windows
+# open without waiting for the sidecar.
 files:
   - dist/**/*
   - assets/**/*

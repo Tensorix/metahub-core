@@ -16,6 +16,7 @@ import { serveWebui, warmWebui } from "../../../src/webui/server/assets.ts";
 import { webuiRoutes } from "../../../src/webui/server/routes.ts";
 
 export function runSidecar(): void {
+  const t0 = Date.now();
   const s = startServer({
     debug: true, // no token auth: the window is the only client, bound to loopback
     host: "127.0.0.1", // never exposed off the machine
@@ -28,6 +29,7 @@ export function runSidecar(): void {
 
   // Contract with main.ts: this exact prefix is matched to extract the port.
   console.log(`METAHUB_PORT=${s.port}`);
+  console.log(`[perf] startServer total ${Date.now() - t0}ms`);
 
   // Pre-build the WebUI bundle in the background so the window's first
   // `/webui.js` request doesn't pay for a cold `Bun.build` (dev only; the

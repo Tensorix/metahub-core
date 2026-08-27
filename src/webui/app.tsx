@@ -239,6 +239,17 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Same deep-link via IPC: the disk-loaded (file://) file-editor window can't
+  // reach the same-origin BroadcastChannel above, so the main process forwards
+  // the id (mh:open-doc). Double delivery from an http #file window is
+  // harmless — both navigate to the same doc.
+  useEffect(() => {
+    const sub = typeof window !== "undefined" ? window.metahubDesktop?.onOpenDoc : undefined;
+    if (!sub) return;
+    return sub((id) => navigate({ kind: "doc", id }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const newEmptyDoc = () =>
     api.createDocument({ title: "" })
       .then((d) => navigate({ kind: "doc", id: d.id }))

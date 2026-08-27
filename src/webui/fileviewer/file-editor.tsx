@@ -21,10 +21,14 @@ function parseHash(): { path: string } {
 const stripExt = (name: string) => name.replace(/\.(md|markdown|txt)$/i, "");
 
 export function FileEditorWindow() {
-  const [{ path }] = useState(parseHash);
   const fs = typeof window !== "undefined" ? window.metahubDesktop?.file : undefined;
-  const [name, setName] = useState("");
-  const [text, setText] = useState<string | null>(null);
+  // Preload-read initial content (--mh-open-file + sync IPC): present, the very
+  // first render already shows the text — no 加载中 flash, and no dependence on
+  // URL parsing (the disk-loaded standalone shell carries no #file hash).
+  const initial = fs?.initial ?? null;
+  const [{ path }] = useState(() => (initial ? { path: initial.path } : parseHash()));
+  const [name, setName] = useState(initial?.name ?? "");
+  const [text, setText] = useState<string | null>(initial?.text ?? null);
   const [dirty, setDirty] = useState(false);
   // .txt opens in source mode (plain text, no WYSIWYG surprises); .md rich.
   const [source, setSource] = useState(() => /\.txt$/i.test(path));
@@ -49,9 +53,14 @@ export function FileEditorWindow() {
   const saveRef = useRef(save);
   saveRef.current = save;
 
-  // Load the file once. The window only exists on desktop with a path param
-  // (main.ts controls the URL), but guard anyway for a stray browser hit.
+  // Load the file once (skipped when preload already delivered it). The window
+  // only exists on desktop with a path (main.ts controls the URL/args), but
+  // guard anyway for a stray browser hit.
   useEffect(() => {
+    if (initial) {
+      document.title = initial.name;
+      return;
+    }
     if (!fs || !path) {
       setError(fs ? "缺少文件路径" : "文件编辑窗口仅在桌面应用内可用");
       return;
@@ -125,6 +134,11 @@ export function FileEditorWindow() {
 
   const openInMain = () => {
     if (!importedId) return;
+    // BroadcastChannel is same-origin only — it reaches the main window when
+    // this window is served by the sidecar (#file route) but NOT from the
+    // disk-loaded file:// shell. The doc id therefore also rides the focusMain
+    // IPC, which the main process forwards as mh:open-doc (app.tsx listens to
+    // both; the double delivery is idempotent — same navigate target).
     try {
       const ch = new BroadcastChannel("mh-open-doc");
       ch.postMessage({ id: importedId });
@@ -132,7 +146,7 @@ export function FileEditorWindow() {
     } catch {
       /* no BroadcastChannel — the main window still comes to front */
     }
-    void fs?.focusMain();
+    void fs?.focusMain(importedId);
   };
 
   return (

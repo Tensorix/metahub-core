@@ -409,6 +409,20 @@ function touchesRecords(method: string, path: string): boolean {
 const TOKEN_KEY = "mh_token";
 const RENEW_PATH = "/auth/token";
 
+// Base origin for every API request. Empty (same-origin relative paths) on all
+// HTTP-served surfaces — the desktop's disk-loaded file-editor window is the
+// one caller of setApiBase: it runs on file:// and attaches the sidecar origin
+// lazily once the server reports healthy (see fileviewer/standalone.tsx).
+// Until then requests fail fast and the window degrades gracefully.
+let apiBase = "";
+export function setApiBase(origin: string): void {
+  apiBase = origin.replace(/\/+$/, "");
+}
+/** Resolve an API path against the configured base (identity when unset). */
+export function apiUrl(path: string): string {
+  return apiBase ? apiBase + path : path;
+}
+
 /** The token cookie the server sets for a `?token=` navigation (QR "open on your
  *  phone"). Not HttpOnly by design — see adoption below. */
 function cookieToken(): string | null {
@@ -464,13 +478,14 @@ export function currentToken(): string | null {
 /** fetch with the stored Bearer token; on 401, swap an in-grace token for the
  *  current one via /auth/token and retry once (seamless rotation). */
 export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const url = apiUrl(path);
   const t = storedToken();
   const headers = new Headers(init.headers);
   if (t && !headers.has("authorization")) headers.set("authorization", `Bearer ${t}`);
-  const res = await fetch(path, { ...init, headers });
+  const res = await fetch(url, { ...init, headers });
   if (res.status !== 401 || !t) return res;
 
-  const renewed = await fetch(RENEW_PATH, {
+  const renewed = await fetch(apiUrl(RENEW_PATH), {
     headers: { authorization: `Bearer ${t}` },
   }).catch(() => null);
   if (!renewed?.ok) return res;
@@ -478,7 +493,7 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
   if (!d?.token) return res;
   saveToken(d.token);
   headers.set("authorization", `Bearer ${d.token}`);
-  return fetch(path, { ...init, headers });
+  return fetch(url, { ...init, headers });
 }
 
 /** Low-level XHR POST of raw bytes — the one transport that reports UPLOAD
@@ -492,7 +507,7 @@ function xhrPost(
 ): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", path);
+    xhr.open("POST", apiUrl(path));
     if (token) xhr.setRequestHeader("authorization", `Bearer ${token}`);
     xhr.setRequestHeader("content-type", ct);
     if (onProgress)
@@ -526,7 +541,7 @@ async function uploadBlobXHR(
   const t = storedToken();
   let r = await xhrPost(path, file, t, ct, onProgress);
   if (r.status === 401 && t) {
-    const renewed = await fetch(RENEW_PATH, { headers: { authorization: `Bearer ${t}` } }).catch(() => null);
+    const renewed = await fetch(apiUrl(RENEW_PATH), { headers: { authorization: `Bearer ${t}` } }).catch(() => null);
     const d = renewed?.ok ? ((await renewed.json().catch(() => null)) as { token?: string } | null) : null;
     if (d?.token) {
       saveToken(d.token);

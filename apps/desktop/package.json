@@ -13,7 +13,7 @@
   "main": "dist/main.js",
   "desktopName": "metahub-desktop.desktop",
   "scripts": {
-    "build:main": "bun run scripts/gen-core-version.ts && bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist",
+    "build:main": "bun run scripts/gen-core-version.ts && bun build src/main.ts src/preload.ts --target=node --format=cjs --external electron --outdir=dist && bun run scripts/build-file-editor.ts",
     "build:icon": "bun run scripts/gen-icon.ts",
     "build:sidecars": "bun run scripts/build-sidecars.ts",
     "build": "bun run build:main && bun run build:icon && bun run build:sidecars",

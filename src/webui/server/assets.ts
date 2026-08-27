@@ -69,6 +69,9 @@ const injected: Record<string, string | null> = {
   // the manifest, so bundleGetter serves them through the same three-way path.
 };
 let injectedWasm: ArrayBuffer | null = null;
+// Deferred wasm: embedders can hand a loader instead of bytes so the ~1MB read
+// stays off their startup critical path (desktop renderers never fetch it).
+let injectedWasmLoader: (() => Promise<Uint8Array>) | null = null;
 /** Embedded 格式化 wasm sidecars, keyed by serve route (fmt/manifest.ts). */
 const injectedFmtWasm: Record<string, ArrayBuffer> = {};
 
@@ -85,7 +88,9 @@ export function setWebuiBundle(bundle: {
   dbWorker: string;
   runtime: string;
   sdk: string;
-  wasm: Uint8Array;
+  /** sqlite3.wasm bytes, or a loader resolved on the first /sqlite3.wasm
+   *  request — lets embedders keep the ~1MB read off their startup path. */
+  wasm: Uint8Array | (() => Promise<Uint8Array>);
   /** Lazy 格式化 provider assets keyed by serve route (fmt/manifest.ts).
    *  Optional so embedders built before a provider existed keep working — a
    *  missing asset 500s only when that language's 格式化 is actually used. */
@@ -97,7 +102,13 @@ export function setWebuiBundle(bundle: {
   injected.dbWorker = bundle.dbWorker;
   injected.runtime = bundle.runtime;
   injected.sdk = bundle.sdk;
-  injectedWasm = toArrayBuffer(bundle.wasm);
+  if (typeof bundle.wasm === "function") {
+    injectedWasmLoader = bundle.wasm;
+    injectedWasm = null;
+  } else {
+    injectedWasm = toArrayBuffer(bundle.wasm);
+    injectedWasmLoader = null;
+  }
   for (const p of FMT_PROVIDERS) {
     const js = bundle.fmt?.[p.js];
     if (js != null) injected[`fmt_${p.id}`] = js;
@@ -236,6 +247,10 @@ async function getSw(): Promise<string> {
  *  sibling dist copy (packaged; build.ts copies it next to the bundles). */
 async function getWasm(): Promise<ArrayBuffer> {
   if (injectedWasm != null) return injectedWasm;
+  if (injectedWasmLoader != null) {
+    injectedWasm = toArrayBuffer(await injectedWasmLoader());
+    return injectedWasm;
+  }
   const path = RUNNING_FROM_SOURCE
     ? join(
         dirname(Bun.resolveSync("@sqlite.org/sqlite-wasm", fileURLToPath(new URL(".", import.meta.url)))),
@@ -283,12 +298,31 @@ export async function warmWebui(): Promise<void> {
   }
 }
 
-// Served by a local server to (mostly) one machine: `no-store` everywhere
-// trades a few KB per load for never needing a hard refresh after an update.
-function asset(body: string, contentType: string): Response {
-  return new Response(body, {
-    headers: { "content-type": contentType, "cache-control": "no-store" },
-  });
+// ETag + `no-cache` on every text asset: the browser must revalidate each load
+// (so an update never needs a hard refresh) but an unchanged asset answers 304
+// and Chromium keeps both its HTTP cache entry AND the V8 code cache for it.
+// That matters on desktop, where several windows (main + quick note + quick
+// board + file editors) each load the same ~1MB /webui.js — with the old
+// `no-store` every window re-downloaded and re-compiled it from scratch.
+// Memoized by body identity: the getters return process-cached strings, so the
+// hash runs once per build, not per request. Cleared on growth (dev rebuilds
+// mint new strings; the handful of live assets never exceeds the cap).
+const etagCache = new Map<string, string>();
+function etagFor(body: string): string {
+  let tag = etagCache.get(body);
+  if (!tag) {
+    if (etagCache.size > 64) etagCache.clear();
+    tag = `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 16)}"`;
+    etagCache.set(body, tag);
+  }
+  return tag;
+}
+
+function asset(req: Request, body: string, contentType: string): Response {
+  const tag = etagFor(body);
+  const headers = { "content-type": contentType, "cache-control": "no-cache", etag: tag };
+  if (req.headers.get("if-none-match") === tag) return new Response(null, { status: 304, headers });
+  return new Response(body, { headers });
 }
 
 /** Handle WebUI asset requests. Returns null for anything else so the caller
@@ -297,9 +331,9 @@ export async function serveWebui(req: Request): Promise<Response | null> {
   if (req.method !== "GET") return null;
   const { pathname } = new URL(req.url);
 
-  if (pathname === "/") return asset(HTML, "text/html; charset=utf-8");
-  if (pathname === "/webui.css") return asset(await getCss(), "text/css; charset=utf-8");
-  if (pathname === "/manifest.webmanifest") return asset(MANIFEST, "application/manifest+json");
+  if (pathname === "/") return asset(req, HTML, "text/html; charset=utf-8");
+  if (pathname === "/webui.css") return asset(req, await getCss(), "text/css; charset=utf-8");
+  if (pathname === "/manifest.webmanifest") return asset(req, MANIFEST, "application/manifest+json");
   const icon = ICONS[pathname];
   if (icon) {
     return new Response(Buffer.from(icon, "base64"), {
@@ -343,7 +377,7 @@ export async function serveWebui(req: Request): Promise<Response | null> {
   const getter = script[pathname];
   if (getter) {
     try {
-      return asset(await getter(), "text/javascript; charset=utf-8");
+      return asset(req, await getter(), "text/javascript; charset=utf-8");
     } catch (e) {
       // This catch is the only thing between the error and oblivion: Bun only
       // auto-logs *uncaught* handler errors, and we catch this one. Log the full

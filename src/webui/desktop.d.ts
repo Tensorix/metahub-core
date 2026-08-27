@@ -80,9 +80,26 @@ export interface MetahubDesktop {
     write: (path: string, text: string) => Promise<void>;
     setDirty: (path: string, dirty: boolean) => Promise<void>;
     saveDone: () => Promise<void>;
-    focusMain: () => Promise<void>;
+    /** Raise the main window; with a doc id, also deep-link it there (the id is
+     *  forwarded main-process-side as mh:open-doc — BroadcastChannel can't cross
+     *  the file:// / http origins). Optional arg — older shells ignore it. */
+    focusMain: (docId?: string) => Promise<void>;
     onRequestSave: (cb: () => void) => () => void;
+    /** The opened file, read synchronously during preload for --mh-open-file
+     *  windows so the first paint already shows the text. Absent elsewhere and
+     *  on older shells. */
+    initial?: { path: string; text: string; name: string } | null;
   };
+  /** Resolves with the sidecar origin (http://127.0.0.1:<port>) once the server
+   *  is healthy — the disk-loaded file-editor window uses it to attach API-
+   *  dependent features late. Absent on older shells. */
+  server?: {
+    origin: () => Promise<string>;
+  };
+  /** Main window: doc deep-links pushed from the main process (file-editor
+   *  「在 MetaHub 中打开」 across the file://→http origin gap). Returns an
+   *  unsubscribe fn. Absent on older shells. */
+  onOpenDoc?: (cb: (id: string) => void) => () => void;
 }
 
 declare global {

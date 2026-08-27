@@ -131,7 +131,9 @@ function scalarHtml(specUrl: string): string {
 /** Start the CRDT sync server. It is just another node backed by ~/.metahub. */
 export function startServer(opts: ServerOptions = {}): RunningServer {
   registerRoomBlobResolver(resolveBlob);
+  const tDb = Date.now();
   const db = openMetahub();
+  const dbMs = Date.now() - tDb;
   const node = getNodeId(db);
   const ctx: RouteCtx = {
     db,
@@ -171,6 +173,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
         };
 
   let server: ReturnType<typeof Bun.serve>;
+  const tServe = Date.now();
   try {
     server = Bun.serve({
     port,
@@ -342,6 +345,11 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       );
     }
     throw e;
+  }
+  // Startup timing, debug-only (the desktop sidecar runs with debug: true):
+  // openMetahub covers db open + WAL recovery + schema migrations.
+  if (opts.debug) {
+    console.log(`[perf] openMetahub ${dbMs}ms, Bun.serve ${Date.now() - tServe}ms`);
   }
   // Auto-sync timer: each tick runs one push/pull round against every enabled
   // peer. The DB is the source of truth, so peers added by `mh config` (a

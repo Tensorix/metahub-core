@@ -7,6 +7,7 @@
 
 import type { ProviderEngine } from "./lang-map.ts";
 import { fmtProvider } from "./manifest.ts";
+import { apiUrl } from "../api.ts";
 
 /** Every provider bundle exports this shape. */
 export interface FmtModule {
@@ -20,7 +21,9 @@ export function loadProvider(id: ProviderEngine): Promise<FmtModule> {
   if (!p) {
     const route = fmtProvider(id)?.js;
     if (!route) return Promise.reject(new Error(`unknown format provider: ${id}`));
-    p = (import(route) as Promise<FmtModule>).catch((e) => {
+    // apiUrl: identity on HTTP surfaces; on the desktop's file:// file-editor
+    // window it resolves the route against the sidecar origin once attached.
+    p = (import(apiUrl(route)) as Promise<FmtModule>).catch((e) => {
       inflight.delete(id);
       throw new Error(`格式化组件加载失败(离线?):${(e as Error)?.message ?? e}`);
     });

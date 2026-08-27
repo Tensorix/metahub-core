@@ -44,6 +44,13 @@ import {
 } from "./service-worker-cleanup";
 import { tagToVersion } from "./version-util";
 
+// Startup timing: one line per cold-start milestone, relative to process start.
+// Cheap and permanent — this is how we keep the cold-start budget honest.
+const t0 = Date.now();
+function perf(event: string): void {
+  console.log(`[perf] ${event} +${Date.now() - t0}ms`);
+}
+
 const HEALTH_PATH = "/health"; // mirrors src/core/sync/protocol.ts
 const HEALTH_TIMEOUT_MS = 15_000;
 const HEALTH_INTERVAL_MS = 150;
@@ -118,6 +125,13 @@ const fileDirty = new Map<string, boolean>();
 const allowedFilePaths = new Set<string>();
 // open-file fires before the sidecar port is known — queue and drain later.
 const pendingOpenFiles: string[] = [];
+// server:origin IPC waiters — disk-loaded file-editor windows that asked for
+// the sidecar origin before it was healthy. Resolved at startup end; a failed
+// sidecar leaves them pending (the window's API features stay dormant).
+const serverOriginWaiters: Array<(origin: string) => void> = [];
+function serverOrigin(): string {
+  return `http://127.0.0.1:${serverPort}`;
+}
 // close-flow "保存" waits for the renderer's file:save-done, keyed by WebContents id.
 const saveWaiters = new Map<number, () => void>();
 // Windows whose dirty-confirm dialog already ran; close() proceeds unprompted.
@@ -183,6 +197,7 @@ function startSidecar(): Promise<number> {
       env: process.env,
     });
     sidecar = child;
+    perf("sidecar spawned");
 
     let settled = false;
     const fail = (err: Error) => {
@@ -197,6 +212,7 @@ function startSidecar(): Promise<number> {
       const m = chunk.match(/METAHUB_PORT=(\d+)/);
       if (m && !settled) {
         settled = true;
+        perf("sidecar port received");
         resolve(Number(m[1]));
       }
     });
@@ -304,9 +320,11 @@ function createWindow(port: number): void {
     if (mainWin === win) mainWin = null;
   });
   win.once("ready-to-show", () => {
+    perf("main window shown");
     win.show();
     win.focus();
     onFirstWindowShown();
+    prewarmMiniWindows();
   });
   void win.loadURL(`http://127.0.0.1:${port}/`);
 }
@@ -319,15 +337,23 @@ function onFirstWindowShown(): void {
   if (firstWindowShown) return;
   firstWindowShown = true;
   closeSplash();
-  // First window is up; quietly warm the mini windows in the background so
-  // their first open is instant. Deferred so they never compete with that
-  // window's first frame (the board trails the note by a second).
-  setTimeout(() => quickNote.prewarm(), 0);
-  setTimeout(() => quickBoard.prewarm(), 1000);
   // Check for a newer core sidecar in the background; if found it's cached and
   // used on the NEXT launch (never hot-swapping the running one). Errors are
   // swallowed inside maybeUpdateCore — this must never disrupt the app.
   if (app.isPackaged) setTimeout(() => void maybeUpdateCore(), 3_000);
+}
+
+// Quietly warm the mini windows once the MAIN window is up, so their first
+// open is instant (the board trails the note by a second so they never compete
+// with the main window's first frame). Deliberately NOT tied to file-editor
+// windows: a .md-only launch stays lean — two hidden full-bundle windows would
+// compete with the sidecar boot running in its background.
+let miniWindowsPrewarmed = false;
+function prewarmMiniWindows(): void {
+  if (miniWindowsPrewarmed) return;
+  miniWindowsPrewarmed = true;
+  setTimeout(() => quickNote.prewarm(), 0);
+  setTimeout(() => quickBoard.prewarm(), 1000);
 }
 
 /**
@@ -393,10 +419,20 @@ function fileArgsFrom(argv: string[], cwd?: string): string[] {
     .filter((a) => existsSync(a));
 }
 
-/** Open now if the server is up, else queue for the end-of-startup drain. */
+/** Absolute path of the disk-loaded file-editor shell (built by
+ *  scripts/build-file-editor.ts), or null when absent — dev running from
+ *  source without a desktop build falls back to the sidecar-served #file
+ *  route. Checked per call: existsSync is trivial and dev builds appear live. */
+function fileEditorShellPath(): string | null {
+  const p = appFile("dist", "file-editor.html");
+  return existsSync(p) ? p : null;
+}
+
+/** Open now if a window can be built (disk shell available, or server up),
+ *  else queue for the end-of-startup drain. */
 function queueOpenFile(p: string): void {
   const abs = resolve(p);
-  if (serverPort) openFileWindow(abs);
+  if (app.isReady() && (fileEditorShellPath() || serverPort)) openFileWindow(abs);
   else pendingOpenFiles.push(abs);
 }
 
@@ -428,13 +464,18 @@ function waitForSaveDone(win: BrowserWindow, ms: number): Promise<void> {
 }
 
 /**
- * Open (or focus) the standalone file-editor window for a .txt/.md path. Loads
- * the shared WebUI at `…/#file?path=…` (see src/webui/fileviewer) — same origin
- * as the sidecar, so its 导入到 MetaHub button is a plain api.createDocument call.
- * One window per file; Cmd+S saves back to disk via the file: IPC below.
+ * Open (or focus) the standalone file-editor window for a .txt/.md path.
+ * Preferred: the disk-loaded shell (dist/file-editor.html + its own small
+ * bundle, see src/webui/fileviewer/standalone.tsx) — no sidecar dependency, so
+ * the window opens before the server is even up; the preload reads the file
+ * synchronously (--mh-open-file) so the first paint already shows the text,
+ * and API features (导入到 MetaHub, doclinks) attach via server:origin later.
+ * Fallback: the sidecar-served `…/#file?path=…` route (dev without a desktop
+ * build). One window per file; Cmd+S saves back to disk via the file: IPC.
  */
 function openFileWindow(absPath: string): void {
-  if (!serverPort) {
+  const shell = fileEditorShellPath();
+  if (!shell && !serverPort) {
     pendingOpenFiles.push(absPath);
     return;
   }
@@ -464,6 +505,9 @@ function openFileWindow(absPath: string): void {
       preload: appFile("dist", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Path only (never content — argv leaks into `ps`): the preload reads the
+      // file over the allowlisted sync IPC before the page's first render.
+      additionalArguments: [`--mh-open-file=${absPath}`],
     },
   });
   fileWins.set(absPath, win);
@@ -500,12 +544,22 @@ function openFileWindow(absPath: string): void {
     fileDirty.delete(absPath);
   });
   win.once("ready-to-show", () => {
+    perf("file window shown");
     win.show();
     win.focus();
     onFirstWindowShown();
   });
-  const params = new URLSearchParams({ path: absPath });
-  void win.loadURL(`http://127.0.0.1:${serverPort}/#file?${params.toString()}`);
+  if (shell) {
+    // theme rides the query string: file:// shares no localStorage with the
+    // sidecar origin, so the shell's inline script resolves from this param
+    // (falling back to the OS preference) to avoid a wrong-theme flash.
+    void win.loadFile(shell, {
+      query: { path: absPath, theme: nativeTheme.shouldUseDarkColors ? "dark" : "light" },
+    });
+  } else {
+    const params = new URLSearchParams({ path: absPath });
+    void win.loadURL(`http://127.0.0.1:${serverPort}/#file?${params.toString()}`);
+  }
 }
 
 /**
@@ -878,6 +932,17 @@ function registerIpc(): void {
     const abs = assertAllowed(p);
     return { text: readFileSync(abs, "utf8"), name: basename(abs) };
   });
+  // Synchronous variant, called from the PRELOAD of --mh-open-file windows so
+  // the page's very first render already has the text. Same allowlist gate;
+  // errors become a null returnValue (renderer falls back to the async read).
+  ipcMain.on("file:read-sync", (e, p: string) => {
+    try {
+      const abs = assertAllowed(p);
+      e.returnValue = { path: abs, text: readFileSync(abs, "utf8"), name: basename(abs) };
+    } catch {
+      e.returnValue = null;
+    }
+  });
   ipcMain.handle("file:write", (_e, p: string, text: string) => {
     const abs = assertAllowed(p);
     writeFileSync(abs, text, "utf8");
@@ -889,9 +954,31 @@ function registerIpc(): void {
   ipcMain.handle("file:save-done", (e) => {
     saveWaiters.get(e.sender.id)?.();
   });
-  // 导入到 MetaHub → raise the main window (the doc id travels renderer-to-
-  // renderer over BroadcastChannel("mh-open-doc"); see file-editor.tsx).
-  ipcMain.handle("file:focus-main", () => showMainWindow());
+  // 导入到 MetaHub → raise the main window. The doc id also travels renderer-
+  // to-renderer over BroadcastChannel("mh-open-doc") when same-origin (#file
+  // route); the disk-loaded file:// window can't reach that channel, so the id
+  // rides this IPC and is forwarded as mh:open-doc (both deliveries navigate
+  // to the same doc — idempotent).
+  ipcMain.handle("file:focus-main", (_e, docId?: unknown) => {
+    showMainWindow();
+    if (typeof docId !== "string" || !docId || !mainWin || mainWin.isDestroyed()) return;
+    const wc = mainWin.webContents;
+    const send = () => {
+      if (!wc.isDestroyed()) wc.send("mh:open-doc", { id: docId });
+    };
+    // A freshly created main window is still loading — deliver after its
+    // listener had a chance to mount.
+    if (wc.isLoading()) wc.once("did-finish-load", send);
+    else send();
+  });
+
+  // Sidecar origin for the disk-loaded file-editor window: resolves once the
+  // server is healthy. Never rejects — a failed sidecar leaves it pending and
+  // the window's API-dependent features simply stay dormant.
+  ipcMain.handle("server:origin", () => {
+    if (serverPort) return serverOrigin();
+    return new Promise<string>((res) => serverOriginWaiters.push(res));
+  });
 
   // Open the Cloudflare OAuth consent page in the user's real browser (never an
   // in-app window). Restricted to the Cloudflare dash host so the renderer can't
@@ -927,6 +1014,7 @@ function killSidecar(): void {
 // ---- lifecycle -------------------------------------------------------------
 
 app.whenReady().then(async () => {
+  perf("app ready");
   if (legacyServiceWorkerCleanup.quarantined.length > 0) {
     void removeQuarantinedServiceWorkerStorage(legacyServiceWorkerCleanup.quarantined).then(
       (failures) => {
@@ -943,20 +1031,33 @@ app.whenReady().then(async () => {
   // macOS keeps its application menu (Cmd shortcuts live there).
   if (process.platform !== "darwin") Menu.setApplicationMenu(null);
   for (const m of miniWindows) m.loadSettings();
-  // Branded feedback up front, before any slow startup work begins.
-  createSplash();
+  // IPC first: the disk-loaded file-editor windows below need file:read-sync
+  // and server:origin before any sidecar exists. Nothing in here touches the
+  // server — handlers that need it (preview:open, …) guard on serverPort.
+  registerIpc();
+  // File-only launch (opened as a .txt/.md handler): show just the file
+  // editor, not the whole app. Files arrive either in the launch argv
+  // (Win/Linux association, CLI on any platform) or via the early macOS
+  // open-file handler. With the disk-loaded editor shell available they open
+  // IMMEDIATELY — before the sidecar — and there is no splash: the window
+  // with the real text painted IS the startup feedback. The main window stays
+  // lazy — dock/tray/「在 MetaHub 中打开」 all go through showMainWindow().
+  const launchFiles = fileArgsFrom(process.argv);
+  const fileOnlyLaunch = launchFiles.length > 0 || pendingOpenFiles.length > 0;
+  const instantFileLaunch = fileOnlyLaunch && fileEditorShellPath() != null;
+  if (instantFileLaunch) {
+    launchFiles.forEach(queueOpenFile);
+    drainPendingFiles();
+  } else {
+    // Branded feedback up front, before any slow startup work begins.
+    createSplash();
+  }
   try {
     serverPort = await startSidecar();
     await waitForHealth(serverPort);
-    registerIpc();
-    // File-only launch (opened as a .txt/.md handler): show just the file
-    // editor, not the whole app. Files arrive either in the launch argv
-    // (Win/Linux association, CLI on any platform) or via the early macOS
-    // open-file handler, which queued them before the sidecar was healthy.
-    // The main window stays lazy — dock/tray/「在 MetaHub 中打开」 all go
-    // through showMainWindow(), which creates it on demand.
-    const launchFiles = fileArgsFrom(process.argv);
-    const fileOnlyLaunch = launchFiles.length > 0 || pendingOpenFiles.length > 0;
+    perf("server healthy");
+    // Wake the file-editor windows' deferred API features (导入 / doclinks).
+    for (const w of serverOriginWaiters.splice(0)) w(serverOrigin());
     if (!fileOnlyLaunch) createWindow(serverPort);
     createTray();
 
@@ -972,15 +1073,25 @@ app.whenReady().then(async () => {
     // macOS: re-open / focus the main window when the dock icon is clicked.
     app.on("activate", () => showMainWindow());
 
-    // Server is healthy now — open the launch files. openFileWindow dedupes
-    // per path, so a path that somehow arrives twice still gets one window.
-    launchFiles.forEach(queueOpenFile);
-    drainPendingFiles();
+    // Open launch files still waiting on the server (fallback #file route —
+    // the instant path already opened them above). openFileWindow dedupes per
+    // path, so a path that somehow arrives twice still gets one window.
+    if (!instantFileLaunch) {
+      launchFiles.forEach(queueOpenFile);
+      drainPendingFiles();
+    }
   } catch (err) {
     closeSplash();
     killSidecar();
-    dialog.showErrorBox("Metahub failed to start", (err as Error).message);
-    app.quit();
+    // A file-only session whose editor window(s) are already up must not be
+    // torn down because the background server failed — on-disk editing works
+    // fully without it (导入/doclink features just stay dormant).
+    if (instantFileLaunch && fileWins.size > 0) {
+      console.error("[desktop] sidecar failed to start:", (err as Error).message);
+    } else {
+      dialog.showErrorBox("Metahub failed to start", (err as Error).message);
+      app.quit();
+    }
   }
 });
 
