@@ -4,7 +4,9 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text as RNText, View } from "react-native";
 
+import { HistorySheet } from "@/components/HistorySheet";
 import { MultiSelectSheet } from "@/components/MultiSelectSheet";
+import { RefPickerSheet, useRefData } from "@/components/RefField";
 import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
 import { MetahubError, type PropInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
@@ -13,6 +15,7 @@ import { useTheme } from "@/lib/theme";
 import { fs } from "@/lib/theme/tokens";
 
 const NONE = "__none__";
+const EMPTY_PROPS: PropInfo[] = [];
 
 export default function RecordScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -20,6 +23,8 @@ export default function RecordScreen() {
   const { client } = useSession();
   const { tokens } = useTheme();
   const [multiOpen, setMultiOpen] = useState<PropInfo | null>(null);
+  const [refOpen, setRefOpen] = useState<PropInfo | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Text drafts keyed by prop id; committed on blur/submit.
   const drafts = useRef(new Map<string, string>());
 
@@ -56,6 +61,9 @@ export default function RecordScreen() {
     () => (data ? recordTitle(data.rec, data.props) : "记录"),
     [data],
   );
+  // Resolve relation/doc target titles outside the SwiftUI Host (hook must
+  // run unconditionally, before the early returns below).
+  const { candidates, refDisplay } = useRefData(data?.props ?? EMPTY_PROPS);
 
   if (error) {
     return (
@@ -83,24 +91,29 @@ export default function RecordScreen() {
         options={{
           title,
           headerRight: () => (
-            <Pressable
-              hitSlop={10}
-              onPress={() =>
-                Alert.alert("删除记录", "确定删除这条记录吗？", [
-                  { text: "取消", style: "cancel" },
-                  {
-                    text: "删除",
-                    style: "destructive",
-                    onPress: async () => {
-                      await client.deleteRecord(rec.id).catch(() => {});
-                      router.back();
+            <View style={styles.headerRight}>
+              <Pressable hitSlop={10} onPress={() => setHistoryOpen(true)}>
+                <RNText style={{ color: tokens.accent, fontSize: fs.ui }}>历史</RNText>
+              </Pressable>
+              <Pressable
+                hitSlop={10}
+                onPress={() =>
+                  Alert.alert("删除记录", "确定删除这条记录吗？", [
+                    { text: "取消", style: "cancel" },
+                    {
+                      text: "删除",
+                      style: "destructive",
+                      onPress: async () => {
+                        await client.deleteRecord(rec.id).catch(() => {});
+                        router.back();
+                      },
                     },
-                  },
-                ])
-              }
-            >
-              <RNText style={{ color: tokens.danger, fontSize: fs.ui }}>删除</RNText>
-            </Pressable>
+                  ])
+                }
+              >
+                <RNText style={{ color: tokens.danger, fontSize: fs.ui }}>删除</RNText>
+              </Pressable>
+            </View>
           ),
         }}
       />
@@ -219,24 +232,55 @@ export default function RecordScreen() {
                   </FieldGroup.Section>
                 );
               }
-              default:
-                // relation / doc: read-only in v1 (title resolution + pickers
-                // are a follow-up).
+              case "relation":
+              case "doc":
                 return (
                   <FieldGroup.Section key={prop.id} title={prop.name}>
-                    <Text>
-                      {Array.isArray(value)
-                        ? `${value.length} 项关联`
-                        : value
-                          ? String(value)
-                          : "（空）"}
+                    <Text onPress={() => setRefOpen(prop)}>
+                      {refDisplay(prop, value)}
                     </Text>
+                  </FieldGroup.Section>
+                );
+              default:
+                return (
+                  <FieldGroup.Section key={prop.id} title={prop.name}>
+                    <Text>{value != null ? String(value) : "（空）"}</Text>
                   </FieldGroup.Section>
                 );
             }
           })}
         </FieldGroup>
       </Host>
+      {refOpen ? (
+        <RefPickerSheet
+          prop={refOpen}
+          candidates={candidates(refOpen)}
+          selected={
+            Array.isArray(rec.cells[refOpen.id])
+              ? (rec.cells[refOpen.id] as unknown[]).filter(
+                  (v): v is string => typeof v === "string",
+                )
+              : []
+          }
+          onToggle={(cid, on) => {
+            const cur = Array.isArray(rec.cells[refOpen.id])
+              ? (rec.cells[refOpen.id] as unknown[]).filter(
+                  (v): v is string => typeof v === "string",
+                )
+              : [];
+            const next = on ? [...cur, cid] : cur.filter((s) => s !== cid);
+            void commit(refOpen, next);
+          }}
+          onClose={() => setRefOpen(null)}
+        />
+      ) : null}
+      <HistorySheet
+        visible={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        recordId={rec.id}
+        props={props}
+        onReverted={() => void refetch()}
+      />
       {multiOpen ? (
         <MultiSelectSheet
           isPresented={multiOpen !== null}
@@ -269,4 +313,5 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   host: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  headerRight: { flexDirection: "row", gap: 18 },
 });
