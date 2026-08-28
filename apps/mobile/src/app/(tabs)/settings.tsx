@@ -1,5 +1,13 @@
 import { useCallback } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApiData } from "@/lib/api/hooks";
@@ -16,7 +24,8 @@ const THEME_OPTIONS: { key: ThemePref; label: string }[] = [
 export default function SettingsScreen() {
   const { creds, api } = useSession();
   const { disconnect } = useSessionCtx();
-  const { tokens, pref, setPref } = useTheme();
+  const { tokens, pref, setPref, dynamicAvailable, materialYou, setMaterialYou } =
+    useTheme();
 
   const fetchVersion = useCallback(() => api.version(), [api]);
   const { data: version } = useApiData(fetchVersion);
@@ -59,6 +68,21 @@ export default function SettingsScreen() {
               </Pressable>
             </View>
           ))}
+          {dynamicAvailable ? (
+            <View>
+              <Divider color={tokens.line} />
+              <View style={styles.row}>
+                <Text style={[styles.rowLabel, { color: tokens.fg }]}>
+                  跟随系统壁纸（Material You）
+                </Text>
+                <Switch
+                  value={materialYou}
+                  onValueChange={setMaterialYou}
+                  trackColor={{ true: tokens.accent }}
+                />
+              </View>
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </SafeAreaView>
