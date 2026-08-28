@@ -4,8 +4,18 @@
 // notify the session (which rebuilds the SDK client), and retry once.
 // Mirrors src/webui/api.ts authFetch.
 
+import type {
+  RecordRevision,
+  RecordVersionState,
+  RevertRecordResult,
+} from "../../../../../src/core/history.ts";
+
 import { saveToken, type Credentials } from "../auth/credentials";
 import { MetahubError } from "./sdk";
+
+export type { RecordRevision, RecordVersionState, RevertRecordResult };
+
+const q = encodeURIComponent;
 
 export interface MobileApi {
   fetch(path: string, init?: RequestInit): Promise<Response>;
@@ -15,6 +25,10 @@ export interface MobileApi {
   health(): Promise<{ ok: boolean; node?: string; version?: string }>;
   version(): Promise<{ version: string }>;
   renew(): Promise<void>;
+  // History endpoints the public SDK deliberately omits.
+  recordHistory(id: string): Promise<RecordRevision[]>;
+  recordAt(id: string, version: string): Promise<RecordVersionState>;
+  revertRecord(id: string, to: string): Promise<RevertRecordResult>;
 }
 
 export function createMobileApi(
@@ -78,6 +92,10 @@ export function createMobileApi(
     },
     health: () => req("GET", "/health"),
     version: () => req("GET", "/api/version"),
+    recordHistory: (id) => req("GET", `/api/record/history?id=${q(id)}`),
+    recordAt: (id, version) =>
+      req("GET", `/api/record/at?id=${q(id)}&version=${q(version)}`),
+    revertRecord: (id, to) => req("POST", `/api/record/revert?id=${q(id)}`, { to }),
     // Proactive renewal on launch/foreground keeps the 30-day rotation
     // healthy even though data requests rarely see a 401.
     renew: async () => {
