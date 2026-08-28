@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 
 import { AdaptiveFab } from "@/components/AdaptiveFab";
+import { BoardView } from "@/components/BoardView";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { RecordCard } from "@/components/RecordCard";
@@ -20,6 +21,7 @@ export default function DatabaseScreen() {
   const { tokens } = useTheme();
   const [sort, setSort] = useState<SortSpec | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
+  const [view, setView] = useState<"list" | "board">("list");
 
   const fetchDb = useCallback(async () => {
     const [dbs, props, records] = await Promise.all([
@@ -41,6 +43,18 @@ export default function DatabaseScreen() {
     () => (data?.props ?? []).slice().sort((a, b) => a.position - b.position),
     [data?.props],
   );
+  // Board groups by the first select property (mirrors the WebUI default).
+  const groupProp = useMemo(() => props.find((p) => p.type === "select") ?? null, [props]);
+
+  const addRecord = useCallback(
+    async (presetOption: string | null) => {
+      const values =
+        presetOption && groupProp ? { [groupProp.id]: presetOption } : {};
+      const rec = await client.createRecord(id, values).catch(() => null);
+      if (rec && "id" in rec) router.push(`/record/${rec.id}`);
+    },
+    [client, id, groupProp, router],
+  );
 
   return (
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
@@ -48,35 +62,57 @@ export default function DatabaseScreen() {
         options={{
           title: data?.db ? `${data.db.icon ?? ""} ${data.db.name}`.trim() : "数据库",
           headerRight: () => (
-            <Pressable hitSlop={10} onPress={() => setSortOpen(true)}>
-              <Text style={{ color: tokens.accent, fontSize: fs.ui }}>
-                {sort ? `排序:${sort.name}` : "排序"}
-              </Text>
-            </Pressable>
+            <View style={styles.headerRight}>
+              {groupProp ? (
+                <Pressable
+                  hitSlop={10}
+                  onPress={() => setView((v) => (v === "list" ? "board" : "list"))}
+                >
+                  <Text style={{ color: tokens.accent, fontSize: fs.ui }}>
+                    {view === "list" ? "看板" : "列表"}
+                  </Text>
+                </Pressable>
+              ) : null}
+              <Pressable hitSlop={10} onPress={() => setSortOpen(true)}>
+                <Text style={{ color: tokens.accent, fontSize: fs.ui }}>
+                  {sort ? `排序:${sort.name}` : "排序"}
+                </Text>
+              </Pressable>
+            </View>
           ),
         }}
       />
       {error ? (
         <ErrorBanner message="加载失败，请检查与服务器的连接" onRetry={refetch} />
       ) : null}
-      <FlashList
-        data={data?.records ?? []}
-        keyExtractor={(r) => r.id}
-        refreshControl={
-          <RefreshControl refreshing={loading && data !== null} onRefresh={refetch} />
-        }
-        renderItem={({ item }) => (
-          <RecordCard
-            record={item}
-            props={props}
-            onPress={() => router.push(`/record/${item.id}`)}
-          />
-        )}
-        ListEmptyComponent={
-          loading ? null : <EmptyState title="还没有记录" hint="用右下角按钮新建一条" />
-        }
-        contentContainerStyle={styles.listContent}
-      />
+      {view === "board" && groupProp ? (
+        <BoardView
+          records={data?.records ?? []}
+          props={props}
+          groupProp={groupProp}
+          onOpenRecord={(rid) => router.push(`/record/${rid}`)}
+          onAddRecord={(preset) => void addRecord(preset)}
+        />
+      ) : (
+        <FlashList
+          data={data?.records ?? []}
+          keyExtractor={(r) => r.id}
+          refreshControl={
+            <RefreshControl refreshing={loading && data !== null} onRefresh={refetch} />
+          }
+          renderItem={({ item }) => (
+            <RecordCard
+              record={item}
+              props={props}
+              onPress={() => router.push(`/record/${item.id}`)}
+            />
+          )}
+          ListEmptyComponent={
+            loading ? null : <EmptyState title="还没有记录" hint="用右下角按钮新建一条" />
+          }
+          contentContainerStyle={styles.listContent}
+        />
+      )}
       <SortSheet
         isPresented={sortOpen}
         onDismiss={() => setSortOpen(false)}
@@ -84,13 +120,7 @@ export default function DatabaseScreen() {
         sort={sort}
         onChange={setSort}
       />
-      <AdaptiveFab
-        label="新建记录"
-        onPress={async () => {
-          const rec = await client.createRecord(id, {}).catch(() => null);
-          if (rec && "id" in rec) router.push(`/record/${rec.id}`);
-        }}
-      />
+      <AdaptiveFab label="新建记录" onPress={() => void addRecord(null)} />
     </View>
   );
 }
@@ -98,4 +128,5 @@ export default function DatabaseScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   listContent: { paddingTop: 8, paddingBottom: 120 },
+  headerRight: { flexDirection: "row", gap: 18 },
 });
