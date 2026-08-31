@@ -76,6 +76,12 @@ export default function HomeScreen() {
     [client],
   );
   const { data, error, loading, refetch } = useApiData(fetchAll);
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  };
   const [docs, dbs] = data ?? [null, null];
   useLiveInvalidate(["databases", "documents"], () => void refetch());
 
@@ -102,7 +108,7 @@ export default function HomeScreen() {
         stickySectionHeadersEnabled={false}
         contentInsetAdjustmentBehavior="automatic"
         refreshControl={
-          <RefreshControl refreshing={loading && data !== null} onRefresh={refetch} />
+          <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />
         }
         ListHeaderComponent={
           <View style={styles.header}>

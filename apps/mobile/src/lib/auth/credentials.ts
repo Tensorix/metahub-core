@@ -2,10 +2,45 @@ import * as SecureStore from "expo-secure-store";
 
 const URL_KEY = "mh.server.url";
 const TOKEN_KEY = "mh.server.token";
+const SERVERS_KEY = "mh.servers";
 
 export interface Credentials {
   baseUrl: string;
   token: string;
+}
+
+/** All servers this device has connected to (the active one included).
+ *  Falls back to the active credentials for installs that predate the list. */
+export async function listServers(): Promise<Credentials[]> {
+  const raw = await SecureStore.getItemAsync(SERVERS_KEY);
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw) as Credentials[];
+      if (Array.isArray(arr)) return arr.filter((s) => s.baseUrl && s.token);
+    } catch {
+      /* corrupted list — rebuild from active creds below */
+    }
+  }
+  const active = await loadCredentials();
+  return active ? [active] : [];
+}
+
+async function saveServers(servers: Credentials[]): Promise<void> {
+  await SecureStore.setItemAsync(SERVERS_KEY, JSON.stringify(servers));
+}
+
+export async function upsertServer(c: Credentials): Promise<void> {
+  const servers = await listServers();
+  const next = servers.filter((s) => s.baseUrl !== c.baseUrl);
+  next.unshift(c);
+  await saveServers(next);
+}
+
+/** Remove a server; returns the remaining list. */
+export async function removeServer(baseUrl: string): Promise<Credentials[]> {
+  const next = (await listServers()).filter((s) => s.baseUrl !== baseUrl);
+  await saveServers(next);
+  return next;
 }
 
 export async function loadCredentials(): Promise<Credentials | null> {
