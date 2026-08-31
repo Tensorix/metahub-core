@@ -1,6 +1,6 @@
 {
   "name": "@tensorix/metahub-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Metahub desktop app (Electron shell over the core sync server)",
   "license": "AGPL-3.0-only",
