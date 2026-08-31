@@ -37,7 +37,13 @@ export default function RecordScreen() {
 
   // Another device may edit this record while it's open.
   useLiveInvalidate(["records", "properties"], (change) => {
-    if (!change.rowIds.length || change.rowIds.includes(id)) void refetch();
+    if (
+      change.truncated ||
+      change.datasets.includes("properties") ||
+      !change.rowIds.length ||
+      change.rowIds.includes(id)
+    )
+      void refetch();
   });
 
   const commit = useCallback(
@@ -70,7 +76,9 @@ export default function RecordScreen() {
       <View style={[styles.center, { backgroundColor: tokens.bg }]}>
         <Stack.Screen options={{ title: "记录" }} />
         <RNText style={{ color: tokens.danger, fontSize: fs.ui }}>
-          {error.message.includes("not_found") ? "记录不存在（可能已被删除）" : "加载失败"}
+          {error instanceof MetahubError && error.code === "not_found"
+            ? "记录不存在（可能已被删除）"
+            : "加载失败"}
         </RNText>
       </View>
     );
@@ -157,7 +165,7 @@ export default function RecordScreen() {
                         drafts.current.delete(prop.id);
                         const trimmed = draft.trim();
                         if (trimmed === "" && value != null) {
-                          void commit(prop, undefined);
+                          void commit(prop, null);
                           return;
                         }
                         const n = Number(trimmed);
@@ -185,7 +193,7 @@ export default function RecordScreen() {
                     <Picker
                       selectedValue={cur}
                       onValueChange={(v) =>
-                        void commit(prop, v === NONE ? undefined : String(v))
+                        void commit(prop, v === NONE ? null : String(v))
                       }
                     >
                       <Picker.Item label="（无）" value={NONE} />
@@ -227,7 +235,7 @@ export default function RecordScreen() {
                       }}
                     />
                     {cur ? (
-                      <Text onPress={() => void commit(prop, undefined)}>清除日期</Text>
+                      <Text onPress={() => void commit(prop, null)}>清除日期</Text>
                     ) : null}
                   </FieldGroup.Section>
                 );
@@ -253,24 +261,17 @@ export default function RecordScreen() {
       </Host>
       {refOpen ? (
         <RefPickerSheet
+          key={refOpen.id}
           prop={refOpen}
           candidates={candidates(refOpen)}
-          selected={
+          initialSelected={
             Array.isArray(rec.cells[refOpen.id])
               ? (rec.cells[refOpen.id] as unknown[]).filter(
                   (v): v is string => typeof v === "string",
                 )
               : []
           }
-          onToggle={(cid, on) => {
-            const cur = Array.isArray(rec.cells[refOpen.id])
-              ? (rec.cells[refOpen.id] as unknown[]).filter(
-                  (v): v is string => typeof v === "string",
-                )
-              : [];
-            const next = on ? [...cur, cid] : cur.filter((s) => s !== cid);
-            void commit(refOpen, next);
-          }}
+          onChange={(next) => void commit(refOpen, next)}
           onClose={() => setRefOpen(null)}
         />
       ) : null}
@@ -283,26 +284,19 @@ export default function RecordScreen() {
       />
       {multiOpen ? (
         <MultiSelectSheet
+          key={multiOpen.id}
           isPresented={multiOpen !== null}
           onDismiss={() => setMultiOpen(null)}
           title={multiOpen.name}
           options={selectOptions(multiOpen)}
-          selected={
+          initialSelected={
             Array.isArray(rec.cells[multiOpen.id])
               ? (rec.cells[multiOpen.id] as unknown[]).filter(
                   (v): v is string => typeof v === "string",
                 )
               : []
           }
-          onToggle={(opt, checked) => {
-            const cur = Array.isArray(rec.cells[multiOpen.id])
-              ? (rec.cells[multiOpen.id] as unknown[]).filter(
-                  (v): v is string => typeof v === "string",
-                )
-              : [];
-            const next = checked ? [...cur, opt] : cur.filter((o) => o !== opt);
-            void commit(multiOpen, next);
-          }}
+          onChange={(next) => void commit(multiOpen, next)}
         />
       ) : null}
     </View>

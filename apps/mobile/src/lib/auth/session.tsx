@@ -14,8 +14,11 @@ import { LiveFeed } from "../api/live";
 import { createMobileApi, type MobileApi } from "../api/mobile-api";
 import {
   clearCredentials,
+  listServers,
   loadCredentials,
+  removeServer,
   saveCredentials,
+  upsertServer,
   type Credentials,
 } from "./credentials";
 
@@ -31,6 +34,9 @@ interface SessionCtx {
   ready: boolean;
   session: Session | null;
   connect: (creds: Credentials) => Promise<void>;
+  /** Switch to another saved server (no-op if it isn't in the list). */
+  switchServer: (baseUrl: string) => Promise<void>;
+  /** Forget the current server; falls back to the next saved one, or signs out. */
   disconnect: () => Promise<void>;
 }
 
@@ -61,17 +67,35 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   // A renewed token must rebuild the SDK client (its explicit token is frozen
   // at creation). api/live self-update (live token getter) and keep running.
-  const handleToken = useCallback((token: string) => {
-    setSession((cur) => {
-      if (!cur) return cur;
-      const creds = { ...cur.creds, token };
-      return { ...cur, creds, client: createClient({ baseUrl: creds.baseUrl, token }) };
-    });
+  // Bound to the originating server's base URL: a late renewal from a server
+  // the user has switched away from updates that server's saved entry only —
+  // it must never overwrite the now-active server's credentials.
+  const handleToken = useCallback((fromBase: string, token: string) => {
+    void upsertServer({ baseUrl: fromBase, token });
+    const cur = sessionRef.current;
+    if (!cur || cur.creds.baseUrl !== fromBase) return;
+    const creds = { ...cur.creds, token };
+    void saveCredentials(creds);
+    setSession((prev) =>
+      prev && prev.creds.baseUrl === fromBase
+        ? { ...prev, creds, client: createClient({ baseUrl: fromBase, token }) }
+        : prev,
+    );
   }, []);
+
+  const makeSession = useCallback(
+    (creds: Credentials) =>
+      buildSession(creds, (t) => handleToken(creds.baseUrl, t)),
+    [handleToken],
+  );
 
   useEffect(() => {
     let alive = true;
-    loadCredentials().then((creds) => {
+    // A SecureStore failure (e.g. Android keystore loss after backup-restore)
+    // must land on onboarding, not hang the splash forever.
+    loadCredentials()
+      .catch(() => null)
+      .then((creds) => {
       if (!alive) return;
       // Dev convenience: EXPO_PUBLIC_MH_URL/TOKEN auto-connects a fresh
       // install so simulator runs skip onboarding. Dev builds only.
@@ -83,47 +107,65 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           url = url.replace(/\/\/(127\.0\.0\.1|localhost)/, "//10.0.2.2");
         if (url && token) creds = { baseUrl: url.replace(/\/$/, ""), token };
       }
-      if (creds) setSession(buildSession(creds, handleToken));
+      if (creds) {
+        setSession(makeSession(creds));
+        void upsertServer(creds); // idempotent; also captures dev auto-connect
+      }
       setReady(true);
     });
     return () => {
       alive = false;
     };
-  }, [handleToken]);
+  }, [makeSession]);
 
-  // Per server connection: start the SSE feed, rotate the token proactively on
-  // launch + every return to foreground. Keyed on base URL so token swaps
-  // (which keep api/live instances) don't churn the stream.
-  const baseUrl = session?.creds.baseUrl;
+  // Per session instance: start the SSE feed, rotate the token proactively on
+  // launch + every return to foreground. Keyed on the LiveFeed instance — it
+  // changes exactly when buildSession runs (server switch OR re-connect to
+  // the same URL, which must tear the old stream down) and not on token
+  // rotations (which must not churn the stream).
+  const live = session?.live;
+  const api = session?.api;
   useEffect(() => {
-    if (!baseUrl) return;
-    const cur = sessionRef.current;
-    if (!cur) return;
-    cur.live.install();
-    void cur.api.renew().catch(() => {});
+    if (!live || !api) return;
+    live.install();
+    void api.renew().catch(() => {});
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") void sessionRef.current?.api.renew().catch(() => {});
+      if (state === "active") void api.renew().catch(() => {});
     });
     return () => {
       sub.remove();
-      cur.live.destroy();
+      live.destroy();
     };
-  }, [baseUrl]);
+  }, [live, api]);
 
   const value = useMemo<SessionCtx>(
     () => ({
       ready,
       session,
       connect: async (creds) => {
-        await saveCredentials(creds);
-        setSession(buildSession(creds, handleToken));
+        await Promise.all([saveCredentials(creds), upsertServer(creds)]);
+        setSession(makeSession(creds));
+      },
+      switchServer: async (baseUrl) => {
+        const target = (await listServers()).find((s) => s.baseUrl === baseUrl);
+        if (!target) return;
+        await saveCredentials(target);
+        setSession(makeSession(target));
       },
       disconnect: async () => {
-        await clearCredentials();
-        setSession(null);
+        const cur = sessionRef.current;
+        const remaining = cur ? await removeServer(cur.creds.baseUrl) : [];
+        const next = remaining[0];
+        if (next) {
+          await saveCredentials(next);
+          setSession(makeSession(next));
+        } else {
+          await clearCredentials();
+          setSession(null);
+        }
       },
     }),
-    [ready, session, handleToken],
+    [ready, session, makeSession],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

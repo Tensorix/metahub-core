@@ -35,6 +35,10 @@ function RootStack() {
           options={{ presentation: "modal", headerShown: true }}
         />
         <Stack.Screen name="doc/[id]" options={{ headerShown: true }} />
+        <Stack.Screen
+          name="add-server"
+          options={{ presentation: "modal", headerShown: true }}
+        />
       </Stack.Protected>
       <Stack.Protected guard={session === null}>
         <Stack.Screen name="onboarding/index" />

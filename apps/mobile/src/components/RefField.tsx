@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   FlatList,
   Modal,
@@ -92,22 +92,31 @@ export function useRefData(props: PropInfo[]): {
   return { candidates, titleOf, refDisplay };
 }
 
-/** Multi-select picker over a relation/doc target set (RN modal sheet). */
+/** Multi-select picker over a relation/doc target set (RN modal sheet).
+ *  Selection is optimistic local state (seeded on mount) so rapid toggles
+ *  never rebuild from a stale server snapshot. */
 export function RefPickerSheet({
   prop,
   candidates,
-  selected,
-  onToggle,
+  initialSelected,
+  onChange,
   onClose,
 }: {
   prop: PropInfo;
   candidates: Candidate[];
-  selected: string[];
-  onToggle: (id: string, on: boolean) => void;
+  initialSelected: string[];
+  onChange: (next: string[]) => void;
   onClose: () => void;
 }) {
   const { tokens } = useTheme();
+  const [selected, setSelected] = useState(initialSelected);
   const target = prop.type === "relation" ? (prop.config?.database as string) : "docs";
+
+  const toggle = (id: string, on: boolean) => {
+    const next = on ? [...selected, id] : selected.filter((s) => s !== id);
+    setSelected(next);
+    onChange(next);
+  };
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
@@ -127,7 +136,7 @@ export function RefPickerSheet({
             const on = selected.includes(item.id);
             return (
               <Pressable
-                onPress={() => onToggle(item.id, !on)}
+                onPress={() => toggle(item.id, !on)}
                 style={({ pressed }) => [
                   styles.candRow,
                   { borderColor: tokens.line },
