@@ -1,21 +1,32 @@
 import { BottomSheet, Button, Checkbox, Column, Host, Text } from "@expo/ui";
+import { useState } from "react";
 
-/** Multi-select editor: checkbox list in a native bottom sheet. */
+/** Multi-select editor: checkbox list in a native bottom sheet. Selection is
+ *  optimistic local state (seeded on mount) so rapid toggles never rebuild
+ *  from a stale server snapshot; each change reports the full next array. */
 export function MultiSelectSheet({
   isPresented,
   onDismiss,
   title,
   options,
-  selected,
-  onToggle,
+  initialSelected,
+  onChange,
 }: {
   isPresented: boolean;
   onDismiss: () => void;
   title: string;
   options: string[];
-  selected: string[];
-  onToggle: (option: string, checked: boolean) => void;
+  initialSelected: string[];
+  onChange: (next: string[]) => void;
 }) {
+  const [selected, setSelected] = useState(initialSelected);
+
+  const toggle = (opt: string, checked: boolean) => {
+    const next = checked ? [...selected, opt] : selected.filter((o) => o !== opt);
+    setSelected(next);
+    onChange(next);
+  };
+
   return (
     <Host>
       <BottomSheet isPresented={isPresented} onDismiss={onDismiss}>
@@ -26,7 +37,7 @@ export function MultiSelectSheet({
               key={opt}
               label={opt}
               value={selected.includes(opt)}
-              onValueChange={(checked) => onToggle(opt, checked)}
+              onValueChange={(checked) => toggle(opt, checked)}
             />
           ))}
           <Button variant="text" label="完成" onPress={onDismiss} />

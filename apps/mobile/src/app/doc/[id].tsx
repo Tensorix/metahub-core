@@ -23,6 +23,15 @@ export default function DocScreen() {
 
   const origin = creds.baseUrl;
   const url = `${origin}/?token=${encodeURIComponent(creds.token)}#/doc/${id}`;
+  // Strict origin compare — a prefix test would also match e.g. :51735 when
+  // the server runs on :5173.
+  const sameOrigin = (u: string): boolean => {
+    try {
+      return new URL(u).origin === origin;
+    } catch {
+      return false;
+    }
+  };
 
   // Seed the WebUI's token + theme before its first script runs.
   const bootstrap = useMemo(
@@ -49,12 +58,12 @@ export default function DocScreen() {
         // Same-origin stays in the WebView (doclinks, hash nav); the WebUI's
         // own back arrow from a doc goes home — catch that and pop natively.
         onShouldStartLoadWithRequest={(req) => {
-          if (req.url.startsWith(origin)) return true;
+          if (sameOrigin(req.url)) return true;
           void Linking.openURL(req.url).catch(() => {});
           return false;
         }}
         onNavigationStateChange={(nav) => {
-          if (!nav.url.startsWith(origin)) return;
+          if (!sameOrigin(nav.url)) return;
           const hash = nav.url.split("#")[1] ?? "";
           // Database links escape to the native db screen…
           const dbMatch = /^\/db\/([^/?]+)/.exec(hash);
