@@ -20,6 +20,9 @@ const READ_STALL_MS = 25_000;
 export interface LiveChange {
   datasets: string[];
   rowIds: string[];
+  /** True when the server capped rowIds (500) — treat as "anything may have
+   *  changed in these datasets" and refetch unconditionally. */
+  truncated: boolean;
 }
 
 type ChangeListener = (change: LiveChange) => void;
@@ -36,6 +39,7 @@ export class LiveFeed {
 
   private pendDatasets = new Set<string>();
   private pendRowIds = new Set<string>();
+  private pendTruncated = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   private changeListeners = new Set<ChangeListener>();
@@ -74,6 +78,7 @@ export class LiveFeed {
     this.flushTimer = null;
     this.pendDatasets = new Set();
     this.pendRowIds = new Set();
+    this.pendTruncated = false;
     this.changeListeners.clear();
     this.statusListeners.clear();
   }
@@ -95,15 +100,18 @@ export class LiveFeed {
     const change: LiveChange = {
       datasets: [...this.pendDatasets],
       rowIds: [...this.pendRowIds],
+      truncated: this.pendTruncated,
     };
     this.pendDatasets = new Set();
     this.pendRowIds = new Set();
+    this.pendTruncated = false;
     for (const fn of this.changeListeners) fn(change);
   };
 
-  private queue(datasets: string[], rowIds: string[]): void {
+  private queue(datasets: string[], rowIds: string[], truncated: boolean): void {
     for (const d of datasets) this.pendDatasets.add(d);
     for (const r of rowIds) this.pendRowIds.add(r);
+    if (truncated) this.pendTruncated = true;
     this.flushTimer ??= setTimeout(this.flush, DEBOUNCE_MS);
   }
 
@@ -116,7 +124,12 @@ export class LiveFeed {
       else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
     }
     if (!dataLines.length) return;
-    let data: { cursor?: number; datasets?: string[]; rowIds?: string[] };
+    let data: {
+      cursor?: number;
+      datasets?: string[];
+      rowIds?: string[];
+      truncated?: boolean;
+    };
     try {
       data = JSON.parse(dataLines.join("\n"));
     } catch {
@@ -125,7 +138,8 @@ export class LiveFeed {
     this.backoff = BACKOFF_MIN_MS; // a parsed event proves the stream is healthy
     this.setConnected(true);
     if (typeof data.cursor === "number") this.cursor = data.cursor;
-    if (event === "changes") this.queue(data.datasets ?? [], data.rowIds ?? []);
+    if (event === "changes")
+      this.queue(data.datasets ?? [], data.rowIds ?? [], data.truncated === true);
   }
 
   private async runLoop(gen: number): Promise<void> {
@@ -182,8 +196,11 @@ export class LiveFeed {
     if (this.looping) return;
     this.looping = true;
     this.backoff = BACKOFF_MIN_MS;
-    void this.runLoop(++this.generation).finally(() => {
-      this.looping = false;
+    const gen = ++this.generation;
+    void this.runLoop(gen).finally(() => {
+      // A superseded loop exiting late (it may finish a backoff sleep after
+      // stop()+start()) must not clear the flag of the loop that replaced it.
+      if (gen === this.generation) this.looping = false;
     });
   }
 

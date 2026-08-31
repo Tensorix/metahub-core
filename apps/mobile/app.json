@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": true },
-        "NSLocalNetworkUsageDescription": "连接局域网内的 Metahub 服务器"
+        "NSLocalNetworkUsageDescription": "连接局域网内的 Metahub 服务器",
+        "NSPhotoLibraryUsageDescription": "在文档中插入相册里的图片"
       }
     },
     "android": {

@@ -1,3 +1,4 @@
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback } from "react";
 import {
   Alert,
@@ -11,6 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApiData } from "@/lib/api/hooks";
+import { listServers } from "@/lib/auth/credentials";
 import { useSession, useSessionCtx } from "@/lib/auth/session";
 import { useTheme, type ThemePref } from "@/lib/theme";
 import { fs, radii } from "@/lib/theme/tokens";
@@ -22,18 +24,32 @@ const THEME_OPTIONS: { key: ThemePref; label: string }[] = [
 ];
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const { creds, api } = useSession();
-  const { disconnect } = useSessionCtx();
+  const { disconnect, switchServer } = useSessionCtx();
   const { tokens, pref, setPref, dynamicAvailable, materialYou, setMaterialYou } =
     useTheme();
 
   const fetchVersion = useCallback(() => api.version(), [api]);
   const { data: version } = useApiData(fetchVersion);
+  const fetchServers = useCallback(() => listServers(), []);
+  const { data: servers, refetch: refetchServers } = useApiData(fetchServers);
+  // The list changes behind this screen's back (add-server modal, token
+  // rotation) — refresh whenever the tab regains focus.
+  useFocusEffect(
+    useCallback(() => {
+      void refetchServers();
+    }, [refetchServers]),
+  );
 
   const confirmDisconnect = () => {
-    Alert.alert("断开连接", "将清除本机保存的服务器地址与令牌。", [
+    Alert.alert("断开连接", "将从本机移除该服务器；若保存了其他服务器则切换过去。", [
       { text: "取消", style: "cancel" },
-      { text: "断开", style: "destructive", onPress: () => void disconnect() },
+      {
+        text: "断开",
+        style: "destructive",
+        onPress: () => void disconnect().then(() => refetchServers()),
+      },
     ]);
   };
 
@@ -46,7 +62,33 @@ export default function SettingsScreen() {
 
         <Text style={[styles.section, { color: tokens.muted }]}>服务器</Text>
         <View style={[styles.card, card]}>
-          <Row label="地址" value={creds.baseUrl} tokens={tokens} />
+          {(servers ?? [creds]).map((s, i) => (
+            <View key={s.baseUrl}>
+              {i > 0 ? <Divider color={tokens.line} /> : null}
+              <Pressable
+                onPress={() =>
+                  s.baseUrl === creds.baseUrl
+                    ? undefined
+                    : void switchServer(s.baseUrl).then(() => refetchServers())
+                }
+                style={styles.row}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={[styles.rowLabel, { color: tokens.fg, flexShrink: 1 }]}
+                >
+                  {s.baseUrl}
+                </Text>
+                {s.baseUrl === creds.baseUrl ? (
+                  <Text style={{ color: tokens.accent, fontSize: fs.body }}>✓</Text>
+                ) : null}
+              </Pressable>
+            </View>
+          ))}
+          <Divider color={tokens.line} />
+          <Pressable onPress={() => router.push("/add-server")} style={styles.row}>
+            <Text style={[styles.rowLabel, { color: tokens.accent }]}>添加服务器</Text>
+          </Pressable>
           <Divider color={tokens.line} />
           <Row label="服务端版本" value={version?.version ?? "…"} tokens={tokens} />
           <Divider color={tokens.line} />

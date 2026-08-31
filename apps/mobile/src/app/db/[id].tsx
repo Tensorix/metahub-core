@@ -37,6 +37,12 @@ export default function DatabaseScreen() {
   }, [client, id, sort]);
 
   const { data, error, loading, refetch } = useApiData(fetchDb);
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  };
   useLiveInvalidate(["records", "properties", "databases"], () => void refetch());
 
   const props = useMemo(
@@ -92,13 +98,20 @@ export default function DatabaseScreen() {
           groupProp={groupProp}
           onOpenRecord={(rid) => router.push(`/record/${rid}`)}
           onAddRecord={(preset) => void addRecord(preset)}
+          onMoveRecord={(rid, option) => {
+            if (!groupProp) return;
+            void client
+              .updateRecord(rid, { [groupProp.id]: option ?? null })
+              .then(() => refetch())
+              .catch(() => {});
+          }}
         />
       ) : (
         <FlashList
           data={data?.records ?? []}
           keyExtractor={(r) => r.id}
           refreshControl={
-            <RefreshControl refreshing={loading && data !== null} onRefresh={refetch} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />
           }
           renderItem={({ item }) => (
             <RecordCard

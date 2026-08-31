@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Dimensions,
   FlatList,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -26,22 +27,26 @@ interface Column {
 
 /** Kanban: one column per option of the grouping select property, horizontal
  *  paging between columns. Mirrors the WebUI board's grouping semantics
- *  (option order from config, ungrouped last). Card drag between columns is
- *  a follow-up — tap a card and switch its select in the form instead. */
+ *  (option order from config, ungrouped last). Cross-column move = long-press
+ *  a card → column menu (narrow screens make true drag-to-offscreen-column a
+ *  poor gesture, and it fights the horizontal scroll). */
 export function BoardView({
   records,
   props,
   groupProp,
   onOpenRecord,
   onAddRecord,
+  onMoveRecord,
 }: {
   records: RecordInfo[];
   props: PropInfo[];
   groupProp: PropInfo;
   onOpenRecord: (id: string) => void;
   onAddRecord: (presetOption: string | null) => void;
+  onMoveRecord: (recordId: string, option: string | null) => void;
 }) {
   const { tokens, scheme } = useTheme();
+  const [moving, setMoving] = useState<RecordInfo | null>(null);
 
   const columns = useMemo<Column[]>(() => {
     const byOption = new Map<string, RecordInfo[]>();
@@ -100,6 +105,7 @@ export function BoardView({
                 record={item}
                 props={props}
                 onPress={() => onOpenRecord(item.id)}
+                onLongPress={() => setMoving(item)}
               />
             )}
             contentContainerStyle={styles.colContent}
@@ -116,6 +122,63 @@ export function BoardView({
           </Pressable>
         </View>
       ))}
+      {moving ? (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setMoving(null)}
+        >
+          <Pressable style={styles.scrim} onPress={() => setMoving(null)} />
+          <View style={[styles.menu, { backgroundColor: tokens.surface }]}>
+            <Text style={[styles.menuTitle, { color: tokens.muted }]} numberOfLines={1}>
+              移动到分组
+            </Text>
+            {columns.map((col) => {
+              const cur =
+                (typeof moving.cells[groupProp.id] === "string"
+                  ? moving.cells[groupProp.id]
+                  : null) ?? UNGROUPED;
+              const isCur = cur === col.key;
+              return (
+                <Pressable
+                  key={col.key}
+                  disabled={isCur}
+                  onPress={() => {
+                    onMoveRecord(moving.id, col.key === UNGROUPED ? null : col.key);
+                    setMoving(null);
+                  }}
+                  style={({ pressed }) => [
+                    styles.menuRow,
+                    { borderColor: tokens.line },
+                    pressed && { backgroundColor: tokens.hover },
+                  ]}
+                >
+                  {col.key !== UNGROUPED ? (
+                    <View
+                      style={[
+                        styles.dot,
+                        { backgroundColor: chipColor(col.label, scheme) },
+                      ]}
+                    />
+                  ) : (
+                    <View style={styles.dot} />
+                  )}
+                  <Text
+                    style={[
+                      styles.menuLabel,
+                      { color: isCur ? tokens.muted : tokens.fg },
+                    ]}
+                  >
+                    {col.label}
+                    {isCur ? "（当前）" : ""}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Modal>
+      ) : null}
     </ScrollView>
   );
 }
@@ -147,4 +210,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   addText: { fontSize: fs.sm },
+  scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
+  menu: {
+    position: "absolute",
+    left: 24,
+    right: 24,
+    top: "28%",
+    borderRadius: radii.lg,
+    paddingVertical: 6,
+    overflow: "hidden",
+  },
+  menuTitle: {
+    fontSize: fs.xs,
+    fontWeight: "600",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  menuLabel: { fontSize: fs.ui },
 });

@@ -11,10 +11,12 @@ export function RecordCard({
   record,
   props,
   onPress,
+  onLongPress,
 }: {
   record: RecordInfo;
   props: PropInfo[];
   onPress: () => void;
+  onLongPress?: () => void;
 }) {
   const { tokens, scheme } = useTheme();
   const tp = titleProp(props);
@@ -30,6 +32,7 @@ export function RecordCard({
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
       style={({ pressed }) => [
         styles.card,
         {

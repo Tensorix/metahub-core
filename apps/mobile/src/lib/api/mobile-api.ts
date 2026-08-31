@@ -10,7 +10,7 @@ import type {
   RevertRecordResult,
 } from "../../../../../src/core/history.ts";
 
-import { saveToken, type Credentials } from "../auth/credentials";
+import type { Credentials } from "../auth/credentials";
 import { MetahubError } from "./sdk";
 
 export type { RecordRevision, RecordVersionState, RevertRecordResult };
@@ -44,9 +44,11 @@ export function createMobileApi(
     return fetch(base + path, { ...init, headers });
   };
 
-  const adoptToken = async (t: string) => {
+  // Persistence is the session's job (via onToken) — it knows which server
+  // this api belongs to and guards against a late renewal from a server the
+  // user has since switched away from.
+  const adoptToken = (t: string) => {
     token = t;
-    await saveToken(t);
     onToken?.(t);
   };
 
@@ -60,7 +62,7 @@ export function createMobileApi(
         ? ((await renewed.json().catch(() => null)) as { token?: string } | null)
         : null;
       if (d?.token) {
-        await adoptToken(d.token);
+        adoptToken(d.token);
         res = await exec(path, init);
       }
     }
@@ -103,7 +105,7 @@ export function createMobileApi(
       const d = res?.ok
         ? ((await res.json().catch(() => null)) as { token?: string } | null)
         : null;
-      if (d?.token && d.token !== token) await adoptToken(d.token);
+      if (d?.token && d.token !== token) adoptToken(d.token);
     },
   };
 }
