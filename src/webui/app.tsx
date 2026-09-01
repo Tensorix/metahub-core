@@ -26,7 +26,7 @@ import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
 import { resolvePage, pageLabel } from "./settings/nav.ts";
 import { cmpVer } from "./version.ts";
-import { SitesView } from "./sites.tsx";
+import { SitesView, SiteView } from "./sites.tsx";
 import { openShareModal } from "./share-modal.tsx";
 import { ShareView } from "./shares-view.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
@@ -642,8 +642,36 @@ function App() {
               </>
             )}
             {view.kind === "sites" && <><span class="emoji"><Icon name="globe" cls="ico sm" /></span><span>站点管理</span></>}
+            {view.kind === "site" && (
+              <>
+                <span class="emoji"><Icon name="globe" cls="ico sm" /></span>
+                <button class="crumb-link" onClick={() => navigate({ kind: "sites" })}>站点</button>
+                <span class="crumb-sep">›</span>
+                <span>{view.name}</span>
+              </>
+            )}
             {view.kind === "shares" && <><span class="emoji"><Icon name="link" cls="ico sm" /></span><span>分享</span></>}
           </div>
+          {view.kind === "site" && (
+            <div class="tb-seg" role="tablist">
+              <button
+                role="tab"
+                aria-selected={view.tab !== "config"}
+                class={"tb-seg-btn" + (view.tab !== "config" ? " active" : "")}
+                onClick={() => view.tab === "config" && navigate({ kind: "site", name: view.name })}
+              >
+                访问
+              </button>
+              <button
+                role="tab"
+                aria-selected={view.tab === "config"}
+                class={"tb-seg-btn" + (view.tab === "config" ? " active" : "")}
+                onClick={() => view.tab !== "config" && navigate({ kind: "site", name: view.name, tab: "config" })}
+              >
+                配置
+              </button>
+            </div>
+          )}
           {(view.kind === "doc" || view.kind === "db") && (
             <>
               <button
@@ -699,7 +727,10 @@ function App() {
             <SearchView q={view.q} onOpenDoc={(id) => navigate({ kind: "doc", id })} onOpenDb={(id) => navigate({ kind: "db", id })} />
           )}
           {view.kind === "settings" && <SettingsView onUpdatePending={setUpdatePending} updatePending={updatePending} focusSec={view.sec} />}
-          {view.kind === "sites" && <SitesView />}
+          {view.kind === "sites" && <SitesView navigate={navigate} />}
+          {view.kind === "site" && (
+            <SiteView key={view.name} name={view.name} tab={view.tab} navigate={navigate} />
+          )}
           {view.kind === "shares" && <ShareView onNavigate={navigate} />}
         </div>
       </div>

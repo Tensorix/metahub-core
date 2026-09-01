@@ -17,10 +17,10 @@ import {
   CHANNEL_STATUS_LABEL,
   channelAudienceLabel,
   channelHostingLabel,
-  type SiteChannel,
 } from "./site-status.ts";
 import { openShareModal, SHARES_CHANGED } from "./share-modal.tsx";
 import { Icon } from "./icons.tsx";
+import type { Navigate } from "./view.ts";
 import {
   openMenu,
   MenuItem,
@@ -31,12 +31,19 @@ import {
   openModal,
   closeModal,
   Modal,
-  useDrawerTransition,
 } from "./ui.tsx";
 
 // "站点管理" — GUI over the static-file sites the `mh site` CLI publishes. Sites
 // are served at /sites/<name>/, so preview just points an iframe at the real URL
 // (no inlining) and file preview fetches the served bytes.
+
+/** Broadcast after a site is created / deleted / renamed, so site lists outside
+ *  this view (the sidebar's 站点 pane) refresh — SitesView reloads itself too,
+ *  which lets a sidebar-created site land before the ?site= deep link resolves. */
+export const SITES_CHANGED = "mh-sites-changed";
+export function notifySitesChanged(): void {
+  document.dispatchEvent(new Event(SITES_CHANGED));
+}
 
 const siteUrl = (name: string) => location.origin + "/sites/" + name + "/";
 // Display form: drop the shared `${origin}/sites` prefix (identical for every
@@ -227,10 +234,120 @@ function UploadProgress({ done, total }: { done: number; total: number }) {
   );
 }
 
-export function SitesView() {
+/** The shared per-site "更多" menu (grid cards, the sidebar's 站点 pane, the
+ *  config page). Every mutation broadcasts SITES_CHANGED, so each open list /
+ *  page refreshes itself — no reload callback threads through here. */
+export function openSiteMenu(
+  e: MouseEvent,
+  s: Site,
+  opts?: {
+    onOpenConfig?: () => void;
+    /** Called with the new slug after a successful rename (fix stale routes). */
+    onRenamed?: (newName: string) => void;
+    onDeleted?: () => void;
+  },
+) {
+  const toggleSpa = async () => {
+    try {
+      await api.updateSite(s.id, { spa: s.spa !== 1 });
+    } catch (err) {
+      return toast((err as Error).message);
+    }
+    toast(s.spa === 1 ? "已关闭 SPA 模式" : "已开启 SPA 模式（无扩展名路径回落到 index.html）");
+    notifySitesChanged();
+  };
+  openMenu(e, (close) => (
+    <>
+      {opts?.onOpenConfig && (
+        <MenuItem
+          icon="settings"
+          label="配置管理"
+          onClick={() => {
+            close();
+            opts.onOpenConfig!();
+          }}
+        />
+      )}
+      <MenuItem
+        icon="externalLink"
+        label="复制私有预览地址"
+        onClick={() => {
+          close();
+          copyText(siteUrl(s.name));
+        }}
+      />
+      <MenuItem
+        icon="link"
+        label="发布与分享…"
+        onClick={() => {
+          close();
+          openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
+        }}
+      />
+      <MenuItem
+        icon="code"
+        label={s.spa === 1 ? "关闭 SPA 模式" : "开启 SPA 模式"}
+        onClick={() => {
+          close();
+          toggleSpa();
+        }}
+      />
+      <MenuItem
+        icon="pencil"
+        label="修改标题…"
+        onClick={async () => {
+          close();
+          const t = await promptDialog({
+            title: "修改标题",
+            label: "标题",
+            value: s.title ?? s.name,
+          });
+          if (t == null) return;
+          try {
+            await api.updateSite(s.id, { title: t });
+          } catch (err) {
+            return toast((err as Error).message);
+          }
+          notifySitesChanged();
+        }}
+      />
+      <MenuItem
+        icon="hash"
+        label="重命名（slug）…"
+        onClick={() => {
+          close();
+          openModal(<RenameSlugModal site={s} onRenamed={(n) => opts?.onRenamed?.(n)} />);
+        }}
+      />
+      <MenuSep />
+      <MenuItem
+        icon="trash"
+        label="删除站点"
+        danger
+        onClick={async () => {
+          close();
+          const ok = await confirmDialog({
+            title: "删除站点？",
+            message: `「${s.name}」及其 ${s.file_count} 个文件将被删除。`,
+            confirmLabel: "删除",
+            danger: true,
+          });
+          if (!ok) return;
+          try {
+            await api.deleteSite(s.id);
+          } catch (err) {
+            return toast((err as Error).message);
+          }
+          notifySitesChanged();
+          opts?.onDeleted?.();
+        }}
+      />
+    </>
+  ));
+}
+
+export function SitesView({ navigate }: { navigate: Navigate }) {
   const [sites, setSites] = useState<Site[] | null>(null);
-  const [peek, setPeek] = useState<Site | null>(null);
-  const [preview, setPreview] = useState<Site | null>(null);
   const [drag, setDrag] = useState(false);
   const [upload, setUpload] = useState<{ done: number; total: number } | null>(null);
   const [shares, setShares] = useState<ShareListItem[]>([]);
@@ -239,11 +356,7 @@ export function SitesView() {
   const reload = () =>
     api
       .listSites()
-      .then((s) => {
-        setSites(s);
-        // keep the open drawer's metadata fresh after writes
-        setPeek((cur) => (cur ? (s.find((x) => x.id === cur.id) ?? null) : null));
-      })
+      .then(setSites)
       .catch((e) => toast(`加载失败：${e.message}`));
   const reloadHosting = () =>
     api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
@@ -259,10 +372,16 @@ export function SitesView() {
     loadShares();
     reloadHosting();
     document.addEventListener(SHARES_CHANGED, refreshPublishState);
-    return () => document.removeEventListener(SHARES_CHANGED, refreshPublishState);
+    document.addEventListener(SITES_CHANGED, reload);
+    return () => {
+      document.removeEventListener(SHARES_CHANGED, refreshPublishState);
+      document.removeEventListener(SITES_CHANGED, reload);
+    };
   }, []);
 
-  const newSite = () => openModal(<NewSiteModal onCreated={(site) => { reload(); setPeek(site); }} />);
+  // A fresh site has no files: land on the config page, where uploads live.
+  const newSite = () =>
+    openModal(<NewSiteModal onCreated={(site) => navigate({ kind: "site", name: site.name, tab: "config" })} />);
 
   // Dropping a DIRECTORY on the list publishes it as a site (dir name = slug),
   // mirroring `mh site publish <name> <dir> --create`: a missing site is only
@@ -270,7 +389,7 @@ export function SitesView() {
   const onGridDrop = async (e: DragEvent) => {
     e.preventDefault();
     setDrag(false);
-    if (peek || preview || upload) return; // the open drawer owns its own drop zone
+    if (upload) return;
     const drop = dropEntries(e.dataTransfer!); // sync — before any await
     if (drop.entries.length !== 1 || !drop.entries[0]!.isDirectory)
       return toast("拖入一个目录即可上传为站点（目录名 = 站点名）");
@@ -299,104 +418,14 @@ export function SitesView() {
       } catch (err) {
         return toast((err as Error).message);
       }
+      notifySitesChanged();
     }
     setUpload({ done: 0, total: inner.length });
     const failed = await uploadBatch(target.id, inner, (done, total) => setUpload({ done, total }));
     setUpload(null);
     reportUpload(inner.length, failed);
-    await reload();
-    setPeek(target);
-  };
-
-  const toggleSpa = async (s: Site) => {
-    try {
-      await api.updateSite(s.id, { spa: s.spa !== 1 });
-    } catch (err) {
-      return toast((err as Error).message);
-    }
-    toast(s.spa === 1 ? "已关闭 SPA 模式" : "已开启 SPA 模式（无扩展名路径回落到 index.html）");
-    reload();
-  };
-
-  const siteMenu = (e: MouseEvent, s: Site, fromPeek?: boolean) => {
-    openMenu(e, (close) => (
-      <>
-        <MenuItem
-          icon="externalLink"
-          label="复制私有预览地址"
-          onClick={() => {
-            close();
-            copyText(siteUrl(s.name));
-          }}
-        />
-        <MenuItem
-          icon="link"
-          label="发布与分享…"
-          onClick={() => {
-            close();
-            openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
-          }}
-        />
-        <MenuItem
-          icon="code"
-          label={s.spa === 1 ? "关闭 SPA 模式" : "开启 SPA 模式"}
-          onClick={() => {
-            close();
-            toggleSpa(s);
-          }}
-        />
-        <MenuItem
-          icon="settings"
-          label="修改标题…"
-          onClick={async () => {
-            close();
-            const t = await promptDialog({
-              title: "修改标题",
-              label: "标题",
-              value: s.title ?? s.name,
-            });
-            if (t == null) return;
-            try {
-              await api.updateSite(s.id, { title: t });
-            } catch (err) {
-              return toast((err as Error).message);
-            }
-            reload();
-          }}
-        />
-        <MenuItem
-          icon="pencil"
-          label="重命名（slug）…"
-          onClick={() => {
-            close();
-            openModal(<RenameSlugModal site={s} onRenamed={reload} />);
-          }}
-        />
-        <MenuSep />
-        <MenuItem
-          icon="trash"
-          label="删除站点"
-          danger
-          onClick={async () => {
-            close();
-            const ok = await confirmDialog({
-              title: "删除站点？",
-              message: `「${s.name}」及其 ${s.file_count} 个文件将被删除。`,
-              confirmLabel: "删除",
-              danger: true,
-            });
-            if (!ok) return;
-            try {
-              await api.deleteSite(s.id);
-            } catch (err) {
-              return toast((err as Error).message);
-            }
-            if (fromPeek) setPeek(null);
-            reload();
-          }}
-        />
-      </>
-    ));
+    notifySitesChanged();
+    navigate({ kind: "site", name: target.name, tab: "config" });
   };
 
   return (
@@ -405,7 +434,7 @@ export function SitesView() {
       onDragOver={(e) => {
         if (!e.dataTransfer?.types.includes("Files")) return;
         e.preventDefault();
-        if (!peek && !preview && !upload) setDrag(true);
+        if (!upload) setDrag(true);
       }}
       onDragLeave={(e) => {
         if (!(e.currentTarget as Node).contains(e.relatedTarget as Node)) setDrag(false);
@@ -454,7 +483,7 @@ export function SitesView() {
                 // address — only counts.
                 const addr = siteCardAddress(channels);
                 return (
-              <div class="site-card" key={s.id} style={`--i:${i}`} onClick={() => setPeek(s)}>
+              <div class="site-card" key={s.id} style={`--i:${i}`} onClick={() => navigate({ kind: "site", name: s.name })}>
                 <div class="site-card-head">
                   <span class="si">
                     <Icon name="globe" />
@@ -495,7 +524,7 @@ export function SitesView() {
                     e.stopPropagation();
                     if (addr.kind === "public") copyText(addr.url);
                     else if (addr.kind === "preview") copyText(siteUrl(s.name));
-                    else setPeek(s);
+                    else navigate({ kind: "site", name: s.name, tab: "config" });
                   }}
                 >
                   <Icon
@@ -531,7 +560,7 @@ export function SitesView() {
                     style={{ flex: 1 }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setPreview(s);
+                      navigate({ kind: "site", name: s.name });
                     }}
                   >
                     <Icon name="globe" cls="ico sm" />
@@ -568,7 +597,9 @@ export function SitesView() {
                     title="更多"
                     onClick={(e) => {
                       e.stopPropagation();
-                      siteMenu(e as unknown as MouseEvent, s);
+                      openSiteMenu(e as unknown as MouseEvent, s, {
+                        onOpenConfig: () => navigate({ kind: "site", name: s.name, tab: "config" }),
+                      });
                     }}
                   >
                     <Icon name="dots" />
@@ -586,23 +617,12 @@ export function SitesView() {
         </>
       )}
 
-      {peek && (
-        <SitePeek
-          site={peek}
-          channels={siteChannels(siteChannelInput(peek, shares, hostingInfo))}
-          onClose={() => setPeek(null)}
-          onVisit={() => setPreview(peek)}
-          onMenu={(e) => siteMenu(e, peek, true)}
-          onChanged={reload}
-        />
-      )}
-      {preview && <SitePreview site={preview} onClose={() => setPreview(null)} />}
       {upload && <UploadProgress done={upload.done} total={upload.total} />}
     </div>
   );
 }
 
-function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
+export function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const create = async () => {
@@ -617,6 +637,7 @@ function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
       const site = await api.createSite({ name: slug, title: title.trim() || undefined });
       closeModal();
       toast(`已创建站点「${slug}」`);
+      notifySitesChanged();
       onCreated(site);
     } catch (e) {
       toast((e as Error).message);
@@ -667,7 +688,7 @@ function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
 
 /** Rename a site's slug: live preview of the canonical (normalized) result,
  *  loud old-links warning; the PATCH guards duplicates (conflict → toast). */
-function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: () => void }) {
+function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: (newName: string) => void }) {
   const [name, setName] = useState(site.name);
   const [busy, setBusy] = useState(false);
   // Same canonicalization core applies on write — what you see is what's saved.
@@ -686,7 +707,8 @@ function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: () => voi
       await api.updateSite(site.id, { name: preview });
       closeModal();
       toast(`已重命名为「${preview}」`);
-      onRenamed();
+      notifySitesChanged();
+      onRenamed(preview);
     } catch (e) {
       toast((e as Error).message); // e.g. conflict: name already exists
     } finally {
@@ -730,27 +752,106 @@ function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: () => voi
   );
 }
 
-function SitePeek({
+/** Full-page per-site view (#/site/<name>): the default mode renders the real
+ *  served site in an iframe; ?view=config is the management page that replaced
+ *  the old peek drawer (upload, publish channels, file list). Resolves the site
+ *  by slug itself, so it deep-links and survives refresh. */
+export function SiteView({ name, tab, navigate }: { name: string; tab?: "config"; navigate: Navigate }) {
+  const [sites, setSites] = useState<Site[] | null>(null);
+  const [shares, setShares] = useState<ShareListItem[]>([]);
+  const [hostingInfo, setHostingInfo] = useState<SiteHostingInfo | null>(null);
+
+  useEffect(() => {
+    const load = () => api.listSites().then(setSites).catch((e) => toast(`加载失败：${e.message}`));
+    const loadShares = () => api.listShares().then(setShares).catch(() => undefined);
+    const loadHosting = () =>
+      api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
+    const refresh = () => {
+      load();
+      loadShares();
+      loadHosting();
+    };
+    refresh();
+    document.addEventListener(SHARES_CHANGED, refresh);
+    document.addEventListener(SITES_CHANGED, load);
+    return () => {
+      document.removeEventListener(SHARES_CHANGED, refresh);
+      document.removeEventListener(SITES_CHANGED, load);
+    };
+  }, []);
+
+  if (sites == null)
+    return (
+      <div class="muted" style={{ padding: 24 }}>
+        加载中…
+      </div>
+    );
+  const site = sites.find((s) => s.name === name);
+  if (!site)
+    return (
+      <div class="site-empty" style={{ marginTop: 60 }}>
+        <div class="ei">
+          <Icon name="globe" />
+        </div>
+        <div class="et">站点不存在</div>
+        <div class="ed">「{name}」可能已被删除或重命名。</div>
+        <button class="btn btn-secondary" onClick={() => navigate({ kind: "sites" })}>
+          查看全部站点
+        </button>
+      </div>
+    );
+  if (tab === "config")
+    return <SiteConfig site={site} shares={shares} hostingInfo={hostingInfo} navigate={navigate} />;
+  return <SiteVisit site={site} navigate={navigate} />;
+}
+
+function SiteVisit({ site, navigate }: { site: Site; navigate: Navigate }) {
+  if (site.file_count === 0)
+    return (
+      <div class="site-empty" style={{ marginTop: 60 }}>
+        <div class="ei">📁</div>
+        <div class="et">站点还没有文件</div>
+        <div class="ed">上传文件后，这里会直接显示站点页面。</div>
+        <button
+          class="btn btn-primary"
+          onClick={() => navigate({ kind: "site", name: site.name, tab: "config" })}
+        >
+          <Icon name="upload" cls="ico sm" />
+          去配置
+        </button>
+      </div>
+    );
+  return (
+    <div class="site-visit">
+      {/* Published sites assume a standalone white canvas, so the frame forces
+          one regardless of the app theme. */}
+      <iframe
+        class="site-frame"
+        src={"/sites/" + site.name + "/"}
+        sandbox="allow-scripts allow-same-origin"
+        title={site.title || site.name}
+      />
+    </div>
+  );
+}
+
+function SiteConfig({
   site,
-  channels,
-  onClose,
-  onVisit,
-  onMenu,
-  onChanged,
+  shares,
+  hostingInfo,
+  navigate,
 }: {
   site: Site;
-  channels: SiteChannel[];
-  onClose: () => void;
-  onVisit: () => void;
-  onMenu: (e: MouseEvent) => void;
-  onChanged: () => void;
+  shares: ShareListItem[];
+  hostingInfo: SiteHostingInfo | null;
+  navigate: Navigate;
 }) {
+  const channels = siteChannels(siteChannelInput(site, shares, hostingInfo));
   const [files, setFiles] = useState<SiteFile[] | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const dirInput = useRef<HTMLInputElement>(null);
   const [upload, setUpload] = useState<{ done: number; total: number } | null>(null);
   const [drag, setDrag] = useState(false);
-  const { open, close } = useDrawerTransition(onClose);
 
   const reload = () =>
     api
@@ -758,7 +859,7 @@ function SitePeek({
       .then(setFiles)
       .catch((e) => toast(e.message));
 
-  // Load on site switch; ignore a stale response if the drawer moved to another
+  // Load on site switch; ignore a stale response if the page moved to another
   // site before this one returned (avoids one site's files flashing under another).
   useEffect(() => {
     let cancelled = false;
@@ -783,7 +884,7 @@ function SitePeek({
     setUpload(null);
     reportUpload(list.length, failed);
     reload();
-    onChanged();
+    notifySitesChanged(); // file_count changed — grid cards / sidebar refresh
   };
 
   const onPick = (e: Event) => {
@@ -802,7 +903,6 @@ function SitePeek({
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
-    e.stopPropagation(); // the grid behind has its own publish-a-directory drop zone
     setDrag(false);
     const drop = dropEntries(e.dataTransfer!); // sync — before any await
     // A single dropped folder fills the site root (its shared root segment is
@@ -824,48 +924,31 @@ function SitePeek({
       return toast((e as Error).message);
     }
     reload();
-    onChanged();
+    notifySitesChanged();
   };
 
   const url = siteUrl(site.name);
   const urlShort = siteUrlShort(site.name);
   return (
-    <>
-      <div class={"scrim" + (open ? " open" : "")} onClick={close} />
-      <div
-        class={"peek" + (open ? " open" : "")}
-        onDragOver={(e) => {
-          if (!e.dataTransfer?.types.includes("Files")) return;
-          e.preventDefault();
-          e.stopPropagation();
-          if (!upload) setDrag(true);
-        }}
-        onDragLeave={(e) => {
-          if (!(e.currentTarget as Node).contains(e.relatedTarget as Node)) setDrag(false);
-        }}
-        onDrop={onDrop}
-        style={drag ? { outline: "2px dashed var(--accent)", outlineOffset: -6 } : undefined}
-      >
-        <div class="peek-head">
-          <button class="iconbtn" onClick={close}>
-            <Icon name="x" />
-          </button>
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              minWidth: 0,
-              fontWeight: 600,
-              fontSize: 14,
-            }}
-          >
-            <Icon name="globe" cls="ico sm" />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {site.name}
-            </span>
-          </div>
+    <div
+      class="db site-config"
+      onDragOver={(e) => {
+        if (!e.dataTransfer?.types.includes("Files")) return;
+        e.preventDefault();
+        if (!upload) setDrag(true);
+      }}
+      onDragLeave={(e) => {
+        if (!(e.currentTarget as Node).contains(e.relatedTarget as Node)) setDrag(false);
+      }}
+      onDrop={onDrop}
+      style={drag ? { outline: "2px dashed var(--accent)", outlineOffset: -8, borderRadius: 12 } : undefined}
+    >
+      <div class="db-head">
+        <div>
+          <div class="db-title">{site.title || site.name}</div>
+          <div class="db-desc">站点配置 — 文件、发布渠道与访问方式。</div>
+        </div>
+        <div class="site-config-acts">
           <button class="btn btn-secondary" onClick={() => fileInput.current?.click()}>
             <Icon name="upload" cls="ico sm" />
             上传文件
@@ -878,33 +961,41 @@ function SitePeek({
             <Icon name="upload" cls="ico sm" />
             上传目录
           </button>
-          <button class="iconbtn" title="更多" onClick={(e) => onMenu(e as unknown as MouseEvent)}>
+          <button
+            class="btn btn-primary"
+            onClick={() => openShareModal({ kind: "site", ref: site.id, title: site.title ?? site.name })}
+          >
+            <Icon name="link" cls="ico sm" />
+            发布与分享
+          </button>
+          <button
+            class="iconbtn"
+            title="更多"
+            onClick={(e) =>
+              openSiteMenu(e as unknown as MouseEvent, site, {
+                onRenamed: (n) => navigate({ kind: "site", name: n, tab: "config" }, { replace: true }),
+                onDeleted: () => navigate({ kind: "sites" }, { replace: true }),
+              })}
+          >
             <Icon name="dots" />
           </button>
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            style={{ display: "none" }}
-            onChange={onPick}
-          />
-          <input
-            // webkitdirectory isn't in Preact's JSX attribute types — set it on
-            // the element directly. Directory picks recurse client-side and
-            // carry webkitRelativePath.
-            ref={(el) => {
-              dirInput.current = el;
-              el?.setAttribute("webkitdirectory", "");
-            }}
-            type="file"
-            multiple
-            style={{ display: "none" }}
-            onChange={onPick}
-          />
         </div>
-        <div class="peek-body">
-          <h2 style={{ margin: "0 0 20px" }}>{site.title || site.name}</h2>
-
+        <input ref={fileInput} type="file" multiple style={{ display: "none" }} onChange={onPick} />
+        <input
+          // webkitdirectory isn't in Preact's JSX attribute types — set it on
+          // the element directly. Directory picks recurse client-side and
+          // carry webkitRelativePath.
+          ref={(el) => {
+            dirInput.current = el;
+            el?.setAttribute("webkitdirectory", "");
+          }}
+          type="file"
+          multiple
+          style={{ display: "none" }}
+          onChange={onPick}
+        />
+      </div>
+      <div class="site-config-body">
           <div class="files-head" style={{ marginTop: 0 }}>
             <span>私有预览</span>
             <span>仅你和已配对设备可打开</span>
@@ -914,7 +1005,7 @@ function SitePeek({
             <button title="复制地址" onClick={() => copyText(url)}>
               <Icon name="copy" cls="ico sm" />
             </button>
-            <button class="accent" title="访问站点" onClick={onVisit}>
+            <button class="accent" title="访问站点" onClick={() => navigate({ kind: "site", name: site.name })}>
               <Icon name="globe" cls="ico sm" />
             </button>
           </div>
@@ -1052,10 +1143,9 @@ function SitePeek({
               ))}
             </div>
           )}
-        </div>
       </div>
       {upload && <UploadProgress done={upload.done} total={upload.total} />}
-    </>
+    </div>
   );
 }
 
@@ -1126,44 +1216,3 @@ function FilePreviewModal({ site, file }: { site: Site; file: SiteFile }) {
   );
 }
 
-function SitePreview({ site, onClose }: { site: Site; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
-  }, []);
-
-  const url = "/sites/" + site.name + "/";
-  return (
-    <div
-      class="spv-scrim open"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div class="spv">
-        <div class="spv-chrome">
-          <div class="spv-dots">
-            <i />
-            <i />
-            <i />
-          </div>
-          <div class="spv-url">
-            <Icon name="lock" cls="ico sm" />
-            <span>{siteUrl(site.name)}</span>
-          </div>
-          <button class="spv-btn" title="在新标签打开" onClick={() => window.open(url, "_blank")}>
-            <Icon name="externalLink" cls="ico sm" />
-            新标签
-          </button>
-          <button class="spv-btn icon" title="关闭" onClick={onClose}>
-            <Icon name="x" />
-          </button>
-        </div>
-        <iframe class="spv-frame" src={url} sandbox="allow-scripts allow-same-origin" />
-      </div>
-    </div>
-  );
-}

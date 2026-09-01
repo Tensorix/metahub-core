@@ -1,6 +1,7 @@
 /** @jsxImportSource preact */
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { api, type Db, type DocSummary, type PropType, type PropConfig } from "./api.ts";
+import { api, type Db, type DocSummary, type PropType, type PropConfig, type Site } from "./api.ts";
+import { NewSiteModal, SITES_CHANGED, openSiteMenu } from "./sites.tsx";
 import { Icon } from "./icons.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
 import type { Navigate, View } from "./view.ts";
@@ -34,12 +35,12 @@ interface SidebarProps {
 let dragId: string | null = null;
 
 // Sidebar list state — a purely local UI preference (per device, never
-// replicated). Keys: "tab" (which list the sidebar shows: docs | db; defaults
-// to docs) and "dbHidden" (true = the collapsed-databases group is OPEN; it
-// defaults to closed). Legacy "db"/"docs" fold booleans may linger in old
-// storage; they're simply ignored.
+// replicated). Keys: "tab" (which list the sidebar shows: docs | db | sites;
+// defaults to docs) and "dbHidden" (true = the collapsed-databases group is
+// OPEN; it defaults to closed). Legacy "db"/"docs" fold booleans may linger in
+// old storage; they're simply ignored.
 const SEC_KEY = "mh.sb.sections";
-type SbTab = "docs" | "db";
+type SbTab = "docs" | "db" | "sites";
 interface SecState {
   tab?: SbTab;
   dbHidden?: boolean;
@@ -52,10 +53,11 @@ function loadSec(): SecState {
   }
 }
 
-// The two sidebar lists, in tab order (docs first — it's the primary surface).
+// The sidebar lists, in tab order (docs first — it's the primary surface).
 const TABS: { key: SbTab; icon: string; label: string }[] = [
   { key: "docs", icon: "fileText", label: "文档" },
   { key: "db", icon: "table", label: "数据表" },
+  { key: "sites", icon: "globe", label: "站点" },
 ];
 
 /** The replicated per-database fold flag (meta.collapsed): tucks site-facing /
@@ -116,11 +118,11 @@ export function Sidebar(props: SidebarProps) {
   const paneAnim = useRef(false);
   const setTab = (t: SbTab) => {
     if (t === tab) return;
-    paneDir.current = t === "db" ? "r" : "l";
+    const idx = (k: SbTab) => TABS.findIndex((x) => x.key === k);
+    paneDir.current = idx(t) > idx(tab) ? "r" : "l";
     paneAnim.current = true;
     patchSec({ tab: t });
   };
-
   // Follow navigation: opening a doc (search result, backlink, history) should
   // reveal it in the list. Manual tab switches don't change the view, so they
   // never get yanked back. The id dep matters — doc→doc back/forward must
@@ -128,7 +130,20 @@ export function Sidebar(props: SidebarProps) {
   useEffect(() => {
     if (view.kind === "doc") setTab("docs");
     else if (view.kind === "db") setTab("db");
+    else if (view.kind === "site" || view.kind === "sites") setTab("sites");
   }, [view.kind, "id" in view ? view.id : ""]);
+
+  // The 站点 pane's list. Fetched on each activation (cheap — keeps it honest
+  // after CLI-side changes) and on SITES_CHANGED broadcasts from SitesView's
+  // create/delete/rename flows. On error the pane just stays as it was.
+  const [sites, setSites] = useState<Site[] | null>(null);
+  useEffect(() => {
+    if (tab !== "sites") return;
+    const load = () => api.listSites().then(setSites).catch(() => undefined);
+    load();
+    document.addEventListener(SITES_CHANGED, load);
+    return () => document.removeEventListener(SITES_CHANGED, load);
+  }, [tab]);
 
   // Sliding pill under the active tab. The label expands via a CSS 0fr→1fr
   // grid transition, so a one-shot measurement would capture a mid-flight
@@ -383,9 +398,10 @@ export function Sidebar(props: SidebarProps) {
           <span class="mark"><Icon name="cube" /></span>Metahub
         </div>
         {/* Mobile-only (CSS-gated, like the collapse button below): on the
-            full-page home the sites/settings entries live up here as icon
+            full-page home the shares/settings entries live up here as icon
             buttons instead of the desktop .sb-footer rows, freeing the bottom.
-            The search button reveals the (mobile-hidden) search box below. */}
+            The search button reveals the (mobile-hidden) search box below.
+            Sites has no entry here — it's a first-class .sb-tabs tab now. */}
         <button
           class={"sb-act" + (searchOpen ? " active" : "")}
           title="搜索"
@@ -393,14 +409,6 @@ export function Sidebar(props: SidebarProps) {
           onClick={() => setSearchOpen((v) => !v)}
         >
           <Icon name="search" cls="ico" />
-        </button>
-        <button
-          class={"sb-act" + (view.kind === "sites" ? " active" : "")}
-          title="站点"
-          aria-label="站点"
-          onClick={() => navigate({ kind: "sites" })}
-        >
-          <Icon name="globe" cls="ico" />
         </button>
         <button
           class={"sb-act" + (view.kind === "shares" ? " active" : "")}
@@ -443,11 +451,13 @@ export function Sidebar(props: SidebarProps) {
         ))}
         <button
           class="add"
-          title={tab === "docs" ? "新建文档" : "新建数据库"}
+          title={tab === "docs" ? "新建文档" : tab === "db" ? "新建数据库" : "新建站点"}
           onClick={() =>
             tab === "docs"
               ? newDoc(null)
-              : openCreateDb((id) => navigate({ kind: "db", id }), props.onError)}
+              : tab === "db"
+                ? openCreateDb((id) => navigate({ kind: "db", id }), props.onError)
+                : openModal(<NewSiteModal onCreated={(s) => navigate({ kind: "site", name: s.name, tab: "config" })} />)}
         >
           <Icon name="plus" cls="ico sm" />
         </button>
@@ -481,7 +491,7 @@ export function Sidebar(props: SidebarProps) {
               {renderTree(null)}
               {props.docs.length === 0 && <div class="navitem muted">暂无文档</div>}
             </>
-          ) : (
+          ) : tab === "db" ? (
             <>
               {props.databases.filter((db) => !isDbCollapsed(db)).map((db) => dbItem(db))}
               {props.databases.length === 0 && <div class="navitem muted">暂无数据表</div>}
@@ -495,12 +505,49 @@ export function Sidebar(props: SidebarProps) {
                 </>
               )}
             </>
+          ) : (
+            <>
+              {(sites ?? []).map((s) => (
+                <div
+                  key={s.id}
+                  class={"navitem" + (view.kind === "site" && view.name === s.name ? " active" : "")}
+                  onClick={() => navigate({ kind: "site", name: s.name })}
+                >
+                  <span class="emoji">
+                    <Icon name="globe" cls="ico sm" />
+                  </span>
+                  <span class="label">{s.title || s.name}</span>
+                  <span class="acts">
+                    <button
+                      title="更多"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openSiteMenu(e as unknown as MouseEvent, s, {
+                          onOpenConfig: () => navigate({ kind: "site", name: s.name, tab: "config" }),
+                          onRenamed: (n) => {
+                            if (view.kind === "site" && view.name === s.name)
+                              navigate({ kind: "site", name: n, tab: view.tab }, { replace: true });
+                          },
+                          onDeleted: () => {
+                            if (view.kind === "site" && view.name === s.name)
+                              navigate({ kind: "empty" }, { replace: true });
+                          },
+                        });
+                      }}
+                    >
+                      <Icon name="dots" cls="ico sm" />
+                    </button>
+                  </span>
+                </div>
+              ))}
+              {sites?.length === 0 && <div class="navitem muted">暂无站点</div>}
+            </>
           )}
         </div>
       </div>
 
       {/* Desktop-only slim status row (mobile hides it and uses the .sb-head
-          icons): sites/settings as icon buttons, core version at the right. */}
+          icons): shares/settings as icon buttons, core version at the right. */}
       <div class="sb-footer">
         <button
           class={"sb-act" + (view.kind === "settings" ? " active" : "")}
@@ -510,14 +557,6 @@ export function Sidebar(props: SidebarProps) {
         >
           <Icon name="settings" cls="ico sm" />
           {props.updatePending && <span class="nav-dot" title="有可用更新" />}
-        </button>
-        <button
-          class={"sb-act" + (view.kind === "sites" ? " active" : "")}
-          title="站点"
-          aria-label="站点"
-          onClick={() => navigate({ kind: "sites" })}
-        >
-          <Icon name="globe" cls="ico sm" />
         </button>
         <button
           class={"sb-act" + (view.kind === "shares" ? " active" : "")}

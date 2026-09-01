@@ -1388,26 +1388,25 @@
   .preview-bin .pi { font-size:28px; margin-bottom:8px; }
   .preview-bin .pt { color:var(--fg-soft); font-size:13px; }
 
-  /* in-app site preview (browser-framed iframe) */
-  .spv-scrim { position:fixed; inset:0; background:rgba(15,15,25,.5); z-index:85; display:grid; place-items:center; padding:28px;
-    opacity:0; pointer-events:none; transition:opacity .16s; animation:spv-in .16s forwards; }
-  @keyframes spv-in { to { opacity:1; pointer-events:auto; } }
-  .spv-scrim.open { opacity:1; pointer-events:auto; }
-  .spv { width:min(1100px, 92vw); height:88vh; background:var(--bg); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg);
-    display:flex; flex-direction:column; overflow:hidden; }
-  .spv-chrome { display:flex; align-items:center; gap:10px; padding:9px 12px; border-bottom:1px solid var(--line); background:var(--surface); }
-  .spv-dots { display:flex; gap:6px; flex:none; }
-  .spv-dots i { width:11px; height:11px; border-radius:50%; background:var(--line-strong); }
-  .spv-url { flex:1; display:flex; align-items:center; gap:6px; min-width:0; background:var(--bg); border:1px solid var(--line);
-    border-radius:7px; padding:5px 10px; color:var(--fg-soft); font-family:var(--mono); font-size:12px; }
-  .spv-url svg { color:var(--muted); flex:none; }
-  .spv-url span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .spv-btn { display:inline-flex; align-items:center; gap:5px; flex:none; padding:6px 10px; border-radius:7px; color:var(--fg-soft); font-size:var(--fs-sm); font-weight:500; }
-  .spv-btn:hover { background:var(--hover-2); color:var(--fg); }
-  .spv-btn.icon { padding:6px; }
+  /* full-page site visit view (#/site/<name>): the served site fills .content.
+     Desktop: .content has a definite flex height, so height:100% works. Mobile
+     puts .content in normal document flow, so the frame gets an explicit
+     viewport-based height there (see the mobile media block). */
+  .site-visit { height:100%; }
   /* #fff on purpose: published site content assumes a white canvas, independent
      of the app theme. */
-  .spv-frame { flex:1; width:100%; border:0; background:#fff; }
+  .site-frame { display:block; width:100%; height:100%; border:0; background:#fff; }
+
+  /* site config page (#/site/<name>?view=config): a .db page; the long-form
+     sections cap their measure like a settings page instead of going full-bleed. */
+  .site-config-acts { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .site-config-body { max-width:860px; }
+
+  /* topbar mini segmented control (访问/配置 on site views) */
+  .tb-seg { display:flex; gap:2px; padding:2px; background:var(--hover-2); border-radius:8px; flex:none; }
+  .tb-seg-btn { padding:3px 12px; border-radius:6px; font-size:var(--fs-sm); font-weight:500; color:var(--fg-soft); }
+  .tb-seg-btn:hover { color:var(--fg); }
+  .tb-seg-btn.active { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
 
   .selbar { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:65; display:flex; align-items:center; gap:4px;
     background:var(--surface); color:var(--fg); border:1px solid var(--line); padding:7px 8px 7px 14px; border-radius:11px; box-shadow:var(--shadow-lg); }
@@ -2012,7 +2011,10 @@
     /* narrower handle gutter on phones; .db left padding must be ≥ --grip-gutter */
     .db { padding:16px 14px 90px 24px; }
     /* pages reusing .db without row grips don't need the left gutter — keep padding symmetric */
-    .shares-page.db { padding-left:14px; }
+    .shares-page.db, .site-config.db { padding-left:14px; }
+    /* .content is in document flow on mobile (no definite height), so the
+       site frame sizes itself against the viewport minus the sticky topbar. */
+    .site-visit { height:calc(100dvh - 49px - env(safe-area-inset-top)); }
     .gridhost { --grip-gutter:24px; }
     /* !important: a desktop drag-resize leaves an inline width on .peek; the
        phone layout must always win over it. */

@@ -16,6 +16,7 @@ export type View =
   | { kind: "search"; q: string }
   | { kind: "settings"; sec?: string }
   | { kind: "sites" }
+  | { kind: "site"; name: string; tab?: "config" } // a site's visit page / config page
   | { kind: "shares" };
 
 export type Navigate = (v: View, opts?: { replace?: boolean }) => void;
@@ -38,6 +39,12 @@ export function viewToHash(v: View): string {
     case "search": return `#/search?q=${encodeURIComponent(v.q)}`;
     case "settings": return v.sec ? `#/settings?sec=${encodeURIComponent(v.sec)}` : "#/settings";
     case "sites": return "#/sites";
+    case "site": {
+      const path = `#/site/${encodeURIComponent(v.name)}`;
+      // ?view=config is a durable mirrored mode (settings?sec= style), NOT a
+      // one-shot request like the db ?view= — both modes are shareable URLs.
+      return v.tab === "config" ? `${path}?view=config` : path;
+    }
     case "shares": return "#/shares";
     case "empty": return "#/";
   }
@@ -81,6 +88,11 @@ export function parseHash(h: string): View {
       return sec ? { kind: "settings", sec } : { kind: "settings" };
     }
     if (kind === "sites") return { kind: "sites" };
+    if (kind === "site" && id) {
+      const name = decodeURIComponent(id);
+      const tab = new URLSearchParams(query).get("view");
+      return tab === "config" ? { kind: "site", name, tab: "config" } : { kind: "site", name };
+    }
     if (kind === "shares") return { kind: "shares" };
   } catch {
     // malformed percent-escape — treat as unrecognized
