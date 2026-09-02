@@ -20,6 +20,7 @@ import {
 } from "./site-status.ts";
 import { openShareModal, SHARES_CHANGED } from "./share-modal.tsx";
 import { Icon } from "./icons.tsx";
+import { PageHeader } from "./settings/primitives.tsx";
 import type { Navigate } from "./view.ts";
 import {
   openMenu,
@@ -943,43 +944,33 @@ function SiteConfig({
       onDrop={onDrop}
       style={drag ? { outline: "2px dashed var(--accent)", outlineOffset: -8, borderRadius: 12 } : undefined}
     >
-      <div class="db-head">
-        <div>
-          <div class="db-title">{site.title || site.name}</div>
-          <div class="db-desc">站点配置 — 文件、发布渠道与访问方式。</div>
-        </div>
-        <div class="site-config-acts">
-          <button class="btn btn-secondary" onClick={() => fileInput.current?.click()}>
-            <Icon name="upload" cls="ico sm" />
-            上传文件
-          </button>
-          <button
-            class="btn btn-secondary"
-            title="上传整个目录（保留相对路径），也可以直接拖拽目录进来"
-            onClick={() => dirInput.current?.click()}
-          >
-            <Icon name="upload" cls="ico sm" />
-            上传目录
-          </button>
-          <button
-            class="btn btn-primary"
-            onClick={() => openShareModal({ kind: "site", ref: site.id, title: site.title ?? site.name })}
-          >
-            <Icon name="link" cls="ico sm" />
-            发布与分享
-          </button>
-          <button
-            class="iconbtn"
-            title="更多"
-            onClick={(e) =>
-              openSiteMenu(e as unknown as MouseEvent, site, {
-                onRenamed: (n) => navigate({ kind: "site", name: n, tab: "config" }, { replace: true }),
-                onDeleted: () => navigate({ kind: "sites" }, { replace: true }),
-              })}
-          >
-            <Icon name="dots" />
-          </button>
-        </div>
+      <div class="site-config-body">
+        <PageHeader
+          title={site.title || site.name}
+          sub={`${files?.length ?? site.file_count} 个文件 · 创建于 ${fmtDate(site.created_hlc)}`}
+          action={
+            <div class="sc-head-acts">
+              <button
+                class="btn btn-primary"
+                onClick={() => openShareModal({ kind: "site", ref: site.id, title: site.title ?? site.name })}
+              >
+                <Icon name="link" cls="ico sm" />
+                发布与分享
+              </button>
+              <button
+                class="iconbtn"
+                title="更多"
+                onClick={(e) =>
+                  openSiteMenu(e as unknown as MouseEvent, site, {
+                    onRenamed: (n) => navigate({ kind: "site", name: n, tab: "config" }, { replace: true }),
+                    onDeleted: () => navigate({ kind: "sites" }, { replace: true }),
+                  })}
+              >
+                <Icon name="dots" />
+              </button>
+            </div>
+          }
+        />
         <input ref={fileInput} type="file" multiple style={{ display: "none" }} onChange={onPick} />
         <input
           // webkitdirectory isn't in Preact's JSX attribute types — set it on
@@ -994,11 +985,9 @@ function SiteConfig({
           style={{ display: "none" }}
           onChange={onPick}
         />
-      </div>
-      <div class="site-config-body">
-          <div class="files-head" style={{ marginTop: 0 }}>
-            <span>私有预览</span>
-            <span>仅你和已配对设备可打开</span>
+          <div class="sc-sect-head">
+            <span>访问</span>
+            <span class="sc-side">仅你和已配对设备可打开</span>
           </div>
           <div class="acc-link">
             <span class="url">{urlShort}</span>
@@ -1010,16 +999,9 @@ function SiteConfig({
             </button>
           </div>
 
-          <div class="site-meta">
-            <span>
-              <b>{files?.length ?? site.file_count}</b> 个文件
-            </span>
-            <span>创建于 {fmtDate(site.created_hlc)}</span>
-          </div>
-
-          <div class="files-head">
-            <span>发布地址与访问渠道</span>
-            <span>{channels.length || ""}</span>
+          <div class="sc-sect-head">
+            <span>发布渠道</span>
+            <span class="sc-side">{channels.length || ""}</span>
           </div>
           {channels.length === 0 ? (
             <div class="muted" style={{ fontSize: 12, margin: "4px 0 20px" }}>
@@ -1074,9 +1056,22 @@ function SiteConfig({
             </div>
           )}
 
-          <div class="files-head">
-            <span>文件</span>
-            <span>{files?.length ?? ""}</span>
+          <div class="sc-sect-head">
+            <span>文件{files != null ? ` · ${files.length}` : ""}</span>
+            <span class="sc-acts">
+              <button class="btn btn-ghost" onClick={() => fileInput.current?.click()}>
+                <Icon name="upload" cls="ico sm" />
+                上传文件
+              </button>
+              <button
+                class="btn btn-ghost"
+                title="上传整个目录（保留相对路径），也可以直接拖拽目录进来"
+                onClick={() => dirInput.current?.click()}
+              >
+                <Icon name="upload" cls="ico sm" />
+                上传目录
+              </button>
+            </span>
           </div>
 
           {files == null ? (

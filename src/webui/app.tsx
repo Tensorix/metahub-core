@@ -590,6 +590,12 @@ function App() {
     }
   };
 
+  // Visit mode is immersive: the served site owns the whole content column, no
+  // topbar. A floating overlay (.fnav) restores the two abilities the topbar
+  // carried: leaving (mobile back / expand a collapsed sidebar) and switching
+  // to the config page. Config mode keeps the normal topbar (crumb + tb-seg).
+  const siteImmersive = view.kind === "site" && view.tab !== "config";
+
   return (
     <>
       <Sidebar
@@ -605,6 +611,30 @@ function App() {
         onError={onError}
       />
       <div class="main">
+        {siteImmersive && view.kind === "site" && (
+          <div class="fnav">
+            {isMobile || sbCollapsed ? (
+              <button
+                class="fnav-btn icon"
+                title={isMobile ? "返回" : "展开侧栏"}
+                onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
+              >
+                <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
+              </button>
+            ) : (
+              <span />
+            )}
+            <button
+              class="fnav-btn"
+              title="站点配置"
+              onClick={() => navigate({ kind: "site", name: view.name, tab: "config" })}
+            >
+              <Icon name="settings" cls="ico sm" />
+              配置
+            </button>
+          </div>
+        )}
+        {!siteImmersive && (
         <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
           <button
             class={"iconbtn hamburger" + (sbCollapsed ? " show-collapsed" : "")}
@@ -687,6 +717,7 @@ function App() {
             </>
           )}
         </div>
+        )}
 
         {offline && (
           <div class="offline-bar">
