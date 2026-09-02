@@ -612,6 +612,7 @@
   body.desktop-mac .peek-head .hist-modes { -webkit-app-region:no-drag; }
   /* sidebar collapsed → traffic lights sit over the main header; clear the hamburger */
   body.desktop-mac .sidebar.collapsed ~ .main .topbar { padding-left:80px; }
+  body.desktop-mac .sidebar.collapsed ~ .main .fnav { left:80px; }
 
   /* document editor */
   .doc { max-width:740px; margin:0 auto; padding:60px 60px 36vh; }
@@ -1397,16 +1398,57 @@
      of the app theme. */
   .site-frame { display:block; width:100%; height:100%; border:0; background:#fff; }
 
-  /* site config page (#/site/<name>?view=config): settings design language —
-     PageHeader + flat labelled sections, capped to the settings measure. */
-  .site-config-body { max-width:680px; }
-  .sc-head-acts { display:flex; align-items:center; gap:8px; }
+  /* site config page (#/site/<name>?view=config): identity card (live
+     thumbnail + name/slug/meta/status) beside settings-language sections.
+     Global actions (发布与分享 / ⋯) live in the app topbar, never in the page,
+     so nothing here competes with the title for width. The page is its own
+     container: two columns when it has room, a stacked strip layout below
+     760px regardless of how wide the sidebar happens to be. */
+  .site-config { container-type:inline-size; }
+  .site-config-body { display:flex; align-items:flex-start; gap:40px; max-width:960px; margin:0 auto; padding-top:4px; }
+  .site-id { flex:0 0 220px; min-width:0; position:sticky; top:0; display:flex; flex-direction:column; gap:12px; }
+  .site-id-text { min-width:0; }
+  .site-id-title { font-size:20px; font-weight:700; letter-spacing:-.02em; line-height:1.25; overflow-wrap:anywhere; margin:0; color:var(--fg); }
+  .site-id-slug { font-family:var(--mono); font-size:12px; color:var(--muted); overflow-wrap:anywhere; margin-top:3px; }
+  .site-id-meta { font-size:12px; color:var(--muted); margin-top:6px; }
+  .site-id .chan-badge { margin-top:10px; }
+  .site-config-main { flex:1 1 auto; min-width:0; max-width:680px; }
+  .site-config-main > .sc-sect-head:first-of-type { margin-top:0; }
   .sc-sect-head { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:26px;
     margin:26px 0 6px; font-size:12px; font-weight:600; letter-spacing:.05em; color:var(--muted); }
   .sc-sect-head .sc-side { font-weight:500; letter-spacing:0; }
   .sc-sect-head .sc-acts { display:flex; gap:2px; }
   .sc-sect-head .sc-acts .btn { padding:3px 8px; font-size:var(--fs-sm); font-weight:500; color:var(--fg-soft); letter-spacing:0; }
   .sc-sect-head .sc-acts .btn:hover { color:var(--fg); }
+  /* live thumbnail: the real site laid out at a 1280px design width, scaled
+     by --w (CSS px) into a 16:10 tile; inert to the pointer so the wrapping
+     button gets the click. Placeholder tile when the site has no files. */
+  .site-thumb { --w:220; position:relative; width:calc(var(--w) * 1px); aspect-ratio:16/10; overflow:hidden; border-radius:10px;
+    border:1px solid var(--line); background:#fff; box-shadow:var(--shadow-sm); cursor:pointer; display:block; padding:0; flex:none; }
+  .site-thumb iframe { width:1280px; height:800px; border:0; transform:scale(calc(var(--w) / 1280)); transform-origin:0 0; pointer-events:none; display:block; }
+  .site-thumb-open { position:absolute; right:8px; bottom:8px; display:inline-flex; gap:4px; align-items:center; padding:4px 9px; border-radius:999px;
+    background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow-md); font-size:12px; font-weight:500; color:var(--fg-soft);
+    opacity:0; transition:opacity .15s; }
+  .site-thumb:hover .site-thumb-open, .site-thumb:focus-visible .site-thumb-open { opacity:1; }
+  .site-thumb.empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
+    background:var(--surface-2); color:var(--muted); font-size:12px; cursor:default; box-shadow:none; border-style:dashed; }
+  .site-thumb.empty svg { width:18px; height:18px; opacity:.7; }
+  @container (max-width: 759px) {
+    .site-config-body { display:block; }
+    .site-id { position:static; flex-direction:row; align-items:flex-start; gap:14px; margin-bottom:6px; }
+    .site-thumb { --w:96; border-radius:8px; }
+    .site-thumb-open { display:none; }
+    .site-thumb.empty span { display:none; }
+    .site-id-title { font-size:18px; }
+    .site-id .chan-badge { margin-top:8px; }
+    .site-config-main > .sc-sect-head:first-of-type { margin-top:22px; }
+  }
+  /* inline text action inside muted copy */
+  .linkbtn { color:var(--accent); font-weight:500; padding:0 2px; border-radius:4px; }
+  .linkbtn:hover { text-decoration:underline; }
+  /* config-mode topbar action, the site counterpart of doc/db's share button */
+  .site-publish { flex:none; color:var(--fg-soft); }
+  .site-publish:not(:disabled):hover { background:var(--hover-2); color:var(--fg); }
 
   /* floating overlay nav for the immersive visit mode (no topbar): left slot =
      mobile back / expand collapsed sidebar, right slot = jump to config. */
@@ -1417,12 +1459,6 @@
     font-size:var(--fs-sm); font-weight:500; }
   .fnav-btn:hover { color:var(--fg); }
   .fnav-btn.icon { width:32px; height:32px; padding:0; justify-content:center; }
-
-  /* topbar mini segmented control (访问/配置 on site views) */
-  .tb-seg { display:flex; gap:2px; padding:2px; background:var(--hover-2); border-radius:8px; flex:none; }
-  .tb-seg-btn { padding:3px 12px; border-radius:6px; font-size:var(--fs-sm); font-weight:500; color:var(--fg-soft); }
-  .tb-seg-btn:hover { color:var(--fg); }
-  .tb-seg-btn.active { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
 
   .selbar { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:65; display:flex; align-items:center; gap:4px;
     background:var(--surface); color:var(--fg); border:1px solid var(--line); padding:7px 8px 7px 14px; border-radius:11px; box-shadow:var(--shadow-lg); }
@@ -1977,6 +2013,9 @@
     .sb-head .iconbtn { display:none; }          /* no collapse on mobile */
     .sb-resizer { display:none; }
     .topbar .hamburger { display:grid; }         /* serves as the back button */
+    /* site config topbar: icon-only publish button so the crumb keeps its last segment */
+    .site-publish { padding:0 8px; min-width:0; }
+    .site-publish-label { display:none; }
 
     /* Sites/settings move from the bottom footer rows up into the home header
        as icon buttons — no full-width strip eating into the list + safe area. */

@@ -26,7 +26,8 @@ import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
 import { resolvePage, pageLabel } from "./settings/nav.ts";
 import { cmpVer } from "./version.ts";
-import { SitesView, SiteView } from "./sites.tsx";
+import { SitesView, SiteView, openSiteMenu } from "./sites.tsx";
+import type { Site } from "./api.ts";
 import { openShareModal } from "./share-modal.tsx";
 import { ShareView } from "./shares-view.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
@@ -593,8 +594,11 @@ function App() {
   // Visit mode is immersive: the served site owns the whole content column, no
   // topbar. A floating overlay (.fnav) restores the two abilities the topbar
   // carried: leaving (mobile back / expand a collapsed sidebar) and switching
-  // to the config page. Config mode keeps the normal topbar (crumb + tb-seg).
+  // to the config page. Config mode keeps the normal topbar (crumb + 发布与分享/⋯).
   const siteImmersive = view.kind === "site" && view.tab !== "config";
+  // Resolved Site for the current #/site/<name> view (reported by SiteView) —
+  // the config-mode topbar carries its global actions, mirroring doc/db.
+  const [activeSite, setActiveSite] = useState<Site | null>(null);
 
   return (
     <>
@@ -677,30 +681,41 @@ function App() {
                 <span class="emoji"><Icon name="globe" cls="ico sm" /></span>
                 <button class="crumb-link" onClick={() => navigate({ kind: "sites" })}>站点</button>
                 <span class="crumb-sep">›</span>
-                <span>{view.name}</span>
+                {/* The topbar only exists in config mode; the site name links
+                    back to the immersive visit page. */}
+                <button class="crumb-link" onClick={() => navigate({ kind: "site", name: view.name })}>{view.name}</button>
+                <span class="crumb-sep">›</span>
+                <span>配置</span>
               </>
             )}
             {view.kind === "shares" && <><span class="emoji"><Icon name="link" cls="ico sm" /></span><span>分享</span></>}
           </div>
           {view.kind === "site" && (
-            <div class="tb-seg" role="tablist">
+            <>
               <button
-                role="tab"
-                aria-selected={view.tab !== "config"}
-                class={"tb-seg-btn" + (view.tab !== "config" ? " active" : "")}
-                onClick={() => view.tab === "config" && navigate({ kind: "site", name: view.name })}
+                class="btn site-publish"
+                disabled={!activeSite}
+                onClick={() =>
+                  activeSite &&
+                  openShareModal({ kind: "site", ref: activeSite.id, title: activeSite.title ?? activeSite.name })}
               >
-                访问
+                <Icon name="link" cls="ico sm" />
+                <span class="site-publish-label">发布与分享</span>
               </button>
               <button
-                role="tab"
-                aria-selected={view.tab === "config"}
-                class={"tb-seg-btn" + (view.tab === "config" ? " active" : "")}
-                onClick={() => view.tab !== "config" && navigate({ kind: "site", name: view.name, tab: "config" })}
+                class="iconbtn"
+                title="更多"
+                disabled={!activeSite}
+                onClick={(e) =>
+                  activeSite &&
+                  openSiteMenu(e as unknown as MouseEvent, activeSite, {
+                    onRenamed: (n) => navigate({ kind: "site", name: n, tab: "config" }, { replace: true }),
+                    onDeleted: () => navigate({ kind: "sites" }, { replace: true }),
+                  })}
               >
-                配置
+                <Icon name="dots" />
               </button>
-            </div>
+            </>
           )}
           {(view.kind === "doc" || view.kind === "db") && (
             <>
@@ -760,7 +775,7 @@ function App() {
           {view.kind === "settings" && <SettingsView onUpdatePending={setUpdatePending} updatePending={updatePending} focusSec={view.sec} />}
           {view.kind === "sites" && <SitesView navigate={navigate} />}
           {view.kind === "site" && (
-            <SiteView key={view.name} name={view.name} tab={view.tab} navigate={navigate} />
+            <SiteView key={view.name} name={view.name} tab={view.tab} navigate={navigate} onResolved={setActiveSite} />
           )}
           {view.kind === "shares" && <ShareView onNavigate={navigate} />}
         </div>

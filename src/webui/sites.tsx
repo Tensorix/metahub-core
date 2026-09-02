@@ -20,7 +20,6 @@ import {
 } from "./site-status.ts";
 import { openShareModal, SHARES_CHANGED } from "./share-modal.tsx";
 import { Icon } from "./icons.tsx";
-import { PageHeader } from "./settings/primitives.tsx";
 import type { Navigate } from "./view.ts";
 import {
   openMenu,
@@ -757,10 +756,28 @@ function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: (newName:
  *  served site in an iframe; ?view=config is the management page that replaced
  *  the old peek drawer (upload, publish channels, file list). Resolves the site
  *  by slug itself, so it deep-links and survives refresh. */
-export function SiteView({ name, tab, navigate }: { name: string; tab?: "config"; navigate: Navigate }) {
+export function SiteView({
+  name,
+  tab,
+  navigate,
+  onResolved,
+}: {
+  name: string;
+  tab?: "config";
+  navigate: Navigate;
+  // The app shell's topbar carries this site's global actions (发布与分享 / ⋯),
+  // so it needs the resolved Site object; null while loading / when missing.
+  onResolved?: (site: Site | null) => void;
+}) {
   const [sites, setSites] = useState<Site[] | null>(null);
   const [shares, setShares] = useState<ShareListItem[]>([]);
   const [hostingInfo, setHostingInfo] = useState<SiteHostingInfo | null>(null);
+  const site = sites?.find((s) => s.name === name) ?? null;
+
+  useEffect(() => {
+    onResolved?.(site);
+  }, [site?.id, site?.name, site?.title, site?.file_count, site?.spa]);
+  useEffect(() => () => onResolved?.(null), []);
 
   useEffect(() => {
     const load = () => api.listSites().then(setSites).catch((e) => toast(`加载失败：${e.message}`));
@@ -787,7 +804,6 @@ export function SiteView({ name, tab, navigate }: { name: string; tab?: "config"
         加载中…
       </div>
     );
-  const site = sites.find((s) => s.name === name);
   if (!site)
     return (
       <div class="site-empty" style={{ marginTop: 60 }}>
@@ -836,6 +852,46 @@ function SiteVisit({ site, navigate }: { site: Site; navigate: Navigate }) {
   );
 }
 
+/** Live thumbnail of the served site: the real page in a sandboxed iframe,
+ *  laid out at a 1280px design width and scaled down by CSS (--w). Inert to
+ *  the pointer; the wrapping button opens the visit page. `ver` remounts the
+ *  frame after file changes so the picture tracks the current files. */
+function SiteThumb({
+  site,
+  hasFiles,
+  ver,
+  onClick,
+}: {
+  site: Site;
+  hasFiles: boolean;
+  ver: number;
+  onClick: () => void;
+}) {
+  if (!hasFiles)
+    return (
+      <div class="site-thumb empty">
+        <Icon name="upload" cls="ico" />
+        <span>还没有文件</span>
+      </div>
+    );
+  return (
+    <button class="site-thumb" title="打开站点" onClick={onClick}>
+      <iframe
+        key={ver}
+        src={"/sites/" + site.name + "/?_t=" + ver}
+        sandbox="allow-scripts allow-same-origin"
+        tabIndex={-1}
+        aria-hidden="true"
+        title=""
+      />
+      <span class="site-thumb-open">
+        <Icon name="externalLink" cls="ico sm" />
+        打开
+      </span>
+    </button>
+  );
+}
+
 function SiteConfig({
   site,
   shares,
@@ -853,6 +909,9 @@ function SiteConfig({
   const dirInput = useRef<HTMLInputElement>(null);
   const [upload, setUpload] = useState<{ done: number; total: number } | null>(null);
   const [drag, setDrag] = useState(false);
+  // Bumped after every file change so the identity-card thumbnail remounts and
+  // shows the site as it is now.
+  const [thumbVer, setThumbVer] = useState(0);
 
   const reload = () =>
     api
@@ -885,6 +944,7 @@ function SiteConfig({
     setUpload(null);
     reportUpload(list.length, failed);
     reload();
+    setThumbVer((v) => v + 1);
     notifySitesChanged(); // file_count changed — grid cards / sidebar refresh
   };
 
@@ -925,6 +985,7 @@ function SiteConfig({
       return toast((e as Error).message);
     }
     reload();
+    setThumbVer((v) => v + 1);
     notifySitesChanged();
   };
 
@@ -945,32 +1006,27 @@ function SiteConfig({
       style={drag ? { outline: "2px dashed var(--accent)", outlineOffset: -8, borderRadius: 12 } : undefined}
     >
       <div class="site-config-body">
-        <PageHeader
-          title={site.title || site.name}
-          sub={`${files?.length ?? site.file_count} 个文件 · 创建于 ${fmtDate(site.created_hlc)}`}
-          action={
-            <div class="sc-head-acts">
-              <button
-                class="btn btn-primary"
-                onClick={() => openShareModal({ kind: "site", ref: site.id, title: site.title ?? site.name })}
-              >
-                <Icon name="link" cls="ico sm" />
-                发布与分享
-              </button>
-              <button
-                class="iconbtn"
-                title="更多"
-                onClick={(e) =>
-                  openSiteMenu(e as unknown as MouseEvent, site, {
-                    onRenamed: (n) => navigate({ kind: "site", name: n, tab: "config" }, { replace: true }),
-                    onDeleted: () => navigate({ kind: "sites" }, { replace: true }),
-                  })}
-              >
-                <Icon name="dots" />
-              </button>
+        {/* Identity card: live thumbnail + name/slug/meta/status. Deliberately
+            no buttons — the site's global actions live in the app topbar. */}
+        <aside class="site-id">
+          <SiteThumb
+            site={site}
+            hasFiles={(files?.length ?? site.file_count) > 0}
+            ver={thumbVer}
+            onClick={() => navigate({ kind: "site", name: site.name })}
+          />
+          <div class="site-id-text">
+            <h1 class="site-id-title">{site.title || site.name}</h1>
+            {site.title && <div class="site-id-slug">{site.name}</div>}
+            <div class="site-id-meta">
+              {files?.length ?? site.file_count} 个文件 · 创建于 {fmtDate(site.created_hlc)}
             </div>
-          }
-        />
+            <span class={"chan-badge" + (channels.length ? " anyone" : "")}>
+              {channels.length ? `已发布 · ${channels.length} 个渠道` : "私有"}
+            </span>
+          </div>
+        </aside>
+        <div class="site-config-main">
         <input ref={fileInput} type="file" multiple style={{ display: "none" }} onChange={onPick} />
         <input
           // webkitdirectory isn't in Preact's JSX attribute types — set it on
@@ -1006,6 +1062,12 @@ function SiteConfig({
           {channels.length === 0 ? (
             <div class="muted" style={{ fontSize: 12, margin: "4px 0 20px" }}>
               还没有发布 — 目前只有你（和已配对设备）能打开上面的预览地址。
+              <button
+                class="linkbtn"
+                onClick={() => openShareModal({ kind: "site", ref: site.id, title: site.title ?? site.name })}
+              >
+                发布与分享…
+              </button>
             </div>
           ) : (
             <div style={{ marginBottom: 20 }}>
@@ -1138,6 +1200,7 @@ function SiteConfig({
               ))}
             </div>
           )}
+        </div>
       </div>
       {upload && <UploadProgress done={upload.done} total={upload.total} />}
     </div>
