@@ -1394,6 +1394,12 @@
      puts .content in normal document flow, so the frame gets an explicit
      viewport-based height there (see the mobile media block). */
   .site-visit { height:100%; }
+  /* stage for the visit view's full-page empty states (no files / site
+     missing): the immersive column has no padding of its own, so this gives
+     the dashed card an even gutter on all four sides and fills the column
+     with the message centred inside. */
+  .site-stage { min-height:100%; display:flex; padding:20px; box-sizing:border-box; }
+  .site-stage .site-empty { flex:1 1 auto; justify-content:center; margin:0; }
   /* #fff on purpose: published site content assumes a white canvas, independent
      of the app theme. */
   .site-frame { display:block; width:100%; height:100%; border:0; background:#fff; }
@@ -2070,6 +2076,7 @@
     /* .content is in document flow on mobile (no definite height), so the
        site frame sizes itself against the viewport; visit mode has no topbar. */
     .site-visit { height:100dvh; }
+    .site-stage { min-height:100dvh; }
     .gridhost { --grip-gutter:24px; }
     /* !important: a desktop drag-resize leaves an inline width on .peek; the
        phone layout must always win over it. */

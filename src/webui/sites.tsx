@@ -806,15 +806,17 @@ export function SiteView({
     );
   if (!site)
     return (
-      <div class="site-empty" style={{ marginTop: 60 }}>
-        <div class="ei">
-          <Icon name="globe" />
+      <div class="site-stage">
+        <div class="site-empty">
+          <div class="ei">
+            <Icon name="globe" />
+          </div>
+          <div class="et">站点不存在</div>
+          <div class="ed">「{name}」可能已被删除或重命名。</div>
+          <button class="btn btn-secondary" onClick={() => navigate({ kind: "sites" })}>
+            查看全部站点
+          </button>
         </div>
-        <div class="et">站点不存在</div>
-        <div class="ed">「{name}」可能已被删除或重命名。</div>
-        <button class="btn btn-secondary" onClick={() => navigate({ kind: "sites" })}>
-          查看全部站点
-        </button>
       </div>
     );
   if (tab === "config")
@@ -823,19 +825,23 @@ export function SiteView({
 }
 
 function SiteVisit({ site, navigate }: { site: Site; navigate: Navigate }) {
+  // Full-page empty state: the immersive view has no page padding of its own,
+  // so a centred stage keeps the card off the edges (and mid-viewport).
   if (site.file_count === 0)
     return (
-      <div class="site-empty" style={{ marginTop: 60 }}>
-        <div class="ei">📁</div>
-        <div class="et">站点还没有文件</div>
-        <div class="ed">上传文件后，这里会直接显示站点页面。</div>
-        <button
-          class="btn btn-primary"
-          onClick={() => navigate({ kind: "site", name: site.name, tab: "config" })}
-        >
-          <Icon name="upload" cls="ico sm" />
-          去配置
-        </button>
+      <div class="site-stage">
+        <div class="site-empty">
+          <div class="ei">📁</div>
+          <div class="et">站点还没有文件</div>
+          <div class="ed">上传文件后，这里会直接显示站点页面。</div>
+          <button
+            class="btn btn-primary"
+            onClick={() => navigate({ kind: "site", name: site.name, tab: "config" })}
+          >
+            <Icon name="upload" cls="ico sm" />
+            去配置
+          </button>
+        </div>
       </div>
     );
   return (
