@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { api, type ShareListItem } from "./api.ts";
 import { Icon } from "./icons.tsx";
-import { toast } from "./ui.tsx";
+import { toast, ListSkeleton } from "./ui.tsx";
 import { useShareActions, SHARES_CHANGED } from "./share-modal.tsx";
 import type { Navigate } from "./view.ts";
 
@@ -27,14 +27,23 @@ function fmtExpiry(ts: number | null): { text: string; warn: boolean; dead: bool
 
 export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
   const [shares, setShares] = useState<ShareListItem[] | null>(null);
+  // First-load failure lands on the page (retry card) rather than in a toast
+  // that leaves the skeleton spinning forever; later reload failures keep the
+  // last good list and toast instead.
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "server" | "room" | "s3">("all");
   const [q, setQ] = useState("");
 
-  const reload = () =>
-    api
+  const reload = () => {
+    setLoadErr(null);
+    return api
       .listShares()
       .then(setShares)
-      .catch((e) => toast(`加载失败：${e.message}`));
+      .catch((e) => {
+        setLoadErr(String(e.message ?? e));
+        if (shares != null) toast(`加载失败：${e.message}`);
+      });
+  };
 
   useEffect(() => {
     reload();
@@ -90,10 +99,15 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
         </div>
       </div>
 
-      {shares == null ? (
-        <div class="muted" style={{ padding: 20 }}>
-          加载中…
+      {shares == null && loadErr != null ? (
+        <div class="site-empty">
+          <div class="ei"><Icon name="cloudOff" /></div>
+          <div class="et">分享列表加载失败</div>
+          <div class="ed">{loadErr}</div>
+          <button class="btn btn-secondary" onClick={reload}>重试</button>
         </div>
+      ) : shares == null ? (
+        <ListSkeleton label="正在加载分享列表" />
       ) : shown.length === 0 ? (
         <div class="site-empty">
           <div class="ei"><Icon name="link" /></div>
