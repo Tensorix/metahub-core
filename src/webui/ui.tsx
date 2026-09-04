@@ -41,6 +41,30 @@ export function toast(msg: string) {
   setTimeout(() => toastStore.set(toastStore.get().filter((t) => t.id !== id)), 2600);
 }
 
+// ---- list skeleton -----------------------------------------------------------
+// Row-shaped loading placeholder for list pages (mirrors the .shv-row box). It
+// fades in only after ~120ms (CSS) so an instant load never flashes it, and
+// each row's sheen is offset by --i so the three read as one descending wave.
+export function ListSkeleton({ rows = 3, label = "正在加载" }: { rows?: number; label?: string }) {
+  return (
+    <div class="skel-list" role="status" aria-live="polite" aria-busy="true" aria-label={label}>
+      {Array.from({ length: rows }, (_, i) => (
+        <div class="skel-row" key={i} style={`--i:${i}`}>
+          <span class="skel-b skel-ico" />
+          <div class="skel-main">
+            <span class="skel-b skel-line t" />
+            <span class="skel-b skel-line m" />
+          </div>
+          <div class="skel-acts">
+            <span class="skel-b skel-pill" />
+            <span class="skel-b skel-pill" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ---- upload progress tray --------------------------------------------------
 // A floating bottom-right list of in-flight uploads (every entry point — drop,
 // paste, slash picker, annotate save — registers here). Detailed % lives here;

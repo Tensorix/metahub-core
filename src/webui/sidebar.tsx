@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type PropType, type PropConfig, type Site } from "./api.ts";
 import { NewSiteModal, SITES_CHANGED, openSiteMenu } from "./sites.tsx";
 import { Icon } from "./icons.tsx";
+import { SyncIndicator } from "./sync-indicator.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
 import type { Navigate, View } from "./view.ts";
 import {
@@ -397,6 +398,9 @@ export function Sidebar(props: SidebarProps) {
         <div class="brand">
           <span class="mark"><Icon name="cube" /></span>Metahub
         </div>
+        {/* Mobile-only slot (CSS-gated): the phone home is the sidebar, so the
+            ambient sync indicator lives up here; desktop uses the footer slot. */}
+        <SyncIndicator variant="head" onOpen={() => navigate({ kind: "settings", sec: "offline" })} />
         {/* Mobile-only (CSS-gated, like the collapse button below): on the
             full-page home the shares/settings entries live up here as icon
             buttons instead of the desktop .sb-footer rows, freeing the bottom.
@@ -566,6 +570,7 @@ export function Sidebar(props: SidebarProps) {
         >
           <Icon name="link" cls="ico sm" />
         </button>
+        <SyncIndicator variant="footer" onOpen={() => navigate({ kind: "settings", sec: "offline" })} />
         {version && <span class="sbf-ver" title={`Metahub Core v${version}`}>v{version}</span>}
       </div>
 

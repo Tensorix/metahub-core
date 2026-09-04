@@ -175,6 +175,10 @@ export interface ReplicaStatus {
   bucketSyncing?: boolean;
   /** Last direct bucket sync error, if the dirty changes could not be saved. */
   bucketError?: string;
+  /** A sync round (any trigger: load, focus, online, debounced push, poll) is
+   *  in flight. Unlike bucketSyncing this flips for every round; the UI hides
+   *  rounds shorter than a few hundred ms so typing never flickers a spinner. */
+  syncing?: boolean;
   error?: string;
 }
 export type WorkerEvent =
@@ -410,6 +414,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
   if (!hasSyncTarget(d)) return { pushed: 0, pulled: 0, ok: true };
   if (syncing) return syncing;
   syncing = (async (): Promise<SyncOutcome> => {
+    setStatus({ syncing: true });
     const before = (
       d.query("SELECT MAX(rowid) AS m FROM crdt_changes").get() as { m: number | null }
     ).m ?? 0;
@@ -524,6 +529,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
       },
       bucketDirty,
       bucketSyncing: false,
+      syncing: false,
       bucketError: bucketErrors.join("; ") || undefined,
     });
     if (touched.length || pushed) {
@@ -537,6 +543,9 @@ async function runSync(force = false): Promise<SyncOutcome> {
     }
     return { pushed, pulled, ok: errors.length === 0 };
   })().finally(() => {
+    // Safety net: a throw between setStatus({syncing:true}) and the final
+    // status write (e.g. drainSpoolToBuckets) must not leave the UI spinning.
+    if (status.syncing) setStatus({ syncing: false });
     if (db && enabledStoragePeers(db).length > 0 && !status.bucketSyncing) {
       const bucketDirty = hasPendingBucketPush(db);
       if (bucketDirty && !status.bucketError) scheduleBucketFlush();

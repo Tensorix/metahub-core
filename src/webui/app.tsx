@@ -30,6 +30,7 @@ import { SitesView, SiteView, openSiteMenu } from "./sites.tsx";
 import type { Site } from "./api.ts";
 import { openShareModal } from "./share-modal.tsx";
 import { ShareView } from "./shares-view.tsx";
+import { SyncIndicator } from "./sync-indicator.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
@@ -647,6 +648,11 @@ function App() {
           >
             <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
           </button>
+          {/* Sidebar collapsed hides its footer slot; keep the sync indicator
+              reachable next to the hamburger. */}
+          {sbCollapsed && !isMobile && (
+            <SyncIndicator variant="topbar" onOpen={() => navigate({ kind: "settings", sec: "offline" })} />
+          )}
           {isDesktop && !isMobile && (
             <>
               <button class="iconbtn navbtn" title="后退" disabled={!canGoBack} onClick={goBack}>

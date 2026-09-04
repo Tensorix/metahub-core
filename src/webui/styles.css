@@ -595,6 +595,26 @@
   @keyframes save-pop { 0% { transform:scale(.7); } 100% { transform:scale(1); } }
   @keyframes save-shake { 10%,90% { transform:translateX(-1px); } 20%,80% { transform:translateX(1.5px); } 30%,50%,70% { transform:translateX(-2px); } 40%,60% { transform:translateX(2px); } }
   @keyframes save-kbd-pulse { 0% { transform:scale(1); } 45% { transform:scale(1.05); } 100% { transform:scale(1); } }
+  /* Ambient replica-sync indicator (sync-indicator.tsx): same ghost-control
+     idiom as .share-save — zero footprint when idle, colour carries state,
+     only error escalates to danger. Lives in .sb-footer (desktop), .sb-head
+     (mobile home) and the topbar (sidebar collapsed). */
+  .sync-ind { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 8px; border-radius:var(--radius-sm);
+    font-size:var(--fs-xs); color:var(--fg-soft); white-space:nowrap; font-variant-numeric:tabular-nums; flex:none;
+    animation:save-rise .22s ease both; }
+  .sync-ind:hover { background:var(--hover-2); color:var(--fg); }
+  .sync-ind-ico { display:inline-flex; align-items:center; }
+  .sync-ring { width:12px; height:12px; border-radius:50%; border:1.5px solid var(--line-strong);
+    border-top-color:var(--accent); animation:mh-spin .8s linear infinite; }
+  .sync-ind-done { color:var(--success); }
+  .sync-ind-done .sync-ind-ico { animation:save-pop .24s cubic-bezier(.18,.9,.24,1.22) both; }
+  .sync-ind-error { color:var(--danger); }
+  .sync-ind-error:hover { background:var(--danger-soft); color:var(--danger); }
+  /* footer: push right, version stays flush right after it */
+  .sb-footer .sync-ind { margin-left:auto; }
+  .sb-footer .sync-ind + .sbf-ver { margin-left:8px; }
+  /* head slot is mobile-only (mirrors the .sb-head .iconbtn gating) */
+  .sb-head .sync-ind { display:none; }
 
   /* macOS desktop (hiddenInset frameless): drop the sidebar logo and reserve a
      draggable strip so the inset traffic lights never overlap our controls.
@@ -1315,7 +1335,32 @@
   .shv-exp.dead { text-decoration:line-through; }
   .shv-actions { display:flex; align-items:center; gap:6px; flex:none; }
   .shv-actions .btn { padding:5px 10px; font-size:12px; }
+  /* list swap: data arriving over the skeleton fades in rather than hard-cutting */
+  .shv-list { animation:skel-in .18s ease both; }
+
+  /* ── list skeleton (ui.tsx ListSkeleton) ─────────────────────────────────
+     Row-shaped placeholder in the .shv-row box. Fades in after 120ms so an
+     instant load never flashes it; each row's sheen is offset by --i so the
+     rows read as one wave rolling down. Global reduced-motion rule freezes it. */
+  .skel-list { display:flex; flex-direction:column; gap:8px; animation:skel-in .25s ease .12s both; }
+  .skel-row { display:flex; align-items:center; gap:13px; padding:13px 15px; background:var(--bg);
+    border:1px solid var(--line); border-radius:var(--radius-lg); }
+  .skel-b { display:block; position:relative; overflow:hidden; background:var(--surface-2); border-radius:6px; }
+  .skel-b::after { content:""; position:absolute; inset:0;
+    background:linear-gradient(90deg, transparent 20%, color-mix(in srgb, var(--fg) 5%, transparent) 50%, transparent 80%);
+    background-size:200% 100%; animation:skel-sweep 1.6s ease-in-out infinite;
+    animation-delay:calc(var(--i, 0) * 120ms); }
+  .skel-ico { width:38px; height:38px; flex:none; border-radius:10px; }
+  .skel-main { flex:1; min-width:0; }
+  .skel-line { height:13px; width:38%; }
+  .skel-line.m { height:11px; width:62%; margin-top:8px; }
+  .skel-acts { display:flex; gap:6px; flex:none; }
+  .skel-pill { width:56px; height:24px; border-radius:999px; }
+  @keyframes skel-in { from { opacity:0; } to { opacity:1; } }
+  @keyframes skel-sweep { from { background-position:100% 0; } to { background-position:-100% 0; } }
   @media (max-width:640px){
+    .skel-acts { display:none; }
+    .skel-line { width:60%; } .skel-line.m { width:90%; }
     /* head stacks: title/desc full row, then segmented tabs, then search */
     .shares-page .db-head { flex-direction:column; align-items:stretch; gap:12px; }
     .shv-tools { margin-left:0; width:100%; }
@@ -2017,6 +2062,7 @@
     html:has(body.mobile), body.mobile { background:var(--sidebar); }
     html:has(body.mobile-content), body.mobile-content { background:var(--bg); }
     .sb-head .iconbtn { display:none; }          /* no collapse on mobile */
+    .sb-head .sync-ind { display:inline-flex; height:32px; } /* .brand's flex:1 already pushes it right */
     .sb-resizer { display:none; }
     .topbar .hamburger { display:grid; }         /* serves as the back button */
     /* site config topbar: icon-only publish button so the crumb keeps its last segment */
@@ -2508,7 +2554,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .switch, .switch-knob, .ico.spin, .blob-seg, .blob-ring-track { transition:none; animation:none; }
+    .switch, .switch-knob, .ico.spin, .sync-ring, .blob-seg, .blob-ring-track { transition:none; animation:none; }
   }
 
   /* Blob manager popup (Settings storage → Blob 管理): a sortable/filterable list
