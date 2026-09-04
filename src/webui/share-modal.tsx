@@ -52,6 +52,14 @@ export interface ShareTarget {
   title?: string;
 }
 
+/** The share dialog target for a list row (an expired device/Edge link can
+ *  only be re-created, so the list hands the row back to the dialog). Null for
+ *  a kind the dialog doesn't know. */
+export function shareTargetOf(s: ShareListItem): ShareTarget | null {
+  if (s.kind !== "doc" && s.kind !== "database" && s.kind !== "site") return null;
+  return { kind: s.kind, ref: s.target_id, title: s.title };
+}
+
 /** Broadcast after any create/revoke/renew so the global view + in-context
  *  "shared" badges (useSharedTargets) refresh — mirrors NAV_INVALIDATE. */
 export const SHARES_CHANGED = "mh-shares-changed";
@@ -110,7 +118,14 @@ export function useShareActions(
     }
   };
   const revoke = async (s: ShareListItem) => {
-    if (!confirm(`撤销这个分享？(${s.source})`)) return;
+    const ok = await confirmDialog({
+      title: "撤销这个分享？",
+      message: "链接立即失效，接收者将无法再打开。",
+      confirmLabel: "撤销",
+      danger: true,
+      aboveMenus: true,
+    });
+    if (!ok) return;
     try {
       const result = await api.revokeShare(s.slug, s.sourceUrl);
       if (result.status === "cleanup_pending") {
@@ -763,7 +778,7 @@ function injectStyle() {
   if (styled) return;
   styled = true;
   const css = `
-  .mhshare-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999}
+  .mhshare-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:90}
   .mhshare-modal{background:var(--mh-bg,#fff);color:var(--mh-fg,#1f2328);width:min(480px,94vw);max-height:88vh;overflow:auto;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC",sans-serif}
   .mhshare-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--mh-line,#e5e7eb);position:sticky;top:0;background:inherit}
   .mhshare-head h2{font-size:16px;margin:0}
