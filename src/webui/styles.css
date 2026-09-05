@@ -1374,29 +1374,31 @@
   /* list swap: data arriving over the skeleton fades in rather than hard-cutting */
   .shv-list { animation:skel-in .18s ease both; }
 
-  /* ── list skeleton (ui.tsx ListSkeleton) ─────────────────────────────────
-     Row-shaped placeholder in the .shv-row box. Fades in after 120ms so an
-     instant load never flashes it; each row's sheen is offset by --i so the
-     rows read as one wave rolling down. Global reduced-motion rule freezes it. */
-  .skel-list { display:flex; flex-direction:column; gap:8px; animation:skel-in .25s ease .12s both; }
-  .skel-row { display:flex; align-items:center; gap:13px; padding:13px 15px; background:var(--bg);
-    border:1px solid var(--line); border-radius:var(--radius-lg); }
+  /* ── list skeleton (shares-view.tsx ShareListSkeleton) ─────────────────
+     Rows are REAL .shv-row markup, so grid/padding/mobile stacking are shared
+     by construction; these rules only size the sheen blocks that stand in for
+     content. Fades in after 120ms so an instant load never flashes it; each
+     row's sheen is offset by --i so the rows read as one wave rolling down.
+     Global reduced-motion rule freezes it. */
+  .skel-list { animation:skel-in .25s ease .12s both; }
   .skel-b { display:block; position:relative; overflow:hidden; background:var(--surface-2); border-radius:6px; }
   .skel-b::after { content:""; position:absolute; inset:0;
     background:linear-gradient(90deg, transparent 20%, color-mix(in srgb, var(--fg) 5%, transparent) 50%, transparent 80%);
     background-size:200% 100%; animation:skel-sweep 1.6s ease-in-out infinite;
     animation-delay:calc(var(--i, 0) * 120ms); }
-  .skel-ico { width:38px; height:38px; flex:none; border-radius:10px; }
-  .skel-main { flex:1; min-width:0; }
-  .skel-line { height:13px; width:38%; }
-  .skel-line.m { height:11px; width:62%; margin-top:8px; }
-  .skel-acts { display:flex; gap:6px; flex:none; }
-  .skel-pill { width:56px; height:24px; border-radius:999px; }
+  .shv-row.skel { pointer-events:none; }
+  .shv-row.skel:hover { border-color:var(--line); box-shadow:none; }
+  .skel-t { height:1.55em; height:1lh; width:calc(52% + var(--i, 0) * 9%); border-radius:5px; }
+  .skel-s { height:1.55em; height:1lh; width:min(44ch, 60%); border-radius:4px; }
+  .shv-status .skel-st { height:1.55em; height:1lh; width:7ch; border-radius:4px; }
+  .skel-btn { width:76px; height:29px; border-radius:var(--radius-sm); }
+  .skel-ib { width:30px; height:30px; border-radius:var(--radius-sm); }
+  .shv-seg-btn .n.ph { visibility:hidden; }
   @keyframes skel-in { from { opacity:0; } to { opacity:1; } }
   @keyframes skel-sweep { from { background-position:100% 0; } to { background-position:-100% 0; } }
   @media (max-width:640px){
-    .skel-acts { display:none; }
-    .skel-line { width:60%; } .skel-line.m { width:90%; }
+    .shv-actions .skel-btn { flex:1; width:auto; height:36px; }
+    .shv-actions .skel-ib { width:40px; height:36px; }
     /* head stacks: title/desc full row, then segmented tabs, then [source][search] */
     .shares-page .db-head { flex-direction:column; align-items:stretch; gap:12px; }
     .shv-tools { margin-left:0; width:100%; }
