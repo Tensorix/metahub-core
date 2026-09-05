@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { api, type ShareListItem } from "./api.ts";
 import { Icon } from "./icons.tsx";
-import { toast, ListSkeleton, openMenu, MenuItem, MenuSep, MenuLabel, confirmDialog } from "./ui.tsx";
+import { toast, openMenu, MenuItem, MenuSep, MenuLabel, confirmDialog } from "./ui.tsx";
 import { useShareActions, SHARES_CHANGED, notifySharesChanged, openShareModal, shareTargetOf } from "./share-modal.tsx";
 import type { Navigate } from "./view.ts";
 import {
@@ -35,6 +35,46 @@ import {
 } from "./shares-model.ts";
 
 const KIND_ICON: Record<string, string> = { doc: "file", database: "database", site: "globe" };
+/** Last loaded row count — the skeleton renders that many rows next time so
+ *  the swap to real data doesn't reflow (session-scoped, best-effort). */
+const SKEL_ROWS_KEY = "mh_shares_n";
+function rememberedRows(): number {
+  try {
+    const n = Number(sessionStorage.getItem(SKEL_ROWS_KEY));
+    return n > 0 ? Math.min(8, Math.max(2, n)) : 3;
+  } catch {
+    return 3;
+  }
+}
+function rememberRows(n: number): void {
+  try {
+    sessionStorage.setItem(SKEL_ROWS_KEY, String(n));
+  } catch {
+    /* private mode */
+  }
+}
+
+/** Loading placeholder built from the REAL row markup and classes: the grid,
+ *  padding, status/action slots and the mobile stacking all come from the same
+ *  .shv-* rules, so the skeleton can't drift from the rows it stands in for.
+ *  Only the content is swapped for sheen blocks. */
+function ShareListSkeleton({ rows }: { rows: number }) {
+  return (
+    <ul class="shv-list skel-list" role="status" aria-live="polite" aria-busy="true" aria-label="正在加载分享列表">
+      {Array.from({ length: rows }, (_, i) => (
+        <li class="shv-row skel" key={i} style={`--i:${Math.min(i, 4)}`}>
+          <span class="shv-ico skel-b" />
+          <div class="shv-main">
+            <span class="shv-title skel-b skel-t" />
+            <div class="shv-sub"><span class="skel-b skel-s" /></div>
+          </div>
+          <span class="shv-status"><span class="shv-dot skel-b" /><span class="skel-b skel-st" /></span>
+          <div class="shv-actions"><span class="skel-b skel-btn" /><span class="skel-b skel-ib" /></div>
+        </li>
+      ))}
+    </ul>
+  );
+}
 const OPEN_OBJECT_LABEL: Record<string, string> = { doc: "打开原文档", database: "打开原表格", site: "打开站点配置" };
 
 export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
@@ -47,12 +87,16 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
   /** Rows whose primary action is in flight (button disabled, label "处理中…"). */
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [clearing, setClearing] = useState(false);
+  const [skelRows] = useState(rememberedRows);
 
   const reload = () => {
     setLoadErr(null);
     return api
       .listShares()
-      .then(setShares)
+      .then((list) => {
+        setShares(list);
+        rememberRows(list.length);
+      })
       .catch((e) => {
         setLoadErr(String(e.message ?? e));
         if (shares != null) toast(`加载失败：${e.message}`);
@@ -326,7 +370,8 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
                 onClick={() => setFilter((x) => ({ ...x, status: f.id }))}
               >
                 {f.label}
-                {shares != null && <span class="n">{counts[f.id]}</span>}
+                {/* always rendered so the count arriving doesn't widen the bar */}
+                <span class={"n" + (shares == null ? " ph" : "")}>{shares == null ? "–" : counts[f.id]}</span>
               </button>
             ))}
           </div>
@@ -360,7 +405,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
           <button class="btn btn-secondary" onClick={reload}>重试</button>
         </div>
       ) : shares == null ? (
-        <ListSkeleton label="正在加载分享列表" />
+        <ShareListSkeleton rows={skelRows} />
       ) : shares.length === 0 ? (
         <div class="site-empty">
           <div class="ei"><Icon name="link" /></div>
