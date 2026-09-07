@@ -1,6 +1,34 @@
 import type { Database } from "bun:sqlite";
-import { emit, grouped } from "./crdt.ts";
+import { emit, grouped, applyChange, CHANGE_SELECT, DOMAIN, type Change } from "./crdt.ts";
 import { PROP_TYPES, type PropertyConfig } from "./properties.ts";
+import type { DbDriver } from "./driver.ts";
+
+// ---- materialization repair --------------------------------------------------
+// The oplog is the source of truth; every DOMAIN table is a cache of its
+// winners. A dropped/emptied/corrupted table is rebuilt by replaying the
+// dataset's changes in seq order (applyChange keeps LWW per register, so the
+// final state equals the converged one). Node-local, emits nothing.
+
+/** Rebuild one replicated table from its oplog changes. Returns rows replayed. */
+export function rematerializeDataset(db: DbDriver, dataset: string): number {
+  const d = DOMAIN[dataset];
+  if (!d) throw new Error(`not a replicated dataset: ${dataset}`);
+  const changes = db
+    .query(`SELECT ${CHANGE_SELECT} FROM crdt_changes WHERE dataset = ? ORDER BY seq`)
+    .all(dataset) as Change[];
+  db.transaction((rows: Change[]) => {
+    db.query(`DELETE FROM ${d.table}`).run();
+    for (const c of rows) applyChange(db, c);
+  })(changes);
+  return changes.length;
+}
+
+/** Rebuild every replicated table (DOMAIN) from the oplog. */
+export function rematerializeAll(db: DbDriver): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const ds of Object.keys(DOMAIN)) out[ds] = rematerializeDataset(db, ds);
+  return out;
+}
 
 // Hub-wide logical invariants. The schema is deliberately weak (primary keys
 // only, no FK/UNIQUE) because the CRDT is a per-field LWW oplog: cell writes can

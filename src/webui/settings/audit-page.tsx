@@ -54,10 +54,13 @@ function entityHash(e: AuditEntity): string | null {
   return null;
 }
 
-function ActorBadge({ entry, nodeName }: { entry: AuditEntry; nodeName: (id: string) => string }) {
+/** Who did it — only when it is NOT the default (this device, by hand): AI
+ *  runs and other devices get a badge, so the common case stays quiet. */
+function ActorBadge({ entry, nodeName }: { entry: AuditEntry; nodeName: (id: string) => string | null }) {
   if (entry.actor === "ai") return <span class="audit-actor ai">AI</span>;
   if (entry.actor) return <span class="audit-actor">{entry.actor}</span>;
-  return <span class="audit-actor node">{nodeName(entry.node_id)}</span>;
+  const name = nodeName(entry.node_id);
+  return name ? <span class="audit-actor node">{name}</span> : null;
 }
 
 /** One entity line inside an expanded entry: per-field old→new diffs. */
@@ -97,9 +100,10 @@ export function AuditPage() {
   // anything newer ("the AI just did this" cue, same as quickboard).
   const headRef = useRef<string | null>(null);
 
-  const nodeName = (id: string): string => {
+  // null = this device (unlabeled — it's the default actor).
+  const nodeName = (id: string): string | null => {
     const n = nodes.find((n) => n.node_id === id);
-    if (n?.self) return "本设备";
+    if (n?.self) return null;
     return n?.label || id.slice(0, 8);
   };
   const selfNode = nodes.find((n) => n.self)?.node_id;
@@ -138,15 +142,18 @@ export function AuditPage() {
     return () => document.removeEventListener(SYNCED_EVENT, onSync);
   }, [filter]);
 
+  const [loadingMore, setLoadingMore] = useState(false);
   const loadMore = () => {
-    if (!next) return;
+    if (!next || loadingMore) return;
+    setLoadingMore(true);
     api
       .auditList({ limit: PAGE_SIZE, before: next, actor: filter === "ai" ? "ai" : undefined })
       .then((page) => {
         setEntries((cur) => [...(cur ?? []), ...page.entries]);
         setNext(page.next);
       })
-      .catch((e) => toast(String((e as Error).message)));
+      .catch((e) => toast(String((e as Error).message)))
+      .finally(() => setLoadingMore(false));
   };
 
   const toggle = (e: AuditEntry) => {
@@ -170,9 +177,9 @@ export function AuditPage() {
   const revert = async (e: AuditEntry) => {
     if (!e.txn) return;
     const ok = await confirmDialog({
-      title: "撤销这次改动？",
+      title: "撤销这组改动",
       message:
-        "以一次新的正向修改恢复到改动前的状态（本身可再撤销）。之后被其他编辑覆盖过的字段会保留，不会被回退。",
+        "会以一次新的正向修改还原到改动前的状态，本身也会记入审计，可以再撤销。之后被其他编辑覆盖过的字段会保留，不会被回退。",
       confirmLabel: "撤销改动",
       danger: true,
     });
@@ -219,7 +226,7 @@ export function AuditPage() {
   const FILTERS: { id: Filter; label: string }[] = [
     { id: "all", label: "全部" },
     { id: "ai", label: "AI 操作" },
-    { id: "self", label: "本设备" },
+    { id: "self", label: "这台设备" },
     { id: "others", label: "其他设备" },
   ];
 
@@ -227,7 +234,7 @@ export function AuditPage() {
     <>
       <PageHeader
         title={pageLabel("audit")}
-        sub="工作区里每一次改动的统一流水：谁在什么时候改了什么。AI 通过命令行做的操作会标注出来，可以逐条检查并一键撤销。"
+        sub="工作区里每一次改动：谁、什么时候、改了什么。AI 通过命令行做的操作会标出来，可以逐条检查并撤销。"
       />
       <div class="audit-filters">
         {FILTERS.map((f) => (
@@ -329,15 +336,17 @@ export function AuditPage() {
             })}
           </div>
         ))}
-        {next && (
-          <button class="btn btn-secondary audit-more" onClick={loadMore}>
-            加载更早的记录
+        {/* Quiet tail: a text button while there is more, an end-of-list rule
+            once exhausted — the retention note only matters when you've hit it. */}
+        {next ? (
+          <button class={"audit-more" + (loadingMore ? " loading" : "")} onClick={loadMore} disabled={loadingMore}>
+            <Icon name={loadingMore ? "spinner" : "chevronDown"} cls={"ico sm" + (loadingMore ? " spin" : "")} />
+            {loadingMore ? "加载中…" : "显示更早的记录"}
           </button>
-        )}
-        {entries !== null && (
-          <div class="audit-foot muted">
-            记录深度受历史压缩窗口限制（默认约 90 天）；更早的改动已合并为基线，不可再撤销。
-          </div>
+        ) : (
+          entries !== null && visible.length > 0 && (
+            <div class="audit-end">已显示全部 · 只保留最近 90 天，更早的改动已合并且无法撤销</div>
+          )
         )}
       </div>
     </>

@@ -2,31 +2,28 @@
 
 ## SQLite 表
 
-当前核心 schema 包含:
+当前核心 schema 包含(层级的唯一权威是 `src/core/tables.ts`,`tables.test.ts` 钉住 `PRAGMA table_list` == 注册表,未登记的表直接红):
 
 ```text
-meta
-crdt_changes
-peers
-peer_grants
-pairing_codes
-storage_cursors
-room_rows                    -- 房间分区影子(node-local)
-drop_rejects                 -- 写信箱被拒信封台账(node-local)
-shares
-databases
-properties
-records
-documents
-doc_blocks
-sites
-site_channels                -- 站点可达渠道的期望态(同步)
-site_channel_observations    -- 本节点对渠道的实际观测(node-local)
-site_files
-blob_cache
-blob_policy
-search_fts
+content(用户创建的东西:同步、可进 share 分区、可搜索、进操作审计)
+  databases / properties / records / documents / doc_blocks / sites / site_files
+
+system(metahub 自己的工作区级状态:同步,永不进 share 分区,操作审计默认隐藏)
+  site_channels                -- 站点可达渠道的期望态
+  blob_policy                  -- 附件长期保存策略(单行)
+  nodes                        -- 设备名册:每台设备自描述 + 共享设备名
+
+local(只属于这台机器,永不进 oplog)
+  meta / crdt_changes / peers / peer_grants / pairing_codes / storage_cursors
+  room_rows                    -- 房间分区影子
+  drop_rejects                 -- 写信箱被拒信封台账
+  shares
+  site_channel_observations    -- 本节点对渠道的实际观测
+  blob_cache
+  search_fts
 ```
+
+由注册表派生、不再手写的清单:`crdt.ts` 的 `DOMAIN` 键集合必须等于 synced 表集合;snapshot `--force` 还原的清空清单;`schema.test.ts` 的墓碑列断言;`audit.ts` 的排除集(system 层 + oplog-only)。`mh repair --rematerialize` 可把任意 synced 表从 oplog 重建(`integrity.ts rematerializeDataset`)。
 
 `search_fts` 是 best-effort FTS5 虚拟表,如果当前 SQLite 不支持 FTS5,搜索会降级到 LIKE。
 
@@ -40,7 +37,8 @@ search_fts
 - `current_db`: 「当前数据库」指针(本机 UI 上下文,不进 oplog、不随 sync)。读取时惰性校验所指库是否仍存在,失效则自动清除(见 `src/core/context.ts`)。
 - `auth_token` / `auth_token_exp` / `auth_token_prev` / `auth_token_prev_exp`: 持久化的服务器鉴权 token、其过期时刻(epoch ms)、上一代 token 及其可被交换的截止时刻(本机服务器密钥,不进 oplog、不随 sync;见 `src/core/sync/token.ts`、[10-persistent-token](../impl-context/10-persistent-token/design.md))。
 - `cfg_host` / `cfg_port` / `cfg_sync_interval` / `cfg_auto_sync` / `cfg_blob_quota` / `cfg_public_base_url`: `mh config` 持久化的服务器级设置(绑定地址、端口、自动同步间隔 ms、自动同步开关、blob 配额、对外可达 base URL),`--server` 启动时作默认值(CLI flag 覆盖);本机配置,不进 oplog、不随 sync(见 `src/core/config.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。
-- `node_label`: 本设备的人类可读名字(设备名册显示用;对端在它自己的 `peers.label` 里另存一份对我的称呼)。
+- `node_label`: 本设备名字的**只读兜底/镜像**(旧版遗留)。权威是同步的 `nodes.label`(见下「nodes」);`setNodeLabel` 写 `nodes` 并镜像到这里,首次启动把旧值迁入 `nodes`。
+- `<dataset>_replay_seq`: 新增同步表的回填水位(`schema-init.ts replayDataset`),删掉即退化为全量幂等重放。
 - `edge_config` / `edge_deploy_progress` / `edge_r2_provision_progress`: Edge 子系统(自有 Cloudflare Worker + D1)的部署身份与断点续做进度;`drop_knobs:<site_id>`: 某站点写信箱的 Turnstile/密码开关。见 `src/core/sync/edge-config.ts`。
 - `drop_keys`: 写信箱收件人 keyring(P-256 私钥;挂桶时桶里的 `keys/drop.json` 才是权威,此处为缓存)。见 `src/core/sync/drop-keys.ts`。
 - `site_publish_states` / `site_publish_rollbacks`: 站点发布的本机运行态与「已本地回滚、目标尚未确认」的补偿记录(`src/core/sync/site-publish-recovery.ts`)。
@@ -314,6 +312,19 @@ site_files(id, site_id, path, content_type, encoding, content, created_hlc, __de
 - `(site_id, path)` 映射到稳定 id:重复上传同一路径复用该 id,「改文件」是同一 CRDT register 合并而非新行。
 - `encoding ∈ {utf8, base64, blob}`:文本(html/css/js/svg/...)存 `utf8`、小号非图片二进制存 `base64`(内联、随 oplog 同步);**图片(image/* 除 svg)一律**、其余超阈值二进制经 `cache.ts` 的 `putBlob` 内容寻址,`encoding=blob`、`content=<hash>`(规范 hash = sha256 截短 32 hex;旧 64-hex 引用仍可解,寻址长度无关)。
 - **blob 字节**:存节点本地 `cache/`,**不进 oplog**;`site_files` 清单(含 hash)照常同步,字节**按需**经 blob 传输层取回(`GET /blob/<hash>`:本地 cache → HTTP peer → 桶)。见 [22-blob-sync](../impl-context/22-blob-sync/design.md)。
+
+## nodes(同步的设备名册)
+
+```text
+nodes(id=node_id, label, platform, form, app, first_seen, __deleted)   -- 同步,system 层
+```
+
+「这台设备是谁」是工作区级事实:每台设备必须显示同一个答案,而纯桶接入的设备除了 oplog 流没有别的渠道报名字——所以名册随 oplog 同步。每列一个 LWW 寄存器,改名与平台刷新互不覆盖。
+
+- **自描述**(`node.ts describeSelf`):设备打开库时写自己那行(`platform` macos/windows/linux/ios/android/web、`form` laptop/desktop/phone/server/browser、`app` cli/server/desktop/web、`first_seen`),值没变就不 emit。CLI/server 在 `db.ts openMetahub` 里做(`METAHUB_APP` 环境变量区分 server/desktop,默认 cli;默认名 = 主机名),浏览器副本在 `db-worker.ts openDb` 里做(默认名如「Chrome · macOS」)。Expo 瘦客户端没有 node id,不入册。
+- **一台设备一个名字**:任何设备都可以改任何设备的 `label`(`setNodeLabel(db, label, nodeId)`,`PATCH /api/node` 带 `node_id`),全员看到同一个名字。
+- **读取兜底链**(`nodeLabelOf`):`nodes.label` → 配对时本机给它起的 `peers.label` → (仅 self)`meta.node_label` → null(UI 显示「未命名设备」+ id)。永不抛。
+- **重建**:表缺失 → `CREATE IF NOT EXISTS` + `migrateNodes` 从 oplog 胜者回填;表损坏 → `mh repair --rematerialize`。
 
 ## blob_cache / blob_policy
 

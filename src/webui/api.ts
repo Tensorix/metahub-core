@@ -87,6 +87,9 @@ export interface S3Peer {
   prefix: string | null;
   accessKeyId: string | null;
   encrypt: boolean;
+  /** Provider preset chosen at connect time (display-only; may be null for
+   *  buckets connected before it was recorded). */
+  provider?: string | null;
   virtualHostedStyle: boolean | null;
 }
 export interface S3PeerInput {
@@ -101,6 +104,7 @@ export interface S3PeerInput {
   /** Browser origin(s) the server should open bucket CORS for, so a replica
    *  behind this server can sync via the bucket directly. Usually [location.origin]. */
   corsOrigins?: string[];
+  provider?: string;
 }
 export interface PairingCode {
   code: string;
@@ -161,8 +165,13 @@ export type { AuditPage, AuditEntry, AuditEntity, AuditEntryDetail, RevertGroupR
 // Server-shaped: assembled in routes.ts (no core row behind it).
 export interface NodeInfo {
   node_id: string;
+  /** Synced roster name → pairing label → null when unnamed. */
   label: string | null;
   self: boolean;
+  /** From the synced device roster (core node.ts); null for pre-roster nodes. */
+  platform: "macos" | "windows" | "linux" | "ios" | "android" | "web" | null;
+  form: "laptop" | "desktop" | "phone" | "server" | "browser" | null;
+  app: "cli" | "server" | "desktop" | "web" | null;
 }
 
 // Not core SiteRow: the sites route adds the computed file_count.
@@ -836,7 +845,8 @@ const httpApi = {
   // Rename THIS node. Careful: through the api proxy the target flips with
   // replicaActive() (hydration timing) — a rename UI must pick one end
   // deterministically (see DeviceGroupName: replicaEnabled() ? worker : HTTP).
-  setNodeLabel: (label: string | null) => req<NodeInfo>("PATCH", "/api/node", { label }),
+  setNodeLabel: (label: string | null, nodeId?: string) =>
+    req<NodeInfo>("PATCH", "/api/node", { label, node_id: nodeId }),
 
   // search
   search: (text: string, limit?: number) => {

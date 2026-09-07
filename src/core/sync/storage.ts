@@ -60,6 +60,10 @@ export interface S3Config {
    * isVirtualHostedStyle). R2/MinIO keep using path-style.
    */
   virtualHostedStyle?: boolean;
+  /** Provider preset chosen when the bucket was connected (r2 / s3 / cos /
+   *  minio / …). Display-only: the settings page names the vendor from it and
+   *  falls back to host-suffix detection, then to the bare host. */
+  provider?: string;
   /**
    * Node-role hints for this bucket (not bucket settings — safe to omit from
    * shared enroll links). `publish` marks this node as the bucket's publisher

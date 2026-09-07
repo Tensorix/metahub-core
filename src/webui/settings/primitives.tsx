@@ -9,22 +9,28 @@ import { Icon } from "../icons.tsx";
 import { openMenu, MenuItem } from "../ui.tsx";
 
 /** One setting: bold 14px title + one-line muted caption on the left, the
- *  control right-aligned. `children` render an expandable detail area below
- *  the 44px row line. Adjacent rows are hairline-divided by CSS. */
+ *  control right-aligned. `lead` is an optional glyph tile before the text
+ *  (device form, bucket). `dim` fades the line (a device gone quiet).
+ *  `children` render an expandable detail area below the 44px row line.
+ *  Adjacent rows are hairline-divided by CSS. */
 export function SetRow({
   title,
   caption,
   control,
+  lead,
   disabled,
   danger,
+  dim,
   onClick,
   children,
 }: {
   title: ComponentChildren;
   caption?: ComponentChildren;
   control?: ComponentChildren;
+  lead?: ComponentChildren;
   disabled?: boolean;
   danger?: boolean;
+  dim?: boolean;
   onClick?: () => void;
   children?: ComponentChildren;
 }) {
@@ -34,10 +40,12 @@ export function SetRow({
         "set-row" +
         (disabled ? " disabled" : "") +
         (danger ? " danger" : "") +
+        (dim ? " dim" : "") +
         (onClick ? " clickable" : "")
       }
     >
       <div class="set-row-line" onClick={disabled ? undefined : onClick}>
+        {lead != null && <div class="set-row-lead">{lead}</div>}
         <div class="set-row-text">
           <div class="set-row-title">{title}</div>
           {caption != null && <div class="set-row-caption">{caption}</div>}
@@ -79,16 +87,21 @@ export function Switch({
 
 /** Flat section: a small gray label over its rows — no gray panel box. The
  *  optional caption states a property of the whole section (typically WHERE the
- *  managed thing lives — its storage scope), distinct from `.set-managed-note`
- *  mid/tail annotations. */
-export function SetSection({ label, caption, children }: {
+ *  managed thing lives — its storage scope, or the one sentence that explains
+ *  every row below), distinct from `.set-managed-note` mid/tail annotations.
+ *  `count` renders a quiet tabular number after the label. */
+export function SetSection({ label, count, caption, children }: {
   label: ComponentChildren;
+  count?: number;
   caption?: ComponentChildren;
   children: ComponentChildren;
 }) {
   return (
     <section class="set-section">
-      <div class="set-section-label">{label}</div>
+      <div class="set-section-head">
+        <span class="set-section-label">{label}</span>
+        {count != null && <span class="set-section-count">{count}</span>}
+      </div>
       {caption != null && <div class="set-section-caption">{caption}</div>}
       {children}
     </section>

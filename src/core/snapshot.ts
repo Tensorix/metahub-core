@@ -8,6 +8,7 @@ import { repairHub } from "./integrity.ts";
 import { cacheDir, metahubHome } from "./paths.ts";
 import { blobPath } from "./cache.ts";
 import { MhError } from "./errors.ts";
+import { SYNCED_TABLES } from "./tables.ts";
 
 export const SNAPSHOT_FORMAT = "metahub-snapshot";
 export const SNAPSHOT_VERSION = 1;
@@ -184,16 +185,11 @@ export async function restoreSnapshot(
 
   let applied = 0;
   const tx = db.transaction(() => {
-    for (const t of [
-      "crdt_changes",
-      "databases",
-      "properties",
-      "records",
-      "documents",
-      "doc_blocks",
-      "peers",
-    ])
+    // Every replicated table (tables.ts) plus the oplog itself and the peer
+    // cursors — derived, so a new synced table can't be left holding stale rows.
+    for (const t of ["crdt_changes", ...SYNCED_TABLES, "peers"])
       db.query(`DELETE FROM ${t}`).run();
+    db.query("DELETE FROM meta WHERE key LIKE '%_replay_seq'").run();
     db.query("DELETE FROM meta WHERE key IN ('search_seq', 'search_index_version')").run();
     if (ftsAvailable(db)) db.query("DELETE FROM search_fts").run();
 

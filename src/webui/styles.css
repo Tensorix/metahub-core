@@ -287,9 +287,34 @@
   .set-row-line { display:flex; align-items:center; gap:14px; min-height:44px; padding:5px 0; }
   .set-row.clickable > .set-row-line { cursor:pointer; }
   .set-row-text { flex:1 1 auto; min-width:0; }
-  .set-row-title { font-size:14px; font-weight:550; color:var(--fg); }
-  .set-row-caption { font-size:12px; color:var(--muted); margin-top:1px;
+  .set-row-title { font-size:14px; font-weight:550; color:var(--fg); display:flex; align-items:center; gap:8px; min-width:0; }
+  .set-row-title > .set-row-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .set-row-caption { font-size:12px; color:var(--muted); margin-top:1px; display:flex; align-items:center; gap:6px;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* leading glyph (device form / bucket) — a soft tile so rows scan by shape */
+  .set-row-lead { flex:none; width:28px; height:28px; display:grid; place-items:center; color:var(--muted);
+    border-radius:7px; background:var(--surface-2); }
+  .set-row-lead .ico { width:15px; height:15px; }
+  .set-row.dim > .set-row-line { opacity:.62; }
+  /* status dot in a caption: the only colour a row carries */
+  .cap-dot { display:inline-block; flex:none; width:7px; height:7px; border-radius:50%; background:var(--muted); }
+  .cap-dot.ok { background:var(--success); } .cap-dot.warn { background:var(--warning,#9a6700); } .cap-dot.err { background:var(--danger); }
+  .cap-err { color:var(--danger); }
+  /* tag variants next to a title: neutral outline (default), accent (roles), self (soft fill) */
+  .set-row-title .set-row-tag { margin-left:0; vertical-align:0; flex:none; }
+  .set-row-tag.accent { color:var(--accent); background:var(--accent-soft); border-color:transparent; }
+  .set-row-tag.self { color:var(--fg-soft); background:var(--surface-2); border-color:transparent; }
+  .set-row-tag.mono { font-family:var(--mono); letter-spacing:-.01em; }
+  /* quiet "+ add" row closing a list, and a "N more…" fold */
+  .add-row { display:flex; align-items:center; gap:8px; width:100%; min-height:40px; margin-top:2px; padding:0 2px;
+    color:var(--muted); font-size:var(--fs-ui); border-radius:var(--radius-sm); text-align:left; }
+  .add-row:hover { color:var(--fg); background:var(--hover); }
+  .add-row .ico { width:15px; height:15px; }
+  .more-row { display:inline-flex; align-items:center; gap:6px; padding:8px 2px; font-size:var(--fs-sm); color:var(--muted); }
+  .more-row:hover { color:var(--fg); }
+  .set-section-head { display:flex; align-items:baseline; gap:10px; margin:0 0 4px 2px; }
+  .set-section-head .set-section-label { margin:0; }
+  .set-section-count { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .set-row-control { flex:none; display:flex; align-items:center; gap:8px; }
   .set-row-detail { padding:2px 0 12px; }
   .set-row.disabled > .set-row-line { opacity:.55; pointer-events:none; }
@@ -354,8 +379,12 @@
   .audit-detail { padding:0 4px 10px 86px; }
   .audit-detail-ent-name { font-size:var(--fs-sm); font-weight:600; margin-top:6px; }
   .audit-blocks { font-size:var(--fs-sm); margin-top:2px; }
-  .audit-more { display:block; margin:14px auto 0; }
-  .audit-foot { font-size:var(--fs-xs); margin-top:18px; line-height:1.6; }
+  /* quiet tail: left-aligned text button while more exists; a rule once exhausted */
+  .audit-more { display:inline-flex; align-items:center; gap:6px; margin:14px 0 0 2px; font-size:var(--fs-sm); color:var(--muted); }
+  .audit-more:hover { color:var(--fg); }
+  .audit-more.loading { opacity:.6; pointer-events:none; }
+  .audit-end { display:flex; align-items:center; gap:12px; margin:18px 0 0; color:var(--muted); font-size:var(--fs-xs); }
+  .audit-end::before, .audit-end::after { content:""; flex:1; height:1px; background:var(--line); }
   @media (hover:none) { .audit-revert { opacity:1; } }
   .set-callout.warn { border-color:color-mix(in srgb,var(--warning,#9a6700) 32%,var(--line)); }
   /* two-fact meta line under a block title (who publishes · where creds live) —
@@ -470,28 +499,31 @@
   /* concurrent problems under the headline (only when >1, else redundant) */
   .sync-health-issues { padding:2px 0 4px; }
   .sync-health-issue { font-size:12px; color:var(--muted); padding:2px 0 2px 18px; }
-  .sync-health-places { padding:4px 0 2px; }
-  .sync-health-place { display:flex; align-items:baseline; gap:8px; padding:8px 0; min-width:0; }
+  /* 查看各处: a bordered place list (kind · name · freshness · inline retry) */
+  .sync-health-places { margin-top:6px; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+  .sync-health-place { display:flex; align-items:center; gap:10px; padding:9px 12px; min-width:0; font-size:var(--fs-sm); }
   .sync-health-place + .sync-health-place { border-top:1px solid var(--line); }
-  .sync-health-place-kind { flex:none; font-size:11px; color:var(--muted); border:1px solid var(--line);
-    border-radius:999px; padding:1px 7px; }
-  .sync-health-place-label { font-size:var(--fs-body); font-weight:550; overflow:hidden;
-    text-overflow:ellipsis; white-space:nowrap; }
-  .sync-health-place-cap { flex:1; min-width:0; font-size:12px; color:var(--muted);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sync-health-place-kind { flex:none; width:64px; font-size:var(--fs-xs); color:var(--muted); }
+  .sync-health-place-label { flex:none; font-weight:550; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:40%; }
+  .sync-health-place-cap { flex:1; min-width:0; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sync-health-place .btn { margin-left:auto; }
   .sync-health-role { flex:none; font-size:11px; color:var(--accent); background:var(--accent-soft);
     border-radius:999px; padding:2px 7px; }
 
-  /* unified device roster (DevicesPanel) */
-  .device-detail { padding:2px 12px 10px 28px; display:flex; flex-direction:column; gap:4px; }
-  .device-detail-line { display:flex; align-items:center; gap:8px; font-size:12px; min-width:0; }
-  .device-ch-label { flex:none; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 7px; font-size:11px; }
-  .device-ch-ref { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg); }
-  .device-ch-actions { margin-left:auto; display:inline-flex; gap:2px; flex:none; }
-  .device-ch-actions .btn { padding:2px 8px; font-size:12px; }
-  .device-danger { color:var(--danger); }
-  .device-detail-note { font-size:12px; color:var(--muted); background:var(--surface-2);
-    border-radius:8px; padding:8px 10px; margin-top:4px; line-height:1.6; }
+  /* device roster (settings/devices-page.tsx): expanded detail = key/value
+     table + one action row + one plain sentence — no gray callout box. */
+  .device-kv { display:grid; grid-template-columns:max-content 1fr; gap:6px 18px; padding:4px 0 10px 42px; font-size:var(--fs-sm); margin:0; }
+  .device-kv dt { color:var(--muted); margin:0; }
+  .device-kv dd { margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .device-kv .mono { font-family:var(--mono); font-size:var(--fs-xs); letter-spacing:-.01em; }
+  .device-actions { display:flex; align-items:center; gap:4px; padding-left:42px; flex-wrap:wrap; }
+  .device-actions .btn { padding:3px 8px; font-size:12px; }
+  .device-actions .btn.danger { color:var(--danger); }
+  .device-actions .btn.danger:hover { background:var(--danger-soft); color:var(--danger); }
+  .device-note { font-size:12px; color:var(--muted); line-height:1.6; padding:4px 0 6px 42px; max-width:60ch; }
+  .device-note b { color:var(--fg-soft); font-weight:600; }
+  .device-note a { color:var(--accent); text-decoration:none; }
+  .device-note a:hover { text-decoration:underline; }
 
   /* cloud accessories panel (CloudPanel: bucket + edge in one glance) */
   .cloud-cta { border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:4px 0 12px;
@@ -566,6 +598,7 @@
   .btn-primary { background:var(--accent); color:var(--accent-fg); box-shadow:var(--shadow-sm); }
   .btn-primary:hover { filter:brightness(1.07); }
   .btn-danger { background:var(--danger); color:#fff; } .btn-danger:hover { filter:brightness(1.05); }
+  .btn.sm { padding:3px 8px; font-size:12px; }
   /* Notion-style ambient sync indicator: a quiet ghost control living in the
      topbar icon row. State reads through the *text/icon colour* — no filled pill
      or drop shadow — and only the error state escalates to a visible danger tone.
@@ -2561,6 +2594,12 @@
   .blob-dot.keep { background:var(--line-strong); }
   .blob-dot.pin { background:var(--muted); opacity:.6; }
   .blob-total { margin:13px 0 14px; font-size:var(--fs-xs); color:var(--muted); }
+  /* headline number over the legend (数据与备份 · 附件) */
+  .blob-stat { font-size:20px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin-bottom:10px; }
+  .blob-stat small { font-size:var(--fs-sm); font-weight:500; color:var(--muted); margin-left:8px; letter-spacing:0; }
+  /* a status sentence in the action row (never a disabled button) */
+  .blob-actions .blob-status { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-sm); color:var(--muted); }
+  .blob-actions .blob-status .ico { width:14px; height:14px; color:var(--success); }
 
   .blob-ring { position:relative; width:152px; height:152px; flex:none; }
   .blob-ring-svg { width:100%; height:100%; display:block; }

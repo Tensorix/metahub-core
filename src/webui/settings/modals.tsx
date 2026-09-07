@@ -936,6 +936,7 @@ export function AddStorageModal({
         accessKeyId: accessKey.trim(),
         secretAccessKey: secretKey.trim(),
         encrypt,
+        provider,
       };
       // origin → attach to the server (data home + publisher), opening bucket CORS
       // for this browser's origin; no-origin → this browser's local replica (which

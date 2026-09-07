@@ -51,7 +51,7 @@ import {
 } from "../../core/history.ts";
 import { listAuditEntries, auditEntryDetail, revertChangeGroup } from "../../core/audit.ts";
 import { search } from "../../core/search.ts";
-import { getNodeId, getNodeLabel, setNodeLabel, displayNodes } from "../../core/node.ts";
+import { getNodeId, setNodeLabel, displayNodes } from "../../core/node.ts";
 import {
   cacheStats,
   cachedBlobs,
@@ -338,8 +338,11 @@ const FieldHistoryEntrySchema = z.object({
 });
 const NodeInfoSchema = z.object({
   node_id: z.string(),
-  label: z.string().nullable().describe("Peer label from pairing; null when unnamed"),
+  label: z.string().nullable().describe("Synced roster name → pairing label → null when unnamed"),
   self: z.boolean().describe("True for the node serving this request"),
+  platform: z.enum(["macos", "windows", "linux", "ios", "android", "web"]).nullable(),
+  form: z.enum(["laptop", "desktop", "phone", "server", "browser"]).nullable(),
+  app: z.enum(["cli", "server", "desktop", "web"]).nullable(),
 });
 const CacheStatsSchema = z.object({
   totalBytes: z.number(),
@@ -908,13 +911,17 @@ export const webuiRoutes: Route[] = [
   {
     method: "PATCH",
     path: "/api/node",
-    summary: "Set this device's display label (empty/null clears it)",
-    request: z.object({ label: z.string().nullable().optional() }),
+    summary: "Rename a device (default: this one). Writes the synced roster; empty/null clears",
+    request: z.object({
+      label: z.string().nullable().optional(),
+      node_id: z.string().optional().describe("Target node; omitted = this device"),
+    }),
     response: NodeInfoSchema,
     handler: handle(async (req, { db }) => {
-      const body = (await req.json()) as { label?: string | null };
-      setNodeLabel(db, body.label ?? null);
-      return { node_id: getNodeId(db), label: getNodeLabel(db), self: true };
+      const body = (await req.json()) as { label?: string | null; node_id?: string };
+      const id = body.node_id ?? getNodeId(db);
+      setNodeLabel(db, body.label ?? null, id);
+      return displayNodes(db).find((n) => n.node_id === id)!;
     }),
   },
   {

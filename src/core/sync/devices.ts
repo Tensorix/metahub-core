@@ -14,7 +14,14 @@
 import type { DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
 import { parseHlc } from "../hlc.ts";
-import { getNodeId, getNodeLabel } from "../node.ts";
+import {
+  getNodeId,
+  nodeLabelOf,
+  readNodeMeta,
+  type NodePlatform,
+  type NodeForm,
+  type NodeApp,
+} from "../node.ts";
 import { listPeers, getPeer } from "./peers.ts";
 import { listGrants } from "./pairing.ts";
 import {
@@ -52,8 +59,13 @@ export type Revocable = "yes" | "bucket_rotate" | "unknown" | "none";
 export interface DeviceView {
   /** null: a grant that never learned its peer's node id (one-directional). */
   nodeId: string | null;
+  /** nodeLabelOf chain: synced roster → peers.label → (self) legacy → null. */
   label: string | null;
   self: boolean;
+  /** From the synced roster (node.ts describeSelf); null for pre-roster devices. */
+  platform: NodePlatform | null;
+  form: NodeForm | null;
+  app: NodeApp | null;
   channels: DeviceChannel[];
   lastActivityAt: number | null;
   revocable: Revocable;
@@ -74,10 +86,14 @@ export function listDevices(db: DbDriver): DeviceView[] {
   const ensure = (nodeId: string): DeviceView => {
     let v = byNode.get(nodeId);
     if (!v) {
+      const meta = readNodeMeta(db, nodeId);
       v = {
         nodeId,
-        label: null,
+        label: nodeLabelOf(db, nodeId),
         self: nodeId === self,
+        platform: meta?.platform ?? null,
+        form: meta?.form ?? null,
+        app: meta?.app ?? null,
         channels: [],
         lastActivityAt: null,
         revocable: "none",
@@ -89,7 +105,11 @@ export function listDevices(db: DbDriver): DeviceView[] {
     return v;
   };
 
-  ensure(self).label = getNodeLabel(db);
+  ensure(self);
+  // Roster rows are devices too — a bucket-joined device that described itself
+  // but whose content changes haven't reached us yet still gets listed.
+  for (const r of db.query("SELECT id FROM nodes WHERE __deleted = 0").all() as { id: string }[])
+    ensure(r.id);
 
   const oplog = db
     .query("SELECT node_id, MAX(hlc) AS h FROM crdt_changes GROUP BY node_id")
@@ -101,7 +121,6 @@ export function listDevices(db: DbDriver): DeviceView[] {
   for (const p of peers) {
     if (!p.node_id) continue;
     const v = ensure(p.node_id);
-    if (!v.label) v.label = p.label;
     v.channels.push({
       kind: "paired_out",
       ref: p.url,
@@ -119,6 +138,9 @@ export function listDevices(db: DbDriver): DeviceView[] {
         nodeId: null,
         label: null,
         self: false,
+        platform: null,
+        form: null,
+        app: null,
         channels: [ch],
         lastActivityAt: g.created_at,
         revocable: "yes",

@@ -11,24 +11,28 @@ import { timeAgo } from "./date.ts";
 
 export type { DataMap, DataMapState, DataPlace };
 
-/** One-line answer to "is my data safe" (settings sync header). */
+/** One-line answer to "is my data safe" (settings sync header). Plain words:
+ *  how many places hold it, then the one thing (if any) that needs attention. */
 export function dataMapHeadline(m: DataMap): string {
   const s = m.state;
+  const saved = `已保存在 ${s.places} 处`;
   switch (s.state) {
     case "no_backup":
-      return "数据只在这一处 — 尚未配置任何同步目标";
+      return "数据只在这一处，还没有备份";
     case "pending_blobs":
-      return `当前版本已确认保存在 ${s.places} 处 · ${s.pendingBlobCount} 个附件仅在本机`;
+      return `${saved} · ${s.pendingBlobCount} 个附件还只在这里`;
     case "unsynced_changes":
-      return `当前版本已确认保存在 ${s.places} 处 · 仍有目标尚未同步`;
-    case "peer_error":
-      return `当前版本已确认保存在 ${s.places} 处 · 有一处同步失败`;
+      return `${saved} · 有改动尚未同步`;
+    case "peer_error": {
+      const n = (s.issues ?? []).filter((i) => i.kind === "peer_error").length || 1;
+      return `${saved} · ${n} 处同步失败`;
+    }
     case "syncing":
-      return `当前版本已确认保存在 ${s.places} 处 · 首次同步进行中`;
+      return `${saved} · 首次同步进行中`;
     case "stale":
-      return `当前版本已确认保存在 ${s.places} 处 · 备份确认已过期`;
+      return `${saved} · 备份确认已过期`;
     case "healthy":
-      return `当前版本已确认保存在 ${s.places} 处${s.oldestSyncedAt != null ? ` · 最早确认于${timeAgo(s.oldestSyncedAt)}` : ""}`;
+      return `已安全保存在 ${s.places} 处${s.oldestSyncedAt != null ? ` · 上次确认 ${timeAgo(s.oldestSyncedAt)}` : ""}`;
   }
 }
 

@@ -199,6 +199,8 @@ export interface StoragePeerSpec {
   publish?: boolean;
   priority?: number;
   label?: string | null;
+  /** Provider preset id (display-only, see S3Config.provider). */
+  provider?: string;
 }
 
 /**
@@ -226,6 +228,7 @@ export async function addAndSyncStoragePeer(
     publish: spec.publish,
     priority: spec.priority,
   };
+  if (spec.provider) config.provider = spec.provider;
   if (encrypt) {
     if (spec.recoveryCode) {
       // Join via recovery code: the code IS the master key. Verify it against

@@ -131,6 +131,9 @@ function scalarHtml(specUrl: string): string {
 /** Start the CRDT sync server. It is just another node backed by ~/.metahub. */
 export function startServer(opts: ServerOptions = {}): RunningServer {
   registerRoomBlobResolver(resolveBlob);
+  // Synced device roster: this open is the server (the desktop shell sets
+  // METAHUB_APP=desktop for its sidecar before we get here).
+  process.env.METAHUB_APP ??= "server";
   const tDb = Date.now();
   const db = openMetahub();
   const dbMs = Date.now() - tDb;

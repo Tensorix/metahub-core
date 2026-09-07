@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="zh-CN" data-resolved="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>metahub · 设置原型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  /* ======== tokens: 与 src/webui/styles.css 完全一致，方便直接迁移 ======== */
+  :root {
+    color-scheme: light;
+    --bg:#ffffff; --surface:#fbfbfa; --surface-2:#f1f1ef; --sidebar:#f7f7f5;
+    --fg:#2c2c30; --fg-soft:#5b5b62; --muted:#75757f; --line:#ebebe8; --line-strong:#dededb;
+    --accent:#4a55d6; --accent-fg:#ffffff; --accent-soft:#eef0ff; --danger:#d6473b; --danger-soft:#fdeceb;
+    --success:#1f8f3e; --warning:#9a6700;
+    --hover:rgba(45,45,55,.045); --hover-2:rgba(45,45,55,.08);
+    --shadow-sm:0 1px 2px rgba(20,20,40,.06),0 1px 1px rgba(20,20,40,.04);
+    --shadow-md:0 4px 12px rgba(20,20,40,.08),0 2px 4px rgba(20,20,40,.05);
+    --shadow-lg:0 16px 48px rgba(20,20,40,.16),0 4px 12px rgba(20,20,40,.08);
+    --radius:8px; --radius-sm:6px; --radius-lg:14px;
+    --fs-body:14px; --fs-ui:13.5px; --fs-sm:12.5px; --fs-xs:11.5px; --fs-micro:11px;
+    --ui:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
+  }
+  :root[data-resolved="dark"] {
+    color-scheme: dark;
+    --bg:#1a1a1c; --surface:#202022; --surface-2:#2a2a2d; --sidebar:#171719;
+    --fg:#e6e6e9; --fg-soft:#b4b4bb; --muted:#8b8b95; --line:#2c2c30; --line-strong:#3a3a40;
+    --accent:#7b86ff; --accent-fg:#14141a; --accent-soft:#23243a; --danger:#f87168; --danger-soft:#341e1c;
+    --success:#3fb950; --warning:#d4a72c;
+    --hover:rgba(255,255,255,.05); --hover-2:rgba(255,255,255,.09);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 14px rgba(0,0,0,.45); --shadow-lg:0 20px 56px rgba(0,0,0,.6);
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); }
+  body { font-family:var(--ui); font-size:var(--fs-body); line-height:1.55; color:var(--fg); overflow:hidden; }
+  button { font:inherit; color:inherit; cursor:pointer; background:none; border:0; padding:0; }
+  input, select { font:inherit; color:inherit; }
+  :where(button,[role="button"],[tabindex]):focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .muted { color:var(--muted); }
+  .mono { font-family:var(--mono); font-size:var(--fs-xs); letter-spacing:-.01em; }
+  svg { display:block; }
+  .ico { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  .ico.sm { width:14px; height:14px; }
+  ::-webkit-scrollbar { width:10px; }
+  ::-webkit-scrollbar-thumb { background:var(--line-strong); border-radius:8px; border:3px solid transparent; background-clip:padding-box; }
+
+  /* ======== app chrome (只为原型：顶栏 + 内容区) ======== */
+  #app { display:flex; flex-direction:column; height:100dvh; }
+  .topbar { flex:none; height:52px; display:flex; align-items:center; gap:8px; padding:0 18px; border-bottom:1px solid var(--line); background:var(--bg); }
+  .crumb { display:flex; align-items:center; gap:6px; font-weight:600; font-size:15px; }
+  .crumb .sep { color:var(--muted); font-weight:400; }
+  .crumb .ico { color:var(--muted); }
+  .content { flex:1; overflow-y:auto; }
+
+  /* ======== settings shell（与 .set-* 同名，样式对齐） ======== */
+  .set-shell { display:flex; flex-direction:column; min-height:100%; }
+  .set-page { flex:1 1 auto; display:flex; align-items:stretch; gap:36px; width:100%; max-width:972px; margin:0 auto; padding:0 32px; }
+  .set-rail-col { flex:0 0 192px; padding:32px 0 0; display:flex; flex-direction:column; }
+  .set-rail { position:sticky; top:24px; display:flex; flex-direction:column; gap:2px; padding-left:12px; }
+  .set-rail::before { content:""; position:absolute; left:0; top:4px; bottom:4px; width:2px; border-radius:2px; background:var(--line); }
+  .set-rail-mark { position:absolute; left:0; width:2px; border-radius:2px; background:var(--accent); height:var(--mark-h,0); transform:translateY(var(--mark-y,0)); transition:transform .26s cubic-bezier(.4,0,.2,1), height .26s cubic-bezier(.4,0,.2,1); }
+  .set-rail-group { display:flex; flex-direction:column; gap:2px; }
+  .set-rail-group + .set-rail-group { margin-top:18px; }
+  .set-rail-group-head { min-height:22px; padding:0 10px 3px; font-size:11px; font-weight:600; letter-spacing:.04em; color:var(--muted); }
+  .set-rail-row { display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:var(--radius-sm); color:var(--muted); text-align:left; transition:color .14s, background .14s; }
+  .set-rail-row:hover { background:var(--hover); color:var(--fg); }
+  .set-rail-row.active { color:var(--accent); }
+  .set-rail-row .ico { width:15px; height:15px; opacity:.85; }
+  .set-rail-label { font-size:var(--fs-sm); font-weight:550; }
+  .set-rail-row.active .set-rail-label { font-weight:600; }
+  .set-rail-foot { margin:auto 0 0; position:sticky; bottom:0; padding:16px 0 12px 12px; }
+  .set-main { flex:1 1 auto; min-width:0; max-width:680px; padding:24px 0 72px; }
+
+  .page-header { margin:0 0 4px; }
+  .page-header-row { display:flex; align-items:flex-start; gap:14px; }
+  .page-header-text { flex:1; min-width:0; }
+  .page-header-title { font-size:26px; font-weight:700; letter-spacing:-.02em; margin:0; }
+  .page-header-sub { color:var(--muted); font-size:var(--fs-sm); margin-top:3px; }
+  .page-header-action { flex:none; padding-top:4px; }
+  .page-header-banner { margin-top:10px; }
+
+  .set-section { margin-top:30px; }
+  .set-section-head { display:flex; align-items:baseline; gap:10px; margin:0 0 4px 2px; }
+  .set-section-label { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
+  .set-section-count { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .set-section-caption { color:var(--muted); font-size:12px; line-height:1.6; margin:2px 0 6px 2px; max-width:56ch; }
+  .set-section-tail { margin-left:auto; }
+
+  /* rows */
+  .set-row + .set-row { border-top:1px solid var(--line); }
+  .set-row-line { display:flex; align-items:center; gap:14px; min-height:46px; padding:6px 0; }
+  .set-row.clickable > .set-row-line { cursor:pointer; margin:0 -8px; padding:6px 8px; border-radius:var(--radius-sm); }
+  .set-row.clickable > .set-row-line:hover { background:var(--hover); }
+  .set-row.dim > .set-row-line { opacity:.62; }
+  .set-row-lead { flex:none; width:28px; height:28px; display:grid; place-items:center; color:var(--muted); border-radius:7px; background:var(--surface-2); }
+  .set-row-lead .ico { width:15px; height:15px; }
+  .set-row-text { flex:1; min-width:0; }
+  .set-row-title { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:550; min-width:0; }
+  .set-row-title > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .set-row-caption { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .set-row-control { flex:none; display:flex; align-items:center; gap:6px; }
+  .set-row-detail { padding:2px 0 14px; }
+  .tag { display:inline-flex; align-items:center; font-size:11px; font-weight:500; line-height:1.5; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:0 7px; white-space:nowrap; }
+  .tag.accent { color:var(--accent); background:var(--accent-soft); border-color:transparent; }
+  .tag.self { color:var(--fg-soft); background:var(--surface-2); border-color:transparent; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--muted); flex:none; }
+  .dot.ok { background:var(--success); } .dot.warn { background:var(--warning); } .dot.err { background:var(--danger); }
+  .cap-err { color:var(--danger); }
+  .row-chev { flex:none; color:var(--muted); display:flex; transition:transform .15s; }
+  .row-chev .ico { width:14px; height:14px; }
+  .row-chev.open { transform:rotate(180deg); }
+  .add-row { display:flex; align-items:center; gap:8px; width:100%; min-height:40px; margin-top:2px; padding:0 2px; color:var(--muted); font-size:var(--fs-ui); border-radius:var(--radius-sm); text-align:left; }
+  .add-row:hover { color:var(--fg); background:var(--hover); }
+  .add-row .ico { width:15px; height:15px; }
+  .more-row { display:inline-flex; align-items:center; gap:6px; padding:8px 2px; font-size:var(--fs-sm); color:var(--muted); }
+  .more-row:hover { color:var(--fg); }
+
+  /* detail key/value block (device expand) */
+  .kv { display:grid; grid-template-columns:max-content 1fr; gap:6px 18px; padding:4px 0 10px 42px; font-size:var(--fs-sm); }
+  .kv dt { color:var(--muted); margin:0; }
+  .kv dd { margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .detail-actions { display:flex; align-items:center; gap:4px; padding-left:42px; flex-wrap:wrap; }
+  .detail-note { font-size:12px; color:var(--muted); line-height:1.6; padding:4px 0 6px 42px; max-width:60ch; }
+  .detail-note a, .link { color:var(--accent); text-decoration:none; cursor:pointer; }
+  .detail-note a:hover, .link:hover { text-decoration:underline; }
+  .detail-note b { color:var(--fg-soft); font-weight:600; }
+  .set-disclosure { margin:2px 0; }
+  .set-disclosure > summary { display:inline-flex; align-items:center; gap:6px; cursor:pointer; width:fit-content; font-size:var(--fs-sm); font-weight:550; color:var(--accent); list-style:none; }
+  .set-disclosure > summary::-webkit-details-marker { display:none; }
+  .set-disclosure > summary::before { content:"▸"; font-size:.85em; color:var(--muted); transition:transform .15s; }
+  .set-disclosure[open] > summary::before { transform:rotate(90deg); }
+  .set-disclosure-body { font-size:var(--fs-sm); color:var(--fg-soft); line-height:1.6; margin-top:8px; max-width:58ch; }
+  .set-note { color:var(--muted); font-size:12px; padding:6px 0 8px; line-height:1.6; max-width:58ch; }
+
+  /* buttons */
+  .btn { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:var(--radius-sm); font-size:13px; font-weight:500; transition:all .12s; white-space:nowrap; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn-ghost { color:var(--fg-soft); } .btn-ghost:hover { background:var(--hover-2); color:var(--fg); }
+  .btn-ghost.danger { color:var(--danger); } .btn-ghost.danger:hover { background:var(--danger-soft); color:var(--danger); }
+  .btn-secondary { background:var(--bg); border:1px solid var(--line-strong); color:var(--fg); box-shadow:var(--shadow-sm); }
+  .btn-secondary:hover { background:var(--surface-2); }
+  .btn-primary { background:var(--accent); color:var(--accent-fg); box-shadow:var(--shadow-sm); }
+  .btn-primary:hover { filter:brightness(1.07); }
+  .btn-danger { background:var(--danger); color:#fff; } .btn-danger:hover { filter:brightness(1.05); }
+  .btn-icon { width:28px; height:28px; padding:0; justify-content:center; border-radius:var(--radius-sm); color:var(--muted); }
+  .btn-icon:hover { background:var(--hover-2); color:var(--fg); }
+  .btn.sm { padding:3px 8px; font-size:12px; }
+  .switch { position:relative; width:38px; height:22px; border-radius:999px; background:var(--line-strong); transition:background .18s; flex:none; }
+  .switch.on { background:var(--accent); }
+  .switch:disabled { opacity:.5; cursor:default; }
+  .switch.locked:disabled { opacity:1; cursor:default; }
+  .switch-knob { position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); transition:transform .18s cubic-bezier(.4,0,.2,1); }
+  .switch.on .switch-knob { transform:translateX(16px); }
+  .seg { display:inline-flex; padding:2px; border-radius:7px; background:var(--surface-2); gap:2px; }
+  .seg-opt { padding:3px 10px; border-radius:5px; font-size:var(--fs-sm); font-weight:550; color:var(--muted); }
+  .seg-opt.on { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
+
+  /* health line */
+  .sync-health-line { display:inline-flex; align-items:center; gap:8px; max-width:100%; padding:2px 0; color:var(--fg-soft); text-align:left; }
+  .sync-health-line:hover { color:var(--fg); }
+  .sync-health-dot { flex:none; width:8px; height:8px; border-radius:50%; }
+  .sync-health-text { font-size:var(--fs-sm); font-weight:500; }
+  .sync-health-more { font-size:var(--fs-xs); color:var(--muted); }
+  .sync-health-line:hover .sync-health-more { color:var(--fg); }
+  .places { margin-top:6px; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+  .place { display:flex; align-items:center; gap:10px; padding:9px 12px; font-size:var(--fs-sm); min-width:0; }
+  .place + .place { border-top:1px solid var(--line); }
+  .place-kind { flex:none; width:64px; color:var(--muted); font-size:var(--fs-xs); }
+  .place-name { font-weight:550; flex:none; }
+  .place-cap { flex:1; min-width:0; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .place .btn { margin-left:auto; }
+
+  /* blob hero */
+  .blob-hero { display:flex; gap:26px; align-items:center; margin:6px 0 2px; }
+  .blob-hero-main { flex:1; min-width:0; }
+  .blob-stat { font-size:20px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+  .blob-stat small { font-size:var(--fs-sm); font-weight:500; color:var(--muted); margin-left:8px; letter-spacing:0; }
+  .blob-legend { display:flex; flex-direction:column; gap:6px; margin:10px 0 12px; }
+  .blob-legend-row { display:flex; align-items:center; gap:8px; font-size:var(--fs-sm); color:var(--fg-soft); }
+  .blob-legend-row b { margin-left:auto; font-weight:600; color:var(--fg); font-variant-numeric:tabular-nums; }
+  .blob-dot { width:9px; height:9px; border-radius:3px; flex:none; }
+  .blob-dot.free { background:var(--accent); } .blob-dot.keep { background:var(--line-strong); }
+  .blob-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .blob-actions .status { font-size:var(--fs-sm); color:var(--muted); display:inline-flex; align-items:center; gap:6px; }
+  .blob-ring { position:relative; width:132px; height:132px; flex:none; }
+  .blob-ring svg { width:100%; height:100%; }
+  .blob-ring-track { fill:none; stroke:var(--line); stroke-width:8; }
+  .blob-ring.safe .blob-ring-track { stroke:color-mix(in srgb, var(--success) 22%, var(--line)); }
+  .blob-seg { fill:none; stroke-width:8; stroke-linecap:round; transition:stroke-dasharray .6s cubic-bezier(.4,0,.2,1); }
+  .blob-seg.free { stroke:var(--accent); } .blob-seg.keep { stroke:var(--line-strong); }
+  .blob-ring-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; text-align:center; }
+  .blob-ring-big { font-size:17px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+  .blob-ring-cap { font-size:var(--fs-xs); color:var(--muted); }
+  .blob-ring-check { width:28px; height:28px; border-radius:50%; display:grid; place-items:center; background:color-mix(in srgb, var(--success) 14%, transparent); color:var(--success); margin-bottom:3px; }
+  .blob-ring-check .ico { width:16px; height:16px; stroke-width:2.4; }
+
+  /* audit */
+  .audit-filters { display:flex; gap:6px; margin:14px 0 14px; }
+  .audit-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 12px; border-radius:999px; border:1px solid var(--line); color:var(--fg-soft); font-size:var(--fs-sm); }
+  .audit-chip:hover { background:var(--hover); }
+  .audit-chip.on { background:var(--accent-soft); border-color:transparent; color:var(--accent); font-weight:600; }
+  .audit-chip-dot { width:7px; height:7px; border-radius:50%; background:#8b5cf6; }
+  .audit-group-label { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin:18px 0 4px 2px; }
+  .audit-group:first-child .audit-group-label { margin-top:0; }
+  .audit-item { border-bottom:1px solid var(--line); }
+  .audit-item:last-child { border-bottom:0; }
+  .audit-item-line { display:flex; align-items:center; gap:10px; padding:9px 8px; margin:0 -8px; border-radius:var(--radius-sm); cursor:pointer; min-width:0; }
+  .audit-item-line:hover { background:var(--hover); }
+  .audit-when { font-size:var(--fs-sm); color:var(--muted); flex:none; width:64px; font-variant-numeric:tabular-nums; }
+  .audit-actor { flex:none; font-size:11px; font-weight:600; padding:1px 7px; border-radius:999px; background:var(--surface); border:1px solid var(--line); color:var(--fg-soft); }
+  .audit-actor.ai { background:color-mix(in srgb,#8b5cf6 14%,transparent); border-color:color-mix(in srgb,#8b5cf6 35%,transparent); color:#8b5cf6; }
+  .audit-summary { font-size:var(--fs-ui); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .audit-verb { color:var(--fg-soft); }
+  .audit-ent { font-weight:600; margin-left:3px; }
+  .audit-dbname { color:var(--muted); }
+  .audit-spacer { flex:1; }
+  .audit-revert { opacity:0; }
+  .audit-item-line:hover .audit-revert { opacity:1; }
+  .audit-caret { color:var(--muted); }
+  .audit-detail { padding:2px 0 12px 74px; }
+  .diff { font-family:var(--mono); font-size:12px; line-height:1.6; border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; }
+  .diff-l { padding:1px 10px; white-space:pre-wrap; }
+  .diff-l.del { background:color-mix(in srgb, var(--danger) 10%, transparent); color:var(--danger); }
+  .diff-l.add { background:color-mix(in srgb, var(--success) 12%, transparent); color:var(--success); }
+  .audit-more { display:inline-flex; align-items:center; gap:6px; margin:14px 0 0 2px; font-size:var(--fs-sm); color:var(--muted); }
+  .audit-more:hover { color:var(--fg); }
+  .audit-more.loading { opacity:.6; pointer-events:none; }
+  .audit-end { display:flex; align-items:center; gap:12px; margin:18px 0 0; color:var(--muted); font-size:var(--fs-xs); }
+  .audit-end::before, .audit-end::after { content:""; flex:1; height:1px; background:var(--line); }
+
+  /* popover menu */
+  .pop { position:fixed; z-index:50; min-width:220px; background:var(--bg); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow-lg); padding:5px; animation:pop-in .12s cubic-bezier(.2,.9,.3,1.2); }
+  @keyframes pop-in { from { opacity:0; transform:translateY(-3px) scale(.98); } }
+  .mi { display:flex; align-items:center; gap:9px; width:100%; padding:6px 9px; border-radius:6px; text-align:left; font-size:var(--fs-ui); }
+  .mi:hover { background:var(--hover-2); }
+  .mi .ico { color:var(--muted); width:15px; height:15px; }
+  .mi.danger, .mi.danger .ico { color:var(--danger); }
+  .mi.danger:hover { background:var(--danger-soft); }
+  .mi-text { display:flex; flex-direction:column; min-width:0; }
+  .mi-sub { font-size:var(--fs-xs); color:var(--muted); }
+  .mi-sep { height:1px; background:var(--line); margin:4px 2px; }
+
+  /* modal */
+  .scrim { position:fixed; inset:0; z-index:60; background:rgba(20,20,30,.35); display:flex; align-items:center; justify-content:center; animation:fade .14s; backdrop-filter:blur(2px); }
+  @keyframes fade { from { opacity:0; } }
+  .modal { width:min(460px, calc(100% - 32px)); background:var(--bg); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); border:1px solid var(--line); animation:modal-in .18s cubic-bezier(.2,.9,.3,1.15); overflow:hidden; }
+  @keyframes modal-in { from { opacity:0; transform:translateY(8px) scale(.985); } }
+  .modal-head { padding:18px 20px 0; }
+  .modal-title { font-size:16px; font-weight:650; letter-spacing:-.01em; }
+  .modal-sub { color:var(--muted); font-size:var(--fs-sm); margin-top:3px; line-height:1.55; }
+  .modal-body { padding:14px 20px 4px; display:flex; flex-direction:column; gap:12px; }
+  .modal-foot { display:flex; justify-content:flex-end; gap:8px; padding:14px 20px 18px; }
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field label { font-size:var(--fs-xs); font-weight:600; color:var(--muted); letter-spacing:.03em; }
+  .field input, .field select { width:100%; padding:7px 10px; border:1px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--bg); outline:none; transition:border-color .12s, box-shadow .12s; }
+  .field input:focus { border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  .field .hint { font-size:var(--fs-xs); color:var(--muted); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .provider-grid { display:flex; flex-wrap:wrap; gap:7px; }
+  .provider-chip { padding:6px 12px; border-radius:999px; border:1px solid var(--line-strong); background:var(--surface); color:var(--fg-soft); font-size:var(--fs-sm); font-weight:550; transition:all .12s; }
+  .provider-chip:hover { border-color:var(--muted); color:var(--fg); }
+  .provider-chip.sel { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .steps { display:flex; flex-direction:column; gap:10px; }
+  .step { display:flex; gap:12px; }
+  .step-n { flex:none; width:22px; height:22px; border-radius:50%; display:grid; place-items:center; font-size:12px; font-weight:600; background:var(--surface-2); color:var(--fg-soft); }
+  .step.done .step-n { background:color-mix(in srgb, var(--success) 15%, transparent); color:var(--success); }
+  .step-t { font-weight:550; }
+  .step-s { font-size:var(--fs-sm); color:var(--muted); line-height:1.55; }
+  .pair-tabs { display:flex; gap:2px; padding:2px; background:var(--surface-2); border-radius:7px; }
+  .pair-tab { flex:1; padding:5px; border-radius:5px; font-size:var(--fs-sm); font-weight:550; color:var(--muted); }
+  .pair-tab.on { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
+  .qr { display:grid; place-items:center; padding:16px; border:1px dashed var(--line-strong); border-radius:var(--radius); }
+  .qr svg { width:148px; height:148px; }
+  .pair-code { font-family:var(--mono); font-size:24px; font-weight:600; letter-spacing:.14em; text-align:center; padding:14px; border:1px dashed var(--line-strong); border-radius:var(--radius); background:var(--surface); }
+  .callout { display:flex; gap:10px; padding:10px 12px; border-radius:var(--radius-sm); background:var(--surface); border:1px solid var(--line); font-size:var(--fs-sm); color:var(--fg-soft); line-height:1.55; }
+  .callout .ico { color:var(--warning); margin-top:2px; }
+  .callout.danger .ico { color:var(--danger); }
+
+  .toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); z-index:80; background:var(--fg); color:var(--bg); padding:8px 14px; border-radius:8px; font-size:var(--fs-sm); box-shadow:var(--shadow-lg); animation:toast-in .2s cubic-bezier(.2,.9,.3,1.2); }
+  @keyframes toast-in { from { opacity:0; transform:translate(-50%, 8px); } }
+
+  /* 原型工具条 */
+  .devbar { position:fixed; right:14px; bottom:14px; z-index:40; display:flex; align-items:center; gap:4px; padding:4px; border-radius:10px; background:var(--bg); border:1px solid var(--line); box-shadow:var(--shadow-md); font-size:var(--fs-xs); color:var(--muted); }
+  .devbar select { border:0; background:none; font-size:var(--fs-xs); color:var(--fg-soft); padding:2px 4px; outline:none; }
+  .devbar .lbl { padding:0 4px 0 6px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A7 7 0 0 0 4.7 12.6 3.5 3.5 0 0 0 6 19z"/><path d="M12 12v6M9 15l3-3 3 3"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></symbol>
+    <symbol id="i-laptop" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><path d="M6 6.5h.01M6 17.5h.01"/></symbol>
+    <symbol id="i-bucket" viewBox="0 0 24 24"><path d="M3 6h18l-1.5 13a2 2 0 0 1-2 1.8h-11a2 2 0 0 1-2-1.8z"/><ellipse cx="12" cy="6" rx="9" ry="2.5"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 20 3M15 8l3 3M18 5l3 3"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v7h-7M17 21h.01"/></symbol>
+  </defs>
+</svg>
+
+<div id="app">
+  <div class="topbar">
+    <div class="crumb"><svg class="ico"><use href="#i-gear"/></svg><span>设置</span><span class="sep">›</span><span id="crumb-page">设备</span></div>
+  </div>
+  <div class="content">
+    <div class="set-shell">
+      <div class="set-page">
+        <div class="set-rail-col">
+          <nav class="set-rail" id="rail">
+            <div class="set-rail-mark" id="rail-mark"></div>
+            <div class="set-rail-group">
+              <div class="set-rail-group-head">本机</div>
+              <button class="set-rail-row" data-page="appearance"><svg class="ico"><use href="#i-sun"/></svg><span class="set-rail-label">外观</span></button>
+              <button class="set-rail-row" data-page="offline"><svg class="ico"><use href="#i-db"/></svg><span class="set-rail-label">离线与缓存</span></button>
+            </div>
+            <div class="set-rail-group">
+              <div class="set-rail-group-head">工作区</div>
+              <button class="set-rail-row" data-page="backup"><svg class="ico"><use href="#i-cloud"/></svg><span class="set-rail-label">数据与备份</span></button>
+              <button class="set-rail-row" data-page="devices"><svg class="ico"><use href="#i-monitor"/></svg><span class="set-rail-label">设备</span></button>
+              <button class="set-rail-row" data-page="audit"><svg class="ico"><use href="#i-history"/></svg><span class="set-rail-label">操作审计</span></button>
+              <button class="set-rail-row" data-page="sites"><svg class="ico"><use href="#i-globe"/></svg><span class="set-rail-label">站点与发布</span></button>
+            </div>
+          </nav>
+          <div class="set-rail-foot">
+            <button class="set-rail-row" data-page="about"><svg class="ico"><use href="#i-box"/></svg><span class="set-rail-label">关于</span></button>
+          </div>
+        </div>
+        <main class="set-main" id="main"></main>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="devbar">
+  <span class="lbl">原型</span>
+  <button class="btn-icon" id="theme-btn" title="切换深浅色"><svg class="ico"><use href="#i-moon"/></svg></button>
+  <select id="scenario">
+    <option value="error">场景：一处同步失败</option>
+    <option value="healthy">场景：一切正常</option>
+    <option value="pending">场景：附件待上传</option>
+    <option value="free">场景：可清理 12 MB</option>
+  </select>
+</div>
+
+<script>
+/* ====================================================================
+   mock state
+   ==================================================================== */
+const NOW = new Date("2026-09-03T20:20:00+08:00").getTime();
+const H = 3600e3, D = 24 * H;
+
+const state = {
+  page: "devices",
+  scenario: "error",
+  openDevice: null,
+  healthOpen: false,
+  showStaleAnchors: false,
+  auditFilter: "all",
+  auditOpen: new Set(),
+  auditPages: 1,
+  devices: [
+    { id: "k2n8s0aa", name: "Noah 的 MacBook Pro", self: true, kind: "laptop", last: NOW - 10 * H, channels: [] },
+    { id: "jgiovo1u", name: "iPhone 15", kind: "phone", last: NOW - 3 * D, revocable: "bucket",
+      channels: [{ kind: "bucket", ref: "metahub-1252110546", full: "s3://metahub-1252110546.cos.ap-shanghai.myqcloud.com/metahub-1252110546/metahub" }] },
+    { id: "kpbtw7ka", name: "家里的 NAS", kind: "server", last: NOW - 4 * D, revocable: "peer", enabled: true,
+      channels: [{ kind: "peer", ref: "http://192.168.1.20:8787" }] },
+    { id: "ecc4z72x", name: "工作室 iMac", kind: "monitor", last: new Date("2026-07-24T11:20:00+08:00").getTime(), revocable: "grant",
+      channels: [{ kind: "grant", ref: "a8f2c1e0" }] },
+    { id: "37mcjgew", name: null, kind: "monitor", last: new Date("2026-07-23T19:02:00+08:00").getTime(), revocable: "grant",
+      channels: [{ kind: "grant", ref: "5d91b7f3" }] },
+    { id: "m32s7stb", name: null, kind: "monitor", last: new Date("2026-07-23T09:41:00+08:00").getTime(), revocable: "grant",
+      channels: [{ kind: "grant", ref: "c0e4a912" }] },
+  ],
+  buckets: [
+    { id: "b1", name: "metahub-1252110546", host: "cos.ap-shanghai.myqcloud.com", provider: "腾讯云 COS", region: "上海",
+      roles: ["工作区同步", "附件备份"], lastSync: NOW - 12 * 60e3, direct: false },
+  ],
+  anchors: new Set(["k2n8s0aa"]),
+  redundancy: "any",
+  verifiedAt: NOW - 2 * H,
+  blob: { count: 37, total: 48.4 * 1024 * 1024 },
+  audit: [],
+};
+
+const AUDIT_SEED = [
+  [NOW - 25 * 60e3, "ai", "修改", "文档", "TODO", null],
+  [NOW - 40 * 60e3, "self", "修改", "文档", "TODO", null],
+  [NOW - 2 * H, "self", "新建", "记录", "周会纪要 9/3", "会议"],
+  [NOW - 5 * H, "other:iPhone 15", "修改", "记录", "买菜", "待办"],
+  [NOW - 26 * H, "self", "修改", "文档", "产品路线图", null],
+  [NOW - 27 * H, "ai", "新建", "文档", "同步设计草稿", null],
+  [NOW - 30 * H, "self", "删除", "记录", "旧的测试条目", "待办"],
+  [NOW - 3 * D, "self", "修改", "文档", "TODO", null],
+  [NOW - 14 * D, "self", "修改", "文档", "TODO", null],
+  [NOW - 14 * D - H, "self", "修改", "文档", "TODO", null],
+  [NOW - 14 * D - 2 * H, "self", "修改", "文档", "TODO", null],
+];
+const AUDIT_OLDER = [
+  [NOW - 40 * D, "self", "修改", "文档", "读书笔记", null],
+  [NOW - 41 * D, "other:工作室 iMac", "新建", "数据表", "项目", null],
+  [NOW - 55 * D, "self", "修改", "文档", "TODO", null],
+  [NOW - 80 * D, "ai", "修改", "记录", "发布清单", "待办"],
+];
+state.audit = AUDIT_SEED.map((r, i) => ({ v: 1000 - i, at: r[0], actor: r[1], verb: r[2], ds: r[3], label: r[4], db: r[5] }));
+
+/* ====================================================================
+   helpers
+   ==================================================================== */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const ico = (n, cls = "ico") => `<svg class="${cls}"><use href="#i-${n}"/></svg>`;
+const fmtBytes = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+const pad = (n) => String(n).padStart(2, "0");
+const fmtTime = (t) => { const d = new Date(t); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const fmtDate = (t) => { const d = new Date(t); return `${d.getMonth() + 1} 月 ${d.getDate()} 日`; };
+function timeAgo(t) {
+  const diff = NOW - t;
+  if (diff < 60e3) return "刚刚";
+  if (diff < H) return `${Math.round(diff / 60e3)} 分钟前`;
+  if (diff < D) return `${Math.round(diff / H)} 小时前`;
+  if (diff < 30 * D) return `${Math.round(diff / D)} 天前`;
+  return fmtDate(t);
+}
+/* 设备行的“活跃”文案：近期用相对时间，久远的直接给日期，避免“最近活动 2026/7/23”这种半相对半绝对 */
+const activeCopy = (t) => (NOW - t < 30 * D ? `${timeAgo(t)}活跃` : `${fmtDate(t)}后无活动`);
+
+let toastTimer;
+function toast(msg) {
+  $(".toast")?.remove();
+  const el = document.createElement("div"); el.className = "toast"; el.textContent = msg; document.body.appendChild(el);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.remove(), 2400);
+}
+
+/* ---- popover menu ---- */
+function openMenu(anchor, items) {
+  closeMenu();
+  const pop = document.createElement("div"); pop.className = "pop";
+  pop.innerHTML = items.map((it) => it === "-" ? `<div class="mi-sep"></div>` :
+    `<button class="mi${it.danger ? " danger" : ""}" data-k="${it.k}">${ico(it.icon)}<span class="mi-text"><span>${esc(it.label)}</span>${it.sub ? `<span class="mi-sub">${esc(it.sub)}</span>` : ""}</span></button>`).join("");
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.top = `${r.bottom + 4}px`;
+  pop.style.left = `${Math.min(r.right - pop.offsetWidth, innerWidth - pop.offsetWidth - 12)}px`;
+  pop.addEventListener("click", (e) => {
+    const b = e.target.closest(".mi"); if (!b) return;
+    closeMenu(); items.find((i) => i !== "-" && i.k === b.dataset.k)?.onClick();
+  });
+  setTimeout(() => document.addEventListener("pointerdown", onDocDown, { once: true }));
+}
+function onDocDown(e) { if (!e.target.closest(".pop")) closeMenu(); else document.addEventListener("pointerdown", onDocDown, { once: true }); }
+function closeMenu() { $(".pop")?.remove(); }
+
+/* ---- modal ---- */
+function openModal({ title, sub, body, foot, onMount }) {
+  closeModal();
+  const s = document.createElement("div"); s.className = "scrim";
+  s.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head"><div class="modal-title">${esc(title)}</div>${sub ? `<div class="modal-sub">${sub}</div>` : ""}</div>
+    <div class="modal-body">${body || ""}</div>
+    <div class="modal-foot">${foot || ""}</div></div>`;
+  s.addEventListener("pointerdown", (e) => { if (e.target === s) closeModal(); });
+  document.body.appendChild(s);
+  onMount?.(s);
+  s.querySelector("input")?.focus();
+}
+function closeModal() { $(".scrim")?.remove(); }
+function confirmDialog({ title, message, confirmLabel, danger }) {
+  return new Promise((res) => {
+    openModal({
+      title, sub: message,
+      foot: `<button class="btn btn-secondary" data-x>取消</button><button class="btn ${danger ? "btn-danger" : "btn-primary"}" data-ok>${esc(confirmLabel)}</button>`,
+      onMount: (s) => {
+        s.querySelector("[data-x]").onclick = () => { closeModal(); res(false); };
+        s.querySelector("[data-ok]").onclick = () => { closeModal(); res(true); };
+      },
+    });
+  });
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeMenu(); closeModal(); } });
+
+/* ====================================================================
+   shared page bits
+   ==================================================================== */
+const PAGE_LABEL = { appearance: "外观", offline: "离线与缓存", backup: "数据与备份", devices: "设备", audit: "操作审计", sites: "站点与发布", about: "关于" };
+
+function pageHeader({ title, sub, action, banner }) {
+  return `<header class="page-header"><div class="page-header-row"><div class="page-header-text"><h1 class="page-header-title">${esc(title)}</h1>${sub ? `<div class="page-header-sub">${sub}</div>` : ""}</div>${action ? `<div class="page-header-action">${action}</div>` : ""}</div>${banner ? `<div class="page-header-banner">${banner}</div>` : ""}</header>`;
+}
+function section({ label, count, caption, tail, body }) {
+  return `<section class="set-section"><div class="set-section-head"><span class="set-section-label">${esc(label)}</span>${count != null ? `<span class="set-section-count">${count}</span>` : ""}${tail ? `<span class="set-section-tail">${tail}</span>` : ""}</div>${caption ? `<div class="set-section-caption">${caption}</div>` : ""}${body}</section>`;
+}
+function row({ key, lead, title, tags = [], caption, control, clickable, open, dim, detail }) {
+  return `<div class="set-row${clickable ? " clickable" : ""}${dim ? " dim" : ""}" ${key ? `data-key="${esc(key)}"` : ""}>
+    <div class="set-row-line" ${clickable ? `data-toggle="${esc(key)}"` : ""}>
+      ${lead ? `<div class="set-row-lead">${lead}</div>` : ""}
+      <div class="set-row-text">
+        <div class="set-row-title"><span>${title}</span>${tags.map((t) => `<span class="tag ${t.cls || ""}">${esc(t.label)}</span>`).join("")}</div>
+        ${caption ? `<div class="set-row-caption">${caption}</div>` : ""}
+      </div>
+      ${control ? `<div class="set-row-control">${control}</div>` : ""}
+    </div>
+    ${open && detail ? `<div class="set-row-detail">${detail}</div>` : ""}
+  </div>`;
+}
+const sw = (on, attrs = "", locked = false) => `<button class="switch${on ? " on" : ""}${locked ? " locked" : ""}" role="switch" aria-checked="${on}" ${locked ? "disabled" : ""} ${attrs}><span class="switch-knob"></span></button>`;
+const chev = (open) => `<span class="row-chev${open ? " open" : ""}">${ico("chev")}</span>`;
+const deviceName = (d) => d.name || "未命名设备";
+const KIND_ICON = { laptop: "laptop", phone: "phone", monitor: "monitor", server: "server" };
+
+/* ====================================================================
+   设备
+   ==================================================================== */
+function deviceCaption(d) {
+  if (d.self) return `<span class="dot ok"></span>这台设备 · ${timeAgo(d.last)}活跃`;
+  const c = d.channels[0];
+  const how = !c ? "曾同步过"
+    : c.kind === "bucket" ? `经存储桶 ${esc(c.ref)} 同步`
+    : c.kind === "peer" ? (d.enabled ? "局域网直连" : "直连已暂停")
+    : "通过授权码接入";
+  return `${how} · ${activeCopy(d.last)}`;
+}
+function deviceDetail(d) {
+  const c = d.channels[0];
+  const kv = [];
+  if (d.self) kv.push(["接入方式", "工作区所在的这台设备"]);
+  else if (c?.kind === "bucket") kv.push(["接入方式", `经存储桶 <span class="mono">${esc(c.full)}</span>`]);
+  else if (c?.kind === "peer") kv.push(["接入方式", `局域网直连 <span class="mono">${esc(c.ref)}</span>`]);
+  else if (c?.kind === "grant") kv.push(["接入方式", `授权码 <span class="mono">${esc(c.ref)}…</span>`]);
+  kv.push(["节点 ID", `<span class="mono">${esc(d.id)}</span>`]);
+  kv.push(["最近活动", fmtTime(d.last)]);
+
+  let actions = "", note = "";
+  if (d.self) {
+    actions = `<button class="btn btn-ghost sm" data-act="rename" data-id="${d.id}">${ico("pencil", "ico sm")}重命名</button>`;
+  } else if (c?.kind === "peer") {
+    actions = `<button class="btn btn-ghost sm" data-act="sync" data-id="${d.id}">${ico("refresh", "ico sm")}立即同步</button>
+      <button class="btn btn-ghost sm" data-act="pause" data-id="${d.id}">${ico(d.enabled ? "pause" : "play", "ico sm")}${d.enabled ? "暂停同步" : "恢复同步"}</button>
+      <button class="btn btn-ghost sm" data-act="rename" data-id="${d.id}">${ico("pencil", "ico sm")}重命名</button>
+      <button class="btn btn-ghost sm danger" data-act="remove" data-id="${d.id}">${ico("trash", "ico sm")}移除</button>`;
+  } else if (c?.kind === "grant") {
+    actions = `<button class="btn btn-ghost sm" data-act="rename" data-id="${d.id}">${ico("pencil", "ico sm")}重命名</button>
+      <button class="btn btn-ghost sm danger" data-act="revoke" data-id="${d.id}">${ico("lock", "ico sm")}撤销接入</button>`;
+    note = `撤销后它不能再同步进来；此前已同步到它上面的数据无法远程删除。`;
+  } else if (c?.kind === "bucket") {
+    actions = `<button class="btn btn-ghost sm" data-act="rename" data-id="${d.id}">${ico("pencil", "ico sm")}重命名</button>
+      <button class="btn btn-ghost sm" data-act="rotate" data-id="${d.id}">${ico("key", "ico sm")}更换存储密钥…</button>`;
+    note = `这台设备和其他设备共用同一把存储密钥，无法单独移除。<b>更换密钥</b>后它将不能再同步；已下载到它上面的数据无法追回。`;
+  }
+  return `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+    <div class="detail-actions">${actions}</div>${note ? `<div class="detail-note">${note}</div>` : ""}`;
+}
+function deviceRow(d) {
+  const open = state.openDevice === d.id;
+  const tags = [];
+  if (d.self) tags.push({ label: "这台设备", cls: "self" });
+  if (!d.name && !d.self) tags.push({ label: d.id, cls: "" });
+  return row({
+    key: d.id, clickable: true, open, dim: !d.self && NOW - d.last > 30 * D && !open,
+    lead: ico(KIND_ICON[d.kind]),
+    title: esc(d.self ? d.name : deviceName(d)), tags,
+    caption: deviceCaption(d), control: chev(open), detail: deviceDetail(d),
+  });
+}
+function renderDevices() {
+  const recent = state.devices.filter((d) => NOW - d.last <= 30 * D);
+  const stale = state.devices.filter((d) => NOW - d.last > 30 * D);
+  return pageHeader({
+    title: "设备",
+    sub: `${state.devices.length} 台设备同步过这个工作区。`,
+    action: `<button class="btn btn-primary" data-act="add-device">${ico("plus", "ico sm")}添加设备</button>`,
+  }) + section({ label: "最近 30 天", count: recent.length, body: recent.map(deviceRow).join("") })
+    + (stale.length ? section({
+      label: "很久没活动", count: stale.length,
+      caption: "超过 30 天没有同步的设备。如果已经不再使用，可以在这里撤销它们的接入。",
+      body: stale.map(deviceRow).join(""),
+    }) : "");
+}
+
+/* ====================================================================
+   数据与备份
+   ==================================================================== */
+function health() {
+  const sc = state.scenario;
+  const map = {
+    error: { tone: "err", text: "已保存在 2 处 · 1 处同步失败" },
+    healthy: { tone: "ok", text: "已安全保存在 3 处 · 上次确认 5 分钟前" },
+    pending: { tone: "warn", text: "已保存在 2 处 · 3 个附件还只在这里" },
+    free: { tone: "ok", text: "已安全保存在 3 处 · 上次确认 5 分钟前" },
+  }[sc];
+  const places = [
+    { kind: "这台服务器", name: "工作区主节点", cap: "实时", role: "" },
+    sc === "error"
+      ? { kind: "存储桶", name: "metahub-1252110546", cap: `<span class="cap-err">同步失败 · 访问密钥已失效</span>`, act: `<button class="btn btn-ghost sm" data-act="retry-bucket">重试</button>` }
+      : { kind: "存储桶", name: "metahub-1252110546", cap: `已确认 · ${timeAgo(NOW - 5 * 60e3)}` },
+    { kind: "设备", name: "iPhone 15", cap: sc === "pending" ? "已确认 · 3 天前 · 3 个附件未上传" : "已确认 · 3 天前" },
+  ];
+  return `<div class="sync-health">
+    <button class="sync-health-line" data-act="health-toggle"><span class="sync-health-dot dot ${map.tone}"></span><span class="sync-health-text">${map.text}</span><span class="sync-health-more">${state.healthOpen ? "收起" : "查看各处"}</span>${chev(state.healthOpen)}</button>
+    ${state.healthOpen ? `<div class="places">${places.map((p) => `<div class="place"><span class="place-kind">${p.kind}</span><span class="place-name">${esc(p.name)}</span><span class="place-cap">${p.cap}</span>${p.act || ""}</div>`).join("")}</div>` : ""}
+  </div>`;
+}
+function bucketRow(b) {
+  const err = state.scenario === "error";
+  const caption = err
+    ? `<span class="dot err"></span><span class="cap-err">同步失败 · 访问密钥已失效</span>`
+    : `<span class="dot ok"></span>${esc(b.provider)} · ${esc(b.region)} · 上次同步 ${timeAgo(b.lastSync)}${b.direct ? " · 此浏览器已直连" : ""}`;
+  return row({
+    key: b.id, lead: ico("bucket"), title: esc(b.name),
+    tags: b.roles.map((r) => ({ label: r, cls: "accent" })),
+    caption,
+    control: `${err ? `<button class="btn btn-ghost sm" data-act="rotate" data-id="jgiovo1u">更换密钥…</button>` : ""}<button class="btn btn-icon" data-menu="bucket" data-id="${b.id}" title="更多">${ico("dots", "ico sm")}</button>`,
+  });
+}
+function blobHero() {
+  const free = state.scenario === "free" ? 12.1 * 1048576 : 0;
+  const total = state.blob.total, keep = total - free;
+  const pct = (v) => (v / total) * 100;
+  const selfAnchor = state.anchors.has("k2n8s0aa");
+  const safe = free === 0;
+  const status = free > 0
+    ? `<button class="btn btn-secondary" data-act="clear">清理腾出 ${fmtBytes(free)}</button><span class="status">只删别处已备份的副本，用到时自动取回</span>`
+    : selfAnchor
+      ? `<span class="status">${ico("check", "ico sm")}这里保留全部附件原件，无需清理</span>`
+      : `<span class="status">${ico("check", "ico sm")}都已备份，暂时没有可清理的</span>`;
+  return `<div class="blob-hero">
+    <div class="blob-hero-main">
+      <div class="blob-stat">${fmtBytes(total)}<small>${state.blob.count} 个附件</small></div>
+      <div class="blob-legend">
+        ${free > 0 ? `<div class="blob-legend-row"><span class="blob-dot free"></span>可释放<b>${fmtBytes(free)}</b></div>` : ""}
+        <div class="blob-legend-row"><span class="blob-dot keep"></span>${selfAnchor ? "长期保留" : "保留中"}<b>${fmtBytes(keep)}</b></div>
+      </div>
+      <div class="blob-actions">${status}<button class="btn btn-ghost sm" data-act="manage">查看附件…</button></div>
+    </div>
+    <div class="blob-ring${safe ? " safe" : ""}">
+      <svg viewBox="0 0 100 100" aria-hidden="true"><g transform="rotate(-90 50 50)">
+        <circle class="blob-ring-track" cx="50" cy="50" r="42" pathLength="100"/>
+        <circle class="blob-seg keep" cx="50" cy="50" r="42" pathLength="100" stroke-dasharray="${pct(keep)} ${100 - pct(keep)}" stroke-dashoffset="${-pct(free)}"/>
+        ${free > 0 ? `<circle class="blob-seg free" cx="50" cy="50" r="42" pathLength="100" stroke-dasharray="${pct(free)} ${100 - pct(free)}"/>` : ""}
+      </g></svg>
+      <div class="blob-ring-center">${free > 0
+        ? `<div class="blob-ring-big">${fmtBytes(free)}</div><div class="blob-ring-cap">可释放</div>`
+        : `<div class="blob-ring-check">${ico("check")}</div><div class="blob-ring-cap">全部已备份</div>`}</div>
+    </div>
+  </div>`;
+}
+function anchorRow(d, kind) {
+  const on = state.anchors.has(d.id);
+  const tags = [];
+  if (d.self) tags.push({ label: "这台设备", cls: "self" });
+  if (kind === "bucket") tags.push({ label: "云端", cls: "" });
+  if (!d.name && !d.self && kind !== "bucket") tags.push({ label: d.id });
+  const cap = kind === "bucket"
+    ? (on ? "附件会长期保存在云端" : "开启后，附件会长期保存在云端")
+    : on ? `保留全部副本 · 上次核对 ${timeAgo(state.verifiedAt)}` : (NOW - d.last > 30 * D ? activeCopy(d.last) : "未保留");
+  return row({
+    key: `a:${d.id}`, lead: ico(kind === "bucket" ? "bucket" : KIND_ICON[d.kind]),
+    title: esc(kind === "bucket" ? d.name : (d.self ? d.name : deviceName(d))), tags, caption: cap,
+    dim: kind !== "bucket" && !d.self && NOW - d.last > 30 * D,
+    control: sw(on, `data-anchor="${d.id}"`),
+  });
+}
+function renderBackup() {
+  const b = state.buckets[0];
+  const recentDevices = state.devices.filter((d) => NOW - d.last <= 30 * D);
+  const staleDevices = state.devices.filter((d) => NOW - d.last > 30 * D);
+  return pageHeader({ title: "数据与备份", banner: health() })
+  + section({
+      label: "同步存储桶", caption: "工作区的云端后端，所有设备通过它交换加密后的数据。",
+      body: state.buckets.map(bucketRow).join("") + `<button class="add-row" data-act="add-bucket">${ico("plus")}连接存储桶</button>`,
+    })
+  + section({
+      label: "附件", caption: "附件原件保存在服务器上，所有设备共用。",
+      body: blobHero(),
+    })
+  + section({
+      label: "长期保留副本",
+      caption: "开启的位置会保留所有附件的完整副本。只要确认这里有备份，其他设备就可以放心清理本地缓存。",
+      body: anchorRow(b, "bucket") + recentDevices.map((d) => anchorRow(d, "device")).join("")
+        + (staleDevices.length ? (state.showStaleAnchors
+            ? staleDevices.map((d) => anchorRow(d, "device")).join("") + `<button class="more-row" data-act="stale-anchors">收起</button>`
+            : `<button class="more-row" data-act="stale-anchors">${ico("chev-r", "ico sm")}还有 ${staleDevices.length} 台很久没活动的设备</button>`) : "")
+        + (state.anchors.size > 1 ? row({
+            title: "清理前需要几处确认", caption: "设备清理缓存前，要有几处长期副本确认持有该附件。",
+            control: `<div class="seg"><button class="seg-opt${state.redundancy === "any" ? " on" : ""}" data-red="any">一处即可</button><button class="seg-opt${state.redundancy === "all" ? " on" : ""}" data-red="all">每处都要</button></div>`,
+          }) : "")
+        + row({
+            title: "备份核对", caption: `上次核对 ${timeAgo(state.verifiedAt)}`,
+            control: `<button class="btn btn-ghost sm" data-act="verify">${ico("refresh", "ico sm")}重新核对</button>`,
+          }),
+    })
+  + `<div class="set-section"><details class="set-disclosure"><summary>它是怎么工作的</summary><div class="set-disclosure-body">存储桶只做“哑”中转：每台设备把自己的改动加密后上传，再拉取别人的——谁都不必同时在线，也不需要公网 IP。密钥只保存在服务器，不会同步到浏览器；信任的设备重输一次密钥即可直连，离线、在外也不中断。</div></details></div>`;
+}
+
+/* ====================================================================
+   操作审计
+   ==================================================================== */
+const groupLabel = (t) => NOW - t < 12 * H && new Date(t).getDate() === new Date(NOW).getDate() ? "今天" : NOW - t < 2 * D ? "昨天" : NOW - t < 7 * D ? "本周" : NOW - t < 30 * D ? "本月" : "更早";
+function auditItem(e) {
+  const open = state.auditOpen.has(e.v);
+  const actor = e.actor === "ai" ? `<span class="audit-actor ai">AI</span>` : e.actor.startsWith("other:") ? `<span class="audit-actor">${esc(e.actor.slice(6))}</span>` : "";
+  return `<div class="audit-item">
+    <div class="audit-item-line" data-audit="${e.v}">
+      <span class="audit-when" title="${fmtTime(e.at)}">${timeAgo(e.at)}</span>${actor}
+      <span class="audit-summary"><span class="audit-verb">${e.verb}${e.ds}</span><a class="audit-ent">${esc(e.label)}</a>${e.db ? `<span class="audit-dbname">（${esc(e.db)}）</span>` : ""}</span>
+      <span class="audit-spacer"></span>
+      <button class="btn btn-ghost sm audit-revert" data-act="revert" data-v="${e.v}">${ico("history", "ico sm")}撤销</button>
+      <span class="row-chev${open ? " open" : ""} audit-caret">${ico("chev")}</span>
+    </div>
+    ${open ? `<div class="audit-detail">${e.verb === "删除" ? `<div class="muted" style="font-size:12.5px">删除了 1 条记录，撤销即可恢复。</div>` : `<div class="diff"><div class="diff-l del">- 下周完成同步设置页改版</div><div class="diff-l add">+ 本周完成同步设置页改版（文案 + 交互）</div><div class="diff-l">  评审后合入 dev</div></div>`}</div>` : ""}
+  </div>`;
+}
+function renderAudit() {
+  const F = [["all", "全部"], ["ai", "AI 操作"], ["self", "这台设备"], ["others", "其他设备"]];
+  const list = state.audit.filter((e) => state.auditFilter === "all" || (state.auditFilter === "ai" && e.actor === "ai") || (state.auditFilter === "self" && e.actor === "self") || (state.auditFilter === "others" && e.actor.startsWith("other:")));
+  const groups = [];
+  for (const e of list) { const l = groupLabel(e.at); if (groups.at(-1)?.label !== l) groups.push({ label: l, items: [] }); groups.at(-1).items.push(e); }
+  const atEnd = state.auditPages >= 2;
+  return pageHeader({ title: "操作审计", sub: "工作区里每一次改动：谁、什么时候、改了什么。AI 通过命令行做的操作会标出来，可以逐条检查并撤销。" })
+    + `<div class="audit-filters">${F.map(([id, l]) => `<button class="audit-chip${state.auditFilter === id ? " on" : ""}" data-filter="${id}">${id === "ai" ? `<span class="audit-chip-dot"></span>` : ""}${l}</button>`).join("")}</div>`
+    + `<div class="audit-feed">${list.length ? groups.map((g) => `<div class="audit-group"><div class="audit-group-label">${g.label}</div>${g.items.map(auditItem).join("")}</div>`).join("") : `<div class="muted" style="padding:24px 0">${state.auditFilter === "ai" ? "还没有 AI 操作的记录。" : "暂无改动记录。"}</div>`}
+      ${atEnd ? `<div class="audit-end">已显示全部 · 只保留最近 90 天，更早的改动已合并且无法撤销</div>` : `<button class="audit-more" data-act="audit-more">${ico("chev", "ico sm")}显示更早的记录</button>`}
+    </div>`;
+}
+
+/* ====================================================================
+   其他页占位
+   ==================================================================== */
+function renderStub(id) {
+  return pageHeader({ title: PAGE_LABEL[id], sub: "本原型只覆盖「设备 / 数据与备份 / 操作审计」三页。" });
+}
+
+/* ====================================================================
+   render + events
+   ==================================================================== */
+function render() {
+  const main = $("#main");
+  main.innerHTML = { devices: renderDevices, backup: renderBackup, audit: renderAudit }[state.page]?.() ?? renderStub(state.page);
+  $("#crumb-page").textContent = PAGE_LABEL[state.page];
+  document.querySelectorAll("[data-page]").forEach((b) => b.classList.toggle("active", b.dataset.page === state.page));
+  const act = $(`.set-rail [data-page="${state.page}"]`);
+  const rail = $("#rail");
+  if (act) {
+    const y = act.offsetTop - rail.offsetTop;
+    rail.style.setProperty("--mark-y", `${y + 4}px`); rail.style.setProperty("--mark-h", `${act.offsetHeight - 8}px`);
+  } else { rail.style.setProperty("--mark-h", "0px"); }
+}
+
+document.addEventListener("click", async (e) => {
+  const t = e.target;
+  const page = t.closest("[data-page]"); if (page) { state.page = page.dataset.page; state.openDevice = null; render(); return; }
+  const tog = t.closest("[data-toggle]");
+  if (tog && !t.closest("button")) { const k = tog.dataset.toggle; state.openDevice = state.openDevice === k ? null : k; render(); return; }
+  const filt = t.closest("[data-filter]"); if (filt) { state.auditFilter = filt.dataset.filter; render(); return; }
+  const au = t.closest("[data-audit]"); if (au && !t.closest("button")) { const v = +au.dataset.audit; state.auditOpen.has(v) ? state.auditOpen.delete(v) : state.auditOpen.add(v); render(); return; }
+  const anchor = t.closest("[data-anchor]");
+  if (anchor) { const id = anchor.dataset.anchor; state.anchors.has(id) ? state.anchors.delete(id) : state.anchors.add(id); state.verifiedAt = NOW; render(); toast(state.anchors.has(id) ? "已开启长期保留，正在核对…" : "已关闭长期保留"); return; }
+  const red = t.closest("[data-red]"); if (red) { state.redundancy = red.dataset.red; render(); return; }
+  const menu = t.closest("[data-menu]"); if (menu) { openBucketMenu(menu, menu.dataset.id); return; }
+  const a = t.closest("[data-act]"); if (!a) return;
+  const id = a.dataset.id; const d = state.devices.find((x) => x.id === id);
+  switch (a.dataset.act) {
+    case "health-toggle": state.healthOpen = !state.healthOpen; render(); break;
+    case "add-device": openAddDevice(); break;
+    case "add-bucket": openAddBucket(); break;
+    case "rename": openRename(d); break;
+    case "rotate": openRotate(); break;
+    case "sync": toast("已同步：推送 3 条，拉取 0 条"); break;
+    case "pause": d.enabled = !d.enabled; render(); toast(d.enabled ? "已恢复同步" : "已暂停同步"); break;
+    case "remove":
+      if (await confirmDialog({ title: `移除 ${deviceName(d)}`, message: `将停止与它的直连同步。它上面已同步的数据仍在，无法远程删除。`, confirmLabel: "移除", danger: true })) { state.devices = state.devices.filter((x) => x !== d); state.openDevice = null; render(); toast("已移除"); }
+      break;
+    case "revoke":
+      if (await confirmDialog({ title: `撤销 ${deviceName(d)} 的接入`, message: `它将无法再同步进这个工作区。已同步到它上面的数据仍在，无法远程删除。`, confirmLabel: "撤销接入", danger: true })) { state.devices = state.devices.filter((x) => x !== d); state.openDevice = null; render(); toast("已撤销接入"); }
+      break;
+    case "retry-bucket": state.scenario = "healthy"; $("#scenario").value = "healthy"; render(); toast("已重新连接，同步完成"); break;
+    case "clear":
+      if (await confirmDialog({ title: "清理腾出 12.1 MB", message: "只删除别处已确认备份的副本，文件不会丢，用到时自动取回。", confirmLabel: "清理" })) { state.scenario = "healthy"; $("#scenario").value = "healthy"; render(); toast("已腾出 12.1 MB（9 项）"); }
+      break;
+    case "manage": toast("打开附件管理器（原型未包含）"); break;
+    case "verify": state.verifiedAt = NOW; render(); toast("核对完成，各处备份一致"); break;
+    case "stale-anchors": state.showStaleAnchors = !state.showStaleAnchors; render(); break;
+    case "audit-more": a.classList.add("loading"); a.innerHTML = `${ico("refresh", "ico sm")}加载中…`;
+      setTimeout(() => { state.auditPages++; if (state.auditPages === 2) state.audit.push(...AUDIT_OLDER.map((r, i) => ({ v: 500 - i, at: r[0], actor: r[1], verb: r[2], ds: r[3], label: r[4], db: r[5] }))); render(); }, 500); break;
+    case "revert":
+      if (await confirmDialog({ title: "撤销这组改动", message: "会以一次新的正向修改还原，本身也会记入审计，可以再撤销。", confirmLabel: "撤销" })) { const v = +a.dataset.v; const src = state.audit.find((x) => x.v === v); state.audit.unshift({ v: 2000 + v, at: NOW, actor: "self", verb: "撤销", ds: src.ds, label: src.label, db: src.db }); render(); toast("已撤销"); }
+      break;
+  }
+});
+
+function openBucketMenu(anchor, id) {
+  const b = state.buckets.find((x) => x.id === id);
+  openMenu(anchor, [
+    { k: "sync", icon: "refresh", label: "立即同步", onClick: () => { b.lastSync = NOW; render(); toast("已触发同步"); } },
+    b.direct
+      ? { k: "detach", icon: "link", label: "停止此浏览器直连", onClick: async () => { if (await confirmDialog({ title: "停止此浏览器直连", message: "存储桶仍在服务器上；此浏览器在线时照常经服务器同步。", confirmLabel: "停止直连", danger: true })) { b.direct = false; render(); } } }
+      : { k: "direct", icon: "link", label: "让此浏览器可离线同步", sub: "服务器连不上时也能同步", onClick: () => { b.direct = true; render(); toast("已直连，此浏览器可离线同步"); } },
+    "-",
+    { k: "rotate", icon: "key", label: "更换存储密钥…", sub: "设备丢失或密钥泄露时", onClick: openRotate },
+    { k: "recovery", icon: "copy", label: "导出恢复码…", onClick: () => toast("打开恢复码（原型未包含）") },
+    "-",
+    { k: "remove", icon: "trash", label: "停止使用此存储桶", danger: true, onClick: async () => { if (await confirmDialog({ title: `停止使用 ${b.name}`, message: "将停止与它同步。桶内数据不受影响，可以随时重新连接。", confirmLabel: "停止使用", danger: true })) { state.buckets = state.buckets.filter((x) => x !== b); render(); toast("已停止使用"); } } },
+  ]);
+}
+
+function openRename(d) {
+  openModal({
+    title: d.self ? "重命名这台设备" : `给 ${deviceName(d)} 起个名字`,
+    sub: d.self ? "其他设备会看到这个名字。" : "只是你在这里看到的备注名，不会同步到那台设备。",
+    body: `<div class="field"><label>名称</label><input id="rn" value="${esc(d.name || "")}" placeholder="例如：工作室 iMac" /></div>`,
+    foot: `<button class="btn btn-secondary" data-x>取消</button><button class="btn btn-primary" data-ok>保存</button>`,
+    onMount: (s) => { s.querySelector("[data-x]").onclick = closeModal; s.querySelector("[data-ok]").onclick = () => { d.name = $("#rn").value.trim() || null; closeModal(); render(); }; s.querySelector("#rn").onkeydown = (e) => e.key === "Enter" && s.querySelector("[data-ok]").click(); },
+  });
+}
+function openRotate() {
+  openModal({
+    title: "更换存储密钥",
+    sub: "换掉存储桶的访问密钥。旧密钥失效后，丢失的设备就无法再同步；正常设备会自动拿到新密钥。",
+    body: `<div class="steps">
+      <div class="step"><div class="step-n">1</div><div><div class="step-t">在存储服务商控制台停用旧密钥</div><div class="step-s">腾讯云 COS → 访问管理 → API 密钥。停用即可，暂时不要删除。</div></div></div>
+      <div class="step"><div class="step-n">2</div><div style="flex:1"><div class="step-t">粘贴新密钥</div><div class="grid2" style="margin-top:8px"><div class="field"><label>Access Key</label><input placeholder="AKID…" /></div><div class="field"><label>Secret Key</label><input type="password" placeholder="••••••••" /></div></div></div></div>
+      <div class="callout danger">${ico("alert", "ico sm")}<span>已丢失的设备此前下载过的数据无法追回。</span></div>
+    </div>`,
+    foot: `<button class="btn btn-secondary" data-x>取消</button><button class="btn btn-primary" data-ok>更换并重新验证</button>`,
+    onMount: (s) => { s.querySelector("[data-x]").onclick = closeModal; s.querySelector("[data-ok]").onclick = () => { closeModal(); state.scenario = "healthy"; $("#scenario").value = "healthy"; render(); toast("密钥已更换，各设备将自动更新"); }; },
+  });
+}
+function openAddBucket() {
+  const P = ["Cloudflare R2", "腾讯云 COS", "阿里云 OSS", "AWS S3", "MinIO", "其他 S3 兼容"];
+  openModal({
+    title: "连接存储桶",
+    sub: "连一次，所有设备都能同步。密钥只保存在服务器，桶里的数据全部加密。",
+    body: `<div class="field"><label>服务商</label><div class="provider-grid">${P.map((p, i) => `<button class="provider-chip${i === 1 ? " sel" : ""}">${p}</button>`).join("")}</div></div>
+      <div class="grid2"><div class="field"><label>Bucket</label><input placeholder="metahub-1252110546" /></div><div class="field"><label>地域</label><input placeholder="ap-shanghai" /></div></div>
+      <div class="grid2"><div class="field"><label>Access Key</label><input placeholder="AKID…" /></div><div class="field"><label>Secret Key</label><input type="password" placeholder="••••••••" /></div></div>
+      <div class="field"><label>加密口令</label><input type="password" placeholder="所有设备加入时都要输入" /><span class="hint">忘记口令将无法恢复桶内数据，建议之后导出恢复码。</span></div>`,
+    foot: `<button class="btn btn-secondary" data-x>取消</button><button class="btn btn-primary" data-ok>连接并验证</button>`,
+    onMount: (s) => {
+      s.querySelectorAll(".provider-chip").forEach((c) => c.onclick = () => { s.querySelectorAll(".provider-chip").forEach((x) => x.classList.remove("sel")); c.classList.add("sel"); });
+      s.querySelector("[data-x]").onclick = closeModal;
+      s.querySelector("[data-ok]").onclick = () => { closeModal(); state.buckets.push({ id: "b" + Date.now(), name: "metahub-backup", host: "r2.cloudflarestorage.com", provider: "Cloudflare R2", region: "自动", roles: ["附件备份"], lastSync: NOW, direct: false }); render(); toast("已连接，首次同步进行中"); };
+    },
+  });
+}
+function openAddDevice() {
+  const qr = (() => { let s = ""; const n = 21; let seed = 7; for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; const finder = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13); const on = finder ? ((x % 6 === 0 || y % 6 === 0 || x % 6 === 6) ? !((x > 6 && x < 14) || (y > 6 && y < 14)) : (x % 7 > 1 && x % 7 < 5 && y % 7 > 1 && y % 7 < 5)) : (seed & 1); if (on) s += `<rect x="${x}" y="${y}" width="1" height="1"/>`; } return `<svg viewBox="0 0 21 21" fill="currentColor" shape-rendering="crispEdges">${s}</svg>`; })();
+  openModal({
+    title: "添加设备",
+    sub: "在新设备上打开 metahub，扫码或输入配对码，即可加入这个工作区并同步全部内容。",
+    body: `<div class="pair-tabs"><button class="pair-tab on" data-t="qr">扫码</button><button class="pair-tab" data-t="code">输入配对码</button></div>
+      <div data-pane="qr" class="qr">${qr}</div>
+      <div data-pane="code" class="pair-code" hidden>7K4M-2XQ9</div>
+      <div class="field"><label>同步方式</label><select><option>经存储桶 metahub-1252110546（推荐）</option><option>局域网直连</option></select></div>
+      <div class="callout">${ico("alert", "ico sm")}<span>配对码 10 分钟内有效，新设备会出现在设备列表里。</span></div>`,
+    foot: `<button class="btn btn-secondary" data-x>完成</button>`,
+    onMount: (s) => {
+      s.querySelector("[data-x]").onclick = closeModal;
+      s.querySelectorAll(".pair-tab").forEach((b) => b.onclick = () => { s.querySelectorAll(".pair-tab").forEach((x) => x.classList.toggle("on", x === b)); s.querySelectorAll("[data-pane]").forEach((p) => p.hidden = p.dataset.pane !== b.dataset.t); });
+    },
+  });
+}
+
+$("#theme-btn").onclick = () => { const r = document.documentElement; const dark = r.dataset.resolved === "dark"; r.dataset.resolved = dark ? "light" : "dark"; $("#theme-btn").innerHTML = ico(dark ? "moon" : "sun"); };
+$("#scenario").onchange = (e) => { state.scenario = e.target.value; render(); };
+
+render();
+</script>
+</body>
+</html>

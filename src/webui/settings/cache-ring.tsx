@@ -186,9 +186,9 @@ export function CacheRingHero({
           )}
           {state === "self-full" && (
             <>
-              <div class="blob-ring-lock"><Icon name="database" cls="ico" /></div>
-              <div class="blob-ring-cap strong">长期备份库</div>
-              <div class="blob-ring-cap">保留全部副本</div>
+              <div class="blob-ring-check"><Icon name="check" cls="ico" /></div>
+              <div class="blob-ring-cap strong">原件都在这里</div>
+              <div class="blob-ring-cap">无需清理</div>
             </>
           )}
         </div>

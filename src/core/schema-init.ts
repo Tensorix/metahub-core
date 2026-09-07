@@ -379,38 +379,46 @@ export function migrateSitesAccess(db: DbDriver): void {
   }
 }
 
-/** Re-materialize site_channels changes an older binary may already have pulled
+/** Re-materialize one dataset's changes an older binary may already have pulled
  * and retained in its oplog while ignoring the unknown dataset. runSchema has
  * created the table by this point; replaying existing winners is idempotent
- * because applyChange re-materializes even when INSERT OR IGNORE is a no-op. */
-const SITE_CHANNELS_REPLAY_KEY = "site_channels_replay_seq";
-
-export function migrateSiteChannels(db: DbDriver): void {
-  if (!tableExists(db, "site_channels")) return;
-  // Incremental: only the oplog tail past the stored watermark is replayed.
-  // Downgrade-then-upgrade stays safe: an old binary neither knows the key nor
-  // materializes site_channels, but everything it ingests lands ABOVE the
-  // watermark, so the next upgraded open replays exactly that tail. compact
-  // never physically deletes site_channels rows (tombstones survive), so the
-  // watermark can never point past retained history. Deleting the meta key
-  // degrades to a full (idempotent) replay.
-  const wm = db
-    .query("SELECT value FROM meta WHERE key = ?")
-    .get(SITE_CHANNELS_REPLAY_KEY) as { value: string } | null;
+ * because applyChange re-materializes even when INSERT OR IGNORE is a no-op.
+ *
+ * Incremental: only the oplog tail past the stored watermark (meta key
+ * `<dataset>_replay_seq`) is replayed. Downgrade-then-upgrade stays safe: an
+ * old binary neither knows the key nor materializes the dataset, but everything
+ * it ingests lands ABOVE the watermark, so the next upgraded open replays
+ * exactly that tail. compact never physically deletes these rows (tombstones
+ * survive), so the watermark can never point past retained history. Deleting
+ * the meta key degrades to a full (idempotent) replay. */
+function replayDataset(db: DbDriver, dataset: string): void {
+  if (!tableExists(db, dataset)) return;
+  const key = `${dataset}_replay_seq`;
+  const wm = db.query("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | null;
   const since = wm ? Number(wm.value) : 0;
   const changes = db
     .query(
       `SELECT seq, ${CHANGE_SELECT} FROM crdt_changes
-       WHERE dataset = 'site_channels' AND seq > ? ORDER BY seq`,
+       WHERE dataset = ? AND seq > ? ORDER BY seq`,
     )
-    .all(since) as (Change & { seq: number })[];
+    .all(dataset, since) as (Change & { seq: number })[];
   if (changes.length === 0) return;
   db.transaction((rows: (Change & { seq: number })[]) => {
     for (const change of rows) applyChange(db, change);
     db.query(
       "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(SITE_CHANNELS_REPLAY_KEY, String(rows[rows.length - 1]!.seq));
+    ).run(key, String(rows[rows.length - 1]!.seq));
   })(changes);
+}
+
+export function migrateSiteChannels(db: DbDriver): void {
+  replayDataset(db, "site_channels");
+}
+
+/** The synced device roster (`nodes`, tables.ts system tier): backfill rows an
+ *  older binary pulled before it knew the dataset. Same watermark replay. */
+export function migrateNodes(db: DbDriver): void {
+  replayDataset(db, "nodes");
 }
 
 /** Bring a freshly opened (or legacy) database to the current schema. */
@@ -428,4 +436,5 @@ export function initSchema(db: DbDriver): void {
   migrateShares(db);
   migrateSitesAccess(db);
   migrateSiteChannels(db);
+  migrateNodes(db);
 }

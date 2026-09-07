@@ -15,7 +15,7 @@
 
 import type { DbDriver } from "./driver.ts";
 import { emit, withChangeGroup } from "./crdt.ts";
-import { getNodeId, getNodeLabel } from "./node.ts";
+import { getNodeId, nodeLabelOf } from "./node.ts";
 
 export const POLICY_ID = "default";
 
@@ -333,15 +333,12 @@ export interface KnownNode {
  *  for the "pick a full-blob device" selector in Settings / CLI. */
 export function knownNodes(db: DbDriver): KnownNode[] {
   const self = getNodeId(db);
-  const byId = new Map<string, string | null>();
-  byId.set(self, getNodeLabel(db));
-  const peers = db
-    .query("SELECT node_id, label FROM peers WHERE node_id IS NOT NULL")
-    .all() as { node_id: string; label: string | null }[];
-  for (const p of peers) if (!byId.get(p.node_id)) byId.set(p.node_id, p.label ?? byId.get(p.node_id) ?? null);
-  const grants = db
-    .query("SELECT DISTINCT node_id FROM peer_grants WHERE node_id IS NOT NULL")
-    .all() as { node_id: string }[];
-  for (const g of grants) if (!byId.has(g.node_id)) byId.set(g.node_id, null);
-  return [...byId.entries()].map(([nodeId, label]) => ({ nodeId, label, self: nodeId === self }));
+  const ids = new Set<string>([self]);
+  for (const r of db.query("SELECT id FROM nodes WHERE __deleted = 0").all() as { id: string }[])
+    ids.add(r.id);
+  for (const p of db.query("SELECT DISTINCT node_id FROM peers WHERE node_id IS NOT NULL").all() as { node_id: string }[])
+    ids.add(p.node_id);
+  for (const g of db.query("SELECT DISTINCT node_id FROM peer_grants WHERE node_id IS NOT NULL").all() as { node_id: string }[])
+    ids.add(g.node_id);
+  return [...ids].map((nodeId) => ({ nodeId, label: nodeLabelOf(db, nodeId), self: nodeId === self }));
 }

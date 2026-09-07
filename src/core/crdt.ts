@@ -194,6 +194,12 @@ export const DOMAIN: Record<string, { table: string; cols: Set<string> }> = {
     table: "blob_policy",
     cols: new Set(["full_nodes", "redundancy", "__deleted"]),
   },
+  // nodes: the synced device roster (node.ts describeSelf / setNodeLabel).
+  // System tier — replicated, never partitioned, hidden from the audit feed.
+  nodes: {
+    table: "nodes",
+    cols: new Set(["label", "platform", "form", "app", "first_seen", "__deleted"]),
+  },
 };
 
 // The `records` dataset is special: these cols hit the `records` table, any
@@ -232,6 +238,7 @@ export const NOT_NULL_ZERO_COLS = new Set([
   "site_channels:__deleted",
   "site_files:__deleted",
   "blob_policy:__deleted",
+  "nodes:__deleted",
 ]);
 
 /** Decode a register's JSON value for materialization, coalescing a null on a

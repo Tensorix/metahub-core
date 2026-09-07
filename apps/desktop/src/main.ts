@@ -256,7 +256,8 @@ function startSidecar(): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const child = spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      // METAHUB_APP tags this device as the desktop app in the synced roster.
+      env: { ...process.env, METAHUB_APP: "desktop" },
     });
     sidecar = child;
     perf("sidecar spawned");

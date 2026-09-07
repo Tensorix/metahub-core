@@ -15,7 +15,13 @@ import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { WasmDriver, type Oo1Db } from "./wasm-driver.ts";
 import type { DbDriver } from "../../core/driver.ts";
 import { initSchema } from "../../core/schema-init.ts";
-import { getNodeId, getNodeLabel, setNodeLabel, displayNodes } from "../../core/node.ts";
+import {
+  getNodeId,
+  setNodeLabel,
+  displayNodes,
+  describeSelf,
+  type NodePlatform,
+} from "../../core/node.ts";
 import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
 import { changesAfterSeq } from "../../core/crdt.ts";
@@ -232,6 +238,47 @@ function openDb(): void {
   const driver = new WasmDriver(oo1);
   initSchema(driver);
   db = driver;
+  // Synced device roster: this browser replica is a full node, so it describes
+  // itself like the CLI/server do (no-op unless something changed).
+  const platform = browserPlatform();
+  describeSelf(driver, {
+    app: "web",
+    platform,
+    form: "browser",
+    defaultLabel: browserLabel(platform),
+  });
+}
+
+/** Coarse platform from the UA hints (no fingerprinting — the roster only
+ *  wants an icon and a sensible default name). */
+function browserPlatform(): NodePlatform | null {
+  const nav = self.navigator as Navigator & { userAgentData?: { platform?: string } };
+  const p = (nav.userAgentData?.platform ?? nav.platform ?? "").toLowerCase();
+  const ua = (nav.userAgent ?? "").toLowerCase();
+  if (p.includes("iphone") || p.includes("ipad") || /iphone|ipad/.test(ua)) return "ios";
+  if (p.includes("android") || ua.includes("android")) return "android";
+  if (p.includes("mac")) return "macos";
+  if (p.includes("win")) return "windows";
+  if (p.includes("linux") || p.includes("cros")) return "linux";
+  return "web";
+}
+
+function browserLabel(platform: NodePlatform | null): string {
+  const ua = self.navigator?.userAgent ?? "";
+  const browser = /edg\//i.test(ua)
+    ? "Edge"
+    : /firefox\//i.test(ua)
+      ? "Firefox"
+      : /chrome\//i.test(ua)
+        ? "Chrome"
+        : /safari\//i.test(ua)
+          ? "Safari"
+          : "浏览器";
+  const os =
+    { macos: "macOS", windows: "Windows", linux: "Linux", ios: "iOS", android: "Android", web: "" }[
+      platform ?? "web"
+    ] ?? "";
+  return os ? `${browser} · ${os}` : browser;
 }
 
 const ready: Promise<void> = (async () => {
@@ -699,15 +746,27 @@ const ops: Record<string, Op> = {
   listStoragePeers: () =>
     listPeers(db!)
       .filter((p) => p.kind === "s3")
-      .map((p) => ({
-        url: p.url,
-        label: p.label,
-        enabled: p.enabled === 1,
-        status: p.last_status,
-        error: p.last_error,
-        lastSyncAt: p.last_success_at,
-        lastAttemptAt: p.last_sync_at,
-      })),
+      .map((p) => {
+        let c: { endpoint?: string; bucket?: string; region?: string; provider?: string } = {};
+        try {
+          c = p.config ? JSON.parse(p.config) : {};
+        } catch {
+          // unreadable config — display falls back to the url
+        }
+        return {
+          url: p.url,
+          label: p.label,
+          enabled: p.enabled === 1,
+          status: p.last_status,
+          error: p.last_error,
+          lastSyncAt: p.last_success_at,
+          lastAttemptAt: p.last_sync_at,
+          endpoint: c.endpoint ?? null,
+          bucket: c.bucket ?? null,
+          region: c.region ?? null,
+          provider: c.provider ?? null,
+        };
+      }),
 
   // Edge configuration and room-hosted site shares in no-origin mode. These
   // rows live only in this browser's OPFS database and never enter the CRDT.
@@ -1178,9 +1237,11 @@ const ops: Record<string, Op> = {
 
   // nodes + search
   nodes: () => displayNodes(db!),
-  setNodeLabel: (label: string | null) => {
-    setNodeLabel(requireDb(), label);
-    return { node_id: getNodeId(requireDb()), label: getNodeLabel(requireDb()), self: true };
+  setNodeLabel: (label: string | null, nodeId?: string) => {
+    const d = requireDb();
+    const id = nodeId ?? getNodeId(d);
+    setNodeLabel(d, label, id);
+    return displayNodes(d).find((n) => n.node_id === id)!;
   },
   search: (text: string, limit?: number) => search(db!, text, { limit }),
 };

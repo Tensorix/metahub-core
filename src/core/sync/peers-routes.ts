@@ -87,6 +87,8 @@ const AddS3PeerReq = z.object({
   /** Browser origin(s) to open bucket CORS for, so a replica behind this server
    *  can hit the bucket directly (away-from-server sync). Usually [location.origin]. */
   corsOrigins: z.array(z.string()).optional(),
+  /** Provider preset id chosen in the UI (display-only). */
+  provider: z.string().optional(),
 });
 /** S3 peer view for the WebUI — no secrets (creds/master key stay server-side). */
 const S3PeerSchema = z.object({
@@ -109,6 +111,7 @@ const S3PeerSchema = z.object({
   accessKeyId: z.string().nullable(),
   encrypt: z.boolean(),
   virtualHostedStyle: z.boolean().nullable(),
+  provider: z.string().nullable(),
 });
 const DataPlaceSchema = z.object({
   kind: z.enum(["self", "device", "bucket"]),
@@ -246,6 +249,7 @@ function s3PeerViews(db: RouteCtx["db"]): z.infer<typeof S3PeerSchema>[] {
         accessKeyId: c.accessKeyId ?? null,
         encrypt: c.encrypt !== false,
         virtualHostedStyle: c.virtualHostedStyle ?? null,
+        provider: c.provider ?? null,
       };
     });
 }

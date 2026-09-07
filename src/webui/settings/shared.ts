@@ -43,6 +43,8 @@ export interface StoragePeerView {
   lastAttemptAt: number | null;
   bucket?: string | null;
   endpoint?: string | null;
+  region?: string | null;
+  provider?: string | null;
 }
 
 /** Host of an endpoint URL for compact row display ("…r2.cloudflarestorage.com"). */
@@ -52,6 +54,62 @@ export function hostOf(endpoint: string): string {
   } catch {
     return endpoint;
   }
+}
+
+// ---- bucket vendor display --------------------------------------------------
+// Three honest layers: the preset recorded at connect time → a host-suffix
+// match for buckets connected before that → the bare host. The mapping can't
+// be complete and doesn't need to be: an unknown vendor shows its host, which
+// for a self-hosted MinIO is the most accurate name there is. Display-only;
+// nothing in sync depends on it.
+
+const PROVIDER_NAME: Record<string, string> = {
+  r2: "Cloudflare R2",
+  s3: "Amazon S3",
+  cos: "腾讯云 COS",
+  oss: "阿里云 OSS",
+  minio: "MinIO",
+  b2: "Backblaze B2",
+  wasabi: "Wasabi",
+  spaces: "DigitalOcean Spaces",
+  gcs: "Google Cloud Storage",
+};
+const HOST_SUFFIX: [suffix: string, id: string][] = [
+  ["amazonaws.com", "s3"],
+  ["r2.cloudflarestorage.com", "r2"],
+  ["myqcloud.com", "cos"],
+  ["aliyuncs.com", "oss"],
+  ["backblazeb2.com", "b2"],
+  ["wasabisys.com", "wasabi"],
+  ["digitaloceanspaces.com", "spaces"],
+  ["storage.googleapis.com", "gcs"],
+];
+
+/** Vendor name for a bucket row. `provider` = the stored preset id (may be
+ *  null/"custom"); `endpoint` = the full URL. Never returns an empty string. */
+export function providerName(provider: string | null | undefined, endpoint: string | null | undefined): string {
+  if (provider && PROVIDER_NAME[provider]) return PROVIDER_NAME[provider]!;
+  const host = endpoint ? hostOf(endpoint).toLowerCase() : "";
+  for (const [suffix, id] of HOST_SUFFIX) if (host === suffix || host.endsWith("." + suffix)) return PROVIDER_NAME[id]!;
+  return host || "存储桶";
+}
+
+const REGION_NAME: Record<string, string> = {
+  // Tencent COS
+  "ap-shanghai": "上海", "ap-beijing": "北京", "ap-guangzhou": "广州", "ap-chengdu": "成都",
+  "ap-nanjing": "南京", "ap-hongkong": "香港", "ap-singapore": "新加坡", "ap-tokyo": "东京",
+  // Aliyun OSS
+  "oss-cn-hangzhou": "杭州", "oss-cn-shanghai": "上海", "oss-cn-beijing": "北京",
+  "oss-cn-shenzhen": "深圳", "oss-cn-hongkong": "香港",
+  // AWS
+  "us-east-1": "美国东部", "us-east-2": "美国东部 2", "us-west-1": "美国西部", "us-west-2": "美国西部 2",
+  "eu-west-1": "爱尔兰", "eu-central-1": "法兰克福", "ap-northeast-1": "东京", "ap-southeast-1": "新加坡",
+};
+
+/** Human region for the row caption; unknown codes show as-is, "auto" hides. */
+export function regionName(region: string | null | undefined): string | null {
+  if (!region || region === "auto") return null;
+  return REGION_NAME[region] ?? region;
 }
 
 export function fmtTime(ms: number | null): string {

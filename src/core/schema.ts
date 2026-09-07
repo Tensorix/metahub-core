@@ -308,6 +308,22 @@ CREATE TABLE IF NOT EXISTS blob_policy (
   redundancy  TEXT,              -- 'all' | 'any'
   __deleted   INTEGER NOT NULL DEFAULT 0
 );
+
+-- Synced device roster (system tier, see tables.ts): one row per node id, written
+-- by the device itself on open (describeSelf) and by anyone who renames it.
+-- Replicates so every device shows the same name and icon for a peer — the only
+-- record a purely bucket-joined device leaves besides its oplog stream. Each
+-- column is its own LWW register, so a rename and a platform refresh never
+-- clobber each other. meta.node_label survives as a node-local read fallback.
+CREATE TABLE IF NOT EXISTS nodes (
+  id          TEXT PRIMARY KEY,  -- node_id
+  label       TEXT,              -- shared display name; any device may set it
+  platform    TEXT,              -- macos | windows | linux | ios | android | web
+  form        TEXT,              -- laptop | desktop | phone | server | browser
+  app         TEXT,              -- cli | server | desktop | web
+  first_seen  INTEGER,           -- epoch ms of the device's first self-description
+  __deleted   INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 // Best-effort: FTS5 may not be compiled in. Search falls back to LIKE if this fails.

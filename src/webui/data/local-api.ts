@@ -130,7 +130,7 @@ export const localApi = {
   // "where is my data" answer — and it works offline. Window mode falls
   // through to the server's /api/sync/health.
   syncHealth: () => rpc("dataMap"),
-  setNodeLabel: (label: string | null) => rpc("setNodeLabel", label),
+  setNodeLabel: (label: string | null, nodeId?: string) => rpc("setNodeLabel", label, nodeId),
 };
 
 /**

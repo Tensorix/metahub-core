@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
-import { repairHub, validateHub } from "../../core/integrity.ts";
+import { repairHub, validateHub, rematerializeAll } from "../../core/integrity.ts";
 import { print, table } from "../output.ts";
 
 export default defineCommand({
@@ -13,9 +13,20 @@ export default defineCommand({
       type: "boolean",
       description: "Report what would be fixed without changing anything (same as `mh doctor`)",
     },
+    rematerialize: {
+      type: "boolean",
+      description:
+        "First rebuild every replicated table from the oplog (fixes a dropped/emptied/corrupted table; local-only, emits nothing)",
+    },
   },
   run: ({ args }) => {
     const db = openMetahub();
+
+    if (args.rematerialize && !args["dry-run"]) {
+      const replayed = rematerializeAll(db);
+      const total = Object.values(replayed).reduce((a, b) => a + b, 0);
+      console.error(`rematerialized ${Object.keys(replayed).length} table(s) from ${total} oplog change(s)`);
+    }
 
     if (args["dry-run"]) {
       const report = validateHub(db);
