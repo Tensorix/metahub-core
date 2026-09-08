@@ -1341,18 +1341,22 @@
      One row = object · status · one primary action · overflow. State is the
      organizing idea: colour lives only in the status dot and the 可编辑 word;
      expiry is a share's normal ending and reads muted, never danger. */
-  .shares-page .db-head { align-items:flex-start; gap:16px; margin-bottom:18px; }
-  .shv-tools { margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .shares-page .db-head { align-items:flex-start; gap:16px; margin-bottom:6px; }
+  .shares-page .db-desc { max-width:56ch; }
+  .shv-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:nowrap; padding:10px 0; margin-bottom:8px; }
+  .shv-tools-right { display:flex; align-items:center; gap:10px; flex:none; margin-left:auto; }
   .shv-seg { display:inline-flex; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:2px; }
   .shv-seg-btn { display:inline-flex; align-items:baseline; padding:5px 11px; border-radius:calc(var(--radius-sm) - 2px); font-size:13px; color:var(--fg-soft); }
   .shv-seg-btn.active { background:var(--bg); color:var(--fg); box-shadow:var(--shadow-sm); }
-  .shv-seg-btn .n { margin-left:5px; font-family:var(--mono); font-size:var(--fs-micro); color:var(--muted); font-variant-numeric:tabular-nums; }
+  .shv-seg-btn .n { display:inline-flex; justify-content:flex-end; align-items:center; min-width:2ch; margin-left:5px; font-family:var(--mono); font-size:var(--fs-micro); color:var(--muted); font-variant-numeric:tabular-nums; }
+  .shv-seg-btn .skel-n { width:2ch; height:.85em; border-radius:3px; animation:skel-in .25s ease .12s both; }
   .shv-seg-btn.active .n { color:var(--fg-soft); }
   .shv-src { gap:5px; color:var(--fg-soft); }
   .shv-src.on { color:var(--fg); }
   .shv-src .ico { width:14px; height:14px; opacity:.7; }
-  .shv-search { display:flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:5px 10px; color:var(--muted); }
-  .shv-search input { border:0; background:none; outline:none; color:var(--fg); font-size:13px; width:180px; }
+  .shv-search { display:flex; align-items:center; gap:6px; flex:1 1 220px; min-width:140px; max-width:360px; background:var(--bg); border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:5px 10px; color:var(--muted); }
+  .shv-search:focus-within { border-color:var(--accent); }
+  .shv-search input { border:0; background:none; outline:none; color:var(--fg); font-size:13px; width:100%; min-width:0; }
 
   .shv-list { display:flex; flex-direction:column; gap:8px; list-style:none; padding:0; margin:0; }
   .shv-row { display:grid; grid-template-columns:38px minmax(0,1fr) auto auto; gap:6px 13px; align-items:center;
@@ -1407,13 +1411,37 @@
   /* list swap: data arriving over the skeleton fades in rather than hard-cutting */
   .shv-list { animation:skel-in .18s ease both; }
 
-  /* ── list skeleton (shares-view.tsx ShareListSkeleton) ─────────────────
-     Rows are REAL .shv-row markup, so grid/padding/mobile stacking are shared
-     by construction; these rules only size the sheen blocks that stand in for
-     content. Fades in after 120ms so an instant load never flashes it; each
-     row's sheen is offset by --i so the rows read as one wave rolling down.
-     Global reduced-motion rule freezes it. */
+  /* ── skeletons (skeleton.tsx, primitives.tsx SetRowSkeleton, shares-view
+     ShareListSkeleton). Rows are the REAL row markup; only content is swapped
+     for sheen blocks. .skel-list fades in after 120ms so an instant load
+     never flashes it; --i offsets each row's sheen into one rolling wave. */
   .skel-list { animation:skel-in .25s ease .12s both; }
+  .skel-lines { display:flex; flex-direction:column; gap:8px; }
+  .skel-lines .skel-s { width:calc(58% + var(--i, 0) * 9%); max-width:100%; }
+  .page-header-sub .skel-s { display:block; width:22ch; }
+  .set-row.skel { pointer-events:none; }
+  .set-row.skel .set-row-text { display:flex; flex-direction:column; gap:5px; padding:3px 0; }
+  .set-row.skel .skel-t { height:14px; width:calc(30% + var(--i, 0) * 8%); border-radius:5px; }
+  .set-row.skel .skel-s { height:11px; width:calc(44% + var(--i, 0) * 7%); border-radius:4px; }
+  .set-row.skel .set-row-lead.skel-b { border-radius:7px; }
+  .skel-switch { width:38px; height:22px; border-radius:999px; }
+  .skel-chevron { width:14px; height:14px; border-radius:4px; }
+  .skel-menu { width:28px; height:28px; border-radius:var(--radius-sm); }
+  .skel-button { width:76px; height:29px; border-radius:var(--radius-sm); }
+  .audit-item.skel .audit-item-line { cursor:default; pointer-events:none; }
+  .audit-item.skel .skel-when { width:56px; height:12px; border-radius:4px; flex:none; }
+  .audit-item.skel .skel-t { height:14px; width:calc(34% + var(--i, 0) * 9%); border-radius:5px; }
+  .site-card.skel { pointer-events:none; }
+  .site-card.skel:hover { transform:none; box-shadow:none; border-color:var(--line); }
+  .site-card.skel .si.skel-b { background:var(--surface-2); }
+  .site-card.skel .skel-t { height:14px; width:calc(40% + var(--i, 0) * 8%); border-radius:5px; margin-bottom:6px; }
+  .site-card.skel .skel-s { height:11px; width:calc(55% + var(--i, 0) * 6%); border-radius:4px; }
+  .site-card.skel .skel-addr { height:30px; width:80%; border-radius:var(--radius-sm); }
+  .filerow.skel { pointer-events:none; }
+  .filerow.skel .fi.skel-b { background:var(--surface-2); }
+  .filerow.skel .skel-t { height:13px; width:calc(36% + var(--i, 0) * 10%); border-radius:4px; }
+  .blob-hero.skel .blob-legend .skel-s { height:12px; width:calc(70% + var(--i, 0) * 8%); }
+  .blob-hero.skel .blob-total .skel-s { display:block; height:11px; width:14ch; }
   .skel-b { display:block; position:relative; overflow:hidden; background:var(--surface-2); border-radius:6px; }
   .skel-b::after { content:""; position:absolute; inset:0;
     background:linear-gradient(90deg, transparent 20%, color-mix(in srgb, var(--fg) 5%, transparent) 50%, transparent 80%);
@@ -1426,7 +1454,6 @@
   .shv-status .skel-st { height:1.55em; height:1lh; width:7ch; border-radius:4px; }
   .skel-btn { width:76px; height:29px; border-radius:var(--radius-sm); }
   .skel-ib { width:30px; height:30px; border-radius:var(--radius-sm); }
-  .shv-seg-btn .n.ph { visibility:hidden; }
   @keyframes skel-in { from { opacity:0; } to { opacity:1; } }
   @keyframes skel-sweep { from { background-position:100% 0; } to { background-position:-100% 0; } }
   @media (max-width:640px){
@@ -1434,12 +1461,12 @@
     .shv-actions .skel-ib { width:40px; height:36px; }
     /* head stacks: title/desc full row, then segmented tabs, then [source][search] */
     .shares-page .db-head { flex-direction:column; align-items:stretch; gap:12px; }
-    .shv-tools { margin-left:0; width:100%; }
-    .shv-seg { display:flex; width:100%; }
+    .shv-toolbar { flex-wrap:wrap; }
+    .shv-tools-right { display:contents; }
+    .shv-seg { display:flex; width:100%; order:-1; }
     .shv-seg-btn { flex:1; justify-content:center; padding:6px 4px; }
     .shv-src { flex:1; justify-content:center; }
-    .shv-search { flex:1; min-width:0; }
-    .shv-search input { width:100%; flex:1; }
+    .shv-search { flex:1; min-width:0; max-width:none; }
 
     /* rows: ico + main on top; status, then the action row, each full width */
     .shv-row { grid-template-columns:38px minmax(0,1fr); gap:8px 13px; align-items:start; }

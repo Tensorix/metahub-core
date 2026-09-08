@@ -55,6 +55,7 @@ export function CacheRingHero({
   verifying,
   actions,
   footnote,
+  loading,
 }: {
   /** Segment bytes (sum ≤ totalBytes); `keep` is 0 for the browser cache. */
   segs: { free: number; keep: number; pin: number };
@@ -67,6 +68,8 @@ export function CacheRingHero({
   actions?: ComponentChildren;
   /** Last-checked caption under the actions (server cache only). */
   footnote?: ComponentChildren;
+  /** Skeleton: ring track + sheen legend, no figures. */
+  loading?: boolean;
 }) {
   // `drawn` flips on after mount so the ring arcs animate from 0 → their share.
   const [drawn, setDrawn] = useState(false);
@@ -76,6 +79,26 @@ export function CacheRingHero({
   }, []);
   // Count-up for the free-state centre figure — called unconditionally (hook rules).
   const freeCount = useCountUp(segs.free);
+
+  if (loading) {
+    return (
+      <div class="blob-hero skel skel-list" role="status" aria-busy="true" aria-label="正在加载">
+        <div class="blob-hero-main">
+          <div class="blob-legend">
+            <div class="blob-legend-row" style="--i:0"><span class="blob-dot skel-b" /><span class="skel-b skel-s" /></div>
+            <div class="blob-legend-row" style="--i:1"><span class="blob-dot skel-b" /><span class="skel-b skel-s" /></div>
+          </div>
+          <div class="blob-total"><span class="skel-b skel-s" style="--i:2" /></div>
+          <div class="blob-actions"><span class="skel-b skel-button" style="--i:3" /></div>
+        </div>
+        <div class="blob-ring locked">
+          <svg viewBox="0 0 100 100" class="blob-ring-svg" aria-hidden="true">
+            <circle class="blob-ring-track" cx="50" cy="50" r="42" pathLength={100} />
+          </svg>
+        </div>
+      </div>
+    );
+  }
 
   // Stroke is sized in pathLength=100 units so segment lengths read as percent.
   const total = Math.max(1, totalBytes);

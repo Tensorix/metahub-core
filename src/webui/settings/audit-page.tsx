@@ -15,6 +15,7 @@ import { groupLabel } from "../hist-diff.ts";
 import { SYNCED_EVENT } from "../data/replica.ts";
 import { PageHeader } from "./primitives.tsx";
 import { pageLabel } from "./nav.ts";
+import { useSkeletonRows, SkelLines } from "../skeleton.tsx";
 
 // The workspace audit page: the global change feed (core/audit.ts) rendered as
 // a Notion-style activity list, with actor filtering and per-entry rollback.
@@ -99,6 +100,7 @@ export function AuditPage() {
   // Newest version currently shown — SYNCED_EVENT refetches flash-mark
   // anything newer ("the AI just did this" cue, same as quickboard).
   const headRef = useRef<string | null>(null);
+  const [skelRows, rememberRows] = useSkeletonRows("audit", 6);
 
   // null = this device (unlabeled — it's the default actor).
   const nodeName = (id: string): string | null => {
@@ -126,6 +128,7 @@ export function AuditPage() {
         }
         headRef.current = page.entries[0]?.version ?? headRef.current;
         setEntries(page.entries);
+        rememberRows(page.entries.length);
         setNext(page.next);
       })
       .catch((e) => toast(String((e as Error).message)));
@@ -249,7 +252,21 @@ export function AuditPage() {
         ))}
       </div>
       <div class="audit-feed">
-        {entries === null && <div class="muted pad">加载中…</div>}
+        {entries === null && (
+          <div class="audit-group skel-list" role="status" aria-busy="true" aria-label="正在加载">
+            <div class="audit-group-label">
+              <span class="skel-b skel-s" style="width:4ch;height:11px;display:inline-block" />
+            </div>
+            {Array.from({ length: skelRows }, (_, i) => (
+              <div class="audit-item skel" key={i} style={`--i:${Math.min(i, 4)}`}>
+                <div class="audit-item-line">
+                  <span class="skel-b skel-when" />
+                  <span class="skel-b skel-t" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {entries !== null && visible.length === 0 && (
           <div class="muted pad">
             {filter === "ai" ? "还没有 AI 操作的记录。" : "暂无改动记录。"}
@@ -311,7 +328,7 @@ export function AuditPage() {
                   {open && (
                     <div class="audit-detail">
                       {!e.txn && <div class="muted">早期版本的改动，仅可查看摘要。</div>}
-                      {e.txn && !detail && <div class="muted">加载中…</div>}
+                      {e.txn && !detail && <SkelLines n={2} />}
                       {detail?.entities.map((ent) => (
                         <div key={ent.dataset + ent.id} class="audit-detail-ent">
                           {detail.entities.length > 1 && (

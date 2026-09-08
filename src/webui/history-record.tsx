@@ -10,6 +10,7 @@ import {
   type RecordVersionState,
 } from "./api.ts";
 import { Icon } from "./icons.tsx";
+import { SkelLines } from "./skeleton.tsx";
 import { timeAgo } from "./date.ts";
 import {
   closeModal,
@@ -58,7 +59,7 @@ function FieldHistoryModal({
       }
     >
       <div class="hist-fh">
-        {entries === null && <div class="muted pad">加载中…</div>}
+        {entries === null && <SkelLines n={4} cls="pad" />}
         {entries !== null && entries.length === 0 && <div class="muted pad">暂无写入记录。</div>}
         {(entries ?? []).map((e) => (
           <div key={e.version} class="hist-fh-row">
@@ -194,7 +195,7 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
           )}
         </div>
         <div class="peek-body hist-feed">
-          {entries === null && <div class="muted pad">加载中…</div>}
+          {entries === null && <SkelLines n={4} cls="pad" />}
           {entries !== null && visible.length === 0 && <div class="muted pad">暂无动态。</div>}
           {visible.map((e) => {
             const key = e.record_id + e.version;
@@ -341,7 +342,7 @@ export function RecordHistoryView({
           显示修复
         </label>
       </div>
-      {revs === null && <div class="muted pad">加载中…</div>}
+      {revs === null && <SkelLines n={4} cls="pad" />}
       {revs !== null && visible.length === 0 && <div class="muted pad">暂无历史。</div>}
       {visible.map((r, i) => {
         const prev = visible[i + 1];
@@ -365,7 +366,7 @@ export function RecordHistoryView({
             </div>
             {expanded === r.version && (
               <div class="hist-fields">
-                {!curState && <div class="muted">加载中…</div>}
+                {!curState && <SkelLines n={2} />}
                 {curState &&
                   fields.map((f) => {
                     const before = prevState ? prevState.data[f] : undefined;

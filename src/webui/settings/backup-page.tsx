@@ -36,7 +36,8 @@ import {
 } from "./modals.tsx";
 import { isDesktop, fmtBytes, providerName, regionName, type StoragePeerView } from "./shared.ts";
 import { pageLabel } from "./nav.ts";
-import { SetRow, Switch, SetSection, PageHeader, RowMenu } from "./primitives.tsx";
+import { SetRow, Switch, SetSection, PageHeader, RowMenu, SetRowSkeleton } from "./primitives.tsx";
+import { useSkeletonRows } from "../skeleton.tsx";
 import { CacheRingHero, type RingState } from "./cache-ring.tsx";
 import { deviceIcon } from "./devices-page.tsx";
 
@@ -136,11 +137,15 @@ export function BackupPage() {
   // Bucket roles from the data map (工作区同步 / 附件长期保存 / 发布快照) —
   // same derivation the sync header uses, keyed by peer url.
   const [rolesByUrl, setRolesByUrl] = useState<Map<string, string[]>>(() => new Map());
+  const [skelRows, rememberRows] = useSkeletonRows("buckets", 1);
 
   const reloadLocal = () => {
     if (replicaEnabled()) {
       replicaCall<StoragePeerView[]>("listStoragePeers")
-        .then(setLocalPeers)
+        .then((rows) => {
+          setLocalPeers(rows);
+          if (noOrigin) rememberRows(rows.length);
+        })
         .catch(() => {});
     } else {
       setLocalPeers(null);
@@ -151,7 +156,10 @@ export function BackupPage() {
     if (!noOrigin) {
       api
         .listServerS3Peers()
-        .then(setServerPeers)
+        .then((rows) => {
+          setServerPeers(rows);
+          rememberRows(rows.length);
+        })
         .catch((e) => toast(`加载失败：${(e as Error).message}`));
       api.getEdgeStatus().then(setEdge).catch(() => setEdge(null));
     }
@@ -326,7 +334,7 @@ export function BackupPage() {
         }
       >
         {list == null ? (
-          <div class="muted">加载中…</div>
+          <SetRowSkeleton rows={skelRows} lead control="menu" />
         ) : list.length === 0 ? (
           !noOrigin && edge != null && !edge.configured ? (
             <div class="cloud-cta">
@@ -546,9 +554,17 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
   const whereCaption = `附件原件保存在「${scope.label}」，所有设备共用。`;
   if (info == null || stats == null) {
     return (
-      <SetSection label="附件" caption={whereCaption}>
-        <SetRow title="占用" caption="加载中…" />
-      </SetSection>
+      <>
+        <SetSection label="附件" caption={whereCaption}>
+          <CacheRingHero loading segs={{ free: 0, keep: 0, pin: 0 }} count={0} totalBytes={0} state="safe" />
+        </SetSection>
+        <SetSection
+          label="长期保留副本"
+          caption="开启的位置会保留所有附件的完整副本。只要确认这里有备份，其他设备就可以放心清理本地缓存。"
+        >
+          <SetRowSkeleton rows={2} lead control="switch" />
+        </SetSection>
+      </>
     );
   }
 

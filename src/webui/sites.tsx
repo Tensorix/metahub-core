@@ -20,6 +20,7 @@ import {
 } from "./site-status.ts";
 import { openShareModal, SHARES_CHANGED } from "./share-modal.tsx";
 import { Icon } from "./icons.tsx";
+import { useSkeletonRows, SkelLines } from "./skeleton.tsx";
 import type { Navigate } from "./view.ts";
 import {
   openMenu,
@@ -352,11 +353,15 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
   const [upload, setUpload] = useState<{ done: number; total: number } | null>(null);
   const [shares, setShares] = useState<ShareListItem[]>([]);
   const [hostingInfo, setHostingInfo] = useState<SiteHostingInfo | null>(null);
+  const [siteSkelRows, rememberSites] = useSkeletonRows("sites", 4);
 
   const reload = () =>
     api
       .listSites()
-      .then(setSites)
+      .then((rows) => {
+        setSites(rows);
+        rememberSites(rows.length);
+      })
       .catch((e) => toast(`加载失败：${e.message}`));
   const reloadHosting = () =>
     api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
@@ -454,8 +459,20 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
       </div>
 
       {sites == null ? (
-        <div class="muted" style={{ padding: 20 }}>
-          加载中…
+        <div class="sites-grid skel-list" role="status" aria-busy="true" aria-label="正在加载">
+          {Array.from({ length: siteSkelRows }, (_, i) => (
+            <div class="site-card skel" key={i} style={`--i:${Math.min(i, 4)}`}>
+              <div class="site-card-head">
+                <span class="si skel-b" />
+                <div class="site-card-id" style={{ flex: 1 }}>
+                  <span class="skel-b skel-t" style={{ display: "block" }} />
+                  <span class="skel-b skel-s" style={{ display: "block" }} />
+                </div>
+              </div>
+              <span class="skel-b skel-s" style={{ display: "block", width: "30%" }} />
+              <span class="skel-b skel-addr" />
+            </div>
+          ))}
         </div>
       ) : sites.length === 0 ? (
         <div class="site-empty">
@@ -798,12 +815,7 @@ export function SiteView({
     };
   }, []);
 
-  if (sites == null)
-    return (
-      <div class="muted" style={{ padding: 24 }}>
-        加载中…
-      </div>
-    );
+  if (sites == null) return <SkelLines n={3} cls="pad" />;
   if (!site)
     return (
       <div class="site-stage">
@@ -1143,7 +1155,14 @@ function SiteConfig({
           </div>
 
           {files == null ? (
-            <div class="muted">加载中…</div>
+            <div class="skel-list" role="status" aria-busy="true" aria-label="正在加载">
+              {Array.from({ length: 3 }, (_, i) => (
+                <div class="filerow skel" key={i} style={`--i:${i}`}>
+                  <span class="fi skel-b" />
+                  <span class="fpath skel-b skel-t" />
+                </div>
+              ))}
+            </div>
           ) : files.length === 0 ? (
             <div class="site-empty" style={{ marginTop: 4 }}>
               <div class="ei">📁</div>
@@ -1266,7 +1285,7 @@ function FilePreviewModal({ site, file }: { site: Site; file: SiteFile }) {
         />
       ) : textual ? (
         text == null ? (
-          <div class="muted">加载中…</div>
+          <SkelLines n={4} />
         ) : (
           <div class="preview-box">{text}</div>
         )

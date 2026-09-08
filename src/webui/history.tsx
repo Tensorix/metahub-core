@@ -10,6 +10,7 @@ import {
   type RevisionKind,
 } from "./api.ts";
 import { Icon } from "./icons.tsx";
+import { SkelLines } from "./skeleton.tsx";
 import { timeAgo } from "./date.ts";
 import { confirmDialog, toast, useDrawerResize, useDrawerTransition } from "./ui.tsx";
 import { renderMarkdown, type RenderOpts } from "../core/sync/share-render.ts";
@@ -443,7 +444,7 @@ export function DocHistoryPanel({
         </div>
         <div class="hist-split">
           <div class="hist-list">
-            {revs === null && <div class="muted pad">加载中…</div>}
+            {revs === null && <SkelLines n={4} cls="pad" />}
             {timeline.map((g, gi) => (
               <div key={gi + ":" + g.label}>
                 <div class="hist-group">{g.label}</div>
@@ -514,7 +515,7 @@ export function DocHistoryPanel({
                   ))}
               </>
             )}
-            {loading && sel && <div class="muted pad">加载中…</div>}
+            {loading && sel && <SkelLines n={3} cls="pad" />}
           </div>
         </div>
         <div class="hist-foot">

@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { api, type ShareListItem } from "./api.ts";
 import { Icon } from "./icons.tsx";
+import { useSkeletonRows } from "./skeleton.tsx";
 import { toast, openMenu, MenuItem, MenuSep, MenuLabel, confirmDialog } from "./ui.tsx";
 import { useShareActions, SHARES_CHANGED, notifySharesChanged, openShareModal, shareTargetOf } from "./share-modal.tsx";
 import type { Navigate } from "./view.ts";
@@ -35,25 +36,6 @@ import {
 } from "./shares-model.ts";
 
 const KIND_ICON: Record<string, string> = { doc: "file", database: "database", site: "globe" };
-/** Last loaded row count — the skeleton renders that many rows next time so
- *  the swap to real data doesn't reflow (session-scoped, best-effort). */
-const SKEL_ROWS_KEY = "mh_shares_n";
-function rememberedRows(): number {
-  try {
-    const n = Number(sessionStorage.getItem(SKEL_ROWS_KEY));
-    return n > 0 ? Math.min(8, Math.max(2, n)) : 3;
-  } catch {
-    return 3;
-  }
-}
-function rememberRows(n: number): void {
-  try {
-    sessionStorage.setItem(SKEL_ROWS_KEY, String(n));
-  } catch {
-    /* private mode */
-  }
-}
-
 /** Loading placeholder built from the REAL row markup and classes: the grid,
  *  padding, status/action slots and the mobile stacking all come from the same
  *  .shv-* rules, so the skeleton can't drift from the rows it stands in for.
@@ -87,7 +69,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
   /** Rows whose primary action is in flight (button disabled, label "处理中…"). */
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [clearing, setClearing] = useState(false);
-  const [skelRows] = useState(rememberedRows);
+  const [skelRows, rememberRows] = useSkeletonRows("shares");
 
   const reload = () => {
     setLoadErr(null);
@@ -359,7 +341,20 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
           <div class="db-title">分享</div>
           <div class="db-desc">所有对外公开的链接都在这里：谁能看、看到哪个版本、还能看多久。</div>
         </div>
-        <div class="shv-tools">
+      </div>
+      <div class="shv-toolbar">
+        <div class="shv-search">
+          <Icon name="search" cls="ico sm" />
+          <input
+            placeholder="搜索标题 / 链接…"
+            value={filter.q}
+            onInput={(e) => {
+              const q = (e.currentTarget as HTMLInputElement).value;
+              setFilter((f) => ({ ...f, q }));
+            }}
+          />
+        </div>
+        <div class="shv-tools-right">
           <div class="shv-seg" role="tablist">
             {STATUS_FILTERS.map((f) => (
               <button
@@ -370,8 +365,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
                 onClick={() => setFilter((x) => ({ ...x, status: f.id }))}
               >
                 {f.label}
-                {/* always rendered so the count arriving doesn't widen the bar */}
-                <span class={"n" + (shares == null ? " ph" : "")}>{shares == null ? "–" : counts[f.id]}</span>
+                <span class="n">{shares == null ? <span class="skel-b skel-n" aria-hidden="true" /> : counts[f.id]}</span>
               </button>
             ))}
           </div>
@@ -383,17 +377,6 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
             {filter.source === "all" ? "全部来源" : SOURCE_KIND_LABEL[filter.source]}
             <Icon name="chevronDown" cls="ico" />
           </button>
-          <div class="shv-search">
-            <Icon name="search" cls="ico sm" />
-            <input
-              placeholder="搜索标题 / 链接…"
-              value={filter.q}
-              onInput={(e) => {
-                const q = (e.currentTarget as HTMLInputElement).value;
-                setFilter((f) => ({ ...f, q }));
-              }}
-            />
-          </div>
         </div>
       </div>
 

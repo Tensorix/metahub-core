@@ -14,7 +14,8 @@ import { timeAgo } from "../date.ts";
 import { toast, confirmDialog, promptDialog, openModal, closeModal } from "../ui.tsx";
 import { clientMode } from "../data/replica.ts";
 import { scopesFor } from "../data/scopes.ts";
-import { SetRow, SetSection, PageHeader } from "./primitives.tsx";
+import { SetRow, SetSection, PageHeader, SetRowSkeleton } from "./primitives.tsx";
+import { useSkeletonRows, SkelText } from "../skeleton.tsx";
 import { pageLabel } from "./nav.ts";
 import { AddDeviceModal, RotateModal } from "./modals.tsx";
 import { fmtTime, isDesktop } from "./shared.ts";
@@ -71,6 +72,7 @@ export function DevicesPage() {
   const [buckets, setBuckets] = useState<S3Peer[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [presenceRefreshing, setPresenceRefreshing] = useState(false);
+  const [skelRows, rememberRows] = useSkeletonRows("devices");
 
   const reload = () => {
     api.listDevices().then(setDevices).catch((e) => toast(`加载失败：${e.message}`));
@@ -85,6 +87,7 @@ export function DevicesPage() {
       .then((rows) => {
         if (!live) return;
         setDevices(rows);
+        rememberRows(rows.length);
         setPresenceRefreshing(true);
         return api.refreshDevicePresence();
       })
@@ -355,7 +358,7 @@ export function DevicesPage() {
     <>
       <PageHeader
         title={pageLabel("devices")}
-        sub={devices == null ? "加载中…" : `${devices.length} 台设备同步过这个工作区。`}
+        sub={devices == null ? <SkelText /> : `${devices.length} 台设备同步过这个工作区。`}
         action={
           <button class="btn btn-primary" onClick={addDevice}>
             <Icon name="plus" cls="ico sm" />
@@ -363,7 +366,11 @@ export function DevicesPage() {
           </button>
         }
       />
-      {devices != null && (
+      {devices == null ? (
+        <SetSection label="最近 30 天">
+          <SetRowSkeleton rows={skelRows} lead control="chevron" />
+        </SetSection>
+      ) : (
         <SetSection label="最近 30 天" count={recent.length}>
           {recent.length === 0 ? <div class="muted">还没有其他设备。</div> : recent.map(row)}
         </SetSection>

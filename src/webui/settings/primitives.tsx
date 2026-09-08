@@ -57,6 +57,40 @@ export function SetRow({
   );
 }
 
+/** Loading placeholder for a SetRow list: N real .set-row shells whose text
+ *  and control slots are sheen blocks, so the swap to data doesn't reflow.
+ *  Lists never render "加载中…" text; pair with useSkeletonRows(key). */
+export function SetRowSkeleton({
+  rows = 3,
+  lead = false,
+  control = "none",
+}: {
+  rows?: number;
+  lead?: boolean;
+  control?: "none" | "switch" | "chevron" | "menu" | "button";
+}) {
+  return (
+    <div class="skel-list" role="status" aria-live="polite" aria-busy="true" aria-label="正在加载">
+      {Array.from({ length: rows }, (_, i) => (
+        <div class="set-row skel" key={i} style={`--i:${Math.min(i, 4)}`}>
+          <div class="set-row-line">
+            {lead && <div class="set-row-lead skel-b" />}
+            <div class="set-row-text">
+              <span class="skel-b skel-t" />
+              <span class="skel-b skel-s" />
+            </div>
+            {control !== "none" && (
+              <div class="set-row-control">
+                <span class={`skel-b skel-${control}`} />
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** THE switch — the existing button-based .switch/.switch-knob pattern.
  *  `locked` renders it checked + disabled without dimming (a state the user
  *  can't change here, not a broken control). */
