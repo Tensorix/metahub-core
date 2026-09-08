@@ -178,7 +178,9 @@ jobs:
         name: Publish
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bun publish
+        run: |
+          npm whoami
+          npm publish
 
   # ── 6. 更新 Homebrew tap 里的 CLI formula（metahub-cli）──────────────────
   # 同 desktop：需要 secret HOMEBREW_TAP_TOKEN（对 homebrew-tap 有 contents:write
