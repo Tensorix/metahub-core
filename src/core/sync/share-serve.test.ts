@@ -30,6 +30,8 @@ test("view share renders the live doc and carries no master-token runtime", asyn
   expect(html).toContain("<h1>Hello</h1>");
   expect(html).toContain("<strong>bold</strong>");
   expect(html).not.toContain("/mh-runtime.js");
+  expect(html).toContain('<div class="mh-tools"><button id="mh-copy"');
+  expect(html).toContain('<template id="mh-src"># Hello\n\nworld **bold**</template>');
 });
 
 test("expired share is 410 Gone but the row stays manageable (renewable)", async () => {
@@ -304,6 +306,7 @@ test("database share SSR resolves relation titles for self and granted targets o
   expect(html1).toContain('<span class="tag">first</span>');
   expect(html1).toContain(`<span class="tag">${alpha.id}</span>`);
   expect(html1).not.toContain('<span class="tag">Alpha</span>');
+  expect(html1).toContain('<template id="mh-src">| Title | Peer | Project |\n| --- | --- | --- |\n| first |  |  |\n| second | first | ' + alpha.id + ' |</template>');
 
   // Share carrying a grant on the target: cross-db titles resolve.
   const granted = createShare(ctx.db, {

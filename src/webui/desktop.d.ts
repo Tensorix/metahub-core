@@ -41,9 +41,9 @@ export interface MetahubDesktop {
     hide: () => Promise<void>;
     /** Summon the window from another renderer. Optional — absent on older preload builds. */
     show?: () => Promise<void>;
-    /** Open a db route in the MAIN window: focuses it if it exists (navigation
-     *  rides BroadcastChannel), else cold-creates it at this hash. The main
-     *  process whitelists the hash (db routes only); rejected → false.
+    /** Open a db or doc route in the MAIN window: focuses it if it exists
+     *  (navigation rides BroadcastChannel), else cold-creates it at this hash.
+     *  The main process whitelists the hash (db/doc routes only); rejected → false.
      *  Optional — absent on older preload builds. */
     openMain?: (hash: string) => Promise<boolean>;
   };

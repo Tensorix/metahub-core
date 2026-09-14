@@ -365,6 +365,12 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
       .catch((e) => toast(`加载失败：${e.message}`));
   const reloadHosting = () =>
     api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
+  const cardMenu = (e: MouseEvent, s: Site) => {
+    e.stopPropagation();
+    openSiteMenu(e, s, {
+      onOpenConfig: () => navigate({ kind: "site", name: s.name, tab: "config" }),
+    });
+  };
 
   useEffect(() => {
     reload();
@@ -500,7 +506,13 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                 // address — only counts.
                 const addr = siteCardAddress(channels);
                 return (
-              <div class="site-card" key={s.id} style={`--i:${i}`} onClick={() => navigate({ kind: "site", name: s.name })}>
+              <div
+                class="site-card"
+                key={s.id}
+                style={`--i:${i}`}
+                onClick={() => navigate({ kind: "site", name: s.name })}
+                onContextMenu={(e) => { e.preventDefault(); cardMenu(e, s); }}
+              >
                 <div class="site-card-head">
                   <span class="si">
                     <Icon name="globe" />
@@ -609,16 +621,7 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                     <Icon name="link" cls="ico sm" />
                     {pendingRollback ? "重试回滚" : channels.length ? "管理" : "发布"}
                   </button>
-                  <button
-                    class="iconbtn"
-                    title="更多"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openSiteMenu(e as unknown as MouseEvent, s, {
-                        onOpenConfig: () => navigate({ kind: "site", name: s.name, tab: "config" }),
-                      });
-                    }}
-                  >
+                  <button class="iconbtn" title="更多" onClick={(e) => cardMenu(e, s)}>
                     <Icon name="dots" />
                   </button>
                 </div>

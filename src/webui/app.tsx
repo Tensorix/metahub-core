@@ -33,6 +33,7 @@ import { ShareView } from "./shares-view.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
+import { pressed, kbd, withKbd } from "./shortcuts.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { QuickBoard } from "./quickboard/quickboard.tsx";
@@ -95,6 +96,7 @@ function App() {
   const [saveFlash, setSaveFlash] = useState(false);
   const [kbdPulse, setKbdPulse] = useState(false);
   const docHandleRef = useRef<DocViewHandle | null>(null);
+  const pendingFocusTitle = useRef(false);
   const hadBucketWork = useRef(false);
   // Holds the latest ⌘S/Ctrl+S handler so the once-bound keydown listener below
   // always sees current saveState/view without re-subscribing. Returns true when
@@ -109,6 +111,10 @@ function App() {
   const onError = useCallback((m: string) => setError(m), []);
   const registerDocHandle = useCallback((handle: DocViewHandle | null) => {
     docHandleRef.current = handle;
+    if (handle && pendingFocusTitle.current) {
+      pendingFocusTitle.current = false;
+      handle.focusTitle();
+    }
   }, []);
 
   const reloadNav = useCallback(async () => {
@@ -208,11 +214,12 @@ function App() {
   // the hash in sync), except the hashchange listener below reacting to the
   // browser's own back/forward. pushState doesn't fire hashchange, so the two
   // writers never echo each other.
-  const navigate = (v: View, opts?: { replace?: boolean }) => {
+  const navigate = (v: View, opts?: { replace?: boolean; focusTitle?: boolean }) => {
     const h = viewToHash(v);
     if (location.hash !== h) {
       history[opts?.replace ? "replaceState" : "pushState"](null, "", h);
     }
+    pendingFocusTitle.current = !!opts?.focusTitle && v.kind === "doc";
     setView(v);
   };
 
@@ -268,7 +275,7 @@ function App() {
 
   const newEmptyDoc = () =>
     api.createDocument({ title: "" })
-      .then((d) => navigate({ kind: "doc", id: d.id }))
+      .then((d) => navigate({ kind: "doc", id: d.id }, { focusTitle: true }))
       .catch((e) => onError(String(e.message)));
 
   const activeDb = view.kind === "db" ? databases.find((d) => d.id === view.id) : undefined;
@@ -305,40 +312,34 @@ function App() {
     if (isMobile) window.scrollTo(0, nowContent ? 0 : homeScroll.current);
   }, [isMobile, contentActive, view]);
 
-  // ⌘K / Ctrl+K — the shortcut behind the search box's kbd badge: focus the
-  // sidebar search from anywhere (same DOM reach the box's own click handler
-  // uses, see sidebar.tsx).
+  // App-level shortcuts; bindings and labels live in shortcuts.ts.
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      // ⌘[ / ⌘] (mac) 或 Alt+←/→ — desktop page back/forward, same traversal
-      // as the topbar nav buttons. Editors claim overlapping keys first (CM6
-      // binds Mod-[ to indent, Alt-Arrow to syntax moves) and preventDefault
-      // before this non-capture listener runs, so honor that.
-      if (isDesktop && !e.defaultPrevented) {
-        const mac = window.metahubDesktop?.platform === "darwin";
-        const back = mac ? e.metaKey && e.key === "[" : e.altKey && e.key === "ArrowLeft";
-        const fwd = mac ? e.metaKey && e.key === "]" : e.altKey && e.key === "ArrowRight";
-        if (back || fwd) {
-          e.preventDefault();
-          (back ? goBack : goForward)();
-          return;
-        }
+      if (isDesktop && (pressed(e, "back") || pressed(e, "forward"))) {
+        e.preventDefault();
+        (pressed(e, "back") ? goBack : goForward)();
+        return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if (pressed(e, "search")) {
         e.preventDefault();
         document.querySelector<HTMLInputElement>(".sb-search input")?.focus();
         return;
       }
-      // ⌘S / Ctrl+S — save to the cloud bucket instead of the browser's "save
-      // page". Delegates to the latest render's handler (see saveHotkeyRef).
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      if (pressed(e, "sidebar")) {
+        if (window.matchMedia(MOBILE_MQ).matches) return;
+        e.preventDefault();
+        setSbCollapsed((v) => !v);
+        return;
+      }
+      if (pressed(e, "settings")) {
+        e.preventDefault();
+        if (parseHash(location.hash).kind !== "settings") navigate({ kind: "settings" });
+        return;
+      }
+      if (pressed(e, "save")) {
         if (saveHotkeyRef.current?.()) e.preventDefault();
       }
-      // ⌘/ / Ctrl+/ — toggle the doc's source ⇄ blocks view (the "code mode"
-      // menu item's shortcut). docHandleRef is non-null only in a doc view, so
-      // this no-ops elsewhere; getMode() keeps it fresh past this empty-dep
-      // effect's closure.
-      if ((e.metaKey || e.ctrlKey) && e.key === "/") {
+      if (pressed(e, "toggleSource")) {
         const h = docHandleRef.current;
         if (h) {
           e.preventDefault();
@@ -448,8 +449,7 @@ function App() {
           : saveState === "error"
             ? "cloudOff"
             : "cloudUp";
-  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-  const saveHint = isMobile ? "" : isMac ? " · ⌘S" : " · Ctrl+S";
+  const saveHint = isMobile ? "" : ` · ${kbd("save")}`;
   const shareSaveTitle =
     saveState === "share"
       ? "分享"
@@ -517,7 +517,7 @@ function App() {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
         <>
-          <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} kbd={isMac ? "⌘/" : "Ctrl /"} checked={docMode === "source"} onClick={() => {
+          <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} kbd={kbd("toggleSource")} checked={docMode === "source"} onClick={() => {
             close();
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
           }} />
@@ -612,6 +612,7 @@ function App() {
         collapsed={sbCollapsed}
         onResize={setSbWidth}
         onCollapse={() => setSbCollapsed(true)}
+        onExpand={() => setSbCollapsed(false)}
         updatePending={updatePending}
         onError={onError}
       />
@@ -621,7 +622,7 @@ function App() {
             {isMobile || sbCollapsed ? (
               <button
                 class="fnav-btn icon"
-                title={isMobile ? "返回" : "展开侧栏"}
+                title={isMobile ? "返回" : withKbd("展开侧栏", "sidebar")}
                 onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
               >
                 <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
@@ -643,7 +644,7 @@ function App() {
         <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
           <button
             class={"iconbtn hamburger" + (sbCollapsed ? " show-collapsed" : "")}
-            title={isMobile ? "返回" : sbCollapsed ? "展开侧栏" : "菜单"}
+            title={isMobile ? "返回" : withKbd(sbCollapsed ? "展开侧栏" : "菜单", "sidebar")}
             onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
           >
             <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
@@ -655,10 +656,10 @@ function App() {
           )}
           {isDesktop && !isMobile && (
             <>
-              <button class="iconbtn navbtn" title="后退" disabled={!canGoBack} onClick={goBack}>
+              <button class="iconbtn navbtn" title={withKbd("后退", "back")} disabled={!canGoBack} onClick={goBack}>
                 <Icon name="arrowLeft" />
               </button>
-              <button class="iconbtn navbtn" title="前进" disabled={!canGoForward} onClick={goForward}>
+              <button class="iconbtn navbtn" title={withKbd("前进", "forward")} disabled={!canGoForward} onClick={goForward}>
                 <Icon name="arrowRight" />
               </button>
             </>

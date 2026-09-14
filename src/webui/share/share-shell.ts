@@ -1,8 +1,11 @@
+import { COPY_CSS } from "../../core/sync/share-copy.ts";
+
 export const SHELL_CSS = `:root{--bg:#fff;--fg:#1f2328;--muted:#6e7781;--line:#d0d7de;--accent:#0969da;--card:#f6f8fa}
 @media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8b949e;--line:#30363d;--accent:#4493f8;--card:#161b22}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
 #app{max-width:820px;margin:0 auto;padding:32px 20px 80px}
-header.mh{margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:14px}header.mh h1{font-size:22px;margin:0}
+header.mh{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:14px}header.mh h1{font-size:22px;margin:0}
+${COPY_CSS}
 article.doc h1,article.doc h2,article.doc h3{line-height:1.3;margin:1.4em 0 .5em}article.doc h1{font-size:1.7em}article.doc h2{font-size:1.4em}article.doc h3{font-size:1.2em}
 article.doc p{margin:.7em 0}article.doc img{max-width:100%;border-radius:8px}article.doc pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;overflow:auto}
 article.doc code{background:var(--card);padding:.15em .35em;border-radius:4px;font-size:.9em}article.doc pre code{background:none;padding:0}

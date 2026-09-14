@@ -6,6 +6,7 @@ import { Icon } from "./icons.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
 import type { Navigate, View } from "./view.ts";
+import { IS_DESKTOP_APP, kbd, pressed, withKbd } from "./shortcuts.ts";
 import {
   openMenu,
   MenuItem,
@@ -28,6 +29,7 @@ interface SidebarProps {
   collapsed: boolean;
   onResize: (w: number) => void;
   onCollapse: () => void;
+  onExpand: () => void;
   /** Show a dot on the settings entry: a core update is staged or available. */
   updatePending?: boolean;
   onError: (msg: string) => void;
@@ -66,13 +68,6 @@ const TABS: { key: SbTab; icon: string; label: string }[] = [
 function isDbCollapsed(db: Db): boolean {
   return db.meta?.collapsed === true;
 }
-
-// For the search shortcut badge only (navigator.platform is deprecated but
-// remains the fallback where userAgentData hasn't shipped).
-const IS_MAC = /mac/i.test(
-  (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
-    navigator.platform,
-);
 
 export function Sidebar(props: SidebarProps) {
   const { view, navigate } = props;
@@ -124,6 +119,33 @@ export function Sidebar(props: SidebarProps) {
     paneAnim.current = true;
     patchSec({ tab: t });
   };
+
+  // Sidebar-owned shortcuts (desktop shell only).
+  const keysRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keysRef.current = (e) => {
+    const tabKey = pressed(e, "tabDocs") ? "docs" : pressed(e, "tabDb") ? "db" : pressed(e, "tabSites") ? "sites" : null;
+    if (tabKey) {
+      e.preventDefault();
+      if (props.collapsed) props.onExpand();
+      setTab(tabKey);
+      return;
+    }
+    if (pressed(e, "newDb")) {
+      e.preventDefault();
+      openCreateDb((id) => navigate({ kind: "db", id }), props.onError);
+      return;
+    }
+    if (pressed(e, "newDoc")) {
+      e.preventDefault();
+      newDoc(null);
+    }
+  };
+  useEffect(() => {
+    if (!IS_DESKTOP_APP) return;
+    const on = (e: KeyboardEvent) => keysRef.current(e);
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
   // Follow navigation: opening a doc (search result, backlink, history) should
   // reveal it in the list. Manual tab switches don't change the view, so they
   // never get yanked back. The id dep matters — doc→doc back/forward must
@@ -189,7 +211,7 @@ export function Sidebar(props: SidebarProps) {
     guard(async () => {
       const doc = await api.createDocument({ title: "", ...(parent ? { parent_id: parent } : {}) });
       if (parent) expanded.add(parent);
-      navigate({ kind: "doc", id: doc.id });
+      navigate({ kind: "doc", id: doc.id }, { focusTitle: true });
     });
 
   const onDrop = (srcId: string, tgt: DocSummary, where: "into" | "before" | "after") =>
@@ -263,11 +285,27 @@ export function Sidebar(props: SidebarProps) {
     ));
   };
 
+  const siteMenu = (e: MouseEvent, s: Site) => {
+    e.stopPropagation();
+    openSiteMenu(e, s, {
+      onOpenConfig: () => navigate({ kind: "site", name: s.name, tab: "config" }),
+      onRenamed: (n) => {
+        if (view.kind === "site" && view.name === s.name)
+          navigate({ kind: "site", name: n, tab: view.tab }, { replace: true });
+      },
+      onDeleted: () => {
+        if (view.kind === "site" && view.name === s.name)
+          navigate({ kind: "empty" }, { replace: true });
+      },
+    });
+  };
+
   const dbItem = (db: Db, dim = false) => (
     <div
       key={db.id}
       class={"navitem" + (dim ? " dim" : "") + (view.kind === "db" && view.id === db.id ? " active" : "")}
       onClick={() => navigate({ kind: "db", id: db.id })}
+      onContextMenu={(e) => { e.preventDefault(); dbMenu(e, db); }}
     >
       <span class="emoji">{db.icon || "🗂️"}</span>
       <span class="label">{db.name}</span>
@@ -354,6 +392,7 @@ export function Sidebar(props: SidebarProps) {
             class={"navitem" + (view.kind === "doc" && view.id === d.id ? " active" : "")}
             draggable
             onClick={() => navigate({ kind: "doc", id: d.id })}
+            onContextMenu={(e) => { e.preventDefault(); docMenu(e, d); }}
             onDragStart={(e) => { e.stopPropagation(); dragId = d.id; (e.currentTarget as HTMLElement).classList.add("dragging"); }}
             onDragEnd={(e) => { (e.currentTarget as HTMLElement).classList.remove("dragging"); clearDrop(); }}
             onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); markDrop(e.currentTarget as HTMLElement, e); }}
@@ -424,7 +463,7 @@ export function Sidebar(props: SidebarProps) {
         </button>
         <button
           class={"sb-act" + (view.kind === "settings" ? " active" : "")}
-          title="设置"
+          title={withKbd("设置", "settings")}
           aria-label="设置"
           onClick={() => navigate({ kind: "settings" })}
         >
@@ -446,7 +485,7 @@ export function Sidebar(props: SidebarProps) {
             role="tab"
             aria-selected={tab === t.key}
             class={"sb-tab" + (tab === t.key ? " on" : "")}
-            title={t.label}
+            title={withKbd(t.label, t.key === "docs" ? "tabDocs" : t.key === "db" ? "tabDb" : "tabSites")}
             onClick={() => setTab(t.key)}
           >
             <Icon name={t.icon} cls="ico sm" />
@@ -455,7 +494,7 @@ export function Sidebar(props: SidebarProps) {
         ))}
         <button
           class="add"
-          title={tab === "docs" ? "新建文档" : tab === "db" ? "新建数据库" : "新建站点"}
+          title={tab === "docs" ? withKbd("新建文档", "newDoc") : tab === "db" ? withKbd("新建数据库", "newDb") : "新建站点"}
           onClick={() =>
             tab === "docs"
               ? newDoc(null)
@@ -482,7 +521,7 @@ export function Sidebar(props: SidebarProps) {
           }}
         />
         {/* the shortcut itself lives in app.tsx (global keydown) */}
-        <kbd>{IS_MAC ? "⌘K" : "Ctrl K"}</kbd>
+        <kbd>{kbd("search")}</kbd>
       </div>
 
       <div class="sb-scroll">
@@ -516,29 +555,14 @@ export function Sidebar(props: SidebarProps) {
                   key={s.id}
                   class={"navitem" + (view.kind === "site" && view.name === s.name ? " active" : "")}
                   onClick={() => navigate({ kind: "site", name: s.name })}
+                  onContextMenu={(e) => { e.preventDefault(); siteMenu(e, s); }}
                 >
                   <span class="emoji">
                     <Icon name="globe" cls="ico sm" />
                   </span>
                   <span class="label">{s.title || s.name}</span>
                   <span class="acts">
-                    <button
-                      title="更多"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openSiteMenu(e as unknown as MouseEvent, s, {
-                          onOpenConfig: () => navigate({ kind: "site", name: s.name, tab: "config" }),
-                          onRenamed: (n) => {
-                            if (view.kind === "site" && view.name === s.name)
-                              navigate({ kind: "site", name: n, tab: view.tab }, { replace: true });
-                          },
-                          onDeleted: () => {
-                            if (view.kind === "site" && view.name === s.name)
-                              navigate({ kind: "empty" }, { replace: true });
-                          },
-                        });
-                      }}
-                    >
+                    <button title="更多" onClick={(e) => siteMenu(e, s)}>
                       <Icon name="dots" cls="ico sm" />
                     </button>
                   </span>
@@ -555,7 +579,7 @@ export function Sidebar(props: SidebarProps) {
       <div class="sb-footer">
         <button
           class={"sb-act" + (view.kind === "settings" ? " active" : "")}
-          title="设置"
+          title={withKbd("设置", "settings")}
           aria-label="设置"
           onClick={() => navigate({ kind: "settings" })}
         >

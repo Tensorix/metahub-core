@@ -1135,12 +1135,12 @@ function registerIpc(): void {
   // The mini windows' 「在主窗口中打开」: raise the main window, cold-creating it
   // AT the given hash — window creation is exactly when the renderer's
   // BroadcastChannel navigation is lost, so the initial URL covers it. Hash is
-  // whitelisted to db routes (id alphabet mirrors view.ts doclinkFromUrl) so
+  // whitelisted to db/doc routes (id alphabet mirrors view.ts doclinkFromUrl) so
   // the renderer can't steer the shell anywhere else. Known residual race: a
   // second request while the window is still loading only focuses it (the
   // broadcast is lost and the hash isn't re-applied) — two clicks within the
   // first paint, acceptable.
-  const MAIN_OPEN_HASH = /^#\/db\/db_[a-z0-9][a-z0-9-]*(\?view=(table|board|calendar|timeline))?$/;
+  const MAIN_OPEN_HASH = /^#\/(db\/db_[a-z0-9][a-z0-9-]*(\?view=(table|board|calendar|timeline))?|doc\/doc_[a-z0-9][a-z0-9-]*)$/;
   ipcMain.handle("main:open-at", (_e, hash: unknown) => {
     if (typeof hash !== "string" || !MAIN_OPEN_HASH.test(hash)) return false;
     showMainWindow(hash);

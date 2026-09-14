@@ -9,6 +9,7 @@
 // on a top-level navigation — we never navigate to the object, we read it.
 
 import { renderMarkdown, escapeHtml } from "../../core/sync/share-render.ts";
+import { copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "../../core/sync/share-copy.ts";
 import { decryptBytes, deriveShareKey, fromB64 } from "../../core/sync/e2ee.ts";
 
 interface Manifest {
@@ -42,6 +43,13 @@ function cellHtml(type: string, value: unknown): string {
   }
   if (Array.isArray(value)) return value.map((v) => `<span class="tag">${escapeHtml(String(v))}</span>`).join(" ");
   return escapeHtml(String(value));
+}
+
+function cellPlain(type: string, value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (type === "checkbox") return value ? "✓" : "";
+  if (Array.isArray(value)) return value.map(String).join(", ");
+  return String(value);
 }
 
 function renderTable(m: Manifest): string {
@@ -119,16 +127,26 @@ async function main() {
     const manifest = JSON.parse(json) as Manifest;
     document.title = manifest.title || "分享";
 
-    const title = `<header class="mh"><h1 class="title">${escapeHtml(manifest.title || "分享")}</h1></header>`;
+    const title = `<header class="mh"><h1 class="title">${escapeHtml(manifest.title || "分享")}</h1><div class="mh-tools">${copyButtonHtml()}</div></header>`;
+    const copySource =
+      manifest.kind === "doc"
+        ? manifest.body ?? ""
+        : markdownTable(
+            (manifest.properties ?? []).map((p) => p.name),
+            (manifest.records ?? []).map((r) => (manifest.properties ?? []).map((p) => cellPlain(p.type, r.cells[p.id]))),
+          );
     const inner =
       manifest.kind === "doc"
         ? `<article class="doc">${renderMarkdown(manifest.body ?? "") || '<p class="muted">（空文档）</p>'}</article>`
         : renderTable(manifest);
     const tpl = document.createElement("template");
-    tpl.innerHTML = `<div class="mh-view">${title}${inner}<footer class="mh">通过 metahub 分享</footer></div>`;
+    tpl.innerHTML = `<div class="mh-view">${title}${inner}<footer class="mh">通过 metahub 分享</footer>${copySourceHtml(copySource)}</div>`;
     const wanted = detachBlobRefs(tpl.content);
     set("");
     root.append(tpl.content);
+    const js = document.createElement("script");
+    js.textContent = copyScript();
+    root.append(js);
 
     await Promise.allSettled(
       Object.entries(manifest.blobs ?? {})

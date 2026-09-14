@@ -11,7 +11,8 @@
 
 import { EditorView, dropCursor, keymap } from "@codemirror/view";
 import { Compartment, type Extension } from "@codemirror/state";
-import { history, historyKeymap, defaultKeymap, indentWithTab } from "@codemirror/commands";
+import { history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { proseDefaultKeymap } from "./prose-keymap";
 import { docModelField, docModel } from "./doc-model";
 import { isListRole } from "./blockmodel";
 import { voidField, clampVoidSelection } from "./voids/void-field";
@@ -160,6 +161,6 @@ export function baseExtensions(opts: EditorOpts): Extension[] {
     richCompartment.of(richLayer(opts)),
     // Structure keymap (inside the compartment) is Prec.highest and runs first;
     // these are the fall-through defaults for ordinary editing + undo/redo.
-    keymap.of([...defaultKeymap, ...historyKeymap]),
+    keymap.of([...proseDefaultKeymap, ...historyKeymap]),
   ];
 }

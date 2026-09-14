@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, NAV_INVALIDATE, type DocSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { DocView, type DocViewHandle } from "../editor.tsx";
-import { imeGhost } from "../keys.ts";
+import { kbd, pressed, withKbd } from "../shortcuts.ts";
+import { viewToHash } from "../view.ts";
 import {
   UiHost,
   openMenu,
@@ -124,21 +125,6 @@ export function QuickNote() {
     qn?.getAlwaysOnTop().then(setPinned).catch(() => {});
   }, [qn]);
 
-  // Esc hides the window (it stays alive in the background for instant reopen).
-  // Only an UNCONSUMED Escape: the editor has its own Escape meanings (close
-  // find bar, exit code island, dismiss table selection — all consumeKey/
-  // preventDefault theirs), and an IME candidate-cancel Escape belongs to the
-  // composition, not to us.
-  useEffect(() => {
-    if (!qn) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || imeGhost(e)) return;
-      void qn.hide();
-    };
-    addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
-  }, [qn]);
-
   const newNote = async () => {
     if (!parentId) return;
     try {
@@ -147,6 +133,53 @@ export function QuickNote() {
       setError(String((e as Error).message));
     }
   };
+
+  const openInMain = () => {
+    if (!activeId) return;
+    try {
+      const ch = new BroadcastChannel("mh-open-doc");
+      ch.postMessage({ id: activeId });
+      ch.close();
+    } catch {
+      /* no BroadcastChannel — openMain's hash path still covers it */
+    }
+    const d = window.metahubDesktop;
+    if (d?.quicknote?.openMain) void d.quicknote.openMain(viewToHash({ kind: "doc", id: activeId }));
+    else void d?.file?.focusMain();
+    void qn?.hide();
+  };
+
+  // Window-level shortcuts; bindings live in shortcuts.ts.
+  const keysRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keysRef.current = (e) => {
+    if (pressed(e, "qnHide")) {
+      void qn?.hide();
+      return;
+    }
+    if (pressed(e, "qnNew")) {
+      e.preventDefault();
+      void newNote();
+      return;
+    }
+    if (pressed(e, "qnOpenMain")) {
+      e.preventDefault();
+      openInMain();
+      return;
+    }
+    const step = pressed(e, "qnPrev") ? -1 : pressed(e, "qnNext") ? 1 : 0;
+    if (step) {
+      e.preventDefault();
+      const i = notes.findIndex((n) => n.id === activeId);
+      const next = notes[i + step];
+      if (i >= 0 && next) setActiveId(next.id);
+    }
+  };
+  useEffect(() => {
+    if (!qn) return;
+    const on = (e: KeyboardEvent) => keysRef.current(e);
+    addEventListener("keydown", on);
+    return () => removeEventListener("keydown", on);
+  }, [qn]);
 
   const togglePin = async () => {
     if (!qn) return;
@@ -196,11 +229,23 @@ export function QuickNote() {
           <MenuItem
             icon="plus"
             label="新建笔记"
+            kbd={kbd("qnNew")}
             onClick={() => {
               close();
               void newNote();
             }}
           />
+          {activeId && (
+            <MenuItem
+              icon="externalLink"
+              label="在主窗口中打开"
+              kbd={kbd("qnOpenMain")}
+              onClick={() => {
+                close();
+                openInMain();
+              }}
+            />
+          )}
           {activeId && (
             <MenuItem
               icon="trash"
@@ -225,7 +270,7 @@ export function QuickNote() {
       <div class="qn-bar">
         <span class="qn-brand">{activeTitle || "快速笔记"}</span>
         <div class="qn-actions">
-          <button class="iconbtn" title="新建笔记" onClick={() => void newNote()}>
+          <button class="iconbtn" title={withKbd("新建笔记", "qnNew")} onClick={() => void newNote()}>
             <Icon name="plus" />
           </button>
           <button class="iconbtn" title="笔记列表" onClick={openList}>

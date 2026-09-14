@@ -63,6 +63,7 @@ import { GROUPS, resolvePage, pageLabel, type PageId, type PageDef } from "./set
 import { SetRow, Switch, SetSection, PageHeader, DangerZone, RowMenu } from "./settings/primitives.tsx";
 import { CacheRingHero, type RingState } from "./settings/cache-ring.tsx";
 import { AuditPage } from "./settings/audit-page.tsx";
+import { ShortcutsPage } from "./settings/shortcuts-page.tsx";
 import { BackupPage } from "./settings/backup-page.tsx";
 import { DevicesPage } from "./settings/devices-page.tsx";
 
@@ -380,6 +381,8 @@ export function SettingsView({ onUpdatePending, updatePending, focusSec }: { onU
               {page === "audit" && <AuditPage />}
 
               {page === "hosting" && <SiteHostingSettings />}
+
+              {page === "shortcuts" && <ShortcutsPage />}
 
               {page === "about" && <AboutPage onUpdatePending={onUpdatePending} />}
             </>

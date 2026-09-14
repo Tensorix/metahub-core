@@ -28,6 +28,8 @@ export interface DocViewHandle {
   flushSave: () => Promise<void>;
   /** Re-fetch the document from the server (e.g. after a history revert). */
   reload: () => void;
+  /** Caret into the title (deferred until the title mounts). */
+  focusTitle: () => void;
 }
 
 export function DocView({
@@ -57,6 +59,7 @@ export function DocView({
   const sourceRef = useRef("");
   const titleRef = useRef("");
   const titleElRef = useRef<HTMLDivElement | null>(null);
+  const focusTitleOnLoad = useRef(false);
   const sharedTargets = useSharedTargets();
   const [mode, setModeState] = useState<DocMode>("blocks");
   const [version, setVersion] = useState(0);
@@ -207,6 +210,10 @@ export function DocView({
   useEffect(() => {
     const el = titleElRef.current;
     if (el && (el.textContent !== titleRef.current || el.firstElementChild)) el.textContent = titleRef.current;
+    if (el && focusTitleOnLoad.current) {
+      focusTitleOnLoad.current = false;
+      focusTitle();
+    }
   }, [version]);
 
   // Unsaved work (debounce window, failed save being retried) shouldn't be
@@ -339,6 +346,10 @@ export function DocView({
       snapshotMarkdown,
       flushSave,
       reload: loadDoc,
+      focusTitle: () => {
+        if (titleElRef.current) focusTitle();
+        else focusTitleOnLoad.current = true;
+      },
     });
     return () => onHandle?.(null);
   }, [onHandle, mode]);

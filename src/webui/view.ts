@@ -19,7 +19,7 @@ export type View =
   | { kind: "site"; name: string; tab?: "config" } // a site's visit page / config page
   | { kind: "shares" };
 
-export type Navigate = (v: View, opts?: { replace?: boolean }) => void;
+export type Navigate = (v: View, opts?: { replace?: boolean; focusTitle?: boolean }) => void;
 
 // --- hash routing ------------------------------------------------------------
 // Views are mirrored to "#/" routes so browser history (and a phone's hardware

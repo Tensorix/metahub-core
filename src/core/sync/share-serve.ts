@@ -33,6 +33,7 @@ import { serveGrantedApi, grantedDepsFromPolicy } from "./grants-routes.ts";
 import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
 import { readGuestSession, mintGuestSession, type GuestSessionScope } from "./guest-session.ts";
 import { renderMarkdown, escapeHtml } from "./share-render.ts";
+import { COPY_CSS, copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "./share-copy.ts";
 
 const HTML = { "content-type": "text/html; charset=utf-8" } as const;
 const HASH_RE = /^[0-9a-f]{16,64}$/;
@@ -147,7 +148,7 @@ async function serveDoc(
   const inner = `<article class="doc">${rendered || '<p class="muted">（空文档）</p>'}</article>`;
   const script = editable ? docEditScript(share.slug, version, doc.body ?? "") : "";
   return new Response(
-    pageShell(doc.title || "文档", inner, { editable, editLabel: "编辑文档", script }),
+    pageShell(doc.title || "文档", inner, { editable, editLabel: "编辑文档", script, copySource: doc.body ?? "" }),
     { headers: HTML },
   );
 }
@@ -280,7 +281,11 @@ async function serveTable(
     .join("");
   const inner = `<div class="table-wrap"><table class="db"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
   const script = editable ? tableEditScript(share.slug) : "";
-  return new Response(pageShell(dbRow.name || "表格", inner, { script, hint: editable ? "可编辑文本/数字/URL/日期单元格，失焦自动保存" : "" }), {
+  const copySource = markdownTable(
+    props.map((p) => p.name),
+    records.map((r) => props.map((p) => cellText(p, r.cells[p.id], titlesFor(p)))),
+  );
+  return new Response(pageShell(dbRow.name || "表格", inner, { script, copySource, hint: editable ? "可编辑文本/数字/URL/日期单元格，失焦自动保存" : "" }), {
     headers: HTML,
   });
 }
@@ -591,11 +596,15 @@ function passwordPage(share: ShareRow, error: boolean): string {
 function pageShell(
   title: string,
   inner: string,
-  opts: { editable?: boolean; editLabel?: string; script?: string; hint?: string; bare?: boolean } = {},
+  opts: { editable?: boolean; editLabel?: string; script?: string; hint?: string; bare?: boolean; copySource?: string } = {},
 ): string {
   const editBtn = opts.editable ? `<button id="mh-edit" class="edit-btn">${opts.editLabel ?? "编辑"}</button>` : "";
+  const copyBtn = opts.copySource !== undefined ? copyButtonHtml() : "";
+  const tools = copyBtn || editBtn ? `<div class="mh-tools">${copyBtn}${editBtn}</div>` : "";
   const hint = opts.hint ? `<p class="hint">${escapeHtml(opts.hint)}</p>` : "";
-  const script = opts.script ? `<script>(function(){${opts.script}})();</script>` : "";
+  const script =
+    (opts.script ? `<script>(function(){${opts.script}})();</script>` : "") +
+    (opts.copySource !== undefined ? `${copySourceHtml(opts.copySource)}<script>${copyScript()}</script>` : "");
   return `<!doctype html><html lang="zh"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
@@ -608,7 +617,8 @@ function pageShell(
   .wrap{max-width:820px;margin:0 auto;padding:32px 20px 80px}
   header.mh{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:14px}
   header.mh h1.title{font-size:22px;margin:0}
-  .edit-btn{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:7px 14px;cursor:pointer;font-size:14px}
+  .edit-btn{background:var(--accent);color:#fff;border:0;border-radius:7px;height:32px;padding:0 14px;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit}
+  ${COPY_CSS}
   .hint{color:var(--muted);font-size:13px;margin:0 0 14px}
   article.doc h1,article.doc h2,article.doc h3{line-height:1.3;margin:1.4em 0 .5em}
   article.doc h1{font-size:1.7em} article.doc h2{font-size:1.4em} article.doc h3{font-size:1.2em}
@@ -639,7 +649,7 @@ function pageShell(
   footer.mh{margin-top:48px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:12px;text-align:center}
 </style></head><body>
 ${opts.bare ? `<div class="wrap">${inner}</div>` : `<div class="wrap">
-<header class="mh"><h1 class="title">${escapeHtml(title)}</h1>${editBtn}</header>
+<header class="mh"><h1 class="title">${escapeHtml(title)}</h1>${tools}</header>
 ${hint}
 ${inner}
 <footer class="mh">通过 metahub 分享</footer>

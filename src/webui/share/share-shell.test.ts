@@ -22,5 +22,6 @@ test("css: 120ms gated fade-in, sheen sweep, reduced-motion off switch", () => {
   expect(SHELL_CSS).toContain("@keyframes skel-sweep");
   expect(SHELL_CSS).toContain("@media (prefers-reduced-motion:reduce)");
   expect(SHELL_CSS).toContain("#app>.mh-view{animation:skel-in .18s ease both}");
-  expect(SHELL_CSS).toContain("header.mh{margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:14px}");
+  expect(SHELL_CSS).toContain("header.mh{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:14px}");
+  expect(SHELL_CSS).toContain(".copy-btn{");
 });

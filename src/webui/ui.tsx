@@ -2,6 +2,7 @@
 import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
+import { consumeKey, imeGhost } from "./keys.ts";
 
 // Imperative UI primitives (Toast / Menu / Modal) backed by tiny external
 // stores, so any code can pop a menu or dialog without prop-drilling. Mount
@@ -136,6 +137,17 @@ function MenuHost() {
   // The editor's slash menu / format bar render their own .pop and stay
   // caret-anchored on purpose. Read per open; menus never survive a rotation.
   const sheet = matchMedia(MOBILE_MQ).matches;
+  // Escape closes the open menu (capture phase: the menu is the topmost layer).
+  useEffect(() => {
+    if (!state) return;
+    const on = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || imeGhost(e)) return;
+      consumeKey(e);
+      closeMenu();
+    };
+    window.addEventListener("keydown", on, true);
+    return () => window.removeEventListener("keydown", on, true);
+  }, [state]);
   useLayoutEffect(() => {
     if (!state || !ref.current || sheet) return setPos(null);
     const { x, y } = anchorPoint(state.anchor);

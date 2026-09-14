@@ -4,8 +4,9 @@
 // old deep links (share-modal: sec=hosting / sec=sync) map via LEGACY_SEC.
 import { isNoOrigin } from "../data/replica.ts";
 import { isDesktop } from "./shared.ts";
+import { MOBILE_MQ } from "../ui.tsx";
 
-export type PageId = "appearance" | "quicknote" | "offline" | "backup" | "devices" | "audit" | "hosting" | "about";
+export type PageId = "appearance" | "quicknote" | "offline" | "backup" | "devices" | "audit" | "hosting" | "shortcuts" | "about";
 
 export interface PageDef { id: PageId; label: string; icon: string; show: () => boolean }
 
@@ -26,6 +27,7 @@ export const GROUPS: { key: "device" | "workspace" | "app"; pages: PageDef[] }[]
   // Headless group (no .set-rail-group-head): the app itself, last in the list.
   // The cube is the product mark, so the row carries the product identity.
   { key: "app", pages: [
+    { id: "shortcuts", label: "快捷键", icon: "keyboard", show: () => !window.matchMedia(MOBILE_MQ).matches },
     { id: "about", label: "关于", icon: "cube", show: () => true },
   ]},
 ];
