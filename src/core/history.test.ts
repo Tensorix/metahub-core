@@ -433,3 +433,65 @@ test("record revert converges across two synced nodes", () => {
   expect(getRecord(b, rec.id)).toEqual(getRecord(a, rec.id));
   expect(listRecordRevisions(b, rec.id)).toEqual(listRecordRevisions(a, rec.id));
 });
+
+// ---- history cache ----------------------------------------------------------
+
+import { getDocHistory } from "./history-cache.ts";
+import { compactOplog } from "./compact.ts";
+
+test("doc history is memoized per document and dropped on any new change", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "Spec", body: "alpha\n\nbeta" });
+  const first = listDocumentRevisions(db, doc.id);
+  expect(getDocHistory(db, doc.id)?.revisions).toEqual(first);
+  const head = documentVersion(db, doc.id);
+  const state = documentAtVersion(db, doc.id, head);
+  expect(getDocHistory(db, doc.id)?.states.get(head)).toEqual(state);
+
+  advanceClock(db, 10_000);
+  updateDocument(db, doc.id, { body: "alpha\n\nbeta2" });
+  expect(getDocHistory(db, doc.id)).toBeUndefined();
+  expect(listDocumentRevisions(db, doc.id).length).toBe(first.length + 1);
+});
+
+test("a late-arriving older change from a peer refreshes cached version states", () => {
+  const a = makeNode("aaaa");
+  const b = makeNode("bbbb");
+  const doc = createDocument(a, { title: "Spec", body: "alpha\n\nbeta" });
+  syncBoth(a, b);
+  updateDocument(b, doc.id, { body: "alpha\n\nbeta-from-b" });
+  const bChanges = changesSince(b, "");
+
+  advanceClock(a, 10_000);
+  updateDocument(a, doc.id, { title: "Spec v2" });
+  const head = documentVersion(a, doc.id);
+  expect(documentAtVersion(a, doc.id, head).body).toBe("alpha\n\nbeta");
+
+  ingest(a, bChanges);
+  expect(getDocHistory(a, doc.id)).toBeUndefined();
+  expect(documentAtVersion(a, doc.id, head).body).toBe("alpha\n\nbeta-from-b");
+});
+
+test("moving a block between documents drops both documents' cache", () => {
+  const db = makeNode("aaaa");
+  const d1 = createDocument(db, { title: "One", body: "shared" });
+  const d2 = createDocument(db, { title: "Two", body: "other" });
+  listDocumentRevisions(db, d1.id);
+  listDocumentRevisions(db, d2.id);
+  const block = db
+    .query("SELECT id FROM doc_blocks WHERE doc_id = ?")
+    .get(d1.id) as { id: string };
+  emit(db, "doc_blocks", block.id, "doc_id", d2.id);
+  expect(getDocHistory(db, d1.id)).toBeUndefined();
+  expect(getDocHistory(db, d2.id)).toBeUndefined();
+});
+
+test("compacting the oplog forgets every cached history", () => {
+  const db = makeNode("aaaa");
+  const doc = createDocument(db, { title: "Spec", body: "alpha" });
+  updateDocument(db, doc.id, { body: "beta" });
+  listDocumentRevisions(db, doc.id);
+  expect(getDocHistory(db, doc.id)).toBeDefined();
+  compactOplog(db, { keepDays: 0, now: Date.now() + 60_000 });
+  expect(getDocHistory(db, doc.id)).toBeUndefined();
+});

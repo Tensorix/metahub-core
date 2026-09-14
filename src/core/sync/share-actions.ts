@@ -20,7 +20,7 @@ import { resolveEntity } from "../resolve.ts";
 import { resolveSite, getSite } from "../sites-core.ts";
 import { getDocument } from "../documents.ts";
 import { getDatabase } from "../databases.ts";
-import { listPeers, getPeer } from "./peers.ts";
+import { listPeers, getPeer, type PeerRow } from "./peers.ts";
 import {
   createShare,
   deleteShare,
@@ -40,6 +40,16 @@ import {
   deleteBucketShareObjects,
 } from "./share-export.ts";
 import { MAX_PRESIGN_SECONDS } from "./storage-s3-sign.ts";
+import {
+  absoluteShareUrl,
+  bucketShareItem,
+  cachedRemoteShares,
+  dropRemoteShare,
+  fetchPeerShares,
+  findCachedBucketShare,
+  primeRemoteShare,
+  type RemoteShareMode,
+} from "./remote-shares-cache.ts";
 import type { S3Config } from "./storage.ts";
 import { edgeCapabilities, getEdgeConfig } from "./edge-config.ts";
 import { roomUrlOf } from "./room-url.ts";
@@ -52,7 +62,6 @@ import {
 
 const DEFAULT_SHARE_VIEWER = "https://share.mh.tensorix.org";
 const DEFAULT_S3_EXPIRY_SEC = MAX_PRESIGN_SECONDS;
-const PEER_LIST_TIMEOUT_MS = 4000;
 const PEER_SHARE_TIMEOUT_MS = 10_000;
 const CreatedShareWireSchema = z.object({
   slug: z.string().min(1).max(128),
@@ -250,14 +259,6 @@ function bucketLink(base: string, manifestUrl: string, keyB64?: string, saltB64?
   return `${base}/#${frag}`;
 }
 
-function absoluteShareUrl(url: string, base: string): string {
-  try {
-    return new URL(url, `${base.replace(/\/+$/, "")}/`).toString();
-  } catch {
-    return url;
-  }
-}
-
 /** The legal-combination matrix in ONE place. Every rule names the conflict and
  *  the way out, so surfaces (CLI flags, WebUI selects, remote peers) fail the
  *  same way instead of each scattering its own throws. */
@@ -309,6 +310,7 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
       expiresSec: req.expiresMs != null ? Math.floor(req.expiresMs / 1000) : DEFAULT_S3_EXPIRY_SEC,
       viewerOrigin: viewerOriginOf(base),
     });
+    primeRemoteShare(db, bucketUrl, bucketShareItem({ url: bucketUrl, label }, out.meta));
     return {
       slug,
       kind: req.kind,
@@ -568,27 +570,22 @@ export function listServerSharesLocal(db: DbDriver, targetId?: string): ShareLis
 
 /** Local listing (server rows + each attached bucket) — NO peer fan-out (so the
  *  /api/shares endpoint a peer calls can't recurse). Optional target filter. */
-export async function listSharesLocal(db: DbDriver, targetId?: string): Promise<ShareListItem[]> {
+export async function listSharesLocal(
+  db: DbDriver,
+  targetId?: string,
+  opts: { mode?: RemoteShareMode } = {},
+): Promise<ShareListItem[]> {
   const out: ShareListItem[] = listServerSharesLocal(db, targetId);
+  if (opts.mode === "cached") {
+    for (const it of cachedRemoteShares(db, targetId)) if (it.sourceKind === "bucket") out.push(it);
+    return out;
+  }
   for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
     const config = JSON.parse(p.config!) as S3Config;
     const metas = await listBucketShares(config).catch(() => []);
     for (const m of metas) {
       if (targetId && m.target_id !== targetId) continue;
-      out.push({
-        slug: m.slug,
-        kind: m.kind,
-        target_id: m.target_id,
-        title: m.title || m.target_id,
-        permission: m.permission,
-        transport: "s3",
-        source: `桶 ${p.label ?? p.url}`,
-        sourceKind: "bucket",
-        hosting: "s3",
-        expiresAt: m.presign_exp,
-        hasPassword: m.has_password,
-        contentUpdatedAt: m.content_updated_at ?? m.created_at,
-      });
+      out.push(bucketShareItem(p, m));
     }
   }
   return out;
@@ -636,9 +633,18 @@ export async function revokeShareByRequestId(
 
 /** Aggregated listing for CLI/WebUI: local ∪ each paired peer's /api/shares
  *  (best-effort, bounded), deduped by slug. Optional target filter. */
-export async function listSharesAggregated(db: DbDriver, targetId?: string): Promise<ShareListItem[]> {
+export async function listSharesAggregated(
+  db: DbDriver,
+  targetId?: string,
+  opts: { mode?: RemoteShareMode } = {},
+): Promise<ShareListItem[]> {
   const bySlug = new Map<string, ShareListItem>();
-  for (const item of await listSharesLocal(db, targetId)) bySlug.set(item.slug, item);
+  for (const item of await listSharesLocal(db, targetId, opts)) bySlug.set(item.slug, item);
+  if (opts.mode === "cached") {
+    for (const it of cachedRemoteShares(db, targetId, { refresh: false }))
+      if (it.sourceKind === "peer" && !bySlug.has(it.slug)) bySlug.set(it.slug, it);
+    return [...bySlug.values()];
+  }
 
   await Promise.all(
     listShareServers(db).map(async ({ url, label }) => {
@@ -657,19 +663,6 @@ export async function listSharesAggregated(db: DbDriver, targetId?: string): Pro
     }),
   );
   return [...bySlug.values()];
-}
-
-async function fetchPeerShares(url: string, token: string, targetId?: string): Promise<ShareListItem[]> {
-  const u = `${url.replace(/\/+$/, "")}/api/shares${targetId ? `?target=${encodeURIComponent(targetId)}` : ""}`;
-  const res = await Promise.race([
-    fetch(u, { headers: { authorization: `Bearer ${token}` } }),
-    new Promise<Response>((_r, rej) => setTimeout(() => rej(new Error("timeout")), PEER_LIST_TIMEOUT_MS)),
-  ]);
-  if (!res.ok) return [];
-  return ((await res.json()) as ShareListItem[]).map((item) => ({
-    ...item,
-    ...(item.url ? { url: absoluteShareUrl(item.url, url) } : {}),
-  }));
 }
 
 /** Revoke: local server row → delete it (cascading the share's room, if one is
@@ -713,15 +706,25 @@ export async function revokeShareAction(db: DbDriver, slug: string): Promise<Rev
       status: "revoked",
     };
   }
+  const owner = await bucketOwning(db, slug);
+  if (!owner) return { ok: false, status: "not_found" };
+  await deleteBucketShareObjects(JSON.parse(owner.peer.config!) as S3Config, slug);
+  dropRemoteShare(db, owner.peer.url, slug);
+  return { ok: true, status: "revoked" };
+}
+
+async function bucketOwning(
+  db: DbDriver,
+  slug: string,
+): Promise<{ peer: PeerRow; kind: ShareKind; item: ShareListItem | null } | null> {
+  const cached = findCachedBucketShare(db, slug);
+  if (cached) return { peer: cached.source.peer, kind: cached.item.kind as ShareKind, item: cached.item };
   for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
-    const config = JSON.parse(p.config!) as S3Config;
-    const metas = await listBucketShares(config).catch(() => []);
-    if (metas.some((m) => m.slug === slug)) {
-      await deleteBucketShareObjects(config, slug);
-      return { ok: true, status: "revoked" };
-    }
+    const metas = await listBucketShares(JSON.parse(p.config!) as S3Config).catch(() => []);
+    const m = metas.find((x) => x.slug === slug);
+    if (m) return { peer: p, kind: m.kind, item: null };
   }
-  return { ok: false, status: "not_found" };
+  return null;
 }
 
 /** Renew an s3 share's LINK. Default is re-presign only — the snapshot content
@@ -734,27 +737,31 @@ export async function renewShareAction(
   viewerBaseOverride?: string,
   opts?: { refreshContent?: boolean },
 ): Promise<CreatedShare> {
-  for (const p of listPeers(db).filter((x) => x.kind === "s3" && x.config)) {
-    const config = JSON.parse(p.config!) as S3Config;
-    const metas = await listBucketShares(config).catch(() => []);
-    const m = metas.find((x) => x.slug === slug);
-    if (!m) continue;
-    const base = viewerBase(db, viewerBaseOverride);
-    const out = opts?.refreshContent
-      ? await renewBucketShare(db, config, slug)
-      : await represignBucketShare(config, slug);
-    return {
-      slug,
-      kind: m.kind,
-      permission: "view",
-      transport: "s3",
-      hosting: "s3",
-      url: bucketLink(base, out.manifestUrl, out.keyB64, out.saltB64),
+  const owner = await bucketOwning(db, slug);
+  if (!owner) throw new MhError("not_found", `no such object-storage share: ${slug}`);
+  const { peer: p } = owner;
+  const config = JSON.parse(p.config!) as S3Config;
+  const base = viewerBase(db, viewerBaseOverride);
+  const out = opts?.refreshContent
+    ? await renewBucketShare(db, config, slug)
+    : await represignBucketShare(config, slug);
+  if (owner.item)
+    primeRemoteShare(db, p.url, {
+      ...owner.item,
+      title: out.title || owner.item.title,
       expiresAt: out.presignExp,
-      source: `桶 ${p.label ?? p.url}`,
-    };
-  }
-  throw new MhError("not_found", `no such object-storage share: ${slug}`);
+      ...(opts?.refreshContent ? { contentUpdatedAt: Date.now() } : {}),
+    });
+  return {
+    slug,
+    kind: owner.kind,
+    permission: "view",
+    transport: "s3",
+    hosting: "s3",
+    url: bucketLink(base, out.manifestUrl, out.keyB64, out.saltB64),
+    expiresAt: out.presignExp,
+    source: `桶 ${p.label ?? p.url}`,
+  };
 }
 
 /** An unguessable slug that doesn't collide with a local server-share row. */

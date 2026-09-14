@@ -116,7 +116,7 @@ export const shareRoutes: Route[] = [
     handler: async (req, { db }) => {
       try {
         const target = new URL(req.url).searchParams.get("target") ?? undefined;
-        return Response.json(await listSharesLocal(db, target));
+        return Response.json(await listSharesLocal(db, target, { mode: "cached" }));
       } catch (e) {
         return errorResponse(e);
       }
@@ -130,7 +130,7 @@ export const shareRoutes: Route[] = [
     handler: async (req, { db }) => {
       try {
         const target = new URL(req.url).searchParams.get("target") ?? undefined;
-        return Response.json(await listSharesAggregated(db, target));
+        return Response.json(await listSharesAggregated(db, target, { mode: "cached" }));
       } catch (e) {
         return errorResponse(e);
       }

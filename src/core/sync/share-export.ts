@@ -210,7 +210,7 @@ export async function createBucketShare(
     expiresSec: number;
     viewerOrigin?: string;
   },
-): Promise<BucketShareLink> {
+): Promise<BucketShareLink & { meta: BucketShareMeta }> {
   const expiresSec = clampExpiry(opts.expiresSec);
   let shareKey: Uint8Array;
   let saltB64: string | undefined;
@@ -252,7 +252,7 @@ export async function createBucketShare(
   });
   await mergeViewerCors(opts.config, opts.viewerOrigin);
 
-  return { manifestUrl, presignExp, keyB64: opts.password ? undefined : toB64(shareKey), saltB64, title };
+  return { manifestUrl, presignExp, keyB64: opts.password ? undefined : toB64(shareKey), saltB64, title, meta };
 }
 
 /** Renew an object-storage share: re-read the (live) source, re-encrypt with the
@@ -352,7 +352,7 @@ export async function represignBucketShare(
 export async function listBucketShares(config: S3Config): Promise<BucketShareMeta[]> {
   const client = storageClientFor(config);
   const root = sharesRoot(config.prefix);
-  const entries = await client.list(`${root}/`, undefined, "/").catch(() => []);
+  const entries = await client.list(`${root}/`, undefined, "/");
   const slugs = entries
     .map((e) => e.key.slice(`${root}/`.length).replace(/\/$/, ""))
     .filter((s) => s && !s.includes("/"));

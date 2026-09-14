@@ -391,6 +391,10 @@ export class ApiError extends Error {
  *  nav — call sites don't (and must not) reload it by hand, so a forgotten
  *  manual refresh can't go stale. */
 export const NAV_INVALIDATE = "mh-nav-invalidate";
+export const SHARES_CHANGED = "mh-shares-changed";
+export function notifySharesChanged(): void {
+  document.dispatchEvent(new Event(SHARES_CHANGED));
+}
 
 // The audit revert (POST /api/audit/revert) can rewrite ANY dataset, so it
 // invalidates both nav and record caches unconditionally.

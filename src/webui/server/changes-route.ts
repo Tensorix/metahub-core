@@ -114,6 +114,14 @@ export function activeSubscribers(db: object): number {
   return pollers.get(db)?.subs.size ?? 0;
 }
 
+/** Push a synthetic changes event for state that lives outside the oplog. */
+export function broadcast(db: object, datasets: string[], rowIds: string[] = []): void {
+  const poller = pollers.get(db);
+  if (!poller || !datasets.length) return;
+  const text = sse("changes", { datasets, rowIds, cursor: poller.cursor, truncated: false });
+  for (const send of [...poller.subs]) send(text);
+}
+
 /** Test hook: run one poll tick now instead of waiting out POLL_MS. */
 export function pokeNow(db: object): void {
   const poller = pollers.get(db);

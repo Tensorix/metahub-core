@@ -20,6 +20,8 @@ import {
   type EdgeStatus,
   type Site,
   type SiteHostingInfo,
+  SHARES_CHANGED,
+  notifySharesChanged,
 } from "./api.ts";
 import { buildShareTargets, shareTargetUrl } from "./data/share-targets.ts";
 import { onReplicaStatus } from "./data/replica.ts";
@@ -60,33 +62,9 @@ export function shareTargetOf(s: ShareListItem): ShareTarget | null {
   return { kind: s.kind, ref: s.target_id, title: s.title };
 }
 
-/** Broadcast after any create/revoke/renew so the global view + in-context
- *  "shared" badges (useSharedTargets) refresh — mirrors NAV_INVALIDATE. */
-export const SHARES_CHANGED = "mh-shares-changed";
-export function notifySharesChanged(): void {
-  document.dispatchEvent(new Event(SHARES_CHANGED));
-}
+export { SHARES_CHANGED, notifySharesChanged };
 
-/** The set of target ids that currently have at least one share — drives the
- *  in-context "已分享" badges. One GET on mount, refreshed on SHARES_CHANGED. */
-export function useSharedTargets(): Set<string> {
-  const [ids, setIds] = useState<Set<string>>(() => new Set());
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .listLocalShares()
-        .then((list) => alive && setIds(new Set(list.map((s) => s.target_id))))
-        .catch(() => undefined);
-    load();
-    document.addEventListener(SHARES_CHANGED, load);
-    return () => {
-      alive = false;
-      document.removeEventListener(SHARES_CHANGED, load);
-    };
-  }, []);
-  return ids;
-}
+export { useSharedTargets } from "./shared-targets.ts";
 
 /** Copy / renew / revoke handlers shared by the modal's rows and the global
  *  ShareView. Broadcasts SHARES_CHANGED + reloads after a mutation.

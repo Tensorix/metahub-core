@@ -13,7 +13,7 @@
  */
 import { startServer } from "../../../src/core/sync/server.ts";
 import { serveWebui, warmWebui } from "../../../src/webui/server/assets.ts";
-import { webuiRoutes } from "../../../src/webui/server/routes.ts";
+import { webuiRoutes, webuiOnStart } from "../../../src/webui/server/routes.ts";
 
 export function runSidecar(): void {
   const t0 = Date.now();
@@ -24,7 +24,7 @@ export function runSidecar(): void {
     allowRemoteSiteHosting: false,
     loopbackUiOnly: true,
     // Core ships no UI — the sidecar injects the WebUI it exists to serve.
-    ui: { serveAssets: serveWebui, routes: webuiRoutes },
+    ui: { serveAssets: serveWebui, routes: webuiRoutes, onStart: webuiOnStart },
   });
 
   // Contract with main.ts: this exact prefix is matched to extract the port.

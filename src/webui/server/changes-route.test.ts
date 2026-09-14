@@ -5,7 +5,7 @@ import { createDatabase } from "../../core/databases.ts";
 import { addProperty } from "../../core/properties.ts";
 import { createRecord } from "../../core/records.ts";
 import type { RouteCtx } from "../../core/sync/routes.ts";
-import { activeSubscribers, changesRoutes, pokeNow } from "./changes-route.ts";
+import { activeSubscribers, changesRoutes, pokeNow, broadcast } from "./changes-route.ts";
 
 function db(): Database {
   const d = new Database(":memory:");
@@ -142,5 +142,23 @@ describe("GET /api/changes", () => {
     expect(activeSubscribers(d)).toBe(1);
     ctrl.abort();
     expect(activeSubscribers(d)).toBe(0);
+  });
+});
+
+describe("broadcast", () => {
+  test("pushes a synthetic changes event carrying the poller's cursor", async () => {
+    const d = db();
+    const ac = new AbortController();
+    const reader = new SseReader(open(d, undefined, ac.signal));
+    const hello = await reader.next();
+    expect(hello.event).toBe("hello");
+    broadcast(d, ["shares"]);
+    const ev = await reader.next();
+    expect(ev.event).toBe("changes");
+    expect(ev.data.datasets).toEqual(["shares"]);
+    expect(ev.data.rowIds).toEqual([]);
+    expect(ev.data.cursor).toBe(hello.data.cursor);
+    ac.abort();
+    await reader.cancel().catch(() => undefined);
   });
 });

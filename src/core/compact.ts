@@ -5,6 +5,7 @@ import { formatHlc } from "./hlc.ts";
 import { cacheDir } from "./paths.ts";
 import { blobRefsIn } from "./blobs-core.ts";
 import { MhError } from "./errors.ts";
+import { invalidateHistory } from "./history-cache.ts";
 import {
   countExpiredIntentReceipts,
   INTENT_RECEIPT_DATASET,
@@ -102,6 +103,7 @@ export function compactOplog(db: Database, opts: CompactOptions): CompactResult 
       pruneExpiredIntentReceipts(db, now) +
       db.query(`DELETE FROM crdt_changes WHERE ${COMPACTABLE}`).run(cutoff)
         .changes;
+    invalidateHistory(db);
   }
   const kept = (db.query("SELECT COUNT(*) AS n FROM crdt_changes").get() as { n: number }).n -
     (dryRun ? deleted : 0);

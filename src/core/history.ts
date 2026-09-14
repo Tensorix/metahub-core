@@ -4,6 +4,7 @@ import { serializeDocBlocks } from "./blocks.ts";
 import { getDocument, updateDocument, documentVersion } from "./documents.ts";
 import { listProperties } from "./properties.ts";
 import { MhError } from "./errors.ts";
+import { getDocHistory, setDocHistory, rememberDocState, type DocHistoryEntry } from "./history-cache.ts";
 
 // Read-side history over the CRDT oplog. The oplog (crdt_changes) is append-only
 // and never compacted, so the state of any register at a cutoff HLC `at` is the
@@ -144,19 +145,22 @@ function everBlockIds(db: DbDriver, docId: string): string[] {
 }
 
 /** Doc register changes + changes of every block ever attached, in HLC order. */
-function docChanges(db: DbDriver, docId: string): RawChange[] {
+function docHistory(db: DbDriver, docId: string): DocHistoryEntry {
+  const cached = getDocHistory(db, docId);
+  if (cached) return cached;
   const blocks = everBlockIds(db, docId);
   const placeholders = blocks.map(() => "?").join(",");
   const blockClause = blocks.length
     ? ` OR (dataset = 'doc_blocks' AND row_id IN (${placeholders}))`
     : "";
-  return db
+  const changes = db
     .query(
       `SELECT ${CHANGE_SELECT} FROM crdt_changes
        WHERE (dataset = 'documents' AND row_id = ?)${blockClause}
        ORDER BY hlc`,
     )
     .all(docId, ...blocks) as RawChange[];
+  return setDocHistory(db, docId, changes, blocks);
 }
 
 export interface DocRevision {
@@ -179,7 +183,9 @@ export interface DocRevision {
 
 /** A document's edit history, newest first, clustered into save-sized revisions. */
 export function listDocumentRevisions(db: DbDriver, id: string): DocRevision[] {
-  const changes = docChanges(db, id);
+  const entry = docHistory(db, id);
+  if (entry.revisions) return entry.revisions.slice();
+  const changes = entry.changes;
   if (!changes.length) throw new MhError("not_found", `no such document: ${id}`);
   // Running values of the doc-level registers, so flags reflect VALUE changes,
   // not mere register writes. Historical oplogs are full of same-value title
@@ -233,7 +239,8 @@ export function listDocumentRevisions(db: DbDriver, id: string): DocRevision[] {
       blocks_deleted: deletedBlocks.size,
     });
   }
-  return out.reverse();
+  entry.revisions = out.reverse();
+  return entry.revisions.slice();
 }
 
 export interface DocumentVersionState {
@@ -248,7 +255,10 @@ export interface DocumentVersionState {
 /** Reconstruct a document as of version cutoff `at` (state at hlc <= at). */
 export function documentAtVersion(db: DbDriver, id: string, at: string): DocumentVersionState {
   if (!at) throw new MhError("invalid_input", "missing version cutoff");
-  const changes = docChanges(db, id).filter((c) => c.hlc <= at);
+  const entry = docHistory(db, id);
+  const hit = entry.states.get(at);
+  if (hit) return { ...hit };
+  const changes = entry.changes.filter((c) => c.hlc <= at);
   if (!changes.length)
     throw new MhError("not_found", `no version of document ${id} at or before ${at}`);
 
@@ -298,13 +308,15 @@ export function documentAtVersion(db: DbDriver, id: string, at: string): Documen
     ? serializeDocBlocks(blocks)
     : ((parse("body") as string | undefined) ?? "");
 
-  return {
+  const state: DocumentVersionState = {
     id,
     title: (parse("title") as string | undefined) ?? "",
     body,
     deleted: docRegs.get("__deleted") ? flagSet(docRegs.get("__deleted")!.value) : false,
     version: changes[changes.length - 1]!.hlc,
   };
+  rememberDocState(entry, at, state);
+  return { ...state };
 }
 
 export interface RevertDocResult {

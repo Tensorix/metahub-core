@@ -7,7 +7,7 @@ GlobalRegistrator.register();
 import { afterAll, expect, test } from "bun:test";
 import { ensureLive, stopLive } from "./live.ts";
 import { SYNCED_EVENT } from "./data/replica.ts";
-import { NAV_INVALIDATE } from "./api.ts";
+import { NAV_INVALIDATE, SHARES_CHANGED } from "./api.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const enc = new TextEncoder();
@@ -78,4 +78,13 @@ test("pokes fan out as SYNCED_EVENT (+NAV_INVALIDATE), aggregated per debounce w
   c1.close();
   await until(() => requests.length >= 2, 4000);
   expect(requests[1]).toBe("/api/changes?since=7");
+});
+
+test("a shares poke fans out as SHARES_CHANGED", async () => {
+  let shares = 0;
+  document.addEventListener(SHARES_CHANGED, () => shares++);
+  await until(() => controller != null, 4000);
+  push('event: changes\ndata: {"datasets":["shares"],"rowIds":[],"cursor":7,"truncated":false}\n\n');
+  await until(() => shares > 0);
+  expect(shares).toBe(1);
 });

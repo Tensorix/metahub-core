@@ -21,6 +21,7 @@
 
 import type { DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
+import { noteChange } from "../history-cache.ts";
 import { ingest, CHANGE_COLS, type Change } from "../crdt.ts";
 import { initSchema } from "../schema-init.ts";
 import { randomSuffix } from "../ids.ts";
@@ -284,6 +285,7 @@ function evictRow(db: DbDriver, key: RowKey, ackSeq: number, guestBase: string):
   const table = STATE_TABLE[key.dataset];
   if (!table) return;
   db.query(`DELETE FROM ${table} WHERE id = ?`).run(key.row_id);
+  noteChange(db, key.dataset, key.row_id, "", null);
   db.query(
     `DELETE FROM crdt_changes WHERE dataset = ? AND row_id = ?
      AND NOT (${GUEST_NODE_SQL} AND seq > ?)`,
@@ -319,6 +321,7 @@ function sweepEvictPending(db: DbDriver, ackSeq: number, guestBase: string): voi
     // Defense in depth: only guest-authored ops are ever eligible here (owner
     // baselines must survive) — mirror evictRow's own author predicate so the
     // invariant is enforced by SQL, not just by the assumption above.
+    noteChange(db, k.dataset, k.row_id, "", null);
     db.query(
       `DELETE FROM crdt_changes WHERE dataset = ? AND row_id = ? AND seq <= ? AND (${GUEST_NODE_SQL})`,
     ).run(k.dataset, k.row_id, ackSeq, guestBase, guestBase);

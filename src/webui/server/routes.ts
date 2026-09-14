@@ -73,7 +73,8 @@ import {
 import type { DbDriver } from "../../core/driver.ts";
 import { getServerConfig } from "../../core/config.ts";
 import { shareRoutes } from "./share-routes.ts";
-import { changesRoutes } from "./changes-route.ts";
+import { changesRoutes, broadcast } from "./changes-route.ts";
+import { onRemoteSharesChanged, refreshRemoteShares } from "../../core/sync/remote-shares-cache.ts";
 import { siteHostingRoutes } from "./site-hosting-routes.ts";
 import { edgeRoutes } from "./edge-routes.ts";
 import pkg from "../../../package.json" with { type: "json" };
@@ -1033,3 +1034,12 @@ export const webuiRoutes: Route[] = [
   ...edgeRoutes,
   ...changesRoutes,
 ];
+
+let remoteSharesWired = false;
+export function webuiOnStart(db: DbDriver): void {
+  if (!remoteSharesWired) {
+    remoteSharesWired = true;
+    onRemoteSharesChanged((d) => broadcast(d, ["shares"]));
+  }
+  void refreshRemoteShares(db);
+}

@@ -3,6 +3,7 @@ import { getNodeId } from "./node.ts";
 import { nextHlc, observeHlc } from "./hlc.ts";
 import { serializeDocBlocks } from "./blocks.ts";
 import { randomSuffix } from "./ids.ts";
+import { noteChange } from "./history-cache.ts";
 import type { ColumnsOf } from "./sqlcols.ts";
 import {
   filterExpiredIntentReceipts,
@@ -374,6 +375,7 @@ export function applyChange(db: DbDriver, c: Change): ApplyResult {
     )
     .get(c.dataset, c.row_id, c.col) as { h: string | null };
 
+  if (inserted) noteChange(db, c.dataset, c.row_id, c.col, c.value);
   if (cur.h !== c.hlc) return { inserted, winner: false }; // a newer write already wins
   try {
     materialize(db, c.dataset, c.row_id, c.col, c.value);

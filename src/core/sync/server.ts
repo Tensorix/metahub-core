@@ -1,5 +1,6 @@
 import "./storage-s3-bun.ts"; // side effect: register the Bun S3 storage-sync client (auto-sync timer)
 import { openMetahub } from "../db.ts";
+import type { DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
 import { getNodeId } from "../node.ts";
 import { getServerConfig } from "../config.ts";
@@ -99,6 +100,7 @@ export interface UiHandler {
   serveAssets(req: Request): Promise<Response | null>;
   /** The UI's data API routes, merged into the route registry (and /docs). */
   routes: Route[];
+  onStart?(db: DbDriver): void;
 }
 
 export function loopbackUiRejection(req: Request, port: number): Response | null {
@@ -144,6 +146,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     allowRemoteSiteHosting: opts.allowRemoteSiteHosting ?? true,
   };
   const allRoutes = opts.ui ? [...routes, ...opts.ui.routes] : routes;
+  opts.ui?.onStart?.(db);
 
   // In-process forward into the route table for /sites/<name>/api/* requests
   // that carry a valid token: the site mount rewrites the URL to /api/* and the

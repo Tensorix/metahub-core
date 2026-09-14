@@ -11,7 +11,7 @@
 // seamless 401 renewal, and the read loop below adds reconnect-with-cursor so
 // changes missed while disconnected are caught up server-side (?since=).
 
-import { authFetch, NAV_INVALIDATE } from "./api.ts";
+import { authFetch, NAV_INVALIDATE, SHARES_CHANGED } from "./api.ts";
 import { SYNCED_EVENT, clientMode } from "./data/replica.ts";
 
 const BACKOFF_MIN_MS = 1000;
@@ -69,6 +69,7 @@ function flush(): void {
   if (datasets.some((d) => d === "databases" || d === "documents")) {
     document.dispatchEvent(new CustomEvent(NAV_INVALIDATE));
   }
+  if (datasets.includes("shares")) document.dispatchEvent(new Event(SHARES_CHANGED));
 }
 
 function queue(datasets: string[], rowIds: string[]): void {

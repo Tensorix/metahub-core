@@ -32,7 +32,7 @@ import { parseDuration } from "../core/sync/token.ts";
 import { startServer } from "../core/sync/server.ts";
 import { errorCode } from "../core/errors.ts";
 import { serveWebui, warmWebui } from "../webui/server/assets.ts";
-import { webuiRoutes } from "../webui/server/routes.ts";
+import { webuiRoutes, webuiOnStart } from "../webui/server/routes.ts";
 import { print, fail, warn } from "./output.ts";
 import { renderStartupBanner } from "./banner.ts";
 import { resolveEndpoints } from "./netaddr.ts";
@@ -138,7 +138,7 @@ if (scopedConfigHelp) {
       autoSync: argv.includes("--no-auto-sync") ? false : undefined,
       tls: tlsCert != null && tlsKey != null ? { certPath: tlsCert, keyPath: tlsKey } : undefined,
       // Core ships no UI; the CLI server is what plugs the browser WebUI in.
-      ui: { serveAssets: serveWebui, routes: webuiRoutes },
+      ui: { serveAssets: serveWebui, routes: webuiRoutes, onStart: webuiOnStart },
     });
     void warmWebui(); // move the first dev Bun.build off the first paint
   } catch (e) {
