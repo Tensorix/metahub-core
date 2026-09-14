@@ -315,10 +315,13 @@ function App() {
   // App-level shortcuts; bindings and labels live in shortcuts.ts.
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      if (isDesktop && (pressed(e, "back") || pressed(e, "forward"))) {
-        e.preventDefault();
-        (pressed(e, "back") ? goBack : goForward)();
-        return;
+      if (isDesktop) {
+        const back = pressed(e, "back");
+        if (back || pressed(e, "forward")) {
+          e.preventDefault();
+          (back ? goBack : goForward)();
+          return;
+        }
       }
       if (pressed(e, "search")) {
         e.preventDefault();
