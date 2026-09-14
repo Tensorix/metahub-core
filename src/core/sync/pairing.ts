@@ -51,9 +51,13 @@ export function redeemPairingCode(db: DbDriver, code: string): boolean {
   );
 }
 
-/** Mint a durable credential we issue to a peer and will accept on /sync. */
+/** Mint a durable credential we issue to a peer and will accept on /sync.
+ *  Re-pairing is credential rotation: a known node's earlier grants are
+ *  superseded — the device only keeps its latest token, so the old ones would
+ *  otherwise linger as live keys nobody holds. */
 export function mintGrant(db: DbDriver, peerUrl: string | null, nodeId: string | null): string {
   const token = randomSuffix(32);
+  if (nodeId) db.query("DELETE FROM peer_grants WHERE node_id = ?").run(nodeId);
   db.query(
     "INSERT INTO peer_grants (token, peer_url, node_id, created_at) VALUES (?, ?, ?, ?)",
   ).run(token, peerUrl, nodeId, Date.now());

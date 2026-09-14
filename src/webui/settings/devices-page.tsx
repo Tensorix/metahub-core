@@ -134,15 +134,15 @@ export function DevicesPage() {
     await api.removePeer(url).catch((e) => toast(e.message));
     reload();
   };
-  const revokeGrantRef = async (d: DeviceView, prefix: string) => {
+  const revokeGrants = async (d: DeviceView, refs: string[]) => {
     const ok = await confirmDialog({
       title: `撤销 ${deviceName(d)} 的接入`,
-      message: "它将无法再同步进这个工作区。已同步到它上面的数据仍在，无法远程删除。",
+      message: `${refs.length > 1 ? `将同时撤销它的 ${refs.length} 个授权码。` : ""}它将无法再同步进这个工作区。已同步到它上面的数据仍在，无法远程删除。`,
       confirmLabel: "撤销接入",
       danger: true,
     });
     if (!ok) return;
-    await api.revokeGrant(prefix).catch((e) => toast(e.message));
+    await Promise.all(refs.map((r) => api.revokeGrant(r))).catch((e) => toast((e as Error).message));
     reload();
   };
   const rename = async (d: DeviceView) => {
@@ -288,13 +288,15 @@ export function DevicesPage() {
               </>
             );
           })}
-          {!d.self &&
-            grants.map((c) => (
-              <button class="btn btn-ghost danger" onClick={() => revokeGrantRef(d, c.ref)}>
-                <Icon name="lock" cls="ico sm" />
-                撤销接入
-              </button>
-            ))}
+          {!d.self && grants.length > 0 && (
+            <button
+              class="btn btn-ghost danger"
+              onClick={() => revokeGrants(d, grants.map((c) => c.ref))}
+            >
+              <Icon name="lock" cls="ico sm" />
+              撤销接入
+            </button>
+          )}
           {!d.self && d.revocable === "bucket_rotate" && (
             <button class="btn btn-ghost" onClick={() => rotate(d)}>
               <Icon name="key" cls="ico sm" />

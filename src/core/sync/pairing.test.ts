@@ -73,6 +73,20 @@ test("mintGrant is accepted; random tokens are not", () => {
   expect(isAcceptedGrant(db, "garbage")).toBe(false);
 });
 
+test("mintGrant supersedes earlier grants for the same node; null-node mints don't", () => {
+  const db = makeDb();
+  const g1 = mintGrant(db, null, "nodeB");
+  const g2 = mintGrant(db, "http://b", "nodeB"); // re-pair: rotates the credential
+  expect(isAcceptedGrant(db, g1)).toBe(false);
+  expect(isAcceptedGrant(db, g2)).toBe(true);
+  expect(listGrants(db).map((g) => g.token)).toEqual([g2]);
+
+  const a = mintGrant(db, "http://x", null);
+  const b = mintGrant(db, "http://x", null);
+  expect(isAcceptedGrant(db, a)).toBe(true);
+  expect(isAcceptedGrant(db, b)).toBe(true);
+});
+
 test("listGrants and revokeGrant (exact and prefix, incl. null peer_url)", () => {
   const db = makeDb();
   const g1 = mintGrant(db, "http://b", "nodeB");
