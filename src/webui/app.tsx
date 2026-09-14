@@ -33,7 +33,7 @@ import { ShareView } from "./shares-view.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
-import { pressed, kbd, withKbd } from "./shortcuts.ts";
+import { pressed, tip } from "./shortcuts.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { QuickBoard } from "./quickboard/quickboard.tsx";
@@ -449,13 +449,12 @@ function App() {
           : saveState === "error"
             ? "cloudOff"
             : "cloudUp";
-  const saveHint = isMobile ? "" : ` · ${kbd("save")}`;
   const shareSaveTitle =
     saveState === "share"
       ? "分享"
       : saveState === "error"
         ? `保存到同步存储桶失败：${replicaSt.bucketError ?? ""}`
-        : `保存到同步存储桶${saveHint}`;
+        : "保存到同步存储桶";
 
   // Quiet success / loud failure: success rides on the inline "已保存" flash
   // (saveFlash, see above), so no success toast — we only shout on failure.
@@ -517,7 +516,7 @@ function App() {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
         <>
-          <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} kbd={kbd("toggleSource")} checked={docMode === "source"} onClick={() => {
+          <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} shortcut="toggleSource" checked={docMode === "source"} onClick={() => {
             close();
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
           }} />
@@ -622,7 +621,7 @@ function App() {
             {isMobile || sbCollapsed ? (
               <button
                 class="fnav-btn icon"
-                title={isMobile ? "返回" : withKbd("展开侧栏", "sidebar")}
+                {...(isMobile ? tip("返回") : tip("展开侧栏", "sidebar"))}
                 onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
               >
                 <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
@@ -632,7 +631,7 @@ function App() {
             )}
             <button
               class="fnav-btn"
-              title="站点配置"
+              {...tip("站点配置")}
               onClick={() => navigate({ kind: "site", name: view.name, tab: "config" })}
             >
               <Icon name="settings" cls="ico sm" />
@@ -644,7 +643,7 @@ function App() {
         <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
           <button
             class={"iconbtn hamburger" + (sbCollapsed ? " show-collapsed" : "")}
-            title={isMobile ? "返回" : withKbd(sbCollapsed ? "展开侧栏" : "菜单", "sidebar")}
+            {...(isMobile ? tip("返回") : tip(sbCollapsed ? "展开侧栏" : "菜单", "sidebar"))}
             onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
           >
             <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
@@ -656,10 +655,10 @@ function App() {
           )}
           {isDesktop && !isMobile && (
             <>
-              <button class="iconbtn navbtn" title={withKbd("后退", "back")} disabled={!canGoBack} onClick={goBack}>
+              <button class="iconbtn navbtn" {...tip("后退", "back")} disabled={!canGoBack} onClick={goBack}>
                 <Icon name="arrowLeft" />
               </button>
-              <button class="iconbtn navbtn" title={withKbd("前进", "forward")} disabled={!canGoForward} onClick={goForward}>
+              <button class="iconbtn navbtn" {...tip("前进", "forward")} disabled={!canGoForward} onClick={goForward}>
                 <Icon name="arrowRight" />
               </button>
             </>
@@ -711,7 +710,7 @@ function App() {
               </button>
               <button
                 class="iconbtn"
-                title="更多"
+                {...tip("更多")}
                 disabled={!activeSite}
                 onClick={(e) =>
                   activeSite &&
@@ -728,7 +727,7 @@ function App() {
             <>
               <button
                 class={`btn share-save share-save-${saveState}${kbdPulse ? " share-save-kbd" : ""}`}
-                title={shareSaveTitle}
+                {...tip(shareSaveTitle, saveState === "share" || isMobile ? undefined : "save")}
                 disabled={saveState === "saving" || saveState === "saved"}
                 onClick={shareSaveClick}
               >

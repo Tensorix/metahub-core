@@ -9,6 +9,7 @@ import { SYNCED_EVENT } from "../data/replica.ts";
 import { LIVE_STATUS_EVENT, liveConnected } from "../live.ts";
 import { UiHost, openMenu, MenuLabel } from "../ui.tsx";
 import { viewToHash } from "../view.ts";
+import { tip } from "../shortcuts.ts";
 
 // The Quick Board window: the desktop's at-a-glance task board, mounted from
 // the shared webui bundle when the URL hash is `#board` (see app.tsx) — the
@@ -267,7 +268,7 @@ export function QuickBoard() {
   return (
     <div class="qb">
       <div class="qb-bar">
-        <button class="qb-brand" onClick={openDbMenu} title="切换数据库">
+        <button class="qb-brand" onClick={openDbMenu} {...tip("切换数据库")}>
           <span class="qb-emoji">{db?.icon || "🗂️"}</span>
           <span class="qb-name">{db?.name ?? "快速看板"}</span>
           <Icon name="chevronDown" cls="ico sm" />
@@ -275,15 +276,15 @@ export function QuickBoard() {
         <div class="qb-actions">
           <span
             class={"qb-live" + (live ? " on" : "")}
-            title={live ? "实时同步中——AI 通过 CLI 的修改会即时出现" : "连接中…"}
+            {...tip(live ? "实时同步中——AI 通过 CLI 的修改会即时出现" : "连接中…")}
           />
-          <button class="iconbtn" title="在主窗口中打开" disabled={!db} onClick={openInMain}>
+          <button class="iconbtn" {...tip("在主窗口中打开")} disabled={!db} onClick={openInMain}>
             <Icon name="externalLink" />
           </button>
           {qb && (
             <button
               class={"iconbtn" + (pinned ? " active" : "")}
-              title={pinned ? "取消置顶" : "始终置顶"}
+              {...tip(pinned ? "取消置顶" : "始终置顶")}
               onClick={() => void togglePin()}
             >
               <Icon name="pin" />

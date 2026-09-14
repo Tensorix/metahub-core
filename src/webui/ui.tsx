@@ -3,6 +3,7 @@ import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { consumeKey, imeGhost } from "./keys.ts";
+import { Kbd } from "./kbd.tsx";
 
 // Imperative UI primitives (Toast / Menu / Modal) backed by tiny external
 // stores, so any code can pop a menu or dialog without prop-drilling. Mount
@@ -172,6 +173,117 @@ function MenuHost() {
   );
 }
 
+// ---- tooltip (elements carrying data-tip / data-tip-kbd, see shortcuts.ts tip()) ----
+type TipState = { el: HTMLElement; label: string; kbdId: string | null } | null;
+const tipStore = makeStore<TipState>(null);
+const TIP_MQ = "(hover: hover) and (pointer: fine)";
+const TIP_DELAY = 450;
+const TIP_WARM = 300;
+
+function TooltipHost() {
+  const state = tipStore.use();
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; side: "below" | "above" } | null>(null);
+
+  useEffect(() => {
+    if (!matchMedia(TIP_MQ).matches) return;
+    let timer = 0;
+    let lastHide = 0;
+    let current: HTMLElement | null = null;
+    const read = (el: HTMLElement): TipState => ({ el, label: el.dataset.tip ?? "", kbdId: el.dataset.tipKbd ?? null });
+    const hide = () => {
+      clearTimeout(timer);
+      timer = 0;
+      current = null;
+      if (tipStore.get()) {
+        lastHide = Date.now();
+        tipStore.set(null);
+      }
+    };
+    const arm = (el: HTMLElement) => {
+      if (el === current) return;
+      current = el;
+      clearTimeout(timer);
+      if (tipStore.get() || Date.now() - lastHide < TIP_WARM) {
+        tipStore.set(read(el));
+        return;
+      }
+      timer = window.setTimeout(() => {
+        if (current === el && el.isConnected) tipStore.set(read(el));
+      }, TIP_DELAY);
+    };
+    const targetOf = (t: EventTarget | null) =>
+      (t as Element | null)?.closest?.("[data-tip]") as HTMLElement | null;
+    const over = (e: PointerEvent) => {
+      const el = targetOf(e.target);
+      if (!el || (el as HTMLButtonElement).disabled) {
+        if (current) hide();
+        return;
+      }
+      arm(el);
+    };
+    const out = (e: PointerEvent) => {
+      if (!current) return;
+      const to = e.relatedTarget as Node | null;
+      if (to && current.contains(to)) return;
+      hide();
+    };
+    const focusIn = (e: FocusEvent) => {
+      const el = targetOf(e.target);
+      if (el && el.matches(":focus-visible")) arm(el);
+    };
+    document.addEventListener("pointerover", over);
+    document.addEventListener("pointerout", out);
+    document.addEventListener("focusin", focusIn);
+    document.addEventListener("focusout", hide);
+    document.addEventListener("pointerdown", hide, true);
+    document.addEventListener("keydown", hide, true);
+    document.addEventListener("scroll", hide, true);
+    window.addEventListener("blur", hide);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("pointerover", over);
+      document.removeEventListener("pointerout", out);
+      document.removeEventListener("focusin", focusIn);
+      document.removeEventListener("focusout", hide);
+      document.removeEventListener("pointerdown", hide, true);
+      document.removeEventListener("keydown", hide, true);
+      document.removeEventListener("scroll", hide, true);
+      window.removeEventListener("blur", hide);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!state || !ref.current) return setPos(null);
+    const a = state.el.getBoundingClientRect();
+    const t = ref.current.getBoundingClientRect();
+    const gap = 6;
+    const margin = 8;
+    let top = a.bottom + gap;
+    let side: "below" | "above" = "below";
+    if (top + t.height > innerHeight - margin) {
+      top = a.top - gap - t.height;
+      side = "above";
+    }
+    const left = Math.max(margin, Math.min(a.left + a.width / 2 - t.width / 2, innerWidth - t.width - margin));
+    setPos({ left, top, side });
+  }, [state]);
+
+  if (!state) return null;
+  return (
+    <div
+      ref={ref}
+      class="tip"
+      role="tooltip"
+      data-side={pos?.side ?? "below"}
+      style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999 }}
+    >
+      <span class="tip-label">{state.label}</span>
+      {state.kbdId && <Kbd id={state.kbdId} />}
+    </div>
+  );
+}
+
 export function MenuLabel({ children }: { children: ComponentChildren }) {
   return <div class="lbl">{children}</div>;
 }
@@ -182,7 +294,7 @@ export function MenuItem({
   icon,
   label,
   sublabel,
-  kbd,
+  shortcut,
   danger,
   checked,
   sel,
@@ -192,7 +304,8 @@ export function MenuItem({
   icon?: string;
   label: ComponentChildren;
   sublabel?: string;
-  kbd?: string;
+  /** Shortcut id (shortcuts.ts) rendered as a key-cap badge on the right. */
+  shortcut?: string;
   danger?: boolean;
   checked?: boolean;
   /** keyboard-navigation highlight (search-driven lists) */
@@ -211,7 +324,7 @@ export function MenuItem({
         <span class="t">{label}</span>
         {sublabel && <span class="d">{sublabel}</span>}
       </span>
-      {kbd && <kbd>{kbd}</kbd>}
+      {shortcut && <Kbd id={shortcut} />}
       {checked && (
         <span class="chk">
           <Icon name="check" cls="ico sm" />
@@ -426,6 +539,7 @@ export function UiHost() {
     <>
       <MenuHost />
       <ModalHost />
+      <TooltipHost />
       <div class="toasts">
         {toasts.map((t) => (
           <div key={t.id} class="toast">

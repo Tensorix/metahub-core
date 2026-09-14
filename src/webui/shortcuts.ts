@@ -91,15 +91,24 @@ const KEY_GLYPH: Record<string, string> = {
   Tab: "Tab",
 };
 
-export function comboLabel(c: Combo): string {
+export function comboKeys(c: Combo): string[] {
   const k = KEY_GLYPH[c.key] ?? (c.key.length === 1 ? c.key.toUpperCase() : c.key);
-  if (IS_MAC) return `${c.mod ? "⌘" : ""}${c.alt ? "⌥" : ""}${c.shift ? "⇧" : ""}${k}`;
-  const parts = [c.mod ? "Ctrl" : "", c.alt ? "Alt" : "", c.shift ? "Shift" : "", k].filter(Boolean);
-  return parts.join(" ");
+  const mods = IS_MAC
+    ? [c.mod ? "⌘" : "", c.alt ? "⌥" : "", c.shift ? "⇧" : ""]
+    : [c.mod ? "Ctrl" : "", c.alt ? "Alt" : "", c.shift ? "Shift" : ""];
+  return [...mods.filter(Boolean), k];
+}
+
+export function comboLabel(c: Combo): string {
+  return comboKeys(c).join(IS_MAC ? "" : " ");
 }
 
 export function kbd(id: string): string {
   return comboLabel(comboOf(id));
+}
+
+export function isSymKey(k: string): boolean {
+  return k.length === 1 && !/[a-z0-9]/i.test(k);
 }
 
 export function shortcutAvailable(id: string): boolean {
@@ -107,6 +116,13 @@ export function shortcutAvailable(id: string): boolean {
   return !!s && (!s.desktopOnly || IS_DESKTOP_APP);
 }
 
-export function withKbd(title: string, id: string): string {
-  return shortcutAvailable(id) ? `${title} · ${kbd(id)}` : title;
+export interface TipAttrs {
+  "data-tip": string;
+  "data-tip-kbd"?: string;
+  "aria-label": string;
+}
+
+export function tip(label: string, id?: string): TipAttrs {
+  const k = id && shortcutAvailable(id) ? id : undefined;
+  return { "data-tip": label, ...(k ? { "data-tip-kbd": k } : {}), "aria-label": label };
 }

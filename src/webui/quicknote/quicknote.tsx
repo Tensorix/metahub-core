@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, NAV_INVALIDATE, type DocSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { DocView, type DocViewHandle } from "../editor.tsx";
-import { kbd, pressed, withKbd } from "../shortcuts.ts";
+import { pressed, tip } from "../shortcuts.ts";
 import { viewToHash } from "../view.ts";
 import {
   UiHost,
@@ -229,7 +229,7 @@ export function QuickNote() {
           <MenuItem
             icon="plus"
             label="新建笔记"
-            kbd={kbd("qnNew")}
+            shortcut="qnNew"
             onClick={() => {
               close();
               void newNote();
@@ -239,7 +239,7 @@ export function QuickNote() {
             <MenuItem
               icon="externalLink"
               label="在主窗口中打开"
-              kbd={kbd("qnOpenMain")}
+              shortcut="qnOpenMain"
               onClick={() => {
                 close();
                 openInMain();
@@ -270,16 +270,16 @@ export function QuickNote() {
       <div class="qn-bar">
         <span class="qn-brand">{activeTitle || "快速笔记"}</span>
         <div class="qn-actions">
-          <button class="iconbtn" title={withKbd("新建笔记", "qnNew")} onClick={() => void newNote()}>
+          <button class="iconbtn" {...tip("新建笔记", "qnNew")} onClick={() => void newNote()}>
             <Icon name="plus" />
           </button>
-          <button class="iconbtn" title="笔记列表" onClick={openList}>
+          <button class="iconbtn" {...tip("笔记列表")} onClick={openList}>
             <Icon name="list" />
           </button>
           {qn && (
             <button
               class={"iconbtn" + (pinned ? " active" : "")}
-              title={pinned ? "取消置顶" : "始终置顶"}
+              {...tip(pinned ? "取消置顶" : "始终置顶")}
               onClick={() => void togglePin()}
             >
               <Icon name="pin" />

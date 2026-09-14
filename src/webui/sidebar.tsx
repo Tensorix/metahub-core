@@ -6,7 +6,8 @@ import { Icon } from "./icons.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
 import type { Navigate, View } from "./view.ts";
-import { IS_DESKTOP_APP, kbd, pressed, withKbd } from "./shortcuts.ts";
+import { IS_DESKTOP_APP, pressed, tip } from "./shortcuts.ts";
+import { Kbd } from "./kbd.tsx";
 import {
   openMenu,
   MenuItem,
@@ -310,7 +311,7 @@ export function Sidebar(props: SidebarProps) {
       <span class="emoji">{db.icon || "🗂️"}</span>
       <span class="label">{db.name}</span>
       <span class="acts">
-        <button title="更多" onClick={(e) => dbMenu(e, db)}>
+        <button {...tip("更多")} onClick={(e) => dbMenu(e, db)}>
           <Icon name="dots" cls="ico sm" />
         </button>
       </span>
@@ -414,10 +415,10 @@ export function Sidebar(props: SidebarProps) {
             </span>
             <span class="label">{d.title || "无标题"}</span>
             <span class="acts">
-              <button title="新建子页" onClick={(e) => { e.stopPropagation(); newDoc(d.id); }}>
+              <button {...tip("新建子页")} onClick={(e) => { e.stopPropagation(); newDoc(d.id); }}>
                 <Icon name="plus" cls="ico sm" />
               </button>
-              <button title="更多" onClick={(e) => docMenu(e, d)}>
+              <button {...tip("更多")} onClick={(e) => docMenu(e, d)}>
                 <Icon name="dots" cls="ico sm" />
               </button>
             </span>
@@ -447,30 +448,27 @@ export function Sidebar(props: SidebarProps) {
             Sites has no entry here — it's a first-class .sb-tabs tab now. */}
         <button
           class={"sb-act" + (searchOpen ? " active" : "")}
-          title="搜索"
-          aria-label="搜索"
+          {...tip("搜索", "search")}
           onClick={() => setSearchOpen((v) => !v)}
         >
           <Icon name="search" cls="ico" />
         </button>
         <button
           class={"sb-act" + (view.kind === "shares" ? " active" : "")}
-          title="分享"
-          aria-label="分享"
+          {...tip("分享")}
           onClick={() => navigate({ kind: "shares" })}
         >
           <Icon name="link" cls="ico" />
         </button>
         <button
           class={"sb-act" + (view.kind === "settings" ? " active" : "")}
-          title={withKbd("设置", "settings")}
-          aria-label="设置"
+          {...tip("设置", "settings")}
           onClick={() => navigate({ kind: "settings" })}
         >
           <Icon name="settings" cls="ico" />
-          {props.updatePending && <span class="nav-dot" title="有可用更新" />}
+          {props.updatePending && <span class="nav-dot" {...tip("有可用更新")} />}
         </button>
-        <button class="iconbtn" title="收起侧栏" onClick={props.onCollapse}>
+        <button class="iconbtn" {...tip("收起侧栏", "sidebar")} onClick={props.onCollapse}>
           <Icon name="panelLeft" />
         </button>
       </div>
@@ -485,7 +483,7 @@ export function Sidebar(props: SidebarProps) {
             role="tab"
             aria-selected={tab === t.key}
             class={"sb-tab" + (tab === t.key ? " on" : "")}
-            title={withKbd(t.label, t.key === "docs" ? "tabDocs" : t.key === "db" ? "tabDb" : "tabSites")}
+            {...tip(t.label, t.key === "docs" ? "tabDocs" : t.key === "db" ? "tabDb" : "tabSites")}
             onClick={() => setTab(t.key)}
           >
             <Icon name={t.icon} cls="ico sm" />
@@ -494,7 +492,7 @@ export function Sidebar(props: SidebarProps) {
         ))}
         <button
           class="add"
-          title={tab === "docs" ? withKbd("新建文档", "newDoc") : tab === "db" ? withKbd("新建数据库", "newDb") : "新建站点"}
+          {...(tab === "docs" ? tip("新建文档", "newDoc") : tab === "db" ? tip("新建数据库", "newDb") : tip("新建站点"))}
           onClick={() =>
             tab === "docs"
               ? newDoc(null)
@@ -521,7 +519,7 @@ export function Sidebar(props: SidebarProps) {
           }}
         />
         {/* the shortcut itself lives in app.tsx (global keydown) */}
-        <kbd>{kbd("search")}</kbd>
+        <Kbd id="search" />
       </div>
 
       <div class="sb-scroll">
@@ -562,7 +560,7 @@ export function Sidebar(props: SidebarProps) {
                   </span>
                   <span class="label">{s.title || s.name}</span>
                   <span class="acts">
-                    <button title="更多" onClick={(e) => siteMenu(e, s)}>
+                    <button {...tip("更多")} onClick={(e) => siteMenu(e, s)}>
                       <Icon name="dots" cls="ico sm" />
                     </button>
                   </span>
@@ -579,23 +577,21 @@ export function Sidebar(props: SidebarProps) {
       <div class="sb-footer">
         <button
           class={"sb-act" + (view.kind === "settings" ? " active" : "")}
-          title={withKbd("设置", "settings")}
-          aria-label="设置"
+          {...tip("设置", "settings")}
           onClick={() => navigate({ kind: "settings" })}
         >
           <Icon name="settings" cls="ico sm" />
-          {props.updatePending && <span class="nav-dot" title="有可用更新" />}
+          {props.updatePending && <span class="nav-dot" {...tip("有可用更新")} />}
         </button>
         <button
           class={"sb-act" + (view.kind === "shares" ? " active" : "")}
-          title="分享"
-          aria-label="分享"
+          {...tip("分享")}
           onClick={() => navigate({ kind: "shares" })}
         >
           <Icon name="link" cls="ico sm" />
         </button>
         <SyncIndicator variant="footer" onOpen={() => navigate({ kind: "settings", sec: "offline" })} />
-        {version && <span class="sbf-ver" title={`Metahub Core v${version}`}>v{version}</span>}
+        {version && <span class="sbf-ver" {...tip(`Metahub Core v${version}`)}>v{version}</span>}
       </div>
 
       <div class="sb-resizer" onMouseDown={startResize} />

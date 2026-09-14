@@ -1,7 +1,8 @@
 /** @jsxImportSource preact */
 import { PageHeader, SetRow, SetSection } from "./primitives.tsx";
 import { pageLabel } from "./nav.ts";
-import { IS_DESKTOP_APP, SHORTCUTS, SHORTCUT_GROUPS, kbd } from "../shortcuts.ts";
+import { IS_DESKTOP_APP, SHORTCUTS, SHORTCUT_GROUPS } from "../shortcuts.ts";
+import { Kbd } from "../kbd.tsx";
 
 export function ShortcutsPage() {
   return (
@@ -23,7 +24,7 @@ export function ShortcutsPage() {
                   title={s.label}
                   caption={unavailable ? "仅桌面应用" : undefined}
                   dim={unavailable}
-                  control={<kbd class="set-kbd">{kbd(s.id)}</kbd>}
+                  control={<Kbd id={s.id} />}
                 />
               );
             })}
