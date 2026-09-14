@@ -141,6 +141,7 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 - `indentCommand`/`outdentCommand`(Tab/Shift-Tab):行首 ±2 列缩进(tab-byte 安全);多行选区按级步进。
 - `smartHome`、`makeVoidExit(dir)`(方向键跨 void)、`makeArrowIntoCode`、`fenceContinuation`、`focusNewCodeVoid`、`enterDocTop`(文档开头是 void 时先开一空行)、`makeExitTop`(正文首行再上 → 回标题)。
 - `cm6/keymap.ts` `structureKeymap`:最高 `Prec`,逐一委托上面命令,false 即穿透到默认/history keymap。
+- `cm6/prose-keymap.ts` `APP_RESERVED_KEYS`:CM 默认 keymap 里被**应用级快捷键征用**的组合(`Mod-[` / `Mod-]` / `Alt-ArrowLeft` / `Alt-ArrowRight`——前进/后退)在装配前就被过滤掉,否则编辑器聚焦时它们会被当成缩进/移动光标吃掉。新增全局快捷键若与 CM 默认键冲突,改这一处。
 
 **转换** `cm6/convert.ts`:块的类型**就是它的行前缀**,所以「turn into」= 重写前缀——把 `[缩进, contentFrom)` 之间的旧 marker 换成新 marker,整段在**一次** transaction(`userEvent:"input.convert"`)里改,撤销一步还原。核心 `turnIntoChanges` 是对扫描模型的纯函数(可用 `scanDoc` fixture 单测);`turnInto` 是 gutter 菜单调的薄封装。
 
@@ -148,7 +149,7 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 
 ## 6. 编辑器外壳与 chrome
 
-- **宿主** `cm6/CmDocBody.tsx`:Preact 组件,持一个 `EditorView`(doc = Markdown body),对外暴露小的命令式句柄 `CmHandle`(`getDoc`/`setDoc`/`focus`/`setSource`);view 只在 mount 建一次、unmount 拆,回调走 ref 读、无 per-render 抖动。
+- **宿主** `cm6/CmDocBody.tsx`:Preact 组件,持一个 `EditorView`(doc = Markdown body),对外暴露小的命令式句柄 `CmHandle`(`getDoc`/`setDoc`/`focus`/`setSource`);view 只在 mount 建一次、unmount 拆,回调走 ref 读、无 per-render 抖动。宿主是**可复用的**:除了 `DocView`,桌面端的 `.md`/`.txt` 文件编辑器窗(`webui/fileviewer/`)也挂它,只是传 `disableUploads`(那里没有 hub 可存 blob),见 [30-mini-windows-and-file-editor](../impl-context/30-mini-windows-and-file-editor/design.md)。
 - **扩展装配** `cm6/editor-view.ts`:`baseExtensions` + `richCompartment`;`richLayer()`(派生模型 field + 光标感知装饰 + 结构 keymap)与 `sourceLayer()`(丢掉这些 → 纯 Markdown 文本编辑器)放在 Compartment 后,**source 模式 = 同一 view reconfig 到 `sourceLayer`**(非另起 textarea)。原生选区(无 `drawSelection`)、`history()` 原生撤销、source 模式 `indentWithTab`。主题 `cm6/editor-theme.ts`。
 - **chrome**(`cm6/chrome/`,都是 CM 扩展/组件):`slash-menu.tsx`(`/` 唤起块菜单)、`find.tsx`(⌘F、装饰式查找,活动匹配按身份追踪 `remapMatches`)、`format-bar.tsx`(选区浮动格式条)、`toc.tsx`(目录 + 滚动高亮)、`word-count.tsx`(右下字数 pill,纯客户端、走 DocModel、CJK 按字/拉丁按词)、`gutter.tsx`(悬停 +/grip 拖拽 → turnInto/重排,一步撤销)、`copy-rich.ts`(富剪贴板复制)、`upload-paste.tsx` + `upload-field.ts`(粘贴/拖拽上传成 media void + `stripStaleUploadLines`)、`preview-anchor.ts`(预览锚点路由)。
 - **代码块一键格式化**:见 [architecture.md](./architecture.md) 的 fmt 子系统(`src/webui/fmt/*`,懒加载 prettier + per-language wasm),CodeIsland 里 `格式化` 按钮触发,`applyTaEdit` 写回保 undo 一步。
@@ -195,7 +196,9 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 11. **构建**:dev(from-source)刷新即热重建;dist/编译产物需 rebuild+restart(记忆 `webui-frontend-edits-need-rebuild`)。
 12. **标题类宿主一律走 `plain-edit.ts`**(粘贴/拖放只取 `text/plain`);新加一个 contentEditable 标题就得接上,否则外部样式会渗进来。
 13. **内链只认 id 形状**——放宽 `[[…]]` 的匹配等于把用户的普通方括号笔记变成断链;要改先想清楚 `stripInlineTokens` 与分享页惰性渲染两处的连带影响。
-14. **`[[` 选择器读的是本地标题表**(`doc-titles.ts`),不是网络:装饰是同步构建的,任何"顺手加一次 fetch"都会闪。
+14. **`[[` 选择器读的是本地标题表**(`doc-titles.ts`),不是网络:装饰是同步构建的,任何"顺手加一次 fetch"都会闪。同理,表格里的关联胶囊读 `relation-titles.ts`(按目标库分桶的同步表)。
+15. **内链胶囊不要 `ignoreEvent(true)`**:那会让 CM 在 `linkClicks` 之前就丢掉事件,胶囊点击失灵。
+16. **应用级快捷键必须先进 `APP_RESERVED_KEYS`**(`cm6/prose-keymap.ts`),否则编辑器聚焦时被 CM 默认 keymap 吞掉。
 
 ---
 

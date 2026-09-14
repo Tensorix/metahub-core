@@ -15,9 +15,10 @@ metahub is a local-first knowledge base CLI built on Bun + SQLite. It gives an A
 ## Why metahub
 
 - **Built for AI read/write** — `doc read` returns the body plus a version token; `doc edit --old/--new` does an anchored find-and-replace that sends only the delta. Refer to anything by id prefix or name — no pasting full ids.
-- **Structured and unstructured in one place** — typed tables (rows, columns, 8 property types) for tasks, ledgers, contacts; Markdown documents for notes and specs.
+- **Structured and unstructured in one place** — typed tables (rows, columns, 9 property types, including `relation` and `doc` columns that link rows to other rows and to documents) for tasks, ledgers, contacts; Markdown documents for notes and specs.
 - **Local-first and syncable** — your data sits on your own disk and works offline; multiple machines merge cleanly, and edits to different paragraphs don't clobber each other.
-- **GUI and API included** — `mh --server` starts a browser WebUI (browse, inline-edit, full-text search), a `/api/*` REST interface, and auto-generated OpenAPI docs.
+- **GUI and API included** — `mh --server` starts a browser WebUI (browse, inline-edit, full-text search), a `/api/*` REST interface, and auto-generated OpenAPI docs. Open views refresh **live** when the CLI writes, so you and your agent can work on the same hub at once.
+- **Auditable agent work** — every write an agent makes is tagged `ai`; `mh audit` is the whole-hub change feed, and `mh audit revert <txn>` undoes one logical change group without clobbering edits made since.
 
 <p align="center">
   <img src="./docs/assets/webui-table.png" alt="metahub WebUI — typed tables with select, multi-select, and checkbox columns" width="100%">
@@ -92,6 +93,8 @@ Pair two devices once (`mh config device code` / `mh config device add`) and the
 
 **Publishing when your device is offline** is optional and runs entirely in *your* Cloudflare account: `mh edge deploy` (sign in with Cloudflare, or paste an API token) puts up one Worker with two namespaces — a **write inbox** that accepts sealed, encrypted visitor submissions your device ingests on its next sync round, and **rooms** (Durable Objects) that keep a shared site live and realtime while every device of yours is asleep. metahub itself operates no backend: the edge only ever holds ciphertext envelopes, or the partition you explicitly shared.
 
+The **desktop app** wraps that same WebUI and adds native surfaces: a Quick Notes window and a live Quick Board window (both summoned by a global shortcut or the tray), and an "open with" handler for `.md` / `.txt` files that gives each file a standalone editor window — editing the file on disk, with a one-click "import into MetaHub".
+
 Requests are guarded by a single token (persisted in `~/.metahub`). The server binds `127.0.0.1` by default; only `--host 0.0.0.0` exposes it, and credentials travel as plaintext Bearer — put it behind a trusted network or TLS (a reverse proxy like Caddy / Tailscale Serve, or `--tls-cert`/`--tls-key` to terminate TLS directly). Details in the [system-design docs](./docs/system-design/).
 
 ## Offline (PWA): the browser as a sync node
@@ -113,7 +116,7 @@ The WebUI is an installable PWA. Open **Settings → 离线副本** and this bro
 | `mh db create\|list\|get\|delete` | Manage databases (tables) |
 | `mh use [<db>] [--clear]` | Set/show the "current db" (record/prop default to it) |
 | `mh get <ref>` | Universal lookup: resolve by id/prefix/name, auto-detect type |
-| `mh prop add\|list\|update\|remove` | Manage properties (columns); `add` takes `--db` (defaults to current db) |
+| `mh prop add\|list\|update\|remove` | Manage properties (columns): `text` / `number` / `checkbox` / `select` / `multi_select` / `date` / `relation` / `doc` / `url`; `add` takes `--db` (defaults to current db) |
 | `mh record create\|list\|get\|update\|delete` | Manage records (rows) |
 | `mh doc create\|list\|get\|update\|delete` | Manage Markdown documents |
 | `mh doc read <id>` | Read body + version token (AI reads before editing) |
@@ -125,8 +128,9 @@ The WebUI is an installable PWA. Open **Settings → 离线副本** and this bro
 | `mh db activity [<id>] [--limit N]` | Table activity feed: every record's revisions merged newest-first, each with old→new cell values and a record-title snapshot (deleted records show their last title) |
 | `mh edit <id>` | Edit a document/record interactively in `$EDITOR` (for humans) |
 | `mh search <query>` | Full-text search (documents + records) |
+| `mh audit [list\|show\|revert]` | Whole-hub change feed, newest first, grouped into logical changes with their actor (agent-driven CLI writes are tagged `ai`; `MH_ACTOR` overrides). `show <txn>` expands per-field before/after; `revert <txn>` undoes one group as a new forward revision, keeping anything edited since |
 | `mh doctor` | Read-only health check: list integrity issues (orphan refs/cells, duplicate paths, doc cycles, name clashes) + oplog/disk stats |
-| `mh repair [--dry-run]` | Deterministic, idempotent repair of auto-fixable issues (changes replicate via oplog); `--dry-run` previews (same as doctor) |
+| `mh repair [--dry-run] [--rematerialize]` | Deterministic, idempotent repair of auto-fixable issues (changes replicate via oplog); `--dry-run` previews (same as doctor); `--rematerialize` rebuilds every synced table from the oplog |
 | `mh compact [--keep <days>] [--dry-run]` | Prune oplog history older than the retention window (default 90d) + GC blobs + VACUUM. Local-only; current data untouched, older history collapses to a baseline |
 | `mh site create\|scaffold\|put\|upload\|list\|files\|rm\|delete` | Host static sites (HTML/CSS/JS) an agent generates, served by `--server` at `/sites/<name>/`. `scaffold` writes a starter page; `upload <dir>` mirrors a directory (`--create` on first upload, `--prune` to delete what's gone) |
 | `mh site access <site> [public\|private]` | Show or change who can reach a site. Public = token-free; private answers exactly like a nonexistent site. `--show-links` prints capability URLs (they *are* the secret) |

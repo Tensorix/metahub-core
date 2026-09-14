@@ -3,8 +3,20 @@
 English · [简体中文](./README.zh-CN.md) · [Project README](../../README.md)
 
 The desktop app for [metahub](../../README.md): a Notion-like GUI over the core
-sync server, plus a **Quick Notes** float window (global hotkey / tray, stays
-above fullscreen apps on any Space).
+sync server, plus native surfaces around it:
+
+- **Quick Notes** float window (global hotkey / tray, stays above fullscreen
+  apps on any Space).
+- **Quick Board** float window — one database's board, kept live by the
+  server's change feed, so agent-driven `mh record update` moves cards on
+  screen.
+- **"Open with" file editor** — Metahub registers as an alternate editor for
+  `.md` / `.txt`; each opened file gets a standalone window editing the file on
+  disk (⌘S writes back), with a one-click "import into MetaHub". File I/O stays
+  in the main process, restricted to paths the app itself opened.
+
+Both float windows come from one `MiniWindow` shell (shortcut, tray, bounds,
+always-on-top persisted per window).
 
 Under the hood it is an Electron shell; the window loads the WebUI served by a
 Bun **sidecar** over loopback HTTP.

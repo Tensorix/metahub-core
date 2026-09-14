@@ -11,9 +11,10 @@ metahub 是基于 Bun + SQLite 的本地优先知识库 CLI，给 AI agent 一�
 ## 为什么用它
 
 - **为 AI 读写而设计** —— `doc read` 先返回正文 + 版本号，`doc edit --old/--new` 做锚定查找替换、只传增量；引用一律支持 id 前缀 / 名字，不必粘完整 id。
-- **结构化 + 非结构化一处管** —— 类型化数据表（行 / 列，8 种属性类型）放任务、流水、联系人；markdown 文档放设计稿、笔记。
+- **结构化 + 非结构化一处管** —— 类型化数据表（行 / 列，9 种属性类型，含把行关联到别的行的 `relation` 列和关联到文档的 `doc` 列）放任务、流水、联系人；markdown 文档放设计稿、笔记。
 - **本地优先、可同步** —— 数据在你自己的磁盘上，离线可用；多台机器干净合并，改不同段落互不覆盖。
-- **自带 GUI 与 API** —— `mh --server` 一条命令起浏览器 WebUI（浏览 / 行内编辑 / 全文搜索）+ `/api/*` REST 接口 + 自动生成的 OpenAPI 文档。
+- **自带 GUI 与 API** —— `mh --server` 一条命令起浏览器 WebUI（浏览 / 行内编辑 / 全文搜索）+ `/api/*` REST 接口 + 自动生成的 OpenAPI 文档。CLI 一写，**打开着的界面自己就更新**，人和 agent 可以同时开着同一个库干活。
+- **Agent 的改动可追可撤** —— agent 驱动的每一次写入都带 `ai` 标记；`mh audit` 是全库变更流，`mh audit revert <txn>` 按逻辑变更组撤销，且不会顺手抹掉你之后做的修改。
 
 <!-- TODO 截图：docs/assets/webui.png（WebUI）、docs/assets/desktop.png（桌面端） -->
 > 想看界面？装上[桌面 App](#获取--安装)，或运行 `mh --server` 后打开 `http://localhost:7777/`。
@@ -85,6 +86,8 @@ mh sync http://a-host:7777
 
 **设备离线时也想让别人访问**是可选能力，且完全跑在**你自己的** Cloudflare 账号里：`mh edge deploy`（用 Cloudflare 登录，或粘贴 API token）部署一个 Worker、两个命名空间——**写信箱**收下访客的密文投稿，你的设备下次同步时再解密入库；**房间**（Durable Object）让分享出去的站点在你所有设备都休眠时依然实时可用。metahub 自己不运营任何后端：边缘上要么只有密文信封，要么只有你明确分享出去的那一小块分区。
 
+**桌面 App** 在同一份 WebUI 之上加了原生能力：全局快捷键/托盘唤起的**快速笔记**与实时刷新的**快速看板**小窗，以及把 Metahub 注册为 `.md` / `.txt` 的**打开方式**——双击得到一个独立编辑器窗，直接编辑磁盘上的文件，并可一键「导入到 MetaHub」。
+
 每个请求由单 token 守护（持久化在 `~/.metahub`）。服务端默认只绑 `127.0.0.1`；`--host 0.0.0.0` 才对外，此时凭据以明文 Bearer 传输，请置于可信网络或前置 TLS。细节见[系统设计文档](./docs/system-design/)。
 
 ## 命令参考
@@ -98,7 +101,7 @@ mh sync http://a-host:7777
 | `mh db create\|list\|get\|delete` | 管理数据库（表） |
 | `mh use [<db>] [--clear]` | 设置/显示「当前库」（record/prop 默认作用于它） |
 | `mh get <ref>` | 通用查找：按 id/前缀/名字解析，自动判别类型 |
-| `mh prop add\|list\|update\|remove` | 管理属性（列）；`add` 用 `--db` 指定库（默认当前库） |
+| `mh prop add\|list\|update\|remove` | 管理属性（列）：`text` / `number` / `checkbox` / `select` / `multi_select` / `date` / `relation` / `doc` / `url`；`add` 用 `--db` 指定库（默认当前库） |
 | `mh record create\|list\|get\|update\|delete` | 管理记录（行） |
 | `mh doc create\|list\|get\|update\|delete` | 管理 markdown 文档 |
 | `mh doc read <id>` | 读正文 + version token（AI 改前先读） |
@@ -110,8 +113,9 @@ mh sync http://a-host:7777
 | `mh db activity [<id>] [--limit N]` | 表级活动流：全表记录修订按时间倒序聚合，每条带字段级「旧值 → 新值」与记录标题快照（已删记录显示删除时的标题） |
 | `mh edit <id>` | 在 `$EDITOR` 中交互式编辑文档/记录（给人用） |
 | `mh search <query>` | 全文检索（文档 + 记录） |
-| `mh doctor` | 只读体检：列出逻辑完整性问题（孤儿引用/单元格、重复路径、文档环、重名等）+ oplog/磁盘统计 |
-| `mh repair [--dry-run]` | 确定性、幂等修复可自动修的问题（改动随 oplog 复制）；`--dry-run` 仅预览（等价 doctor） |
+| `mh audit [list\|show\|revert]` | 全库变更流，新→旧，按逻辑变更组聚合并带 actor（非交互跑的 CLI 自动标 `ai`，`MH_ACTOR` 可覆盖）。`show <txn>` 展开逐字段旧值→新值；`revert <txn>` 整组撤销为一次新的正向修订，之后被改过的部分保留 |
+| `mh doctor` | 只读体检：列出逻辑完整性问题（孤儿引用/单元格、关联指向已删目标、重复路径、文档环、重名等）+ oplog/磁盘统计 |
+| `mh repair [--dry-run] [--rematerialize]` | 确定性、幂等修复可自动修的问题（改动随 oplog 复制）；`--dry-run` 仅预览（等价 doctor）；`--rematerialize` 把所有同步表从 oplog 整表重建 |
 | `mh compact [--keep <天数>] [--dry-run]` | 清理保留窗口（默认 90 天）之外的 oplog 历史 + 回收无引用 blob + VACUUM。纯本地操作；当前数据不变，窗口外历史坍缩为基线（无法再回滚到更早版本） |
 | `mh site create\|scaffold\|put\|upload\|list\|files\|rm\|delete` | 托管 agent 生成的静态站点（HTML/CSS/JS），由 `--server` 在 `/sites/<name>/` serve 出去。`scaffold` 写一份起步页；`upload <目录>` 镜像整个目录（首次加 `--create`，`--prune` 连带删除本地已不存在的文件） |
 | `mh site access <site> [public\|private]` | 查看 / 修改「谁可以访问这个站点」。public = 免 token；private 的响应与「不存在」完全一致。`--show-links` 才打印能力 URL（链接本身即密钥） |

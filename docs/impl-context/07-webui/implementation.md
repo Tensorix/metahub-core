@@ -547,3 +547,39 @@ Enter 拆分(§14.1)有了逆操作前,**非空块**光标在行首按 Backspace
 ### 21.3 验证
 
 `bun test` 273 全绿、webui tsc 干净。手动回归重点：输入后点击别处保存成功（核心回归项）；编辑态行高不变（与多行邻格同行验证）；IME Enter 选词不提交；值不变 blur 无网络请求；Tab 串行编辑；切库后无残留编辑态（`[db.id]` effect 补了 `setEditing(null)`）。
+
+## 22. v3.5 0.5.x:引用列、站点视图、分享列表、快捷键与骨架态
+
+这一轮的共同主题是**把"能用"变成"好用"**,分五块,均只动前端(core 侧的配套见各自的设计文档)。
+
+### 22.1 引用列(relation / doc)
+
+单元格从"逗号分隔的自由文本"变成**标题胶囊 + 记录选择器**;建 relation 列时多一步**挑目标库**(`DbTargetList`,可搜索、键盘导航、滚动上限,自引用单独标注),列头菜单能看到并改当前目标;胶囊点击跳 `#/db/<db>/<rec>` 深链(与 peek 双向同步)。
+
+标题来自 `relation-titles.ts`:**按目标库分桶**的同步内存表(装饰/胶囊是同步渲染的,不能等网络),失效期间继续供旧标题避免闪烁,失败的桶停在 `error` 退回显示 id(而不是按渲染重试打出请求风暴)。失效源:副本路径 `SYNCED_EVENT`,window 模式 `REC_INVALIDATE`。设计见 [27-relation-and-doc-properties](../27-relation-and-doc-properties/design.md)。
+
+### 22.2 select 选项就地编辑
+
+pill 本身变成输入框(同度量、色相匹配的焦点环,`width:0` 干掉 input 的固有宽度以免菜单变宽,入场动画只淡入焦点环);新增行走 ghost 样式。改名/删除走 `POST /api/property/option/rename|remove`,由 core 级联重写单元格;`PATCH /api/property` 的 `config` 改为键级合并 patch。
+
+### 22.3 站点成为一等视图
+
+侧栏加第三个标签(文档 / 数据表 / 站点,滑动指示条);`#/site/<name>` 是**沉浸式访问页**(浮动导航、无顶栏),`#/site/<name>?view=config` 是整页配置(身份卡 + 缩略 iframe + 两栏小节,顶栏与 doc/db 对齐)。原先的 peek 抽屉与 `tb-seg` 分段控件删除,**不要回加**。
+
+### 22.4 分享视图状态驱动
+
+`shares-view.tsx` 只剩接线 + JSX,全部派生搬进 `shares-model.ts`(纯函数,有单测):状态机(active / expiring / expired / provisioning / cleanup_pending)、状态→动作矩阵(一行只给**一个**主操作,其余进溢出菜单)、过滤与计数、分组。过期行沉到独立分组可批量清理;s3 行没有 url(链接按需重签),`renew` 只对 s3 存在。
+
+### 22.5 加载态与快捷键
+
+- **骨架**:`skeleton.tsx` 的 `useSkeletonRows` 用 sessionStorage 记住上次行数(2..8 夹取),列表骨架复用**真实行的 DOM 结构**(桌面 + 移动几何一致),计数位预留固定 2ch 宽度,120ms 淡入。**列表永不写「加载中…」**。
+- **同步指示器**:`sync-indicator.tsx`,只服务浏览器副本模式——空闲零占位、短轮次不出现、出现后至少驻留一段时间再闪「已更新」、失败留一条可点提示;window 模式与桌面端永不显示。
+- **快捷键**:`shortcuts.ts` 是唯一定义处(组合、分组、`desktopOnly`、`⌘`/`Ctrl` 平台分叉),设置页的速查表与按钮气泡都从它派生;带快捷键的按钮统一用 `tip()`(委托式 `TooltipHost` + `<Kbd>` 键帽,`⇧` 等符号走系统 UI 字体避免字形回退),不再用 `title=`。与 CM6 默认 keymap 冲突的组合在 `cm6/prose-keymap.ts` 的 `APP_RESERVED_KEYS` 里提前摘掉。
+
+### 22.6 实时刷新
+
+window(HTTP)模式挂 `GET /api/changes` 的 SSE 流,扇出到既有的 `SYNCED_EVENT` / `NAV_INVALIDATE` / `SHARES_CHANGED`,于是表格/编辑器/侧栏/快速看板**零改动**就跟着 CLI 写入刷新。见 [28-live-change-feed](../28-live-change-feed/design.md)。
+
+### 22.7 涉及文件
+
+`src/webui/`:`cells.tsx`、`table.tsx`、`relation-titles.ts`、`sites.tsx`、`shares-view.tsx`、`shares-model.ts`、`skeleton.tsx`、`sync-indicator.tsx`、`shortcuts.ts`、`kbd.tsx`、`ui.tsx`(`TooltipHost`)、`sidebar.tsx`、`view.ts`、`live.ts`、`nav-history.ts`、`settings/*`、`styles.css`。

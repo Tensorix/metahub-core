@@ -132,15 +132,18 @@ properties(id, database_id, name, type, config, position, __deleted)
 - `multi_select`
 - `date`
 - `relation`
+- `doc`
 - `url`
 
 当前类型语义:
 
-- `select` 和 `multi_select` 要求 `config.options`。
+- `select` 和 `multi_select` 要求 `config.options`。**改名/删除选项**走 core 的级联重写(`POST /api/property/option/rename|remove`),所有用旧值的单元格一并改写,不留孤儿值;`updateProperty` 的 `config` 是**键级合并 patch**(只改 options 不会抹掉 relation 的 `database`)。
 - `relation` 要求 `config.database`。
+- `doc`(0.5.0)**不需要 config**:文档是全局的,没有目标库可挑。
 - `date` 当前按 string 校验,没有统一规范化。
 - `url` 当前按 string 校验,没有 URL 格式校验。
-- `relation` 当前存目标 record id 数组,没有反向链接和完整性校验。写入时,relation 值会在**目标库范围内**经引用解析(id/前缀/名字),数组逐个解析;歧义或匹配不到则报错,完整 `rec_` id 直通(前向引用逃生阀)。
+- `relation` / `doc` 存目标 id 数组,没有反向链接、没有 SQL 级完整性约束。写入时逐个经引用解析(relation 在**目标库范围内**、doc 在 `documents` 范围内,支持 id/前缀/名字);歧义或匹配不到则报错,完整 `rec_`/`doc_` id 直通(前向引用逃生阀)。指向**已墓碑**目标的元素由 `dead_cell_ref` 完整性修复剔除。
+- 显示标题按 `resolve.ts titlePropId`(按 position 排序的第一个 text 属性)解析,见 [27-relation-and-doc-properties](../impl-context/27-relation-and-doc-properties/design.md);新建 relation/doc 列默认进记录索引。
 
 ## records
 
@@ -239,7 +242,7 @@ room_rows(peer_key, dataset, row_id) PK(peer_key,dataset,row_id)  -- 房间分�
 
 - `peers`(出站):我会同步去的对端。`kind`(默认 `'http'`;`'s3'` = 对象存储桶转发;`'room'` = 一个分享的 Edge 房间)选传输,`config`(JSON)持该传输的参数(桶端点/前缀等,S3 用;房间用 `base`/`slug`/`ownerSecret`/`guestBase` + `lifecycle`,peer key 按约定是 `room://<slug>`)。`pull_cursor`/`push_cursor` 是基于 `crdt_changes.seq` 的复制游标;`token` 是对端配对时签发给我、我出站 `/sync` 时出示的凭据;`enabled` 决定是否进自动同步定时器;`last_sync_at` 是最近尝试,`last_success_at` 是最近成功(读前 freshness 只看它),`last_status/error` 为状态。老库经 `migratePeers` 幂等补列(含 `kind`/`config`)。
 - `storage_cursors`(S3 store-and-forward):挂了对象存储桶(`kind='s3'`)时,按**每桶 × 每远端节点**记拉取进度 `last_key`——桶是数据盲的转发中继,各设备把变更推上去、按 key 拉下来,无需两端同时在线。见 [17-s3-storage-sync](../impl-context/17-s3-storage-sync/design.md)。
-- `peer_grants`(入站):我签发、并在 `/sync` 上接受的长期 bearer 凭据(`acceptsSyncToken` = 主 token 或命中此表)。`peer_url` 记签发对象,`removePeer` 据此连带吊销;单向配对产生的 `peer_url` 为 null,需 `grant revoke`。**目前无过期**。
+- `peer_grants`(入站):我签发、并在 `/sync` 上接受的长期 bearer 凭据(`acceptsSyncToken` = 主 token 或命中此表)。`peer_url` 记签发对象,`removePeer` 据此连带吊销;单向配对产生的 `peer_url` 为 null,需 `grant revoke`。**目前无过期**。**重新配对 = 凭据轮换**:`mintGrant` 先删掉同一 `node_id` 的旧凭据——设备只留着最新那一个 token,旧的留下来就是没人持有的活钥匙;对应地,吊销一台设备是**一次性作用于它的全部凭据**,不是逐条。
 - `pairing_codes`:一次性配对码(随机 12 位 base36,默认 10min)。兑换是单条原子 `UPDATE ... WHERE used=0 AND 未过期`(防 TOCTOU 双兑换);生成时清理过期/已用码。
 - `room_rows`(房间分区影子):本节点上次告诉某个 `kind='room'` 对端的 `(dataset,row_id)` 集合。**故意不进 `DOMAIN`、永不同步**——每台设备各自持影子,跨设备影子分裂由房间协议的 `need_baseline`/digest 层自愈,而不是靠同步影子。见 `src/core/sync/partition.ts`。
 
@@ -353,7 +356,7 @@ schema **刻意只保留主键,不加 FK / UNIQUE**:per-field LWW oplog 需要�
 
 两个入口:
 
-- `validateHub(db)`:只读体检,归类问题(`broken_ref` / `orphan_cell` / `dup_path` / `parent_cycle` 可自动修;`dup_name` / `bad_config` 仅报告)。
+- `validateHub(db)`:只读体检,归类问题(`broken_ref` / `orphan_cell` / `dead_cell_ref` / `dup_path` / `parent_cycle` 可自动修;`dup_name` / `bad_config` 仅报告)。`dead_cell_ref` = relation/doc 单元格里指向已墓碑目标的元素,修复时剔除该元素,整格元素全死则修成 `[]`。
 - `repairHub(db)`:确定性修复可自动修的类别;**绝不 hard-delete 用户内容**——重复 database/property 名只报告,只删派生行(孤儿 cell/block)和路由冗余(同 site 同 path 文件,winner 取 `created_hlc` 最早者,与 `getFileForServe`/`fileIdFor` 读取一致)。
 
 两层协作:删除操作内置**写时级联**(databases/properties/documents,删除节点一次性 emit,是主路径);`repairHub` 是**事后兜底**,处理 sync 引入的坏数据(典型竞态:A 删库时 B 并发往该库建记录)。`repairHub` 在 `restoreSnapshot`(merge + reset)后自动跑一次,并由 `mh doctor` / `mh repair` 手动触发;**不**在每次 sync 后自动跑(避免重扫描与抖动)。

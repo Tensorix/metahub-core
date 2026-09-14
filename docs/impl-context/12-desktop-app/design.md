@@ -92,6 +92,8 @@ apps/desktop/
 
 全局快捷键 / 菜单栏唤起的小窗,半透明背景、可始终置顶、专做 Markdown 速记。复用主 WebUI 与块编辑器,**不在 core 引入「快速笔记」概念**。
 
+> 0.5.x 起,本节描述的小窗外壳已泛化成 `MiniWindow` 类(快速笔记 + 快速看板两个实例),并新增了 `.md`/`.txt` 的「打开方式」文件编辑器窗与配套的启动性能工作——见 [30-mini-windows-and-file-editor](../30-mini-windows-and-file-editor/design.md)。
+
 ### 7.1 视图:同一份 bundle 的 `#quick` 路由 + 桌面守卫
 
 小窗不是新前端。主进程为它另开一个 BrowserWindow 加载 `http://127.0.0.1:<port>/#quick`,`src/webui/app.tsx` 在入口分流:

@@ -55,6 +55,8 @@
 
 ## 4. 已知留白
 
+> 0.5.x 后续进展:站点已升为**一等视图**(侧栏第三个标签 + `#/site/<name>` 沉浸式访问页 + `?view=config` 整页配置),peek 抽屉与 `tb-seg` 已删除;shares-view 改成**状态驱动**的列表(一行一个主操作 + 溢出菜单、按状态/来源过滤带计数、过期分组批量清理),派生逻辑收在带单测的纯函数 `webui/shares-model.ts`——但仍按对象×transport 组织,尚未并入"渠道"概念。
+
 - shares-view（全局分享列表）未并入渠道概念（仍按对象×transport 列）；
 - doc/db 分享对话框保持原四字段（本就 0 必填）；
 - AccessPolicy 存储迁移、grants 三 store 合一仍是后续 stage；

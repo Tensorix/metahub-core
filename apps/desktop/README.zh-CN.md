@@ -2,7 +2,13 @@
 
 [English](./README.md) · 简体中文 · [主项目 README](../../README.zh-CN.md)
 
-[metahub](../../README.zh-CN.md) 的桌面 App：在 core 同步服务端之上提供 notion 风格的图形界面，外加一个 **Quick Notes** 浮窗（全局快捷键 / 托盘唤起，可悬浮在任意 Space 的全屏应用之上）。
+[metahub](../../README.zh-CN.md) 的桌面 App：在 core 同步服务端之上提供 notion 风格的图形界面，外加几个原生能力：
+
+- **快速笔记**浮窗（全局快捷键 / 托盘唤起，可悬浮在任意 Space 的全屏应用之上）。
+- **快速看板**浮窗 —— 一个数据库的看板，由服务端的实时变更流保持新鲜：agent 在终端跑 `mh record update`，卡片会自己动。
+- **`.md` / `.txt` 打开方式** —— Metahub 注册为可选编辑器，双击打开的文件得到一个独立窗口，直接编辑磁盘上的文件（⌘S 写回），并可一键「导入到 MetaHub」。文件读写留在主进程，且只接受 App 自己打开过的路径。
+
+两个浮窗共用同一套 `MiniWindow` 外壳（快捷键、托盘、窗口位置尺寸、置顶状态各自持久化）。
 
 底层是一个 Electron 外壳；窗口加载由 Bun **边车（sidecar）** 在回环 HTTP 上提供的 WebUI。
 

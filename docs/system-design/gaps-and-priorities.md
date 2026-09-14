@@ -82,6 +82,19 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 
 仍未做:访客写入的用量/滥用可视化(目前只有拒收台账);房间的多分享共用与配额面板;`AccessPolicy` 的存储合一(现为只读门面);shares-view 尚未并入"渠道"概念。
 
+## 已改善: 引用列、实时性与可问责(0.5.x)
+
+0.5.x 版本线补的是"多人/多 agent 同时动一个库"时最先绊住人的三件事(见 [27-relation-and-doc-properties](../impl-context/27-relation-and-doc-properties/design.md)、[28-live-change-feed](../impl-context/28-live-change-feed/design.md)、[29-audit-log](../impl-context/29-audit-log/design.md)、[30-mini-windows-and-file-editor](../impl-context/30-mini-windows-and-file-editor/design.md)):
+
+- **引用列可用了**:`relation` 显示目标标题而非裸 id、编辑走记录选择器、建列时能挑目标库;新增 `doc` 类型把"这一行关联哪篇文档"表达出来;CSV 导出成人能读会改的标题列表(带引号逃生阀,往返无损);`dead_cell_ref` 把指向已删目标的元素确定性清掉。
+- **界面自己会动**:`GET /api/changes` 的 SSE 推送让 CLI/agent 的写入在 1~2 秒内反映到打开着的表格、文档、侧栏与快速看板——此前必须手动刷新,这是"人和 agent 同开一个库"最刺眼的缺口。
+- **谁改的、能不能撤**:`mh audit` + 设置页「操作审计」给出全库变更流,agent 驱动的 CLI 写入自动带 `ai` 标,可按逻辑变更组一键回滚,且**尊重后来的写入**(被别人改过的部分保留并计入 skipped)。
+- **桌面端成为工作面**:小窗外壳泛化出**快速看板**(实时看板小窗),Metahub 可作 `.md`/`.txt` 的打开方式(磁盘加载的独立编辑器窗,首帧即有正文);全局快捷键单一来源 + 键帽气泡 + 速查表。
+- **加载态与列表体验**:骨架屏取代「加载中…」(记住行数、真实行形状)、分享页状态驱动列表、站点升为一等视图、环境同步指示器。
+- **表层级注册表**:`src/core/tables.ts` 成为 content / system / local 三层的唯一权威(测试钉死),`DOMAIN`、快照清空清单、审计排除集等由它派生;配套 `mh repair --rematerialize` 可从 oplog 整表重建。
+
+仍未做:关联列的**反向链接**与按引用筛选(`relation contains` 仍在 P1 的查询缺口里);审计的跨设备聚合视图与导出;桌面小窗之外的多窗口工作区。
+
 ## P0: 当前体验硬伤
 
 ### 友好参数错误

@@ -93,10 +93,11 @@ mh use                                # show current db
 mh use --clear                        # unset
 
 # Properties = columns. Types: text | number | checkbox | select |
-# multi_select | date | relation | url. --db defaults to the current db.
+# multi_select | date | relation | doc | url. --db defaults to the current db.
 mh prop add Title  --type text
 mh prop add Status --type select --options "todo,doing,done"
-mh prop add Owner  --type relation --target contacts   # relation → another db
+mh prop add Owner  --type relation --target contacts   # relation → rows of another db
+mh prop add Spec   --type doc                          # doc → documents (no --target: docs are global)
 mh prop list
 mh prop update Status --options "todo,doing,done,blocked"
 mh prop remove Owner
@@ -240,6 +241,24 @@ Notes for agents:
 - Errors follow the standard codes: unknown version → `not_found` (exit 3),
   `--if-match` mismatch → `stale` (exit 5).
 
+## Undoing your own work (`mh audit`)
+
+Every txn the CLI mints carries an **actor tag**. When stdout is not a TTY — i.e. whenever an
+agent runs it — writes are tagged `ai`, so the user can see exactly what you did and roll it
+back. Set `MH_ACTOR=human` (or `""`) to opt out, or `MH_ACTOR=<slug>` for your own label.
+
+```bash
+mh audit                      # whole-hub change feed, newest first: time / actor / kind / summary / txn
+mh audit list --actor ai --limit 20
+mh audit show <txn>           # expand one group: per-entity, per-field before → after
+mh audit revert <txn>         # undo that group as a NEW forward revision
+```
+
+`revert` keeps anything edited since (reported as `skipped_registers` / `skipped_rows`), so it
+never clobbers a human's later fix. It is itself revertible. Depth is bounded by the compaction
+window (`mh compact`) — older groups have collapsed to a baseline and can no longer be reverted.
+Use this to back out a bad batch instead of hand-writing N reverse edits.
+
 ## Search and universal lookup
 
 ```bash
@@ -275,9 +294,10 @@ non-zero exit + `error`). Verify by reading the evidence field, not by assuming.
 ## Health & repair
 
 ```bash
-mh doctor                # read-only: lists integrity issues (orphan refs, dup paths, doc cycles, name clashes)
+mh doctor                # read-only: lists integrity issues (orphan refs/cells, relation cells pointing at deleted targets, dup paths, doc cycles, name clashes)
 mh repair --dry-run      # preview the deterministic auto-fixes (same as doctor)
 mh repair                # apply them (idempotent; changes replicate over the oplog)
+mh repair --rematerialize   # last resort: rebuild every synced table from the oplog
 mh compact --dry-run     # how much oplog history a 90-day retention window would prune
 mh compact --keep 90     # prune it + GC unreferenced blobs + VACUUM. Local-only (never syncs).
                          #   History older than the window collapses to a baseline: revert
@@ -390,3 +410,8 @@ will prompt interactively** — always pass their flags explicitly:
   you omit the db arg. Pass the db explicitly in scripts to avoid surprises.
 - **Ambiguous refs fail loudly** with candidates (exit 4) — narrow the prefix/name.
 - **JSON by default** when piped; add `--pretty` only when a human will read it.
+- **Relation / doc cells are id arrays in JSON.** The human-readable (TTY) output shows target
+  titles, but JSON output — the one you parse — always carries raw ids. Write them back as ids,
+  or as titles/prefixes and let the CLI resolve them.
+- **Your writes are attributed.** Non-TTY runs are tagged `ai` in `mh audit`; that is by design,
+  not something to suppress.
