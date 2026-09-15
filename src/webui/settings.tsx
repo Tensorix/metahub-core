@@ -60,7 +60,7 @@ import {
   type StoragePeerView,
 } from "./settings/shared.ts";
 import { GROUPS, resolvePage, pageLabel, type PageId, type PageDef } from "./settings/nav.ts";
-import { SetRow, Switch, SetSection, PageHeader, DangerZone, RowMenu } from "./settings/primitives.tsx";
+import { SetRow, Switch, SetSection, PageHeader, DangerZone } from "./settings/primitives.tsx";
 import { CacheRingHero, type RingState } from "./settings/cache-ring.tsx";
 import { AuditPage } from "./settings/audit-page.tsx";
 import { ShortcutsPage } from "./settings/shortcuts-page.tsx";

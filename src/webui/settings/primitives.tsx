@@ -179,28 +179,37 @@ export function DangerZone({ children }: { children: ComponentChildren }) {
   );
 }
 
-/** Trailing `⋯` button opening a row's overflow menu (ui.tsx openMenu). */
-export function RowMenu({
-  items,
+/** A row's dropdown control: the current option's label + a chevron, opening a
+ *  checked list (ui.tsx openMenu) — the Notion "select" control, never a
+ *  segmented accent box. */
+export function RowSelect<T extends string>({
+  value,
+  options,
+  onChange,
+  disabled,
 }: {
-  items: { icon?: string; label: ComponentChildren; sublabel?: string; danger?: boolean; onClick: () => void }[];
+  value: T;
+  options: { value: T; label: string; sublabel?: string }[];
+  onChange: (v: T) => void;
+  disabled?: boolean;
 }) {
+  const cur = options.find((o) => o.value === value);
   return (
     <button
-      class="btn btn-ghost peer-menu"
-      title="更多"
+      class="btn btn-ghost row-select"
+      disabled={disabled}
       onClick={(e) =>
         openMenu(e as unknown as MouseEvent, (close) => (
           <>
-            {items.map((it) => (
+            {options.map((o) => (
               <MenuItem
-                icon={it.icon}
-                label={it.label}
-                sublabel={it.sublabel}
-                danger={it.danger}
+                key={o.value}
+                label={o.label}
+                sublabel={o.sublabel}
+                checked={o.value === value}
                 onClick={() => {
                   close();
-                  it.onClick();
+                  if (o.value !== value) onChange(o.value);
                 }}
               />
             ))}
@@ -208,7 +217,8 @@ export function RowMenu({
         ))
       }
     >
-      <Icon name="dots" cls="ico sm" />
+      {cur?.label ?? value}
+      <Icon name="chevronDown" cls="ico sm" />
     </button>
   );
 }

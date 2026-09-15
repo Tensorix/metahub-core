@@ -660,8 +660,8 @@ function PairCodeView({ code, exp }: { code: string; exp: number }) {
   );
 }
 
-/** Advanced tab: live HTTP pairing against a server (generate / redeem a one-time
- *  code), plus the server-login QR a phone scans to open this server. */
+/** Live HTTP pairing between two servers: generate a one-time code for the other
+ *  side to redeem, or redeem theirs. Creates a direct sync target (数据与备份). */
 function ServerPairing({ onPaired }: { onPaired: () => void }) {
   const [code, setCode] = useState<{ code: string; exp: number } | null>(null);
   const [genBusy, setGenBusy] = useState(false);
@@ -694,23 +694,6 @@ function ServerPairing({ onPaired }: { onPaired: () => void }) {
     }
   };
 
-  const [base, setBase] = useState(() => {
-    try {
-      return localStorage.getItem(SERVER_BASE_KEY) || location.origin;
-    } catch {
-      return location.origin;
-    }
-  });
-  const onBase = (v: string) => {
-    setBase(v);
-    try {
-      v ? localStorage.setItem(SERVER_BASE_KEY, v) : localStorage.removeItem(SERVER_BASE_KEY);
-    } catch {
-      /* private mode */
-    }
-  };
-  const loginUrl = originEnrollUrl(base, currentToken());
-
   return (
     <>
       <div class="enroll-section">邀请另一台服务器配对</div>
@@ -739,8 +722,44 @@ function ServerPairing({ onPaired }: { onPaired: () => void }) {
       <button class="btn btn-primary" style={{ width: "100%", marginTop: 10 }} disabled={busy} onClick={redeem}>
         {busy ? "配对中…" : "配对"}
       </button>
+    </>
+  );
+}
 
-      <div class="enroll-sep" />
+/** 数据与备份 → 添加同步目标 → 直连另一台服务器. */
+export function AddDirectPeerModal({ onDone }: { onDone: () => void }) {
+  return (
+    <Modal
+      title="直连另一台服务器"
+      sub="两台服务器互相实时同步。一边生成配对码，另一边填入。"
+      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
+      width={420}
+    >
+      <ServerPairing onPaired={onDone} />
+    </Modal>
+  );
+}
+
+/** 添加设备 → 手机打开服务器: the `<server>/?token=…` login QR a phone scans. */
+function ServerLoginQr() {
+  const [base, setBase] = useState(() => {
+    try {
+      return localStorage.getItem(SERVER_BASE_KEY) || location.origin;
+    } catch {
+      return location.origin;
+    }
+  });
+  const onBase = (v: string) => {
+    setBase(v);
+    try {
+      v ? localStorage.setItem(SERVER_BASE_KEY, v) : localStorage.removeItem(SERVER_BASE_KEY);
+    } catch {
+      /* private mode */
+    }
+  };
+  const loginUrl = originEnrollUrl(base, currentToken());
+  return (
+    <>
       <div class="enroll-section">在手机上打开本服务器</div>
       <QrSvg data={loginUrl} />
       <div class="field-label">服务器地址（手机访问的域名；留空用当前地址）</div>
@@ -753,7 +772,8 @@ function ServerPairing({ onPaired }: { onPaired: () => void }) {
 
 /** Unified "添加设备" surface: one modal that brings another device onto the
  *  workspace — a phone (scan/link), a computer/CLI (command/code), or, against a
- *  server, live HTTP pairing. The enroll token carries bucket access only (never
+ *  server, the phone login QR. Server-to-server pairing is a sync target and
+ *  lives in AddDirectPeerModal (数据与备份). The enroll token carries bucket access only (never
  *  the passphrase); the joining device types that. Replaces the old per-bucket
  *  QrModal, the server-login OriginQrModal, and the pairing add/code modals. */
 export function AddDeviceModal({
@@ -775,7 +795,7 @@ export function AddDeviceModal({
           { id: "cli", label: "电脑 / 命令行" },
         ] as { id: AddTab; label: string }[])
       : []),
-    ...(server ? ([{ id: "server", label: "高级:服务器配对" }] as { id: AddTab; label: string }[]) : []),
+    ...(server ? ([{ id: "server", label: "手机打开服务器" }] as { id: AddTab; label: string }[]) : []),
   ];
   const [tab, setTab] = useState<AddTab>(tabs[0]?.id ?? "server");
   const [bucketUrl, setBucketUrl] = useState(buckets[0]?.url ?? "");
@@ -848,7 +868,7 @@ export function AddDeviceModal({
         </>
       )}
 
-      {tab === "server" && <ServerPairing onPaired={onPaired} />}
+      {tab === "server" && <ServerLoginQr />}
     </Modal>
   );
 }
@@ -872,8 +892,8 @@ function originEnrollUrl(base: string, token: string | null): string {
   return token ? `${b}/?token=${encodeURIComponent(token)}` : b;
 }
 
-// The server-login QR ("在手机上打开本服务器") now lives in AddDeviceModal's
-// 「高级:服务器配对」 tab (ServerPairing); originEnrollUrl + SERVER_BASE_KEY above
+// The server-login QR ("在手机上打开本服务器") lives in AddDeviceModal's
+// 「手机打开服务器」 tab (ServerLoginQr); originEnrollUrl + SERVER_BASE_KEY above
 // are shared with it.
 
 /** Provider presets — prefill the right region + endpoint shape + a one-line
@@ -1290,5 +1310,5 @@ export function RecoveryCodeModal({ buckets }: { buckets: S3Peer[] }) {
   );
 }
 
-// PairingCodeModal + AddPeerModal folded into AddDeviceModal's 「高级:服务器配对」
-// tab (PairCodeView + ServerPairing).
+// PairingCodeModal + AddPeerModal folded into AddDirectPeerModal
+// (PairCodeView + ServerPairing).

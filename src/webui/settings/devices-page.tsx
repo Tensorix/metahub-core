@@ -38,8 +38,8 @@ export function deviceIcon(form: DeviceView["form"] | null | undefined): string 
   }
 }
 
-const APP_WORD: Record<string, string> = { cli: "命令行", server: "服务器", desktop: "桌面应用", web: "浏览器" };
-const PLATFORM_WORD: Record<string, string> = {
+export const APP_WORD: Record<string, string> = { cli: "命令行", server: "服务器", desktop: "桌面应用", web: "浏览器" };
+export const PLATFORM_WORD: Record<string, string> = {
   macos: "macOS",
   windows: "Windows",
   linux: "Linux",
@@ -109,31 +109,6 @@ export function DevicesPage() {
   const key = (d: DeviceView) => d.nodeId ?? `grant:${d.channels[0]?.ref ?? ""}`;
 
   // ---- actions ------------------------------------------------------------
-  const syncNow = async (url: string) => {
-    try {
-      const r = await api.syncPeer(url);
-      toast(r.ok ? `已同步：推送 ${r.pushed}，拉取 ${r.pulled}` : `同步失败：${r.error}`);
-    } catch (e) {
-      toast(`同步失败：${(e as Error).message}`);
-    }
-    reload();
-  };
-  const togglePeer = async (url: string) => {
-    const p = peers.find((x) => x.url === url);
-    await api.updatePeer(url, { enabled: !(p?.enabled ?? 0) }).catch((e) => toast(e.message));
-    reload();
-  };
-  const removePeerRow = async (d: DeviceView, url: string) => {
-    const ok = await confirmDialog({
-      title: `移除 ${deviceName(d)}`,
-      message: "将停止与它的直连同步。它上面已同步的数据仍在，无法远程删除。",
-      confirmLabel: "移除",
-      danger: true,
-    });
-    if (!ok) return;
-    await api.removePeer(url).catch((e) => toast(e.message));
-    reload();
-  };
   const revokeGrants = async (d: DeviceView, refs: string[]) => {
     const ok = await confirmDialog({
       title: `撤销 ${deviceName(d)} 的接入`,
@@ -269,25 +244,6 @@ export function DevicesPage() {
               重命名
             </button>
           )}
-          {paired.map((c) => {
-            const on = !!peers.find((x) => x.url === c.ref)?.enabled;
-            return (
-              <>
-                <button class="btn btn-ghost" onClick={() => syncNow(c.ref)}>
-                  <Icon name="refresh" cls="ico sm" />
-                  立即同步
-                </button>
-                <button class="btn btn-ghost" onClick={() => togglePeer(c.ref)}>
-                  <Icon name={on ? "pause" : "play"} cls="ico sm" />
-                  {on ? "暂停同步" : "恢复同步"}
-                </button>
-                <button class="btn btn-ghost danger" onClick={() => removePeerRow(d, c.ref)}>
-                  <Icon name="trash" cls="ico sm" />
-                  移除
-                </button>
-              </>
-            );
-          })}
           {!d.self && grants.length > 0 && (
             <button
               class="btn btn-ghost danger"
@@ -304,6 +260,11 @@ export function DevicesPage() {
             </button>
           )}
         </div>
+        {!d.self && paired.length > 0 && (
+          <div class="device-note">
+            同步状态、暂停与停止直连在 <a href="#/settings?sec=backup">数据与备份</a>。
+          </div>
+        )}
         {!d.self && grants.length > 0 && paired.length === 0 && (
           <div class="device-note">撤销后它不能再同步进来；此前已同步到它上面的数据无法远程删除。</div>
         )}

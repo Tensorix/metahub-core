@@ -332,6 +332,9 @@
   .set-row-tag { display:inline-block; margin-left:8px; font-size:11px; font-weight:500;
     color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 7px; vertical-align:1px; }
   .set-row-input { width:15em; min-width:0; }
+  /* row dropdown (primitives.tsx RowSelect): current value + chevron */
+  .row-select { gap:4px; padding:4px 6px 4px 10px; }
+  .row-select .ico { width:13px; height:13px; color:var(--muted); }
 
   /* Page chrome (primitives.tsx PageHeader / DangerZone) — every page opens
      with its own PageHeader (the shell renders no title). */
@@ -340,7 +343,7 @@
   .page-header-text { flex:1 1 auto; min-width:0; }
   .page-header-title { font-size:26px; font-weight:700; letter-spacing:-.02em; color:var(--fg); margin:0; }
   .page-header-sub { color:var(--muted); font-size:var(--fs-sm); margin-top:3px; }
-  .page-header-action { flex:none; padding-top:4px; }
+  .page-header-action { flex:none; display:flex; align-items:center; gap:8px; padding-top:4px; }
   .page-header-banner { margin-top:8px; }
   .danger-zone { margin-top:34px; }
   .danger-zone-label { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.07em;
@@ -389,11 +392,6 @@
   .audit-end::before, .audit-end::after { content:""; flex:1; height:1px; background:var(--line); }
   @media (hover:none) { .audit-revert { opacity:1; } }
   .set-callout.warn { border-color:color-mix(in srgb,var(--warning,#9a6700) 32%,var(--line)); }
-  /* two-fact meta line under a block title (who publishes · where creds live) —
-     answers the questions hiding under "is this bucket for server or browser?" */
-  .set-meta { display:flex; flex-wrap:wrap; gap:8px 16px; margin:0 0 12px; }
-  .set-meta-item { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-sm); color:var(--fg-soft); }
-  .set-meta-item svg { width:14px; height:14px; color:var(--accent); }
   /* a quiet helper line under a field / chip group */
   .set-hint { font-size:var(--fs-xs); color:var(--muted); line-height:1.5; margin:3px 0 4px; }
   /* progressive disclosure ("工作原理" / "进阶") — native details, themed */
@@ -478,39 +476,18 @@
   .peer-sub { font-size:12px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .peer-menu { flex:none; padding:6px; }
 
-  /* workspace data-map summary heading 数据与备份 (SyncHealthLine): a quiet
-     page sub-line, not a callout — no border, no fill; the dot carries tone. */
-  .sync-health { margin:0; }
-  .sync-health-line { display:inline-flex; align-items:center; gap:8px; max-width:100%; padding:2px 0;
-    background:none; border:0; cursor:pointer; text-align:left; font:inherit; color:var(--fg-soft); }
-  .sync-health-line:hover { color:var(--fg); }
-  .sync-health-line:hover .sync-health-more { color:var(--fg); }
+  /* 数据与备份 health sentence (PageHeader sub): the dot alone carries tone */
+  .sync-health-sub { display:inline-flex; align-items:center; gap:8px; max-width:100%; min-width:0; }
   .sync-health-dot { flex:none; width:8px; height:8px; border-radius:50%; }
   .sync-health-dot.dot-ok { background:var(--success); }
   .sync-health-dot.dot-warn { background:var(--warning,#9a6700); }
   .sync-health-dot.dot-error { background:var(--danger); }
-  .sync-health-text { min-width:0; font-size:var(--fs-sm); font-weight:500;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .sync-health-more { flex:none; font-size:var(--fs-xs); color:var(--muted); }
-  /* shared expander chevron (SyncHealthLine 详情, device roster rows) */
+  /* shared expander chevron (bucket + device roster rows) */
   .row-chev { flex:none; color:var(--muted); display:flex; transition:transform .15s; }
   .row-chev .ico { width:14px; height:14px; }
   .row-chev.open { transform:rotate(180deg); }
   /* confirm dialogs: keep \n line breaks (consequence lists) */
   .cfm-msg { white-space: pre-line; }
-  /* concurrent problems under the headline (only when >1, else redundant) */
-  .sync-health-issues { padding:2px 0 4px; }
-  .sync-health-issue { font-size:12px; color:var(--muted); padding:2px 0 2px 18px; }
-  /* 查看各处: a bordered place list (kind · name · freshness · inline retry) */
-  .sync-health-places { margin-top:6px; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
-  .sync-health-place { display:flex; align-items:center; gap:10px; padding:9px 12px; min-width:0; font-size:var(--fs-sm); }
-  .sync-health-place + .sync-health-place { border-top:1px solid var(--line); }
-  .sync-health-place-kind { flex:none; width:64px; font-size:var(--fs-xs); color:var(--muted); }
-  .sync-health-place-label { flex:none; font-weight:550; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:40%; }
-  .sync-health-place-cap { flex:1; min-width:0; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .sync-health-place .btn { margin-left:auto; }
-  .sync-health-role { flex:none; font-size:11px; color:var(--accent); background:var(--accent-soft);
-    border-radius:999px; padding:2px 7px; }
 
   /* device roster (settings/devices-page.tsx): expanded detail = key/value
      table + one action row + one plain sentence — no gray callout box. */
@@ -532,7 +509,6 @@
     display:grid; grid-template-columns:1fr auto; gap:4px 12px; align-items:center; background:var(--surface-1); }
   .cloud-cta-title { font-weight:650; font-size:var(--fs-body); }
   .cloud-cta-sub { font-size:12px; color:var(--muted); margin-top:2px; line-height:1.6; }
-  .cloud-cta-alt { grid-column:1 / -1; font-size:12px; }
 
   /* printable recovery card */
   .recovery-card { border:2px solid var(--fg); border-radius:12px; padding:16px 18px; margin-top:8px; background:var(--surface); }
@@ -2614,17 +2590,7 @@
   .switch.on .switch-knob { transform:translateX(16px); }
   .ico.spin { animation:save-spin .8s linear infinite; }
 
-  /* clear-policy segmented control (redundancy any/all) */
   .seg { display:flex; gap:8px; }
-  .seg-opt { flex:1 1 0; display:flex; flex-direction:column; gap:2px; align-items:flex-start;
-    text-align:left; padding:9px 12px; border:1px solid var(--line-strong); border-radius:var(--radius);
-    background:var(--surface); cursor:pointer; transition:border-color .14s, background .14s, box-shadow .14s; }
-  .seg-opt:hover { border-color:var(--muted); }
-  .seg-opt.on { border-color:var(--accent); background:var(--accent-soft); box-shadow:0 0 0 1px var(--accent) inset; }
-  .seg-opt:disabled { opacity:.6; cursor:default; }
-  .seg-opt-t { font-size:var(--fs-sm); font-weight:600; color:var(--fg); }
-  .seg-opt-s { font-size:var(--fs-xs); color:var(--muted); }
-  .seg-opt.on .seg-opt-s { color:var(--accent); }
 
   /* cache-usage ring hero (settings/cache-ring.tsx CacheRingHero): legend
      column left, 152px three-segment ring right. Arcs animate 0 → share on
@@ -2640,9 +2606,6 @@
   .blob-dot.keep { background:var(--line-strong); }
   .blob-dot.pin { background:var(--muted); opacity:.6; }
   .blob-total { margin:13px 0 14px; font-size:var(--fs-xs); color:var(--muted); }
-  /* headline number over the legend (数据与备份 · 附件) */
-  .blob-stat { font-size:20px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin-bottom:10px; }
-  .blob-stat small { font-size:var(--fs-sm); font-weight:500; color:var(--muted); margin-left:8px; letter-spacing:0; }
   /* a status sentence in the action row (never a disabled button) */
   .blob-actions .blob-status { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-sm); color:var(--muted); }
   .blob-actions .blob-status .ico { width:14px; height:14px; color:var(--success); }
