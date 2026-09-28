@@ -1253,7 +1253,7 @@
   /* data-resolved (not prefers-color-scheme): tracks a manual dark choice too. */
   :root[data-resolved="dark"] .chip { background:color-mix(in srgb,var(--c) 22%,transparent); color:color-mix(in srgb,var(--c) 75%,#fff); }
   /* relation chip: an <a> that jumps to the target record */
-  a.chip.rel { text-decoration:none; cursor:pointer; }
+  a.chip.rel { display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; text-decoration:none; cursor:pointer; }
   a.chip.rel:hover { background:color-mix(in srgb,var(--c) 26%,transparent); text-decoration:underline; text-decoration-style:dashed; text-underline-offset:2px; }
   /* doc chip whose target is deleted/unsynced: muted + dashed, same cue as the
      editor's .cm-doclink-missing pill */
@@ -1648,7 +1648,7 @@
   .hist-kind.repair { background:var(--danger-soft); color:var(--danger); }
   .hist-now { font-size:var(--fs-xs); padding:1px 6px; border-radius:99px; background:var(--accent); color:var(--accent-fg); }
   .hist-preview { flex:1; overflow:auto; padding:20px 24px; }
-  .hist-doc-title { font-size:21px; font-weight:700; letter-spacing:-.02em; margin-bottom:14px; }
+  .hist-doc-title { font-size:21px; font-weight:700; letter-spacing:-.02em; margin-bottom:14px; overflow-wrap:anywhere; }
   .hist-foot { display:flex; justify-content:flex-end; padding:12px 16px; border-top:1px solid var(--line); }
   .pad { padding:12px; }
   .hist-rec-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
@@ -1777,12 +1777,12 @@
   /* menu / popover */
   .menu-layer { position:fixed; inset:0; z-index:115; }
   .pop { position:fixed; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-lg);
-    padding:6px; min-width:232px; max-height:70vh; overflow:auto; animation:pop .12s ease; }
+    padding:6px; min-width:232px; max-width:min(420px, calc(100vw - 20px)); max-height:70vh; overflow:auto; animation:pop .12s ease; }
   @keyframes pop { from { opacity:0; transform:translateY(-4px); } }
   /* Action-sheet variant: MenuHost (ui.tsx) adds .sheet on phones, where an
      anchored popover clips at the edges and sits under the finger. */
   .pop.sheet { left:8px; right:8px; top:auto; bottom:calc(8px + env(safe-area-inset-bottom));
-    min-width:0; max-height:60vh; max-height:60dvh; border-radius:var(--radius-lg);
+    min-width:0; max-width:none; max-height:60vh; max-height:60dvh; border-radius:var(--radius-lg);
     animation:sheet-in .18s ease; }
   @keyframes sheet-in { from { opacity:0; transform:translateY(12px); } }
   .pop .lbl { font-size:var(--fs-micro); font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; padding:6px 8px 3px; }
@@ -1791,7 +1791,7 @@
   .pop .item .lico { width:28px; height:28px; display:grid; place-items:center; border:1px solid var(--line); border-radius:6px; color:var(--fg-soft); flex:none; }
   .pop .item .lico.plain { border:0; width:22px; height:22px; }
   .pop .item .meta { flex:1; min-width:0; }
-  .pop .item .t { font-size:var(--fs-ui); } .pop .item .d { font-size:var(--fs-xs); color:var(--muted); display:block; }
+  .pop .item .t { font-size:var(--fs-ui); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .pop .item .d { font-size:var(--fs-xs); color:var(--muted); display:block; }
   .pop .item .chk { color:var(--accent); margin-left:auto; }
   .pop .item .kbd { margin-left:auto; }
   .pop .item.danger { color:var(--danger); } .pop .item.danger .lico { color:var(--danger); }
@@ -1958,6 +1958,9 @@
   .error-bar { margin:12px 24px; padding:10px 14px; background:var(--danger-soft); color:var(--danger); border-radius:var(--radius-sm); font-size:13px; cursor:pointer; }
   .offline-bar { margin:12px 24px 0; padding:8px 14px; background:var(--surface-2); color:var(--fg-soft); border-radius:var(--radius-sm); font-size:12.5px; }
   .search-hit { margin:0 0 8px; padding:10px 14px; background:var(--surface); border-radius:var(--radius-sm); font-size:13px; cursor:pointer; }
+  .search-hit-head { display:flex; align-items:baseline; gap:6px; min-width:0; }
+  .search-hit-head strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .search-hit-head .muted { flex:none; }
   .search-hit:hover { background:var(--surface-2); }
   .search-hit mark { background:transparent; color:var(--accent); font-weight:600; }
   .view-placeholder { padding:40px; text-align:center; border:1px dashed var(--line-strong); border-radius:var(--radius); color:var(--muted); margin-top:8px; }
@@ -2336,6 +2339,8 @@
   .qn-body { flex:1; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; -webkit-app-region:no-drag; }
   .qn-body .doc { max-width:none; margin:0; padding:14px 1px 30vh 12px; }
   .qn-body .doc-title { font-size:24px; margin-bottom:2px; }
+  .qn-body .doc-title { overflow-wrap:anywhere; }
+  .qn-body .doc-title:not(:focus) { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .qn-body .doc-meta { display:none; }
   /* The CM6 hover gutter never fits the compact window: quick notes offer no
      block insert/drag handles (Enter / slash commands cover insertion). */

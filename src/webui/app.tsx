@@ -866,7 +866,10 @@ function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: str
           class="search-hit"
           onClick={() => (h.type === "document" ? onOpenDoc(h.id) : h.database_id && onOpenDb(h.database_id))}
         >
-          <strong>{h.title || h.id}</strong> <span class="muted">{h.type === "document" ? "文档" : "记录"}</span>
+          <div class="search-hit-head">
+            <strong>{h.title || h.id}</strong>
+            <span class="muted">{h.type === "document" ? "文档" : "记录"}</span>
+          </div>
           <div class="muted"><SnippetText text={h.snippet} /></div>
         </div>
       ))}
