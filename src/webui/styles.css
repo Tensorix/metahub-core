@@ -2361,6 +2361,7 @@
      share .pop/.item/.lico with the main app; scope under the quick window
      body classes so the main app keeps its roomier density). */
   body.quicknote .pop, body.quickboard .pop { padding:5px; border-radius:9px; }
+  body.quicknote .menu-layer .pop, body.quickboard .menu-layer .pop { max-width:50vw; }
   body.quicknote .pop .lbl, body.quickboard .pop .lbl { padding:4px 8px 2px; font-size:10px; }
   body.quicknote .pop .item, body.quickboard .pop .item { padding:5px 9px; gap:8px; font-size:var(--fs-sm); }
   body.quicknote .pop .item .t, body.quickboard .pop .item .t { font-size:var(--fs-sm); }
