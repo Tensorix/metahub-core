@@ -10,6 +10,7 @@ import jsQR from "jsqr";
 import { decodeEnroll, type EnrollPayload } from "../core/sync/enroll.ts";
 import { enableReplicaFromBucket } from "./data/replica.ts";
 import { Icon } from "./icons.tsx";
+import { t } from "./i18n/t.ts";
 
 /** Bucket config carried in a `#enroll=<base64url(JSON)>` deep link (the QR a
  *  desktop shows). The passphrase is never in the link — it's typed here. */
@@ -129,13 +130,13 @@ function QrScanner({
       return decodeCanvas(canvas, v, v.videoWidth, v.videoHeight, 512);
     };
 
-    const loop = (t: number) => {
+    const loop = (now: number) => {
       if (stopped || !alive) return;
       raf = requestAnimationFrame(loop);
-      if (busy || document.hidden || t - last < 150) return;
+      if (busy || document.hidden || now - last < 150) return;
       const v = videoRef.current;
       if (!v || v.readyState < v.HAVE_ENOUGH_DATA || !v.videoWidth) return;
-      last = t;
+      last = now;
       busy = true;
       void decodeFrame(v)
         .then((raw) => {
@@ -228,7 +229,7 @@ export function Enroll({ onDone }: { onDone: () => void }) {
 
   const connect = async (cfg: EnrollPayload, pw: string) => {
     if (cfg.encrypt !== false && !pw) {
-      setErr("加密口令必填");
+      setErr(t("加密口令必填"));
       return;
     }
     setBusy(true);
@@ -257,10 +258,10 @@ export function Enroll({ onDone }: { onDone: () => void }) {
       const msg = (e as Error).message;
       setErr(
         code === "auth"
-          ? "加密口令不正确,请输入与其他设备相同的口令。"
+          ? t("加密口令不正确,请输入与其他设备相同的口令。")
           : /failed to fetch|load failed|networkerror|cors/i.test(msg)
-            ? "连接被浏览器拦截:请给存储桶配置 CORS,允许此源的 GET/PUT/HEAD/DELETE。"
-            : `连接失败:${msg}`,
+            ? t("连接被浏览器拦截:请给存储桶配置 CORS,允许此源的 GET/PUT/HEAD/DELETE。")
+            : t("连接失败:{msg}", { msg }),
       );
       setBusy(false);
     }
@@ -298,7 +299,7 @@ export function Enroll({ onDone }: { onDone: () => void }) {
 
   const submitManual = () => {
     if (!endpoint.trim() || !bucket.trim() || !accessKey.trim() || !secretKey.trim()) {
-      setErr("endpoint、bucket、access key、secret key 必填");
+      setErr(t("endpoint、bucket、access key、secret key 必填"));
       return;
     }
     void connect(
@@ -330,7 +331,7 @@ export function Enroll({ onDone }: { onDone: () => void }) {
       const f = input.files?.[0];
       if (!f) return;
       const raw = await decodeImageFile(f).catch(() => null);
-      if (!raw || !tryAdopt(raw)) setErr("没有在图片中找到有效的接入二维码");
+      if (!raw || !tryAdopt(raw)) setErr(t("没有在图片中找到有效的接入二维码"));
     };
     input.click();
   };
@@ -338,19 +339,19 @@ export function Enroll({ onDone }: { onDone: () => void }) {
   return (
     <div class="enroll">
       <div class="enroll-card">
-        <div class="enroll-title">连接你的存储桶</div>
+        <div class="enroll-title">{t("连接你的存储桶")}</div>
 
         {step === "scan" && (
           <>
             <div class="enroll-sub">
-              扫描主设备上的二维码:在桌面端打开 设置 → 同步 → 手机接入。
+              {t("扫描主设备上的二维码:在桌面端打开 设置 → 同步 → 手机接入。")}
             </div>
             <div class={`enroll-scan${hit ? " hit" : ""}`}>
               {camErr === "denied" ? (
                 <div class="enroll-cam-err">
                   <Icon name="camera" cls="ico enroll-cam-errico" />
-                  <div>相机权限被拒绝</div>
-                  <div class="muted">允许访问相机,或改用下方粘贴/手动方式。</div>
+                  <div>{t("相机权限被拒绝")}</div>
+                  <div class="muted">{t("允许访问相机,或改用下方粘贴/手动方式。")}</div>
                   <button
                     class="btn"
                     onClick={() => {
@@ -358,7 +359,7 @@ export function Enroll({ onDone }: { onDone: () => void }) {
                       setCamKey((k) => k + 1);
                     }}
                   >
-                    重试授权
+                    {t("重试授权")}
                   </button>
                 </div>
               ) : (
@@ -366,7 +367,7 @@ export function Enroll({ onDone }: { onDone: () => void }) {
                   key={camKey}
                   onDecoded={(raw) => {
                     const ok = tryAdopt(raw, { flash: true });
-                    if (!ok) setErr("这不是有效的接入二维码"); // transient; scanning continues
+                    if (!ok) setErr(t("这不是有效的接入二维码")); // transient; scanning continues
                     return ok;
                   }}
                   onError={(kind) => {
@@ -376,15 +377,15 @@ export function Enroll({ onDone }: { onDone: () => void }) {
                 />
               )}
             </div>
-            <PasteBox onRaw={(raw) => tryAdopt(raw) || setErr("无效的接入链接或代码")} />
+            <PasteBox onRaw={(raw) => tryAdopt(raw) || setErr(t("无效的接入链接或代码"))} />
             {err && <div class="enroll-err">{err}</div>}
             <div class="enroll-switch">
               <button class="enroll-link" onClick={pickImage}>
-                从图片识别
+                {t("从图片识别")}
               </button>
               <span class="enroll-switch-dot">·</span>
               <button class="enroll-link" onClick={() => switchTo("manual")}>
-                手动填写
+                {t("手动填写")}
               </button>
             </div>
           </>
@@ -393,7 +394,7 @@ export function Enroll({ onDone }: { onDone: () => void }) {
         {step === "unlock" && config && (
           <>
             <div class="enroll-sub">
-              {encrypt ? "已读取桶信息,输入加密口令即可同步你的数据。" : "已读取桶信息,点击连接即可同步你的数据。"}
+              {encrypt ? t("已读取桶信息,输入加密口令即可同步你的数据。") : t("已读取桶信息,点击连接即可同步你的数据。")}
             </div>
             <div class="enroll-bucket-card">
               <Icon name="database" cls="ico enroll-bucket-ico" />
@@ -404,18 +405,18 @@ export function Enroll({ onDone }: { onDone: () => void }) {
               {encrypt && (
                 <span class="enroll-bucket-badge">
                   <Icon name="lock" cls="ico" />
-                  端到端加密
+                  {t("端到端加密")}
                 </span>
               )}
             </div>
             {encrypt && (
               <>
-                <div class="field-label">加密口令</div>
+                <div class="field-label">{t("加密口令")}</div>
                 <input
                   class="text-input"
                   type="password"
                   autofocus
-                  placeholder="与其他设备相同的口令"
+                  placeholder={t("与其他设备相同的口令")}
                   value={passphrase}
                   onInput={(e) => setPassphrase((e.target as HTMLInputElement).value)}
                   onKeyDown={(e) => e.key === "Enter" && void connect(config, passphrase)}
@@ -424,19 +425,19 @@ export function Enroll({ onDone }: { onDone: () => void }) {
             )}
             {err && <div class="enroll-err">{err}</div>}
             <button class="btn btn-primary enroll-go" disabled={busy} onClick={() => void connect(config, passphrase)}>
-              {busy ? "连接中…" : "连接并同步"}
+              {busy ? t("连接中…") : t("连接并同步")}
             </button>
             <div class="enroll-switch">
               {cameraLikely() && !pre && (
                 <>
                   <button class="enroll-link" onClick={() => switchTo("scan")}>
-                    重新扫码
+                    {t("重新扫码")}
                   </button>
                   <span class="enroll-switch-dot">·</span>
                 </>
               )}
               <button class="enroll-link" onClick={() => switchTo("manual")}>
-                改为手动填写
+                {t("改为手动填写")}
               </button>
             </div>
           </>
@@ -445,7 +446,7 @@ export function Enroll({ onDone }: { onDone: () => void }) {
         {step === "manual" && (
           <>
             <div class="enroll-sub">
-              填入 S3 兼容存储桶(R2/COS/MinIO/S3)的连接信息;数据上传前端到端加密。
+              {t("填入 S3 兼容存储桶(R2/COS/MinIO/S3)的连接信息;数据上传前端到端加密。")}
             </div>
             <div class="field-label">Endpoint</div>
             <input class="text-input" placeholder="https://<bucket>.cos.<region>.myqcloud.com" value={endpoint} onInput={(e) => setEndpoint((e.target as HTMLInputElement).value)} />
@@ -457,25 +458,25 @@ export function Enroll({ onDone }: { onDone: () => void }) {
             <input class="text-input" value={accessKey} onInput={(e) => setAccessKey((e.target as HTMLInputElement).value)} />
             <div class="field-label">Secret Access Key</div>
             <input class="text-input" type="password" value={secretKey} onInput={(e) => setSecretKey((e.target as HTMLInputElement).value)} />
-            <div class="field-label">路径前缀</div>
+            <div class="field-label">{t("路径前缀")}</div>
             <input class="text-input" value={prefix} onInput={(e) => setPrefix((e.target as HTMLInputElement).value)} />
-            <div class="field-label">加密口令</div>
+            <div class="field-label">{t("加密口令")}</div>
             <input
               class="text-input"
               type="password"
-              placeholder="与其他设备相同的口令"
+              placeholder={t("与其他设备相同的口令")}
               value={passphrase}
               onInput={(e) => setPassphrase((e.target as HTMLInputElement).value)}
               onKeyDown={(e) => e.key === "Enter" && submitManual()}
             />
             {err && <div class="enroll-err">{err}</div>}
             <button class="btn btn-primary enroll-go" disabled={busy} onClick={submitManual}>
-              {busy ? "连接中…" : "连接并同步"}
+              {busy ? t("连接中…") : t("连接并同步")}
             </button>
             {cameraLikely() && (
               <div class="enroll-switch">
                 <button class="enroll-link" onClick={() => switchTo("scan")}>
-                  改为扫码
+                  {t("改为扫码")}
                 </button>
               </div>
             )}
@@ -483,7 +484,7 @@ export function Enroll({ onDone }: { onDone: () => void }) {
         )}
 
         <div class="enroll-hint muted">
-          提示:iPhone 请用 Safari 的「分享 → 添加到主屏」装成 App,离线与持久存储才生效。
+          {t("提示:iPhone 请用 Safari 的「分享 → 添加到主屏」装成 App,离线与持久存储才生效。")}
         </div>
       </div>
     </div>
@@ -505,7 +506,7 @@ function PasteBox({ onRaw }: { onRaw: (raw: string) => unknown }) {
   return (
     <input
       class="text-input enroll-paste"
-      placeholder="或粘贴接入链接 / 接入码…"
+      placeholder={t("或粘贴接入链接 / 接入码…")}
       value={v}
       onInput={(e) => setV((e.target as HTMLInputElement).value)}
       onPaste={(e) => {

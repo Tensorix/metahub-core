@@ -1,4 +1,5 @@
 import { COPY_CSS } from "../../core/sync/share-copy.ts";
+import { pm } from "../../core/sync/page-messages.ts";
 
 export const SHELL_CSS = `:root{--bg:#fff;--fg:#1f2328;--muted:#6e7781;--line:#d0d7de;--accent:#0969da;--card:#f6f8fa}
 @media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8b949e;--line:#30363d;--accent:#4493f8;--card:#161b22}}
@@ -42,12 +43,15 @@ export const SKELETON_HTML = `<div class="skel" role="status" aria-busy="true" a
 </article>
 </div>`;
 
+const LANG_SCRIPT = `try{var ls=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language],en=true;for(var i=0;i<ls.length;i++){var g=ls[i]||'';if(/^zh/i.test(g)){en=false;break}if(/^en/i.test(g))break}if(en){document.documentElement.lang='en';document.title=${JSON.stringify(pm("en", "分享"))};var s=document.querySelector('.skel');if(s)s.setAttribute('aria-label',${JSON.stringify(pm("en", "正在加载"))})}}catch(e){}`;
+
 export function shellHtml(scriptSrc = "./share-viewer.js"): string {
-  return `<!doctype html><html lang="zh"><head>
+  return `<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>分享</title>
+<meta name="robots" content="noindex"><title>${pm("zh-CN", "分享")}</title>
 <style>${SHELL_CSS}</style></head><body>
 <div id="app">${SKELETON_HTML}</div>
+<script>${LANG_SCRIPT}</script>
 <script type="module" src="${scriptSrc}"></script>
 </body></html>`;
 }

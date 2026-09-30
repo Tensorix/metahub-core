@@ -5,6 +5,7 @@ import { Icon } from "../icons.tsx";
 import { DocView, type DocViewHandle } from "../editor.tsx";
 import { pressed, tip } from "../shortcuts.ts";
 import { viewToHash } from "../view.ts";
+import { t } from "../i18n/t.ts";
 import {
   UiHost,
   openMenu,
@@ -195,9 +196,9 @@ export function QuickNote() {
   const deleteActive = async () => {
     if (!activeId || !parentId) return;
     const ok = await confirmDialog({
-      title: "删除笔记？",
-      message: "该快速笔记将被删除。",
-      confirmLabel: "删除",
+      title: t("删除笔记？"),
+      message: t("该快速笔记将被删除。"),
+      confirmLabel: t("删除"),
       danger: true,
     });
     if (!ok) return;
@@ -211,13 +212,13 @@ export function QuickNote() {
       e,
       (close) => (
         <>
-          <MenuLabel>快速笔记</MenuLabel>
-          {notes.length === 0 && <div class="lbl">还没有笔记</div>}
+          <MenuLabel>{t("快速笔记")}</MenuLabel>
+          {notes.length === 0 && <div class="lbl">{t("还没有笔记")}</div>}
           {notes.map((n) => (
             <MenuItem
               key={n.id}
               icon="file"
-              label={n.title || "无标题"}
+              label={n.title || t("无标题")}
               checked={n.id === activeId}
               onClick={() => {
                 close();
@@ -228,7 +229,7 @@ export function QuickNote() {
           <MenuSep />
           <MenuItem
             icon="plus"
-            label="新建笔记"
+            label={t("新建笔记")}
             shortcut="qnNew"
             onClick={() => {
               close();
@@ -238,7 +239,7 @@ export function QuickNote() {
           {activeId && (
             <MenuItem
               icon="externalLink"
-              label="在主窗口中打开"
+              label={t("在主窗口中打开")}
               shortcut="qnOpenMain"
               onClick={() => {
                 close();
@@ -249,7 +250,7 @@ export function QuickNote() {
           {activeId && (
             <MenuItem
               icon="trash"
-              label="删除当前笔记"
+              label={t("删除当前笔记")}
               danger
               onClick={() => {
                 close();
@@ -268,18 +269,18 @@ export function QuickNote() {
   return (
     <div class="qn">
       <div class="qn-bar">
-        <span class="qn-brand">{activeTitle || "快速笔记"}</span>
+        <span class="qn-brand">{activeTitle || t("快速笔记")}</span>
         <div class="qn-actions">
-          <button class="iconbtn" {...tip("新建笔记", "qnNew")} onClick={() => void newNote()}>
+          <button class="iconbtn" {...tip(t("新建笔记"), "qnNew")} onClick={() => void newNote()}>
             <Icon name="plus" />
           </button>
-          <button class="iconbtn" {...tip("笔记列表")} onClick={openList}>
+          <button class="iconbtn" {...tip(t("笔记列表"))} onClick={openList}>
             <Icon name="list" />
           </button>
           {qn && (
             <button
               class={"iconbtn" + (pinned ? " active" : "")}
-              {...tip(pinned ? "取消置顶" : "始终置顶")}
+              {...tip(pinned ? t("取消置顶") : t("始终置顶"))}
               onClick={() => void togglePin()}
             >
               <Icon name="pin" />
@@ -290,7 +291,7 @@ export function QuickNote() {
 
       {error && (
         <div class="error-bar" onClick={() => setError("")}>
-          ⚠ {error}（点击关闭）
+          ⚠ {t("{error}（点击关闭）", { error })}
         </div>
       )}
 
@@ -305,7 +306,7 @@ export function QuickNote() {
           />
         ) : (
           <div class="empty">
-            <div>加载中…</div>
+            <div>{t("加载中…")}</div>
           </div>
         )}
       </div>

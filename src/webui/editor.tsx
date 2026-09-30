@@ -4,6 +4,8 @@ import { api, ApiError } from "./api.ts";
 import { clientMode, onReplicaStatus, replicaActive, replicaStatus, SYNCED_EVENT } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
 import { sameDay } from "./date.ts";
+import { t } from "./i18n/t.ts";
+import { fmtDate } from "./i18n/fmt.ts";
 import { Icon } from "./icons.tsx";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import { toast } from "./ui.tsx";
@@ -134,7 +136,7 @@ export function DocView({
       // Keep annotating the (now current) image: the lightbox follows the new src.
       setLightbox((lb) => (lb && lb.src === token ? { ...lb, src: up.url } : lb));
     } catch (err) {
-      toast(`保存失败：${(err as Error).message}`);
+      toast(t("保存失败：{msg}", { msg: (err as Error).message }));
     }
   };
 
@@ -252,7 +254,7 @@ export function DocView({
           inferAutoMode(d);
           setConflict(false);
           setVersion((v) => v + 1);
-          toast("已合并其他设备的修改");
+          toast(t("已合并其他设备的修改"));
         } catch {
           // Doc deleted remotely or replica hiccup — the nav refresh handles it.
         }
@@ -464,7 +466,7 @@ export function DocView({
     splitDocTop(v, moved);
   };
 
-  if (loading) return <div class="empty">加载中…</div>;
+  if (loading) return <div class="empty">{t("加载中…")}</div>;
 
   // Move the caret to the very start of the body and focus it (title → body).
   // enterDocTop opens a fresh line first when the doc starts with a void, so the
@@ -506,17 +508,18 @@ export function DocView({
     >
       {conflict && (
         <div class="doc-conflict" role="alert">
-          <span class="doc-conflict-msg">文档已被其他端修改，自动保存已暂停。</span>
+          <span class="doc-conflict-msg">{t("文档已被其他端修改，自动保存已暂停。")}</span>
           <button class="btn btn-secondary" onClick={() => loadDoc()}>
-            载入最新（弃本地改动）
+            {t("载入最新（弃本地改动）")}
           </button>
           <button class="btn btn-danger" onClick={() => void save({ force: true })}>
-            用本地版本覆盖
+            {t("用本地版本覆盖")}
           </button>
         </div>
       )}
       <div
         class="doc-title"
+        data-placeholder={t("无标题")}
         contentEditable
         ref={titleElRef}
         {...plainPasteHandlers()}
@@ -547,10 +550,10 @@ export function DocView({
         {sharedTargets.has(docId) && (
           <button
             class="doc-shared"
-            title="已分享 · 管理分享"
+            title={t("已分享 · 管理分享")}
             onClick={() => openShareModal({ kind: "doc", ref: docId, title: titleRef.current })}
           >
-            <Icon name="link" cls="ico sm" />已分享
+            <Icon name="link" cls="ico sm" />{t("已分享")}
           </button>
         )}
       </div>}
@@ -595,7 +598,7 @@ function SyncStamp() {
       const apply = (s: ReplicaStatus) => {
         const ls = s.lastSync;
         if (!ls) return;
-        setSt(ls.ok ? { at: ls.at, error: null } : { at: null, error: ls.error ?? "未知错误" });
+        setSt(ls.ok ? { at: ls.at, error: null } : { at: null, error: ls.error ?? t("未知错误") });
       };
       apply(replicaStatus());
       offs.push(onReplicaStatus(apply));
@@ -620,18 +623,16 @@ function SyncStamp() {
     }
     return () => offs.forEach((f) => f());
   }, []);
-  if (st.error) return <span title={st.error}>同步失败</span>;
-  if (st.at) return <span title={new Date(st.at).toLocaleString()}>上次同步 {fmtSyncStamp(st.at)}</span>;
-  return <span>实时同步</span>;
+  if (st.error) return <span title={st.error}>{t("同步失败")}</span>;
+  if (st.at) return <span title={fmtDate(st.at, "dateTime")}>{t("上次同步 {when}", { when: fmtSyncStamp(st.at) })}</span>;
+  return <span>{t("实时同步")}</span>;
 }
 
 // Absolute clock time, not "n minutes ago": auto-sync runs every ~30s, so a
 // relative label would sit on "刚刚" forever and carry no information. A time
 // that visibly ticks with each sync round does; older stamps gain the date.
 function fmtSyncStamp(at: number): string {
-  const d = new Date(at);
-  const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return sameDay(d, new Date()) ? hm : `${d.toLocaleDateString()} ${hm}`;
+  return sameDay(new Date(at), new Date()) ? fmtDate(at, "time") : fmtDate(at, "dateTime");
 }
 
 // Is the collapsed caret on the first / last visual line of `el`? Compares the

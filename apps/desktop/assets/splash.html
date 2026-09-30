@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -95,6 +95,7 @@
     <div class="title">Metahub</div>
     <div class="spinner" role="status" aria-label="正在启动"></div>
     <div class="hint">正在启动…</div>
+    <script>try{if(new URLSearchParams(location.search).get('lang')==='en'){document.documentElement.lang='en';document.querySelector('.spinner').setAttribute('aria-label','Starting');document.querySelector('.hint').textContent='Starting…'}}catch(e){}</script>
   </div>
 </body>
 </html>

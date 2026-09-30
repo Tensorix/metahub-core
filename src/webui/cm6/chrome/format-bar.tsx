@@ -9,6 +9,7 @@
 // gesture completes (pointerup / keyup of Shift+Arrow), never while dragging.
 // update() only hides and scroll-follows an already-visible bar.
 
+import { t } from "../../i18n/t.ts";
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
@@ -22,11 +23,11 @@ import { deferCoords, cancelDeferred } from "../defer";
 
 type Cmd = "bold" | "italic" | "code" | "strike" | "link";
 const BUTTONS: { cmd: Cmd; icon: string; title: string }[] = [
-  { cmd: "bold", icon: "bold", title: "加粗" },
-  { cmd: "italic", icon: "italic", title: "斜体" },
-  { cmd: "strike", icon: "strike", title: "删除线" },
-  { cmd: "code", icon: "code", title: "行内代码" },
-  { cmd: "link", icon: "link", title: "链接" },
+  { cmd: "bold", icon: "bold", title: t("加粗") },
+  { cmd: "italic", icon: "italic", title: t("斜体") },
+  { cmd: "strike", icon: "strike", title: t("删除线") },
+  { cmd: "code", icon: "code", title: t("行内代码") },
+  { cmd: "link", icon: "link", title: t("链接") },
 ];
 
 const WRAP: Record<Exclude<Cmd, "link">, string> = { bold: "**", italic: "*", code: "`", strike: "~~" };
@@ -110,7 +111,7 @@ export function formatBar(): Extension {
           // URL dialog (old-editor behavior): a link with an empty target is
           // dead markup the user then has to hand-edit. Selection survives the
           // modal — CM keeps state while unfocused.
-          const url = (await promptDialog({ title: "插入链接", label: "链接地址", placeholder: "https://…" }))?.trim();
+          const url = (await promptDialog({ title: t("插入链接"), label: t("链接地址"), placeholder: "https://…" }))?.trim();
           if (!url) { view.focus(); return; }
           const changes = view.state.changeByRange((r) => {
             const text = view.state.sliceDoc(r.from, r.to);
@@ -132,17 +133,17 @@ export function formatBar(): Extension {
           // can never disagree with what actually renders.
           const line = view.state.doc.lineAt(r.from);
           if (r.to <= line.to) {
-            const t = tokenizeInline(line.text).find(
-              (t) =>
-                t.kind === KIND[cmd] &&
-                ((line.from + t.innerFrom <= r.from && r.to <= line.from + t.innerTo) ||
-                  (line.from + t.start === r.from && line.from + t.end === r.to)),
+            const tok = tokenizeInline(line.text).find(
+              (x) =>
+                x.kind === KIND[cmd] &&
+                ((line.from + x.innerFrom <= r.from && r.to <= line.from + x.innerTo) ||
+                  (line.from + x.start === r.from && line.from + x.end === r.to)),
             );
-            if (t) {
-              const inner = line.text.slice(t.innerFrom, t.innerTo);
+            if (tok) {
+              const inner = line.text.slice(tok.innerFrom, tok.innerTo);
               return {
-                changes: { from: line.from + t.start, to: line.from + t.end, insert: inner },
-                range: EditorSelection.range(line.from + t.start, line.from + t.start + inner.length),
+                changes: { from: line.from + tok.start, to: line.from + tok.end, insert: inner },
+                range: EditorSelection.range(line.from + tok.start, line.from + tok.start + inner.length),
               };
             }
           }

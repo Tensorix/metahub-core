@@ -15,6 +15,8 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
+import { t } from "./i18n/t.ts";
+import { fmtNumber } from "./i18n/fmt.ts";
 import { clientMode, onReplicaStatus, replicaStatus } from "./data/replica.ts";
 import type { ReplicaStatus } from "./data/db-worker.ts";
 
@@ -61,40 +63,40 @@ export function useSyncPhase(): SyncPhaseState {
       // Hydration is the long wait — show at once. Ordinary rounds wait out
       // SHOW_DELAY so a fast push after a keystroke never flickers.
       const delay = st.state === "hydrating" ? 0 : SHOW_DELAY_MS;
-      const t = setTimeout(() => {
+      const timer = setTimeout(() => {
         shownAt.current = Date.now();
         setShown(true);
       }, delay);
-      return () => clearTimeout(t);
+      return () => clearTimeout(timer);
     }
     if (!shown) return;
     // Round ended while visible: hold the minimum, then flash the outcome.
     const hold = Math.max(0, MIN_SHOWN_MS - (Date.now() - shownAt.current));
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       setShown(false);
       if (st.lastSync?.ok) setDone({ pulled: st.lastSync.pulled });
     }, hold);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [busy, st.state, replica]);
 
   useEffect(() => {
     if (!done) return;
-    const t = setTimeout(() => setDone(null), DONE_FLASH_MS);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setDone(null), DONE_FLASH_MS);
+    return () => clearTimeout(timer);
   }, [done]);
 
   if (!replica || !online) return { phase: "hidden", label: "", title: "" };
   if (shown && st.state === "hydrating") {
-    const n = (st.hydrated ?? 0).toLocaleString();
-    return { phase: "hydrating", label: `下载中 · ${n}`, title: `正在下载本地副本，已接收 ${n} 条变更` };
+    const n = fmtNumber(st.hydrated ?? 0);
+    return { phase: "hydrating", label: t("下载中 · {n}", { n }), title: t("正在下载本地副本，已接收 {n} 条变更", { n }) };
   }
-  if (shown) return { phase: "syncing", label: "同步中", title: "正在与服务器同步" };
-  if (done) return { phase: "done", label: done.pulled > 0 ? "已更新" : "已同步", title: "" };
+  if (shown) return { phase: "syncing", label: t("同步中"), title: t("正在与服务器同步") };
+  if (done) return { phase: "done", label: done.pulled > 0 ? t("已更新") : t("已同步"), title: "" };
   if (st.state === "ready" && st.lastSync && !st.lastSync.ok) {
     return {
       phase: "error",
-      label: "同步失败",
-      title: `上次同步失败：${st.lastSync.error ?? "未知错误"} · 本地读写不受影响，点击查看`,
+      label: t("同步失败"),
+      title: t("上次同步失败：{msg} · 本地读写不受影响，点击查看", { msg: st.lastSync.error ?? t("未知错误") }),
     };
   }
   return { phase: "hidden", label: "", title: "" };

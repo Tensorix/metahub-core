@@ -1,0 +1,118 @@
+import type { Locale } from "./locale.ts";
+import { MhError } from "../errors.ts";
+
+const EN = {
+  "通过 metahub 分享": "Shared via metahub",
+  "由 metahub 托管": "Hosted by metahub",
+  "（空文档）": "(empty document)",
+  文档: "Document",
+  表格: "Table",
+  编辑: "Edit",
+  编辑文档: "Edit document",
+  保存: "Save",
+  "保存中…": "Saving…",
+  保存失败: "Save failed",
+  "已保存 ✓": "Saved ✓",
+  "可编辑文本/数字/URL/日期单元格，失焦自动保存": "Text, number, URL and date cells are editable; changes save on blur",
+  "编辑站点文件（文本文件可在线编辑；保存即对所有访问者生效）。": "Edit site files (text files can be edited here; saving applies to every visitor).",
+  "（暂无文件）": "(no files yet)",
+  "预览 ↗": "Preview ↗",
+  "（二进制文件，不可在线编辑）": "(binary file, cannot be edited here)",
+  "{name} · 文件": "{name} · Files",
+  "🔒 此分享受口令保护": "🔒 This share is protected by a passcode",
+  "口令错误，请重试。": "Wrong passcode, try again.",
+  口令: "Passcode",
+  解锁: "Unlock",
+  受保护的分享: "Protected share",
+  复制全文: "Copy all",
+  已复制: "Copied",
+  复制失败: "Copy failed",
+  站点尚未同步: "Site not synced yet",
+  "分享方设备上线同步后即可访问。": "Available once the sharing device comes online and syncs.",
+  页面不存在: "Page not found",
+  "这个站点里没有这个页面或文件。": "This site has no such page or file.",
+  资源暂不可用: "Resource temporarily unavailable",
+  "文件内容尚未同步到房间，请稍后重试。": "The file content has not synced to the room yet. Try again later.",
+  "文件的内容暂时无法取得，请稍后重试。": "The file content cannot be retrieved right now. Try again later.",
+  站点不存在: "Site not found",
+  "没有名为 “{name}” 的站点。": "There is no site named “{name}”.",
+  返回站点首页: "Back to site home",
+  "验证访问令牌 · metahub": "Verify access token · metahub",
+  输入访问令牌: "Enter the access token",
+  "此服务器已开启访问保护。在已登录设备的「设置 → 设备与授权」获取登录链接或二维码,或在服务器上运行 {cmd}。": "This server requires an access token. Get a login link or QR code from Settings → Devices on a signed-in device, or run {cmd} on the server.",
+  粘贴访问令牌或登录链接: "Paste the access token or login link",
+  显示令牌: "Show token",
+  隐藏令牌: "Hide token",
+  解锁并进入: "Unlock and enter",
+  "请输入访问令牌。": "Enter the access token.",
+  "验证中…": "Verifying…",
+  "令牌无效,请检查后重试。": "Invalid token. Check it and try again.",
+  "登录已过期,请重新输入令牌。": "Session expired. Enter the token again.",
+  附件已失效: "Attachment unavailable",
+  链接缺少分享数据: "The link is missing share data",
+  请输入分享口令: "Enter the share passcode",
+  链接缺少密钥: "The link is missing its key",
+  口令错误或链接已失效: "Wrong passcode or the link has expired",
+  链接已失效或密钥不正确: "The link has expired or the key is wrong",
+  分享: "Share",
+  正在加载: "Loading",
+  "✅ 已授权": "✅ Authorized",
+  "可以关闭此标签页，回到 MetaHub 继续部署。": "You can close this tab and return to MetaHub to continue deploying.",
+  站点入口健康响应过大: "Site entry health response is too large",
+  站点入口不能指向云平台元数据服务: "Site entry must not point at a cloud metadata service",
+  "Desktop sidecar 仅用于本机预览；请启动带鉴权的 mh --server，或使用 Edge": "The desktop sidecar is for local preview only; start an authenticated mh --server, or use Edge",
+  "站点入口健康检查失败（HTTP {status}）": "Site entry health check failed (HTTP {status})",
+  站点入口健康响应无效: "Site entry health response is invalid",
+  "站点入口节点不匹配（期望 {expected}，实际 {actual}）；这是防误配检查，不是身份认证": "Site entry node mismatch (expected {expected}, got {actual}); this is a misconfiguration guard, not authentication",
+  "目标设备版本不支持定向发布渠道；请先升级该设备，再重新验证入口": "The target device does not support targeted publishing channels; upgrade it, then verify the entry again",
+  "无法验证站点入口：连接超时": "Could not verify the site entry: connection timed out",
+  "无法验证站点入口：{msg}": "Could not verify the site entry: {msg}",
+  "请先在“设置 → 站点托管”配置并验证当前设备的公网或局域网入口": "Configure and verify this device's public or LAN entry under Settings → Site hosting first",
+  "配对设备缺少节点身份，重新配对后再试": "The paired device has no node identity; pair again and retry",
+  "该站点仍在等待目标设备确认回滚，请先重试回滚": "This site is still waiting for the target device to confirm the rollback; retry the rollback first",
+  配对设备同步失败: "Sync with the paired device failed",
+  没有待确认的站点回滚: "No site rollback is awaiting confirmation",
+  "目标配对设备不存在，请重新配对后重试": "The target paired device does not exist; pair again and retry",
+  站点渠道已不存在: "The site channel no longer exists",
+  "OAuth 流程不存在或已过期，请重新登录": "The OAuth flow does not exist or has expired; sign in again",
+  "OAuth 流程不存在或已过期，请重试": "The OAuth flow does not exist or has expired; try again",
+  "Cloudflare 授权失败": "Cloudflare authorization failed",
+  "Cloudflare 授权尚未完成，请稍候": "Cloudflare authorization is not finished yet; please wait",
+  "缺少 Cloudflare 账号 id": "Missing Cloudflare account id",
+  "缺少 Cloudflare 凭据（请先登录或提供 API Token）": "Missing Cloudflare credentials (sign in first or provide an API token)",
+  "Cloudflare 授权失败：{detail}": "Cloudflare authorization failed: {detail}",
+  "未返回 access token": "no access token returned",
+  "无法连接 Cloudflare 授权服务：{msg}": "Could not reach the Cloudflare authorization service: {msg}",
+  "Cloudflare 令牌交换失败（HTTP {status}）": "Cloudflare token exchange failed (HTTP {status})",
+  "无法读取 Cloudflare 账号列表：{msg}": "Could not read the Cloudflare account list: {msg}",
+  "读取 Cloudflare 账号失败（HTTP {status}）": "Reading Cloudflare accounts failed (HTTP {status})",
+  "未配置 Cloudflare OAuth 客户端，请改用 API Token 部署": "No Cloudflare OAuth client is configured; deploy with an API token instead",
+  "Cloudflare 授权超时，请重试": "Cloudflare authorization timed out; try again",
+  "Cloudflare 授权被拒绝：{detail}": "Cloudflare authorization was denied: {detail}",
+  "OAuth state 不匹配，疑似伪造回调，已中止": "OAuth state mismatch; the callback looks forged, aborted",
+  "Cloudflare 未返回授权码": "Cloudflare did not return an authorization code",
+  "请输入完整的 http(s) 地址": "Enter a complete http(s) address",
+  "站点入口只支持 HTTP 或 HTTPS": "Site entry supports HTTP or HTTPS only",
+  "站点入口不能包含凭据、查询参数或片段": "Site entry must not contain credentials, query parameters or fragments",
+  "站点入口必须是域名根地址，不能包含路径": "Site entry must be a domain root without a path",
+  站点入口必须是可访问的主机地址: "Site entry must be a reachable host address",
+  "公网入口必须使用 HTTPS；HTTP 仅允许本机或局域网地址": "A public entry must use HTTPS; HTTP is only allowed for local or LAN addresses",
+} as const;
+
+export type PageMsgKey = keyof typeof EN;
+
+export function pm(locale: Locale, key: PageMsgKey, params?: Record<string, string | number>): string {
+  const s: string = locale === "en" ? EN[key] : key;
+  return params ? s.replace(/\{(\w+)\}/g, (m, k: string) => (k in params ? String(params[k]) : m)) : s;
+}
+
+export function pmIfKnown(locale: Locale, text: string, params?: Record<string, string | number>): string {
+  if (locale === "en" && text in EN) return pm(locale, text as PageMsgKey, params);
+  return params ? pm(locale, text as PageMsgKey, params) : text;
+}
+
+export function localizeError(locale: Locale, e: unknown): string {
+  if (e instanceof MhError && e.i18n) return pmIfKnown(locale, e.i18n.key, e.i18n.params);
+  const message = e instanceof Error ? e.message : String(e);
+  return pmIfKnown(locale, message);
+}

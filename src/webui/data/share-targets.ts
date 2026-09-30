@@ -8,6 +8,7 @@
 
 import type { Scope } from "./scopes.ts";
 import type { ShareTargetOpt } from "../api.ts";
+import { t } from "../i18n/t.ts";
 
 /** Build the ordered share target list: current server (default, index 0) +
  *  paired peer servers + attached buckets. The peer/bucket url is encoded in the
@@ -23,7 +24,7 @@ export function buildShareTargets(
     {
       id: "server",
       kind: "server",
-      label: "当前服务器",
+      label: t("当前服务器"),
       subtitle: origin,
       icon: "globe",
       isDefault: true,
@@ -51,7 +52,7 @@ export function buildShareTargets(
     out.push({
       id: `bucket:${b.url}`,
       kind: "bucket",
-      label: "存储桶",
+      label: t("存储桶"),
       subtitle: b.label,
       icon: "database",
       isDefault: false,

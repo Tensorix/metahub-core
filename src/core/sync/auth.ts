@@ -8,6 +8,8 @@
 // localStorage + a cookie and reloads; served HTML then gets a fetch shim that
 // re-attaches the token as a Bearer header on same-origin API calls.
 
+import type { Locale } from "./locale.ts";
+import { pm } from "./page-messages.ts";
 import type { Database } from "bun:sqlite";
 import { injectRuntimeTag } from "../inject-runtime.ts";
 import { loadOrRotate } from "./token.ts";
@@ -242,12 +244,25 @@ const UNLOCK_CSS = `
 /** Self-contained token gate: themed to match the WebUI (light/dark, metahub
  *  mark), validates the token before entering, and stores it to localStorage +
  *  cookie on success. No stylesheet/bundle — it runs inside the auth gate. */
-export function unlockPage(): string {
-  return `<!doctype html><html lang="zh-CN"><head>
+const escapeAttr = (v: string): string =>
+  v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+export function unlockPage(locale: Locale = "zh-CN"): string {
+  const m = (key: Parameters<typeof pm>[1]) => escapeAttr(pm(locale, key));
+  const L = JSON.stringify({
+    go: pm(locale, "解锁并进入"),
+    show: pm(locale, "显示令牌"),
+    hide: pm(locale, "隐藏令牌"),
+    empty: pm(locale, "请输入访问令牌。"),
+    verifying: pm(locale, "验证中…"),
+    invalid: pm(locale, "令牌无效,请检查后重试。"),
+    expired: pm(locale, "登录已过期,请重新输入令牌。"),
+  });
+  return `<!doctype html><html lang="${locale}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<title>验证访问令牌 · metahub</title>
+<title>${m("验证访问令牌 · metahub")}</title>
 <script>
   // FOUC-guard theme resolution, same key/logic as src/webui/theme.ts.
   try {
@@ -261,18 +276,18 @@ export function unlockPage(): string {
 <div class="boot" id="boot"><svg viewBox="0 0 24 24">${CUBE_SVG}</svg></div>
 <form class="card" id="f" style="display:none" autocomplete="on">
   <div class="brand"><svg viewBox="0 0 24 24">${CUBE_SVG}</svg></div>
-  <h1>输入访问令牌</h1>
-  <p class="sub">此服务器已开启访问保护。在已登录设备的「设置 → 设备与授权」获取登录链接或二维码,或在服务器上运行 <code>mh token show</code>。</p>
+  <h1>${m("输入访问令牌")}</h1>
+  <p class="sub">${pm(locale, "此服务器已开启访问保护。在已登录设备的「设置 → 设备与授权」获取登录链接或二维码,或在服务器上运行 {cmd}。", { cmd: "<code>mh token show</code>" })}</p>
   <div class="field">
-    <input id="t" type="password" placeholder="粘贴访问令牌或登录链接"
+    <input id="t" type="password" placeholder="${m("粘贴访问令牌或登录链接")}"
       autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
-    <button type="button" class="peek" id="peek" aria-label="显示令牌"><svg viewBox="0 0 24 24">${EYE_SVG}</svg></button>
+    <button type="button" class="peek" id="peek" aria-label="${m("显示令牌")}"><svg viewBox="0 0 24 24">${EYE_SVG}</svg></button>
   </div>
   <p class="err" id="e" style="display:none"></p>
-  <button type="submit" class="go" id="go">解锁并进入</button>
+  <button type="submit" class="go" id="go">${m("解锁并进入")}</button>
 </form>
 <script>
-  var KEY = "mh_token";
+  var KEY = "mh_token", L = ${L};
   var form = document.getElementById("f"), boot = document.getElementById("boot");
   var input = document.getElementById("t"), errEl = document.getElementById("e");
   var goBtn = document.getElementById("go"), peek = document.getElementById("peek");
@@ -297,7 +312,7 @@ export function unlockPage(): string {
   }
   function fail(msg) {
     goBtn.disabled = false;
-    goBtn.innerHTML = "解锁并进入";
+    goBtn.textContent = L.go;
     errEl.textContent = msg;
     errEl.style.display = "flex";
     form.classList.remove("bad");
@@ -310,7 +325,7 @@ export function unlockPage(): string {
     var pw = input.type === "password";
     input.type = pw ? "text" : "password";
     peek.innerHTML = '<svg viewBox="0 0 24 24">' + (pw ? ${JSON.stringify(EYE_OFF_SVG)} : ${JSON.stringify(EYE_SVG)}) + "</svg>";
-    peek.setAttribute("aria-label", pw ? "隐藏令牌" : "显示令牌");
+    peek.setAttribute("aria-label", pw ? L.hide : L.show);
     input.focus();
   });
   input.addEventListener("input", function () {
@@ -320,9 +335,9 @@ export function unlockPage(): string {
   form.addEventListener("submit", function (ev) {
     ev.preventDefault();
     var token = normalize(input.value);
-    if (!token) { fail("请输入访问令牌。"); return; }
+    if (!token) { fail(L.empty); return; }
     goBtn.disabled = true;
-    goBtn.innerHTML = '<span class="spin"></span>验证中…';
+    goBtn.innerHTML = '<span class="spin"></span>' + L.verifying;
     var hdr = { headers: { authorization: "Bearer " + token } };
     // Prefer the renewal endpoint (managed mode returns the canonical token,
     // also upgrading a pasted in-grace token). Fall back to a cheap
@@ -333,7 +348,7 @@ export function unlockPage(): string {
       .then(function (d) {
         if (d && d.token) { save(d.token); location.reload(); return; }
         return fetch("/api/version", hdr).then(function (r) {
-          if (r.status === 401) { fail("令牌无效,请检查后重试。"); return; }
+          if (r.status === 401) { fail(L.invalid); return; }
           // 200 (static-token mode) or no UI (404) → trust it and reload.
           save(token); location.reload();
         });
@@ -350,7 +365,7 @@ export function unlockPage(): string {
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (d && d.token) { save(d.token); location.reload(); }
-        else showForm("登录已过期,请重新输入令牌。");
+        else showForm(L.expired);
       })
       .catch(function () { showForm(""); });
   } else {

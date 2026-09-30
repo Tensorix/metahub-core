@@ -8,6 +8,7 @@
 // Bytes can be missing even for a valid block (cross-device not-yet-synced, peer
 // offline, evicted), so each media element falls back to an "unavailable" card on
 // load error; retry remounts the element, re-triggering an on-demand resolve.
+import { t } from "../i18n/t.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Block } from "../blocks.ts";
 import { Icon } from "../icons.tsx";
@@ -27,11 +28,11 @@ function Unavailable({ icon, name, onRetry }: { icon: string; name?: string; onR
     <div class="void-block void-unavailable">
       <Icon name={icon} cls="ico" />
       <span class="vu-meta">
-        <span class="vu-name">{name || "媒体"}</span>
-        <span class="vu-sub">字节未同步到本设备或加载失败</span>
+        <span class="vu-name">{name || t("媒体")}</span>
+        <span class="vu-sub">{t("字节未同步到本设备或加载失败")}</span>
       </span>
       <button class="vu-retry" onClick={onRetry} onMouseDown={(e) => e.stopPropagation()}>
-        <Icon name="history" cls="ico sm" /> 重试
+        <Icon name="history" cls="ico sm" /> {t("重试")}
       </button>
     </div>
   );
@@ -43,8 +44,8 @@ export function UploadingBlock({ block }: { block: Block }) {
   return (
     <div class="void-block void-uploading">
       <Icon name="spinner" cls="ico spin" />
-      <span class="vu-name">{block.name || "上传中…"}</span>
-      <span class="vu-sub">上传中…</span>
+      <span class="vu-name">{block.name || t("上传中…")}</span>
+      <span class="vu-sub">{t("上传中…")}</span>
     </div>
   );
 }
@@ -111,10 +112,10 @@ export function ImageBlock({
         alt={block.name ?? ""}
         loading="lazy"
         draggable={false}
-        title="双击预览 / 标注"
+        title={t("双击预览 / 标注")}
         onError={() => setFailed(true)}
       />
-      <button class="void-expand" title="预览" onClick={onPreview} onMouseDown={(e) => e.stopPropagation()}>
+      <button class="void-expand" title={t("预览")} onClick={onPreview} onMouseDown={(e) => e.stopPropagation()}>
         <Icon name="maximize" cls="ico sm" />
       </button>
       {selected && (
@@ -155,7 +156,7 @@ export function AudioBlock({ block }: { block: Block }) {
 }
 
 export function FileBlock({ block }: { block: Block }) {
-  const name = block.name || "文件";
+  const name = block.name || t("文件");
   const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toUpperCase() : "";
   return (
     <a
@@ -172,7 +173,7 @@ export function FileBlock({ block }: { block: Block }) {
       </span>
       <span class="file-meta">
         <span class="file-name">{name}</span>
-        <span class="file-sub">{fmtSize(block.size) || "下载文件"}</span>
+        <span class="file-sub">{fmtSize(block.size) || t("下载文件")}</span>
       </span>
       <span class="file-dl"><Icon name="download" cls="ico sm" /></span>
     </a>

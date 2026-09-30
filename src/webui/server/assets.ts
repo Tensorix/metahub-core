@@ -22,7 +22,7 @@ const RUNNING_FROM_SOURCE = import.meta.url.includes("/src/webui/");
 /** The HTML shell. The Preact app and stylesheet are delivered separately as
  *  /webui.js and /webui.css (both served below, never cached). */
 const HTML = `<!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,6 +46,9 @@ const HTML = `<!doctype html>
      alone, so the dark palette exists exactly once — see styles.css. Dark also
      pre-tints the status bar (hex mirrors --bg) so the first frame isn't white. -->
 <script>try{var t=localStorage.getItem('mh-theme'),d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.resolved=d?'dark':'light';if(d)document.getElementById('theme-color-meta').content='#1a1a1c'}catch(e){}</script>
+<!-- Same for the UI language: mirror src/webui/i18n/locale.ts so <html lang>
+     is right before the bundle runs. -->
+<script>try{var l=localStorage.getItem('mh-lang');if(l!=='zh-CN'&&l!=='en'){var ls=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language];l='en';for(var i=0;i<ls.length;i++){var g=ls[i]||'';if(/^zh\\b/i.test(g)){l='zh-CN';break}if(/^en\\b/i.test(g))break}}document.documentElement.lang=l}catch(e){}</script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
 <link rel="stylesheet" href="/webui.css">

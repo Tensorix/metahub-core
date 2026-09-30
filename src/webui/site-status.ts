@@ -15,42 +15,43 @@ import type {
   ShareListItem,
   SiteHostingInfo,
 } from "./api.ts";
+import { t } from "./i18n/t.ts";
 
 export { siteChannels, siteState };
 export type { SiteChannel, SiteChannelInput, SiteState };
 
 /** One-line answer to "who can reach this site right now" (card subtitle). */
 export const SITE_STATE_LABEL: Record<SiteState, string> = {
-  rollback_pending: "回滚待确认",
-  cleanup_pending: "撤销待确认",
-  error: "发布失败",
-  provisioning: "正在创建 Edge 渠道",
-  room_live: "已上线 · Edge 始终在线",
-  device_live: "已上线 · 设备托管",
-  device_syncing: "正在同步 · 设备托管",
-  public_unverified: "已设公开 · 入口未验证",
-  link_only: "链接分享中",
-  expired_link: "链接已过期",
-  private: "私有预览",
+  rollback_pending: t("回滚待确认"),
+  cleanup_pending: t("撤销待确认"),
+  error: t("发布失败"),
+  provisioning: t("正在创建 Edge 渠道"),
+  room_live: t("已上线 · Edge 始终在线"),
+  device_live: t("已上线 · 设备托管"),
+  device_syncing: t("正在同步 · 设备托管"),
+  public_unverified: t("已设公开 · 入口未验证"),
+  link_only: t("链接分享中"),
+  expired_link: t("链接已过期"),
+  private: t("私有预览"),
 };
 
 export const CHANNEL_STATUS_LABEL: Record<SiteChannel["status"], string> = {
-  ready: "在线",
-  syncing: "同步中",
-  unverified: "入口未验证",
-  provisioning: "正在创建",
-  rollback_pending: "回滚待确认",
-  cleanup_pending: "撤销待确认",
-  waiting_controller: "等待控制设备",
-  error: "失败",
-  expired: "已过期",
+  ready: t("在线"),
+  syncing: t("同步中"),
+  unverified: t("入口未验证"),
+  provisioning: t("正在创建"),
+  rollback_pending: t("回滚待确认"),
+  cleanup_pending: t("撤销待确认"),
+  waiting_controller: t("等待控制设备"),
+  error: t("失败"),
+  expired: t("已过期"),
 };
 
 export const channelAudienceLabel = (c: SiteChannel): string =>
-  c.audience === "anyone" ? "任何人" : "持链接者";
+  c.audience === "anyone" ? t("任何人") : t("持链接者");
 
 export const channelHostingLabel = (c: SiteChannel): string =>
-  c.hosting === "room" ? "Edge" : "设备";
+  c.hosting === "room" ? "Edge" : t("设备");
 
 /** Public address vs secret capability link, at a glance. */
 export const channelAudienceIcon = (c: Pick<SiteChannel, "audience">): "globe" | "lock" =>

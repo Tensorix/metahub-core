@@ -25,6 +25,8 @@ import { DatabaseView } from "./table.tsx";
 import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
 import { resolvePage, pageLabel } from "./settings/nav.ts";
+import { LANG_KEY, resolveLocale } from "./i18n/locale.ts";
+import { t } from "./i18n/t.ts";
 import { cmpVer } from "./version.ts";
 import { SitesView, SiteView, openSiteMenu } from "./sites.tsx";
 import type { Site } from "./api.ts";
@@ -393,6 +395,14 @@ function App() {
     return () => mq.removeEventListener("change", on);
   }, []);
 
+  useEffect(() => {
+    const on = (e: StorageEvent) => {
+      if (e.key === LANG_KEY && e.newValue !== e.oldValue) location.reload();
+    };
+    window.addEventListener("storage", on);
+    return () => window.removeEventListener("storage", on);
+  }, []);
+
   // Export actions, shared between the "…" menu and the share menu.
   const exportDocMarkdown = (doc: DocSummary) => {
     const body = docHandleRef.current?.snapshotMarkdown();
@@ -417,34 +427,34 @@ function App() {
   const shareMenu = (e: MouseEvent) => {
     openMenu(e, (close) => (
       <>
-        <MenuItem icon="link" label="复制链接" onClick={() => {
+        <MenuItem icon="link" label={t("复制链接")} onClick={() => {
           close();
           // The hash route *is* the shareable address (same host).
           navigator.clipboard.writeText(location.origin + location.pathname + viewToHash(view))
-            .then(() => toast("链接已复制"))
+            .then(() => toast(t("链接已复制")))
             .catch((err) => onError(String(err.message)));
         }} />
         {(view.kind === "doc" || view.kind === "db") && (
-          <MenuItem icon="file" label="复制内链" onClick={() => {
+          <MenuItem icon="file" label={t("复制内链")} onClick={() => {
             close();
             // `[[id]]` — origin-free internal reference; pasting it into any
             // document renders a live link to this target on every device.
             navigator.clipboard.writeText(`[[${view.id}]]`)
-              .then(() => toast("内链已复制，可粘贴到任意文档"))
+              .then(() => toast(t("内链已复制，可粘贴到任意文档")))
               .catch((err) => onError(String(err.message)));
           }} />
         )}
         {view.kind === "doc" && activeDoc && (
-          <MenuItem icon="link" label="通过设备分享…" onClick={() => { close(); openShareModal({ kind: "doc", ref: activeDoc.id, title: activeDoc.title }); }} />
+          <MenuItem icon="link" label={t("通过设备分享…")} onClick={() => { close(); openShareModal({ kind: "doc", ref: activeDoc.id, title: activeDoc.title }); }} />
         )}
         {view.kind === "db" && activeDb && (
-          <MenuItem icon="link" label="通过设备分享…" onClick={() => { close(); openShareModal({ kind: "database", ref: activeDb.id, title: activeDb.name }); }} />
+          <MenuItem icon="link" label={t("通过设备分享…")} onClick={() => { close(); openShareModal({ kind: "database", ref: activeDb.id, title: activeDb.name }); }} />
         )}
         {view.kind === "doc" && activeDoc && (
-          <MenuItem icon="download" label="导出 Markdown" onClick={() => { close(); exportDocMarkdown(activeDoc); }} />
+          <MenuItem icon="download" label={t("导出 Markdown")} onClick={() => { close(); exportDocMarkdown(activeDoc); }} />
         )}
         {view.kind === "db" && activeDb && (
-          <MenuItem icon="download" label="导出 CSV" onClick={() => { close(); exportDbCsv(activeDb); }} />
+          <MenuItem icon="download" label={t("导出 CSV")} onClick={() => { close(); exportDbCsv(activeDb); }} />
         )}
       </>
     ));
@@ -462,12 +472,12 @@ function App() {
       : "share";
   const saveLabel =
     saveState === "saving"
-      ? "保存中…"
+      ? t("保存中…")
       : saveState === "saved"
-        ? "已保存"
+        ? t("已保存")
         : saveState === "share"
-          ? "分享"
-          : "保存";
+          ? t("分享")
+          : t("保存");
   const saveIcon =
     saveState === "share"
       ? "share"
@@ -480,10 +490,10 @@ function App() {
             : "cloudUp";
   const shareSaveTitle =
     saveState === "share"
-      ? "分享"
+      ? t("分享")
       : saveState === "error"
-        ? `保存到同步存储桶失败：${replicaSt.bucketError ?? ""}`
-        : "保存到同步存储桶";
+        ? t("保存到同步存储桶失败：{msg}", { msg: replicaSt.bucketError ?? "" })
+        : t("保存到同步存储桶");
 
   // Quiet success / loud failure: success rides on the inline "已保存" flash
   // (saveFlash, see above), so no success toast — we only shout on failure.
@@ -494,9 +504,9 @@ function App() {
       await syncReplicaNow();
       const st = replicaStatus();
       if (st.bucketError) throw new Error(st.bucketError);
-      if (st.bucketDirty) throw new Error("仍有改动尚未保存到同步存储桶");
+      if (st.bucketDirty) throw new Error(t("仍有改动尚未保存到同步存储桶"));
     } catch (err) {
-      toast(`保存失败：${(err as Error).message}`);
+      toast(t("保存失败：{msg}", { msg: (err as Error).message }));
     }
   };
 
@@ -522,7 +532,7 @@ function App() {
       void saveToBucket();
       triggerKbdPulse();
     } else if (replicaActive()) {
-      toast("已是最新"); // synced — nothing to push, just acknowledge
+      toast(t("已是最新")); // synced — nothing to push, just acknowledge
       triggerKbdPulse();
     }
     return true; // doc/db view → swallow the browser "save page" regardless
@@ -553,26 +563,26 @@ function App() {
     toggleSource: () => docHandleRef.current?.setMode(docHandleRef.current.getMode() === "source" ? "blocks" : "source"),
     docWide: toggleDocWide,
     docHistory: () => { docHandleRef.current?.flushSave(); setDocHistory(true); },
-    copyDocId: () => { if (activeDocId) navigator.clipboard?.writeText(activeDocId).then(() => toast("已复制 ID")); },
+    copyDocId: () => { if (activeDocId) navigator.clipboard?.writeText(activeDocId).then(() => toast(t("已复制 ID"))); },
   };
   const run = (k: string) => () => cmdRef.current[k]?.();
   useEffect(() => registerCommands([
-    { id: "openById", label: "按 ID 打开…", group: "nav", icon: "hash", order: 0, run: run("openById") },
-    { id: "search", label: "搜索", group: "nav", icon: "search", shortcut: "search", order: 1, run: run("search") },
-    { id: "settings", label: "打开设置", group: "nav", icon: "settings", shortcut: "settings", run: run("settings") },
-    { id: "sidebar", label: "折叠 / 展开侧栏", group: "nav", icon: "monitor", shortcut: "sidebar", run: run("sidebar") },
+    { id: "openById", label: t("按 ID 打开…"), group: "nav", icon: "hash", order: 0, run: run("openById") },
+    { id: "search", label: t("搜索"), group: "nav", icon: "search", shortcut: "search", order: 1, run: run("search") },
+    { id: "settings", label: t("打开设置"), group: "nav", icon: "settings", shortcut: "settings", run: run("settings") },
+    { id: "sidebar", label: t("折叠 / 展开侧栏"), group: "nav", icon: "monitor", shortcut: "sidebar", run: run("sidebar") },
     ...(isDesktop ? [
-      { id: "back", label: "后退", group: "nav" as const, icon: "arrowLeft", shortcut: "back", run: run("back") },
-      { id: "forward", label: "前进", group: "nav" as const, icon: "arrowRight", shortcut: "forward", run: run("forward") },
+      { id: "back", label: t("后退"), group: "nav" as const, icon: "arrowLeft", shortcut: "back", run: run("back") },
+      { id: "forward", label: t("前进"), group: "nav" as const, icon: "arrowRight", shortcut: "forward", run: run("forward") },
     ] : []),
   ]), [isDesktop]);
   useEffect(() => {
     if (!activeDocId) return;
     return registerCommands([
-      { id: "toggleSource", label: "块 / 代码方式切换", group: "doc", icon: "code", shortcut: "toggleSource", run: run("toggleSource") },
-      { id: "docWide", label: "宽屏模式", group: "doc", icon: "maximize", run: run("docWide") },
-      { id: "docHistory", label: "版本历史", group: "doc", icon: "history", run: run("docHistory") },
-      { id: "copyDocId", label: "复制 ID", group: "doc", icon: "hash", run: run("copyDocId") },
+      { id: "toggleSource", label: t("块 / 代码方式切换"), group: "doc", icon: "code", shortcut: "toggleSource", run: run("toggleSource") },
+      { id: "docWide", label: t("宽屏模式"), group: "doc", icon: "maximize", run: run("docWide") },
+      { id: "docHistory", label: t("版本历史"), group: "doc", icon: "history", run: run("docHistory") },
+      { id: "copyDocId", label: t("复制 ID"), group: "doc", icon: "hash", run: run("copyDocId") },
     ]);
   }, [activeDocId]);
 
@@ -580,44 +590,44 @@ function App() {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
         <>
-          <MenuItem icon="code" label={docMode === "source" ? "块方式显示" : "代码方式显示"} shortcut="toggleSource" checked={docMode === "source"} onClick={() => {
+          <MenuItem icon="code" label={docMode === "source" ? t("块方式显示") : t("代码方式显示")} shortcut="toggleSource" checked={docMode === "source"} onClick={() => {
             close();
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
           }} />
-          <MenuItem icon="maximize" label="宽屏模式" checked={docWide} onClick={() => {
+          <MenuItem icon="maximize" label={t("宽屏模式")} checked={docWide} onClick={() => {
             close();
             toggleDocWide();
           }} />
-          <MenuItem icon="copy" label="创建副本" onClick={async () => {
+          <MenuItem icon="copy" label={t("创建副本")} onClick={async () => {
             close();
             // The copy is made server-side, so flush pending edits first.
             docHandleRef.current?.flushSave();
             try {
-              const d = await api.duplicateDocument(activeDoc.id, { title: `${activeDoc.title || "无标题"} 副本` });
+              const d = await api.duplicateDocument(activeDoc.id, { title: t("{title} 副本", { title: activeDoc.title || t("无标题") }) });
               navigate({ kind: "doc", id: d.id });
-              toast("已创建副本");
+              toast(t("已创建副本"));
             } catch (err) { onError(String((err as Error).message)); }
           }} />
-          <MenuItem icon="history" label="版本历史" onClick={() => {
+          <MenuItem icon="history" label={t("版本历史")} onClick={() => {
             close();
             // Flush pending edits first so the history list includes them.
             docHandleRef.current?.flushSave();
             setDocHistory(true);
           }} />
           <MenuSep />
-          <MenuItem icon="hash" label="复制 ID" onClick={() => {
+          <MenuItem icon="hash" label={t("复制 ID")} onClick={() => {
             close();
-            navigator.clipboard?.writeText(activeDoc.id).then(() => toast("已复制 ID"));
+            navigator.clipboard?.writeText(activeDoc.id).then(() => toast(t("已复制 ID")));
           }} />
-          <MenuItem icon="settings" label="重命名…" onClick={async () => {
+          <MenuItem icon="settings" label={t("重命名…")} onClick={async () => {
             close();
-            const title = await promptDialog({ title: "重命名文档", value: activeDoc.title });
+            const title = await promptDialog({ title: t("重命名文档"), value: activeDoc.title });
             if (title) await api.updateDocument(activeDoc.id, { title });
           }} />
           <MenuSep />
-          <MenuItem icon="trash" label="删除文档" danger onClick={async () => {
+          <MenuItem icon="trash" label={t("删除文档")} danger onClick={async () => {
             close();
-            const ok = await confirmDialog({ title: "删除文档？", message: `「${activeDoc.title || "无标题"}」将被删除。`, confirmLabel: "删除", danger: true });
+            const ok = await confirmDialog({ title: t("删除文档？"), message: t("「{title}」将被删除。", { title: activeDoc.title || t("无标题") }), confirmLabel: t("删除"), danger: true });
             if (ok) { await api.deleteDocument(activeDoc.id); navigate({ kind: "empty" }, { replace: true }); }
           }} />
         </>
@@ -625,29 +635,29 @@ function App() {
     } else if (view.kind === "db" && activeDb) {
       openMenu(e, (close) => (
         <>
-          <MenuItem icon="copy" label="创建副本" onClick={async () => {
+          <MenuItem icon="copy" label={t("创建副本")} onClick={async () => {
             close();
             try {
-              const nd = await api.duplicateDatabase(activeDb.id, { name: `${activeDb.name} 副本` });
+              const nd = await api.duplicateDatabase(activeDb.id, { name: t("{title} 副本", { title: activeDb.name }) });
               navigate({ kind: "db", id: nd.id });
-              toast("已创建副本");
+              toast(t("已创建副本"));
             } catch (err) { onError(String((err as Error).message)); }
           }} />
-          <MenuItem icon="history" label="最近动态" onClick={() => { close(); setDbActivity(true); }} />
+          <MenuItem icon="history" label={t("最近动态")} onClick={() => { close(); setDbActivity(true); }} />
           <MenuSep />
-          <MenuItem icon="hash" label="复制 ID" onClick={() => {
+          <MenuItem icon="hash" label={t("复制 ID")} onClick={() => {
             close();
-            navigator.clipboard?.writeText(activeDb.id).then(() => toast("已复制 ID"));
+            navigator.clipboard?.writeText(activeDb.id).then(() => toast(t("已复制 ID")));
           }} />
-          <MenuItem icon="settings" label="重命名…" onClick={async () => {
+          <MenuItem icon="settings" label={t("重命名…")} onClick={async () => {
             close();
-            const name = await promptDialog({ title: "重命名数据库", value: activeDb.name });
+            const name = await promptDialog({ title: t("重命名数据库"), value: activeDb.name });
             if (name && name !== activeDb.name) await api.updateDatabase(activeDb.id, { name });
           }} />
           <MenuSep />
-          <MenuItem icon="trash" label="删除数据库" danger onClick={async () => {
+          <MenuItem icon="trash" label={t("删除数据库")} danger onClick={async () => {
             close();
-            const ok = await confirmDialog({ title: "删除数据库？", message: `「${activeDb.name}」及其所有记录将被永久删除。`, confirmLabel: "删除", danger: true });
+            const ok = await confirmDialog({ title: t("删除数据库？"), message: t("「{name}」及其所有记录将被永久删除。", { name: activeDb.name }), confirmLabel: t("删除"), danger: true });
             if (ok) { await api.deleteDatabase(activeDb.id); navigate({ kind: "empty" }, { replace: true }); }
           }} />
         </>
@@ -685,7 +695,7 @@ function App() {
             {isMobile || sbCollapsed ? (
               <button
                 class="fnav-btn icon"
-                {...(isMobile ? tip("返回") : tip("展开侧栏", "sidebar"))}
+                {...(isMobile ? tip(t("返回")) : tip(t("展开侧栏"), "sidebar"))}
                 onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
               >
                 <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
@@ -695,11 +705,11 @@ function App() {
             )}
             <button
               class="fnav-btn"
-              {...tip("站点配置")}
+              {...tip(t("站点配置"))}
               onClick={() => navigate({ kind: "site", name: view.name, tab: "config" })}
             >
               <Icon name="settings" cls="ico sm" />
-              配置
+              {t("配置")}
             </button>
           </div>
         )}
@@ -707,7 +717,7 @@ function App() {
         <div class={"topbar" + (view.kind === "empty" ? " bare" : "")}>
           <button
             class={"iconbtn hamburger" + (sbCollapsed ? " show-collapsed" : "")}
-            {...(isMobile ? tip("返回") : tip(sbCollapsed ? "展开侧栏" : "菜单", "sidebar"))}
+            {...(isMobile ? tip(t("返回")) : tip(sbCollapsed ? t("展开侧栏") : t("菜单"), "sidebar"))}
             onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
           >
             <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
@@ -719,46 +729,46 @@ function App() {
           )}
           {isDesktop && !isMobile && (
             <>
-              <button class="iconbtn navbtn" {...tip("后退", "back")} disabled={!canGoBack} onClick={goBack}>
+              <button class="iconbtn navbtn" {...tip(t("后退"), "back")} disabled={!canGoBack} onClick={goBack}>
                 <Icon name="arrowLeft" />
               </button>
-              <button class="iconbtn navbtn" {...tip("前进", "forward")} disabled={!canGoForward} onClick={goForward}>
+              <button class="iconbtn navbtn" {...tip(t("前进"), "forward")} disabled={!canGoForward} onClick={goForward}>
                 <Icon name="arrowRight" />
               </button>
             </>
           )}
           <div class="crumb">
-            {view.kind === "doc" && <><span class="emoji"><Icon name="file" cls="ico sm" /></span><span>{activeDoc?.title || "无标题"}</span></>}
+            {view.kind === "doc" && <><span class="emoji"><Icon name="file" cls="ico sm" /></span><span>{activeDoc?.title || t("无标题")}</span></>}
             {view.kind === "db" && <><span class="emoji">{activeDb?.icon || "🗂️"}</span><span>{activeDb?.name}</span></>}
-            {view.kind === "search" && <span>搜索：“{view.q}”</span>}
+            {view.kind === "search" && <span>{t("搜索：“{q}”", { q: view.q })}</span>}
             {view.kind === "settings" && (
               <>
                 <span class="emoji"><Icon name="settings" cls="ico sm" /></span>
                 {view.sec !== undefined ? (
                   <>
-                    <button class="crumb-link" onClick={() => navigate({ kind: "settings" })}>设置</button>
+                    <button class="crumb-link" onClick={() => navigate({ kind: "settings" })}>{t("设置")}</button>
                     <span class="crumb-sep">›</span>
                     <span>{pageLabel(resolvePage(view.sec))}</span>
                   </>
                 ) : (
-                  <span>设置</span>
+                  <span>{t("设置")}</span>
                 )}
               </>
             )}
-            {view.kind === "sites" && <><span class="emoji"><Icon name="globe" cls="ico sm" /></span><span>站点管理</span></>}
+            {view.kind === "sites" && <><span class="emoji"><Icon name="globe" cls="ico sm" /></span><span>{t("站点管理")}</span></>}
             {view.kind === "site" && (
               <>
                 <span class="emoji"><Icon name="globe" cls="ico sm" /></span>
-                <button class="crumb-link" onClick={() => navigate({ kind: "sites" })}>站点</button>
+                <button class="crumb-link" onClick={() => navigate({ kind: "sites" })}>{t("站点")}</button>
                 <span class="crumb-sep">›</span>
                 {/* The topbar only exists in config mode; the site name links
                     back to the immersive visit page. */}
                 <button class="crumb-link" onClick={() => navigate({ kind: "site", name: view.name })}>{view.name}</button>
                 <span class="crumb-sep">›</span>
-                <span>配置</span>
+                <span>{t("配置")}</span>
               </>
             )}
-            {view.kind === "shares" && <><span class="emoji"><Icon name="link" cls="ico sm" /></span><span>分享</span></>}
+            {view.kind === "shares" && <><span class="emoji"><Icon name="link" cls="ico sm" /></span><span>{t("分享")}</span></>}
           </div>
           {view.kind === "site" && (
             <>
@@ -770,11 +780,11 @@ function App() {
                   openShareModal({ kind: "site", ref: activeSite.id, title: activeSite.title ?? activeSite.name })}
               >
                 <Icon name="link" cls="ico sm" />
-                <span class="site-publish-label">发布与分享</span>
+                <span class="site-publish-label">{t("发布与分享")}</span>
               </button>
               <button
                 class="iconbtn"
-                {...tip("更多")}
+                {...tip(t("更多"))}
                 disabled={!activeSite}
                 onClick={(e) =>
                   activeSite &&
@@ -807,11 +817,11 @@ function App() {
         {offline && (
           <div class="offline-bar">
             {replicaActive()
-              ? "⚡ 离线 — 本地副本模式:可正常查看和编辑全部内容,恢复连接后自动同步"
-              : "⚡ 离线 — 可浏览已缓存的内容,修改会失败;恢复网络后自动恢复"}
+              ? t("⚡ 离线 — 本地副本模式:可正常查看和编辑全部内容,恢复连接后自动同步")
+              : t("⚡ 离线 — 可浏览已缓存的内容,修改会失败;恢复网络后自动恢复")}
           </div>
         )}
-        {error && <div class="error-bar" onClick={() => setError("")}>⚠ {error}（点击关闭）</div>}
+        {error && <div class="error-bar" onClick={() => setError("")}>{t("⚠ {error}（点击关闭）", { error })}</div>}
 
         <div class="content">
           {view.kind === "empty" && <EmptyState onNewDoc={newEmptyDoc} />}
@@ -822,12 +832,12 @@ function App() {
               rec={view.rec ?? null}
               onRecNav={(r) => navigate({ kind: "db", id: activeDb.id, rec: r ?? undefined }, { replace: true })}
               tabReq={view.tab ?? null}
-              onTabReq={(t) => navigate({ kind: "db", id: activeDb.id, rec: view.rec, tab: t ?? undefined }, { replace: true })}
+              onTabReq={(tab) => navigate({ kind: "db", id: activeDb.id, rec: view.rec, tab: tab ?? undefined }, { replace: true })}
               onError={onError}
             />
           )}
           {view.kind === "db" && !activeDb && (
-            <div class="empty">{navReady ? "数据库不存在或已被删除。" : "加载中…"}</div>
+            <div class="empty">{navReady ? t("数据库不存在或已被删除。") : t("加载中…")}</div>
           )}
           {view.kind === "doc" && (
             <DocView
@@ -895,9 +905,9 @@ function EmptyState({ onNewDoc }: { onNewDoc: () => void }) {
         <circle class="kg-particle p4 fill-soft" cx="182" cy="126" r="2.4" />
         <circle class="kg-particle p5 fill-a" cx="150" cy="44" r="2.2" />
       </svg>
-      <p class="estate-title">空空如也</p>
-      <p class="estate-hint">从左侧选择一个数据库或文档，或新建一个开始。</p>
-      <button class="estate-link" onClick={onNewDoc}>＋ 新建文档</button>
+      <p class="estate-title">{t("空空如也")}</p>
+      <p class="estate-hint">{t("从左侧选择一个数据库或文档，或新建一个开始。")}</p>
+      <button class="estate-link" onClick={onNewDoc}>{t("＋ 新建文档")}</button>
     </div>
   );
 }
@@ -918,9 +928,9 @@ function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: str
   }, [q]);
   return (
     <div class="db">
-      <div class="db-title" style={{ marginBottom: 14 }}>搜索：“{q}”</div>
-      {hits === null && <p class="muted">搜索中…</p>}
-      {hits?.length === 0 && <p class="muted">没有匹配结果。</p>}
+      <div class="db-title" style={{ marginBottom: 14 }}>{t("搜索：“{q}”", { q })}</div>
+      {hits === null && <p class="muted">{t("搜索中…")}</p>}
+      {hits?.length === 0 && <p class="muted">{t("没有匹配结果。")}</p>}
       {hits?.map((h) => (
         <div
           key={h.id}
@@ -929,7 +939,7 @@ function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: str
         >
           <div class="search-hit-head">
             <strong>{h.title || h.id}</strong>
-            <span class="muted">{h.type === "document" ? "文档" : "记录"}</span>
+            <span class="muted">{h.type === "document" ? t("文档") : t("记录")}</span>
           </div>
           <div class="muted"><SnippetText text={h.snippet} /></div>
         </div>
@@ -995,10 +1005,10 @@ function Root() {
     });
   }, [mode]);
 
-  if (mode === "detecting") return <Splash text="加载中…" />;
+  if (mode === "detecting") return <Splash text={t("加载中…")} />;
   if (mode === "enroll")
     return <Enroll onDone={() => setMode(replicaActive() ? "app" : "hydrating")} />;
-  if (mode === "hydrating") return <Splash text="正在从同步存储桶恢复本地副本…" />;
+  if (mode === "hydrating") return <Splash text={t("正在从同步存储桶恢复本地副本…")} />;
   return <App />;
 }
 
@@ -1006,6 +1016,7 @@ function Root() {
 // frameless macOS window drops the sidebar logo and reserves a draggable strip
 // for the inset traffic lights. A browser leaves these classes off entirely.
 if (typeof window !== "undefined" && window.metahubDesktop) {
+  void window.metahubDesktop.app?.setLocale(resolveLocale());
   document.body.classList.add("desktop");
   if (window.metahubDesktop.platform === "darwin") document.body.classList.add("desktop-mac");
   // Self-heal a leftover SW in EVERY desktop window, not just the main app:

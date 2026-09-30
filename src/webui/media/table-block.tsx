@@ -9,6 +9,7 @@
 // widths, browser auto table layout sizes columns by content (capped to the
 // wrap, see .doc-table.autofit) — and the first drag freezes the measured
 // widths into the ref and switches to the fixed-layout manual mode below.
+import { t } from "../i18n/t.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Block, ColAlign } from "../blocks.ts";
 import { Icon } from "../icons.tsx";
@@ -326,27 +327,27 @@ export function TableBlock({
   // fallback for drag-reorder, so they render on coarse pointers only.
   const colMenuItems = (c: number, close: () => void) => (
     <>
-      <MenuLabel>对齐方式</MenuLabel>
-      <MenuItem icon="alignLeft" label="左对齐" checked={(align[c] ?? null) === null || align[c] === "left"} onClick={() => { setAlign(c, "left"); close(); }} />
-      <MenuItem icon="alignCenter" label="居中" checked={align[c] === "center"} onClick={() => { setAlign(c, "center"); close(); }} />
-      <MenuItem icon="alignRight" label="右对齐" checked={align[c] === "right"} onClick={() => { setAlign(c, "right"); close(); }} />
+      <MenuLabel>{t("对齐方式")}</MenuLabel>
+      <MenuItem icon="alignLeft" label={t("左对齐")} checked={(align[c] ?? null) === null || align[c] === "left"} onClick={() => { setAlign(c, "left"); close(); }} />
+      <MenuItem icon="alignCenter" label={t("居中")} checked={align[c] === "center"} onClick={() => { setAlign(c, "center"); close(); }} />
+      <MenuItem icon="alignRight" label={t("右对齐")} checked={align[c] === "right"} onClick={() => { setAlign(c, "right"); close(); }} />
       <MenuSep />
-      <MenuItem icon="plus" label="在左侧插入列" onClick={() => { insertCol(c); close(); }} />
-      <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => { insertCol(c + 1); close(); }} />
-      <MenuItem icon="copy" label="复制列" onClick={() => { duplicateCol(c); close(); }} />
-      {COARSE && c > 0 && <MenuItem icon="arrowLeft" label="左移列" onClick={() => { moveColTo(c, c - 1); close(); }} />}
-      {COARSE && c < cols - 1 && <MenuItem icon="chevron" label="右移列" onClick={() => { moveColTo(c, c + 2); close(); }} />}
-      {cols > 1 && <MenuItem icon="trash" label="删除列" danger onClick={() => { deleteCol(c); close(); }} />}
+      <MenuItem icon="plus" label={t("在左侧插入列")} onClick={() => { insertCol(c); close(); }} />
+      <MenuItem icon="cornerUpRight" label={t("在右侧插入列")} onClick={() => { insertCol(c + 1); close(); }} />
+      <MenuItem icon="copy" label={t("复制列")} onClick={() => { duplicateCol(c); close(); }} />
+      {COARSE && c > 0 && <MenuItem icon="arrowLeft" label={t("左移列")} onClick={() => { moveColTo(c, c - 1); close(); }} />}
+      {COARSE && c < cols - 1 && <MenuItem icon="chevron" label={t("右移列")} onClick={() => { moveColTo(c, c + 2); close(); }} />}
+      {cols > 1 && <MenuItem icon="trash" label={t("删除列")} danger onClick={() => { deleteCol(c); close(); }} />}
     </>
   );
   const rowMenuItems = (r: number, close: () => void) => (
     <>
-      {r >= 1 && <MenuItem icon="plus" label="在上方插入行" onClick={() => { insertRow(r); close(); }} />}
-      <MenuItem icon="cornerUpRight" label="在下方插入行" onClick={() => { insertRow(r + 1); close(); }} />
-      {r > 0 && <MenuItem icon="copy" label="复制行" onClick={() => { duplicateRow(r); close(); }} />}
-      {COARSE && r > 1 && <MenuItem icon="arrowUp" label="上移行" onClick={() => { moveRowTo(r, r - 1); close(); }} />}
-      {COARSE && r >= 1 && r < rows.length - 1 && <MenuItem icon="chevronDown" label="下移行" onClick={() => { moveRowTo(r, r + 2); close(); }} />}
-      {r > 0 && rows.length > 2 && <MenuItem icon="trash" label="删除行" danger onClick={() => { deleteRow(r); close(); }} />}
+      {r >= 1 && <MenuItem icon="plus" label={t("在上方插入行")} onClick={() => { insertRow(r); close(); }} />}
+      <MenuItem icon="cornerUpRight" label={t("在下方插入行")} onClick={() => { insertRow(r + 1); close(); }} />
+      {r > 0 && <MenuItem icon="copy" label={t("复制行")} onClick={() => { duplicateRow(r); close(); }} />}
+      {COARSE && r > 1 && <MenuItem icon="arrowUp" label={t("上移行")} onClick={() => { moveRowTo(r, r - 1); close(); }} />}
+      {COARSE && r >= 1 && r < rows.length - 1 && <MenuItem icon="chevronDown" label={t("下移行")} onClick={() => { moveRowTo(r, r + 2); close(); }} />}
+      {r > 0 && rows.length > 2 && <MenuItem icon="trash" label={t("删除行")} danger onClick={() => { deleteRow(r); close(); }} />}
     </>
   );
 
@@ -446,12 +447,12 @@ export function TableBlock({
           const sr = trs[src]!.getBoundingClientRect();
           outline = { left: tb.left - ir.left, top: sr.top - ir.top, width: tb.width, height: sr.height };
           pos = Math.round(Math.min(Math.max(ev.clientY, trs[1]!.getBoundingClientRect().top), tb.bottom) - wr.top - 14);
-          let t = rows.length;
+          let at = rows.length;
           for (let i = 1; i < trs.length; i++) {
             const rr = trs[i]!.getBoundingClientRect();
-            if (ev.clientY < rr.top + rr.height / 2) { t = i; break; }
+            if (ev.clientY < rr.top + rr.height / 2) { at = i; break; }
           }
-          bound = t === src || t === src + 1 ? null : t;
+          bound = at === src || at === src + 1 ? null : at;
           if (bound != null) {
             const edge = bound === rows.length ? trs[trs.length - 1]!.getBoundingClientRect().bottom : trs[bound]!.getBoundingClientRect().top;
             line = Math.round(edge - ir.top);
@@ -462,12 +463,12 @@ export function TableBlock({
           outline = { left: sc.left - ir.left, top: tb.top - ir.top, width: sc.width, height: tb.height };
           const lo = Math.max(tb.left, wr.left), hi = Math.min(tb.right, wr.right);
           pos = Math.round(Math.min(Math.max(ev.clientX, lo + 10), hi - 10) - wr.left);
-          let t = cols;
+          let at = cols;
           for (let i = 0; i < tds.length; i++) {
             const cr = tds[i]!.getBoundingClientRect();
-            if (ev.clientX < cr.left + cr.width / 2) { t = i; break; }
+            if (ev.clientX < cr.left + cr.width / 2) { at = i; break; }
           }
-          bound = t === src || t === src + 1 ? null : t;
+          bound = at === src || at === src + 1 ? null : at;
           if (bound != null) {
             const edge = bound === cols ? tds[tds.length - 1]!.getBoundingClientRect().right : tds[bound]!.getBoundingClientRect().left;
             line = Math.round(edge - ir.left);
@@ -528,7 +529,7 @@ export function TableBlock({
         <button
           class={"doc-row-handle" + (drag?.kind === "row" ? " grab" : "")}
           style={{ top: rowHandleTop }}
-          title="行选项"
+          title={t("行选项")}
           onPointerDown={(e) => { if (drag == null && active) startReorder(e as PointerEvent, "row", active.r); }}
         >
           <Icon name="grip" cls="ico sm" />
@@ -538,7 +539,7 @@ export function TableBlock({
         <button
           class={"doc-col-handle" + (drag?.kind === "col" ? " grab" : "")}
           style={{ left: colHandleLeft }}
-          title="列选项"
+          title={t("列选项")}
           onPointerDown={(e) => { if (drag == null && active) startReorder(e as PointerEvent, "col", active.c); }}
         >
           <Icon name="gripH" cls="ico sm" />
@@ -546,12 +547,12 @@ export function TableBlock({
       )}
       {selBar && rect && (
         <div class="doc-sel-bar" style={{ left: selBar.left, top: selBar.top }}>
-          <button onClick={() => { navigator.clipboard?.writeText(selectionToTsv(rows, rect)).catch(() => {}); copyFlash(); }}>复制</button>
-          <button onClick={() => { block.rows = clearRect(rows, rect); onTableChange(); onCellSel(null); }}>清空</button>
+          <button onClick={() => { navigator.clipboard?.writeText(selectionToTsv(rows, rect)).catch(() => {}); copyFlash(); }}>{t("复制")}</button>
+          <button onClick={() => { block.rows = clearRect(rows, rect); onTableChange(); onCellSel(null); }}>{t("清空")}</button>
           <button onClick={() => onCellSel(null)}>✕</button>
         </div>
       )}
-      <div class="doc-table-scroll" onScroll={() => { setScrollTick((t) => t + 1); setActive((a) => (a ? measureActive(a.r, a.c) : a)); }}>
+      <div class="doc-table-scroll" onScroll={() => { setScrollTick((k) => k + 1); setActive((a) => (a ? measureActive(a.r, a.c) : a)); }}>
         <div class="doc-table-inner" ref={innerRef}>
           {drag?.on && drag.outline && (
             <>
@@ -605,11 +606,11 @@ export function TableBlock({
                 ))}
               </tbody>
             </table>
-            <button class="doc-table-addcol" title="新增列" onMouseDown={(e) => { e.preventDefault(); addCol(); }}>
+            <button class="doc-table-addcol" title={t("新增列")} onMouseDown={(e) => { e.preventDefault(); addCol(); }}>
               <Icon name="plus" cls="ico sm" />
             </button>
           </div>
-          <button class="doc-table-addrow" title="新增行" onMouseDown={(e) => { e.preventDefault(); addRow(); }}>
+          <button class="doc-table-addrow" title={t("新增行")} onMouseDown={(e) => { e.preventDefault(); addRow(); }}>
             <Icon name="plus" cls="ico sm" />
           </button>
         </div>
@@ -650,7 +651,7 @@ export function TableCell({
       data-r={r}
       data-c={c}
       contentEditable
-      data-ph={r === 0 ? "表头" : ""}
+      data-ph={r === 0 ? t("表头") : ""}
       style={align ? { textAlign: align } : undefined}
       onInput={(e) => onInput(htmlToInline((e.currentTarget as HTMLElement).innerHTML))}
       onKeyDown={(e) => onKeyDown(e as KeyboardEvent)}

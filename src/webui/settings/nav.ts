@@ -5,6 +5,7 @@
 import { isNoOrigin } from "../data/replica.ts";
 import { isDesktop } from "./shared.ts";
 import { MOBILE_MQ } from "../ui.tsx";
+import { t } from "../i18n/t.ts";
 
 export type PageId = "appearance" | "quicknote" | "offline" | "backup" | "devices" | "audit" | "hosting" | "shortcuts" | "about";
 
@@ -12,23 +13,23 @@ export interface PageDef { id: PageId; label: string; icon: string; show: () => 
 
 export const GROUPS: { key: "device" | "workspace" | "app"; pages: PageDef[] }[] = [
   { key: "device", pages: [
-    { id: "appearance", label: "外观", icon: "sun", show: () => true },
-    { id: "quicknote", label: "快速小窗", icon: "pin", show: () => !!(window as any).metahubDesktop?.quicknote },
+    { id: "appearance", label: t("外观"), icon: "sun", show: () => true },
+    { id: "quicknote", label: t("快速小窗"), icon: "pin", show: () => !!(window as any).metahubDesktop?.quicknote },
     // Desktop has no browser cache and no replica switch; the sidecar's bytes
     // are workspace storage (数据与备份 → 附件存储), so the page hides there.
-    { id: "offline", label: "离线与缓存", icon: "database", show: () => !isDesktop() },
+    { id: "offline", label: t("离线与缓存"), icon: "database", show: () => !isDesktop() },
   ]},
   { key: "workspace", pages: [
-    { id: "backup", label: "数据与备份", icon: "cloudCheck", show: () => true },
-    { id: "devices", label: "设备", icon: "monitor", show: () => !isNoOrigin() },
-    { id: "audit", label: "操作审计", icon: "history", show: () => true },
-    { id: "hosting", label: "站点与发布", icon: "globe", show: () => true },
+    { id: "backup", label: t("数据与备份"), icon: "cloudCheck", show: () => true },
+    { id: "devices", label: t("设备##page"), icon: "monitor", show: () => !isNoOrigin() },
+    { id: "audit", label: t("操作审计"), icon: "history", show: () => true },
+    { id: "hosting", label: t("站点与发布"), icon: "globe", show: () => true },
   ]},
   // Headless group (no .set-rail-group-head): the app itself, last in the list.
   // The cube is the product mark, so the row carries the product identity.
   { key: "app", pages: [
-    { id: "shortcuts", label: "快捷键", icon: "keyboard", show: () => !window.matchMedia(MOBILE_MQ).matches },
-    { id: "about", label: "关于", icon: "cube", show: () => true },
+    { id: "shortcuts", label: t("快捷键"), icon: "keyboard", show: () => !window.matchMedia(MOBILE_MQ).matches },
+    { id: "about", label: t("关于"), icon: "cube", show: () => true },
   ]},
 ];
 

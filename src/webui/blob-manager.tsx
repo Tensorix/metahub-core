@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { timeAgo } from "./date.ts";
+import { t } from "./i18n/t.ts";
 import {
   Modal,
   openModal,
@@ -58,9 +59,9 @@ export interface BlobSource {
 export function sourceForScope(scope: Scope): BlobSource {
   if (scope.kind === "local") {
     return {
-      title: "管理本机缓存",
+      title: t("管理本机缓存"),
       subtitle:
-        "已下载到这台设备的图片和大文件。清理只删本机副本，需要时从云端重新取回；桶里的原件始终不动。",
+        t("已下载到这台设备的图片和大文件。清理只删本机副本，需要时从云端重新取回；桶里的原件始终不动。"),
       deleteSemantics: "evict",
       list: async () => {
         const [blobs, refs] = await Promise.all([
@@ -88,9 +89,9 @@ export function sourceForScope(scope: Scope): BlobSource {
     };
   }
   return {
-    title: "管理附件存储",
+    title: t("管理附件存储"),
     subtitle:
-      "工作区里的全部图片和大文件，所有设备共用。可清理项已有长期备份、随时能腾空间（用时自动取回）；没被任何文档或站点引用的孤儿可彻底删除。",
+      t("工作区里的全部图片和大文件，所有设备共用。可清理项已有长期备份、随时能腾空间（用时自动取回）；没被任何文档或站点引用的孤儿可彻底删除。"),
     deleteSemantics: "purge",
     list: () => api.blobs(),
     clear: (h) => api.clearBlobs(h),
@@ -116,11 +117,11 @@ function fmtBytes(n: number): string {
 
 type Kind = "image" | "video" | "audio" | "file" | "other";
 const KIND_LABEL: Record<Kind, string> = {
-  image: "图片",
-  video: "视频",
-  audio: "音频",
-  file: "文件",
-  other: "其他",
+  image: t("图片"),
+  video: t("视频"),
+  audio: t("音频"),
+  file: t("文件"),
+  other: t("其他"),
 };
 const KIND_ICON: Record<Kind, string> = {
   image: "image",
@@ -132,11 +133,11 @@ const KIND_ICON: Record<Kind, string> = {
 
 function blobKind(ct: string | null): Kind {
   if (!ct) return "other";
-  const t = ct.toLowerCase();
-  if (t.startsWith("image/")) return "image";
-  if (t.startsWith("video/")) return "video";
-  if (t.startsWith("audio/")) return "audio";
-  if (t.startsWith("application/") || t.startsWith("text/")) return "file";
+  const lc = ct.toLowerCase();
+  if (lc.startsWith("image/")) return "image";
+  if (lc.startsWith("video/")) return "video";
+  if (lc.startsWith("audio/")) return "audio";
+  if (lc.startsWith("application/") || lc.startsWith("text/")) return "file";
   return "other";
 }
 
@@ -151,31 +152,31 @@ function blobStatus(b: BlobRow): Status {
   return "retained";
 }
 const STATUS_LABEL: Record<Status, string> = {
-  pending: "待上传",
-  pinned: "已固定",
-  orphan: "孤儿",
-  clearable: "可清理",
-  retained: "保留",
+  pending: t("待上传"),
+  pinned: t("已固定"),
+  orphan: t("孤儿"),
+  clearable: t("可清理"),
+  retained: t("保留"),
 };
 
 type SortKey = "size" | "type" | "access";
-const SORT_LABEL: Record<SortKey, string> = { size: "大小", type: "类型", access: "最近使用" };
+const SORT_LABEL: Record<SortKey, string> = { size: t("大小"), type: t("类型"), access: t("最近使用") };
 
 const TYPE_FILTERS: { key: Kind | "all"; label: string }[] = [
-  { key: "all", label: "全部类型" },
-  { key: "image", label: "图片" },
-  { key: "video", label: "视频" },
-  { key: "audio", label: "音频" },
-  { key: "file", label: "文件" },
-  { key: "other", label: "其他" },
+  { key: "all", label: t("全部类型") },
+  { key: "image", label: t("图片") },
+  { key: "video", label: t("视频") },
+  { key: "audio", label: t("音频") },
+  { key: "file", label: t("文件") },
+  { key: "other", label: t("其他") },
 ];
 const STATUS_FILTERS: { key: Status | "all"; label: string }[] = [
-  { key: "all", label: "全部状态" },
-  { key: "clearable", label: "可清理" },
-  { key: "retained", label: "保留中" },
-  { key: "pinned", label: "已固定" },
-  { key: "pending", label: "待上传" },
-  { key: "orphan", label: "孤儿" },
+  { key: "all", label: t("全部状态") },
+  { key: "clearable", label: t("可清理") },
+  { key: "retained", label: t("保留中") },
+  { key: "pinned", label: t("已固定") },
+  { key: "pending", label: t("待上传") },
+  { key: "orphan", label: t("孤儿") },
 ];
 
 /** Small image thumbnail (served from /blob/<hash> — local cache or SW), falling
@@ -303,7 +304,7 @@ function BlobManager({ source }: { source: BlobSource }) {
     setBusy(true);
     try {
       const r = await source.clear(hashes);
-      toast(r.cleared ? `已清理 ${r.cleared} 项 · 腾出 ${fmtBytes(r.freedBytes)}` : "没有可清理的项");
+      toast(r.cleared ? t("已清理 {n} 项 · 腾出 {bytes}", { n: r.cleared, bytes: fmtBytes(r.freedBytes) }) : t("没有可清理的项"));
       await load();
     } catch (e) {
       toast((e as Error).message);
@@ -318,18 +319,18 @@ function BlobManager({ source }: { source: BlobSource }) {
     const bytes = orphans.reduce((s, r) => s + r.size, 0);
     const evict = source.deleteSemantics === "evict";
     const ok = await confirmDialog({
-      title: "删除孤儿 blob",
+      title: t("删除孤儿 blob"),
       message: evict
-        ? `将从这台设备移除 ${orphans.length} 个未被任何文档/站点引用的 blob，约 ${fmtBytes(bytes)}。桶里的原件不动，需要时仍可重新下载。`
-        : `将永久删除 ${orphans.length} 个未被任何文档/站点引用的 blob，约 ${fmtBytes(bytes)}。此操作不可恢复。`,
-      confirmLabel: "删除",
+        ? t("将从这台设备移除 {n} 个未被任何文档/站点引用的 blob，约 {bytes}。桶里的原件不动，需要时仍可重新下载。", { n: orphans.length, bytes: fmtBytes(bytes) })
+        : t("将永久删除 {n} 个未被任何文档/站点引用的 blob，约 {bytes}。此操作不可恢复。", { n: orphans.length, bytes: fmtBytes(bytes) }),
+      confirmLabel: t("删除"),
       danger: true,
     });
     if (!ok) return;
     setBusy(true);
     try {
       const r = await source.remove(orphans.map((o) => o.hash));
-      toast(r.removed ? `已删除 ${r.removed} 项 · 腾出 ${fmtBytes(r.freedBytes)}` : "没有可删除的孤儿");
+      toast(r.removed ? t("已删除 {n} 项 · 腾出 {bytes}", { n: r.removed, bytes: fmtBytes(r.freedBytes) }) : t("没有可删除的孤儿"));
       await load();
     } catch (e) {
       toast((e as Error).message);
@@ -341,7 +342,7 @@ function BlobManager({ source }: { source: BlobSource }) {
   const sortMenu = (e: MouseEvent) =>
     openMenu(e, (close) => (
       <>
-        <MenuLabel>排序依据</MenuLabel>
+        <MenuLabel>{t("排序依据")}</MenuLabel>
         {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
           <MenuItem
             key={k}
@@ -359,7 +360,7 @@ function BlobManager({ source }: { source: BlobSource }) {
   const typeMenu = (e: MouseEvent) =>
     openMenu(e, (close) => (
       <>
-        <MenuLabel>按类型</MenuLabel>
+        <MenuLabel>{t("按类型")}</MenuLabel>
         {TYPE_FILTERS.map((f) => (
           <MenuItem
             key={f.key}
@@ -377,7 +378,7 @@ function BlobManager({ source }: { source: BlobSource }) {
   const statusMenu = (e: MouseEvent) =>
     openMenu(e, (close) => (
       <>
-        <MenuLabel>按状态</MenuLabel>
+        <MenuLabel>{t("按状态")}</MenuLabel>
         {STATUS_FILTERS.map((f) => (
           <MenuItem
             key={f.key}
@@ -404,27 +405,23 @@ function BlobManager({ source }: { source: BlobSource }) {
         <>
           <div class="blob-mgr-selsum">
             {sel.size > 0 ? (
-              <>
-                已选 <b>{sel.size}</b> 项 · {fmtBytes(selBytes)}
-              </>
+              t("已选 {n} 项 · {bytes}", { n: sel.size, bytes: fmtBytes(selBytes) })
             ) : rows ? (
-              <>
-                共 {rows.length} 项 · {fmtBytes(rows.reduce((s, r) => s + r.size, 0))}
-              </>
+              t("共 {n} 项 · {bytes}", { n: rows.length, bytes: fmtBytes(rows.reduce((s, r) => s + r.size, 0)) })
             ) : (
               ""
             )}
           </div>
           <button class="btn btn-secondary" disabled={busy || !selClearable.length} onClick={() => void doClear()}>
             <Icon name="trash" cls="ico sm" />
-            清理所选{selClearable.length ? `（${selClearable.length}）` : ""}
+            {selClearable.length ? t("清理所选（{n}）", { n: selClearable.length }) : t("清理所选")}
           </button>
           <button class="btn btn-danger" disabled={busy || !selOrphans.length} onClick={() => void doDelete()}>
             <Icon name="trash" cls="ico sm" />
-            删除孤儿{selOrphans.length ? `（${selOrphans.length}）` : ""}
+            {selOrphans.length ? t("删除孤儿（{n}）", { n: selOrphans.length }) : t("删除孤儿")}
           </button>
           <button class="btn btn-ghost" onClick={() => closeModal()}>
-            关闭
+            {t("关闭")}
           </button>
         </>
       }
@@ -435,7 +432,7 @@ function BlobManager({ source }: { source: BlobSource }) {
             <Icon name="search" cls="ico sm" />
             <input
               class="blob-mgr-search-in"
-              placeholder="搜索 hash 或类型…"
+              placeholder={t("搜索 hash 或类型…")}
               value={query}
               onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
             />
@@ -456,11 +453,11 @@ function BlobManager({ source }: { source: BlobSource }) {
         </div>
 
         {err ? (
-          <div class="blob-mgr-empty">无法读取：{err}</div>
+          <div class="blob-mgr-empty">{t("无法读取：{err}", { err })}</div>
         ) : !rows ? (
-          <div class="blob-mgr-empty">加载中…</div>
+          <div class="blob-mgr-empty">{t("加载中…")}</div>
         ) : filtered.length === 0 ? (
-          <div class="blob-mgr-empty">{rows.length ? "没有符合条件的项" : "这台设备还没有缓存的 blob"}</div>
+          <div class="blob-mgr-empty">{rows.length ? t("没有符合条件的项") : t("这台设备还没有缓存的 blob")}</div>
         ) : (
           <div class="blob-mgr-list">
             <div class="blob-mgr-row blob-mgr-head">
@@ -468,10 +465,10 @@ function BlobManager({ source }: { source: BlobSource }) {
                 <input type="checkbox" checked={allShownSelected} onChange={toggleAll} />
               </label>
               <span />
-              <span>名称</span>
-              <span class="blob-mgr-r">大小</span>
-              <span>状态</span>
-              <span class="blob-mgr-age">最近使用</span>
+              <span>{t("名称")}</span>
+              <span class="blob-mgr-r">{t("大小")}</span>
+              <span>{t("状态")}</span>
+              <span class="blob-mgr-age">{t("最近使用")}</span>
               <span />
             </div>
             {filtered.map((b) => {
@@ -493,7 +490,7 @@ function BlobManager({ source }: { source: BlobSource }) {
                   <button
                     class={"blob-mgr-pin" + (b.pinned ? " on" : "")}
                     disabled={busy || b.pending}
-                    title={b.pinned ? "取消固定" : "固定（不被自动清理）"}
+                    title={b.pinned ? t("取消固定") : t("固定（不被自动清理）")}
                     onClick={() => void togglePin(b)}
                   >
                     <Icon name="pin" cls="ico sm" />

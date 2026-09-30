@@ -27,6 +27,7 @@ import {
   unauthorized,
   HTML_HEADERS,
 } from "./auth.ts";
+import { pickLocale } from "./locale.ts";
 
 export interface RunningServer {
   server: ReturnType<typeof Bun.serve>;
@@ -267,7 +268,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
           return wantsHtml(req)
             ? // x-mh-unlock tells the service worker this 200 is the unlock
               // page, not the app shell — caching it would brick offline starts.
-              new Response(unlockPage(), { headers: { ...HTML_HEADERS, "x-mh-unlock": "1" } })
+              new Response(unlockPage(pickLocale(req)), { headers: { ...HTML_HEADERS, "x-mh-unlock": "1" } })
             : unauthorized();
         }
       }

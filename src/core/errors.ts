@@ -26,14 +26,25 @@ export type MhErrorCode =
   /** The requested listen port is taken (exit 98, historical). */
   | "port_in_use";
 
+export type MsgParams = Record<string, string | number>;
+
 export class MhError extends Error {
   constructor(
     readonly code: MhErrorCode,
     message: string,
+    readonly i18n?: { key: string; params?: MsgParams },
   ) {
     super(message);
     this.name = "MhError";
   }
+}
+
+export function interpolateMsg(s: string, params?: MsgParams): string {
+  return params ? s.replace(/\{(\w+)\}/g, (m, k: string) => (k in params ? String(params[k]) : m)) : s;
+}
+
+export function mhError(code: MhErrorCode, key: string, params?: MsgParams): MhError {
+  return new MhError(code, interpolateMsg(key, params), { key, params });
 }
 
 /** The error's code, for errors that carry one (anything else → undefined). */

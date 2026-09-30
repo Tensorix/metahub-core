@@ -4,6 +4,7 @@
 // auth token + blob bytes are available): annotation save flattens + uploads here,
 // then reports the new /blob URL back to the editor window over a same-origin
 // BroadcastChannel. Close = window.close().
+import { t } from "../i18n/t.ts";
 import { useState } from "preact/hooks";
 import { api } from "../api.ts";
 import { toast } from "../ui.tsx";
@@ -32,7 +33,7 @@ export function ImagePreviewWindow() {
       }
       setSrc(up.url); // show the flattened result here too
     } catch (err) {
-      toast(`保存失败：${(err as Error).message}`);
+      toast(t("保存失败：{msg}", { msg: (err as Error).message }));
     }
   };
 

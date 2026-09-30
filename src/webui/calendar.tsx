@@ -8,8 +8,10 @@ import { Icon, TYPE_ICON } from "./icons.tsx";
 import { optColor } from "./cells.tsx";
 import { openMenu, MenuItem, MenuLabel } from "./ui.tsx";
 import { monthMatrix, parseDate, toISO, sameDay, today } from "./date.ts";
+import { fmtDate, weekdayLabels } from "./i18n/fmt.ts";
+import { t } from "./i18n/t.ts";
 
-const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
+const WEEKDAYS = weekdayLabels();
 const MAX_PER_DAY = 3;
 
 export function CalendarView({
@@ -33,7 +35,7 @@ export function CalendarView({
   const dragRef = useRef<{ id: string; pointerId: number; startX: number; startY: number; active: boolean; ghost: HTMLElement | null } | null>(null);
 
   if (!dateProp) {
-    return <div class="view-placeholder">日历视图需要一个「日期」属性。请在表格视图中添加一个日期列后再切换到日历。</div>;
+    return <div class="view-placeholder">{t("日历视图需要一个「日期」属性。请在表格视图中添加一个日期列后再切换到日历。")}</div>;
   }
 
   const titleProp = props[0];
@@ -96,7 +98,7 @@ export function CalendarView({
   const pickField = (e: MouseEvent) =>
     openMenu(e, (close) => (
       <>
-        <MenuLabel>按日期属性</MenuLabel>
+        <MenuLabel>{t("按日期属性")}</MenuLabel>
         {dateProps.map((p) => (
           <MenuItem key={p.id} icon={TYPE_ICON[p.type]} label={p.name} onClick={() => { setDateId(p.id); close(); }} />
         ))}
@@ -106,10 +108,10 @@ export function CalendarView({
   return (
     <div class="cal">
       <div class="cal-nav">
-        <button class="iconbtn" title="上个月" onClick={() => step(-1)}><Icon name="chevron" cls="ico flip" /></button>
-        <div class="cal-title">{cursor.y} 年 {cursor.m + 1} 月</div>
-        <button class="iconbtn" title="下个月" onClick={() => step(1)}><Icon name="chevron" cls="ico" /></button>
-        <button class="tbtn" onClick={goToday}>今天</button>
+        <button class="iconbtn" title={t("上个月")} onClick={() => step(-1)}><Icon name="chevron" cls="ico flip" /></button>
+        <div class="cal-title">{fmtDate(new Date(cursor.y, cursor.m, 1), "yearMonth")}</div>
+        <button class="iconbtn" title={t("下个月")} onClick={() => step(1)}><Icon name="chevron" cls="ico" /></button>
+        <button class="tbtn" onClick={goToday}>{t("今天")}</button>
         <div class="spacer" />
         {dateProps.length > 1 && (
           <button class="tbtn" onClick={pickField}><Icon name="calendar" cls="ico sm" />{dateProp.name}</button>
@@ -139,7 +141,7 @@ export function CalendarView({
                 >
                   <div class="cal-daynum">
                     <span>{day.getDate()}</span>
-                    <button class="cal-add" title="新建记录" onClick={(e) => { e.stopPropagation(); onCreate({ [dateProp.id]: iso }); }}>
+                    <button class="cal-add" title={t("新建记录")} onClick={(e) => { e.stopPropagation(); onCreate({ [dateProp.id]: iso }); }}>
                       <Icon name="plus" cls="ico sm" />
                     </button>
                   </div>
@@ -151,7 +153,7 @@ export function CalendarView({
                         style={{ ["--c" as any]: optColor(titleText(rec, titleProp) || rec.id) }}
                         onPointerDown={(e) => startDrag(e, rec)}
                       >
-                        {titleText(rec, titleProp) || "无标题"}
+                        {titleText(rec, titleProp) || t("无标题")}
                       </div>
                     ))}
                     {evs.length > MAX_PER_DAY && (
@@ -161,11 +163,11 @@ export function CalendarView({
                           e.stopPropagation();
                           openMenu(e, (close) => (
                             <>
-                              <MenuLabel>{iso} · {evs.length} 条记录</MenuLabel>
+                              <MenuLabel>{t("{date} · {n} 条记录", { date: iso, n: evs.length })}</MenuLabel>
                               {evs.map(({ rec }) => (
                                 <MenuItem
                                   key={rec.id}
-                                  label={titleText(rec, titleProp) || "无标题"}
+                                  label={titleText(rec, titleProp) || t("无标题")}
                                   onClick={() => { close(); onOpenRecord(rec.id); }}
                                 />
                               ))}
@@ -173,7 +175,7 @@ export function CalendarView({
                           ));
                         }}
                       >
-                        +{evs.length - MAX_PER_DAY} 更多
+                        {t("+{n} 更多", { n: evs.length - MAX_PER_DAY })}
                       </button>
                     )}
                   </div>
@@ -196,7 +198,7 @@ function titleText(rec: Rec, titleProp: Prop | undefined): string {
 function makeGhost(text: string): HTMLElement {
   const g = document.createElement("div");
   g.className = "drag-ghost";
-  g.textContent = text || "移动记录";
+  g.textContent = text || t("移动记录");
   document.body.appendChild(g);
   return g;
 }

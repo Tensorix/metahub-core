@@ -10,6 +10,7 @@
 // Markdown. `uploadFilesAt` / `pickAndUpload` are exported so the slash menu
 // reuses the exact same pipeline via a file picker.
 
+import { t } from "../../i18n/t.ts";
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { api, MAX_UPLOAD_BYTES } from "../../api.ts";
@@ -40,7 +41,7 @@ export function mediaFilesFrom(dt: DataTransfer | null | undefined): File[] {
 }
 
 function safeName(name: string): string {
-  return (name || "文件").replace(/[\r\n]+/g, " ").trim() || "文件";
+  return (name || t("文件")).replace(/[\r\n]+/g, " ").trim() || t("文件");
 }
 
 function tryDispatch(view: EditorView, spec: Parameters<EditorView["dispatch"]>[0]): void {
@@ -60,7 +61,7 @@ function pendingFor(view: EditorView, token: string): { pos: number } | null {
 function withinCap(file: File, onError?: (m: string) => void): boolean {
   const cap = MAX_UPLOAD_BYTES[mediaKindFromMime(file.type)];
   if (file.size > cap) {
-    const msg = `${file.name || "文件"} 超过 ${Math.round(cap / 1024 / 1024)}MB 上限`;
+    const msg = t("{name} 超过 {mb}MB 上限", { name: file.name || t("文件"), mb: Math.round(cap / 1024 / 1024) });
     toast(msg);
     onError?.(msg);
     return false;
@@ -89,7 +90,7 @@ export function uploadFilesAt(view: EditorView, pos: number, files: File[], onEr
 
   files.forEach((file, i) => {
     const token = tokens[i]!;
-    const tid = startUpload(file.name || "文件");
+    const tid = startUpload(file.name || t("文件"));
     beginUpload();
     api.uploadDocBlob(file, (loaded, total) => updateUpload(tid, loaded, total))
       .then((up) => {
@@ -113,7 +114,7 @@ export function uploadFilesAt(view: EditorView, pos: number, files: File[], onEr
         finishUpload(tid, false, () => {
           try { uploadFilesAt(view, view.state.doc.length, [file], onError); } catch { /* view gone */ }
         });
-        onError?.(`上传失败：${err instanceof Error ? err.message : String(err)}`);
+        onError?.(t("上传失败：{msg}", { msg: err instanceof Error ? err.message : String(err) }));
       })
       .finally(() => endUpload());
   });

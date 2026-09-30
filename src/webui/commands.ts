@@ -1,4 +1,5 @@
 // Command registry for the ⌘⇧P palette; owners register/unregister their actions.
+import { t } from "./i18n/t.ts";
 
 export type CommandGroup = "nav" | "create" | "doc";
 
@@ -15,9 +16,9 @@ export interface Command {
 }
 
 export const COMMAND_GROUPS: { key: CommandGroup; label: string }[] = [
-  { key: "doc", label: "当前文档" },
-  { key: "nav", label: "导航" },
-  { key: "create", label: "新建" },
+  { key: "doc", label: t("当前文档") },
+  { key: "nav", label: t("导航") },
+  { key: "create", label: t("新建") },
 ];
 
 const registry = new Map<string, Command>();

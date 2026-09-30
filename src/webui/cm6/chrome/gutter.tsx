@@ -7,6 +7,7 @@
 // Reorder moves that line span with one text transaction (native undo covers
 // it). All coord reads go through the deferred path.
 
+import { t } from "../../i18n/t.ts";
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
@@ -22,9 +23,9 @@ import { turnInto, type TargetType } from "../convert";
 // "转换为" targets, in menu order; labels/icons come from the shared BLOCK_MENU
 // (same strings/icons as the slash menu and the old editor's grip menu).
 const CONVERT_TYPES: TargetType[] = ["p", "h1", "h2", "h3", "quote", "bullet", "numbered", "todo", "code"];
-const CONVERT_ITEMS = CONVERT_TYPES.map((t) => {
-  const m = BLOCK_MENU.find((m) => m.type === t)!;
-  return { type: t, ic: m.ic, t: m.t };
+const CONVERT_ITEMS = CONVERT_TYPES.map((type) => {
+  const m = BLOCK_MENU.find((m) => m.type === type)!;
+  return { type, ic: m.ic, t: m.t };
 });
 
 /** The block's current type as a convert target (for the menu checkmark). */
@@ -134,7 +135,7 @@ class GutterPlugin implements PluginValue {
       <>
         {showConvert && (
           <>
-            <MenuLabel>{multi ? `转换为（${count} 行）` : "转换为"}</MenuLabel>
+            <MenuLabel>{multi ? t("转换为（{n} 行）", { n: count }) : t("转换为")}</MenuLabel>
             {items.map((m) => (
               <MenuItem
                 key={m.type}
@@ -147,8 +148,8 @@ class GutterPlugin implements PluginValue {
             <MenuSep />
           </>
         )}
-        <MenuItem icon="copy" label={multi ? "复制块组" : "复制块"} onClick={() => { duplicateRange(view, moveTarget); close(); }} />
-        <MenuItem icon="trash" label={multi ? "删除块组" : "删除块"} danger onClick={() => { this.remove(moveTarget); close(); }} />
+        <MenuItem icon="copy" label={multi ? t("复制块组") : t("复制块")} onClick={() => { duplicateRange(view, moveTarget); close(); }} />
+        <MenuItem icon="trash" label={multi ? t("删除块组") : t("删除块")} danger onClick={() => { this.remove(moveTarget); close(); }} />
       </>
     ));
   }
@@ -201,12 +202,12 @@ class GutterPlugin implements PluginValue {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
-      const t = target;
+      const tgt = target;
       const b = before;
       clear();
       // Re-validate against the current doc: a remote merge during the drag can
       // shorten the document under us.
-      if (drop && t && t <= this.view.state.doc.lines) this.reorder(src, t, b);
+      if (drop && tgt && tgt <= this.view.state.doc.lines) this.reorder(src, tgt, b);
     };
     const up = () => finish(true);
     const cancel = () => finish(false);
@@ -237,12 +238,12 @@ class GutterPlugin implements PluginValue {
     const top = coords.top - box.top;
     render(
       <div class="cm-block-gutter" style={{ position: "absolute", left: "-52px", top: `${top}px`, display: "flex", gap: "2px", pointerEvents: "auto" }}>
-        <button class="cm-g-btn" title="在下方插入" onMouseDown={(e) => { e.preventDefault(); this.insertBelow(range); }}>
+        <button class="cm-g-btn" title={t("在下方插入")} onMouseDown={(e) => { e.preventDefault(); this.insertBelow(range); }}>
           <Icon name="plus" cls="ico sm" />
         </button>
         <button
           class="cm-g-btn cm-g-grip"
-          title="拖动重排 / 点击菜单"
+          title={t("拖动重排 / 点击菜单")}
           // Drag moves the whole subtree (children travel with a parent item).
           onPointerDown={(e) => this.startDrag(e as PointerEvent, blockSpanWithChildren(this.view, this.line))}
           onClick={(e) => this.menu(e as MouseEvent, range)}

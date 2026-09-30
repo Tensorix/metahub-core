@@ -20,6 +20,7 @@
 // `Decoration.set(_, true)` (sorted) rather than a RangeSetBuilder, because a line
 // and an inline replace can share an offset and hand-sorting is error-prone.
 
+import { t } from "../i18n/t.ts";
 import {
   Decoration,
   ViewPlugin,
@@ -32,7 +33,7 @@ import type { Range } from "@codemirror/state";
 import { docModel } from "./doc-model";
 import { MAX_NEST, hiddenIndentChars, isListRole, type LineInfo } from "./blockmodel";
 
-export const PLACEHOLDER = '输入文本，"/" 唤出命令';
+export const PLACEHOLDER = t('输入文本，"/" 唤出命令');
 
 // Marker widgets carry a `sel` flag: native ::selection cannot paint replaced
 // widgets, so a drag-select/select-all left unpainted holes in the marker

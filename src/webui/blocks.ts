@@ -132,6 +132,7 @@ export {
   type ListLine,
   type MediaKind,
 } from "../core/md/grammar.ts";
+import { t } from "./i18n/t.ts";
 import {
   RE,
   HTML_FENCE,
@@ -732,7 +733,7 @@ function renderBlock(block: Block, indent: number, number: number): string[] {
       return [`${pad}![${safeLabel(block.name ?? "")}](${mediaUrl(block)})`];
     case "file": {
       const title = block.size != null ? ` "${block.size}"` : "";
-      return [`${pad}[${safeLabel(block.name ?? "文件")}](${block.src ?? ""}${title})`];
+      return [`${pad}[${safeLabel(block.name ?? t("文件"))}](${block.src ?? ""}${title})`];
     }
     case "html": {
       const fence = fenceFor(block.content);
@@ -792,7 +793,7 @@ function shouldPersist(block: Block): boolean {
 /** Languages offered in the code block's language dropdown. Values are
  *  highlight.js language ids (also accepted by cleanLang for round-trip). */
 export const COMMON_LANGS: { id: string; label: string }[] = [
-  { id: "", label: "纯文本" },
+  { id: "", label: t("纯文本") },
   { id: "bash", label: "Bash" },
   { id: "shell", label: "Shell" },
   { id: "javascript", label: "JavaScript" },
@@ -824,22 +825,22 @@ export const COMMON_LANGS: { id: string; label: string }[] = [
 ];
 
 export const BLOCK_MENU: { type: BlockType; ic: string; t: string; d: string }[] = [
-  { type: "p", ic: "text", t: "文本", d: "普通段落" },
-  { type: "h1", ic: "heading", t: "标题 1", d: "大号标题" },
-  { type: "h2", ic: "heading", t: "标题 2", d: "中号标题" },
-  { type: "h3", ic: "heading", t: "标题 3", d: "小号标题" },
-  { type: "bullet", ic: "list", t: "无序列表", d: "项目符号" },
-  { type: "numbered", ic: "numList", t: "有序列表", d: "编号列表" },
-  { type: "todo", ic: "checkbox", t: "待办清单", d: "复选项" },
-  { type: "quote", ic: "quote", t: "引用", d: "引用块" },
-  { type: "code", ic: "code", t: "代码", d: "代码块" },
-  { type: "table", ic: "table", t: "表格", d: "插入表格" },
-  { type: "divider", ic: "minus", t: "分隔线", d: "水平分隔" },
-  { type: "image", ic: "image", t: "图片", d: "上传或拖入图片" },
-  { type: "video", ic: "video", t: "视频", d: "上传视频文件" },
-  { type: "audio", ic: "audio", t: "音频", d: "上传音频文件" },
-  { type: "file", ic: "file", t: "文件", d: "上传任意文件" },
-  { type: "html", ic: "htmlTag", t: "HTML", d: "嵌入并渲染 HTML" },
+  { type: "p", ic: "text", t: t("文本"), d: t("普通段落") },
+  { type: "h1", ic: "heading", t: t("标题 1"), d: t("大号标题") },
+  { type: "h2", ic: "heading", t: t("标题 2"), d: t("中号标题") },
+  { type: "h3", ic: "heading", t: t("标题 3"), d: t("小号标题") },
+  { type: "bullet", ic: "list", t: t("无序列表"), d: t("项目符号") },
+  { type: "numbered", ic: "numList", t: t("有序列表"), d: t("编号列表") },
+  { type: "todo", ic: "checkbox", t: t("待办清单"), d: t("复选项") },
+  { type: "quote", ic: "quote", t: t("引用"), d: t("引用块") },
+  { type: "code", ic: "code", t: t("代码"), d: t("代码块") },
+  { type: "table", ic: "table", t: t("表格"), d: t("插入表格") },
+  { type: "divider", ic: "minus", t: t("分隔线"), d: t("水平分隔") },
+  { type: "image", ic: "image", t: t("图片"), d: t("上传或拖入图片") },
+  { type: "video", ic: "video", t: t("视频"), d: t("上传视频文件") },
+  { type: "audio", ic: "audio", t: t("音频"), d: t("上传音频文件") },
+  { type: "file", ic: "file", t: t("文件"), d: t("上传任意文件") },
+  { type: "html", ic: "htmlTag", t: "HTML", d: t("嵌入并渲染 HTML") },
 ];
 
 /** Block types inserted via a file picker (not a plain text-conversion). */

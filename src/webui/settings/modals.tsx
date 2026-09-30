@@ -18,6 +18,8 @@ import {
 import { call as replicaCall } from "../data/replica.ts";
 import { Modal, closeModal, toast } from "../ui.tsx";
 import { hostOf } from "./shared.ts";
+import { t } from "../i18n/t.ts";
+import { fmtDate } from "../i18n/fmt.ts";
 
 export function EdgeDeployModal({
   status,
@@ -97,7 +99,7 @@ export function EdgeDeployModal({
           if ((s.accounts ?? []).length === 1) setAccountId(s.accounts![0]!.id);
           setAuthState("ready");
         } else if (s.state === "error") {
-          setAuthErr(s.error || "Cloudflare 授权失败");
+          setAuthErr(s.error || t("Cloudflare 授权失败"));
           setAuthState("error");
         }
       } catch (e) {
@@ -142,9 +144,9 @@ export function EdgeDeployModal({
   };
 
   const deploy = async () => {
-    if (!confirmed) return toast("请先确认将创建或更新列出的 Cloudflare 资源");
-    if (!useToken && authState !== "ready") return toast("请先用 Cloudflare 登录");
-    if (!useToken && accounts.length > 1 && !accountId) return toast("请选择要部署到的 Cloudflare 账号");
+    if (!confirmed) return toast(t("请先确认将创建或更新列出的 Cloudflare 资源"));
+    if (!useToken && authState !== "ready") return toast(t("请先用 Cloudflare 登录"));
+    if (!useToken && accounts.length > 1 && !accountId) return toast(t("请选择要部署到的 Cloudflare 账号"));
     setBusy(true);
     try {
       const result = await api.deployEdge(
@@ -164,7 +166,7 @@ export function EdgeDeployModal({
       const failed = result.wired.filter((x) => !x.registered);
       const notes = [
         ...result.warnings,
-        ...(failed.length ? [`${failed.length} 个站点重新接线失败：${failed.map((x) => x.site).join("、")}`] : []),
+        ...(failed.length ? [t("{n} 个站点重新接线失败：{sites}", { n: failed.length, sites: failed.map((x) => x.site).join(t("、")) })] : []),
       ];
       let r2Note = "";
       if (withR2) {
@@ -176,7 +178,7 @@ export function EdgeDeployModal({
           );
           setR2Result(r2);
         } catch (e) {
-          r2Note = `R2 桶创建失败：${(e as Error).message}`;
+          r2Note = t("R2 桶创建失败：{msg}", { msg: (e as Error).message });
         }
       }
       setApiToken("");
@@ -186,7 +188,7 @@ export function EdgeDeployModal({
       setFlowId(null);
       setAuthState("idle");
       toast(
-        [notes.length ? `Edge 部署完成；${notes.join("；")}` : "Edge 部署完成", r2Note]
+        [notes.length ? t("Edge 部署完成；{notes}", { notes: notes.join(t("；")) }) : t("Edge 部署完成"), r2Note]
           .filter(Boolean)
           .join(" "),
       );
@@ -203,8 +205,8 @@ export function EdgeDeployModal({
 
   const attachR2 = async () => {
     if (!r2Result) return;
-    if (!r2Ak.trim() || !r2Sk.trim()) return toast("请填入 Access Key ID 与 Secret");
-    if (!r2Pw) return toast("请设置加密口令");
+    if (!r2Ak.trim() || !r2Sk.trim()) return toast(t("请填入 Access Key ID 与 Secret"));
+    if (!r2Pw) return toast(t("请设置加密口令"));
     setR2Busy(true);
     try {
       await api.addServerS3Peer({
@@ -217,7 +219,7 @@ export function EdgeDeployModal({
         passphrase: r2Pw,
         corsOrigins: [location.origin],
       });
-      toast("同步桶已接入");
+      toast(t("同步桶已接入"));
       onDone();
     } catch (e) {
       toast((e as Error).message);
@@ -229,41 +231,40 @@ export function EdgeDeployModal({
   if (r2Result) {
     return (
       <Modal
-        title="接入同步桶"
-        sub={`R2 桶 ${r2Result.bucketName} 已创建。最后一步：Cloudflare 不允许应用代为创建 S3 凭据，请到控制台生成后粘贴到这里。`}
+        title={t("接入同步桶")}
+        sub={t("R2 桶 {name} 已创建。最后一步：Cloudflare 不允许应用代为创建 S3 凭据，请到控制台生成后粘贴到这里。", { name: r2Result.bucketName })}
         footer={
           <>
-            <button class="btn btn-secondary" onClick={() => { closeModal(); onDone(); }}>稍后再接</button>
+            <button class="btn btn-secondary" onClick={() => { closeModal(); onDone(); }}>{t("稍后再接")}</button>
             <button class="btn btn-primary" disabled={r2Busy} onClick={attachR2}>
-              {r2Busy ? "接入中…" : "接入同步桶"}
+              {r2Busy ? t("接入中…") : t("接入同步桶")}
             </button>
           </>
         }
       >
         <div class="set-callout warn">
-          打开{" "}
+          {t("打开")}{" "}
           <a href={r2Result.credentialsUrl} target="_blank" rel="noopener">
-            R2 → 管理 R2 API 令牌
+            {t("R2 → 管理 R2 API 令牌")}
           </a>
-          ，创建一个「对象读和写」令牌（可只勾选 {r2Result.bucketName} 这个桶），把页面显示的
-          Access Key ID 与 Secret Access Key 粘贴到下面。
+          {t("，创建一个「对象读和写」令牌（可只勾选 {bucket} 这个桶），把页面显示的 Access Key ID 与 Secret Access Key 粘贴到下面。", { bucket: r2Result.bucketName })}
         </div>
         <div class="field-label">Access Key ID</div>
         <input class="text-input" value={r2Ak} onInput={(e) => setR2Ak((e.currentTarget as HTMLInputElement).value)} />
         <div class="field-label">Secret Access Key</div>
         <input class="text-input" type="password" value={r2Sk} onInput={(e) => setR2Sk((e.currentTarget as HTMLInputElement).value)} />
-        <div class="field-label">加密口令（新工作区在此设置；其他设备加入时需输入同一口令）</div>
+        <div class="field-label">{t("加密口令（新工作区在此设置；其他设备加入时需输入同一口令）")}</div>
         <input class="text-input" type="password" value={r2Pw} onInput={(e) => setR2Pw((e.currentTarget as HTMLInputElement).value)} autocomplete="new-password" />
         <div class="set-hint">
-          口令保护数据机密性，请牢记；接入完成后建议在「设备与授权 → 导出恢复码」打印备份。
+          {t("口令保护数据机密性，请牢记；接入完成后建议在「设备与授权 → 导出恢复码」打印备份。")}
         </div>
       </Modal>
     );
   }
   return (
     <Modal
-      title={status?.configured ? "升级 Edge" : "部署 Edge"}
-      sub="将在你自己的 Cloudflare 账户中创建或更新一个 Worker、一个 D1 数据库和 workers.dev 入口。凭据仅用于本次请求，不会保存。"
+      title={status?.configured ? t("升级 Edge") : t("部署 Edge")}
+      sub={t("将在你自己的 Cloudflare 账户中创建或更新一个 Worker、一个 D1 数据库和 workers.dev 入口。凭据仅用于本次请求，不会保存。")}
       footer={
         <>
           <button
@@ -277,21 +278,21 @@ export function EdgeDeployModal({
               closeModal();
             }}
           >
-            取消
+            {t("取消")}
           </button>
           <button
             class="btn btn-primary"
             disabled={busy || !confirmed || (!useToken && authState !== "ready")}
             onClick={deploy}
           >
-            {busy ? "部署中…" : "确认并部署"}
+            {busy ? t("部署中…") : t("确认并部署")}
           </button>
         </>
       }
     >
       {!useToken ? (
         <>
-          <div class="field-label">Cloudflare 账号</div>
+          <div class="field-label">{t("Cloudflare 账号")}</div>
           {authState === "ready" ? (
             accounts.length > 1 ? (
               <select
@@ -299,30 +300,30 @@ export function EdgeDeployModal({
                 value={accountId}
                 onChange={(e) => setAccountId((e.currentTarget as HTMLSelectElement).value)}
               >
-                <option value="">选择账号…</option>
+                <option value="">{t("选择账号…")}</option>
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.name}（{a.id}）
+                    {t("{name}（{id}）", { name: a.name, id: a.id })}
                   </option>
                 ))}
               </select>
             ) : (
               <div class="muted" style={{ fontSize: 13 }}>
-                ✅ 已登录：{accounts[0]?.name ?? accountId}
+                {t("✅ 已登录：{name}", { name: accounts[0]?.name ?? accountId })}
               </div>
             )
           ) : (
             <button class="btn btn-secondary" disabled={authState === "authing"} onClick={signIn}>
-              {authState === "authing" ? "等待浏览器授权…" : "用 Cloudflare 登录"}
+              {authState === "authing" ? t("等待浏览器授权…") : t("用 Cloudflare 登录")}
             </button>
           )}
           <div class="muted" style={{ fontSize: 12, marginTop: 6 }}>
-            将打开 Cloudflare 授权页，只申请 Workers 与 D1 的最小权限；令牌仅用于本次部署、不会保存。
+            {t("将打开 Cloudflare 授权页，只申请 Workers 与 D1 的最小权限；令牌仅用于本次部署、不会保存。")}
             {oauthAvailable && (
               <>
                 {" "}
                 <a href="#" onClick={(e) => { e.preventDefault(); setUseToken(true); }}>
-                  改用 API Token
+                  {t("改用 API Token")}
                 </a>
               </>
             )}
@@ -337,29 +338,29 @@ export function EdgeDeployModal({
         <>
           <div class="field-label">Cloudflare Account ID</div>
           <input class="text-input" value={accountId} onInput={(e) => setAccountId((e.currentTarget as HTMLInputElement).value)} />
-          <div class="field-label">临时 API Token</div>
+          <div class="field-label">{t("临时 API Token")}</div>
           <input class="text-input" type="password" value={apiToken} onInput={(e) => setApiToken((e.currentTarget as HTMLInputElement).value)} />
           <div class="muted" style={{ fontSize: 12, marginTop: 4 }}>
-            需要 Workers Scripts Write 与 D1 Write。Cloudflare Token 是账户级凭据，请仅使用最小权限 Token。
+            {t("需要 Workers Scripts Write 与 D1 Write。Cloudflare Token 是账户级凭据，请仅使用最小权限 Token。")}
             {oauthAvailable && (
               <>
                 {" "}
                 <a href="#" onClick={(e) => { e.preventDefault(); setUseToken(false); }}>
-                  改用 Cloudflare 登录
+                  {t("改用 Cloudflare 登录")}
                 </a>
               </>
             )}
           </div>
         </>
       )}
-      <div class="field-label">Worker 名称</div>
+      <div class="field-label">{t("Worker 名称")}</div>
       <input class="text-input" value={workerName} onInput={(e) => setWorkerName((e.currentTarget as HTMLInputElement).value)} />
-      <div class="field-label">D1 名称</div>
+      <div class="field-label">{t("D1 名称")}</div>
       <input class="text-input" value={d1Name} onInput={(e) => setD1Name((e.currentTarget as HTMLInputElement).value)} />
-      <div class="field-label">workers.dev 子域（账户尚未设置时创建）</div>
+      <div class="field-label">{t("workers.dev 子域（账户尚未设置时创建）")}</div>
       <input class="text-input" value={subdomain} onInput={(e) => setSubdomain((e.currentTarget as HTMLInputElement).value)} />
       <div class="muted" style={{ fontSize: 12, marginTop: 4 }}>
-        子域属于整个 Cloudflare 账户；如果账户已有子域，将使用现有值并在完成结果中提示。
+        {t("子域属于整个 Cloudflare 账户；如果账户已有子域，将使用现有值并在完成结果中提示。")}
       </div>
       <label class="set-check-row" style={{ marginTop: 14 }}>
         <input
@@ -367,27 +368,25 @@ export function EdgeDeployModal({
           checked={withR2}
           onChange={(e) => setWithR2((e.currentTarget as HTMLInputElement).checked)}
         />
-        <span>
-          同时创建 <b>R2 同步桶</b>（创建桶后仍需单独生成 S3 凭据）
-        </span>
+        <span>{t("同时创建 R2 同步桶（创建桶后仍需单独生成 S3 凭据）")}</span>
       </label>
       {withR2 && (
         <>
-          <div class="field-label">R2 桶名称</div>
+          <div class="field-label">{t("R2 桶名称")}</div>
           <input class="text-input" value={r2Name} onInput={(e) => setR2Name((e.currentTarget as HTMLInputElement).value)} />
           <div class="set-hint">
-            创建后还差一步：到 Cloudflare 控制台生成 S3 凭据并粘贴（授权无法代办这一步），本向导会引导你完成。
+            {t("创建后还差一步：到 Cloudflare 控制台生成 S3 凭据并粘贴（授权无法代办这一步），本向导会引导你完成。")}
           </div>
         </>
       )}
       {status?.pending && (
         <div class="set-callout warn" style={{ marginTop: 10 }}>
-          检测到未完成部署，当前步骤：{status.pending.step}。使用相同名称可继续，不会自动删除已创建资源。
+          {t("检测到未完成部署，当前步骤：{step}。使用相同名称可继续，不会自动删除已创建资源。", { step: status.pending.step })}
         </div>
       )}
       <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 12 }}>
         <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed((e.currentTarget as HTMLInputElement).checked)} />
-        <span>我确认创建或更新上述 Cloudflare 资源；断开 MetaHub 时不会自动删除它们。</span>
+        <span>{t("我确认创建或更新上述 Cloudflare 资源；断开 MetaHub 时不会自动删除它们。")}</span>
       </label>
     </Modal>
   );
@@ -411,10 +410,10 @@ export function ActivateBucketOnDeviceModal({ peer, onDone }: { peer: S3Peer; on
   const host = peer.endpoint ? hostOf(peer.endpoint) : "";
 
   const submit = async () => {
-    if (!secretKey.trim()) return toast("密钥必填");
-    if (peer.encrypt && !passphrase) return toast("加密口令必填");
+    if (!secretKey.trim()) return toast(t("密钥必填"));
+    if (peer.encrypt && !passphrase) return toast(t("加密口令必填"));
     if (!peer.endpoint || !peer.bucket || !peer.accessKeyId) {
-      return toast("服务器未提供该桶的完整配置,无法在本设备激活");
+      return toast(t("服务器未提供该桶的完整配置,无法在本设备激活"));
     }
     setBusy(true);
     try {
@@ -430,14 +429,14 @@ export function ActivateBucketOnDeviceModal({ peer, onDone }: { peer: S3Peer; on
         publish: false,
       };
       await replicaCall("addStorageReplica", config, passphrase);
-      toast("已让本机直连存储桶 · 离线、在外也能直接同步");
+      toast(t("已让本机直连存储桶 · 离线、在外也能直接同步"));
       onDone();
     } catch (e) {
       const msg = (e as Error).message;
       toast(
         looksLikeCors(msg)
-          ? "连接被浏览器拦截：请给存储桶配置 CORS，允许此源的 GET/PUT/HEAD/DELETE。"
-          : `启用失败：${msg}`,
+          ? t("连接被浏览器拦截：请给存储桶配置 CORS，允许此源的 GET/PUT/HEAD/DELETE。")
+          : t("启用失败：{msg}", { msg }),
       );
       setBusy(false);
     }
@@ -445,46 +444,46 @@ export function ActivateBucketOnDeviceModal({ peer, onDone }: { peer: S3Peer; on
 
   return (
     <Modal
-      title="在本设备启用直连"
-      sub="服务器已配置这个存储桶。为保护密钥,服务器不会把它同步到浏览器——再输入一次密钥,这台设备就能与桶直接同步(离线、在外也不中断)。"
+      title={t("在本设备启用直连")}
+      sub={t("服务器已配置这个存储桶。为保护密钥,服务器不会把它同步到浏览器——再输入一次密钥,这台设备就能与桶直接同步(离线、在外也不中断)。")}
       footer={
         <>
-          <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>取消</button>
+          <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>{t("取消")}</button>
           <button class="btn btn-primary" onClick={submit} disabled={busy}>
-            {busy ? "连接中…" : "启用直连"}
+            {busy ? t("连接中…") : t("启用直连")}
           </button>
         </>
       }
     >
       <div class="activate-id">
-        <div class="activate-id-row"><span>存储桶</span><b>{peer.bucket}</b></div>
-        {host && <div class="activate-id-row"><span>服务地址</span><b>{host}</b></div>}
+        <div class="activate-id-row"><span>{t("存储桶")}</span><b>{peer.bucket}</b></div>
+        {host && <div class="activate-id-row"><span>{t("服务地址")}</span><b>{host}</b></div>}
         {peer.accessKeyId && (
-          <div class="activate-id-row"><span>访问密钥 ID</span><b>{maskKey(peer.accessKeyId)}</b></div>
+          <div class="activate-id-row"><span>{t("访问密钥 ID")}</span><b>{maskKey(peer.accessKeyId)}</b></div>
         )}
       </div>
-      <div class="field-label">密钥</div>
+      <div class="field-label">{t("密钥")}</div>
       <input
         class="text-input"
         type="password"
         autofocus
-        placeholder="重新输入该桶的密钥"
+        placeholder={t("重新输入该桶的密钥")}
         value={secretKey}
         onInput={(e) => setSecretKey((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => !peer.encrypt && e.key === "Enter" && submit()}
       />
       {peer.encrypt && (
         <>
-          <div class="field-label">加密口令</div>
+          <div class="field-label">{t("加密口令")}</div>
           <input
             class="text-input"
             type="password"
-            placeholder="与其它设备相同的加密口令"
+            placeholder={t("与其它设备相同的加密口令")}
             value={passphrase}
             onInput={(e) => setPassphrase((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
           />
-          <div class="set-hint">跨设备共用的那把加密钥——用它解开桶里别人的数据。</div>
+          <div class="set-hint">{t("跨设备共用的那把加密钥——用它解开桶里别人的数据。")}</div>
         </>
       )}
     </Modal>
@@ -610,15 +609,15 @@ function PhoneEnroll({ config }: { config: S3Config }) {
   return (
     <>
       <QrSvg data={url} />
-      <div class="field-label">壳地址（手机访问的静态站点域名；留空用当前地址）</div>
+      <div class="field-label">{t("壳地址（手机访问的静态站点域名；留空用当前地址）")}</div>
       <input
         class="text-input"
         placeholder={location.origin}
         value={shellBase}
         onInput={(e) => onBase((e.target as HTMLInputElement).value)}
       />
-      <CopyRow text={url} label="复制链接" done="已复制链接" />
-      <div class="peer-sub" style="margin-top:8px">手机相机扫码打开,输入加密口令即可同步。</div>
+      <CopyRow text={url} label={t("复制链接")} done={t("已复制链接")} />
+      <div class="peer-sub" style="margin-top:8px">{t("手机相机扫码打开,输入加密口令即可同步。")}</div>
     </>
   );
 }
@@ -629,12 +628,12 @@ function CliEnroll({ config }: { config: S3Config }) {
   const cmd = `mh config backup connect --enroll ${token}`;
   return (
     <>
-      <div class="field-label">在另一台电脑的终端运行</div>
+      <div class="field-label">{t("在另一台电脑的终端运行")}</div>
       <div class="enroll-cmd">{cmd}</div>
-      <CopyRow text={cmd} label="复制命令" done="已复制命令" primary />
-      <CopyRow text={token} label="复制接入码" done="已复制接入码" />
+      <CopyRow text={cmd} label={t("复制命令")} done={t("已复制命令")} primary />
+      <CopyRow text={token} label={t("复制接入码")} done={t("已复制接入码")} />
       <div class="peer-sub" style="margin-top:8px">
-        对方运行后会提示输入加密口令。也可在 <code>mh config</code> 向导选「粘贴接入码加入存储」。
+        {t("对方运行后会提示输入加密口令。也可在")} <code>mh config</code> {t("向导选「粘贴接入码加入存储」。")}
       </div>
     </>
   );
@@ -644,8 +643,8 @@ function CliEnroll({ config }: { config: S3Config }) {
 function PairCodeView({ code, exp }: { code: string; exp: number }) {
   const [left, setLeft] = useState(Math.max(0, Math.round((exp - Date.now()) / 1000)));
   useEffect(() => {
-    const t = setInterval(() => setLeft(Math.max(0, Math.round((exp - Date.now()) / 1000))), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setLeft(Math.max(0, Math.round((exp - Date.now()) / 1000))), 1000);
+    return () => clearInterval(timer);
   }, [exp]);
   const mm = Math.floor(left / 60);
   const ss = String(left % 60).padStart(2, "0");
@@ -653,9 +652,9 @@ function PairCodeView({ code, exp }: { code: string; exp: number }) {
     <>
       <div class="pair-code">{code}</div>
       <div class="muted" style={{ textAlign: "center", marginTop: 8 }}>
-        {left > 0 ? `${mm}:${ss} 后过期` : "已过期,请重新生成"}
+        {left > 0 ? t("{time} 后过期", { time: `${mm}:${ss}` }) : t("已过期,请重新生成")}
       </div>
-      <CopyRow text={code} label="复制配对码" done="已复制配对码" />
+      <CopyRow text={code} label={t("复制配对码")} done={t("已复制配对码")} />
     </>
   );
 }
@@ -670,7 +669,7 @@ function ServerPairing({ onPaired }: { onPaired: () => void }) {
     try {
       setCode(await api.newPairingCode());
     } catch (e) {
-      toast(`生成失败：${(e as Error).message}`);
+      toast(t("生成失败：{msg}", { msg: (e as Error).message }));
     } finally {
       setGenBusy(false);
     }
@@ -681,46 +680,46 @@ function ServerPairing({ onPaired }: { onPaired: () => void }) {
   const [selfUrl, setSelfUrl] = useState(location.origin);
   const [busy, setBusy] = useState(false);
   const redeem = async () => {
-    if (!url.trim() || !rcode.trim()) return toast("地址和配对码必填");
+    if (!url.trim() || !rcode.trim()) return toast(t("地址和配对码必填"));
     setBusy(true);
     try {
       const r = await api.addPeerByPairing({ url: url.trim(), code: rcode.trim(), self_url: selfUrl.trim() || undefined });
       await api.syncPeer(r.url).catch(() => {});
-      toast(`已配对 ${r.url}`);
+      toast(t("已配对 {url}", { url: r.url }));
       onPaired();
     } catch (e) {
-      toast(`配对失败：${(e as Error).message}`);
+      toast(t("配对失败：{msg}", { msg: (e as Error).message }));
       setBusy(false);
     }
   };
 
   return (
     <>
-      <div class="enroll-section">邀请另一台服务器配对</div>
+      <div class="enroll-section">{t("邀请另一台服务器配对")}</div>
       {code ? (
         <PairCodeView code={code.code} exp={code.exp} />
       ) : (
         <button class="btn btn-secondary" style={{ width: "100%" }} disabled={genBusy} onClick={gen}>
-          <Icon name="link" cls="ico sm" /> {genBusy ? "生成中…" : "生成本机配对码"}
+          <Icon name="link" cls="ico sm" /> {genBusy ? t("生成中…") : t("生成本机配对码")}
         </button>
       )}
 
       <div class="enroll-sep" />
-      <div class="enroll-section">已有对方的配对码?</div>
-      <div class="field-label">对方服务器地址</div>
+      <div class="enroll-section">{t("已有对方的配对码?")}</div>
+      <div class="field-label">{t("对方服务器地址")}</div>
       <input class="text-input" placeholder="http://192.168.1.10:7777" value={url} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
-      <div class="field-label">配对码</div>
+      <div class="field-label">{t("配对码")}</div>
       <input
         class="text-input"
-        placeholder="对方「生成本机配对码」得到的码"
+        placeholder={t("对方「生成本机配对码」得到的码")}
         value={rcode}
         onInput={(e) => setRcode((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => e.key === "Enter" && redeem()}
       />
-      <div class="field-label">本机可达地址（可选）</div>
-      <input class="text-input" placeholder="留空则仅本机主动同步" value={selfUrl} onInput={(e) => setSelfUrl((e.target as HTMLInputElement).value)} />
+      <div class="field-label">{t("本机可达地址（可选）")}</div>
+      <input class="text-input" placeholder={t("留空则仅本机主动同步")} value={selfUrl} onInput={(e) => setSelfUrl((e.target as HTMLInputElement).value)} />
       <button class="btn btn-primary" style={{ width: "100%", marginTop: 10 }} disabled={busy} onClick={redeem}>
-        {busy ? "配对中…" : "配对"}
+        {busy ? t("配对中…") : t("配对")}
       </button>
     </>
   );
@@ -730,9 +729,9 @@ function ServerPairing({ onPaired }: { onPaired: () => void }) {
 export function AddDirectPeerModal({ onDone }: { onDone: () => void }) {
   return (
     <Modal
-      title="直连另一台服务器"
-      sub="两台服务器互相实时同步。一边生成配对码，另一边填入。"
-      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
+      title={t("直连另一台服务器")}
+      sub={t("两台服务器互相实时同步。一边生成配对码，另一边填入。")}
+      footer={<button class="btn btn-primary" onClick={closeModal}>{t("完成")}</button>}
       width={420}
     >
       <ServerPairing onPaired={onDone} />
@@ -760,12 +759,12 @@ function ServerLoginQr() {
   const loginUrl = originEnrollUrl(base, currentToken());
   return (
     <>
-      <div class="enroll-section">在手机上打开本服务器</div>
+      <div class="enroll-section">{t("在手机上打开本服务器")}</div>
       <QrSvg data={loginUrl} />
-      <div class="field-label">服务器地址（手机访问的域名；留空用当前地址）</div>
+      <div class="field-label">{t("服务器地址（手机访问的域名；留空用当前地址）")}</div>
       <input class="text-input" placeholder={location.origin} value={base} onInput={(e) => onBase((e.target as HTMLInputElement).value)} />
-      <CopyRow text={loginUrl} label="复制链接" done="已复制链接" />
-      <div class="peer-sub" style="margin-top:8px">⚠ 含访问令牌,请勿公开分享。</div>
+      <CopyRow text={loginUrl} label={t("复制链接")} done={t("已复制链接")} />
+      <div class="peer-sub" style="margin-top:8px">{t("⚠ 含访问令牌,请勿公开分享。")}</div>
     </>
   );
 }
@@ -791,11 +790,11 @@ export function AddDeviceModal({
   const tabs: { id: AddTab; label: string }[] = [
     ...(hasBuckets
       ? ([
-          { id: "phone", label: "手机扫码" },
-          { id: "cli", label: "电脑 / 命令行" },
+          { id: "phone", label: t("手机扫码") },
+          { id: "cli", label: t("电脑 / 命令行") },
         ] as { id: AddTab; label: string }[])
       : []),
-    ...(server ? ([{ id: "server", label: "手机打开服务器" }] as { id: AddTab; label: string }[]) : []),
+    ...(server ? ([{ id: "server", label: t("手机打开服务器") }] as { id: AddTab; label: string }[]) : []),
   ];
   const [tab, setTab] = useState<AddTab>(tabs[0]?.id ?? "server");
   const [bucketUrl, setBucketUrl] = useState(buckets[0]?.url ?? "");
@@ -810,7 +809,7 @@ export function AddDeviceModal({
     getConfig(bucketUrl)
       .then((c) => {
         if (!live) return;
-        c ? setConfig(c) : setLoadErr("找不到该存储的配置");
+        c ? setConfig(c) : setLoadErr(t("找不到该存储的配置"));
       })
       .catch((e) => live && setLoadErr((e as Error).message));
     return () => {
@@ -820,16 +819,16 @@ export function AddDeviceModal({
 
   return (
     <Modal
-      title="添加设备"
-      sub="让另一台设备加入同一个工作区——手机扫码,或在电脑上粘贴接入码。"
-      footer={<button class="btn btn-primary" onClick={closeModal}>完成</button>}
+      title={t("添加设备")}
+      sub={t("让另一台设备加入同一个工作区——手机扫码,或在电脑上粘贴接入码。")}
+      footer={<button class="btn btn-primary" onClick={closeModal}>{t("完成")}</button>}
       width={420}
     >
       {tabs.length > 1 && (
         <div class="add-tabs">
-          {tabs.map((t) => (
-            <button key={t.id} class={"add-tab" + (tab === t.id ? " on" : "")} onClick={() => setTab(t.id)}>
-              {t.label}
+          {tabs.map((tb) => (
+            <button key={tb.id} class={"add-tab" + (tab === tb.id ? " on" : "")} onClick={() => setTab(tb.id)}>
+              {tb.label}
             </button>
           ))}
         </div>
@@ -839,7 +838,7 @@ export function AddDeviceModal({
         <>
           {buckets.length > 1 && (
             <>
-              <div class="field-label">存储桶</div>
+              <div class="field-label">{t("存储桶")}</div>
               <select
                 class="text-input"
                 value={bucketUrl}
@@ -854,7 +853,7 @@ export function AddDeviceModal({
           {loadErr ? (
             <div class="enroll-err">{loadErr}</div>
           ) : !config ? (
-            <div class="muted">加载中…</div>
+            <div class="muted">{t("加载中…")}</div>
           ) : tab === "phone" ? (
             <PhoneEnroll config={config} />
           ) : (
@@ -862,7 +861,7 @@ export function AddDeviceModal({
           )}
           {config && (
             <div class="peer-sub" style="margin-top:8px">
-              ⚠ 接入码含桶访问密钥,请勿公开分享;不含加密口令——新设备需另输口令。
+              {t("⚠ 接入码含桶访问密钥,请勿公开分享;不含加密口令——新设备需另输口令。")}
             </div>
           )}
         </>
@@ -902,11 +901,11 @@ function originEnrollUrl(base: string, token: string | null): string {
  *  COS uses virtual-hosted addressing (auto-detected when the endpoint host
  *  starts with the bucket name — see storage-s3-bun §13). */
 const S3_PROVIDERS = [
-  { id: "r2", name: "Cloudflare R2", region: "auto", ph: "https://<账户ID>.r2.cloudflarestorage.com", hint: "R2 控制台 → 管理 R2 API 令牌，创建仅限目标桶的对象读写凭据；区域填 auto。价格与额度以 Cloudflare 控制台为准。" },
-  { id: "s3", name: "Amazon S3", region: "us-east-1", ph: "https://s3.<区域>.amazonaws.com", hint: "IAM 用户的访问密钥;区域如 us-east-1。" },
-  { id: "minio", name: "MinIO", region: "us-east-1", ph: "https://minio.你的域名", hint: "自建 MinIO 的访问地址与 access / secret key。" },
-  { id: "cos", name: "腾讯云 COS", region: "ap-shanghai", ph: "https://<桶名-APPID>.cos.<区域>.myqcloud.com", hint: "桶名须含 APPID,用虚拟主机风格地址(host 以桶名开头)。" },
-  { id: "custom", name: "自定义", region: "auto", ph: "https://s3.example.com", hint: "任何 S3 兼容存储桶。" },
+  { id: "r2", name: "Cloudflare R2", region: "auto", ph: t("https://<账户ID>.r2.cloudflarestorage.com"), hint: t("R2 控制台 → 管理 R2 API 令牌，创建仅限目标桶的对象读写凭据；区域填 auto。价格与额度以 Cloudflare 控制台为准。") },
+  { id: "s3", name: "Amazon S3", region: "us-east-1", ph: t("https://s3.<区域>.amazonaws.com"), hint: t("IAM 用户的访问密钥;区域如 us-east-1。") },
+  { id: "minio", name: "MinIO", region: "us-east-1", ph: t("https://minio.你的域名"), hint: t("自建 MinIO 的访问地址与 access / secret key。") },
+  { id: "cos", name: t("腾讯云 COS"), region: "ap-shanghai", ph: t("https://<桶名-APPID>.cos.<区域>.myqcloud.com"), hint: t("桶名须含 APPID,用虚拟主机风格地址(host 以桶名开头)。") },
+  { id: "custom", name: t("自定义"), region: "auto", ph: "https://s3.example.com", hint: t("任何 S3 兼容存储桶。") },
 ] as const;
 
 export function AddStorageModal({
@@ -939,11 +938,11 @@ export function AddStorageModal({
 
   const submit = async () => {
     if (!endpoint.trim() || !bucket.trim() || !accessKey.trim() || !secretKey.trim()) {
-      toast("服务地址、桶名称、访问密钥 ID、密钥都要填");
+      toast(t("服务地址、桶名称、访问密钥 ID、密钥都要填"));
       return;
     }
     if (encrypt && !passphrase) {
-      toast("加密口令必填（或关闭加密）");
+      toast(t("加密口令必填（或关闭加密）"));
       return;
     }
     setBusy(true);
@@ -975,17 +974,17 @@ export function AddStorageModal({
       toast(
         toServer
           ? alsoReplica
-            ? "已连接存储桶 · 服务器开始同步到桶,这台设备也直接同步"
-            : "已连接存储桶 · 服务器开始同步到桶"
-          : "已连接存储桶 · 这台设备开始同步到桶",
+            ? t("已连接存储桶 · 服务器开始同步到桶,这台设备也直接同步")
+            : t("已连接存储桶 · 服务器开始同步到桶")
+          : t("已连接存储桶 · 这台设备开始同步到桶"),
       );
       onDone();
     } catch (e) {
       const msg = (e as Error).message;
       toast(
         looksLikeCors(msg)
-          ? "连接被浏览器拦截：请给存储桶配置 CORS，允许此源的 GET/PUT/HEAD/DELETE（R2 控制台一条规则即可）。"
-          : `添加失败：${msg}`,
+          ? t("连接被浏览器拦截：请给存储桶配置 CORS，允许此源的 GET/PUT/HEAD/DELETE（R2 控制台一条规则即可）。")
+          : t("添加失败：{msg}", { msg }),
       );
       setBusy(false);
     }
@@ -993,23 +992,23 @@ export function AddStorageModal({
 
   return (
     <Modal
-      title="连接存储桶"
-      sub="连接一个 S3 兼容存储桶,所有设备就能同步——不需要公网服务器。新桶自动初始化;已有桶用相同加密口令即可加入。"
+      title={t("连接存储桶")}
+      sub={t("连接一个 S3 兼容存储桶,所有设备就能同步——不需要公网服务器。新桶自动初始化;已有桶用相同加密口令即可加入。")}
       footer={
         <>
-          <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>取消</button>
+          <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>{t("取消")}</button>
           <button class="btn btn-primary" onClick={submit} disabled={busy}>
-            {busy ? "连接中…" : "连接"}
+            {busy ? t("连接中…") : t("连接")}
           </button>
         </>
       }
     >
       <div class="set-hint" style={{ marginTop: 0, marginBottom: 12 }}>
         {toServer
-          ? "连接后，工作区主节点负责把整库同步到这个桶；这台设备和其他设备都从它同步。"
-          : "连接后,这台设备(本机)把整库同步到这个桶;新设备扫码加入即可一起用。"}
+          ? t("连接后，工作区主节点负责把整库同步到这个桶；这台设备和其他设备都从它同步。")
+          : t("连接后,这台设备(本机)把整库同步到这个桶;新设备扫码加入即可一起用。")}
       </div>
-      <div class="field-label">存储服务商</div>
+      <div class="field-label">{t("存储服务商")}</div>
       <div class="provider-grid">
         {S3_PROVIDERS.map((p) => (
           <button
@@ -1024,7 +1023,7 @@ export function AddStorageModal({
       </div>
       <div class="set-hint">{prov.hint}</div>
 
-      <div class="field-label">服务地址</div>
+      <div class="field-label">{t("服务地址")}</div>
       <input
         class="text-input"
         autofocus
@@ -1032,21 +1031,21 @@ export function AddStorageModal({
         value={endpoint}
         onInput={(e) => setEndpoint((e.target as HTMLInputElement).value)}
       />
-      <div class="field-label">桶名称</div>
+      <div class="field-label">{t("桶名称")}</div>
       <input
         class="text-input"
         placeholder="my-metahub"
         value={bucket}
         onInput={(e) => setBucket((e.target as HTMLInputElement).value)}
       />
-      <div class="field-label">访问密钥 ID</div>
+      <div class="field-label">{t("访问密钥 ID")}</div>
       <input
         class="text-input"
         placeholder="Access Key ID"
         value={accessKey}
         onInput={(e) => setAccessKey((e.target as HTMLInputElement).value)}
       />
-      <div class="field-label">密钥</div>
+      <div class="field-label">{t("密钥")}</div>
       <input
         class="text-input"
         type="password"
@@ -1057,42 +1056,42 @@ export function AddStorageModal({
 
       <label class="set-check-row" style={{ marginTop: 14 }}>
         <input type="checkbox" checked={encrypt} onChange={(e) => setEncrypt((e.target as HTMLInputElement).checked)} />
-        <span>端到端加密(强烈建议;关闭后文件以明文存放,仅限完全信任的存储)</span>
+        <span>{t("端到端加密(强烈建议;关闭后文件以明文存放,仅限完全信任的存储)")}</span>
       </label>
       {encrypt && (
         <>
-          <div class="field-label">加密口令</div>
+          <div class="field-label">{t("加密口令")}</div>
           <input
             class="text-input"
             type="password"
-            placeholder="新桶以此创建;其它设备用同一口令加入"
+            placeholder={t("新桶以此创建;其它设备用同一口令加入")}
             value={passphrase}
             onInput={(e) => setPassphrase((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
           />
-          <div class="set-hint">这是跨设备共用的一把加密钥——记牢它,换设备 / 加入已有桶时都要用它解开数据。</div>
+          <div class="set-hint">{t("这是跨设备共用的一把加密钥——记牢它,换设备 / 加入已有桶时都要用它解开数据。")}</div>
         </>
       )}
 
       <details class="set-disclosure" style={{ marginTop: 14 }}>
-        <summary>进阶</summary>
+        <summary>{t("进阶")}</summary>
         <div class="set-disclosure-body">
-          <div class="field-label" style={{ marginTop: 0 }}>区域</div>
+          <div class="field-label" style={{ marginTop: 0 }}>{t("区域")}</div>
           <input
             class="text-input"
             placeholder={prov.region}
             value={region}
             onInput={(e) => setRegion((e.target as HTMLInputElement).value)}
           />
-          <div class="set-hint">大多按服务商默认即可(R2 用 auto)。</div>
-          <div class="field-label">路径前缀</div>
+          <div class="set-hint">{t("大多按服务商默认即可(R2 用 auto)。")}</div>
+          <div class="field-label">{t("路径前缀")}</div>
           <input
             class="text-input"
             placeholder="metahub"
             value={prefix}
             onInput={(e) => setPrefix((e.target as HTMLInputElement).value)}
           />
-          <div class="set-hint">同一个桶里隔离多个工作区时用;默认 metahub。</div>
+          <div class="set-hint">{t("同一个桶里隔离多个工作区时用;默认 metahub。")}</div>
         </div>
       </details>
     </Modal>
@@ -1118,9 +1117,9 @@ export function RotateModal({ buckets, onDone }: { buckets: S3Peer[]; onDone: ()
     setError(null);
     const wantCreds = ak.trim() !== "" || sk.trim() !== "";
     if (wantCreds && (!ak.trim() || !sk.trim()))
-      return setError("新密钥需要同时填 Access Key ID 和 Secret。");
-    if (changePw && (pw1 === "" || pw1 !== pw2)) return setError("两次输入的新口令不一致。");
-    if (!wantCreds && !changePw) return setError("没有要更改的内容。");
+      return setError(t("新密钥需要同时填 Access Key ID 和 Secret。"));
+    if (changePw && (pw1 === "" || pw1 !== pw2)) return setError(t("两次输入的新口令不一致。"));
+    if (!wantCreds && !changePw) return setError(t("没有要更改的内容。"));
     setBusy(true);
     try {
       const r = await api.rotateServerS3Peer({
@@ -1140,24 +1139,24 @@ export function RotateModal({ buckets, onDone }: { buckets: S3Peer[]; onDone: ()
   if (result) {
     return (
       <Modal
-        title="轮换完成"
-        footer={<button class="btn btn-primary" onClick={onDone}>完成</button>}
+        title={t("轮换完成")}
+        footer={<button class="btn btn-primary" onClick={onDone}>{t("完成")}</button>}
       >
         <div class="set-callout ok">
-          {result.rotatedCredentials && <div>✓ 存储密钥已更换 — 现在可以到服务商控制台停用旧密钥了。</div>}
-          {result.rotatedPassphrase && <div>✓ 口令已更换 — 已配置设备无需重输，只有新加入的设备需要新口令。</div>}
-          {!result.sync.ok && <div>⚠️ 轮换后的首次同步失败：{result.sync.error}（凭据已保存，稍后可在同步页重试）</div>}
+          {result.rotatedCredentials && <div>{t("✓ 存储密钥已更换 — 现在可以到服务商控制台停用旧密钥了。")}</div>}
+          {result.rotatedPassphrase && <div>{t("✓ 口令已更换 — 已配置设备无需重输，只有新加入的设备需要新口令。")}</div>}
+          {!result.sync.ok && <div>{t("⚠️ 轮换后的首次同步失败：{msg}（凭据已保存，稍后可在同步页重试）", { msg: result.sync.error ?? "" })}</div>}
         </div>
         <div class="set-hint">
-          其他设备用下面的新接入码重新接入（数据与同步进度不受影响）。丢失设备此前已同步的数据无法远程抹除；它只是无法再获取之后的数据。
+          {t("其他设备用下面的新接入码重新接入（数据与同步进度不受影响）。丢失设备此前已同步的数据无法远程抹除；它只是无法再获取之后的数据。")}
         </div>
         <div class="enroll-cmd">
           <code>{result.enroll}</code>
           <button
             class="btn btn-secondary"
-            onClick={() => { navigator.clipboard?.writeText(result.enroll); toast("已复制"); }}
+            onClick={() => { navigator.clipboard?.writeText(result.enroll); toast(t("已复制")); }}
           >
-            复制
+            {t("复制")}
           </button>
         </div>
       </Modal>
@@ -1166,24 +1165,23 @@ export function RotateModal({ buckets, onDone }: { buckets: S3Peer[]; onDone: ()
 
   return (
     <Modal
-      title="轮换存储密钥"
-      sub="适用于「手机丢了 / 密钥泄露 / 想换口令」。"
+      title={t("轮换存储密钥")}
+      sub={t("适用于「手机丢了 / 密钥泄露 / 想换口令」。")}
       footer={
         <>
-          <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>取消</button>
+          <button class="btn btn-secondary" onClick={closeModal} disabled={busy}>{t("取消")}</button>
           <button class="btn btn-primary" disabled={busy} onClick={submit}>
-            {busy ? "轮换中…" : "开始轮换"}
+            {busy ? t("轮换中…") : t("开始轮换")}
           </button>
         </>
       }
     >
       <div class="set-callout warn">
-        请先在存储服务商控制台<b>新建</b>一把 Access Key——<b>先不要删除旧的</b>，完成后再停用。
-        中途任何失败，旧钥匙都还能用；重试即可续接。
+        {t("请先在存储服务商控制台新建一把 Access Key——先不要删除旧的，完成后再停用。 中途任何失败，旧钥匙都还能用；重试即可续接。")}
       </div>
       {buckets.length > 1 && (
         <>
-          <div class="field-label">存储桶</div>
+          <div class="field-label">{t("存储桶")}</div>
           <select class="text-input" value={url} onChange={(e) => setUrl((e.target as HTMLSelectElement).value)}>
             {buckets.map((b) => (
               <option value={b.url}>{b.label || b.bucket || b.url}</option>
@@ -1191,14 +1189,14 @@ export function RotateModal({ buckets, onDone }: { buckets: S3Peer[]; onDone: ()
           </select>
         </>
       )}
-      <div class="field-label">新 Access Key ID（留空 = 不更换密钥）</div>
+      <div class="field-label">{t("新 Access Key ID（留空 = 不更换密钥）")}</div>
       <input
         class="text-input"
         value={ak}
         autocomplete="off"
         onInput={(e) => setAk((e.target as HTMLInputElement).value)}
       />
-      <div class="field-label">新 Secret Access Key</div>
+      <div class="field-label">{t("新 Secret Access Key")}</div>
       <input
         class="text-input"
         type="password"
@@ -1214,11 +1212,11 @@ export function RotateModal({ buckets, onDone }: { buckets: S3Peer[]; onDone: ()
               checked={changePw}
               onChange={(e) => setChangePw((e.target as HTMLInputElement).checked)}
             />
-            <span>同时更换加密口令（不会重新加密历史数据；已配置设备无需重输）</span>
+            <span>{t("同时更换加密口令（不会重新加密历史数据；已配置设备无需重输）")}</span>
           </label>
           {changePw && (
             <>
-              <div class="field-label">新口令</div>
+              <div class="field-label">{t("新口令")}</div>
               <input
                 class="text-input"
                 type="password"
@@ -1226,7 +1224,7 @@ export function RotateModal({ buckets, onDone }: { buckets: S3Peer[]; onDone: ()
                 autocomplete="new-password"
                 onInput={(e) => setPw1((e.target as HTMLInputElement).value)}
               />
-              <div class="field-label">再输一次确认</div>
+              <div class="field-label">{t("再输一次确认")}</div>
               <input
                 class="text-input"
                 type="password"
@@ -1258,23 +1256,23 @@ export function RecoveryCodeModal({ buckets }: { buckets: S3Peer[] }) {
   const bucket = encrypted.find((b) => b.url === url);
   return (
     <Modal
-      title="导出恢复码"
+      title={t("导出恢复码")}
       footer={
         <>
-          <button class="btn btn-secondary" onClick={closeModal}>关闭</button>
+          <button class="btn btn-secondary" onClick={closeModal}>{t("关闭")}</button>
           <button class="btn btn-primary" disabled={code == null} onClick={() => window.print()}>
-            打印
+            {t("打印")}
           </button>
         </>
       }
     >
       {encrypted.length === 0 ? (
-        <div class="set-hint">没有加密的存储桶，无需恢复码。</div>
+        <div class="set-hint">{t("没有加密的存储桶，无需恢复码。")}</div>
       ) : (
         <>
           {encrypted.length > 1 && (
             <>
-              <div class="field-label">存储桶</div>
+              <div class="field-label">{t("存储桶")}</div>
               <select class="text-input" value={url} onChange={(e) => setUrl((e.target as HTMLSelectElement).value)}>
                 {encrypted.map((b) => (
                   <option value={b.url}>{b.label || b.bucket || b.url}</option>
@@ -1285,12 +1283,12 @@ export function RecoveryCodeModal({ buckets }: { buckets: S3Peer[] }) {
           {error ? (
             <div class="set-callout warn">{error}</div>
           ) : code == null ? (
-            <div class="muted">生成中…</div>
+            <div class="muted">{t("生成中…")}</div>
           ) : (
             <div class="recovery-card">
-              <div class="recovery-card-title">Metahub 恢复码</div>
+              <div class="recovery-card-title">{t("Metahub 恢复码")}</div>
               <div class="recovery-card-meta">
-                存储桶 {bucket?.bucket || url} · 生成于 {new Date().toLocaleDateString()}
+                {t("存储桶 {bucket} · 生成于 {date}", { bucket: bucket?.bucket || url, date: fmtDate(Date.now(), "date") })}
               </div>
               <div class="recovery-card-code">
                 {code.split("-").slice(1).map((g, i) => (
@@ -1298,9 +1296,7 @@ export function RecoveryCodeModal({ buckets }: { buckets: S3Peer[] }) {
                 ))}
               </div>
               <div class="recovery-card-note">
-                这串代码等于你全部数据的钥匙。忘记加密口令时，凭它可恢复数据并设置新口令。
-                请打印或抄写，放在安全的地方；<b>不要</b>保存在会被同步的笔记里。
-                任何拿到它的人都能读取你的全部数据。
+                {t("这串代码等于你全部数据的钥匙。忘记加密口令时，凭它可恢复数据并设置新口令。 请打印或抄写，放在安全的地方；不要保存在会被同步的笔记里。 任何拿到它的人都能读取你的全部数据。")}
               </div>
             </div>
           )}

@@ -25,3 +25,11 @@ test("css: 120ms gated fade-in, sheen sweep, reduced-motion off switch", () => {
   expect(SHELL_CSS).toContain("header.mh{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:14px}");
   expect(SHELL_CSS).toContain(".copy-btn{");
 });
+
+test("shell defaults to zh-CN and switches <html lang>/title to English from navigator.language", () => {
+  const html = shellHtml();
+  expect(html).toContain('<html lang="zh-CN">');
+  expect(html).toContain("<title>分享</title>");
+  expect(html).toContain("document.documentElement.lang='en'");
+  expect(html).toContain('document.title="Share"');
+});

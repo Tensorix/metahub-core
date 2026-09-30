@@ -24,12 +24,12 @@ const outdir = join(desktopRoot, "dist");
 // sidecar origin — so main.ts passes ?theme= (the OS/nativeTheme resolution)
 // and the OS preference is the fallback.
 const HTML = `<!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Metahub</title>
-<script>try{var q=new URLSearchParams(location.search).get('theme'),d=q?q==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.resolved=d?'dark':'light'}catch(e){}</script>
+<script>try{var sp=new URLSearchParams(location.search),q=sp.get('theme'),d=q?q==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.resolved=d?'dark':'light';var l=sp.get('lang');if(l==='en'||l==='zh-CN')document.documentElement.lang=l}catch(e){}</script>
 <link rel="stylesheet" href="./file-editor.css">
 </head>
 <body>

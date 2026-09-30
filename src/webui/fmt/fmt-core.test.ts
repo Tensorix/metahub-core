@@ -66,5 +66,5 @@ test("syntax errors reject with a line-referencing message", async () => {
 });
 
 test("unknown language rejects", async () => {
-  await expect(format("x", "brainfuck", 0)).rejects.toThrow(/不支持/);
+  await expect(format("x", "brainfuck", 0)).rejects.toThrow(/unsupported language/);
 });

@@ -10,6 +10,7 @@ import { getReplicaBus, BusError } from "./replica-bus.ts";
 import { probeOrigin, type OriginMode } from "./origin.ts";
 import type { ReplicaStatus, WorkerEvent } from "./db-worker.ts";
 import type { S3Config } from "../../core/sync/storage.ts";
+import { t } from "../i18n/t.ts";
 
 /** Fired on `document` after a sync pulled remote changes; detail carries
  *  `{ datasets, rowIds }` so open views can refresh what they show. */
@@ -228,7 +229,7 @@ function waitReady(timeoutMs = 30_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       off();
-      reject(new ReplicaError("本地副本启动超时", undefined));
+      reject(new ReplicaError(t("本地副本启动超时"), undefined));
     }, timeoutMs);
     const off = onReplicaStatus((s) => {
       if (s.state === "ready") {
@@ -238,7 +239,7 @@ function waitReady(timeoutMs = 30_000): Promise<void> {
       } else if (s.state === "error") {
         clearTimeout(timer);
         off();
-        reject(new ReplicaError(s.error ?? "本地副本启动失败", undefined));
+        reject(new ReplicaError(s.error ?? t("本地副本启动失败"), undefined));
       }
     });
   });
@@ -251,14 +252,14 @@ function waitReady(timeoutMs = 30_000): Promise<void> {
 export async function enableReplicaFromServer(): Promise<void> {
   if (isNoOrigin())
     throw new ReplicaError(
-      "此页面没有工作区主节点，不能使用服务器配对；请重新连接同步存储桶。",
+      t("此页面没有工作区主节点，不能使用服务器配对；请重新连接同步存储桶。"),
       "invalid_input",
     );
   startReplica();
   await waitReady();
   if (!status.paired) {
     const res = await authFetch("/api/pair/new", { method: "POST" });
-    if (!res.ok) throw new ReplicaError(`无法获取配对码: ${res.status}`, undefined);
+    if (!res.ok) throw new ReplicaError(t("无法获取配对码: {status}", { status: res.status }), undefined);
     const { code } = (await res.json()) as { code: string };
     await call("pair", code);
   }

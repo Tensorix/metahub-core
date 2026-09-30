@@ -49,7 +49,7 @@ export async function format(
     return { text: sqlFormat(code, { language: "sql", tabWidth: 2 }), cursor };
   }
   const parser = PARSER[lang];
-  if (!parser) throw new Error(`不支持的语言:${lang}`);
+  if (!parser) throw new Error(`unsupported language: ${lang}`);
   const r = await formatWithCursor(code, {
     parser,
     plugins: PLUGINS,

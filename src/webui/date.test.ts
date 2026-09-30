@@ -9,6 +9,7 @@ import {
   startOfWeekMon,
   timeAgo,
 } from "./date.ts";
+import { fmtDate } from "./i18n/fmt.ts";
 
 test("parseDate handles YYYY-MM-DD and empty", () => {
   const d = parseDate("2026-06-02")!;
@@ -75,6 +76,5 @@ test("timeAgo buckets ms / ISO / Date inputs", () => {
   expect(timeAgo(now - 2 * 86_400_000)).toBe("2 天前");
   expect(timeAgo(new Date(now - 90_000).toISOString())).toBe("1 分钟前");
   expect(timeAgo(new Date(now - 30_000))).toBe("刚刚");
-  // Beyond 30 days: falls back to a locale date string.
-  expect(timeAgo(now - 40 * 86_400_000)).toBe(new Date(now - 40 * 86_400_000).toLocaleDateString());
+  expect(timeAgo(now - 40 * 86_400_000)).toBe(fmtDate(now - 40 * 86_400_000, "date"));
 });

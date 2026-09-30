@@ -34,6 +34,8 @@ import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
 import { readGuestSession, mintGuestSession, type GuestSessionScope } from "./guest-session.ts";
 import { renderMarkdown, escapeHtml } from "./share-render.ts";
 import { COPY_CSS, copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "./share-copy.ts";
+import { pickLocale, type Locale } from "./locale.ts";
+import { pm } from "./page-messages.ts";
 
 const HTML = { "content-type": "text/html; charset=utf-8" } as const;
 const HASH_RE = /^[0-9a-f]{16,64}$/;
@@ -73,6 +75,7 @@ export async function serveShare(
   const share = getShare(ctx.db, slug);
   if (!share) return notFound();
   if (share.transport !== "server") return notFound(); // s3 shares aren't served here
+  const locale = pickLocale(req);
   // Expired = access refused, share row untouched: the row stays manageable
   // (renewable) per the "expired" status contract; only explicit revoke/delete
   // removes it.
@@ -83,7 +86,7 @@ export async function serveShare(
   const locked = !!share.pw_hash && !(await readShareSession(ctx, req, share));
   if (locked) {
     return wantsHtml(req)
-      ? new Response(passwordPage(share, false), { headers: HTML })
+      ? new Response(passwordPage(locale, share, false), { headers: HTML })
       : unauthorizedJson();
   }
 
@@ -91,9 +94,9 @@ export async function serveShare(
   // shared target actually references — never an open blob oracle).
   if (sub.startsWith("blob/")) return serveScopedBlob(ctx, share, sub.slice("blob/".length));
 
-  if (share.kind === "doc") return serveDoc(ctx, req, share, sub);
-  if (share.kind === "database") return serveTable(ctx, req, share, sub);
-  if (share.kind === "site") return serveSiteShare(ctx, req, share, sub, opts);
+  if (share.kind === "doc") return serveDoc(ctx, req, share, sub, locale);
+  if (share.kind === "database") return serveTable(ctx, req, share, sub, locale);
+  if (share.kind === "site") return serveSiteShare(ctx, req, share, sub, opts, locale);
   return notFound();
 }
 
@@ -104,6 +107,7 @@ async function serveDoc(
   req: Request,
   share: ShareRow,
   sub: string,
+  locale: Locale,
 ): Promise<Response> {
   const doc = getDocument(ctx.db, share.target_id);
   if (!doc) return notFound();
@@ -145,30 +149,31 @@ async function serveDoc(
   });
   const version = documentVersion(ctx.db, share.target_id);
   const editable = share.permission === "edit";
-  const inner = `<article class="doc">${rendered || '<p class="muted">（空文档）</p>'}</article>`;
-  const script = editable ? docEditScript(share.slug, version, doc.body ?? "") : "";
+  const inner = `<article class="doc">${rendered || `<p class="muted">${escapeHtml(pm(locale, "（空文档）"))}</p>`}</article>`;
+  const script = editable ? docEditScript(locale, share.slug, version, doc.body ?? "") : "";
   return new Response(
-    pageShell(doc.title || "文档", inner, { editable, editLabel: "编辑文档", script, copySource: doc.body ?? "" }),
+    pageShell(doc.title || pm(locale, "文档"), inner, { lang: locale, editable, editLabel: pm(locale, "编辑文档"), script, copySource: doc.body ?? "" }),
     { headers: HTML },
   );
 }
 
-function docEditScript(slug: string, version: string, body: string): string {
+function docEditScript(locale: Locale, slug: string, version: string, body: string): string {
+  const L = JSON.stringify({ save: pm(locale, "保存"), saving: pm(locale, "保存中…"), failed: pm(locale, "保存失败") });
   return `
-  let editing=false; const ver=${JSON.stringify(version)}; const body0=${JSON.stringify(body)};
+  let editing=false; const ver=${JSON.stringify(version)}; const body0=${JSON.stringify(body)}; const L=${L};
   const art=document.querySelector('article.doc');
   const btn=document.getElementById('mh-edit');
   let ta;
   btn.addEventListener('click', async ()=>{
     if(!editing){
-      editing=true; btn.textContent='保存';
+      editing=true; btn.textContent=L.save;
       ta=document.createElement('textarea'); ta.className='mh-raw'; ta.value=body0;
       art.replaceWith(ta); ta.focus();
     } else {
-      btn.disabled=true; btn.textContent='保存中…';
+      btn.disabled=true; btn.textContent=L.saving;
       const res=await fetch('/share/${slug}/doc',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({body:ta.value,ifMatch:ver})});
       if(res.ok){ location.reload(); }
-      else { const j=await res.json().catch(()=>({})); alert(j.error||'保存失败'); btn.disabled=false; btn.textContent='保存'; }
+      else { const j=await res.json().catch(()=>({})); alert(j.error||L.failed); btn.disabled=false; btn.textContent=L.save; }
     }
   });`;
 }
@@ -208,6 +213,7 @@ async function serveTable(
   req: Request,
   share: ShareRow,
   sub: string,
+  locale: Locale,
 ): Promise<Response> {
   const dbRow = getDatabase(ctx.db, share.target_id);
   if (!dbRow) return notFound();
@@ -280,18 +286,25 @@ async function serveTable(
     })
     .join("");
   const inner = `<div class="table-wrap"><table class="db"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
-  const script = editable ? tableEditScript(share.slug) : "";
+  const script = editable ? tableEditScript(locale, share.slug) : "";
   const copySource = markdownTable(
     props.map((p) => p.name),
     records.map((r) => props.map((p) => cellText(p, r.cells[p.id], titlesFor(p)))),
   );
-  return new Response(pageShell(dbRow.name || "表格", inner, { script, copySource, hint: editable ? "可编辑文本/数字/URL/日期单元格，失焦自动保存" : "" }), {
-    headers: HTML,
-  });
+  return new Response(
+    pageShell(dbRow.name || pm(locale, "表格"), inner, {
+      lang: locale,
+      script,
+      copySource,
+      hint: editable ? pm(locale, "可编辑文本/数字/URL/日期单元格，失焦自动保存") : "",
+    }),
+    { headers: HTML },
+  );
 }
 
-function tableEditScript(slug: string): string {
+function tableEditScript(locale: Locale, slug: string): string {
   return `
+  const L=${JSON.stringify({ failed: pm(locale, "保存失败") })};
   document.querySelectorAll('td[contenteditable]').forEach(td=>{
     let orig=td.textContent;
     td.addEventListener('blur', async ()=>{
@@ -303,7 +316,7 @@ function tableEditScript(slug: string): string {
       const res=await fetch('/share/${slug}/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:td.dataset.rec,propId:td.dataset.prop,value:v})});
       td.classList.remove('saving');
       if(res.ok){ orig=val; td.classList.add('saved'); setTimeout(()=>td.classList.remove('saved'),600); }
-      else { td.textContent=orig; const j=await res.json().catch(()=>({})); alert(j.error||'保存失败'); }
+      else { td.textContent=orig; const j=await res.json().catch(()=>({})); alert(j.error||L.failed); }
     });
   });`;
 }
@@ -316,6 +329,7 @@ async function serveSiteShare(
   share: ShareRow,
   sub: string,
   opts: ServeShareOpts = {},
+  locale: Locale = "zh-CN",
 ): Promise<Response> {
   let site: ReturnType<typeof resolveSite>;
   try {
@@ -356,7 +370,7 @@ async function serveSiteShare(
 
   // Edit surface (reserved underscore paths so they never collide with files).
   if (share.permission === "edit") {
-    if (sub === "_files") return new Response(siteFilesPage(ctx, share, siteId), { headers: HTML });
+    if (sub === "_files") return new Response(siteFilesPage(ctx, share, siteId, locale), { headers: HTML });
     if (sub === "_file" && req.method === "POST") {
       const body = (await req.json().catch(() => ({}))) as { path?: string; content?: string; contentType?: string };
       if (!body.path || typeof body.content !== "string")
@@ -395,8 +409,9 @@ async function serveSiteShare(
   return serveSiteFile(req, ctx.db, siteId, sub, { spa: site.spa === 1 });
 }
 
-function siteFilesPage(ctx: RouteCtx, share: ShareRow, siteId: string): string {
+function siteFilesPage(ctx: RouteCtx, share: ShareRow, siteId: string, locale: Locale): string {
   const files = listFiles(ctx.db, siteId);
+  const L = JSON.stringify({ binary: pm(locale, "（二进制文件，不可在线编辑）"), saved: pm(locale, "已保存 ✓"), save: pm(locale, "保存"), failed: pm(locale, "保存失败") });
   const list = files
     .map(
       (f) =>
@@ -406,30 +421,30 @@ function siteFilesPage(ctx: RouteCtx, share: ShareRow, siteId: string): string {
     )
     .join("");
   const inner = `
-    <p class="hint">编辑站点文件（文本文件可在线编辑；保存即对所有访问者生效）。</p>
-    <ul class="files">${list || '<li class="muted">（暂无文件）</li>'}</ul>
+    <p class="hint">${escapeHtml(pm(locale, "编辑站点文件（文本文件可在线编辑；保存即对所有访问者生效）。"))}</p>
+    <ul class="files">${list || `<li class="muted">${escapeHtml(pm(locale, "（暂无文件）"))}</li>`}</ul>
     <div id="editor" hidden>
-      <div class="row"><strong id="fpath"></strong> <a id="open" target="_blank" rel="noreferrer">预览 ↗</a></div>
+      <div class="row"><strong id="fpath"></strong> <a id="open" target="_blank" rel="noreferrer">${escapeHtml(pm(locale, "预览 ↗"))}</a></div>
       <textarea class="mh-raw" id="fbody"></textarea>
-      <div class="row"><button id="save">保存</button></div>
+      <div class="row"><button id="save">${escapeHtml(pm(locale, "保存"))}</button></div>
     </div>`;
   const script = `
-    const slug=${JSON.stringify(share.slug)};
+    const slug=${JSON.stringify(share.slug)}; const L=${L};
     const ed=document.getElementById('editor'), fpath=document.getElementById('fpath'), fbody=document.getElementById('fbody'), open=document.getElementById('open');
     let cur=null;
     document.querySelectorAll('button.file').forEach(b=>b.addEventListener('click', async ()=>{
       cur=b.dataset.path; fpath.textContent=cur; open.href='/share/'+slug+'/'+cur;
       if(b.dataset.text==='1'){ const r=await fetch('/share/'+slug+'/_raw?path='+encodeURIComponent(cur)); const j=await r.json(); fbody.value=j.content||''; fbody.disabled=false; }
-      else { fbody.value='（二进制文件，不可在线编辑）'; fbody.disabled=true; }
+      else { fbody.value=L.binary; fbody.disabled=true; }
       ed.hidden=false;
     }));
     document.getElementById('save').addEventListener('click', async ()=>{
       if(!cur||fbody.disabled) return;
       const res=await fetch('/share/'+slug+'/_file',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({path:cur,content:fbody.value})});
-      if(res.ok){ const s=document.getElementById('save'); s.textContent='已保存 ✓'; setTimeout(()=>s.textContent='保存',900); }
-      else { const j=await res.json().catch(()=>({})); alert(j.error||'保存失败'); }
+      if(res.ok){ const s=document.getElementById('save'); s.textContent=L.saved; setTimeout(()=>s.textContent=L.save,900); }
+      else { const j=await res.json().catch(()=>({})); alert(j.error||L.failed); }
     });`;
-  return pageShell(`${resolveSite(ctx.db, share.target_id).name} · 文件`, inner, { script });
+  return pageShell(pm(locale, "{name} · 文件", { name: resolveSite(ctx.db, share.target_id).name }), inner, { lang: locale, script });
 }
 
 // ---- scoped blob --------------------------------------------------------------
@@ -565,7 +580,7 @@ async function handleUnlock(
     pw = form ? String(form.get("password") ?? "") : "";
   }
   if (!(await verifySharePassword(share, pw))) {
-    return new Response(passwordPage(share, true), { headers: HTML, status: 401 });
+    return new Response(passwordPage(pickLocale(req), share, true), { headers: HTML, status: 401 });
   }
   // Unlock mints the session — including this visitor's own guest sub id, so
   // every write of this session is attributed to one distinct author.
@@ -582,30 +597,30 @@ function ttlRemaining(share: ShareRow): number {
 
 // ---- page shell ---------------------------------------------------------------
 
-function passwordPage(share: ShareRow, error: boolean): string {
+function passwordPage(locale: Locale, share: ShareRow, error: boolean): string {
   const inner = `
     <form method="post" action="/share/${share.slug}/unlock" class="pw">
-      <h1>🔒 此分享受口令保护</h1>
-      ${error ? '<p class="err">口令错误，请重试。</p>' : ""}
-      <input type="password" name="password" placeholder="口令" autofocus autocomplete="current-password">
-      <button type="submit">解锁</button>
+      <h1>${escapeHtml(pm(locale, "🔒 此分享受口令保护"))}</h1>
+      ${error ? `<p class="err">${escapeHtml(pm(locale, "口令错误，请重试。"))}</p>` : ""}
+      <input type="password" name="password" placeholder="${escapeHtml(pm(locale, "口令"))}" autofocus autocomplete="current-password">
+      <button type="submit">${escapeHtml(pm(locale, "解锁"))}</button>
     </form>`;
-  return pageShell("受保护的分享", inner, { bare: true });
+  return pageShell(pm(locale, "受保护的分享"), inner, { lang: locale, bare: true });
 }
 
 function pageShell(
   title: string,
   inner: string,
-  opts: { editable?: boolean; editLabel?: string; script?: string; hint?: string; bare?: boolean; copySource?: string } = {},
+  opts: { lang: Locale; editable?: boolean; editLabel?: string; script?: string; hint?: string; bare?: boolean; copySource?: string },
 ): string {
-  const editBtn = opts.editable ? `<button id="mh-edit" class="edit-btn">${opts.editLabel ?? "编辑"}</button>` : "";
-  const copyBtn = opts.copySource !== undefined ? copyButtonHtml() : "";
+  const editBtn = opts.editable ? `<button id="mh-edit" class="edit-btn">${escapeHtml(opts.editLabel ?? pm(opts.lang, "编辑"))}</button>` : "";
+  const copyBtn = opts.copySource !== undefined ? copyButtonHtml(opts.lang) : "";
   const tools = copyBtn || editBtn ? `<div class="mh-tools">${copyBtn}${editBtn}</div>` : "";
   const hint = opts.hint ? `<p class="hint">${escapeHtml(opts.hint)}</p>` : "";
   const script =
     (opts.script ? `<script>(function(){${opts.script}})();</script>` : "") +
-    (opts.copySource !== undefined ? `${copySourceHtml(opts.copySource)}<script>${copyScript()}</script>` : "");
-  return `<!doctype html><html lang="zh"><head>
+    (opts.copySource !== undefined ? `${copySourceHtml(opts.copySource)}<script>${copyScript(opts.lang)}</script>` : "");
+  return `<!doctype html><html lang="${opts.lang}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
@@ -652,7 +667,7 @@ ${opts.bare ? `<div class="wrap">${inner}</div>` : `<div class="wrap">
 <header class="mh"><h1 class="title">${escapeHtml(title)}</h1>${tools}</header>
 ${hint}
 ${inner}
-<footer class="mh">通过 metahub 分享</footer>
+<footer class="mh">${escapeHtml(pm(opts.lang, "通过 metahub 分享"))}</footer>
 </div>`}
 ${script}
 </body></html>`;

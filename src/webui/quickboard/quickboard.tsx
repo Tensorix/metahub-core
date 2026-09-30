@@ -10,6 +10,7 @@ import { LIVE_STATUS_EVENT, liveConnected } from "../live.ts";
 import { UiHost, openMenu, MenuLabel } from "../ui.tsx";
 import { viewToHash } from "../view.ts";
 import { tip } from "../shortcuts.ts";
+import { t } from "../i18n/t.ts";
 
 // The Quick Board window: the desktop's at-a-glance task board, mounted from
 // the shared webui bundle when the URL hash is `#board` (see app.tsx) — the
@@ -236,14 +237,14 @@ export function QuickBoard() {
       e,
       (close) => (
         <>
-          <MenuLabel>切换数据库</MenuLabel>
+          <MenuLabel>{t("切换数据库")}</MenuLabel>
           {dbs.length === 0 ? (
-            <div class="lbl">还没有数据库</div>
+            <div class="lbl">{t("还没有数据库")}</div>
           ) : (
             <DbTargetList
               target={db?.id}
               autoFocus
-              placeholder="搜索数据库"
+              placeholder={t("搜索数据库")}
               onPick={(d) => {
                 close();
                 // The list DbTargetList fetched can be fresher than our SSE
@@ -268,23 +269,23 @@ export function QuickBoard() {
   return (
     <div class="qb">
       <div class="qb-bar">
-        <button class="qb-brand" onClick={openDbMenu} {...tip("切换数据库")}>
+        <button class="qb-brand" onClick={openDbMenu} {...tip(t("切换数据库"))}>
           <span class="qb-emoji">{db?.icon || "🗂️"}</span>
-          <span class="qb-name">{db?.name ?? "快速看板"}</span>
+          <span class="qb-name">{db?.name ?? t("快速看板")}</span>
           <Icon name="chevronDown" cls="ico sm" />
         </button>
         <div class="qb-actions">
           <span
             class={"qb-live" + (live ? " on" : "")}
-            {...tip(live ? "实时同步中——AI 通过 CLI 的修改会即时出现" : "连接中…")}
+            {...tip(live ? t("实时同步中——AI 通过 CLI 的修改会即时出现") : t("连接中…"))}
           />
-          <button class="iconbtn" {...tip("在主窗口中打开")} disabled={!db} onClick={openInMain}>
+          <button class="iconbtn" {...tip(t("在主窗口中打开"))} disabled={!db} onClick={openInMain}>
             <Icon name="externalLink" />
           </button>
           {qb && (
             <button
               class={"iconbtn" + (pinned ? " active" : "")}
-              {...tip(pinned ? "取消置顶" : "始终置顶")}
+              {...tip(pinned ? t("取消置顶") : t("始终置顶"))}
               onClick={() => void togglePin()}
             >
               <Icon name="pin" />
@@ -295,7 +296,7 @@ export function QuickBoard() {
 
       {error && (
         <div class="error-bar" onClick={() => setError("")}>
-          ⚠ {error}（点击关闭）
+          ⚠ {t("{error}（点击关闭）", { error })}
         </div>
       )}
 
@@ -315,12 +316,12 @@ export function QuickBoard() {
         ) : loaded ? (
           <div class="qb-empty">
             <Icon name="group" />
-            <div class="qb-empty-title">还没有看板</div>
-            <div class="qb-empty-sub">在主窗口创建一个带「单选」属性的数据库，任务进度就会出现在这里。</div>
+            <div class="qb-empty-title">{t("还没有看板")}</div>
+            <div class="qb-empty-sub">{t("在主窗口创建一个带「单选」属性的数据库，任务进度就会出现在这里。")}</div>
           </div>
         ) : (
           <div class="qb-empty">
-            <div class="qb-empty-sub">加载中…</div>
+            <div class="qb-empty-sub">{t("加载中…")}</div>
           </div>
         )}
       </div>

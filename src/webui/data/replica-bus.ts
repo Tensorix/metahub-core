@@ -17,6 +17,7 @@
 // No imports from api.ts: this module is bundled into mh-runtime.js, which is
 // injected into hosted site pages.
 
+import { resolveLocale } from "../i18n/locale.ts";
 import type { RpcResponse, WorkerEvent } from "./db-worker.ts";
 
 const CHANNEL = "mh-replica-bus";
@@ -112,6 +113,7 @@ export class ReplicaBus {
   private spawnWorker(): void {
     if (this.worker) return;
     this.worker = new Worker("/db-worker.js", { type: "module" });
+    void this.workerCall("applyLocale", [resolveLocale()]).catch(() => {});
     this.worker.onmessage = (e: MessageEvent) => {
       const d = e.data as RpcResponse | WorkerEvent;
       if ("id" in d) {

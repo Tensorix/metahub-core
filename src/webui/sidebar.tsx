@@ -2,6 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type PropType, type PropConfig, type Site } from "./api.ts";
 import { NewSiteModal, SITES_CHANGED, openSiteMenu } from "./sites.tsx";
+import { t } from "./i18n/t.ts";
 import { Icon } from "./icons.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
@@ -60,9 +61,9 @@ function loadSec(): SecState {
 
 // The sidebar lists, in tab order (docs first — it's the primary surface).
 const TABS: { key: SbTab; icon: string; label: string }[] = [
-  { key: "docs", icon: "fileText", label: "文档" },
-  { key: "db", icon: "table", label: "数据表" },
-  { key: "sites", icon: "globe", label: "站点" },
+  { key: "docs", icon: "fileText", label: t("文档") },
+  { key: "db", icon: "table", label: t("数据表") },
+  { key: "sites", icon: "globe", label: t("站点") },
 ];
 
 /** The replicated per-database fold flag (meta.collapsed): tucks site-facing /
@@ -114,12 +115,12 @@ export function Sidebar(props: SidebarProps) {
   const tab = sec.tab ?? "docs";
   const paneDir = useRef<"r" | "l">("r");
   const paneAnim = useRef(false);
-  const setTab = (t: SbTab) => {
-    if (t === tab) return;
+  const setTab = (next: SbTab) => {
+    if (next === tab) return;
     const idx = (k: SbTab) => TABS.findIndex((x) => x.key === k);
-    paneDir.current = idx(t) > idx(tab) ? "r" : "l";
+    paneDir.current = idx(next) > idx(tab) ? "r" : "l";
     paneAnim.current = true;
-    patchSec({ tab: t });
+    patchSec({ tab: next });
   };
 
   // Sidebar-owned shortcuts (desktop shell only).
@@ -160,11 +161,11 @@ export function Sidebar(props: SidebarProps) {
   useEffect(() => {
     const run = (k: string) => () => cmdRef.current[k]?.();
     return registerCommands([
-      { id: "newDoc", label: "新建文档", group: "create", icon: "doc", shortcut: "newDoc", run: run("newDoc") },
-      { id: "newDb", label: "新建数据库", group: "create", icon: "database", shortcut: "newDb", run: run("newDb") },
-      { id: "tabDocs", order: 80, label: "侧栏：文档", group: "nav", icon: "doc", shortcut: "tabDocs", run: run("tabDocs") },
-      { id: "tabDb", order: 80, label: "侧栏：数据表", group: "nav", icon: "table", shortcut: "tabDb", run: run("tabDb") },
-      { id: "tabSites", order: 80, label: "侧栏：站点", group: "nav", icon: "globe", shortcut: "tabSites", run: run("tabSites") },
+      { id: "newDoc", label: t("新建文档"), group: "create", icon: "doc", shortcut: "newDoc", run: run("newDoc") },
+      { id: "newDb", label: t("新建数据库"), group: "create", icon: "database", shortcut: "newDb", run: run("newDb") },
+      { id: "tabDocs", order: 80, label: t("侧栏：文档"), group: "nav", icon: "doc", shortcut: "tabDocs", run: run("tabDocs") },
+      { id: "tabDb", order: 80, label: t("侧栏：数据表"), group: "nav", icon: "table", shortcut: "tabDb", run: run("tabDb") },
+      { id: "tabSites", order: 80, label: t("侧栏：站点"), group: "nav", icon: "globe", shortcut: "tabSites", run: run("tabSites") },
     ]);
   }, []);
   // Follow navigation: opening a doc (search result, backlink, history) should
@@ -251,18 +252,18 @@ export function Sidebar(props: SidebarProps) {
       <>
         <MenuItem
           icon="hash"
-          label="复制 ID"
+          label={t("复制 ID")}
           onClick={() => {
             close();
-            navigator.clipboard?.writeText(db.id).then(() => toast("已复制 ID"));
+            navigator.clipboard?.writeText(db.id).then(() => toast(t("已复制 ID")));
           }}
         />
         <MenuItem
           icon="settings"
-          label="重命名…"
+          label={t("重命名…")}
           onClick={async () => {
             close();
-            const name = await promptDialog({ title: "重命名数据库", value: db.name });
+            const name = await promptDialog({ title: t("重命名数据库"), value: db.name });
             if (name && name !== db.name)
               guard(async () => {
                 await api.updateDatabase(db.id, { name });
@@ -271,7 +272,7 @@ export function Sidebar(props: SidebarProps) {
         />
         <MenuItem
           icon={isDbCollapsed(db) ? "chevronDown" : "chevron"}
-          label={isDbCollapsed(db) ? "移出折叠组" : "折叠此数据库"}
+          label={isDbCollapsed(db) ? t("移出折叠组") : t("折叠此数据库")}
           onClick={() => {
             close();
             // meta is a whole-object register — merge the current value in.
@@ -285,14 +286,14 @@ export function Sidebar(props: SidebarProps) {
         <MenuSep />
         <MenuItem
           icon="trash"
-          label="删除数据库"
+          label={t("删除数据库")}
           danger
           onClick={async () => {
             close();
             const ok = await confirmDialog({
-              title: "删除数据库？",
-              message: `「${db.name}」及其所有记录将被永久删除。`,
-              confirmLabel: "删除",
+              title: t("删除数据库？"),
+              message: t("「{name}」及其所有记录将被永久删除。", { name: db.name }),
+              confirmLabel: t("删除"),
               danger: true,
             });
             if (ok)
@@ -331,7 +332,7 @@ export function Sidebar(props: SidebarProps) {
       <span class="emoji">{db.icon || "🗂️"}</span>
       <span class="label">{db.name}</span>
       <span class="acts">
-        <button {...tip("更多")} onClick={(e) => dbMenu(e, db)}>
+        <button {...tip(t("更多"))} onClick={(e) => dbMenu(e, db)}>
           <Icon name="dots" cls="ico sm" />
         </button>
       </span>
@@ -343,21 +344,21 @@ export function Sidebar(props: SidebarProps) {
     const childCount = props.docs.filter((x) => x.parent_id === d.id).length;
     openMenu(e, (close) => (
       <>
-        <MenuItem icon="plus" label="新建子页" onClick={() => { close(); newDoc(d.id); }} />
+        <MenuItem icon="plus" label={t("新建子页")} onClick={() => { close(); newDoc(d.id); }} />
         <MenuItem
           icon="hash"
-          label="复制 ID"
+          label={t("复制 ID")}
           onClick={() => {
             close();
-            navigator.clipboard?.writeText(d.id).then(() => toast("已复制 ID"));
+            navigator.clipboard?.writeText(d.id).then(() => toast(t("已复制 ID")));
           }}
         />
         <MenuItem
           icon="settings"
-          label="重命名…"
+          label={t("重命名…")}
           onClick={async () => {
             close();
-            const title = await promptDialog({ title: "重命名文档", value: d.title });
+            const title = await promptDialog({ title: t("重命名文档"), value: d.title });
             if (title)
               guard(async () => {
                 await api.updateDocument(d.id, { title });
@@ -367,7 +368,7 @@ export function Sidebar(props: SidebarProps) {
         {d.parent_id && (
           <MenuItem
             icon="cornerUpRight"
-            label="移到顶层"
+            label={t("移到顶层")}
             onClick={() => {
               close();
               guard(async () => {
@@ -379,16 +380,16 @@ export function Sidebar(props: SidebarProps) {
         <MenuSep />
         <MenuItem
           icon="trash"
-          label="删除"
+          label={t("删除")}
           danger
           onClick={async () => {
             close();
             const ok = await confirmDialog({
-              title: "删除文档？",
+              title: t("删除文档？"),
               message: childCount
-                ? `「${d.title || "无标题"}」及其 ${childCount} 个子页将被删除。`
-                : `「${d.title || "无标题"}」将被删除。`,
-              confirmLabel: "删除",
+                ? t("「{title}」及其 {n} 个子页将被删除。", { title: d.title || t("无标题"), n: childCount })
+                : t("「{title}」将被删除。", { title: d.title || t("无标题") }),
+              confirmLabel: t("删除"),
               danger: true,
             });
             if (ok)
@@ -433,12 +434,12 @@ export function Sidebar(props: SidebarProps) {
             <span class="emoji">
               <Icon name="file" cls="ico sm" />
             </span>
-            <span class="label">{d.title || "无标题"}</span>
+            <span class="label">{d.title || t("无标题")}</span>
             <span class="acts">
-              <button {...tip("新建子页")} onClick={(e) => { e.stopPropagation(); newDoc(d.id); }}>
+              <button {...tip(t("新建子页"))} onClick={(e) => { e.stopPropagation(); newDoc(d.id); }}>
                 <Icon name="plus" cls="ico sm" />
               </button>
-              <button {...tip("更多")} onClick={(e) => docMenu(e, d)}>
+              <button {...tip(t("更多"))} onClick={(e) => docMenu(e, d)}>
                 <Icon name="dots" cls="ico sm" />
               </button>
             </span>
@@ -468,27 +469,27 @@ export function Sidebar(props: SidebarProps) {
             Sites has no entry here — it's a first-class .sb-tabs tab now. */}
         <button
           class={"sb-act" + (searchOpen ? " active" : "")}
-          {...tip("搜索", "search")}
+          {...tip(t("搜索"), "search")}
           onClick={() => setSearchOpen((v) => !v)}
         >
           <Icon name="search" cls="ico" />
         </button>
         <button
           class={"sb-act" + (view.kind === "shares" ? " active" : "")}
-          {...tip("分享")}
+          {...tip(t("分享"))}
           onClick={() => navigate({ kind: "shares" })}
         >
           <Icon name="link" cls="ico" />
         </button>
         <button
           class={"sb-act" + (view.kind === "settings" ? " active" : "")}
-          {...tip("设置", "settings")}
+          {...tip(t("设置"), "settings")}
           onClick={() => navigate({ kind: "settings" })}
         >
           <Icon name="settings" cls="ico" />
-          {props.updatePending && <span class="nav-dot" {...tip("有可用更新")} />}
+          {props.updatePending && <span class="nav-dot" {...tip(t("有可用更新"))} />}
         </button>
-        <button class="iconbtn" {...tip("收起侧栏", "sidebar")} onClick={props.onCollapse}>
+        <button class="iconbtn" {...tip(t("收起侧栏"), "sidebar")} onClick={props.onCollapse}>
           <Icon name="panelLeft" />
         </button>
       </div>
@@ -497,22 +498,22 @@ export function Sidebar(props: SidebarProps) {
           = icon only. The + creates whatever the active tab holds. */}
       <div class="sb-tabs" role="tablist" ref={tabsRef}>
         <span class="sb-tab-ind" aria-hidden="true" />
-        {TABS.map((t) => (
+        {TABS.map((tb) => (
           <button
-            key={t.key}
+            key={tb.key}
             role="tab"
-            aria-selected={tab === t.key}
-            class={"sb-tab" + (tab === t.key ? " on" : "")}
-            {...tip(t.label, t.key === "docs" ? "tabDocs" : t.key === "db" ? "tabDb" : "tabSites")}
-            onClick={() => setTab(t.key)}
+            aria-selected={tab === tb.key}
+            class={"sb-tab" + (tab === tb.key ? " on" : "")}
+            {...tip(tb.label, tb.key === "docs" ? "tabDocs" : tb.key === "db" ? "tabDb" : "tabSites")}
+            onClick={() => setTab(tb.key)}
           >
-            <Icon name={t.icon} cls="ico sm" />
-            <span class="tab-label"><span>{t.label}</span></span>
+            <Icon name={tb.icon} cls="ico sm" />
+            <span class="tab-label"><span>{tb.label}</span></span>
           </button>
         ))}
         <button
           class="add"
-          {...(tab === "docs" ? tip("新建文档", "newDoc") : tab === "db" ? tip("新建数据库", "newDb") : tip("新建站点"))}
+          {...(tab === "docs" ? tip(t("新建文档"), "newDoc") : tab === "db" ? tip(t("新建数据库"), "newDb") : tip(t("新建站点")))}
           onClick={() =>
             tab === "docs"
               ? newDoc(null)
@@ -528,7 +529,7 @@ export function Sidebar(props: SidebarProps) {
         <Icon name="search" cls="ico sm" />
         <input
           ref={searchRef}
-          placeholder="搜索…"
+          placeholder={t("搜索…")}
           value={q}
           onInput={(e) => setQ((e.target as HTMLInputElement).value)}
           onKeyDown={(e) => {
@@ -550,17 +551,17 @@ export function Sidebar(props: SidebarProps) {
           {tab === "docs" ? (
             <>
               {renderTree(null)}
-              {props.docs.length === 0 && <div class="navitem muted">暂无文档</div>}
+              {props.docs.length === 0 && <div class="navitem muted">{t("暂无文档")}</div>}
             </>
           ) : tab === "db" ? (
             <>
               {props.databases.filter((db) => !isDbCollapsed(db)).map((db) => dbItem(db))}
-              {props.databases.length === 0 && <div class="navitem muted">暂无数据表</div>}
+              {props.databases.length === 0 && <div class="navitem muted">{t("暂无数据表")}</div>}
               {props.databases.some(isDbCollapsed) && (
                 <>
                   <button class="sb-subfold" onClick={() => patchSec({ dbHidden: !sec.dbHidden })} aria-expanded={!!sec.dbHidden}>
                     <Icon name="chevron" cls={"ico sm chev" + (sec.dbHidden ? " open" : "")} />
-                    <span>已折叠 · {props.databases.filter(isDbCollapsed).length}</span>
+                    <span>{t("已折叠 · {n}", { n: props.databases.filter(isDbCollapsed).length })}</span>
                   </button>
                   {sec.dbHidden && props.databases.filter(isDbCollapsed).map((db) => dbItem(db, true))}
                 </>
@@ -580,13 +581,13 @@ export function Sidebar(props: SidebarProps) {
                   </span>
                   <span class="label">{s.title || s.name}</span>
                   <span class="acts">
-                    <button {...tip("更多")} onClick={(e) => siteMenu(e, s)}>
+                    <button {...tip(t("更多"))} onClick={(e) => siteMenu(e, s)}>
                       <Icon name="dots" cls="ico sm" />
                     </button>
                   </span>
                 </div>
               ))}
-              {sites?.length === 0 && <div class="navitem muted">暂无站点</div>}
+              {sites?.length === 0 && <div class="navitem muted">{t("暂无站点")}</div>}
             </>
           )}
         </div>
@@ -597,15 +598,15 @@ export function Sidebar(props: SidebarProps) {
       <div class="sb-footer">
         <button
           class={"sb-act" + (view.kind === "settings" ? " active" : "")}
-          {...tip("设置", "settings")}
+          {...tip(t("设置"), "settings")}
           onClick={() => navigate({ kind: "settings" })}
         >
           <Icon name="settings" cls="ico sm" />
-          {props.updatePending && <span class="nav-dot" {...tip("有可用更新")} />}
+          {props.updatePending && <span class="nav-dot" {...tip(t("有可用更新"))} />}
         </button>
         <button
           class={"sb-act" + (view.kind === "shares" ? " active" : "")}
-          {...tip("分享")}
+          {...tip(t("分享"))}
           onClick={() => navigate({ kind: "shares" })}
         >
           <Icon name="link" cls="ico sm" />
@@ -668,18 +669,18 @@ function useResize(onResize: (w: number) => void) {
 
 // ---- create-database modal ----
 const TEMPLATES: Record<string, { name: string; type: PropType; config?: PropConfig }[]> = {
-  blank: [{ name: "名称", type: "text" }],
+  blank: [{ name: t("名称"), type: "text" }],
   tasks: [
-    { name: "名称", type: "text" },
-    { name: "状态", type: "select", config: { options: ["待办", "进行中", "已完成"] } },
-    { name: "优先级", type: "select", config: { options: ["高", "中", "低"] } },
-    { name: "截止", type: "date" },
+    { name: t("名称"), type: "text" },
+    { name: t("状态"), type: "select", config: { options: [t("待办"), t("进行中"), t("已完成")] } },
+    { name: t("优先级"), type: "select", config: { options: [t("高"), t("中"), t("低")] } },
+    { name: t("截止"), type: "date" },
   ],
   crm: [
-    { name: "姓名", type: "text" },
-    { name: "公司", type: "text" },
-    { name: "分类", type: "select", config: { options: ["客户", "合作", "潜在"] } },
-    { name: "邮箱", type: "url" },
+    { name: t("姓名"), type: "text" },
+    { name: t("公司"), type: "text" },
+    { name: t("分类"), type: "select", config: { options: [t("客户"), t("合作"), t("潜在")] } },
+    { name: t("邮箱"), type: "url" },
   ],
 };
 
@@ -696,9 +697,9 @@ function CreateDbForm(props: {
 }) {
   const ICONS = ["🗂️", "🎯", "🤝", "📦", "📚", "💡", "🧩", "📊", "🗓️", "✅"];
   const TMPLS: [string, string, string][] = [
-    ["blank", "空白", "仅一个「名称」列"],
-    ["tasks", "任务", "状态·优先级·截止"],
-    ["crm", "联系人", "公司·分类·邮箱"],
+    ["blank", t("空白"), t("仅一个「名称」列")],
+    ["tasks", t("任务"), t("状态·优先级·截止")],
+    ["crm", t("联系人"), t("公司·分类·邮箱")],
   ];
   const [name, setName] = useState("");
   const [icon, setIcon] = useState(ICONS[0]!);
@@ -709,12 +710,12 @@ function CreateDbForm(props: {
     if (busy.current) return;
     busy.current = true;
     try {
-      const db = await api.createDatabase({ name: name.trim() || "未命名数据库", icon });
+      const db = await api.createDatabase({ name: name.trim() || t("未命名数据库"), icon });
       for (const spec of TEMPLATES[tmpl] ?? TEMPLATES.blank!)
         await api.createProperty({ db: db.id, name: spec.name, type: spec.type, config: spec.config });
       closeModal();
       props.onOpenDb(db.id);
-      toast(`已创建数据库「${db.name}」`);
+      toast(t("已创建数据库「{name}」", { name: db.name }));
     } catch (e) {
       props.onError(String((e as Error).message));
     } finally {
@@ -724,31 +725,31 @@ function CreateDbForm(props: {
 
   return (
     <Modal
-      title="新建数据库"
-      sub="创建一个带属性列的结构化数据表。"
+      title={t("新建数据库")}
+      sub={t("创建一个带属性列的结构化数据表。")}
       footer={
         <>
-          <button class="btn btn-secondary" onClick={closeModal}>取消</button>
-          <button class="btn btn-primary" onClick={create}>创建</button>
+          <button class="btn btn-secondary" onClick={closeModal}>{t("取消")}</button>
+          <button class="btn btn-primary" onClick={create}>{t("创建")}</button>
         </>
       }
     >
-      <div class="field-label">名称</div>
+      <div class="field-label">{t("名称")}</div>
       <input
         class="text-input"
         autofocus
-        placeholder="例如：项目、客户、库存…"
+        placeholder={t("例如：项目、客户、库存…")}
         value={name}
         onInput={(e) => setName((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => e.key === "Enter" && create()}
       />
-      <div class="field-label">图标</div>
+      <div class="field-label">{t("图标")}</div>
       <div class="icon-pick">
         {ICONS.map((ic) => (
           <button key={ic} class={ic === icon ? "sel" : ""} onClick={() => setIcon(ic)}>{ic}</button>
         ))}
       </div>
-      <div class="field-label">模板</div>
+      <div class="field-label">{t("模板")}</div>
       <div class="tmpl">
         {TMPLS.map(([k, t, d]) => (
           <button key={k} class={k === tmpl ? "sel" : ""} onClick={() => setTmpl(k)}>

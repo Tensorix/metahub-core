@@ -2,6 +2,7 @@
 import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
+import { t } from "./i18n/t.ts";
 import { consumeKey, imeGhost } from "./keys.ts";
 import { Kbd } from "./kbd.tsx";
 
@@ -40,7 +41,7 @@ let toastSeq = 0;
 export function toast(msg: string) {
   const id = ++toastSeq;
   toastStore.set([...toastStore.get(), { id, msg }]);
-  setTimeout(() => toastStore.set(toastStore.get().filter((t) => t.id !== id)), 2600);
+  setTimeout(() => toastStore.set(toastStore.get().filter((x) => x.id !== id)), 2600);
 }
 
 // ---- upload progress tray --------------------------------------------------
@@ -87,11 +88,11 @@ function UploadTray() {
             <span class="up-name" title={u.name}>{u.name}</span>
             {u.failed ? (
               <span class="up-fail">
-                <span>失败</span>
+                <span>{t("失败")}</span>
                 {u.retry && (
-                  <button class="up-retry" onClick={() => { u.retry?.(); dropUpload(u.id); }}>重试</button>
+                  <button class="up-retry" onClick={() => { u.retry?.(); dropUpload(u.id); }}>{t("重试")}</button>
                 )}
-                <button class="up-x" title="移除" onClick={() => dropUpload(u.id)}><Icon name="x" cls="ico sm" /></button>
+                <button class="up-x" title={t("移除")} onClick={() => dropUpload(u.id)}><Icon name="x" cls="ico sm" /></button>
               </span>
             ) : (
               <span class="up-prog">
@@ -256,16 +257,16 @@ function TooltipHost() {
   useLayoutEffect(() => {
     if (!state || !ref.current) return setPos(null);
     const a = state.el.getBoundingClientRect();
-    const t = ref.current.getBoundingClientRect();
+    const box = ref.current.getBoundingClientRect();
     const gap = 6;
     const margin = 8;
     let top = a.bottom + gap;
     let side: "below" | "above" = "below";
-    if (top + t.height > innerHeight - margin) {
-      top = a.top - gap - t.height;
+    if (top + box.height > innerHeight - margin) {
+      top = a.top - gap - box.height;
       side = "above";
     }
-    const left = Math.max(margin, Math.min(a.left + a.width / 2 - t.width / 2, innerWidth - t.width - margin));
+    const left = Math.max(margin, Math.min(a.left + a.width / 2 - box.width / 2, innerWidth - box.width - margin));
     setPos({ left, top, side });
   }, [state]);
 
@@ -363,20 +364,20 @@ export function useDrawerResize(storageKey: string, min = 380) {
   });
   const start = (e: PointerEvent) => {
     e.preventDefault();
-    const t = e.currentTarget as HTMLElement;
-    t.setPointerCapture(e.pointerId);
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
     let w: number | null = null;
     const move = (ev: PointerEvent) => {
       w = Math.max(min, Math.min(window.innerWidth - 64, window.innerWidth - ev.clientX));
       setWidth(w);
     };
     const up = () => {
-      t.removeEventListener("pointermove", move);
-      t.removeEventListener("pointerup", up);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
       if (w != null) localStorage.setItem(storageKey, String(Math.round(w)));
     };
-    t.addEventListener("pointermove", move);
-    t.addEventListener("pointerup", up);
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
   };
   const reset = () => {
     localStorage.removeItem(storageKey);
@@ -385,7 +386,7 @@ export function useDrawerResize(storageKey: string, min = 380) {
   const handle = (
     <div
       class="peek-resize"
-      title="拖动调整宽度，双击复原"
+      title={t("拖动调整宽度，双击复原")}
       onPointerDown={start}
       onDblClick={reset}
     />
@@ -469,13 +470,13 @@ export function confirmDialog(opts: {
         footer={
           <>
             <button class="btn btn-secondary" onClick={() => done(false)}>
-              取消
+              {t("取消")}
             </button>
             <button
               class={"btn " + (opts.danger ? "btn-danger" : "btn-primary")}
               onClick={() => done(true)}
             >
-              {opts.confirmLabel ?? "确定"}
+              {opts.confirmLabel ?? t("确定")}
             </button>
           </>
         }
@@ -508,10 +509,10 @@ export function promptDialog(opts: {
         footer={
           <>
             <button class="btn btn-secondary" onClick={() => done(null)}>
-              取消
+              {t("取消")}
             </button>
             <button class="btn btn-primary" onClick={() => done(val.trim() || (opts.value ?? ""))}>
-              {opts.confirmLabel ?? "保存"}
+              {opts.confirmLabel ?? t("保存")}
             </button>
           </>
         }
@@ -541,10 +542,10 @@ export function UiHost() {
       <ModalHost />
       <TooltipHost />
       <div class="toasts">
-        {toasts.map((t) => (
-          <div key={t.id} class="toast">
+        {toasts.map((item) => (
+          <div key={item.id} class="toast">
             <Icon name="check" cls="ico sm" />
-            <span>{t.msg}</span>
+            <span>{item.msg}</span>
           </div>
         ))}
       </div>

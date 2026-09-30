@@ -7,6 +7,7 @@
 // (data/local-api.ts) when this browser enabled offline mode — see the Proxy
 // at the bottom of this file.
 
+import { t } from "./i18n/t.ts";
 import { localApi, localSites, replicaActive, isNoOrigin } from "./data/local-api.ts";
 import {
   blobHash32,
@@ -467,8 +468,8 @@ function cookieToken(): string | null {
 
 function storedToken(): string | null {
   try {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (t) return t;
+    const tok = localStorage.getItem(TOKEN_KEY);
+    if (tok) return tok;
   } catch {
     return cookieToken(); // private mode: cookie only, no adoption possible
   }
@@ -488,13 +489,13 @@ function storedToken(): string | null {
   return c;
 }
 
-function saveToken(t: string): void {
+function saveToken(tok: string): void {
   try {
-    localStorage.setItem(TOKEN_KEY, t);
+    localStorage.setItem(TOKEN_KEY, tok);
   } catch {
     /* private mode */
   }
-  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(t)}; path=/; SameSite=Strict; Max-Age=31536000`;
+  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(tok)}; path=/; SameSite=Strict; Max-Age=31536000`;
 }
 
 /** The current server access token, for building an origin "open on your phone"
@@ -507,11 +508,11 @@ export function currentToken(): string | null {
  *  current one via /auth/token and retry once (seamless rotation). */
 export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const url = apiUrl(path);
-  const t = storedToken();
+  const tok = storedToken();
   const headers = new Headers(init.headers);
-  if (t && !headers.has("authorization")) headers.set("authorization", `Bearer ${t}`);
+  if (tok && !headers.has("authorization")) headers.set("authorization", `Bearer ${tok}`);
   const res = await fetch(url, { ...init, headers });
-  if (res.status !== 401 || !t) return res;
+  if (res.status !== 401 || !tok) return res;
 
   const renewed = await fetch(apiUrl(RENEW_PATH), {
     headers: { authorization: `Bearer ${t}` },
@@ -566,10 +567,10 @@ async function uploadBlobXHR(
   ct: string,
   onProgress?: (loaded: number, total: number) => void,
 ): Promise<any> {
-  const t = storedToken();
-  let r = await xhrPost(path, file, t, ct, onProgress);
-  if (r.status === 401 && t) {
-    const renewed = await fetch(apiUrl(RENEW_PATH), { headers: { authorization: `Bearer ${t}` } }).catch(() => null);
+  const tok = storedToken();
+  let r = await xhrPost(path, file, tok, ct, onProgress);
+  if (r.status === 401 && tok) {
+    const renewed = await fetch(apiUrl(RENEW_PATH), { headers: { authorization: `Bearer ${tok}` } }).catch(() => null);
     const d = renewed?.ok ? ((await renewed.json().catch(() => null)) as { token?: string } | null) : null;
     if (d?.token) {
       saveToken(d.token);
@@ -1084,13 +1085,13 @@ export const api: Api = new Proxy(httpApi, {
 }) as Api;
 
 export const TYPE_META: Record<PropType, { ic: string; t: string }> = {
-  text: { ic: "text", t: "文本" },
-  number: { ic: "hash", t: "数字" },
-  select: { ic: "select", t: "单选" },
-  multi_select: { ic: "multi", t: "多选" },
-  checkbox: { ic: "checkbox", t: "复选框" },
-  date: { ic: "calendar", t: "日期" },
-  url: { ic: "link", t: "链接" },
-  relation: { ic: "relation", t: "关联" },
-  doc: { ic: "fileText", t: "文档" },
+  text: { ic: "text", t: t("文本") },
+  number: { ic: "hash", t: t("数字") },
+  select: { ic: "select", t: t("单选") },
+  multi_select: { ic: "multi", t: t("多选") },
+  checkbox: { ic: "checkbox", t: t("复选框") },
+  date: { ic: "calendar", t: t("日期") },
+  url: { ic: "link", t: t("链接") },
+  relation: { ic: "relation", t: t("关联") },
+  doc: { ic: "fileText", t: t("文档") },
 };

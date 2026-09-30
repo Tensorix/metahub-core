@@ -14,6 +14,8 @@
 //   - lifecycle (room only): provisioning / cleanup_pending.
 
 import type { ShareListItem } from "./api.ts";
+import { t } from "./i18n/t.ts";
+import { fmtDate } from "./i18n/fmt.ts";
 
 export type ShareState = "active" | "expiring" | "expired" | "provisioning" | "cleanup_pending";
 export type StatusTone = "ok" | "warn" | "muted" | "busy";
@@ -32,21 +34,21 @@ export function isExpired(s: Pick<ShareListItem, "expiresAt">, now: number): boo
 
 function remainingText(ms: number): string {
   const d = Math.floor(ms / 86_400_000);
-  if (d >= 1) return `${d} 天后过期`;
+  if (d >= 1) return t("{n} 天后过期", { n: d });
   const h = Math.floor(ms / 3_600_000);
-  if (h >= 1) return `${h} 小时后过期`;
-  return `${Math.max(1, Math.floor(ms / 60_000))} 分钟后过期`;
+  if (h >= 1) return t("{n} 小时后过期", { n: h });
+  return t("{n} 分钟后过期", { n: Math.max(1, Math.floor(ms / 60_000)) });
 }
 
 /** The single status judgment for a row. Lifecycle wins over expiry: a room
  *  being torn down is "撤销中" no matter what its clock says. Expiry is a
  *  share's normal ending, so it reads muted — never danger. */
 export function shareStatus(s: ShareListItem, now = Date.now()): ShareStatus {
-  if (s.lifecycle === "cleanup_pending") return { state: "cleanup_pending", label: "撤销中", tone: "warn" };
-  if (s.lifecycle === "provisioning") return { state: "provisioning", label: "准备中", tone: "busy" };
-  if (s.expiresAt == null) return { state: "active", label: "永久", tone: "ok" };
+  if (s.lifecycle === "cleanup_pending") return { state: "cleanup_pending", label: t("撤销中"), tone: "warn" };
+  if (s.lifecycle === "provisioning") return { state: "provisioning", label: t("准备中"), tone: "busy" };
+  if (s.expiresAt == null) return { state: "active", label: t("永久"), tone: "ok" };
   const ms = s.expiresAt - now;
-  if (ms <= 0) return { state: "expired", label: "已过期", tone: "muted" };
+  if (ms <= 0) return { state: "expired", label: t("已过期"), tone: "muted" };
   const label = remainingText(ms);
   return ms < EXPIRING_WINDOW_MS
     ? { state: "expiring", label, tone: "warn" }
@@ -68,25 +70,25 @@ export function primaryAction(s: Pick<ShareListItem, "transport">, st: ShareStat
   const s3 = s.transport === "s3";
   switch (st.state) {
     case "cleanup_pending":
-      return { kind: "retryRevoke", label: "重试撤销", danger: true };
+      return { kind: "retryRevoke", label: t("重试撤销"), danger: true };
     case "provisioning":
-      return { kind: "copy", label: "复制链接", disabled: true };
+      return { kind: "copy", label: t("复制链接"), disabled: true };
     case "expired":
-      return s3 ? { kind: "renew", label: "续期" } : { kind: "recreate", label: "重新分享" };
+      return s3 ? { kind: "renew", label: t("续期") } : { kind: "recreate", label: t("重新分享") };
     case "expiring":
-      return s3 ? { kind: "renew", label: "续期" } : { kind: "copy", label: "复制链接" };
+      return s3 ? { kind: "renew", label: t("续期") } : { kind: "copy", label: t("复制链接") };
     default:
-      return { kind: "copy", label: "复制链接" };
+      return { kind: "copy", label: t("复制链接") };
   }
 }
 
 export type SourceKind = ShareListItem["sourceKind"];
 export const SOURCE_KINDS: SourceKind[] = ["server", "peer", "room", "bucket"];
 export const SOURCE_KIND_LABEL: Record<SourceKind, string> = {
-  server: "本机",
-  peer: "设备",
+  server: t("本机"),
+  peer: t("设备"),
   room: "Edge",
-  bucket: "存储桶",
+  bucket: t("存储桶"),
 };
 
 /** Human source line: strips the engineering prefixes core bakes into
@@ -96,13 +98,13 @@ export const SOURCE_KIND_LABEL: Record<SourceKind, string> = {
 export function sourceLabel(s: Pick<ShareListItem, "sourceKind" | "source">): string {
   switch (s.sourceKind) {
     case "bucket":
-      return `存储桶 ${s.source.replace(/^桶\s*/, "")}`;
+      return t("存储桶 {name}", { name: s.source.replace(/^桶\s*/, "") });
     case "room":
       return "Edge";
     case "peer":
-      return `设备 ${s.source}`;
+      return t("设备 {name}", { name: s.source });
     default:
-      return "本机";
+      return t("本机");
   }
 }
 
@@ -111,21 +113,18 @@ export function displayUrl(url: string): string {
   return url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/+$/, "");
 }
 
-/** "快照 8/21 14:02" (year shown only when it differs from now's). */
+/** "快照 8月21日 14:02" (year shown only when it differs from now's). */
 export function fmtSnapshot(ts: number, now = Date.now()): string {
-  const d = new Date(ts);
-  const n = new Date(now);
-  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  const md = `${d.getMonth() + 1}/${d.getDate()}`;
-  return `快照 ${d.getFullYear() === n.getFullYear() ? md : `${d.getFullYear()}/${md}`} ${hm}`;
+  const sameYear = new Date(ts).getFullYear() === new Date(now).getFullYear();
+  return t("快照 {when}", { when: fmtDate(ts, sameYear ? "monthDayTime" : "dateTime") });
 }
 
 export type StatusFilter = "all" | "active" | "expiring" | "expired";
 export const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
-  { id: "all", label: "全部" },
-  { id: "active", label: "有效" },
-  { id: "expiring", label: "快过期" },
-  { id: "expired", label: "已过期" },
+  { id: "all", label: t("全部") },
+  { id: "active", label: t("有效") },
+  { id: "expiring", label: t("快过期") },
+  { id: "expired", label: t("已过期") },
 ];
 
 export interface ShareFilter {

@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { dataMapIssueLines, dataMapTone, selfPlaceCopy } from "./data-map-status.ts";
+import { dataMapHeadline, dataMapIssueLines, dataMapTone, selfPlaceCopy } from "./data-map-status.ts";
+import { setLocaleOverride } from "./i18n/locale.ts";
 import type { ClientMode } from "./data/replica.ts";
 import type { DataMap } from "./api.ts";
 
@@ -68,4 +69,18 @@ test("tone: any peer_error issue forces error even if the headline differs", () 
       ),
     ),
   ).toBe("error");
+});
+
+test("English headline composes counts with plurals", () => {
+  setLocaleOverride("en");
+  try {
+    const m = mapWith([], "healthy");
+    m.state.places = 1;
+    expect(dataMapHeadline(m)).toBe("Safely saved in 1 place");
+    const p = mapWith([{ kind: "peer_error", placeUrl: null, placeLabel: "R2", message: "x" }], "peer_error");
+    p.state.places = 3;
+    expect(dataMapHeadline(p)).toBe("Saved in 3 places · 1 place failing to sync");
+  } finally {
+    setLocaleOverride(null);
+  }
 });

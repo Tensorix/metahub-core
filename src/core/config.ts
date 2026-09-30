@@ -5,6 +5,7 @@
 
 import type { DbDriver } from "./driver.ts";
 import { parseDuration } from "./sync/token.ts";
+import { MhError } from "./errors.ts";
 
 /** Authoritative upper bound for a single POST /api/blob upload (bytes). The
  *  WebUI applies friendlier per-kind caps (image 25MB / av 100MB / file 100MB)
@@ -109,19 +110,19 @@ export function normalizePublicBaseUrl(input: string): {
   try {
     parsed = new URL(input.trim());
   } catch {
-    throw new Error("请输入完整的 http(s) 地址");
+    throw new MhError("invalid_input", "请输入完整的 http(s) 地址");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-    throw new Error("站点入口只支持 HTTP 或 HTTPS");
+    throw new MhError("invalid_input", "站点入口只支持 HTTP 或 HTTPS");
   if (parsed.username || parsed.password || parsed.search || parsed.hash)
-    throw new Error("站点入口不能包含凭据、查询参数或片段");
+    throw new MhError("invalid_input", "站点入口不能包含凭据、查询参数或片段");
   if (parsed.pathname !== "/" && parsed.pathname !== "")
-    throw new Error("站点入口必须是域名根地址，不能包含路径");
+    throw new MhError("invalid_input", "站点入口必须是域名根地址，不能包含路径");
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   const scope = hostScope(host);
-  if (scope === "invalid") throw new Error("站点入口必须是可访问的主机地址");
+  if (scope === "invalid") throw new MhError("invalid_input", "站点入口必须是可访问的主机地址");
   if (parsed.protocol === "http:" && scope === "public")
-    throw new Error("公网入口必须使用 HTTPS；HTTP 仅允许本机或局域网地址");
+    throw new MhError("invalid_input", "公网入口必须使用 HTTPS；HTTP 仅允许本机或局域网地址");
   parsed.pathname = "";
   const url = parsed.toString().replace(/\/+$/, "");
   return { url, scope };

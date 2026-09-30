@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { queryTokenCookie, type AuthConfig } from "./auth.ts";
+import { queryTokenCookie, unlockPage, type AuthConfig } from "./auth.ts";
 
 const cfg: AuthConfig = { debug: false, staticToken: "T0PSECRET", db: null, ttlMs: 0, graceMs: 0 };
 
@@ -35,4 +35,15 @@ test("queryTokenCookie returns null when the token is wrong, absent, or a cookie
 test("queryTokenCookie is a no-op when auth is off", () => {
   const off: AuthConfig = { debug: true, staticToken: null, db: null, ttlMs: 0, graceMs: 0 };
   expect(queryTokenCookie(reqWith(), new URL("https://host/?token=anything"), off)).toBeNull();
+});
+
+test("unlockPage renders in the requested locale", () => {
+  expect(unlockPage()).toContain('<html lang="zh-CN">');
+  expect(unlockPage()).toContain("<h1>输入访问令牌</h1>");
+  const en = unlockPage("en");
+  expect(en).toContain('<html lang="en">');
+  expect(en).toContain("<title>Verify access token · metahub</title>");
+  expect(en).toContain("<h1>Enter the access token</h1>");
+  expect(en).toContain('"invalid":"Invalid token. Check it and try again."');
+  expect(en).not.toContain("输入访问令牌");
 });

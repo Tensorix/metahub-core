@@ -18,6 +18,8 @@ import { getDropKnobs } from "./edge-config.ts";
 import { safeDecode } from "./http-util.ts";
 import { rateLimiter, PUBLIC_READ_LIMIT, PUBLIC_WRITE_LIMIT } from "./rate-limit.ts";
 import { escapeHtml } from "./share-render.ts";
+import { pickLocale, type Locale } from "./locale.ts";
+import { pm } from "./page-messages.ts";
 import {
   type AuthConfig,
   authActive,
@@ -111,7 +113,7 @@ export async function serveSite(
     const ambientOnly =
       mutating && authActive(auth) && explicitToken(req, url) == null;
     if (!ambientOnly && hasValidToken(req, url, auth)) {
-      if (!site) return notFoundResponse("站点不存在", `没有名为 “${escapeHtml(name)}” 的站点。`);
+      if (!site) return siteNotFound(req, name);
       if (!opts.forwardApi) return new Response("not found", { status: 404 });
       const fwd = new Request(`${url.origin}/${filePath}${url.search}`, req);
       return opts.forwardApi(fwd);
@@ -164,11 +166,11 @@ export async function serveSite(
   if (!hasValidToken(req, url, auth)) {
     return wantsHtml(req)
       ? // x-mh-unlock: the service worker must not cache this 200 as the shell.
-        new Response(unlockPage(), { headers: { ...HTML_HEADERS, "x-mh-unlock": "1" } })
+        new Response(unlockPage(pickLocale(req)), { headers: { ...HTML_HEADERS, "x-mh-unlock": "1" } })
       : unauthorized();
   }
 
-  if (!site) return notFoundResponse("站点不存在", `没有名为 “${escapeHtml(name)}” 的站点。`);
+  if (!site) return siteNotFound(req, name);
   const res = await serveSiteFile(req, ctx.db, site.id, filePath, { spa: site.spa === 1 });
   return withShim(res, auth, req, url);
 }
@@ -190,8 +192,9 @@ export async function serveSiteFile(
   path: string,
   opts: { spa?: boolean; isPublic?: boolean } = {},
 ): Promise<Response> {
+  const locale = pickLocale(req);
   const meta = getFileMetaForServe(db, siteId, path, { spa: opts.spa });
-  if (!meta) return notFoundResponse("页面不存在", "这个站点里没有这个页面或文件。");
+  if (!meta) return notFoundResponse(locale, pm(locale, "页面不存在"), pm(locale, "这个站点里没有这个页面或文件。"));
 
   const cacheControl = siteCacheControl(meta.row.content_type, meta.row.encoding, opts.isPublic ?? false);
   const headers: Record<string, string> = { etag: meta.etag, "cache-control": cacheControl };
@@ -205,7 +208,7 @@ export async function serveSiteFile(
   if (!bytes) {
     // Row exists but its bytes are unreachable (blob evicted locally and no
     // peer/bucket answered in time) — a real miss for this request.
-    return notFoundResponse("资源暂不可用", "文件的内容暂时无法取得，请稍后重试。");
+    return notFoundResponse(locale, pm(locale, "资源暂不可用"), pm(locale, "文件的内容暂时无法取得，请稍后重试。"));
   }
   const body = new Uint8Array(bytes.byteLength);
   body.set(bytes);
@@ -240,8 +243,13 @@ function etagMatches(header: string | null, etag: string): boolean {
 /** Small self-contained 404 page, visually aligned with share-serve's pageShell
  *  (same palette tokens + dark scheme). `no-store`: a negative answer must not
  *  stick in any cache — the site may be created/republished a second later. */
-function notFoundResponse(title: string, detail: string): Response {
-  const html = `<!doctype html><html lang="zh"><head>
+function siteNotFound(req: Request, name: string): Response {
+  const locale = pickLocale(req);
+  return notFoundResponse(locale, pm(locale, "站点不存在"), pm(locale, "没有名为 “{name}” 的站点。", { name: escapeHtml(name) }));
+}
+
+function notFoundResponse(locale: Locale, title: string, detail: string): Response {
+  const html = `<!doctype html><html lang="${locale}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
@@ -262,8 +270,8 @@ function notFoundResponse(title: string, detail: string): Response {
 <p class="code">404</p>
 <h1>${escapeHtml(title)}</h1>
 <p>${detail}</p>
-<a class="home" href="./">返回站点首页</a>
-<footer>由 metahub 托管</footer>
+<a class="home" href="./">${escapeHtml(pm(locale, "返回站点首页"))}</a>
+<footer>${escapeHtml(pm(locale, "由 metahub 托管"))}</footer>
 </main></body></html>`;
   return new Response(html, {
     status: 404,

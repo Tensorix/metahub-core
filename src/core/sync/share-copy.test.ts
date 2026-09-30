@@ -20,3 +20,11 @@ test("copy source is an inert template with escaped content", () => {
   expect(copyScript()).toContain("ClipboardItem");
   expect(copyScript()).toContain("execCommand('copy')");
 });
+
+test("copy chrome is localized per locale", () => {
+  expect(copyButtonHtml("en")).toContain('aria-label="Copy all"');
+  expect(copyButtonHtml("en")).toContain("<span>Copy all</span>");
+  expect(copyButtonHtml()).toContain("<span>复制全文</span>");
+  expect(copyScript("en")).toContain('"done":"Copied"');
+  expect(copyScript()).toContain('"fail":"复制失败"');
+});

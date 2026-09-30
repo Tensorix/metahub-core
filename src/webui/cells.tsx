@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { Prop, PropType } from "./api.ts";
 import { relationTitle, onRelationTitleChange } from "./relation-titles.ts";
 import { docLinkTitle, onDocTitleChange } from "./doc-titles.ts";
+import { t } from "./i18n/t.ts";
 
 // ---- option colors (stable per string) ----
 const HUES = [4, 28, 45, 130, 165, 200, 220, 255, 290, 330];
@@ -23,9 +24,9 @@ export function Chip({ text }: { text: string }) {
  *  titled-but-empty record, and a shortened raw id while loading / for dangling
  *  refs / when the target db has no text property. */
 export function relationLabel(dbId: string | undefined, recId: string): string {
-  const t = relationTitle(dbId, recId);
-  if (t) return t;
-  if (t === "") return "无标题";
+  const title = relationTitle(dbId, recId);
+  if (title) return title;
+  if (title === "") return t("无标题");
   return recId.length > 15 ? `${recId.slice(0, 14)}…` : recId;
 }
 
@@ -62,11 +63,11 @@ function RelChip({ dbId, recId }: { dbId: string | undefined; recId: string }) {
  *  but untitled document, and a shortened raw id while loading / for dangling
  *  refs (deleted or unsynced documents). */
 export function docLabel(docId: string): { label: string; missing: boolean } {
-  const t = docLinkTitle(docId);
-  if (t) return { label: t, missing: false };
-  if (t === "") return { label: "无标题", missing: false };
+  const title = docLinkTitle(docId);
+  if (title) return { label: title, missing: false };
+  if (title === "") return { label: t("无标题"), missing: false };
   const short = docId.length > 15 ? `${docId.slice(0, 14)}…` : docId;
-  return { label: short, missing: t === null };
+  return { label: short, missing: title === null };
 }
 
 /** One doc chip: shows the document's title and links to it. Same anchor-based
@@ -119,8 +120,8 @@ export function coerceInput(_type: PropType, raw: string): unknown {
  *  the peek <h2>). Only free-text types qualify: number/date rely on
  *  `<input type=…>` shaping (coerceInput is identity), and checkbox/select/
  *  multi_select/relation/doc edit through pickers. */
-export function isPlainTextEditable(t: PropType): boolean {
-  return t === "text" || t === "url";
+export function isPlainTextEditable(pt: PropType): boolean {
+  return pt === "text" || pt === "url";
 }
 
 export function cellText(prop: Prop, val: unknown): string {

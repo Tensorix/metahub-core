@@ -10,6 +10,7 @@
 // here — callers that target buckets (share) layer them on themselves.
 
 import type { ClientMode, Surface } from "./replica.ts";
+import { t } from "../i18n/t.ts";
 
 export type ScopeKind = "local" | "server" | "bucket";
 
@@ -48,9 +49,9 @@ export interface Scope {
 // replica, dataHome, hold, OPFS, origin, no-origin, S3, peer, publisher,
 // snapshot, oplog. Guarded by scopes.test.ts.
 const COPY = {
-  localDevice: { label: "本机", subtitle: "这台设备上的副本", icon: "monitor" },
-  serverWorkspace: { label: "工作区主节点", subtitle: "当前连接的工作区", icon: "globe" },
-  localWorkspace: { label: "本机工作区", subtitle: "这台电脑上的工作区", icon: "monitor" },
+  localDevice: { label: t("本机"), subtitle: t("这台设备上的副本"), icon: "monitor" },
+  serverWorkspace: { label: t("工作区主节点"), subtitle: t("当前连接的工作区"), icon: "globe" },
+  localWorkspace: { label: t("本机工作区"), subtitle: t("这台电脑上的工作区"), icon: "monitor" },
 } as const;
 
 function localScope(): Scope {

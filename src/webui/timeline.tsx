@@ -8,6 +8,8 @@ import type { Prop, Rec } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "./ui.tsx";
 import { parseDate, toISO, addDays, daysBetween, today } from "./date.ts";
+import { fmtDate } from "./i18n/fmt.ts";
+import { t } from "./i18n/t.ts";
 
 const SIDE = 200; // px width of the sticky record-name column
 const ROW = 36; // px row height
@@ -37,7 +39,7 @@ export function TimelineView({
   const guideRef = useRef<HTMLDivElement>(null);
 
   if (!startProp) {
-    return <div class="view-placeholder">时间轴视图需要一个「日期」属性作为开始日期。请在表格视图中添加一个日期列后再切换到时间轴。</div>;
+    return <div class="view-placeholder">{t("时间轴视图需要一个「日期」属性作为开始日期。请在表格视图中添加一个日期列后再切换到时间轴。")}</div>;
   }
 
   const titleProp = props[0];
@@ -174,13 +176,13 @@ export function TimelineView({
   const pickField = (e: MouseEvent) =>
     openMenu(e, (close) => (
       <>
-        <MenuLabel>开始日期</MenuLabel>
+        <MenuLabel>{t("开始日期")}</MenuLabel>
         {dateProps.map((p) => (
           <MenuItem key={p.id} icon={TYPE_ICON[p.type]} label={p.name} checked={p === startProp} onClick={() => { setStartId(p.id); close(); }} />
         ))}
         <MenuSep />
-        <MenuLabel>结束日期（可选）</MenuLabel>
-        <MenuItem icon="x" label="无（里程碑）" checked={!endProp} onClick={() => { setEndId("none"); close(); }} />
+        <MenuLabel>{t("结束日期（可选）")}</MenuLabel>
+        <MenuItem icon="x" label={t("无（里程碑）")} checked={!endProp} onClick={() => { setEndId("none"); close(); }} />
         {dateProps.map((p) => (
           <MenuItem key={p.id} icon={TYPE_ICON[p.type]} label={p.name} checked={p === endProp} onClick={() => { setEndId(p.id); close(); }} />
         ))}
@@ -192,13 +194,13 @@ export function TimelineView({
       <div class="tl-toolbar">
         <button class="tbtn" onClick={pickField}>
           <Icon name="timeline" cls="ico sm" />
-          {startProp.name}{endProp ? ` → ${endProp.name}` : "（里程碑）"}
+          {startProp.name}{endProp ? ` → ${endProp.name}` : t("（里程碑）")}
         </button>
       </div>
       <div class="tl-scroll">
         <div class="tl-canvas" style={{ width: canvasW, height: HEAD + rows.length * ROW + 8 }}>
           <div class="tl-axis" style={{ height: HEAD }}>
-            <div class="tl-corner" style={{ width: SIDE }}>记录</div>
+            <div class="tl-corner" style={{ width: SIDE }}>{t("记录")}</div>
             {days.map((d, i) => {
               const first = d.getDate() === 1;
               return (
@@ -207,7 +209,7 @@ export function TimelineView({
                   key={i}
                   style={{ left: xForOffset(i), width: DAY_PX }}
                 >
-                  {first && <span class="tl-month">{d.getMonth() + 1}月</span>}
+                  {first && <span class="tl-month">{fmtDate(d, "month")}</span>}
                   <span class="tl-dnum">{d.getDate()}</span>
                 </div>
               );
@@ -219,11 +221,11 @@ export function TimelineView({
             const span = s && e ? daysBetween(s, e) + 1 : 1;
             return (
               <div class="tl-row" key={rec.id} style={{ top: HEAD + ri * ROW, height: ROW }}>
-                <div class="tl-rowlabel" style={{ width: SIDE }}>{titleText(rec, titleProp) || <span class="muted">无标题</span>}</div>
+                <div class="tl-rowlabel" style={{ width: SIDE }}>{titleText(rec, titleProp) || <span class="muted">{t("无标题")}</span>}</div>
                 {!s ? (
-                  <div class="tl-track-empty" style={{ left: SIDE }} onClick={(ev) => placeAt(ev, rec)} title="点击空白处排期">
+                  <div class="tl-track-empty" style={{ left: SIDE }} onClick={(ev) => placeAt(ev, rec)} title={t("点击空白处排期")}>
                     <button class="tl-schedule" style={{ left: SIDE + 8 }} onClick={(ev) => { ev.stopPropagation(); scheduleStart(rec, now); }}>
-                      未排期 · 排到今天
+                      {t("未排期 · 排到今天")}
                     </button>
                   </div>
                 ) : e ? (

@@ -11,6 +11,7 @@
 // forbids block decorations from a ViewPlugin). This module must stay free of
 // ui.tsx / Preact imports so it can be exercised headlessly in tests.
 
+import { t } from "../../i18n/t.ts";
 import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
 import { StateEffect, StateField, type EditorState } from "@codemirror/state";
 import { docModel } from "../doc-model";
@@ -38,7 +39,7 @@ class UploadingWidget extends WidgetType {
     const div = document.createElement("div");
     div.className = "cm-upload-ph";
     div.style.opacity = "0.6";
-    div.textContent = `⏳ 正在上传 ${this.name}…`;
+    div.textContent = t("⏳ 正在上传 {name}…", { name: this.name });
     return div;
   }
   override ignoreEvent(): boolean {

@@ -29,6 +29,8 @@ import { randomSuffix } from "../ids.ts";
 import { policyForRoom } from "../access-policy.ts";
 import { safeDecode } from "./http-util.ts";
 import { escapeHtml } from "./html-escape.ts";
+import { pickLocale, type Locale } from "./locale.ts";
+import { pm } from "./page-messages.ts";
 import { serveGrantedApi, grantedDepsFromPolicy } from "./grants-routes.ts";
 import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
 import { resolveSiteFileRow, base64ToBytes } from "../sites-core.ts";
@@ -397,10 +399,10 @@ export function createRoomFetch(deps: RoomHostDeps): (req: Request) => Promise<R
     if (req.method !== "GET") return plain404();
     if (locked) {
       return wantsHtml(req)
-        ? new Response(unlockPage(cfg, false), { headers: HTML })
+        ? new Response(unlockPage(pickLocale(req), cfg, false), { headers: HTML })
         : json({ error: "unauthorized" }, 401);
     }
-    return serveRoomFile(db, cfg, sub);
+    return serveRoomFile(db, cfg, sub, pickLocale(req));
   };
 }
 
@@ -422,7 +424,7 @@ async function handleUnlock(
   }
   const ok =
     !cfg.pwHash || !cfg.pwSalt ? true : await verifyPasswordVerifier(cfg.pwHash, cfg.pwSalt, pw);
-  if (!ok) return new Response(unlockPage(cfg, true), { headers: HTML, status: 401 });
+  if (!ok) return new Response(unlockPage(pickLocale(req), cfg, true), { headers: HTML, status: 401 });
   // Unlock mints the per-visitor session (its own guest sub id) — every write
   // of this session is attributed to one distinct author, like share unlock.
   const minted = await mintRoomSession(db, cfg, url);
@@ -434,13 +436,13 @@ async function handleUnlock(
 
 // ---- site file serving ------------------------------------------------------------------
 
-function serveRoomFile(db: DbDriver, cfg: RoomConfig, path: string): Response {
+function serveRoomFile(db: DbDriver, cfg: RoomConfig, path: string, locale: Locale): Response {
   const site = db
     .query("SELECT id, spa FROM sites WHERE __deleted = 0 ORDER BY created_hlc LIMIT 1")
     .get() as { id: string; spa: number } | null;
-  if (!site) return roomMessagePage("站点尚未同步", "分享方设备上线同步后即可访问。", 404);
+  if (!site) return roomMessagePage(locale, pm(locale, "站点尚未同步"), pm(locale, "分享方设备上线同步后即可访问。"), 404);
   const resolved = resolveSiteFileRow(db, site.id, path, { spa: site.spa === 1 });
-  if (!resolved) return roomMessagePage("页面不存在", "这个站点里没有这个页面或文件。", 404);
+  if (!resolved) return roomMessagePage(locale, pm(locale, "页面不存在"), pm(locale, "这个站点里没有这个页面或文件。"), 404);
   const { row, status } = resolved;
   const headers: Record<string, string> = {
     "content-type": row.content_type,
@@ -458,7 +460,7 @@ function serveRoomFile(db: DbDriver, cfg: RoomConfig, path: string): Response {
   }
   // blob: reassemble from the chunk store the owner filled via /owner/blob.
   const bytes = row.content ? roomBlobBytes(db, row.content) : null;
-  if (!bytes) return roomMessagePage("资源暂不可用", "文件内容尚未同步到房间，请稍后重试。", 404);
+  if (!bytes) return roomMessagePage(locale, pm(locale, "资源暂不可用"), pm(locale, "文件内容尚未同步到房间，请稍后重试。"), 404);
   const body = new Uint8Array(bytes.byteLength);
   body.set(bytes);
   return new Response(body.buffer, { status, headers });
@@ -485,29 +487,29 @@ const PAGE_CSS = `
   h1{font-size:20px;margin:0 0 10px;text-align:center}
   footer{margin-top:34px;color:var(--muted);font-size:12px;text-align:center}`;
 
-function unlockPage(cfg: RoomConfig, error: boolean): string {
-  return `<!doctype html><html lang="zh"><head>
+function unlockPage(locale: Locale, cfg: RoomConfig, error: boolean): string {
+  return `<!doctype html><html lang="${locale}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>受保护的分享</title>
+<meta name="robots" content="noindex"><title>${escapeHtml(pm(locale, "受保护的分享"))}</title>
 <style>${PAGE_CSS}</style></head><body><main>
 <form method="post" action="/r/${escapeHtml(cfg.slug)}/unlock" class="pw">
-  <h1>🔒 此分享受口令保护</h1>
-  ${error ? '<p class="err">口令错误，请重试。</p>' : ""}
-  <input type="password" name="password" placeholder="口令" autofocus autocomplete="current-password">
-  <button type="submit">解锁</button>
+  <h1>${escapeHtml(pm(locale, "🔒 此分享受口令保护"))}</h1>
+  ${error ? `<p class="err">${escapeHtml(pm(locale, "口令错误，请重试。"))}</p>` : ""}
+  <input type="password" name="password" placeholder="${escapeHtml(pm(locale, "口令"))}" autofocus autocomplete="current-password">
+  <button type="submit">${escapeHtml(pm(locale, "解锁"))}</button>
 </form>
-<footer>通过 metahub 分享</footer>
+<footer>${escapeHtml(pm(locale, "通过 metahub 分享"))}</footer>
 </main></body></html>`;
 }
 
-function roomMessagePage(title: string, detail: string, status: number): Response {
-  const html = `<!doctype html><html lang="zh"><head>
+function roomMessagePage(locale: Locale, title: string, detail: string, status: number): Response {
+  const html = `<!doctype html><html lang="${locale}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>${escapeHtml(title)}</title>
 <style>${PAGE_CSS}</style></head><body><main>
 <h1>${escapeHtml(title)}</h1>
 <p class="muted" style="text-align:center">${escapeHtml(detail)}</p>
-<footer>由 metahub 托管</footer>
+<footer>${escapeHtml(pm(locale, "由 metahub 托管"))}</footer>
 </main></body></html>`;
   return new Response(html, { status, headers: { ...HTML, "cache-control": "no-store" } });
 }

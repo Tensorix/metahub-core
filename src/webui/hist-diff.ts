@@ -5,6 +5,8 @@
 import { parseDocBlocks } from "../core/blocks.ts";
 import type { DocRevision } from "../core/history.ts";
 import { addDays, sameDay, startOfWeekMon, today } from "./date.ts";
+import { t } from "./i18n/t.ts";
+import { fmtDate } from "./i18n/fmt.ts";
 
 // ---- line diff (source mode) -------------------------------------------------
 
@@ -459,12 +461,12 @@ export interface TimelineGroup {
 export function groupLabel(at: string, now: Date = today()): string {
   const d = new Date(at);
   const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  if (sameDay(day, now)) return "今天";
-  if (sameDay(day, addDays(now, -1))) return "昨天";
-  if (day >= startOfWeekMon(now) && day < now) return "本周";
+  if (sameDay(day, now)) return t("今天");
+  if (sameDay(day, addDays(now, -1))) return t("昨天");
+  if (day >= startOfWeekMon(now) && day < now) return t("本周");
   if (day.getFullYear() === now.getFullYear() && day.getMonth() === now.getMonth())
-    return `${day.getMonth() + 1}月${day.getDate()}日`;
-  return `${day.getFullYear()}年${day.getMonth() + 1}月`;
+    return fmtDate(day, "monthDay");
+  return fmtDate(day, "yearMonth");
 }
 
 /** A revision small enough to fold into a cluster: a plain user edit touching

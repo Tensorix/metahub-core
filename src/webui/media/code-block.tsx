@@ -6,6 +6,7 @@
 // tools pill (hover-revealed; hidden while editing or block-selected so it never
 // covers the editing area), so the block's height never changes and the widget
 // never degrades to raw source text.
+import { t } from "../i18n/t.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import hljs from "highlight.js/lib/common";
@@ -229,7 +230,7 @@ export function CodeEditorBody({
           rows={1}
           spellcheck={false}
           wrap={wrap ? "soft" : "off"}
-          placeholder={placeholder ?? "输入代码…"}
+          placeholder={placeholder ?? t("输入代码…")}
           onInput={(e) => {
             const ta = e.currentTarget as HTMLTextAreaElement;
             paint(ta.value);
@@ -349,38 +350,38 @@ export function CodeIsland({
             value={langVal}
             onChange={(e) => onLang((e.currentTarget as HTMLSelectElement).value)}
           >
-            {!langKnown && <option value={langVal}>{langVal || "纯文本"}</option>}
+            {!langKnown && <option value={langVal}>{langVal || t("纯文本")}</option>}
             {COMMON_LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
           </select>
           <Icon name="chevronDown" cls="ico sm" />
         </span>
         <button
           class={"code-wrap-btn" + (wrap ? " on" : "")}
-          title={wrap ? "关闭自动换行" : "自动换行(所有代码块)"}
+          title={wrap ? t("关闭自动换行") : t("自动换行(所有代码块)")}
           aria-pressed={wrap}
           onMouseDown={(e) => e.preventDefault() /* keep textarea focus/caret */}
           onClick={() => setWrapPref(!wrap)}
         >
           <Icon name="wrapText" cls="ico sm" />
-          换行
+          {t("换行")}
         </button>
         {canFormat(langVal) && (
           <button
             class={"code-fmt" + (fmtState === "ok" ? " ok" : fmtState === "err" ? " err" : "")}
-            title={fmtState === "err" ? fmtErr.current : "格式化代码 (Shift+Alt+F)"}
+            title={fmtState === "err" ? fmtErr.current : t("格式化代码 (Shift+Alt+F)")}
             onMouseDown={(e) => e.preventDefault() /* keep textarea focus/caret */}
             onClick={() => void runFormat()}
           >
             <Icon name={fmtState === "ok" ? "check" : "wand"} cls="ico sm" />
-            {fmtState === "busy" ? "格式化中…"
-              : fmtState === "ok" ? "已格式化"
-              : fmtState === "err" ? "失败"
-              : "格式化"}
+            {fmtState === "busy" ? t("格式化中…")
+              : fmtState === "ok" ? t("已格式化")
+              : fmtState === "err" ? t("失败")
+              : t("格式化")}
           </button>
         )}
         <button
           class={"code-copy" + (copied ? " ok" : "")}
-          title="复制代码"
+          title={t("复制代码")}
           onClick={() => {
             const text = localTa.current?.value ?? code;
             navigator.clipboard?.writeText(text)
@@ -389,7 +390,7 @@ export function CodeIsland({
           }}
         >
           <Icon name={copied ? "check" : "copy"} cls="ico sm" />
-          {copied ? "已复制" : "复制"}
+          {copied ? t("已复制") : t("复制")}
         </button>
       </div>
     </div>

@@ -28,6 +28,7 @@
 // what keeps a focused island from silently overwriting a remote edit.
 
 import { render } from "preact";
+import { t } from "../../i18n/t.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
   Decoration,
@@ -450,7 +451,7 @@ function HtmlFrame({ html, view }: { html: string; view: EditorView }) {
     <iframe
       ref={ref}
       class="html-frame"
-      title="HTML 预览"
+      title={t("HTML 预览")}
       sandbox="allow-scripts allow-popups"
       srcdoc={htmlSrcdoc(html)}
     />
@@ -531,8 +532,8 @@ class VoidWidget extends WidgetType {
       // card's <a>) keep their own behavior. preventDefault on mousedown does
       // NOT suppress a subsequent dblclick, so double-click preview still works.
       host.addEventListener("mousedown", (e) => {
-        const t = e.target as HTMLElement | null;
-        if (t?.closest("button, select, input, textarea, a, video, audio, .img-handle")) return;
+        const el = e.target as HTMLElement | null;
+        if (el?.closest("button, select, input, textarea, a, video, audio, .img-handle")) return;
         e.preventDefault();
         const v = voidUnder(view, host); // resolve fresh: positions shift as the user types
         if (!v) return;
@@ -604,13 +605,13 @@ class VoidWidget extends WidgetType {
               <span class="html-tag">HTML</span>
               <button
                 class="html-toggle"
-                title="编辑源码"
+                title={t("编辑源码")}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   reveal(view, host);
                 }}
               >
-                源码
+                {t("源码")}
               </button>
             </div>
             <HtmlFrame html={this.block.content} view={view} />

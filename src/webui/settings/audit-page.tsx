@@ -9,6 +9,8 @@ import {
 } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { timeAgo } from "../date.ts";
+import { t } from "../i18n/t.ts";
+import { fmtDate } from "../i18n/fmt.ts";
 import { toast, confirmDialog } from "../ui.tsx";
 import { KindBadge, fmtVal } from "../history.tsx";
 import { groupLabel } from "../hist-diff.ts";
@@ -26,23 +28,23 @@ import { useSkeletonRows, SkelLines } from "../skeleton.tsx";
 const PAGE_SIZE = 50;
 
 const DATASET_LABEL: Record<string, string> = {
-  records: "记录",
-  documents: "文档",
-  properties: "字段",
-  databases: "数据库",
-  sites: "站点",
-  site_channels: "站点渠道",
-  site_files: "站点文件",
-  doc_blocks: "文档块",
-  blob_policy: "附件策略",
+  records: t("记录"),
+  documents: t("文档"),
+  properties: t("字段"),
+  databases: t("数据库"),
+  sites: t("站点"),
+  site_channels: t("站点渠道"),
+  site_files: t("站点文件"),
+  doc_blocks: t("文档块"),
+  blob_policy: t("附件策略"),
 };
 
 type Filter = "all" | "ai" | "self" | "others";
 
 function entityVerb(e: AuditEntity): string {
-  if (e.created) return "创建";
-  if (e.deleted) return "删除";
-  return "修改";
+  if (e.created) return t("创建");
+  if (e.deleted) return t("删除");
+  return t("修改##audit");
 }
 
 function entityHash(e: AuditEntity): string | null {
@@ -72,7 +74,7 @@ function EntityDiffs({ ent, created }: { ent: AuditEntryDetail["entities"][numbe
     <div class="hist-fields">
       {diffs.map((d) => (
         <div key={d.col} class="hist-field">
-          <span class="fname">{d.label === "block" ? "段落" : d.label}</span>
+          <span class="fname">{d.label === "block" ? t("段落") : d.label}</span>
           {!created && (
             <span class="old" title={fmtVal(d.before)}>
               {fmtVal(d.before)}
@@ -180,10 +182,9 @@ export function AuditPage() {
   const revert = async (e: AuditEntry) => {
     if (!e.txn) return;
     const ok = await confirmDialog({
-      title: "撤销这组改动",
-      message:
-        "会以一次新的正向修改还原到改动前的状态，本身也会记入审计，可以再撤销。之后被其他编辑覆盖过的字段会保留，不会被回退。",
-      confirmLabel: "撤销改动",
+      title: t("撤销这组改动"),
+      message: t("会以一次新的正向修改还原到改动前的状态，本身也会记入审计，可以再撤销。之后被其他编辑覆盖过的字段会保留，不会被回退。"),
+      confirmLabel: t("撤销改动"),
       danger: true,
     });
     if (!ok) return;
@@ -193,9 +194,10 @@ export function AuditPage() {
       const kept = r.skipped_registers + r.skipped_rows;
       toast(
         r.changed
-          ? `已恢复 ${r.restored_registers + r.removed_rows} 项` +
-              (kept ? `，保留了 ${kept} 项更晚的编辑` : "")
-          : "无需恢复：已是改动前的状态",
+          ? kept
+            ? t("已恢复 {n} 项，保留了 {kept} 项更晚的编辑", { n: r.restored_registers + r.removed_rows, kept })
+            : t("已恢复 {n} 项", { n: r.restored_registers + r.removed_rows })
+          : t("无需恢复：已是改动前的状态"),
       );
       load();
     } catch (err) {
@@ -227,17 +229,17 @@ export function AuditPage() {
   }, [visible]);
 
   const FILTERS: { id: Filter; label: string }[] = [
-    { id: "all", label: "全部" },
-    { id: "ai", label: "AI 操作" },
-    { id: "self", label: "这台设备" },
-    { id: "others", label: "其他设备" },
+    { id: "all", label: t("全部") },
+    { id: "ai", label: t("AI 操作") },
+    { id: "self", label: t("这台设备") },
+    { id: "others", label: t("其他设备") },
   ];
 
   return (
     <>
       <PageHeader
         title={pageLabel("audit")}
-        sub="工作区里每一次改动：谁、什么时候、改了什么。AI 通过命令行做的操作会标出来，可以逐条检查并撤销。"
+        sub={t("工作区里每一次改动：谁、什么时候、改了什么。AI 通过命令行做的操作会标出来，可以逐条检查并撤销。")}
       />
       <div class="audit-filters">
         {FILTERS.map((f) => (
@@ -253,7 +255,7 @@ export function AuditPage() {
       </div>
       <div class="audit-feed">
         {entries === null && (
-          <div class="audit-group skel-list" role="status" aria-busy="true" aria-label="正在加载">
+          <div class="audit-group skel-list" role="status" aria-busy="true" aria-label={t("正在加载")}>
             <div class="audit-group-label">
               <span class="skel-b skel-s" style="width:4ch;height:11px;display:inline-block" />
             </div>
@@ -269,7 +271,7 @@ export function AuditPage() {
         )}
         {entries !== null && visible.length === 0 && (
           <div class="muted pad">
-            {filter === "ai" ? "还没有 AI 操作的记录。" : "暂无改动记录。"}
+            {filter === "ai" ? t("还没有 AI 操作的记录。") : t("暂无改动记录。")}
           </div>
         )}
         {groups.map((g) => (
@@ -284,7 +286,7 @@ export function AuditPage() {
                   class={"audit-item" + (flash.has(e.version) ? " flash" : "")}
                 >
                   <div class="audit-item-line" onClick={() => toggle(e)}>
-                    <span class="audit-when" title={new Date(e.at).toLocaleString()}>
+                    <span class="audit-when" title={fmtDate(e.at, "dateTime")}>
                       {timeAgo(e.at)}
                     </span>
                     <ActorBadge entry={e} nodeName={nodeName} />
@@ -313,21 +315,21 @@ export function AuditPage() {
                       <button
                         class="btn btn-ghost audit-revert"
                         disabled={busy === e.txn}
-                        title="以一次新的正向修改撤销这组改动"
+                        title={t("以一次新的正向修改撤销这组改动")}
                         onClick={(ev) => {
                           ev.stopPropagation();
                           void revert(e);
                         }}
                       >
                         <Icon name="history" cls="ico sm" />
-                        撤销
+                        {t("撤销##audit")}
                       </button>
                     )}
                     <Icon name={open ? "chevronDown" : "chevron"} cls="ico sm audit-caret" />
                   </div>
                   {open && (
                     <div class="audit-detail">
-                      {!e.txn && <div class="muted">早期版本的改动，仅可查看摘要。</div>}
+                      {!e.txn && <div class="muted">{t("早期版本的改动，仅可查看摘要。")}</div>}
                       {e.txn && !detail && <SkelLines n={2} />}
                       {detail?.entities.map((ent) => (
                         <div key={ent.dataset + ent.id} class="audit-detail-ent">
@@ -338,9 +340,9 @@ export function AuditPage() {
                           )}
                           {(ent.blocks_changed > 0 || ent.blocks_deleted > 0) && (
                             <div class="audit-blocks muted">
-                              {ent.blocks_changed > 0 && `${ent.blocks_changed} 块修改`}
-                              {ent.blocks_changed > 0 && ent.blocks_deleted > 0 && "，"}
-                              {ent.blocks_deleted > 0 && `${ent.blocks_deleted} 块删除`}
+                              {ent.blocks_changed > 0 && t("{n} 块修改", { n: ent.blocks_changed })}
+                              {ent.blocks_changed > 0 && ent.blocks_deleted > 0 && t("，")}
+                              {ent.blocks_deleted > 0 && t("{n} 块删除", { n: ent.blocks_deleted })}
                             </div>
                           )}
                           <EntityDiffs ent={ent} created={ent.created} />
@@ -358,11 +360,11 @@ export function AuditPage() {
         {next ? (
           <button class={"audit-more" + (loadingMore ? " loading" : "")} onClick={loadMore} disabled={loadingMore}>
             <Icon name={loadingMore ? "spinner" : "chevronDown"} cls={"ico sm" + (loadingMore ? " spin" : "")} />
-            {loadingMore ? "加载中…" : "显示更早的记录"}
+            {loadingMore ? t("加载中…") : t("显示更早的记录")}
           </button>
         ) : (
           entries !== null && visible.length > 0 && (
-            <div class="audit-end">已显示全部 · 只保留最近 90 天，更早的改动已合并且无法撤销</div>
+            <div class="audit-end">{t("已显示全部 · 只保留最近 90 天，更早的改动已合并且无法撤销")}</div>
           )
         )}
       </div>

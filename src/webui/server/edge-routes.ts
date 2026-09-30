@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { MhError } from "../../core/errors.ts";
+import { pickLocale } from "../../core/sync/locale.ts";
+import { pmIfKnown } from "../../core/sync/page-messages.ts";
 import { type Route } from "../../core/sync/routes.ts";
 import {
   connectEdge,
@@ -31,6 +33,7 @@ interface CfFlow {
   token?: string;
   accounts?: CfAccount[];
   error?: string;
+  errorI18n?: MhError["i18n"];
   createdAt: number;
 }
 const flows = new Map<string, CfFlow>();
@@ -81,7 +84,7 @@ function resolveCfCreds(body: {
   if (body.flowId) {
     const flow = flows.get(body.flowId);
     if (!flow) throw new MhError("not_found", "OAuth 流程不存在或已过期，请重新登录");
-    if (flow.state === "error") throw new MhError("auth", flow.error || "Cloudflare 授权失败");
+    if (flow.state === "error") throw new MhError("auth", flow.error || "Cloudflare 授权失败", flow.errorI18n);
     if (flow.state !== "ready" || !flow.token)
       throw new MhError("conflict", "Cloudflare 授权尚未完成，请稍候");
     apiToken = flow.token;
@@ -132,6 +135,7 @@ export const edgeRoutes: Route[] = [
         .catch((e) => {
           flow.state = "error";
           flow.error = (e as Error).message;
+          flow.errorI18n = e instanceof MhError ? e.i18n : undefined;
         });
       return { flowId, authUrl: handle.authUrl };
     }),
@@ -149,7 +153,13 @@ export const edgeRoutes: Route[] = [
       const flowId = new URL(req.url).searchParams.get("flowId") ?? "";
       const flow = flows.get(flowId);
       if (!flow) throw new MhError("not_found", "OAuth 流程不存在或已过期，请重试");
-      return { state: flow.state, accounts: flow.accounts, error: flow.error };
+      const error =
+        flow.error === undefined
+          ? undefined
+          : flow.errorI18n
+            ? pmIfKnown(pickLocale(req), flow.errorI18n.key, flow.errorI18n.params)
+            : pmIfKnown(pickLocale(req), flow.error);
+      return { state: flow.state, accounts: flow.accounts, error };
     }),
   },
   {

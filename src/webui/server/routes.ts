@@ -448,7 +448,7 @@ function handle(
       if (out instanceof Response) return out;
       return Response.json(out ?? null);
     } catch (e) {
-      return errorResponse(e);
+      return errorResponse(e, req);
     }
   };
 }

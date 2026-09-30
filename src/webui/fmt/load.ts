@@ -5,6 +5,7 @@
 // The promise (not the module) is cached so concurrent first clicks share one
 // fetch; a rejected load is evicted so a transient offline failure can retry.
 
+import { t } from "../i18n/t.ts";
 import type { ProviderEngine } from "./lang-map.ts";
 import { fmtProvider } from "./manifest.ts";
 import { apiUrl } from "../api.ts";
@@ -25,7 +26,7 @@ export function loadProvider(id: ProviderEngine): Promise<FmtModule> {
     // window it resolves the route against the sidecar origin once attached.
     p = (import(apiUrl(route)) as Promise<FmtModule>).catch((e) => {
       inflight.delete(id);
-      throw new Error(`格式化组件加载失败(离线?):${(e as Error)?.message ?? e}`);
+      throw new Error(t("格式化组件加载失败(离线?):{msg}", { msg: String((e as Error)?.message ?? e) }));
     });
     inflight.set(id, p);
   }

@@ -21,6 +21,8 @@
 // current js+css bundle), so any bundle change byte-diffs the worker and
 // triggers the update flow; activation drops caches from older versions.
 
+import { localeFromAcceptLanguage } from "./i18n/locale.ts";
+import { tIn } from "./i18n/t.ts";
 import { mapApiRequest } from "./data/api-map.ts";
 import { probeOrigin, type OriginMode } from "./data/origin.ts";
 import { cacheGet, cachePut, inferBlobType, verifyBytes } from "./data/blob-store.ts";
@@ -370,10 +372,11 @@ async function siteFileResponse(
 /** Cold-start shell: an offline navigation with no client able to answer. The
  *  shell loads the runtime, pulls the real HTML out of the replica (this page
  *  IS a client once loaded), and document.writes it in place. */
-function bootstrapShell(site: string, path: string): Response {
+function bootstrapShell(site: string, path: string, req: Request): Response {
   const args = `${JSON.stringify(site)},${JSON.stringify(path)}`;
+  const lang = localeFromAcceptLanguage(req.headers.get("accept-language"));
   return new Response(
-    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="/mh-runtime.js"></script></head><body><p style="font:14px system-ui;color:#888;margin:2em">正在从本地副本加载…</p><script>__mhOfflineBootstrap(${args})</script></body></html>`,
+    `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="/mh-runtime.js"></script></head><body><p style="font:14px system-ui;color:#888;margin:2em">${tIn(lang, "正在从本地副本加载…")}</p><script>__mhOfflineBootstrap(${args})</script></body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8", "x-mh-source": "bootstrap" } },
   );
 }
@@ -409,7 +412,7 @@ async function serveSiteFromReplica(event: FetchEventLike, url: URL): Promise<Re
   }
   // No client could answer. For a navigation we can still bootstrap: the shell
   // page itself becomes the answering client.
-  if (event.request.mode === "navigate") return bootstrapShell(name, path);
+  if (event.request.mode === "navigate") return bootstrapShell(name, path, event.request);
   return null;
 }
 

@@ -23,6 +23,7 @@
 // clicks. Suppressing caret placement is the handler's job (preventDefault +
 // return true), never ignoreEvent's.
 
+import { t } from "../i18n/t.ts";
 import {
   Decoration,
   EditorView,
@@ -124,7 +125,7 @@ function docLinkLabel(id: string, alias: string | undefined): { label: string; m
   const title = docLinkTitle(id);
   if (title === null) return { label: id, missing: true };
   if (title === undefined) return { label: id, missing: false };
-  return { label: title || "无标题", missing: false };
+  return { label: title || t("无标题"), missing: false };
 }
 
 /** Rebuild signal for open editors when a referenced title changes. */
@@ -161,17 +162,17 @@ function build(view: EditorView, cache: TokenCache, next: TokenCache): Decoratio
       const tokens = hit && hit.text === text ? hit.tokens : tokenizeInline(text);
       next.set(line.number, { text, tokens });
 
-      for (const t of tokens) {
-        const absStart = line.from + t.start;
-        const absEnd = line.from + t.end;
-        const absInnerFrom = line.from + t.innerFrom;
-        const absInnerTo = line.from + t.innerTo;
+      for (const tok of tokens) {
+        const absStart = line.from + tok.start;
+        const absEnd = line.from + tok.end;
+        const absInnerFrom = line.from + tok.innerFrom;
+        const absInnerTo = line.from + tok.innerTo;
         const revealed = touches(sel, absStart, absEnd);
 
-        if (t.kind === "image") {
+        if (tok.kind === "image") {
           if (!revealed) {
             out.push(
-              Decoration.replace({ widget: new InlineImgWidget(t.url!, t.alt ?? "") }).range(absStart, absEnd),
+              Decoration.replace({ widget: new InlineImgWidget(tok.url!, tok.alt ?? "") }).range(absStart, absEnd),
             );
           } else {
             // Revealed: full `![alt](url)` source with muted delimiters.
@@ -181,18 +182,18 @@ function build(view: EditorView, cache: TokenCache, next: TokenCache): Decoratio
           continue;
         }
 
-        if (t.kind === "doclink") {
+        if (tok.kind === "doclink") {
           if (!revealed) {
-            const { label, missing } = docLinkLabel(t.id!, t.alias);
+            const { label, missing } = docLinkLabel(tok.id!, tok.alias);
             out.push(
-              Decoration.replace({ widget: new DocLinkWidget(t.id!, label, missing) }).range(absStart, absEnd),
+              Decoration.replace({ widget: new DocLinkWidget(tok.id!, label, missing) }).range(absStart, absEnd),
             );
           } else {
             // Revealed: `[[id|alias]]` source; delimiters muted, target styled.
             out.push(
               Decoration.mark({
                 class: "cm-doclink-src",
-                attributes: { "data-doclink": t.id!, "data-md-revealed": "1" },
+                attributes: { "data-doclink": tok.id!, "data-md-revealed": "1" },
               }).range(absInnerFrom, absInnerTo),
             );
             if (absInnerFrom > absStart) out.push(Decoration.mark({ class: "cm-md-mark" }).range(absStart, absInnerFrom));
@@ -202,14 +203,14 @@ function build(view: EditorView, cache: TokenCache, next: TokenCache): Decoratio
         }
 
         const mark =
-          t.kind === "link"
+          tok.kind === "link"
             ? Decoration.mark({
                 class: CLASS.link,
                 attributes: revealed
-                  ? { "data-href": t.url!, "data-md-revealed": "1" }
-                  : { "data-href": t.url! },
+                  ? { "data-href": tok.url!, "data-md-revealed": "1" }
+                  : { "data-href": tok.url! },
               })
-            : Decoration.mark({ class: CLASS[t.kind] });
+            : Decoration.mark({ class: CLASS[tok.kind] });
         out.push(mark.range(absInnerFrom, absInnerTo));
         if (!revealed) {
           if (absInnerFrom > absStart) out.push(Decoration.replace({}).range(absStart, absInnerFrom));
@@ -287,7 +288,7 @@ export function openDocLink(el: HTMLElement, mod: boolean): boolean {
   const id = el.getAttribute("data-doclink");
   if (!id) return false;
   if (el.hasAttribute("data-doclink-missing") || docLinkTitle(id) === null) {
-    toast("文档不存在或未同步");
+    toast(t("文档不存在或未同步"));
     return true;
   }
   location.hash = `#/${id.startsWith("db_") ? "db" : "doc"}/${encodeURIComponent(id)}`;

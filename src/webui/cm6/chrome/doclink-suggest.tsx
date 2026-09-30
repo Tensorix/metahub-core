@@ -8,6 +8,7 @@
 // document.body and intercepts nav keys with a CAPTURE-phase keydown listener
 // so the structure keymap never sees them while the menu is open.
 
+import { t } from "../../i18n/t.ts";
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
@@ -38,9 +39,9 @@ function matchesFor(query: string): Match[] {
   const starts: Match[] = [];
   const contains: Match[] = [];
   for (const m of all) {
-    const t = m.title.toLowerCase();
-    if (t.startsWith(q) || m.id.startsWith(q)) starts.push(m);
-    else if (t.includes(q) || m.id.includes(q)) contains.push(m);
+    const title = m.title.toLowerCase();
+    if (title.startsWith(q) || m.id.startsWith(q)) starts.push(m);
+    else if (title.includes(q) || m.id.includes(q)) contains.push(m);
   }
   return [...starts, ...contains].slice(0, LIMIT);
 }
@@ -179,7 +180,7 @@ export function doclinkSuggest(): Extension {
         el.style.bottom = below ? "" : `${innerHeight - coords.top + GAP}px`;
         render(
           <>
-            <MenuLabel>链接到</MenuLabel>
+            <MenuLabel>{t("链接到")}</MenuLabel>
             {matches.map((m, i) => (
               <button
                 key={m.id}
@@ -187,7 +188,7 @@ export function doclinkSuggest(): Extension {
                 onMouseDown={(e) => { e.preventDefault(); this.select(m.id); }}
               >
                 <span class="lico"><Icon name={m.id.startsWith("db_") ? "database" : "file"} cls="ico sm" /></span>
-                <span class="meta"><span class="t">{m.title || "无标题"}</span><span class="d">{m.id}</span></span>
+                <span class="meta"><span class="t">{m.title || t("无标题")}</span><span class="d">{m.id}</span></span>
               </button>
             ))}
           </>,

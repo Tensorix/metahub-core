@@ -33,6 +33,8 @@ import {
   type SiteChannel,
 } from "./site-status.ts";
 import { confirmDialog } from "./ui.tsx";
+import { t } from "./i18n/t.ts";
+import { fmtDate } from "./i18n/fmt.ts";
 import {
   channelRowView,
   legacyShareRowView,
@@ -78,7 +80,7 @@ export function useShareActions(
   const copyShare = async (s: ShareListItem) => {
     if (s.url) {
       copy(s.url);
-      onFlash("链接已复制");
+      onFlash(t("链接已复制"));
       return;
     }
     try {
@@ -86,8 +88,8 @@ export function useShareActions(
       copy(r.url);
       onFlash(
         s.contentUpdatedAt
-          ? `已重新生成访问链接并复制（内容为 ${new Date(s.contentUpdatedAt).toLocaleString()} 的快照）`
-          : "已重新生成访问链接并复制（内容不变）",
+          ? t("已重新生成访问链接并复制（内容为 {when} 的快照）", { when: fmtDate(s.contentUpdatedAt, "dateTime") })
+          : t("已重新生成访问链接并复制（内容不变）"),
       );
       notifySharesChanged();
       reload();
@@ -97,9 +99,9 @@ export function useShareActions(
   };
   const revoke = async (s: ShareListItem) => {
     const ok = await confirmDialog({
-      title: "撤销这个分享？",
-      message: "链接立即失效，接收者将无法再打开。",
-      confirmLabel: "撤销",
+      title: t("撤销这个分享？"),
+      message: t("链接立即失效，接收者将无法再打开。"),
+      confirmLabel: t("撤销"),
       danger: true,
       aboveMenus: true,
     });
@@ -107,12 +109,12 @@ export function useShareActions(
     try {
       const result = await api.revokeShare(s.slug, s.sourceUrl);
       if (result.status === "cleanup_pending") {
-        onError("撤销已提交，但 Edge 尚未确认销毁 Room；本地保留管理记录并会继续重试。");
+        onError(t("撤销已提交，但 Edge 尚未确认销毁 Room；本地保留管理记录并会继续重试。"));
         notifySharesChanged();
         reload();
         return;
       }
-      onFlash("已撤销");
+      onFlash(t("已撤销"));
       notifySharesChanged();
       reload();
     } catch (e) {
@@ -123,7 +125,7 @@ export function useShareActions(
     try {
       const r = await api.renewShare(s.slug);
       copy(r.url);
-      onFlash("已重新生成访问链接，新链接已复制（内容不变）");
+      onFlash(t("已重新生成访问链接，新链接已复制（内容不变）"));
       notifySharesChanged();
       reload();
     } catch (e) {
@@ -132,16 +134,16 @@ export function useShareActions(
   };
   const refreshExport = async (s: ShareListItem) => {
     const ok = await confirmDialog({
-      title: "更新快照内容并续期？",
-      message: "将用当前最新数据覆盖这份快照，接收者会看到更新后的版本；同时生成新的访问链接。",
-      confirmLabel: "更新内容并续期",
+      title: t("更新快照内容并续期？"),
+      message: t("将用当前最新数据覆盖这份快照，接收者会看到更新后的版本；同时生成新的访问链接。"),
+      confirmLabel: t("更新内容并续期"),
       danger: true,
     });
     if (!ok) return;
     try {
       const r = await api.renewShare(s.slug, { refreshContent: true });
       copy(r.url);
-      onFlash("已更新快照内容并复制新链接");
+      onFlash(t("已更新快照内容并复制新链接"));
       notifySharesChanged();
       reload();
     } catch (e) {
@@ -196,15 +198,15 @@ function ShareModal({ target, onClose }: { target: ShareTarget; onClose: () => v
 // ── site: 当前访问渠道 + 新增访问方式 ─────────────────────────────────────────
 
 const ACTION_LABEL: Record<ChannelRowAction, string> = {
-  copy: "复制",
-  open: "打开",
-  revoke: "撤销链接",
-  stopPublic: "停止公开访问",
-  recreate: "重新创建链接",
-  copyShare: "复制",
-  renewLink: "延长有效期",
-  refreshExport: "更新内容并续期",
-  revokeShare: "撤销链接",
+  copy: t("复制"),
+  open: t("打开"),
+  revoke: t("撤销链接"),
+  stopPublic: t("停止公开访问"),
+  recreate: t("重新创建链接"),
+  copyShare: t("复制"),
+  renewLink: t("延长有效期"),
+  refreshExport: t("更新内容并续期"),
+  revokeShare: t("撤销链接"),
 };
 const DANGER_ACTIONS: ChannelRowAction[] = ["revoke", "stopPublic", "revokeShare", "refreshExport"];
 
@@ -234,7 +236,7 @@ function ChannelRow({
           .map((a) =>
           a === "open" && view.url ? (
             <a key={a} href={view.url} target="_blank" rel="noreferrer">
-              打开
+              {t("打开")}
             </a>
           ) : (
             <button
@@ -292,7 +294,7 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
         setPublicGrantsLoaded(true);
       })
       .catch((e) => {
-        setGrantsError(`无法读取现有公开权限：${(e as Error).message}`);
+        setGrantsError(t("无法读取现有公开权限：{msg}", { msg: (e as Error).message }));
         setPublicGrantsLoaded(false);
       });
   };
@@ -335,10 +337,9 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
 
   const stopPublic = async () => {
     const ok = await confirmDialog({
-      title: "停止公开访问？",
-      message:
-        "任何人将无法再通过公开地址访问这个站点；已有的分享链接不受影响。浏览器或 CDN 缓存可能仍保留数分钟。",
-      confirmLabel: "停止公开",
+      title: t("停止公开访问？"),
+      message: t("任何人将无法再通过公开地址访问这个站点；已有的分享链接不受影响。浏览器或 CDN 缓存可能仍保留数分钟。"),
+      confirmLabel: t("停止公开"),
       danger: true,
     });
     if (!ok) return;
@@ -346,7 +347,7 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
     setError("");
     try {
       const pending = await requestPrivateAccess();
-      setFlash(pending ? "已提交停止公开，等待托管设备收到同步" : "已停止公开访问");
+      setFlash(pending ? t("已提交停止公开，等待托管设备收到同步") : t("已停止公开访问"));
       notifySharesChanged();
       refreshSiteState();
     } catch (e) {
@@ -359,12 +360,12 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
   const revokeChannel = async (channel: SiteChannel) => {
     if (!channel.id) return stopPublic();
     const ok = await confirmDialog({
-      title: channel.audience === "anyone" ? "停止这个公开渠道？" : "撤销这个链接？",
+      title: channel.audience === "anyone" ? t("停止这个公开渠道？") : t("撤销这个链接？"),
       message:
         channel.hosting === "room"
-          ? "撤销意图会同步到控制设备。若控制设备离线，Edge Room 会显示“等待控制设备”，上线后自动销毁。"
-          : "撤销意图会同步到托管设备；该设备收到后将停止提供这个渠道。",
-      confirmLabel: "撤销",
+          ? t("撤销意图会同步到控制设备。若控制设备离线，Edge Room 会显示“等待控制设备”，上线后自动销毁。")
+          : t("撤销意图会同步到托管设备；该设备收到后将停止提供这个渠道。"),
+      confirmLabel: t("撤销"),
       danger: true,
     });
     if (!ok) return;
@@ -374,8 +375,8 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
       const result = await api.revokeSiteChannel(channel.id);
       setFlash(
         result.status === "waiting_controller" || result.status === "cleanup_pending"
-          ? "撤销已请求，等待控制设备完成清理"
-          : "渠道已撤销",
+          ? t("撤销已请求，等待控制设备完成清理")
+          : t("渠道已撤销"),
       );
       notifySharesChanged();
       refreshShares();
@@ -428,8 +429,8 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
     <div class="mhshare-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div class="mhshare-modal">
         <div class="mhshare-head">
-          <h2>发布与分享{target.title ? `：${target.title}` : ""}</h2>
-          <button class="mhshare-x" onClick={onClose} aria-label="关闭">
+          <h2>{target.title ? t("发布与分享：{title}", { title: target.title }) : t("发布与分享")}</h2>
+          <button class="mhshare-x" onClick={onClose} aria-label={t("关闭")}>
             ✕
           </button>
         </div>
@@ -440,13 +441,13 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
           {resultUrl && (
             <div class="mhshare-result">
               <code>{resultUrl}</code>
-              <button onClick={() => copy(resultUrl)}>复制</button>
-              <a href={resultUrl} target="_blank" rel="noreferrer">打开</a>
+              <button onClick={() => copy(resultUrl)}>{t("复制")}</button>
+              <a href={resultUrl} target="_blank" rel="noreferrer">{t("打开")}</a>
             </div>
           )}
 
-          <div class="mhshare-section">当前访问渠道（{rowCount}）</div>
-          {rowCount === 0 && <p class="mhshare-note">还没有任何访问渠道 — 在下方创建。</p>}
+          <div class="mhshare-section">{t("当前访问渠道（{n}）", { n: rowCount })}</div>
+          {rowCount === 0 && <p class="mhshare-note">{t("还没有任何访问渠道 — 在下方创建。")}</p>}
           <ul class="mhshare-list">
             {publicChannels.map((c) => (
               <ChannelRow
@@ -456,7 +457,7 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
                   copy: () => {
                     if (c.url) {
                       copy(c.url);
-                      setFlash("公开地址已复制");
+                      setFlash(t("公开地址已复制"));
                     }
                   },
                   stopPublic: () => revokeChannel(c),
@@ -471,7 +472,7 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
                   copy: () => {
                     if (c.url) {
                       copy(c.url);
-                      setFlash("链接已复制");
+                      setFlash(t("链接已复制"));
                     }
                   },
                   revoke: () => revokeChannel(c),
@@ -494,7 +495,7 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
             ))}
           </ul>
 
-          <div class="mhshare-section">新增访问方式</div>
+          <div class="mhshare-section">{t("新增访问方式")}</div>
           <div class="mhshare-addrow">
             <button
               class={"mhshare-addbtn" + (expandedForm === "link" ? " sel" : "")}
@@ -503,15 +504,15 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
                 setExpandedForm(expandedForm === "link" ? null : "link");
               }}
             >
-              <span class="mhshare-acard-t">创建私密链接</span>
-              <span class="mhshare-acard-d">链接无法被猜到；可加口令和有效期。</span>
+              <span class="mhshare-acard-t">{t("创建私密链接")}</span>
+              <span class="mhshare-acard-d">{t("链接无法被猜到；可加口令和有效期。")}</span>
             </button>
             <button
               class={"mhshare-addbtn" + (expandedForm === "public" ? " sel" : "")}
               onClick={() => setExpandedForm(expandedForm === "public" ? null : "public")}
             >
-              <span class="mhshare-acard-t">发布公开网页</span>
-              <span class="mhshare-acard-d">任何人无需登录即可访问公开地址。</span>
+              <span class="mhshare-acard-t">{t("发布公开网页")}</span>
+              <span class="mhshare-acard-d">{t("任何人无需登录即可访问公开地址。")}</span>
             </button>
           </div>
           {expandedForm === "link" && (
@@ -554,7 +555,7 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
           )}
 
           <div class="mhshare-foot">
-            <button onClick={onClose} disabled={busy}>关闭</button>
+            <button onClick={onClose} disabled={busy}>{t("关闭")}</button>
           </div>
         </div>
       </div>
@@ -592,12 +593,12 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
     setError("");
     setFlash(
       s.hasPassword
-        ? "已按过期链接预填上方表单；原口令无法恢复，请重新设置。"
-        : "已按过期链接预填上方表单。",
+        ? t("已按过期链接预填上方表单；原口令无法恢复，请重新设置。")
+        : t("已按过期链接预填上方表单。"),
     );
   };
 
-  const sel = targets.find((t) => t.id === selId) ?? targets[0];
+  const sel = targets.find((tgt) => tgt.id === selId) ?? targets[0];
   const s3 = sel?.kind === "bucket";
   useEffect(() => {
     if (s3 && permission === "edit") setPermission("view");
@@ -625,12 +626,12 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
       const r = await api.createShare(body);
       copy(r.url);
       setResultUrl(r.url);
-      setFlash(`已通过「${r.source}」上线，地址已复制`);
+      setFlash(t("已通过「{source}」上线，地址已复制", { source: r.source }));
       setPassword("");
       notifySharesChanged();
       refreshShares();
     } catch (e) {
-      setError((e as Error).message || "创建失败");
+      setError((e as Error).message || t("创建失败"));
     } finally {
       setBusy(false);
     }
@@ -640,35 +641,35 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
     <div class="mhshare-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div class="mhshare-modal">
         <div class="mhshare-head">
-          <h2>分享{target.title ? `：${target.title}` : ""}</h2>
-          <button class="mhshare-x" onClick={onClose} aria-label="关闭">
+          <h2>{target.title ? t("分享：{title}", { title: target.title }) : t("分享")}</h2>
+          <button class="mhshare-x" onClick={onClose} aria-label={t("关闭")}>
             ✕
           </button>
         </div>
 
         <div class="mhshare-body">
-          <div class="mhshare-section">新建分享</div>
+          <div class="mhshare-section">{t("新建分享")}</div>
           <label class="mhshare-field">
-            <span>托管位置</span>
+            <span>{t("托管位置")}</span>
             <select value={sel?.id} onChange={(e) => setSelId((e.currentTarget as HTMLSelectElement).value)}>
-              {targets.map((t) => (
-                <option value={t.id}>{t.label} — {t.subtitle}</option>
+              {targets.map((tgt) => (
+                <option value={tgt.id}>{tgt.label} — {tgt.subtitle}</option>
               ))}
             </select>
           </label>
           <label class="mhshare-field">
-            <span>权限</span>
+            <span>{t("权限")}</span>
             <select value={permission} disabled={s3} onChange={(e) => setPermission((e.currentTarget as HTMLSelectElement).value as "view" | "edit")}>
-              <option value="view">只读</option>
-              <option value="edit">可编辑{s3 ? "（仅服务器）" : ""}</option>
+              <option value="view">{t("只读")}</option>
+              <option value="edit">{s3 ? t("可编辑（仅服务器）") : t("可编辑")}</option>
             </select>
           </label>
           <label class="mhshare-field">
-            <span>口令</span>
-            <input type="password" placeholder="可选" value={password} onInput={(e) => setPassword((e.currentTarget as HTMLInputElement).value)} />
+            <span>{t("口令")}</span>
+            <input type="password" placeholder={t("可选")} value={password} onInput={(e) => setPassword((e.currentTarget as HTMLInputElement).value)} />
           </label>
           <label class="mhshare-field">
-            <span>有效期</span>
+            <span>{t("有效期")}</span>
             <select value={String(eIdx)} onChange={(e) => setExpiryIdx(Number((e.currentTarget as HTMLSelectElement).value))}>
               {expiryOpts.map((o, i) => (
                 <option value={String(i)}>{o.label}</option>
@@ -677,7 +678,7 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
           </label>
           {s3 && (
             <p class="mhshare-note">
-              存储桶分享是快照链接：内容是导出时的版本，之后不会随数据变化；「更新内容并续期」才会覆盖快照。
+              {t("存储桶分享是快照链接：内容是导出时的版本，之后不会随数据变化；「更新内容并续期」才会覆盖快照。")}
             </p>
           )}
           {error && <p class="mhshare-err">{error}</p>}
@@ -685,25 +686,25 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
           {resultUrl && (
             <div class="mhshare-result">
               <code>{resultUrl}</code>
-              <button onClick={() => copy(resultUrl)}>复制</button>
-              <a href={resultUrl} target="_blank" rel="noreferrer">打开</a>
+              <button onClick={() => copy(resultUrl)}>{t("复制")}</button>
+              <a href={resultUrl} target="_blank" rel="noreferrer">{t("打开")}</a>
             </div>
           )}
           <div class="mhshare-foot">
-            <button onClick={onClose}>关闭</button>
+            <button onClick={onClose}>{t("关闭")}</button>
             <button class="mhshare-primary" disabled={busy} onClick={create}>
-              {busy ? "创建中…" : "创建并复制链接"}
+              {busy ? t("创建中…") : t("创建并复制链接")}
             </button>
           </div>
 
-          <div class="mhshare-section">已有分享（{shares.length}）</div>
+          <div class="mhshare-section">{t("已有分享（{n}）", { n: shares.length })}</div>
           <ShareRows
             shares={shares}
             reload={refreshShares}
             onFlash={setFlash}
             onError={setError}
             onRecreate={recreateFrom}
-            empty="还没有分享这个对象。"
+            empty={t("还没有分享这个对象。")}
           />
         </div>
       </div>

@@ -107,8 +107,8 @@ describe("sourceLabel / displayUrl / fmtSnapshot", () => {
   test("fmtSnapshot omits the year in the same year", () => {
     const ts = new Date(2026, 7, 21, 14, 2).getTime();
     const now = new Date(2026, 8, 4).getTime();
-    expect(fmtSnapshot(ts, now)).toBe("快照 8/21 14:02");
-    expect(fmtSnapshot(ts, new Date(2027, 0, 1).getTime())).toBe("快照 2026/8/21 14:02");
+    expect(fmtSnapshot(ts, now)).toBe("快照 8月21日 14:02");
+    expect(fmtSnapshot(ts, new Date(2027, 0, 1).getTime())).toBe("快照 2026年8月21日 14:02");
   });
 });
 

@@ -33,6 +33,7 @@ import {
   closeModal,
   Modal,
 } from "./ui.tsx";
+import { t } from "./i18n/t.ts";
 
 // "站点管理" — GUI over the static-file sites the `mh site` CLI publishes. Sites
 // are served at /sites/<name>/, so preview just points an iframe at the real URL
@@ -67,9 +68,9 @@ function fileIcon(f: SiteFile): string {
   return "file";
 }
 
-function copyText(t: string) {
-  navigator.clipboard?.writeText(t).catch(() => {});
-  toast("已复制");
+function copyText(text: string) {
+  navigator.clipboard?.writeText(text).catch(() => {});
+  toast(t("已复制"));
 }
 
 /** Human-readable byte size; null (blob bytes not held locally) renders "—". */
@@ -181,23 +182,23 @@ function stripCommonDirPrefix(files: DroppedFile[]): DroppedFile[] {
  *  publishDirectory warning). Non-blocking — the upload still proceeds. */
 function warnReservedApiPaths(files: DroppedFile[]): void {
   const n = files.filter((f) => f.path === "api" || f.path.startsWith("api/")).length;
-  if (n) toast(`${n} 个 api/ 下的文件会被站点数据 API 遮蔽（仍会上传，但无法访问）`);
+  if (n) toast(t("{n} 个 api/ 下的文件会被站点数据 API 遮蔽（仍会上传，但无法访问）", { n }));
 }
 
 function reportUpload(total: number, failed: UploadFailure[]) {
-  if (!failed.length) return toast(`已上传 ${total} 个文件`);
-  toast(`已上传 ${total - failed.length}/${total} 个，${failed.length} 个失败`);
+  if (!failed.length) return toast(t("已上传 {n} 个文件", { n: total }));
+  toast(t("已上传 {ok}/{total} 个，{failed} 个失败", { ok: total - failed.length, total, failed: failed.length }));
   openModal(<UploadFailuresModal failed={failed} />);
 }
 
 function UploadFailuresModal({ failed }: { failed: UploadFailure[] }) {
   return (
     <Modal
-      title="部分文件上传失败"
-      sub={`${failed.length} 个文件未能上传，可修正后重新拖入（成功的文件无需重传）。`}
+      title={t("部分文件上传失败")}
+      sub={t("{n} 个文件未能上传，可修正后重新拖入（成功的文件无需重传）。", { n: failed.length })}
       footer={
         <button class="btn btn-primary" onClick={closeModal}>
-          关闭
+          {t("关闭")}
         </button>
       }
     >
@@ -230,7 +231,7 @@ function UploadProgress({ done, total }: { done: number; total: number }) {
         zIndex: 300,
       }}
     >
-      上传中 {done}/{total}…
+      {t("上传中 {done}/{total}…", { done, total })}
     </div>
   );
 }
@@ -254,7 +255,7 @@ export function openSiteMenu(
     } catch (err) {
       return toast((err as Error).message);
     }
-    toast(s.spa === 1 ? "已关闭 SPA 模式" : "已开启 SPA 模式（无扩展名路径回落到 index.html）");
+    toast(s.spa === 1 ? t("已关闭 SPA 模式") : t("已开启 SPA 模式（无扩展名路径回落到 index.html）"));
     notifySitesChanged();
   };
   openMenu(e, (close) => (
@@ -262,7 +263,7 @@ export function openSiteMenu(
       {opts?.onOpenConfig && (
         <MenuItem
           icon="settings"
-          label="配置管理"
+          label={t("配置管理")}
           onClick={() => {
             close();
             opts.onOpenConfig!();
@@ -271,7 +272,7 @@ export function openSiteMenu(
       )}
       <MenuItem
         icon="externalLink"
-        label="复制私有预览地址"
+        label={t("复制私有预览地址")}
         onClick={() => {
           close();
           copyText(siteUrl(s.name));
@@ -279,7 +280,7 @@ export function openSiteMenu(
       />
       <MenuItem
         icon="link"
-        label="发布与分享…"
+        label={t("发布与分享…")}
         onClick={() => {
           close();
           openShareModal({ kind: "site", ref: s.id, title: s.title ?? s.name });
@@ -287,7 +288,7 @@ export function openSiteMenu(
       />
       <MenuItem
         icon="code"
-        label={s.spa === 1 ? "关闭 SPA 模式" : "开启 SPA 模式"}
+        label={s.spa === 1 ? t("关闭 SPA 模式") : t("开启 SPA 模式")}
         onClick={() => {
           close();
           toggleSpa();
@@ -295,17 +296,17 @@ export function openSiteMenu(
       />
       <MenuItem
         icon="pencil"
-        label="修改标题…"
+        label={t("修改标题…")}
         onClick={async () => {
           close();
-          const t = await promptDialog({
-            title: "修改标题",
-            label: "标题",
+          const next = await promptDialog({
+            title: t("修改标题"),
+            label: t("标题"),
             value: s.title ?? s.name,
           });
-          if (t == null) return;
+          if (next == null) return;
           try {
-            await api.updateSite(s.id, { title: t });
+            await api.updateSite(s.id, { title: next });
           } catch (err) {
             return toast((err as Error).message);
           }
@@ -314,7 +315,7 @@ export function openSiteMenu(
       />
       <MenuItem
         icon="hash"
-        label="重命名（slug）…"
+        label={t("重命名（slug）…")}
         onClick={() => {
           close();
           openModal(<RenameSlugModal site={s} onRenamed={(n) => opts?.onRenamed?.(n)} />);
@@ -323,14 +324,14 @@ export function openSiteMenu(
       <MenuSep />
       <MenuItem
         icon="trash"
-        label="删除站点"
+        label={t("删除站点")}
         danger
         onClick={async () => {
           close();
           const ok = await confirmDialog({
-            title: "删除站点？",
-            message: `「${s.name}」及其 ${s.file_count} 个文件将被删除。`,
-            confirmLabel: "删除",
+            title: t("删除站点？"),
+            message: t("「{name}」及其 {n} 个文件将被删除。", { name: s.name, n: s.file_count }),
+            confirmLabel: t("删除"),
             danger: true,
           });
           if (!ok) return;
@@ -362,7 +363,7 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
         setSites(rows);
         rememberSites(rows.length);
       })
-      .catch((e) => toast(`加载失败：${e.message}`));
+      .catch((e) => toast(t("加载失败：{msg}", { msg: e.message })));
   const reloadHosting = () =>
     api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
   const cardMenu = (e: MouseEvent, s: Site) => {
@@ -403,25 +404,25 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
     if (upload) return;
     const drop = dropEntries(e.dataTransfer!); // sync — before any await
     if (drop.entries.length !== 1 || !drop.entries[0]!.isDirectory)
-      return toast("拖入一个目录即可上传为站点（目录名 = 站点名）");
+      return toast(t("拖入一个目录即可上传为站点（目录名 = 站点名）"));
     const dirName = drop.entries[0]!.name;
     let slug: string;
     try {
       slug = normalizeSiteName(dirName);
     } catch {
-      return toast(`目录名「${dirName}」无法转成有效的站点名`);
+      return toast(t("目录名「{name}」无法转成有效的站点名", { name: dirName }));
     }
     const all = await collectDropped(drop);
     // publish semantics: the dropped directory's CONTENTS become the site root
     const inner = all.map((f) => ({ ...f, path: f.path.slice(dirName.length + 1) }));
-    if (!inner.length) return toast("目录里没有可上传的文件");
+    if (!inner.length) return toast(t("目录里没有可上传的文件"));
     warnReservedApiPaths(inner);
     let target = (sites ?? []).find((s) => s.name === slug) ?? null;
     if (!target) {
       const ok = await confirmDialog({
-        title: `创建站点「${slug}」？`,
-        message: `站点「${slug}」不存在。创建它并上传 ${inner.length} 个文件？`,
-        confirmLabel: "创建并上传",
+        title: t("创建站点「{name}」？", { name: slug }),
+        message: t("站点「{name}」不存在。创建它并上传 {n} 个文件？", { name: slug, n: inner.length }),
+        confirmLabel: t("创建并上传"),
       });
       if (!ok) return;
       try {
@@ -455,17 +456,17 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
     >
       <div class="db-head">
         <div>
-          <div class="db-title">站点管理</div>
-          <div class="db-desc">发布静态站点，生成可分享的访问链接。</div>
+          <div class="db-title">{t("站点管理")}</div>
+          <div class="db-desc">{t("发布静态站点，生成可分享的访问链接。")}</div>
         </div>
         <button class="btn btn-primary site-new" onClick={newSite}>
           <Icon name="plus" cls="ico sm" />
-          新建站点
+          {t("新建站点")}
         </button>
       </div>
 
       {sites == null ? (
-        <div class="sites-grid skel-list" role="status" aria-busy="true" aria-label="正在加载">
+        <div class="sites-grid skel-list" role="status" aria-busy="true" aria-label={t("正在加载")}>
           {Array.from({ length: siteSkelRows }, (_, i) => (
             <div class="site-card skel" key={i} style={`--i:${Math.min(i, 4)}`}>
               <div class="site-card-head">
@@ -483,11 +484,11 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
       ) : sites.length === 0 ? (
         <div class="site-empty">
           <div class="ei"><Icon name="globe" /></div>
-          <div class="et">还没有站点</div>
-          <div class="ed">站点是一组网页文件，可先在本机预览，发布后供他人访问。</div>
+          <div class="et">{t("还没有站点")}</div>
+          <div class="ed">{t("站点是一组网页文件，可先在本机预览，发布后供他人访问。")}</div>
           <button class="btn btn-primary" onClick={newSite}>
             <Icon name="plus" cls="ico sm" />
-            新建站点
+            {t("新建站点")}
           </button>
         </div>
       ) : (
@@ -519,7 +520,7 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                   </span>
                   <div class="site-card-id">
                     <div class="slug">{s.name}</div>
-                    <div class={"ttl" + (s.title ? "" : " muted")}>{s.title || "未命名站点"}</div>
+                    <div class={"ttl" + (s.title ? "" : " muted")}>{s.title || t("未命名站点")}</div>
                   </div>
                   {channels.length > 0 && (
                     <span
@@ -542,12 +543,12 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                   class="site-addr"
                   title={
                     addr.kind === "public"
-                      ? "点击复制公开地址"
+                      ? t("点击复制公开地址")
                       : addr.kind === "public_multi"
-                        ? "存在多个公开地址；打开详情选择"
+                        ? t("存在多个公开地址；打开详情选择")
                         : addr.kind === "links_only"
-                          ? "私密链接不在卡片显示；打开详情管理"
-                          : "点击复制私有预览地址"
+                          ? t("私密链接不在卡片显示；打开详情管理")
+                          : t("点击复制私有预览地址")
                   }
                   onClick={(e) => {
                     e.stopPropagation();
@@ -570,16 +571,14 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                     {addr.kind === "public"
                       ? addr.url
                       : addr.kind === "public_multi"
-                        ? `${addr.count} 个公开地址`
+                        ? t("{n} 个公开地址", { n: addr.count })
                         : addr.kind === "links_only"
-                          ? `${addr.count} 个私密链接`
-                          : `私有预览 · ${siteUrlShort(s.name)}`}
+                          ? t("{n} 个私密链接", { n: addr.count })
+                          : t("私有预览 · {url}", { url: siteUrlShort(s.name) })}
                   </span>
                 </button>
                 <div class="site-card-meta">
-                  <span>
-                    <b>{s.file_count}</b> 文件
-                  </span>
+                  <span>{t("{n} 文件", { n: s.file_count })}</span>
                   <span class="dot">·</span>
                   <span>{fmtDate(s.created_hlc)}</span>
                 </div>
@@ -593,7 +592,7 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                     }}
                   >
                     <Icon name="globe" cls="ico sm" />
-                    预览
+                    {t("预览")}
                   </button>
                   <button
                     class={"btn " + (pendingRollback ? "btn-danger" : "btn-primary")}
@@ -607,8 +606,8 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                             pendingRollback.peerUrl,
                           );
                           if (result.status === "rollback_pending")
-                            toast(`回滚仍未确认：${result.error ?? "目标设备不可达"}`);
-                          else toast("目标设备已确认恢复发布前状态");
+                            toast(t("回滚仍未确认：{msg}", { msg: result.error ?? t("目标设备不可达") }));
+                          else toast(t("目标设备已确认恢复发布前状态"));
                           await reloadHosting();
                         } catch (err) {
                           toast((err as Error).message);
@@ -619,9 +618,9 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                     }}
                   >
                     <Icon name="link" cls="ico sm" />
-                    {pendingRollback ? "重试回滚" : channels.length ? "管理" : "发布"}
+                    {pendingRollback ? t("重试回滚") : channels.length ? t("管理") : t("发布")}
                   </button>
-                  <button class="iconbtn" title="更多" onClick={(e) => cardMenu(e, s)}>
+                  <button class="iconbtn" title={t("更多")} onClick={(e) => cardMenu(e, s)}>
                     <Icon name="dots" />
                   </button>
                 </div>
@@ -631,8 +630,8 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
             ))}
           </div>
           <div class="gridfoot">
-            <span>共 {sites.length} 个站点</span>
-            <span>{sites.reduce((n, s) => n + s.file_count, 0)} 个文件</span>
+            <span>{t("共 {n} 个站点", { n: sites.length })}</span>
+            <span>{t("{n} 个文件", { n: sites.reduce((n, s) => n + s.file_count, 0) })}</span>
           </div>
         </>
       )}
@@ -651,12 +650,12 @@ export function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
     try {
       slug = normalizeSiteName(name);
     } catch {
-      return toast("请填写站点名称");
+      return toast(t("请填写站点名称"));
     }
     try {
       const site = await api.createSite({ name: slug, title: title.trim() || undefined });
       closeModal();
-      toast(`已创建站点「${slug}」`);
+      toast(t("已创建站点「{name}」", { name: slug }));
       notifySitesChanged();
       onCreated(site);
     } catch (e) {
@@ -665,42 +664,42 @@ export function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
   };
   return (
     <Modal
-      title="新建站点"
-      sub="创建一组网页文件，随你的设备自动同步。"
+      title={t("新建站点")}
+      sub={t("创建一组网页文件，随你的设备自动同步。")}
       footer={
         <>
           <button class="btn btn-secondary" onClick={closeModal}>
-            取消
+            {t("取消")}
           </button>
           <button class="btn btn-primary" onClick={create}>
-            创建
+            {t("创建")}
           </button>
         </>
       }
     >
-      <div class="field-label">名称（slug）</div>
+      <div class="field-label">{t("名称（slug）")}</div>
       <input
         class="text-input"
         autofocus
         value={name}
-        placeholder="例如：docs、demo、status"
+        placeholder={t("例如：docs、demo、status")}
         onInput={(e) => setName((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") create();
         }}
       />
-      <div class="field-label">标题（可选）</div>
+      <div class="field-label">{t("标题（可选）")}</div>
       <input
         class="text-input"
         value={title}
-        placeholder="人类可读的标题"
+        placeholder={t("人类可读的标题")}
         onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") create();
         }}
       />
       <div class="muted" style={{ fontSize: 12, marginTop: 10 }}>
-        将通过 <span style={{ fontFamily: "var(--mono)" }}>/sites/&lt;名称&gt;/</span> 对外提供。
+        {t("将通过 /sites/<名称>/ 对外提供。")}
       </div>
     </Modal>
   );
@@ -720,13 +719,13 @@ function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: (newName:
   }
   const changed = preview != null && preview !== site.name;
   const save = async () => {
-    if (!preview) return toast("请输入有效的站点名（a-z、0-9、-）");
+    if (!preview) return toast(t("请输入有效的站点名（a-z、0-9、-）"));
     if (!changed) return closeModal();
     setBusy(true);
     try {
       await api.updateSite(site.id, { name: preview });
       closeModal();
-      toast(`已重命名为「${preview}」`);
+      toast(t("已重命名为「{name}」", { name: preview }));
       notifySitesChanged();
       onRenamed(preview);
     } catch (e) {
@@ -737,20 +736,20 @@ function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: (newName:
   };
   return (
     <Modal
-      title="重命名（slug）"
-      sub="slug 决定站点的访问地址 /sites/<slug>/。"
+      title={t("重命名（slug）")}
+      sub={t("slug 决定站点的访问地址 /sites/<slug>/。")}
       footer={
         <>
           <button class="btn btn-secondary" onClick={closeModal}>
-            取消
+            {t("取消")}
           </button>
           <button class="btn btn-primary" disabled={busy || !preview} onClick={save}>
-            {busy ? "保存中…" : "重命名"}
+            {busy ? t("保存中…") : t("重命名")}
           </button>
         </>
       }
     >
-      <div class="field-label">新名称（slug）</div>
+      <div class="field-label">{t("新名称（slug）")}</div>
       <input
         class="text-input"
         autofocus
@@ -761,11 +760,11 @@ function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: (newName:
         }}
       />
       <div class="muted" style={{ fontSize: 12, marginTop: 8, fontFamily: "var(--mono)" }}>
-        {preview ? `将保存为 /sites/${preview}/` : "无法从输入得到有效的站点名"}
+        {preview ? t("将保存为 /sites/{name}/", { name: preview }) : t("无法从输入得到有效的站点名")}
       </div>
       {changed && (
         <div style={{ fontSize: 12, marginTop: 8, color: "var(--danger, #c0392b)" }}>
-          注意：重命名后旧链接将失效 — /sites/{site.name}/ 不再可访问，已分发的地址需要更新。
+          {t("注意：重命名后旧链接将失效 — /sites/{name}/ 不再可访问，已分发的地址需要更新。", { name: site.name })}
         </div>
       )}
     </Modal>
@@ -800,7 +799,7 @@ export function SiteView({
   useEffect(() => () => onResolved?.(null), []);
 
   useEffect(() => {
-    const load = () => api.listSites().then(setSites).catch((e) => toast(`加载失败：${e.message}`));
+    const load = () => api.listSites().then(setSites).catch((e) => toast(t("加载失败：{msg}", { msg: e.message })));
     const loadShares = () => api.listShares().then(setShares).catch(() => undefined);
     const loadHosting = () =>
       api.getSiteHosting().then(setHostingInfo).catch(() => setHostingInfo(null));
@@ -826,10 +825,10 @@ export function SiteView({
           <div class="ei">
             <Icon name="globe" />
           </div>
-          <div class="et">站点不存在</div>
-          <div class="ed">「{name}」可能已被删除或重命名。</div>
+          <div class="et">{t("站点不存在")}</div>
+          <div class="ed">{t("「{name}」可能已被删除或重命名。", { name })}</div>
           <button class="btn btn-secondary" onClick={() => navigate({ kind: "sites" })}>
-            查看全部站点
+            {t("查看全部站点")}
           </button>
         </div>
       </div>
@@ -847,14 +846,14 @@ function SiteVisit({ site, navigate }: { site: Site; navigate: Navigate }) {
       <div class="site-stage">
         <div class="site-empty">
           <div class="ei">📁</div>
-          <div class="et">站点还没有文件</div>
-          <div class="ed">上传文件后，这里会直接显示站点页面。</div>
+          <div class="et">{t("站点还没有文件")}</div>
+          <div class="ed">{t("上传文件后，这里会直接显示站点页面。")}</div>
           <button
             class="btn btn-primary"
             onClick={() => navigate({ kind: "site", name: site.name, tab: "config" })}
           >
             <Icon name="upload" cls="ico sm" />
-            去配置
+            {t("去配置")}
           </button>
         </div>
       </div>
@@ -892,11 +891,11 @@ function SiteThumb({
     return (
       <div class="site-thumb empty">
         <Icon name="upload" cls="ico" />
-        <span>还没有文件</span>
+        <span>{t("还没有文件")}</span>
       </div>
     );
   return (
-    <button class="site-thumb" title="打开站点" onClick={onClick}>
+    <button class="site-thumb" title={t("打开站点")} onClick={onClick}>
       <iframe
         key={ver}
         src={"/sites/" + site.name + "/?_t=" + ver}
@@ -907,7 +906,7 @@ function SiteThumb({
       />
       <span class="site-thumb-open">
         <Icon name="externalLink" cls="ico sm" />
-        打开
+        {t("打开")}
       </span>
     </button>
   );
@@ -994,9 +993,9 @@ function SiteConfig({
 
   const removeFile = async (f: SiteFile) => {
     const ok = await confirmDialog({
-      title: "删除文件？",
-      message: `「${f.path}」将从站点「${site.name}」中删除。`,
-      confirmLabel: "删除",
+      title: t("删除文件？"),
+      message: t("「{path}」将从站点「{name}」中删除。", { path: f.path, name: site.name }),
+      confirmLabel: t("删除"),
       danger: true,
     });
     if (!ok) return;
@@ -1040,10 +1039,10 @@ function SiteConfig({
             <h1 class="site-id-title">{site.title || site.name}</h1>
             {site.title && <div class="site-id-slug">{site.name}</div>}
             <div class="site-id-meta">
-              {files?.length ?? site.file_count} 个文件 · 创建于 {fmtDate(site.created_hlc)}
+              {t("{n} 个文件 · 创建于 {date}", { n: files?.length ?? site.file_count, date: fmtDate(site.created_hlc) })}
             </div>
             <span class={"chan-badge" + (channels.length ? " anyone" : "")}>
-              {channels.length ? `已发布 · ${channels.length} 个渠道` : "私有"}
+              {channels.length ? t("已发布 · {n} 个渠道", { n: channels.length }) : t("私有")}
             </span>
           </div>
         </aside>
@@ -1063,31 +1062,31 @@ function SiteConfig({
           onChange={onPick}
         />
           <div class="sc-sect-head">
-            <span>访问</span>
-            <span class="sc-side">仅你和已配对设备可打开</span>
+            <span>{t("访问")}</span>
+            <span class="sc-side">{t("仅你和已配对设备可打开")}</span>
           </div>
           <div class="acc-link">
             <span class="url">{urlShort}</span>
-            <button title="复制地址" onClick={() => copyText(url)}>
+            <button title={t("复制地址")} onClick={() => copyText(url)}>
               <Icon name="copy" cls="ico sm" />
             </button>
-            <button class="accent" title="访问站点" onClick={() => navigate({ kind: "site", name: site.name })}>
+            <button class="accent" title={t("访问站点")} onClick={() => navigate({ kind: "site", name: site.name })}>
               <Icon name="globe" cls="ico sm" />
             </button>
           </div>
 
           <div class="sc-sect-head">
-            <span>发布渠道</span>
+            <span>{t("发布渠道")}</span>
             <span class="sc-side">{channels.length || ""}</span>
           </div>
           {channels.length === 0 ? (
             <div class="muted" style={{ fontSize: 12, margin: "4px 0 20px" }}>
-              还没有发布 — 目前只有你（和已配对设备）能打开上面的预览地址。
+              {t("还没有发布 — 目前只有你（和已配对设备）能打开上面的预览地址。")}
               <button
                 class="linkbtn"
                 onClick={() => openShareModal({ kind: "site", ref: site.id, title: site.title ?? site.name })}
               >
-                发布与分享…
+                {t("发布与分享…")}
               </button>
             </div>
           ) : (
@@ -1097,7 +1096,7 @@ function SiteConfig({
                   <span class={"chan-badge" + (c.audience === "anyone" ? " anyone" : "")}>
                     {channelAudienceLabel(c)}
                   </span>
-                  <span class="chan-host">{channelHostingLabel(c)}托管</span>
+                  <span class="chan-host">{t("{host}托管", { host: channelHostingLabel(c) })}</span>
                   <span
                     class={
                       "chan-status" +
@@ -1114,13 +1113,13 @@ function SiteConfig({
                   >
                     {CHANNEL_STATUS_LABEL[c.status]}
                   </span>
-                  {c.hasPassword && <span class="chan-host" title="需要口令">🔒</span>}
+                  {c.hasPassword && <span class="chan-host" title={t("需要口令")}>🔒</span>}
                   <span class="chan-url" title={c.url ?? undefined}>
                     {c.url ?? "—"}
                   </span>
                   {c.url && (
                     <>
-                      <button title="复制地址" onClick={() => copyText(c.url!)}>
+                      <button title={t("复制地址")} onClick={() => copyText(c.url!)}>
                         <Icon name="copy" cls="ico sm" />
                       </button>
                       <a
@@ -1128,7 +1127,7 @@ function SiteConfig({
                         target="_blank"
                         rel="noreferrer"
                         style={{ display: "grid", placeItems: "center", width: 26, height: 26, color: "var(--muted)" }}
-                        title="打开"
+                        title={t("打开")}
                       >
                         <Icon name="globe" cls="ico sm" />
                       </a>
@@ -1140,25 +1139,25 @@ function SiteConfig({
           )}
 
           <div class="sc-sect-head">
-            <span>文件{files != null ? ` · ${files.length}` : ""}</span>
+            <span>{t("文件##tab")}{files != null ? ` · ${files.length}` : ""}</span>
             <span class="sc-acts">
               <button class="btn btn-ghost" onClick={() => fileInput.current?.click()}>
                 <Icon name="upload" cls="ico sm" />
-                上传文件
+                {t("上传文件")}
               </button>
               <button
                 class="btn btn-ghost"
-                title="上传整个目录（保留相对路径），也可以直接拖拽目录进来"
+                title={t("上传整个目录（保留相对路径），也可以直接拖拽目录进来")}
                 onClick={() => dirInput.current?.click()}
               >
                 <Icon name="upload" cls="ico sm" />
-                上传目录
+                {t("上传目录")}
               </button>
             </span>
           </div>
 
           {files == null ? (
-            <div class="skel-list" role="status" aria-busy="true" aria-label="正在加载">
+            <div class="skel-list" role="status" aria-busy="true" aria-label={t("正在加载")}>
               {Array.from({ length: 3 }, (_, i) => (
                 <div class="filerow skel" key={i} style={`--i:${i}`}>
                   <span class="fi skel-b" />
@@ -1169,11 +1168,11 @@ function SiteConfig({
           ) : files.length === 0 ? (
             <div class="site-empty" style={{ marginTop: 4 }}>
               <div class="ei">📁</div>
-              <div class="et">站点还没有文件</div>
-              <div class="ed">上传文件后即可通过站点地址访问。</div>
+              <div class="et">{t("站点还没有文件")}</div>
+              <div class="ed">{t("上传文件后即可通过站点地址访问。")}</div>
               <button class="btn btn-secondary" onClick={() => fileInput.current?.click()}>
                 <Icon name="upload" cls="ico sm" />
-                上传文件
+                {t("上传文件")}
               </button>
             </div>
           ) : (
@@ -1188,7 +1187,7 @@ function SiteConfig({
                     <Icon name={fileIcon(f)} cls="ico sm" />
                   </span>
                   <span class="fpath">{f.path}</span>
-                  <span class="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }} title="文件大小">
+                  <span class="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }} title={t("文件大小")}>
                     {fmtSize(f.size)}
                   </span>
                   <span class={"enc-badge" + (f.encoding === "blob" ? " blob" : "")}>
@@ -1196,7 +1195,7 @@ function SiteConfig({
                   </span>
                   <div class="facts">
                     <button
-                      title="预览"
+                      title={t("预览")}
                       onClick={(e) => {
                         e.stopPropagation();
                         openModal(<FilePreviewModal site={site} file={f} />);
@@ -1205,7 +1204,7 @@ function SiteConfig({
                       <Icon name="eye" cls="ico sm" />
                     </button>
                     <button
-                      title="复制路径"
+                      title={t("复制路径")}
                       onClick={(e) => {
                         e.stopPropagation();
                         copyText("/sites/" + site.name + "/" + f.path);
@@ -1215,7 +1214,7 @@ function SiteConfig({
                     </button>
                     <button
                       class="del"
-                      title="删除"
+                      title={t("删除")}
                       onClick={(e) => {
                         e.stopPropagation();
                         removeFile(f);
@@ -1247,7 +1246,7 @@ function FilePreviewModal({ site, file }: { site: Site; file: SiteFile }) {
     fetch(url)
       .then((r) => r.text())
       .then(setText)
-      .catch(() => setText("（无法加载内容）"));
+      .catch(() => setText(t("（无法加载内容）")));
   }, [url]);
 
   return (
@@ -1258,10 +1257,10 @@ function FilePreviewModal({ site, file }: { site: Site; file: SiteFile }) {
       footer={
         <>
           <button class="btn btn-secondary" onClick={() => copyText(url)}>
-            复制路径
+            {t("复制路径")}
           </button>
           <button class="btn btn-primary" onClick={closeModal}>
-            关闭
+            {t("关闭")}
           </button>
         </>
       }
@@ -1295,7 +1294,7 @@ function FilePreviewModal({ site, file }: { site: Site; file: SiteFile }) {
       ) : (
         <div class="preview-bin">
           <div class="pi">📦</div>
-          <div class="pt">二进制文件 · 在新标签打开查看</div>
+          <div class="pt">{t("二进制文件 · 在新标签打开查看")}</div>
         </div>
       )}
     </Modal>

@@ -9,6 +9,7 @@
 // In edit mode the annotator owns the single toolbar row (filename · tools ·
 // colors · undo/redo · cancel/save · close) — the viewer's own toolbar is not
 // rendered, so the chrome never stacks two rows.
+import { t } from "../i18n/t.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../icons.tsx";
 
@@ -30,9 +31,9 @@ const LINE_H = 1.3; // text line-height factor (canvas and overlay input agree)
 const TEXT_FONT = (px: number) => `600 ${px}px system-ui, -apple-system, sans-serif`;
 
 const TOOLS: { id: Tool; icon: string; label: string }[] = [
-  { id: "rect", icon: "annotRect", label: "矩形框选" },
-  { id: "arrow", icon: "annotArrow", label: "箭头" },
-  { id: "text", icon: "annotText", label: "文字" },
+  { id: "rect", icon: "annotRect", label: t("矩形框选") },
+  { id: "arrow", icon: "annotArrow", label: t("箭头") },
+  { id: "text", icon: "annotText", label: t("文字") },
 ];
 
 function drawShape(ctx: CanvasRenderingContext2D, s: Shape, scale: number) {
@@ -324,14 +325,14 @@ export function ImageAnnotator({
         {name && <span class="lightbox-name" title={name}>{name}</span>}
         <span class="lightbox-spacer" />
         <div class="annot-seg" role="group">
-          {TOOLS.map((t) => (
+          {TOOLS.map((tl) => (
             <button
-              key={t.id}
-              class={"annot-seg-btn" + (tool === t.id ? " on" : "")}
-              title={t.label}
-              onClick={() => setTool(t.id)}
+              key={tl.id}
+              class={"annot-seg-btn" + (tool === tl.id ? " on" : "")}
+              title={tl.label}
+              onClick={() => setTool(tl.id)}
             >
-              <Icon name={t.icon} />
+              <Icon name={tl.icon} />
             </button>
           ))}
         </div>
@@ -349,13 +350,13 @@ export function ImageAnnotator({
           ))}
         </div>
         <span class="annot-div" />
-        <button class="annot-icon-btn" title="撤销 (⌘Z)" disabled={!shapes.length || !!textEdit} onClick={undo}><Icon name="undo" /></button>
-        <button class="annot-icon-btn" title="重做 (⇧⌘Z)" disabled={!redoStack.length || !!textEdit} onClick={redo}><Icon name="redo" /></button>
+        <button class="annot-icon-btn" title={t("撤销 (⌘Z)")} disabled={!shapes.length || !!textEdit} onClick={undo}><Icon name="undo" /></button>
+        <button class="annot-icon-btn" title={t("重做 (⇧⌘Z)")} disabled={!redoStack.length || !!textEdit} onClick={redo}><Icon name="redo" /></button>
         <div class="annot-actions">
-          <button class="btn btn-secondary" onClick={onCancel}>取消</button>
-          <button class="btn btn-primary" disabled={busy} onClick={save}>{busy ? "保存中…" : "保存"}</button>
+          <button class="btn btn-secondary" onClick={onCancel}>{t("取消")}</button>
+          <button class="btn btn-primary" disabled={busy} onClick={save}>{busy ? t("保存中…") : t("保存")}</button>
         </div>
-        {onClose && <button title="关闭" onClick={onClose}><Icon name="x" /></button>}
+        {onClose && <button title={t("关闭")} onClick={onClose}><Icon name="x" /></button>}
       </div>
       <div class="annot-stage">
         <div class="annot-img-wrap">

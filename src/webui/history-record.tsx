@@ -12,6 +12,8 @@ import {
 import { Icon } from "./icons.tsx";
 import { SkelLines } from "./skeleton.tsx";
 import { timeAgo } from "./date.ts";
+import { t } from "./i18n/t.ts";
+import { fmtDate } from "./i18n/fmt.ts";
 import {
   closeModal,
   confirmDialog,
@@ -49,26 +51,26 @@ function FieldHistoryModal({
   }, [recId, propId]);
   return (
     <Modal
-      title={`「${propName}」字段历史`}
-      sub="该单元格的每一次写入，最新在前。"
+      title={t("「{name}」字段历史", { name: propName })}
+      sub={t("该单元格的每一次写入，最新在前。")}
       width={460}
       footer={
         <button class="btn btn-secondary" onClick={closeModal}>
-          关闭
+          {t("关闭")}
         </button>
       }
     >
       <div class="hist-fh">
         {entries === null && <SkelLines n={4} cls="pad" />}
-        {entries !== null && entries.length === 0 && <div class="muted pad">暂无写入记录。</div>}
+        {entries !== null && entries.length === 0 && <div class="muted pad">{t("暂无写入记录。")}</div>}
         {(entries ?? []).map((e) => (
           <div key={e.version} class="hist-fh-row">
-            <span class="when" title={new Date(e.at).toLocaleString()}>
+            <span class="when" title={fmtDate(e.at, "dateTime")}>
               {timeAgo(e.at)}
             </span>
             <span class="who">{nodeName(e.node_id)}</span>
             <span class={"val" + (e.cleared ? " cleared" : "")} title={fmtVal(e.value)}>
-              {e.cleared ? "（清空）" : fmtVal(e.value)}
+              {e.cleared ? t("（清空）") : fmtVal(e.value)}
             </span>
           </div>
         ))}
@@ -85,9 +87,9 @@ export function openFieldHistory(recId: string, propId: string, propName: string
 
 /** Status word for an activity entry; plain edits let the value diffs speak. */
 function activityStatus(e: DatabaseActivityEntry): string {
-  if (e.deleted) return "已删除";
-  if (e.created) return "创建";
-  if (e.moved && !e.diffs.length) return "调整排序";
+  if (e.deleted) return t("已删除");
+  if (e.created) return t("创建");
+  if (e.moved && !e.diffs.length) return t("调整排序");
   return "";
 }
 
@@ -151,12 +153,12 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
           </button>
           <span class="hist-title">
             <Icon name="history" cls="ico sm" />
-            最近动态
+            {t("最近动态")}
           </span>
           <div style={{ flex: 1 }} />
           <label class="hist-toggle">
             <input type="checkbox" checked={showAll} onInput={() => setShowAll(!showAll)} />
-            显示修复
+            {t("显示修复")}
           </label>
         </div>
         <div class="hist-filters">
@@ -164,7 +166,7 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
             value={filterRec ?? ""}
             onChange={(e) => setFilterRec((e.target as HTMLSelectElement).value || null)}
           >
-            <option value="">全部记录</option>
+            <option value="">{t("全部记录")}</option>
             {recOptions.map(([id, title]) => (
               <option key={id} value={id}>
                 {title}
@@ -175,7 +177,7 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
             value={filterNode ?? ""}
             onChange={(e) => setFilterNode((e.target as HTMLSelectElement).value || null)}
           >
-            <option value="">全部设备</option>
+            <option value="">{t("全部设备")}</option>
             {nodeOptions.map((id) => (
               <option key={id} value={id}>
                 {nodeName(id)}
@@ -190,13 +192,13 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
                 setFilterNode(null);
               }}
             >
-              清除筛选
+              {t("清除筛选")}
             </button>
           )}
         </div>
         <div class="peek-body hist-feed">
           {entries === null && <SkelLines n={4} cls="pad" />}
-          {entries !== null && visible.length === 0 && <div class="muted pad">暂无动态。</div>}
+          {entries !== null && visible.length === 0 && <div class="muted pad">{t("暂无动态。")}</div>}
           {visible.map((e) => {
             const key = e.record_id + e.version;
             const all = expanded.has(key);
@@ -205,13 +207,13 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
             return (
               <div key={key} class="hist-item static">
                 <div class="row1">
-                  <span class="when" title={new Date(e.at).toLocaleString()}>
+                  <span class="when" title={fmtDate(e.at, "dateTime")}>
                     {timeAgo(e.at)}
                   </span>
                   <KindBadge kind={e.kind} />
                   <button
                     class="hist-recname"
-                    title="只看这条记录"
+                    title={t("只看这条记录")}
                     onClick={() => setFilterRec(e.record_id)}
                   >
                     {e.record_title || e.record_id}
@@ -225,7 +227,7 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
                   <div class="hist-fields">
                     {diffs.map((d) => (
                       <div key={d.prop} class="hist-field">
-                        <span class="fname">{names.get(d.prop) ?? "（已删字段）"}</span>
+                        <span class="fname">{names.get(d.prop) ?? t("（已删字段）")}</span>
                         {!e.created && (
                           <span class="old" title={fmtVal(d.before)}>
                             {fmtVal(d.before)}
@@ -242,7 +244,7 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
                         class="hist-more"
                         onClick={() => setExpanded(new Set(expanded).add(key))}
                       >
-                        …还有 {e.diffs.length - ACTIVITY_DIFF_PREVIEW} 项
+                        {t("…还有 {n} 项", { n: e.diffs.length - ACTIVITY_DIFF_PREVIEW })}
                       </button>
                     )}
                   </div>
@@ -260,12 +262,12 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
 
 function recSummary(r: RecordRevision, names: Map<string, string>): string {
   const parts: string[] = [];
-  if (r.created) parts.push("创建");
-  if (r.deleted) parts.push("删除");
+  if (r.created) parts.push(t("创建"));
+  if (r.deleted) parts.push(t("删除"));
   if (r.fields.length)
-    parts.push(r.fields.map((f) => names.get(f) ?? "（已删字段）").join("、"));
-  if (r.moved && !parts.length) parts.push("排序");
-  return parts.join("；") || "元数据";
+    parts.push(r.fields.map((f) => names.get(f) ?? t("（已删字段）")).join(t("、")));
+  if (r.moved && !parts.length) parts.push(t("排序"));
+  return parts.join(t("；")) || t("元数据");
 }
 
 export function RecordHistoryView({
@@ -312,14 +314,14 @@ export function RecordHistoryView({
 
   const restore = async (r: RecordRevision) => {
     const ok = await confirmDialog({
-      title: "恢复到此版本？",
-      message: "记录字段将恢复到该修订时的值。此操作会作为一次新修订记录。",
-      confirmLabel: "恢复",
+      title: t("恢复到此版本？"),
+      message: t("记录字段将恢复到该修订时的值。此操作会作为一次新修订记录。"),
+      confirmLabel: t("恢复"),
     });
     if (!ok) return;
     try {
       await api.revertRecord(rec.id, r.version);
-      toast("已恢复");
+      toast(t("已恢复"));
       states.current.clear();
       onReverted();
       await load();
@@ -335,15 +337,15 @@ export function RecordHistoryView({
       <div class="hist-rec-head">
         <span class="hist-title">
           <Icon name="history" cls="ico sm" />
-          修改历史
+          {t("修改历史")}
         </span>
         <label class="hist-toggle">
           <input type="checkbox" checked={showAll} onInput={() => setShowAll(!showAll)} />
-          显示修复
+          {t("显示修复")}
         </label>
       </div>
       {revs === null && <SkelLines n={4} cls="pad" />}
-      {revs !== null && visible.length === 0 && <div class="muted pad">暂无历史。</div>}
+      {revs !== null && visible.length === 0 && <div class="muted pad">{t("暂无历史。")}</div>}
       {visible.map((r, i) => {
         const prev = visible[i + 1];
         const curState = states.current.get(r.version);
@@ -352,11 +354,11 @@ export function RecordHistoryView({
         return (
           <div key={r.version} class="hist-item static">
             <div class="row1" onClick={() => expand(r, prev)}>
-              <span class="when" title={new Date(r.at).toLocaleString()}>
+              <span class="when" title={fmtDate(r.at, "dateTime")}>
                 {timeAgo(r.at)}
               </span>
               <KindBadge kind={r.kind} />
-              {i === 0 && <span class="hist-now">当前</span>}
+              {i === 0 && <span class="hist-now">{t("当前")}</span>}
               <div style={{ flex: 1 }} />
               <Icon name={expanded === r.version ? "chevronDown" : "chevron"} cls="ico sm" />
             </div>
@@ -375,10 +377,10 @@ export function RecordHistoryView({
                       <div key={f} class="hist-field">
                         <button
                           class="fname link"
-                          title="查看此字段完整历史"
-                          onClick={() => openFieldHistory(rec.id, f, names.get(f) ?? "（已删字段）")}
+                          title={t("查看此字段完整历史")}
+                          onClick={() => openFieldHistory(rec.id, f, names.get(f) ?? t("（已删字段）"))}
                         >
-                          {names.get(f) ?? "（已删字段）"}
+                          {names.get(f) ?? t("（已删字段）")}
                         </button>
                         {prev && <span class="old">{fmtVal(before)}</span>}
                         {prev && <span class="arr">→</span>}
@@ -388,7 +390,7 @@ export function RecordHistoryView({
                   })}
                 {curState && i !== 0 && (
                   <button class="btn btn-secondary hist-restore" onClick={() => restore(r)}>
-                    恢复到此版本
+                    {t("恢复到此版本")}
                   </button>
                 )}
               </div>

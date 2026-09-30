@@ -1,4 +1,5 @@
 import { imeGhost } from "./keys.ts";
+import { t } from "./i18n/t.ts";
 
 export const IS_MAC =
   typeof navigator !== "undefined" &&
@@ -27,36 +28,36 @@ export interface Shortcut {
 }
 
 export const SHORTCUT_GROUPS: { key: ShortcutGroup; label: string }[] = [
-  { key: "nav", label: "导航" },
-  { key: "create", label: "新建" },
-  { key: "editor", label: "编辑器" },
-  { key: "quicknote", label: "快速笔记" },
+  { key: "nav", label: t("导航") },
+  { key: "create", label: t("新建") },
+  { key: "editor", label: t("编辑器") },
+  { key: "quicknote", label: t("快速笔记") },
 ];
 
 export const SHORTCUTS: Shortcut[] = [
-  { id: "back", label: "后退", group: "nav", keys: { mac: { mod: true, key: "[" }, other: { alt: true, key: "ArrowLeft" } } },
-  { id: "forward", label: "前进", group: "nav", keys: { mac: { mod: true, key: "]" }, other: { alt: true, key: "ArrowRight" } } },
-  { id: "search", label: "搜索", group: "nav", keys: { mod: true, key: "k" } },
-  { id: "palette", label: "命令面板", group: "nav", keys: { mod: true, shift: true, key: "p" } },
-  { id: "sidebar", label: "折叠 / 展开侧栏", group: "nav", keys: { mod: true, key: "\\" } },
-  { id: "tabDocs", label: "侧栏：文档", group: "nav", keys: { mod: true, key: "1" }, desktopOnly: true },
-  { id: "tabDb", label: "侧栏：数据表", group: "nav", keys: { mod: true, key: "2" }, desktopOnly: true },
-  { id: "tabSites", label: "侧栏：站点", group: "nav", keys: { mod: true, key: "3" }, desktopOnly: true },
-  { id: "settings", label: "打开设置", group: "nav", keys: { mod: true, key: "," } },
-  { id: "closeMenu", label: "关闭菜单 / 弹窗", group: "nav", keys: { key: "Escape" } },
-  { id: "newDoc", label: "新建文档", group: "create", keys: { mod: true, key: "n" }, desktopOnly: true },
-  { id: "newDb", label: "新建数据库", group: "create", keys: { mod: true, shift: true, key: "n" }, desktopOnly: true },
-  { id: "save", label: "保存到同步桶", group: "editor", keys: { mod: true, key: "s" } },
-  { id: "toggleSource", label: "块 / 代码方式切换", group: "editor", keys: { mod: true, key: "/" } },
-  { id: "find", label: "文内查找", group: "editor", keys: { mod: true, key: "f" } },
-  { id: "duplicateBlock", label: "复制当前块", group: "editor", keys: { mod: true, key: "d" } },
-  { id: "indent", label: "列表缩进", group: "editor", keys: { key: "Tab" } },
-  { id: "outdent", label: "列表反缩进", group: "editor", keys: { shift: true, key: "Tab" } },
-  { id: "qnNew", label: "新建笔记", group: "quicknote", keys: { mod: true, key: "n" }, desktopOnly: true },
-  { id: "qnPrev", label: "上一条笔记", group: "quicknote", keys: { mod: true, key: "[" }, desktopOnly: true },
-  { id: "qnNext", label: "下一条笔记", group: "quicknote", keys: { mod: true, key: "]" }, desktopOnly: true },
-  { id: "qnOpenMain", label: "在主窗口中打开", group: "quicknote", keys: { mod: true, shift: true, key: "o" }, desktopOnly: true },
-  { id: "qnHide", label: "隐藏小窗", group: "quicknote", keys: { key: "Escape" }, desktopOnly: true },
+  { id: "back", label: t("后退"), group: "nav", keys: { mac: { mod: true, key: "[" }, other: { alt: true, key: "ArrowLeft" } } },
+  { id: "forward", label: t("前进"), group: "nav", keys: { mac: { mod: true, key: "]" }, other: { alt: true, key: "ArrowRight" } } },
+  { id: "search", label: t("搜索"), group: "nav", keys: { mod: true, key: "k" } },
+  { id: "palette", label: t("命令面板"), group: "nav", keys: { mod: true, shift: true, key: "p" } },
+  { id: "sidebar", label: t("折叠 / 展开侧栏"), group: "nav", keys: { mod: true, key: "\\" } },
+  { id: "tabDocs", label: t("侧栏：文档"), group: "nav", keys: { mod: true, key: "1" }, desktopOnly: true },
+  { id: "tabDb", label: t("侧栏：数据表"), group: "nav", keys: { mod: true, key: "2" }, desktopOnly: true },
+  { id: "tabSites", label: t("侧栏：站点"), group: "nav", keys: { mod: true, key: "3" }, desktopOnly: true },
+  { id: "settings", label: t("打开设置"), group: "nav", keys: { mod: true, key: "," } },
+  { id: "closeMenu", label: t("关闭菜单 / 弹窗"), group: "nav", keys: { key: "Escape" } },
+  { id: "newDoc", label: t("新建文档"), group: "create", keys: { mod: true, key: "n" }, desktopOnly: true },
+  { id: "newDb", label: t("新建数据库"), group: "create", keys: { mod: true, shift: true, key: "n" }, desktopOnly: true },
+  { id: "save", label: t("保存到同步桶"), group: "editor", keys: { mod: true, key: "s" } },
+  { id: "toggleSource", label: t("块 / 代码方式切换"), group: "editor", keys: { mod: true, key: "/" } },
+  { id: "find", label: t("文内查找"), group: "editor", keys: { mod: true, key: "f" } },
+  { id: "duplicateBlock", label: t("复制当前块"), group: "editor", keys: { mod: true, key: "d" } },
+  { id: "indent", label: t("列表缩进"), group: "editor", keys: { key: "Tab" } },
+  { id: "outdent", label: t("列表反缩进"), group: "editor", keys: { shift: true, key: "Tab" } },
+  { id: "qnNew", label: t("新建笔记"), group: "quicknote", keys: { mod: true, key: "n" }, desktopOnly: true },
+  { id: "qnPrev", label: t("上一条笔记"), group: "quicknote", keys: { mod: true, key: "[" }, desktopOnly: true },
+  { id: "qnNext", label: t("下一条笔记"), group: "quicknote", keys: { mod: true, key: "]" }, desktopOnly: true },
+  { id: "qnOpenMain", label: t("在主窗口中打开"), group: "quicknote", keys: { mod: true, shift: true, key: "o" }, desktopOnly: true },
+  { id: "qnHide", label: t("隐藏小窗"), group: "quicknote", keys: { key: "Escape" }, desktopOnly: true },
 ];
 
 const BY_ID = new Map(SHORTCUTS.map((s) => [s.id, s]));

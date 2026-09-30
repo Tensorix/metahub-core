@@ -24,6 +24,8 @@ import {
 } from "../../core/node.ts";
 import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
+import { t } from "../i18n/t.ts";
+import { setLocaleOverride, type Locale } from "../i18n/locale.ts";
 import { changesAfterSeq } from "../../core/crdt.ts";
 import { referencedHashes, setBlobBytesResolver } from "../../core/blobs-core.ts";
 import { syncWithPeer } from "../../core/sync/client.ts";
@@ -215,7 +217,7 @@ function setStatus(patch: Partial<ReplicaStatus>): void {
  *  an op arriving during the brief window inside `reset` (wipe → re-open) or
  *  before boot finished. Beats a raw `db!` null-deref. */
 function requireDb(): DbDriver {
-  if (!db) throw new MhError("network", "本地副本未就绪");
+  if (!db) throw new MhError("network", t("本地副本未就绪"));
   return db;
 }
 
@@ -583,8 +585,8 @@ async function runSync(force = false): Promise<SyncOutcome> {
     if (touched.length || pushed) {
       post({
         event: "synced",
-        datasets: [...new Set(touched.map((t) => t.dataset))],
-        rowIds: touched.map((t) => t.row_id),
+        datasets: [...new Set(touched.map((x) => x.dataset))],
+        rowIds: touched.map((x) => x.row_id),
         pushed,
         pulled,
       });
@@ -694,6 +696,10 @@ type Op = (...args: any[]) => unknown;
  *  not_found errors and document version tokens) so the local-api facade is a
  *  drop-in for the HTTP client. */
 const ops: Record<string, Op> = {
+  applyLocale: (l: Locale) => {
+    setLocaleOverride(l);
+    return { ok: true };
+  },
   // lifecycle
   status: () => status,
   pair: (code: string) => pair(code),
@@ -847,7 +853,7 @@ const ops: Record<string, Op> = {
   disconnectEdge: () => {
     const d = requireDb();
     if (listPeers(d).some((p) => p.kind === "room"))
-      throw new MhError("conflict", "请先撤销所有 Edge Room 再断开");
+      throw new MhError("conflict", t("请先撤销所有 Edge Room 再断开"));
     setEdgeConfig(d, null);
     return { ok: true };
   },
@@ -893,11 +899,11 @@ const ops: Record<string, Op> = {
   }) => {
     const d = requireDb();
     if (req.kind !== "site" || req.hosting !== "room")
-      throw new MhError("invalid_input", "此设备不驻留在线托管，目前仅支持通过 Edge 发布站点");
+      throw new MhError("invalid_input", t("此设备不驻留在线托管，目前仅支持通过 Edge 发布站点"));
     const edge = getEdgeConfig(d);
-    if (!edge) throw new MhError("invalid_input", "请先连接 Edge");
+    if (!edge) throw new MhError("invalid_input", t("请先连接 Edge"));
     if (!edgeCapabilities(edge).includes("room"))
-      throw new MhError("conflict", "当前 Edge 仅支持 inbox，不支持 Room 托管");
+      throw new MhError("conflict", t("当前 Edge 仅支持 inbox，不支持 Room 托管"));
     const site = resolveSite(d, req.ref);
     const hashed = req.password ? await hashSharePassword(req.password) : null;
     const share = createShare(d, {
@@ -1147,7 +1153,7 @@ const ops: Record<string, Op> = {
     if (b.visibility === "public")
       throw new MhError(
         "invalid_input",
-        "此浏览器通过同步存储桶交换数据、不驻留在线；请在在线主节点管理公开发布",
+        t("此浏览器通过同步存储桶交换数据、不驻留在线；请在在线主节点管理公开发布"),
       );
     return {
       ...createSite(db!, b),
@@ -1161,7 +1167,7 @@ const ops: Record<string, Op> = {
     if (b.visibility === "public")
       throw new MhError(
         "invalid_input",
-        "此浏览器通过同步存储桶交换数据、不驻留在线；请在在线主节点管理公开发布",
+        t("此浏览器通过同步存储桶交换数据、不驻留在线；请在在线主节点管理公开发布"),
       );
     // Validation and channel side effects commit or roll back together — a
     // failed rename must not leave a replicated revocation behind.

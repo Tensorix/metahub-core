@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api.ts";
 import { CmDocBody, type CmHandle } from "../cm6/CmDocBody.tsx";
 import { UiHost, toast } from "../ui.tsx";
+import { t } from "../i18n/t.ts";
 
 function parseHash(): { path: string } {
   const h = typeof location !== "undefined" ? location.hash : "";
@@ -42,7 +43,7 @@ export function FileEditorWindow() {
 
   const save = async (): Promise<{ ok: boolean; error?: string }> => {
     const h = handleRef.current;
-    if (!h || !fs) return { ok: false, error: "编辑器尚未就绪" };
+    if (!h || !fs) return { ok: false, error: t("编辑器尚未就绪") };
     try {
       await fs.write(path, h.getDoc());
       setDirty(false);
@@ -65,7 +66,7 @@ export function FileEditorWindow() {
       return;
     }
     if (!fs || !path) {
-      setError(fs ? "缺少文件路径" : "文件编辑窗口仅在桌面应用内可用");
+      setError(fs ? t("缺少文件路径") : t("文件编辑窗口仅在桌面应用内可用"));
       return;
     }
     fs.read(path)
@@ -129,7 +130,7 @@ export function FileEditorWindow() {
       const doc = await api.createDocument({ title: stripExt(name), body: h.getDoc() });
       setImportedId(doc.id);
       setImportedFresh(true);
-      toast("已导入到 MetaHub");
+      toast(t("已导入到 MetaHub"));
     } catch (e) {
       setError(String((e as Error).message));
     } finally {
@@ -163,11 +164,11 @@ export function FileEditorWindow() {
         </span>
         <div class="fw-actions">
           <button class="btn btn-ghost" onClick={toggleSource}>
-            {source ? "预览模式" : "源码模式"}
+            {source ? t("预览模式") : t("源码模式")}
           </button>
           {importedId && (
             <button class="btn btn-secondary" onClick={openInMain}>
-              在 MetaHub 中打开
+              {t("在 MetaHub 中打开")}
             </button>
           )}
           <button
@@ -175,14 +176,14 @@ export function FileEditorWindow() {
             disabled={importing || importedFresh || text === null}
             onClick={() => void doImport()}
           >
-            {importedFresh ? "已导入 ✓" : importing ? "导入中…" : "导入到 MetaHub"}
+            {importedFresh ? t("已导入 ✓") : importing ? t("导入中…") : t("导入到 MetaHub")}
           </button>
         </div>
       </div>
 
       {error && (
         <div class="error-bar" onClick={() => setError("")}>
-          ⚠ {error}（点击关闭）
+          ⚠ {t("{error}（点击关闭）", { error })}
         </div>
       )}
 
@@ -201,7 +202,7 @@ export function FileEditorWindow() {
         ) : (
           !error && (
             <div class="empty">
-              <div>加载中…</div>
+              <div>{t("加载中…")}</div>
             </div>
           )
         )}

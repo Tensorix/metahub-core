@@ -11,6 +11,7 @@
 // nav keys with a CAPTURE-phase keydown listener on view.dom, which preempts the
 // Prec.highest structure keymap while the menu is open.
 
+import { t } from "../../i18n/t.ts";
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
@@ -82,7 +83,7 @@ function blockInsertion(type: BlockType, from: number): { insert: string | null;
     case "quote": return marker("> ");
     case "divider": return { insert: "---\n", caret: from + 4 };
     case "code": return { insert: "```\n\n```", caret: from + 4 };
-    case "table": return { insert: "| 列1 | 列2 |\n| --- | --- |\n|  |  |", caret: from };
+    case "table": return { insert: `| ${t("列1")} | ${t("列2")} |\n| --- | --- |\n|  |  |`, caret: from };
     case "html": return { insert: "```mh-html\n\n```", caret: from + 11 };
     default: return { insert: null, caret: from }; // image / video / audio / file
   }
@@ -245,7 +246,7 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
         el.style.bottom = below ? "" : `${innerHeight - coords.top + GAP}px`;
         render(
           <>
-            <MenuLabel>基础块</MenuLabel>
+            <MenuLabel>{t("基础块")}</MenuLabel>
             {matches.map((m, i) => (
               <button
                 key={m.type}

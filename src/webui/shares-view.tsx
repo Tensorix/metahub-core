@@ -15,6 +15,7 @@ import { useSkeletonRows } from "./skeleton.tsx";
 import { toast, openMenu, MenuItem, MenuSep, MenuLabel, confirmDialog } from "./ui.tsx";
 import { useShareActions, SHARES_CHANGED, notifySharesChanged, openShareModal, shareTargetOf } from "./share-modal.tsx";
 import type { Navigate } from "./view.ts";
+import { t } from "./i18n/t.ts";
 import {
   EMPTY_FILTER,
   SOURCE_KINDS,
@@ -42,7 +43,7 @@ const KIND_ICON: Record<string, string> = { doc: "file", database: "database", s
  *  Only the content is swapped for sheen blocks. */
 function ShareListSkeleton({ rows }: { rows: number }) {
   return (
-    <ul class="shv-list skel-list" role="status" aria-live="polite" aria-busy="true" aria-label="正在加载分享列表">
+    <ul class="shv-list skel-list" role="status" aria-live="polite" aria-busy="true" aria-label={t("正在加载分享列表")}>
       {Array.from({ length: rows }, (_, i) => (
         <li class="shv-row skel" key={i} style={`--i:${Math.min(i, 4)}`}>
           <span class="shv-ico skel-b" />
@@ -57,7 +58,7 @@ function ShareListSkeleton({ rows }: { rows: number }) {
     </ul>
   );
 }
-const OPEN_OBJECT_LABEL: Record<string, string> = { doc: "打开原文档", database: "打开原表格", site: "打开站点配置" };
+const OPEN_OBJECT_LABEL: Record<string, string> = { doc: t("打开原文档"), database: t("打开原表格"), site: t("打开站点配置") };
 
 export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
   const [shares, setShares] = useState<ShareListItem[] | null>(null);
@@ -81,7 +82,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
       })
       .catch((e) => {
         setLoadErr(String(e.message ?? e));
-        if (shares != null) toast(`加载失败：${e.message}`);
+        if (shares != null) toast(t("加载失败：{msg}", { msg: e.message }));
       });
   };
 
@@ -113,9 +114,9 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
   };
 
   const recreate = (s: ShareListItem) => {
-    const t = shareTargetOf(s);
-    if (!t) return toast("这类对象无法在这里重新分享");
-    openShareModal(t);
+    const tgt = shareTargetOf(s);
+    if (!tgt) return toast(t("这类对象无法在这里重新分享"));
+    openShareModal(tgt);
   };
 
   const withBusy = async (s: ShareListItem, fn: () => Promise<unknown> | void) => {
@@ -152,7 +153,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
         {openable && (
           <MenuItem
             icon="externalLink"
-            label="打开链接"
+            label={t("打开链接")}
             onClick={() => {
               close();
               window.open(s.url, "_blank", "noreferrer");
@@ -161,7 +162,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
         )}
         <MenuItem
           icon={KIND_ICON[s.kind] ?? "file"}
-          label={OPEN_OBJECT_LABEL[s.kind] ?? "打开原对象"}
+          label={OPEN_OBJECT_LABEL[s.kind] ?? t("打开原对象")}
           onClick={() => {
             close();
             openObject(s);
@@ -172,8 +173,8 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
             <MenuSep />
             <MenuItem
               icon="link"
-              label="续期（仅链接）"
-              sublabel="内容不变，重新生成访问链接"
+              label={t("续期（仅链接）")}
+              sublabel={t("内容不变，重新生成访问链接")}
               onClick={() => {
                 close();
                 void withBusy(s, () => renew(s));
@@ -181,8 +182,8 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
             />
             <MenuItem
               icon="upload"
-              label="更新快照并续期"
-              sublabel="用当前最新内容覆盖接收者看到的版本"
+              label={t("更新快照并续期")}
+              sublabel={t("用当前最新内容覆盖接收者看到的版本")}
               onClick={() => {
                 close();
                 void withBusy(s, () => refreshExport(s));
@@ -193,7 +194,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
         <MenuSep />
         <MenuItem
           icon="trash"
-          label={st.state === "cleanup_pending" ? "重试撤销" : "撤销"}
+          label={st.state === "cleanup_pending" ? t("重试撤销") : t("撤销")}
           danger
           onClick={() => {
             close();
@@ -211,9 +212,9 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
       { rect },
       (close) => (
         <>
-          <MenuLabel>来源</MenuLabel>
+          <MenuLabel>{t("来源")}</MenuLabel>
           <MenuItem
-            label="全部来源"
+            label={t("全部来源")}
             checked={filter.source === "all"}
             onClick={() => {
               close();
@@ -224,7 +225,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
             <MenuItem
               key={k}
               label={SOURCE_KIND_LABEL[k]}
-              sublabel={`${sourceCounts[k]} 个分享`}
+              sublabel={t("{n} 个分享", { n: sourceCounts[k] ?? 0 })}
               checked={filter.source === k}
               onClick={() => {
                 close();
@@ -240,9 +241,9 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
 
   const clearExpired = async (rows: ShareListItem[]) => {
     const ok = await confirmDialog({
-      title: `清理 ${rows.length} 个已过期分享？`,
-      message: "记录将被删除。设备与 Edge 分享如需再次公开，可以重新分享。",
-      confirmLabel: "清理",
+      title: t("清理 {n} 个已过期分享？", { n: rows.length }),
+      message: t("记录将被删除。设备与 Edge 分享如需再次公开，可以重新分享。"),
+      confirmLabel: t("清理"),
       danger: true,
     });
     if (!ok) return;
@@ -258,7 +259,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
       }
     }
     setClearing(false);
-    toast(firstErr ? `已清理 ${done} 个，${rows.length - done} 个失败：${firstErr}` : `已清理 ${done} 个分享`);
+    toast(firstErr ? t("已清理 {done} 个，{fail} 个失败：{err}", { done, fail: rows.length - done, err: firstErr }) : t("已清理 {n} 个分享", { n: done }));
     notifySharesChanged();
     reload();
   };
@@ -275,19 +276,19 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
           <Icon name={KIND_ICON[s.kind] ?? "file"} />
         </span>
         <div class="shv-main">
-          <button class="shv-title" onClick={() => openObject(s)} title={OPEN_OBJECT_LABEL[s.kind] ?? "打开原对象"}>
+          <button class="shv-title" onClick={() => openObject(s)} title={OPEN_OBJECT_LABEL[s.kind] ?? t("打开原对象")}>
             {s.title}
           </button>
           <div class="shv-sub">
             {s3 ? (
-              <span class="shv-snap" title="存储桶分享是一份快照；链接需续签后生成">
-                {s.contentUpdatedAt ? fmtSnapshot(s.contentUpdatedAt, now) : "快照链接"}
+              <span class="shv-snap" title={t("存储桶分享是一份快照；链接需续签后生成")}>
+                {s.contentUpdatedAt ? fmtSnapshot(s.contentUpdatedAt, now) : t("快照链接")}
               </span>
             ) : s.url ? (
               <button
                 class="shv-link"
                 disabled={expiredRow || isBusy}
-                title={expiredRow ? "链接已过期" : `${s.url}\n点击复制`}
+                title={expiredRow ? t("链接已过期") : `${s.url}\n${t("点击复制")}`}
                 onClick={() => withBusy(s, () => copyShare(s))}
               >
                 <span class="shv-link-text">{displayUrl(s.url)}</span>
@@ -303,13 +304,13 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
             {s.permission === "edit" && (
               <>
                 <span class="shv-sep">·</span>
-                <span class="shv-perm edit">可编辑</span>
+                <span class="shv-perm edit">{t("可编辑")}</span>
               </>
             )}
             {s.hasPassword && (
               <>
                 <span class="shv-sep">·</span>
-                <span class="shv-lock" title="口令保护"><Icon name="lock" cls="ico" /></span>
+                <span class="shv-lock" title={t("口令保护")}><Icon name="lock" cls="ico" /></span>
               </>
             )}
           </div>
@@ -324,9 +325,9 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
             disabled={pa.disabled || isBusy}
             onClick={() => void runPrimary(s, pa)}
           >
-            {isBusy ? "处理中…" : pa.label}
+            {isBusy ? t("处理中…") : pa.label}
           </button>
-          <button class="iconbtn" title="更多" onClick={(e) => openRowMenu(e as unknown as MouseEvent, s, st)}>
+          <button class="iconbtn" title={t("更多")} onClick={(e) => openRowMenu(e as unknown as MouseEvent, s, st)}>
             <Icon name="dots" />
           </button>
         </div>
@@ -338,15 +339,15 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
     <div class="db shares-page">
       <div class="db-head">
         <div>
-          <div class="db-title">分享</div>
-          <div class="db-desc">所有对外公开的链接都在这里：谁能看、看到哪个版本、还能看多久。</div>
+          <div class="db-title">{t("分享")}</div>
+          <div class="db-desc">{t("所有对外公开的链接都在这里：谁能看、看到哪个版本、还能看多久。")}</div>
         </div>
       </div>
       <div class="shv-toolbar">
         <div class="shv-search">
           <Icon name="search" cls="ico sm" />
           <input
-            placeholder="搜索标题 / 链接…"
+            placeholder={t("搜索标题 / 链接…")}
             value={filter.q}
             onInput={(e) => {
               const q = (e.currentTarget as HTMLInputElement).value;
@@ -371,10 +372,10 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
           </div>
           <button
             class={"btn btn-secondary shv-src" + (filter.source !== "all" ? " on" : "")}
-            title="按来源筛选"
+            title={t("按来源筛选")}
             onClick={(e) => openSourceMenu(e as unknown as MouseEvent)}
           >
-            {filter.source === "all" ? "全部来源" : SOURCE_KIND_LABEL[filter.source]}
+            {filter.source === "all" ? t("全部来源") : SOURCE_KIND_LABEL[filter.source]}
             <Icon name="chevronDown" cls="ico" />
           </button>
         </div>
@@ -383,25 +384,25 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
       {shares == null && loadErr != null ? (
         <div class="site-empty">
           <div class="ei"><Icon name="cloudOff" /></div>
-          <div class="et">分享列表加载失败</div>
+          <div class="et">{t("分享列表加载失败")}</div>
           <div class="ed">{loadErr}</div>
-          <button class="btn btn-secondary" onClick={reload}>重试</button>
+          <button class="btn btn-secondary" onClick={reload}>{t("重试")}</button>
         </div>
       ) : shares == null ? (
         <ShareListSkeleton rows={skelRows} />
       ) : shares.length === 0 ? (
         <div class="site-empty">
           <div class="ei"><Icon name="link" /></div>
-          <div class="et">还没有分享出去的内容</div>
-          <div class="ed">在文档、表格或站点里点「分享」即可创建链接。</div>
+          <div class="et">{t("还没有分享出去的内容")}</div>
+          <div class="ed">{t("在文档、表格或站点里点「分享」即可创建链接。")}</div>
         </div>
       ) : shown.length === 0 ? (
         <div class="site-empty">
           <div class="ei"><Icon name="search" /></div>
-          <div class="et">没有匹配的分享</div>
-          <div class="ed">换个关键词，或清除当前的状态与来源筛选。</div>
+          <div class="et">{t("没有匹配的分享")}</div>
+          <div class="ed">{t("换个关键词，或清除当前的状态与来源筛选。")}</div>
           {filtered && (
-            <button class="btn btn-secondary" onClick={() => setFilter(EMPTY_FILTER)}>清除筛选</button>
+            <button class="btn btn-secondary" onClick={() => setFilter(EMPTY_FILTER)}>{t("清除筛选")}</button>
           )}
         </div>
       ) : (
@@ -411,9 +412,9 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
             <>
               {filter.status !== "expired" && (
                 <div class="shv-group-head">
-                  已过期<span class="n">{expired.length}</span>
+                  {t("已过期")}<span class="n">{expired.length}</span>
                   <button class="btn btn-secondary" disabled={clearing} onClick={() => void clearExpired(expired)}>
-                    {clearing ? "清理中…" : "清理全部已过期"}
+                    {clearing ? t("清理中…") : t("清理全部已过期")}
                   </button>
                 </div>
               )}

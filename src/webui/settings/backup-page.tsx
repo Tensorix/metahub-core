@@ -24,6 +24,7 @@ import {
 import type { S3Config } from "../../core/sync/storage.ts";
 import { Icon } from "../icons.tsx";
 import { timeAgo } from "../date.ts";
+import { t } from "../i18n/t.ts";
 import {
   dataMapHeadline,
   dataMapIssueLines,
@@ -60,10 +61,10 @@ function useSyncHealth(): [DataMap | null, () => void] {
     let live = true;
     const t0 = () => api.syncHealth().then((m) => live && setMap(m)).catch(() => undefined);
     t0();
-    const t = setInterval(t0, 30_000);
+    const timer = setInterval(t0, 30_000);
     return () => {
       live = false;
-      clearInterval(t);
+      clearInterval(timer);
     };
   }, []);
   return [map, tick];
@@ -139,7 +140,7 @@ export function BackupPage() {
   const reload = () => {
     reloadLocal();
     if (!noOrigin) {
-      api.listServerS3Peers().then(setServerPeers).catch((e) => toast(`加载失败：${(e as Error).message}`));
+      api.listServerS3Peers().then(setServerPeers).catch((e) => toast(t("加载失败：{msg}", { msg: (e as Error).message })));
       api.listPeers().then((rows) => setHttpPeers(rows.filter((p) => !p.url.startsWith("s3://")))).catch(() => undefined);
       api.nodes().then(setRoster).catch(() => undefined);
       api.getEdgeStatus().then(setEdge).catch(() => setEdge(null));
@@ -188,8 +189,8 @@ export function BackupPage() {
       <>
         <MenuItem
           icon="bucket"
-          label="连接存储桶"
-          sublabel="所有设备通过它同步"
+          label={t("连接存储桶")}
+          sublabel={t("所有设备通过它同步")}
           onClick={() => {
             close();
             addBucket();
@@ -197,8 +198,8 @@ export function BackupPage() {
         />
         <MenuItem
           icon="server"
-          label="直连另一台服务器"
-          sublabel="两台服务器互相实时同步"
+          label={t("直连另一台服务器")}
+          sublabel={t("两台服务器互相实时同步")}
           onClick={() => {
             close();
             addDirectPeer();
@@ -230,9 +231,9 @@ export function BackupPage() {
         if (r.ok === false && r.error) throw new Error(r.error);
         if (replicaOn && localUrls.has(url)) await replicaCall("sync").catch(() => {});
       }
-      toast("已触发同步");
+      toast(t("已触发同步"));
     } catch (e) {
-      toast(`同步失败：${(e as Error).message}`);
+      toast(t("同步失败：{msg}", { msg: (e as Error).message }));
     } finally {
       setBusyUrl(null);
       reload();
@@ -241,9 +242,9 @@ export function BackupPage() {
 
   const removeBucket = async (url: string, name: string) => {
     const ok = await confirmDialog({
-      title: `停止使用 ${name}`,
-      message: "将停止与它同步。桶内数据不受影响，可以随时重新连接。",
-      confirmLabel: "停止使用",
+      title: t("停止使用 {name}", { name }),
+      message: t("将停止与它同步。桶内数据不受影响，可以随时重新连接。"),
+      confirmLabel: t("停止使用"),
       danger: true,
     });
     if (!ok) return;
@@ -258,9 +259,9 @@ export function BackupPage() {
 
   const detachHere = async (url: string, name: string) => {
     const ok = await confirmDialog({
-      title: "停止此浏览器离线同步",
-      message: `此浏览器将不再直连 ${name}。存储桶仍在服务器上；此浏览器在线时照常经服务器同步。`,
-      confirmLabel: "停止",
+      title: t("停止此浏览器离线同步"),
+      message: t("此浏览器将不再直连 {name}。存储桶仍在服务器上；此浏览器在线时照常经服务器同步。", { name }),
+      confirmLabel: t("停止"),
       danger: true,
     });
     if (!ok) return;
@@ -275,9 +276,9 @@ export function BackupPage() {
   };
   const removeDirectPeer = async (url: string, name: string) => {
     const ok = await confirmDialog({
-      title: `停止直连 ${name}`,
-      message: "将停止与它的直连同步。它上面已同步的数据仍在，无法远程删除。",
-      confirmLabel: "停止直连",
+      title: t("停止直连 {name}", { name }),
+      message: t("将停止与它的直连同步。它上面已同步的数据仍在，无法远程删除。"),
+      confirmLabel: t("停止直连"),
       danger: true,
     });
     if (!ok) return;
@@ -324,7 +325,7 @@ export function BackupPage() {
       caption={
         <>
           <span class="cap-dot ok" />
-          实时 · 数据在这里产生
+          {t("实时 · 数据在这里产生")}
         </>
       }
     />
@@ -346,14 +347,14 @@ export function BackupPage() {
         title={
           <>
             <span class="set-row-name">{pl.label}</span>
-            <span class="set-row-tag">直连</span>
+            <span class="set-row-tag">{t("直连")}</span>
             {roleTags(pl)}
           </>
         }
         caption={
           <>
             <span class={"cap-dot " + (failed ? "err" : paused ? "" : pl.freshness === "current" ? "ok" : "warn")} />
-            <span class={failed ? "cap-err" : ""}>{paused ? "已暂停" : placeCaption(pl)}</span>
+            <span class={failed ? "cap-err" : ""}>{paused ? t("已暂停") : placeCaption(pl)}</span>
           </>
         }
         onClick={() => setOpen(expanded ? null : url)}
@@ -368,7 +369,7 @@ export function BackupPage() {
                   void syncTarget(url);
                 }}
               >
-                {busyUrl === url ? "重试中…" : "重试"}
+                {busyUrl === url ? t("重试中…") : t("重试")}
               </button>
             )}
             <span class={`row-chev${expanded ? " open" : ""}`}>
@@ -380,39 +381,39 @@ export function BackupPage() {
         {expanded && (
           <>
             <dl class="device-kv">
-              <dt>地址</dt>
+              <dt>{t("地址")}</dt>
               <dd class="mono">{url}</dd>
               {peer?.node_id && (
                 <>
-                  <dt>节点 ID</dt>
+                  <dt>{t("节点 ID")}</dt>
                   <dd class="mono">{peer.node_id}</dd>
                 </>
               )}
-              <dt>上次成功同步</dt>
+              <dt>{t("上次成功同步")}</dt>
               <dd>{pl.syncedAt ? fmtTime(pl.syncedAt) : "—"}</dd>
               {pl.lag > 0 && (
                 <>
-                  <dt>尚未确认</dt>
-                  <dd>{pl.lag} 条改动</dd>
+                  <dt>{t("尚未确认")}</dt>
+                  <dd>{t("{n} 条改动", { n: pl.lag })}</dd>
                 </>
               )}
             </dl>
             <div class="device-actions">
               <button class="btn btn-ghost" disabled={busyUrl === url} onClick={() => void syncTarget(url)}>
                 <Icon name="refresh" cls="ico sm" />
-                立即同步
+                {t("立即同步")}
               </button>
               <button class="btn btn-ghost" onClick={() => void togglePeer(url)}>
                 <Icon name={paused ? "play" : "pause"} cls="ico sm" />
-                {paused ? "恢复同步" : "暂停同步"}
+                {paused ? t("恢复同步") : t("暂停同步")}
               </button>
               <button class="btn btn-ghost danger" onClick={() => void removeDirectPeer(url, pl.label)}>
                 <Icon name="trash" cls="ico sm" />
-                停止直连
+                {t("停止直连")}
               </button>
             </div>
             <div class="device-note">
-              这台设备的名字与接入权限在 <a href="#/settings?sec=devices">设备</a> 页管理。
+              {t("这台设备的名字与接入权限在")} <a href="#/settings?sec=devices">{t("设备")}</a> {t("页管理。")}
             </div>
           </>
         )}
@@ -427,14 +428,14 @@ export function BackupPage() {
       return (
         <>
           <span class="cap-dot err" />
-          <span class="cap-err">同步失败 · {p.error}</span>
+          <span class="cap-err">{t("同步失败 · {error}", { error: p.error })}</span>
         </>
       );
     const parts = [
       providerName(p.provider, p.endpoint),
       regionName(p.region),
-      p.lastSyncAt ? `上次同步 ${timeAgo(p.lastSyncAt)}` : "还没同步过",
-      direct ? (noOrigin ? "本机发布" : "此浏览器可离线同步") : null,
+      p.lastSyncAt ? t("上次同步 {ago}", { ago: timeAgo(p.lastSyncAt) }) : t("还没同步过"),
+      direct ? (noOrigin ? t("本机发布") : t("此浏览器可离线同步")) : null,
     ].filter(Boolean);
     return (
       <>
@@ -450,77 +451,77 @@ export function BackupPage() {
     const name = nameOf(p);
     const prefix = "prefix" in p ? p.prefix : null;
     const encrypt = "encrypt" in p ? p.encrypt : null;
-    const creds = noOrigin ? "这台设备" : onDevice ? "服务器，此浏览器也保存了一份" : "服务器";
+    const creds = noOrigin ? t("这台设备") : onDevice ? t("服务器，此浏览器也保存了一份") : t("服务器");
     return (
       <>
         <dl class="device-kv">
-          <dt>服务商</dt>
+          <dt>{t("服务商")}</dt>
           <dd>{providerName(p.provider, p.endpoint)}{regionName(p.region) ? ` · ${regionName(p.region)}` : ""}</dd>
           {p.endpoint && (
             <>
-              <dt>地址</dt>
+              <dt>{t("地址")}</dt>
               <dd class="mono">{p.endpoint}</dd>
             </>
           )}
           {p.bucket && (
             <>
-              <dt>存储桶</dt>
+              <dt>{t("存储桶")}</dt>
               <dd class="mono">{p.bucket}{prefix ? ` / ${prefix}` : ""}</dd>
             </>
           )}
           {encrypt != null && (
             <>
-              <dt>加密</dt>
-              <dd>{encrypt ? "已加密，上传前在本地完成" : "未加密"}</dd>
+              <dt>{t("加密")}</dt>
+              <dd>{encrypt ? t("已加密，上传前在本地完成") : t("未加密")}</dd>
             </>
           )}
-          <dt>凭据保存在</dt>
+          <dt>{t("凭据保存在")}</dt>
           <dd>{creds}</dd>
           {pl.roles.length > 0 && (
             <>
-              <dt>用途</dt>
+              <dt>{t("用途")}</dt>
               <dd>{pl.roles.map((r) => PLACE_ROLE_LABEL[r]).join(" · ")}</dd>
             </>
           )}
-          <dt>上次同步</dt>
+          <dt>{t("上次同步")}</dt>
           <dd>{p.lastSyncAt ? fmtTime(p.lastSyncAt) : "—"}</dd>
         </dl>
         <div class="device-actions">
           <button class="btn btn-ghost" disabled={busyUrl === p.url} onClick={() => void syncTarget(p.url)}>
             <Icon name="refresh" cls="ico sm" />
-            立即同步
+            {t("立即同步")}
           </button>
           {!noOrigin && replicaOn && !onDevice && (
             <button class="btn btn-ghost" onClick={() => activateHere(sp)}>
               <Icon name="link" cls="ico sm" />
-              让此浏览器可离线同步
+              {t("让此浏览器可离线同步")}
             </button>
           )}
           {onDevice && (
             <button class="btn btn-ghost" onClick={() => void detachHere(p.url, name)}>
               <Icon name="link" cls="ico sm" />
-              停止此浏览器离线同步
+              {t("停止此浏览器离线同步")}
             </button>
           )}
           {!noOrigin && (
             <>
               <button class="btn btn-ghost" onClick={() => rotateBucket(sp)}>
                 <Icon name="key" cls="ico sm" />
-                更换存储密钥…
+                {t("更换存储密钥…")}
               </button>
               <button class="btn btn-ghost" onClick={() => recoveryBucket(sp)}>
                 <Icon name="copy" cls="ico sm" />
-                导出恢复码…
+                {t("导出恢复码…")}
               </button>
             </>
           )}
           <button class="btn btn-ghost danger" onClick={() => void removeBucket(p.url, name)}>
             <Icon name="trash" cls="ico sm" />
-            停止使用
+            {t("停止使用")}
           </button>
         </div>
         {!noOrigin && replicaOn && !onDevice && (
-          <div class="device-note">让此浏览器可离线同步后，服务器连不上时它也能直接经存储桶同步。</div>
+          <div class="device-note">{t("让此浏览器可离线同步后，服务器连不上时它也能直接经存储桶同步。")}</div>
         )}
       </>
     );
@@ -565,7 +566,7 @@ export function BackupPage() {
                   void syncTarget(url);
                 }}
               >
-                {busyUrl === url ? "重试中…" : "重试"}
+                {busyUrl === url ? t("重试中…") : t("重试")}
               </button>
             )}
             {failed && !noOrigin && p && (
@@ -576,7 +577,7 @@ export function BackupPage() {
                   rotateBucket(p as S3Peer);
                 }}
               >
-                更换密钥…
+                {t("更换密钥…")}
               </button>
             )}
             {p && (
@@ -601,8 +602,8 @@ export function BackupPage() {
       <>
         <PageHeader title={pageLabel("backup")} sub={<HealthSub map={map} />} />
         <div class="set-callout warn" style={{ marginTop: 12 }}>
-          先在「离线与缓存」把这台设备设为在本机保存，再连接存储桶。{" "}
-          <a href="#/settings?sec=offline">前往设置</a>
+          {t("先在「离线与缓存」把这台设备设为在本机保存，再连接存储桶。")}{" "}
+          <a href="#/settings?sec=offline">{t("前往设置")}</a>
         </div>
       </>
     );
@@ -622,18 +623,18 @@ export function BackupPage() {
           <>
             {noOrigin && bucketList.length > 0 && (
               <button class="btn btn-ghost" onClick={addDevice}>
-                添加设备
+                {t("添加设备")}
               </button>
             )}
             {noOrigin ? (
               <button class="btn btn-primary" onClick={addBucket}>
                 <Icon name="plus" cls="ico sm" />
-                连接存储桶
+                {t("连接存储桶")}
               </button>
             ) : (
               <button class="btn btn-primary" onClick={(e) => addTarget(e as unknown as MouseEvent)}>
                 <Icon name="plus" cls="ico sm" />
-                添加同步目标
+                {t("添加同步目标")}
                 <Icon name="chevronDown" cls="ico sm" />
               </button>
             )}
@@ -642,11 +643,11 @@ export function BackupPage() {
       />
 
       <SetSection
-        label="同步目标"
+        label={t("同步目标")}
         caption={
           noOrigin
-            ? "这台设备的云端后端，其他设备通过它加入并同步。"
-            : "数据保存在这些地方；上传到云端前已在本地加密。"
+            ? t("这台设备的云端后端，其他设备通过它加入并同步。")
+            : t("数据保存在这些地方；上传到云端前已在本地加密。")
         }
       >
         {places == null ? (
@@ -658,9 +659,9 @@ export function BackupPage() {
               (!noOrigin && edge != null && !edge.configured ? (
                 <div class="cloud-cta">
                   <div class="cloud-cta-text">
-                    <div class="cloud-cta-title">用 Cloudflare 开始</div>
+                    <div class="cloud-cta-title">{t("用 Cloudflare 开始")}</div>
                     <div class="cloud-cta-sub">
-                      登录后创建 R2 存储桶并部署 Edge，向导会带你在控制台生成访问密钥。
+                      {t("登录后创建 R2 存储桶并部署 Edge，向导会带你在控制台生成访问密钥。")}
                     </div>
                   </div>
                   <button
@@ -678,18 +679,18 @@ export function BackupPage() {
                       )
                     }
                   >
-                    连接 Cloudflare
+                    {t("连接 Cloudflare")}
                   </button>
                 </div>
               ) : (
                 <SetRow
                   lead={<Icon name="bucket" />}
-                  title="还没有其他同步目标"
-                  caption="连接一个存储桶，所有设备通过它交换加密后的工作区数据。"
+                  title={t("还没有其他同步目标")}
+                  caption={t("连接一个存储桶，所有设备通过它交换加密后的工作区数据。")}
                 />
               ))}
             {hasTargets && !hasBucket && !noOrigin && (
-              <div class="set-managed-note">还没连接存储桶。直连只在两边都在线时同步；存储桶能让离线的设备稍后补齐。</div>
+              <div class="set-managed-note">{t("还没连接存储桶。直连只在两边都在线时同步；存储桶能让离线的设备稍后补齐。")}</div>
             )}
           </>
         )}
@@ -698,14 +699,14 @@ export function BackupPage() {
       {serverScope && <WorkspaceStorageSection scope={serverScope} />}
 
       <details class="set-disclosure" style={{ marginTop: 22 }}>
-        <summary>它是怎么工作的</summary>
+        <summary>{t("它是怎么工作的")}</summary>
         <div class="set-disclosure-body">
-          存储桶只做中转：每台设备把改动加密后上传，再拉取别人的——不必同时在线，也不需要公网 IP。直连则是两台服务器互相推送，实时但要求两边同时在线。
+          {t("存储桶只做中转：每台设备把改动加密后上传，再拉取别人的——不必同时在线，也不需要公网 IP。直连则是两台服务器互相推送，实时但要求两边同时在线。")}
           {desktop
-            ? "这台设备把改动发布到桶，其他设备从桶拉取；新设备扫码加入即可。"
+            ? t("这台设备把改动发布到桶，其他设备从桶拉取；新设备扫码加入即可。")
             : noOrigin
-              ? "这台设备把整个工作区发布到桶，新设备扫码加入后从桶恢复。"
-              : "密钥只保存在服务器；信任的设备重输一次密钥即可直连桶，离线、在外也不中断。"}
+              ? t("这台设备把整个工作区发布到桶，新设备扫码加入后从桶恢复。")
+              : t("密钥只保存在服务器；信任的设备重输一次密钥即可直连桶，离线、在外也不中断。")}
         </div>
       </details>
     </>
@@ -759,15 +760,15 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
 
   const clear = async () => {
     const ok = await confirmDialog({
-      title: `清理腾出 ${fmtBytes(clearable)}`,
-      message: "只删除别处已确认备份的副本，文件不会丢，用到时自动取回。",
-      confirmLabel: "清理",
+      title: t("清理腾出 {bytes}", { bytes: fmtBytes(clearable) }),
+      message: t("只删除别处已确认备份的副本，文件不会丢，用到时自动取回。"),
+      confirmLabel: t("清理"),
     });
     if (!ok) return;
     setBusy(true);
     try {
       const r = await api.clearBlobCache();
-      toast(r.cleared ? `已腾出 ${fmtBytes(r.freedBytes)}（${r.cleared} 项）` : "暂时没有可清理的");
+      toast(r.cleared ? t("已腾出 {bytes}（{n} 项）", { bytes: fmtBytes(r.freedBytes), n: r.cleared }) : t("暂时没有可清理的"));
       load(); // clearing doesn't invalidate lastVerifiedAt — no re-verify
     } catch (e) {
       toast((e as Error).message);
@@ -806,15 +807,15 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
     }
   };
 
-  const whereCaption = `附件原件保存在「${scope.label}」，所有设备共用。`;
-  const policyCaption = "开启的位置会保留所有附件的完整副本。只要确认这里有备份，其他设备就可以放心清理本地缓存。";
+  const whereCaption = t("附件原件保存在「{place}」，所有设备共用。", { place: scope.label });
+  const policyCaption = t("开启的位置会保留所有附件的完整副本。只要确认这里有备份，其他设备就可以放心清理本地缓存。");
   if (info == null || stats == null) {
     return (
       <>
-        <SetSection label="附件" caption={whereCaption}>
+        <SetSection label={t("附件")} caption={whereCaption}>
           <CacheRingHero loading segs={{ free: 0, keep: 0, pin: 0 }} count={0} totalBytes={0} state="safe" />
         </SetSection>
-        <SetSection label="长期保留副本" caption={policyCaption}>
+        <SetSection label={t("长期保留副本")} caption={policyCaption}>
           <SetRowSkeleton rows={2} lead control="switch" />
         </SetSection>
       </>
@@ -828,35 +829,35 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
       .filter((a) => a.startsWith("s3://") && !buckets.some((b) => b.url === a))
       .map((url) => ({ url, label: null, bucket: null })),
   ];
-  const selfTag = isDesktop() ? "这台设备" : scope.label;
+  const selfTag = isDesktop() ? t("这台设备") : scope.label;
   const rosterOf = (id: string) => roster.find((n) => n.node_id === id);
   /** Static description: what kind of place this is — the switch carries state. */
   const deviceCaption = (id: string) => {
     const n = rosterOf(id);
     const words = [n?.app && APP_WORD[n.app], n?.platform && PLATFORM_WORD[n.platform]].filter(Boolean);
-    return words.length ? words.join(" · ") : "设备";
+    return words.length ? words.join(" · ") : t("设备");
   };
 
   const status = hasFreeable ? (
     <button class="btn btn-secondary" disabled={busy || verifying} onClick={() => void clear()}>
-      清理腾出 {fmtBytes(clearable)}
+      {t("清理腾出 {bytes}", { bytes: fmtBytes(clearable) })}
     </button>
   ) : (
     <span class="blob-status">
       <Icon name="check" cls="ico sm" />
-      {selfIsFull ? "这里保留全部附件原件，无需清理" : noAnchor ? "还没指定长期保留的位置" : unverified ? "核对备份后才能清理" : "都已备份，暂时没有可清理的"}
+      {selfIsFull ? t("这里保留全部附件原件，无需清理") : noAnchor ? t("还没指定长期保留的位置") : unverified ? t("核对备份后才能清理") : t("都已备份，暂时没有可清理的")}
     </span>
   );
 
   const verifiedCopy = verifying
-    ? "核对中…"
+    ? t("核对中…")
     : info.lastVerifiedAt != null
-      ? `上次核对 ${timeAgo(info.lastVerifiedAt)}`
-      : "还没核对过";
+      ? t("上次核对 {ago}", { ago: timeAgo(info.lastVerifiedAt) })
+      : t("还没核对过");
 
   return (
     <>
-      <SetSection label="附件" caption={whereCaption}>
+      <SetSection label={t("附件")} caption={whereCaption}>
         <CacheRingHero
           segs={{
             free: stats.clearableBytes,
@@ -871,20 +872,20 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
             <>
               {status}
               <button class="btn btn-ghost" onClick={() => openBlobManager(scope)}>
-                查看附件…
+                {t("查看附件…")}
               </button>
             </>
           }
         />
       </SetSection>
 
-      <SetSection label="长期保留副本" caption={policyCaption}>
+      <SetSection label={t("长期保留副本")} caption={policyCaption}>
         {bucketAnchors.map((b) => (
           <SetRow
             key={b.url}
             lead={<Icon name="bucket" />}
             title={<span class="set-row-name">{b.label || b.bucket || b.url}</span>}
-            caption="云端存储桶"
+            caption={t("云端存储桶")}
             control={<Switch checked={policy.fullNodes.includes(b.url)} disabled={busy} onChange={() => toggleNode(b.url)} />}
           />
         ))}
@@ -894,7 +895,7 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
             lead={<Icon name={deviceIcon(rosterOf(n.nodeId)?.form)} />}
             title={
               <>
-                <span class="set-row-name">{n.label || "未命名设备"}</span>
+                <span class="set-row-name">{n.label || t("未命名设备")}</span>
                 {n.self && <span class="set-row-tag self">{selfTag}</span>}
                 {!n.label && <span class="set-row-tag mono">{n.nodeId}</span>}
               </>
@@ -904,19 +905,19 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
           />
         ))}
         {policy.fullNodes.length === 0 && (
-          <div class="set-managed-note">还没有长期保留的位置。先指定一处，其他设备才能放心清理本地缓存。</div>
+          <div class="set-managed-note">{t("还没有长期保留的位置。先指定一处，其他设备才能放心清理本地缓存。")}</div>
         )}
         {policy.fullNodes.length > 1 && (
           <SetRow
-            title="清理前需要几处确认"
-            caption="设备清理缓存前，要有几处长期副本确认持有该附件。"
+            title={t("清理前需要几处确认")}
+            caption={t("设备清理缓存前，要有几处长期副本确认持有该附件。")}
             control={
               <RowSelect
                 value={policy.redundancy}
                 disabled={busy || verifying}
                 options={[
-                  { value: "any", label: "一处即可", sublabel: "任一长期副本确认即可清理" },
-                  { value: "all", label: "每处都要", sublabel: "所有长期副本都确认后才清理" },
+                  { value: "any", label: t("一处即可"), sublabel: t("任一长期副本确认即可清理") },
+                  { value: "all", label: t("每处都要"), sublabel: t("所有长期副本都确认后才清理") },
                 ]}
                 onChange={(r) => void pickRedundancy(r)}
               />
@@ -925,7 +926,7 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
         )}
         <div class="set-managed-note">
           {verifiedCopy}
-          {info.unreachableAnchors.length > 0 && " · 部分位置连不上，相关文件暂不清理"}
+          {info.unreachableAnchors.length > 0 && ` · ${t("部分位置连不上，相关文件暂不清理")}`}
           {!verifying && (
             <>
               {" · "}
@@ -936,14 +937,14 @@ function WorkspaceStorageSection({ scope }: { scope: Scope }) {
                   if (!busy) void verify(true);
                 }}
               >
-                重新核对
+                {t("重新核对")}
               </a>
             </>
           )}
         </div>
         {info.quotaBytes > 0 && (
           <div class="set-managed-note">
-            占用超过 {fmtBytes(info.quotaBytes)} 时，自动清理最久没用、已有备份的；你固定的不动。
+            {t("占用超过 {bytes} 时，自动清理最久没用、已有备份的；你固定的不动。", { bytes: fmtBytes(info.quotaBytes) })}
           </div>
         )}
       </SetSection>

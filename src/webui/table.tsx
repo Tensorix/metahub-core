@@ -10,6 +10,7 @@ import {
   type PropConfig,
 } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
+import { t } from "./i18n/t.ts";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import {
   openMenu,
@@ -51,10 +52,10 @@ import { type CellPos, type CellSel, normRect, edgeShadow } from "./cell-select.
 import { plainPasteHandlers } from "./plain-edit.ts";
 
 const VIEW_TABS: [string, string][] = [
-  ["表格", "list"],
-  ["看板", "group"],
-  ["日历", "calendar"],
-  ["时间轴", "timeline"],
+  [t("表格"), "list"],
+  [t("看板"), "group"],
+  [t("日历"), "calendar"],
+  [t("时间轴"), "timeline"],
 ];
 
 /** 「浮窗看板」— summon the desktop quick-board window on this database. Sits
@@ -66,7 +67,7 @@ function PopOutBoard({ dbId }: { dbId: string }) {
   return (
     <button
       class="popout-btn"
-      title="在浮窗中打开这个数据库的看板"
+      title={t("在浮窗中打开这个数据库的看板")}
       onClick={() => {
         // Point the quick-board window at this database: localStorage covers
         // a cold mount, the broadcast switches an already-warm hidden window
@@ -106,7 +107,7 @@ export function DatabaseView({
   tabReq: DbTab | null;
   /** Replace-navigate the hash to strip `?view=` once the request is consumed,
    *  so a repeated request is always a null→value change and fires again. */
-  onTabReq: (t: DbTab | null) => void;
+  onTabReq: (tab: DbTab | null) => void;
   onError: (m: string) => void;
 }) {
   const [props, setProps] = useState<Prop[]>([]);
@@ -199,7 +200,7 @@ export function DatabaseView({
   recordsRef.current = records;
   useEffect(() => {
     if (rec && loaded && !recordsRef.current.some((r) => r.id === rec)) {
-      toast("记录不存在或已被删除");
+      toast(t("记录不存在或已被删除"));
       closePeek();
     }
   }, [rec, loaded]);
@@ -334,18 +335,18 @@ export function DatabaseView({
       },
       onMove: (ev) => {
         positionGhost(ghost, ev.clientX - offX, ev.clientY - offY);
-        const t = rowDropTarget(ev.clientY, recId);
-        dropRef.current = t;
-        setDropY(t ? t.y : null);
+        const tgt = rowDropTarget(ev.clientY, recId);
+        dropRef.current = tgt;
+        setDropY(tgt ? tgt.y : null);
       },
       onEnd: (_ev, active) => {
         ghost?.remove();
         source.classList.remove("drag-source");
         document.body.classList.remove("table-dragging");
-        const t = dropRef.current;
+        const tgt = dropRef.current;
         dropRef.current = null;
         setDropY(null);
-        if (active && t) persistRecordMove(recId, t.id, t.where);
+        if (active && tgt) persistRecordMove(recId, tgt.id, tgt.where);
       },
     });
   };
@@ -358,7 +359,7 @@ export function DatabaseView({
       source,
       axis: "x",
       ghostCls: "col-ghost",
-      ghostText: source.textContent?.trim() || "移动属性",
+      ghostText: source.textContent?.trim() || t("移动属性"),
       targetSelector: "th[data-col-id]",
       isSelf: (el) => el.dataset.colId === prop.id,
       // Header click opens the column menu; a real drag must swallow the click
@@ -391,8 +392,8 @@ export function DatabaseView({
   // ---- keyboard cell navigation / editing ----
   // "editable" = the free-text inline editor applies; checkbox toggles in
   // place, select/multi_select/relation/doc edit through their picker popovers.
-  const isEditable = (t: PropType) =>
-    t !== "checkbox" && t !== "select" && t !== "multi_select" && t !== "relation" && t !== "doc";
+  const isEditable = (pt: PropType) =>
+    pt !== "checkbox" && pt !== "select" && pt !== "multi_select" && pt !== "relation" && pt !== "doc";
   const clampN = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
   const scrollCellIntoView = (r: number, c: number) =>
     requestAnimationFrame(() => {
@@ -582,7 +583,7 @@ export function DatabaseView({
         {shared.has(db.id) && (
           <span
             class="db-title-share"
-            title="已分享 · 管理分享"
+            title={t("已分享 · 管理分享")}
             onClick={() => openShareModal({ kind: "database", ref: db.id, title: db.name })}
           >
             <Icon name="link" />
@@ -591,20 +592,20 @@ export function DatabaseView({
       </div>
 
       <div class="views">
-        {VIEW_TABS.map(([t, ic], i) => (
-          <div key={t} class={"view-tab" + (i === tab ? " active" : "")} onClick={() => setTab(i)}>
+        {VIEW_TABS.map(([label, ic], i) => (
+          <div key={label} class={"view-tab" + (i === tab ? " active" : "")} onClick={() => setTab(i)}>
             <Icon name={ic} />
-            {t}
+            {label}
           </div>
         ))}
         <div class="spacer" style={{ flex: 1 }} />
-        <button class="btn btn-primary" onClick={newRecord}><Icon name="plus" cls="ico sm" />新建</button>
+        <button class="btn btn-primary" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建")}</button>
       </div>
 
       {tab === 0 && (
         <div class="toolbar">
           <button class="tbtn" onClick={(e) => openSortMenu(e, props, sort, setSort)}>
-            <Icon name="sort" cls="ico sm" />排序
+            <Icon name="sort" cls="ico sm" />{t("排序")}
           </button>
           <div class="spacer" />
           <PopOutBoard dbId={db.id} />
@@ -648,7 +649,7 @@ export function DatabaseView({
             <button
               class={"rowgrip-ext" + (sort ? " is-disabled" : "")}
               style={{ top: grip.top + grip.height / 2 }}
-              title={sort ? "清除排序后可拖拽移动" : "拖拽移动"}
+              title={sort ? t("清除排序后可拖拽移动") : t("拖拽移动")}
               aria-disabled={sort ? "true" : undefined}
               onPointerDown={(e) => startRowDrag(e, grip.id)}
             >
@@ -706,7 +707,7 @@ export function DatabaseView({
                     </th>
                   ))}
                   <th class="addcol">
-                    <div class="colhead" title="新建属性" onClick={(e) => openAddCol(e, db.id, props, reload)}>
+                    <div class="colhead" title={t("新建属性")} onClick={(e) => openAddCol(e, db.id, props, reload)}>
                       <Icon name="plus" cls="ico sm" />
                     </div>
                   </th>
@@ -771,27 +772,27 @@ export function DatabaseView({
               </tbody>
             </table>
           </div>
-          <div class="addrow" onClick={newRecord}><Icon name="plus" cls="ico sm" />新建记录</div>
+          <div class="addrow" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建记录")}</div>
           </div>
         </div>
       )}
 
       <div class="gridfoot">
-        <span>共 {records.length} 条记录</span>
-        <span>{props.length} 个属性</span>
+        <span>{t("共 {n} 条记录", { n: records.length })}</span>
+        <span>{t("{n} 个属性", { n: props.length })}</span>
       </div>
 
       {sel.size > 0 && (
         <div class="selbar">
-          <span class="cnt">{sel.size} 已选</span>
+          <span class="cnt">{t("{n} 已选", { n: sel.size })}</span>
           <button onClick={() => guard(async () => { for (const id of sel) await duplicateRecord(records.find((r) => r.id === id)!); })}>
-            <Icon name="copy" cls="ico sm" />复制
+            <Icon name="copy" cls="ico sm" />{t("复制")}
           </button>
           <button class="del" onClick={async () => {
-            const ok = await confirmDialog({ title: "删除记录？", message: `确定删除选中的 ${sel.size} 条记录？`, confirmLabel: "删除", danger: true });
+            const ok = await confirmDialog({ title: t("删除记录？"), message: t("确定删除选中的 {n} 条记录？", { n: sel.size }), confirmLabel: t("删除"), danger: true });
             if (ok) deleteRecords([...sel]);
           }}>
-            <Icon name="trash" cls="ico sm" />删除
+            <Icon name="trash" cls="ico sm" />{t("删除")}
           </button>
           <button onClick={() => setSel(new Set())}><Icon name="x" cls="ico sm" /></button>
         </div>
@@ -799,13 +800,13 @@ export function DatabaseView({
 
       {cr && (cr.r0 !== cr.r1 || cr.c0 !== cr.c1) && (
         <div class="selbar cellselbar">
-          <span class="cnt">{(cr.r1 - cr.r0 + 1) * (cr.c1 - cr.c0 + 1)} 个单元格</span>
-          <button onClick={copySelection}><Icon name="copy" cls="ico sm" />复制</button>
+          <span class="cnt">{t("{n} 个单元格", { n: (cr.r1 - cr.r0 + 1) * (cr.c1 - cr.c0 + 1) })}</span>
+          <button onClick={copySelection}><Icon name="copy" cls="ico sm" />{t("复制")}</button>
           <button onClick={() => applyToSelection((p) => sorted[cr.r0]!.cells[p.id] ?? null)}>
-            <Icon name="copy" cls="ico sm" />填充
+            <Icon name="copy" cls="ico sm" />{t("填充")}
           </button>
           <button class="del" onClick={() => applyToSelection(() => null)}>
-            <Icon name="trash" cls="ico sm" />清空
+            <Icon name="trash" cls="ico sm" />{t("清空")}
           </button>
           <button onClick={() => setCellSel(null)}><Icon name="x" cls="ico sm" /></button>
         </div>
@@ -920,7 +921,7 @@ function CellView({
       <div class="firstcell">
         {body}
         <div class="rowactions">
-          <button class="rowopen" title="打开" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+          <button class="rowopen" title={t("打开")} onClick={(e) => { e.stopPropagation(); onOpen(); }}>
             <Icon name="openPeek" cls="ico sm" />
           </button>
         </div>
@@ -962,7 +963,7 @@ function rowGhostText(row: HTMLElement): string {
     .map((td) => (td.textContent ?? "").trim())
     .filter(Boolean)
     .join("    ");
-  return text || "移动记录";
+  return text || t("移动记录");
 }
 
 // ---- column resizer ----
@@ -1034,7 +1035,7 @@ function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; o
     const v = q;
     api.updateProperty(prop.id, { config: { options: [...opts, v] } })
       .then(() => { setOpts((os) => [...os, v]); pick(v); })
-      .catch((e) => toast(`创建选项失败：${(e as Error).message}`));
+      .catch((e) => toast(t("创建选项失败：{msg}", { msg: (e as Error).message })));
   };
   const activate = (i: number) => { if (i < filtered.length) pick(filtered[i]!); else create(); };
 
@@ -1043,7 +1044,7 @@ function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; o
       <div class="selsearch">
         <Icon name="search" cls="ico sm" />
         <input
-          placeholder="搜索或创建选项"
+          placeholder={t("搜索或创建选项")}
           value={query}
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
@@ -1069,7 +1070,7 @@ function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; o
             onMouseEnter={() => setSelIdx(filtered.length)}
           >
             <span class="lico plain"><Icon name="plus" cls="ico sm" /></span>
-            创建
+            {t("创建")}
             <Chip text={q} />
           </button>
         )}
@@ -1077,7 +1078,7 @@ function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; o
       {multi && Array.isArray(cur) && cur.length > 0 && (
         <>
           <MenuSep />
-          <MenuItem icon="x" label="清空" onClick={() => { setCur([]); onPick([]); }} />
+          <MenuItem icon="x" label={t("清空")} onClick={() => { setCur([]); onPick([]); }} />
         </>
       )}
     </>
@@ -1157,7 +1158,7 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
         onCreated?.();
         pick(r.id);
       })
-      .catch((e) => toast(`创建记录失败：${(e as Error).message}`));
+      .catch((e) => toast(t("创建记录失败：{msg}", { msg: (e as Error).message })));
   };
   const activate = (i: number) => { if (i < shown.length) pick(shown[i]!.id); else create(); };
 
@@ -1166,7 +1167,7 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
       <div class="selsearch">
         <Icon name="search" cls="ico sm" />
         <input
-          placeholder="搜索或创建记录"
+          placeholder={t("搜索或创建记录")}
           value={query}
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
@@ -1179,11 +1180,11 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
         />
       </div>
       <div ref={listRef} class="rellist">
-        {!target && <MenuLabel>该属性未设置关联目标</MenuLabel>}
-        {target && state === "loading" && <MenuLabel>加载中…</MenuLabel>}
-        {target && state === "error" && <MenuLabel>无法加载目标数据表</MenuLabel>}
+        {!target && <MenuLabel>{t("该属性未设置关联目标")}</MenuLabel>}
+        {target && state === "loading" && <MenuLabel>{t("加载中…")}</MenuLabel>}
+        {target && state === "error" && <MenuLabel>{t("无法加载目标数据表")}</MenuLabel>}
         {target && state !== "loading" && state !== "error" && all.length === 0 && (
-          <MenuLabel>目标数据表暂无记录</MenuLabel>
+          <MenuLabel>{t("目标数据表暂无记录")}</MenuLabel>
         )}
         {shown.map((r, i) => (
           <button key={r.id} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(r.id)} onMouseEnter={() => setSelIdx(i)}>
@@ -1191,7 +1192,7 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
             {cur.includes(r.id) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
           </button>
         ))}
-        {matches.length > CAP && <MenuLabel>还有 {matches.length - CAP} 条，继续输入过滤</MenuLabel>}
+        {matches.length > CAP && <MenuLabel>{t("还有 {n} 条，继续输入过滤", { n: matches.length - CAP })}</MenuLabel>}
         {canCreate && (
           <button
             class={"item" + (sel === shown.length ? " sel" : "")}
@@ -1199,7 +1200,7 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
             onMouseEnter={() => setSelIdx(shown.length)}
           >
             <span class="lico plain"><Icon name="plus" cls="ico sm" /></span>
-            创建
+            {t("创建")}
             <Chip text={q} />
           </button>
         )}
@@ -1207,7 +1208,7 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
       {cur.length > 0 && (
         <>
           <MenuSep />
-          <MenuItem icon="x" label="清空" onClick={() => { setCur([]); onPick([]); }} />
+          <MenuItem icon="x" label={t("清空")} onClick={() => { setCur([]); onPick([]); }} />
         </>
       )}
     </>
@@ -1279,7 +1280,7 @@ function DocMenu({ value, onPick, seed }: {
         primeDocTitle(d.id, title);
         pick(d.id);
       })
-      .catch((e) => toast(`创建文档失败：${(e as Error).message}`));
+      .catch((e) => toast(t("创建文档失败：{msg}", { msg: (e as Error).message })));
   };
   const activate = (i: number) => { if (i < shown.length) pick(shown[i]!.id); else create(); };
 
@@ -1288,7 +1289,7 @@ function DocMenu({ value, onPick, seed }: {
       <div class="selsearch">
         <Icon name="search" cls="ico sm" />
         <input
-          placeholder="搜索或创建文档"
+          placeholder={t("搜索或创建文档")}
           value={query}
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
@@ -1301,14 +1302,14 @@ function DocMenu({ value, onPick, seed }: {
         />
       </div>
       <div ref={listRef} class="rellist">
-        {all.length === 0 && !canCreate && <MenuLabel>暂无文档，输入标题创建</MenuLabel>}
+        {all.length === 0 && !canCreate && <MenuLabel>{t("暂无文档，输入标题创建")}</MenuLabel>}
         {shown.map((d, i) => (
           <button key={d.id} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(d.id)} onMouseEnter={() => setSelIdx(i)}>
             <Chip text={docLabel(d.id).label} />
             {cur.includes(d.id) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
           </button>
         ))}
-        {matches.length > CAP && <MenuLabel>还有 {matches.length - CAP} 条，继续输入过滤</MenuLabel>}
+        {matches.length > CAP && <MenuLabel>{t("还有 {n} 条，继续输入过滤", { n: matches.length - CAP })}</MenuLabel>}
         {canCreate && (
           <button
             class={"item" + (sel === shown.length ? " sel" : "")}
@@ -1316,7 +1317,7 @@ function DocMenu({ value, onPick, seed }: {
             onMouseEnter={() => setSelIdx(shown.length)}
           >
             <span class="lico plain"><Icon name="plus" cls="ico sm" /></span>
-            创建
+            {t("创建")}
             <Chip text={q} />
           </button>
         )}
@@ -1324,7 +1325,7 @@ function DocMenu({ value, onPick, seed }: {
       {cur.length > 0 && (
         <>
           <MenuSep />
-          <MenuItem icon="x" label="清空" onClick={() => { setCur([]); onPick([]); }} />
+          <MenuItem icon="x" label={t("清空")} onClick={() => { setCur([]); onPick([]); }} />
         </>
       )}
     </>
@@ -1345,24 +1346,24 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
   const editRef = useRef<HTMLInputElement>(null); // only one row edits at a time
 
   const persist = (patch: { name?: string; type?: PropType; config?: PropConfig }) =>
-    api.updateProperty(prop.id, patch).then(reload).catch((e) => toast(`更新属性失败：${(e as Error).message}`));
+    api.updateProperty(prop.id, patch).then(reload).catch((e) => toast(t("更新属性失败：{msg}", { msg: (e as Error).message })));
 
-  const changeType = (t: PropType) => {
-    setType(t);
-    if (t === "relation") {
+  const changeType = (pt: PropType) => {
+    setType(pt);
+    if (pt === "relation") {
       // relation is only valid with a target database — without one, defer the
       // persist to the target list below; with one (kept in config through
       // type flips — config is a merge patch), re-attach it explicitly since
       // the type change re-validates.
-      if (target) persist({ type: t, config: { database: target } });
+      if (target) persist({ type: pt, config: { database: target } });
       return;
     }
     let opts = options;
-    if ((t === "select" || t === "multi_select") && opts.length === 0) {
-      opts = ["选项 1", "选项 2"];
+    if ((pt === "select" || pt === "multi_select") && opts.length === 0) {
+      opts = [t("选项 1"), t("选项 2")];
       setOptions(opts);
     }
-    persist({ type: t, ...(t === "select" || t === "multi_select" ? { config: { options: opts } } : {}) });
+    persist({ type: pt, ...(pt === "select" || pt === "multi_select" ? { config: { options: opts } } : {}) });
   };
   const setOpts = (next: string[]) => { setOptions(next); persist({ config: { options: next } }); };
 
@@ -1372,32 +1373,32 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
     setEditing(null);
     const to = raw.trim();
     if (!to || to === from) return;
-    if (options.includes(to)) { toast("已存在同名选项"); return; }
+    if (options.includes(to)) { toast(t("已存在同名选项")); return; }
     const prev = options;
     setOptions(prev.map((o) => (o === from ? to : o)));
     api.renameSelectOption(prop.id, from, to).then(reload).catch((e) => {
       setOptions(prev);
-      toast(`重命名选项失败：${(e as Error).message}`);
+      toast(t("重命名选项失败：{msg}", { msg: (e as Error).message }));
     });
   };
 
   const removeOpt = async (o: string) => {
-    if (options.length === 1) { toast("至少保留一个选项"); return; }
+    if (options.length === 1) { toast(t("至少保留一个选项")); return; }
     // aboveMenus stacks the dialog over this popover, so the menu survives it
-    const ok = await confirmDialog({ title: "删除选项？", message: `「${o}」将从所有使用它的记录中清除。`, confirmLabel: "删除", danger: true, aboveMenus: true });
+    const ok = await confirmDialog({ title: t("删除选项？"), message: t("「{name}」将从所有使用它的记录中清除。", { name: o }), confirmLabel: t("删除"), danger: true, aboveMenus: true });
     if (!ok) return;
     const prev = options;
     setOptions(prev.filter((x) => x !== o));
     api.removeSelectOption(prop.id, o).then(reload).catch((e) => {
       setOptions(prev);
-      toast(`删除选项失败：${(e as Error).message}`);
+      toast(t("删除选项失败：{msg}", { msg: (e as Error).message }));
     });
   };
 
   const addOpt = (input: HTMLInputElement) => {
     const v = input.value.trim();
     if (!v) return;
-    if (options.includes(v)) { toast("已存在同名选项"); return; }
+    if (options.includes(v)) { toast(t("已存在同名选项")); return; }
     input.value = "";
     setOpts([...options, v]);
   };
@@ -1433,19 +1434,19 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
         onBlur={() => name && name !== prop.name && persist({ name })}
         onKeyDown={(e) => { if (e.key === "Enter") { (e.target as HTMLInputElement).blur(); close(); } }}
       />
-      <MenuLabel>属性类型</MenuLabel>
+      <MenuLabel>{t("属性类型")}</MenuLabel>
       <div class="typegrid">
-        {(Object.keys(TYPE_META) as PropType[]).map((t) => (
-          <button key={t} class={"item" + (t === type ? " sel" : "")} onClick={() => changeType(t)}>
-            <span class="lico"><Icon name={TYPE_ICON[t]!} cls="ico sm" /></span>
-            <span class="d">{TYPE_META[t].t}</span>
+        {(Object.keys(TYPE_META) as PropType[]).map((pt) => (
+          <button key={pt} class={"item" + (pt === type ? " sel" : "")} onClick={() => changeType(pt)}>
+            <span class="lico"><Icon name={TYPE_ICON[pt]!} cls="ico sm" /></span>
+            <span class="d">{TYPE_META[pt].t}</span>
           </button>
         ))}
       </div>
       {(type === "select" || type === "multi_select") && (
         <>
           <MenuSep />
-          <MenuLabel>选项</MenuLabel>
+          <MenuLabel>{t("选项")}</MenuLabel>
           {options.map((o) => (
             <div key={o} class="optrow" data-opt={o}>
               {editing === o ? (
@@ -1473,12 +1474,12 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
                   {/* mousedown preventDefault keeps focus on the input so blur
                       (= the commit/cancel path) fires exactly once, on our terms */}
                   <button
-                    class="x ok" title="确认"
+                    class="x ok" title={t("确认")}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => editRef.current?.blur()}
                   ><Icon name="check" cls="ico sm" /></button>
                   <button
-                    class="x cancel" title="取消"
+                    class="x cancel" title={t("取消")}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       if (editRef.current) editRef.current.dataset.cancel = "1";
@@ -1489,9 +1490,9 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
               ) : (
                 <>
                   <span class="grip" onPointerDown={(e) => startOptDrag(e, o)}><Icon name="grip" cls="ico sm" /></span>
-                  <button class="optlabel" title="重命名选项" onClick={() => setEditing(o)}><Chip text={o} /></button>
-                  <button class="x" title="重命名选项" onClick={() => setEditing(o)}><Icon name="pencil" cls="ico sm" /></button>
-                  <button class="x del" title="删除选项" onClick={() => removeOpt(o)}><Icon name="x" cls="ico sm" /></button>
+                  <button class="optlabel" title={t("重命名选项")} onClick={() => setEditing(o)}><Chip text={o} /></button>
+                  <button class="x" title={t("重命名选项")} onClick={() => setEditing(o)}><Icon name="pencil" cls="ico sm" /></button>
+                  <button class="x del" title={t("删除选项")} onClick={() => removeOpt(o)}><Icon name="x" cls="ico sm" /></button>
                 </>
               )}
             </div>
@@ -1499,7 +1500,7 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
           <div class="optrow optadd">
             <span class="grip dim"><Icon name="plus" cls="ico sm" /></span>
             <input
-              placeholder="添加选项"
+              placeholder={t("添加选项")}
               onKeyDown={(e) => { if (e.key === "Enter") addOpt(e.target as HTMLInputElement); }}
             />
           </div>
@@ -1508,7 +1509,7 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
       {type === "relation" && (
         <>
           <MenuSep />
-          <MenuLabel>{target ? "关联目标" : "选择关联的数据表"}</MenuLabel>
+          <MenuLabel>{target ? t("关联目标") : t("选择关联的数据表")}</MenuLabel>
           <DbTargetList
             currentDb={dbId}
             target={target}
@@ -1520,16 +1521,16 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
         </>
       )}
       <MenuSep />
-      <MenuItem icon="cornerUpRight" label="在右侧插入列" onClick={() => {
+      <MenuItem icon="cornerUpRight" label={t("在右侧插入列")} onClick={() => {
         close();
-        api.createProperty({ db: dbId, name: uniquePropName("新属性", allProps), type: "text" })
+        api.createProperty({ db: dbId, name: uniquePropName(t("新属性"), allProps), type: "text" })
           .then(reload)
-          .catch((e) => toast(`新建属性失败：${(e as Error).message}`));
+          .catch((e) => toast(t("新建属性失败：{msg}", { msg: (e as Error).message })));
       }} />
       <MenuSep />
-      <MenuItem icon="trash" label="删除属性" danger onClick={async () => {
+      <MenuItem icon="trash" label={t("删除属性")} danger onClick={async () => {
         close();
-        const ok = await confirmDialog({ title: "删除属性？", message: `「${prop.name}」及其所有单元格数据将被移除。`, confirmLabel: "删除", danger: true });
+        const ok = await confirmDialog({ title: t("删除属性？"), message: t("「{name}」及其所有单元格数据将被移除。", { name: prop.name }), confirmLabel: t("删除"), danger: true });
         if (ok) api.deleteProperty(prop.id).then(reload);
       }} />
     </>
@@ -1551,7 +1552,7 @@ function uniquePropName(base: string, existing: Prop[]): string {
 /** Searchable database list for pick-a-database menus: relation targets here,
  *  the quick board's switcher (quickboard.tsx). Every database is listed —
  *  self-relation is legal, so the current table appears too, just labeled. */
-export function DbTargetList({ currentDb, target, autoFocus, placeholder = "搜索数据表", onPick }: {
+export function DbTargetList({ currentDb, target, autoFocus, placeholder = t("搜索数据表"), onPick }: {
   /** labels the matching row 「当前表」 (relation pickers — self-relation cue) */
   currentDb?: string; target?: string;
   /** steal focus only in the dedicated pick step — ColMenu has a rename input on top */
@@ -1567,7 +1568,7 @@ export function DbTargetList({ currentDb, target, autoFocus, placeholder = "搜�
 
   const q = query.trim().toLowerCase();
   const all = dbs ?? [];
-  const matches = q ? all.filter((d) => (d.name || "未命名数据库").toLowerCase().includes(q)) : all;
+  const matches = q ? all.filter((d) => (d.name || t("未命名数据库")).toLowerCase().includes(q)) : all;
   const CAP = 50;
   const shown = matches.slice(0, CAP);
   const sel = Math.min(selIdx, Math.max(0, shown.length - 1));
@@ -1595,7 +1596,7 @@ export function DbTargetList({ currentDb, target, autoFocus, placeholder = "搜�
         {query && (
           <button
             class="clear"
-            title="清空"
+            title={t("清空")}
             onMouseDown={(e) => e.preventDefault() /* keep the input focused */}
             onClick={() => { setQuery(""); setSelIdx(0); }}
           >
@@ -1604,20 +1605,20 @@ export function DbTargetList({ currentDb, target, autoFocus, placeholder = "搜�
         )}
       </div>
       <div ref={listRef} class="rellist">
-        {shown.length === 0 && <MenuLabel>无匹配结果</MenuLabel>}
+        {shown.length === 0 && <MenuLabel>{t("无匹配结果")}</MenuLabel>}
         {shown.map((d, i) => (
           <MenuItem
             key={d.id}
             icon="database"
-            label={d.name || "未命名数据库"}
-            sublabel={d.id === currentDb ? "当前表" : undefined}
+            label={d.name || t("未命名数据库")}
+            sublabel={d.id === currentDb ? t("当前表") : undefined}
             checked={d.id === target}
             sel={i === sel}
             onHover={() => setSelIdx(i)}
             onClick={() => onPick(d)}
           />
         ))}
-        {matches.length > CAP && <MenuLabel>还有 {matches.length - CAP} 条，继续输入过滤</MenuLabel>}
+        {matches.length > CAP && <MenuLabel>{t("还有 {n} 条，继续输入过滤", { n: matches.length - CAP })}</MenuLabel>}
       </div>
     </>
   );
@@ -1631,33 +1632,33 @@ function AddColMenu({ dbId, allProps, reload, close }: { dbId: string; allProps:
   // relation can't be created from the type alone — it needs a target database,
   // so picking it swaps the menu to a second step instead of creating.
   const [pickTarget, setPickTarget] = useState(false);
-  const create = (t: PropType, config: PropConfig | undefined, base: string) => {
+  const create = (pt: PropType, config: PropConfig | undefined, base: string) => {
     close();
-    api.createProperty({ db: dbId, name: uniquePropName(base, allProps), type: t, config })
+    api.createProperty({ db: dbId, name: uniquePropName(base, allProps), type: pt, config })
       .then(reload)
-      .catch((e) => toast(`新建属性失败：${(e as Error).message}`));
+      .catch((e) => toast(t("新建属性失败：{msg}", { msg: (e as Error).message })));
   };
   if (pickTarget)
     return (
       <>
-        <MenuLabel>选择关联的数据表</MenuLabel>
+        <MenuLabel>{t("选择关联的数据表")}</MenuLabel>
         <DbTargetList currentDb={dbId} autoFocus onPick={(d) => create("relation", { database: d.id }, d.name || TYPE_META.relation.t)} />
         <MenuSep />
-        <MenuItem icon="arrowLeft" label="返回" onClick={() => setPickTarget(false)} />
+        <MenuItem icon="arrowLeft" label={t("返回")} onClick={() => setPickTarget(false)} />
       </>
     );
   return (
     <>
-      <MenuLabel>新建属性 · 选择类型</MenuLabel>
+      <MenuLabel>{t("新建属性 · 选择类型")}</MenuLabel>
       <div class="typegrid">
-        {(Object.keys(TYPE_META) as PropType[]).map((t) => (
-          <button key={t} class="item" onClick={() => {
-            if (t === "relation") { setPickTarget(true); return; }
-            const cfg = t === "select" || t === "multi_select" ? { options: ["选项 1", "选项 2"] } : undefined;
-            create(t, cfg, TYPE_META[t].t);
+        {(Object.keys(TYPE_META) as PropType[]).map((pt) => (
+          <button key={pt} class="item" onClick={() => {
+            if (pt === "relation") { setPickTarget(true); return; }
+            const cfg = pt === "select" || pt === "multi_select" ? { options: [t("选项 1"), t("选项 2")] } : undefined;
+            create(pt, cfg, TYPE_META[pt].t);
           }}>
-            <span class="lico"><Icon name={TYPE_ICON[t]!} cls="ico sm" /></span>
-            <span class="d">{TYPE_META[t].t}</span>
+            <span class="lico"><Icon name={TYPE_ICON[pt]!} cls="ico sm" /></span>
+            <span class="d">{TYPE_META[pt].t}</span>
           </button>
         ))}
       </div>
@@ -1668,11 +1669,11 @@ function AddColMenu({ dbId, allProps, reload, close }: { dbId: string; allProps:
 function openSortMenu(e: MouseEvent, props: Prop[], cur: { id: string; desc: boolean } | null, setSort: (s: { id: string; desc: boolean } | null) => void) {
   openMenu(e, (close) => (
     <>
-      <MenuLabel>排序依据</MenuLabel>
+      <MenuLabel>{t("排序依据")}</MenuLabel>
       {props.map((p) => (
         <MenuItem key={p.id} icon={TYPE_ICON[p.type]} label={p.name} onClick={() => { setSort({ id: p.id, desc: cur?.id === p.id ? !cur.desc : false }); close(); }} />
       ))}
-      {cur && (<><MenuSep /><MenuItem icon="x" label="清除排序" onClick={() => { setSort(null); close(); }} /></>)}
+      {cur && (<><MenuSep /><MenuItem icon="x" label={t("清除排序")} onClick={() => { setSort(null); close(); }} /></>)}
     </>
   ));
 }
@@ -1681,12 +1682,12 @@ function openRowMenu(e: MouseEvent, rec: Rec, onOpen: () => void, onDup: () => v
   e.stopPropagation();
   openMenu(e, (close) => (
     <>
-      <MenuItem icon="cornerUpRight" label="打开记录" onClick={() => { close(); onOpen(); }} />
-      <MenuItem icon="copy" label="复制记录" onClick={() => { close(); onDup(); }} />
+      <MenuItem icon="cornerUpRight" label={t("打开记录")} onClick={() => { close(); onOpen(); }} />
+      <MenuItem icon="copy" label={t("复制记录")} onClick={() => { close(); onDup(); }} />
       <MenuSep />
-      <MenuItem icon="trash" label="删除记录" danger onClick={async () => {
+      <MenuItem icon="trash" label={t("删除记录")} danger onClick={async () => {
         close();
-        const ok = await confirmDialog({ title: "删除记录？", message: "确定删除这条记录？", confirmLabel: "删除", danger: true });
+        const ok = await confirmDialog({ title: t("删除记录？"), message: t("确定删除这条记录？"), confirmLabel: t("删除"), danger: true });
         if (ok) onDel();
       }} />
     </>
@@ -1717,18 +1718,18 @@ export function RecordPeek({
         <div class="peek-head">
           <button class="iconbtn" onClick={close}><Icon name="x" /></button>
           {hist && (
-            <button class="iconbtn" title="返回字段" onClick={() => setHist(false)}>
+            <button class="iconbtn" title={t("返回字段")} onClick={() => setHist(false)}>
               <Icon name="arrowLeft" />
             </button>
           )}
           <div style={{ flex: 1 }} />
-          <button class="iconbtn" title="更多" onClick={(e) =>
+          <button class="iconbtn" title={t("更多")} onClick={(e) =>
             openMenu(e, (close) => (
               <>
-                <MenuItem icon="history" label="版本历史" checked={hist} onClick={() => { close(); setHist(!hist); }} />
-                <MenuItem icon="copy" label="复制记录" onClick={() => { close(); onDuplicate(); }} />
+                <MenuItem icon="history" label={t("版本历史")} checked={hist} onClick={() => { close(); setHist(!hist); }} />
+                <MenuItem icon="copy" label={t("复制记录")} onClick={() => { close(); onDuplicate(); }} />
                 <MenuSep />
-                <MenuItem icon="trash" label="删除记录" danger onClick={async () => { close(); const ok = await confirmDialog({ title: "删除记录？", message: "确定删除这条记录？", confirmLabel: "删除", danger: true }); if (ok) onDelete(); }} />
+                <MenuItem icon="trash" label={t("删除记录")} danger onClick={async () => { close(); const ok = await confirmDialog({ title: t("删除记录？"), message: t("确定删除这条记录？"), confirmLabel: t("删除"), danger: true }); if (ok) onDelete(); }} />
               </>
             ))
           }><Icon name="dots" /></button>
@@ -1743,7 +1744,7 @@ export function RecordPeek({
                 {...(titleEditable ? plainPasteHandlers() : {})}
                 onBlur={titleEditable ? (e) => onCommit(titleProp, (e.target as HTMLElement).textContent ?? "") : undefined}
               >
-                {titleProp ? String(rec.cells[titleProp.id] ?? "无标题") : "无标题"}
+                {titleProp ? String(rec.cells[titleProp.id] ?? t("无标题")) : t("无标题")}
               </h2>
               {props.map((p) => (
                 <div key={p.id} class="proprow">
@@ -1751,7 +1752,7 @@ export function RecordPeek({
                     class="k"
                     onClick={(e) =>
                       openMenu(e, (close) => (
-                        <MenuItem icon="history" label="字段修改历史" onClick={() => { close(); openFieldHistory(rec.id, p.id, p.name); }} />
+                        <MenuItem icon="history" label={t("字段修改历史")} onClick={() => { close(); openFieldHistory(rec.id, p.id, p.name); }} />
                       ))
                     }
                   ><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span></div>
@@ -1822,13 +1823,13 @@ function PeekDocs({ props, rec }: { props: Prop[]; rec: Rec }) {
         })}
         <div style={{ flex: 1 }} />
         {!activeMissing && (
-          <a class="iconbtn peekdocs-open" title="在主视图打开" href={`#/doc/${encodeURIComponent(activeId)}`}>
+          <a class="iconbtn peekdocs-open" title={t("在主视图打开")} href={`#/doc/${encodeURIComponent(activeId)}`}>
             <Icon name="cornerUpRight" cls="ico sm" />
           </a>
         )}
       </div>
       {activeMissing ? (
-        <div class="empty">文档不存在或未同步</div>
+        <div class="empty">{t("文档不存在或未同步")}</div>
       ) : (
         <DocView key={activeId} docId={activeId} embedded onError={(m) => toast(m)} onHandle={onHandle} />
       )}

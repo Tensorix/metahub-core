@@ -13,6 +13,8 @@ import { sitesRoutes } from "./sites-routes.ts";
 import { peersRoutes } from "./peers-routes.ts";
 import { blobRoutes } from "./blob-routes.ts";
 import { errorCode, type MhErrorCode } from "../errors.ts";
+import { pickLocale } from "./locale.ts";
+import { localizeError } from "./page-messages.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
 /** Injected at server startup; handlers reuse the open DB connection. */
@@ -41,8 +43,8 @@ const HTTP_STATUS: Record<MhErrorCode, number> = {
 /** Turn a thrown handler error into a JSON response: `{error, code?}` with a
  *  semantic status, so HTTP clients can dispatch on `code` like CLI users
  *  dispatch on exit codes. */
-export function errorResponse(e: unknown): Response {
-  const message = e instanceof Error ? e.message : String(e);
+export function errorResponse(e: unknown, req?: Request): Response {
+  const message = req ? localizeError(pickLocale(req), e) : e instanceof Error ? e.message : String(e);
   const code = errorCode(e);
   return Response.json(code ? { error: message, code } : { error: message }, {
     status: code ? HTTP_STATUS[code] : 400,

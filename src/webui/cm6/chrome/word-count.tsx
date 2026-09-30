@@ -6,6 +6,8 @@
 // selection instead reports just the selected text. Honours the settings toggle,
 // re-reading it on the same-tab WORD_COUNT_EVENT and the cross-tab `storage` event.
 
+import { t } from "../../i18n/t.ts";
+import { fmtNumber } from "../../i18n/fmt.ts";
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
@@ -86,14 +88,14 @@ class WordCountPlugin implements PluginValue {
     const sel = this.view.state.selection.main;
     if (!sel.empty) {
       const s = countText(this.view.state.sliceDoc(sel.from, sel.to));
-      this.render(`已选 ${s.zi.toLocaleString()} 字`, `${s.chars.toLocaleString()} 字符`, null, true);
+      this.render(t("已选 {n} 字", { n: fmtNumber(s.zi) }), t("{n} 字符", { n: fmtNumber(s.chars) }), null, true);
       return;
     }
     const { zi, chars, minutes } = this.stats;
     this.render(
-      `${zi.toLocaleString()} 字`,
-      `${chars.toLocaleString()} 字符`,
-      minutes > 0 ? `约 ${minutes} 分钟阅读` : null,
+      t("{n} 字", { n: fmtNumber(zi) }),
+      t("{n} 字符", { n: fmtNumber(chars) }),
+      minutes > 0 ? t("约 {n} 分钟阅读", { n: minutes }) : null,
       false,
     );
   }

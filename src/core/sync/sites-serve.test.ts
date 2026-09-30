@@ -487,3 +487,30 @@ test("a site page cannot mutate the workspace on the owner's ambient cookie", as
   expect(explicit.status).toBe(200);
   expect(forwarded).toBe(2);
 });
+
+test("built-in 404 and unlock pages follow Accept-Language and the mh-lang cookie", async () => {
+  const ctx = makeCtx();
+  createSite(ctx.db, { name: "demo" });
+
+  const zh = await (await serveSite(req("/sites/ghost/"), ctx, AUTH_OFF))!.text();
+  expect(zh).toContain('<html lang="zh-CN">');
+  expect(zh).toContain("站点不存在");
+
+  const en = await (await serveSite(req("/sites/ghost/", { "accept-language": "en-GB,en;q=0.8" }), ctx, AUTH_OFF))!.text();
+  expect(en).toContain('<html lang="en">');
+  expect(en).toContain("Site not found");
+  expect(en).toContain("There is no site named “ghost”.");
+  expect(en).toContain("Hosted by metahub");
+
+  const miss = await (await serveSite(req("/sites/demo/nope.html", { "accept-language": "en" }), ctx, AUTH_OFF))!.text();
+  expect(miss).toContain("Page not found");
+
+  const gateEn = await (await serveSite(asBrowser("/sites/demo/", { cookie: "mh-lang=en" }), ctx, AUTH_TOKEN))!.text();
+  expect(gateEn).toContain('<html lang="en">');
+  expect(gateEn).toContain("Enter the access token");
+  expect(gateEn).toContain("<code>mh token show</code>");
+
+  const gateZh = await (await serveSite(asBrowser("/sites/demo/", { "accept-language": "en", cookie: "mh-lang=zh-CN" }), ctx, AUTH_TOKEN))!.text();
+  expect(gateZh).toContain('<html lang="zh-CN">');
+  expect(gateZh).toContain("输入访问令牌");
+});

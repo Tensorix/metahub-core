@@ -13,6 +13,7 @@ export interface MetahubDesktop {
   versions: { electron: string; chrome: string; node: string };
   /** Electron shell (desktop app) version, from the main process. */
   appVersion?: () => Promise<string>;
+  app?: { setLocale: (locale: "zh-CN" | "en") => Promise<void> };
   /**
    * Core sidecar auto-update bridge. `installedVersion` is the version staged on
    * disk (runs next launch); `check` hits GitHub for the latest release without

@@ -11,6 +11,11 @@
 import { renderMarkdown, escapeHtml } from "../../core/sync/share-render.ts";
 import { copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "../../core/sync/share-copy.ts";
 import { decryptBytes, deriveShareKey, fromB64 } from "../../core/sync/e2ee.ts";
+import { localeFromTags } from "../../core/sync/locale.ts";
+import { pm, type PageMsgKey } from "../../core/sync/page-messages.ts";
+
+const LOCALE = localeFromTags(navigator.languages?.length ? navigator.languages : [navigator.language]);
+const m = (key: PageMsgKey) => pm(LOCALE, key);
 
 interface Manifest {
   v: 1;
@@ -98,7 +103,7 @@ function attachBlob(hash: string, url: string | null): void {
       if (isPh) ph!.remove();
     } else if (isPh) {
       ph!.classList.add("dead");
-      ph!.textContent = "附件已失效";
+      ph!.textContent = m("附件已失效");
     }
   }
 }
@@ -107,27 +112,27 @@ async function main() {
   const root = document.getElementById("app")!;
   const set = (html: string) => (root.innerHTML = html);
   try {
-    const { m, k, s } = parseHash();
-    if (!m) throw new Error("链接缺少分享数据");
+    const { m: manifestUrl, k, s } = parseHash();
+    if (!manifestUrl) throw new Error(pm(LOCALE, "链接缺少分享数据"));
 
     let key: Uint8Array;
     if (k) key = fromB64(k);
     else if (s) {
-      const pw = window.prompt("请输入分享口令") ?? "";
+      const pw = window.prompt(pm(LOCALE, "请输入分享口令")) ?? "";
       key = await deriveShareKey(pw, fromB64(s));
-    } else throw new Error("链接缺少密钥");
+    } else throw new Error(pm(LOCALE, "链接缺少密钥"));
 
-    const enc = new Uint8Array(await (await fetch(m)).arrayBuffer());
+    const enc = new Uint8Array(await (await fetch(manifestUrl)).arrayBuffer());
     let json: string;
     try {
       json = new TextDecoder().decode(await decryptBytes(key, enc));
     } catch {
-      throw new Error(s ? "口令错误或链接已失效" : "链接已失效或密钥不正确");
+      throw new Error(pm(LOCALE, s ? "口令错误或链接已失效" : "链接已失效或密钥不正确"));
     }
     const manifest = JSON.parse(json) as Manifest;
-    document.title = manifest.title || "分享";
+    document.title = manifest.title || pm(LOCALE, "分享");
 
-    const title = `<header class="mh"><h1 class="title">${escapeHtml(manifest.title || "分享")}</h1><div class="mh-tools">${copyButtonHtml()}</div></header>`;
+    const title = `<header class="mh"><h1 class="title">${escapeHtml(manifest.title || pm(LOCALE, "分享"))}</h1><div class="mh-tools">${copyButtonHtml(LOCALE)}</div></header>`;
     const copySource =
       manifest.kind === "doc"
         ? manifest.body ?? ""
@@ -137,15 +142,15 @@ async function main() {
           );
     const inner =
       manifest.kind === "doc"
-        ? `<article class="doc">${renderMarkdown(manifest.body ?? "") || '<p class="muted">（空文档）</p>'}</article>`
+        ? `<article class="doc">${renderMarkdown(manifest.body ?? "") || `<p class="muted">${escapeHtml(pm(LOCALE, "（空文档）"))}</p>`}</article>`
         : renderTable(manifest);
     const tpl = document.createElement("template");
-    tpl.innerHTML = `<div class="mh-view">${title}${inner}<footer class="mh">通过 metahub 分享</footer>${copySourceHtml(copySource)}</div>`;
+    tpl.innerHTML = `<div class="mh-view">${title}${inner}<footer class="mh">${escapeHtml(pm(LOCALE, "通过 metahub 分享"))}</footer>${copySourceHtml(copySource)}</div>`;
     const wanted = detachBlobRefs(tpl.content);
     set("");
     root.append(tpl.content);
     const js = document.createElement("script");
-    js.textContent = copyScript();
+    js.textContent = copyScript(LOCALE);
     root.append(js);
 
     await Promise.allSettled(

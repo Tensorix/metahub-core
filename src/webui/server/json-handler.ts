@@ -8,7 +8,7 @@ export function jsonHandler(
     try {
       return Response.json((await fn(req, ctx)) ?? null);
     } catch (e) {
-      return errorResponse(e);
+      return errorResponse(e, req);
     }
   };
 }

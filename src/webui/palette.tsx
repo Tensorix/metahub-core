@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, type LookupHit } from "./api.ts";
 import { Icon } from "./icons.tsx";
+import { t } from "./i18n/t.ts";
 import { MenuItem, MenuLabel, closeModal, openModal } from "./ui.tsx";
 import { COMMAND_GROUPS, listCommands, onCommandsChange, type Command } from "./commands.ts";
 import type { Navigate } from "./view.ts";
@@ -18,12 +19,12 @@ export interface PaletteCtx {
 
 /** Input → resolver ref: hash link (deepest id), `[[id|text]]`, or the text itself. */
 export function refFromInput(text: string): string {
-  const t = text.trim();
-  const url = t.match(/#\/(?:doc|db)\/((?:doc|db)_[a-z0-9][a-z0-9-]*)(?:\/(rec_[a-z0-9][a-z0-9-]*))?/);
+  const s = text.trim();
+  const url = s.match(/#\/(?:doc|db)\/((?:doc|db)_[a-z0-9][a-z0-9-]*)(?:\/(rec_[a-z0-9][a-z0-9-]*))?/);
   if (url) return url[2] ?? url[1]!;
-  const link = t.match(/^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$/);
+  const link = s.match(/^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$/);
   if (link) return link[1]!.trim();
-  return t;
+  return s;
 }
 
 const looksLikeId = (ref: string) => /^(doc|db|rec)_/.test(ref);
@@ -35,7 +36,7 @@ export function openHit(hit: LookupHit, navigate: Navigate): void {
 }
 
 const HIT_ICON: Record<LookupHit["kind"], string> = { doc: "doc", db: "database", rec: "table" };
-const HIT_NOUN: Record<LookupHit["kind"], string> = { doc: "文档", db: "数据库", rec: "记录" };
+const HIT_NOUN: Record<LookupHit["kind"], string> = { doc: t("文档"), db: t("数据库"), rec: t("记录") };
 
 type Row = { key: string; cmd: Command } | { key: string; hit: LookupHit };
 
@@ -63,7 +64,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
       return;
     }
     const my = ++seq.current;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       api.resolve(ref, 20)
         .then((rows) => {
           if (my !== seq.current) return;
@@ -76,7 +77,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
           setResolvedFor(ref);
         });
     }, 120);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [ref]);
 
   const q = query.trim().toLowerCase();
@@ -125,7 +126,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
         <MenuItem
           key={r.key}
           icon={HIT_ICON[h.kind]}
-          label={h.label || (h.kind === "db" ? "未命名数据库" : h.kind === "doc" ? "无标题" : "未命名记录")}
+          label={h.label || (h.kind === "db" ? t("未命名数据库") : h.kind === "doc" ? t("无标题") : t("未命名记录"))}
           sublabel={where}
           sel={idx === sel}
           onHover={() => setSelIdx(idx)}
@@ -136,7 +137,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
 
   const first = idFirst ? hitRows : cmdRows;
   const second = idFirst ? cmdRows : hitRows;
-  const label = (list: Row[]) => (list === hitRows ? "打开" : null);
+  const label = (list: Row[]) => (list === hitRows ? t("打开") : null);
 
   const sections: { key: string; label: string | null; list: Row[]; offset: number }[] = [];
   if (first.length) sections.push({ key: "a", label: label(first), list: first, offset: 0 });
@@ -147,7 +148,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
       <div class="selsearch">
         <Icon name={mode === "open" ? "hash" : "search"} cls="ico sm" />
         <input
-          placeholder={mode === "open" ? "输入 ID、前缀或名称" : "输入命令、ID 或名称"}
+          placeholder={mode === "open" ? t("输入 ID、前缀或名称") : t("输入命令、ID 或名称")}
           value={query}
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
@@ -158,7 +159,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
           }}
         />
         {query && (
-          <button class="clear" title="清空" onMouseDown={(e) => e.preventDefault()} onClick={() => { setQuery(""); setSelIdx(0); }}>
+          <button class="clear" title={t("清空")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setQuery(""); setSelIdx(0); }}>
             <Icon name="x" cls="ico sm" />
           </button>
         )}
@@ -192,8 +193,8 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
             </div>
           );
         })}
-        {notFound && <MenuLabel>未找到 {ref}，可能未同步或已删除</MenuLabel>}
-        {empty && !notFound && <MenuLabel>{ref ? "无匹配" : "暂无可用命令"}</MenuLabel>}
+        {notFound && <MenuLabel>{t("未找到 {ref}，可能未同步或已删除", { ref })}</MenuLabel>}
+        {empty && !notFound && <MenuLabel>{ref ? t("无匹配") : t("暂无可用命令")}</MenuLabel>}
       </div>
     </div>
   );

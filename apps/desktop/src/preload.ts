@@ -70,6 +70,9 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     node: process.versions.node,
   },
   appVersion: () => ipcRenderer.invoke("app:get-version"),
+  app: {
+    setLocale: (locale: "zh-CN" | "en") => ipcRenderer.invoke("app:set-locale", locale),
+  },
   coreUpdate: {
     installedVersion: () => ipcRenderer.invoke("core:installed-version"),
     check: () => ipcRenderer.invoke("core:check"),

@@ -10,6 +10,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../icons.tsx";
 import { fmtBytes } from "./shared.ts";
+import { t } from "../i18n/t.ts";
 
 const prefersReduced = () =>
   typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -82,7 +83,7 @@ export function CacheRingHero({
 
   if (loading) {
     return (
-      <div class="blob-hero skel skel-list" role="status" aria-busy="true" aria-label="正在加载">
+      <div class="blob-hero skel skel-list" role="status" aria-busy="true" aria-label={t("正在加载")}>
         <div class="blob-hero-main">
           <div class="blob-legend">
             <div class="blob-legend-row" style="--i:0"><span class="blob-dot skel-b" /><span class="skel-b skel-s" /></div>
@@ -113,23 +114,23 @@ export function CacheRingHero({
       <div class="blob-hero-main">
         <div class="blob-legend">
           <div class="blob-legend-row">
-            <span class="blob-dot free" /> <span class="blob-legend-k">可释放</span>
+            <span class="blob-dot free" /> <span class="blob-legend-k">{t("可释放")}</span>
             <b>{fmtBytes(segs.free)}</b>
           </div>
           {segs.keep > 0 && (
             <div class="blob-legend-row">
-              <span class="blob-dot keep" /> <span class="blob-legend-k">保留中</span>
+              <span class="blob-dot keep" /> <span class="blob-legend-k">{t("保留中")}</span>
               <b>{fmtBytes(segs.keep)}</b>
             </div>
           )}
           {segs.pin > 0 && (
             <div class="blob-legend-row">
-              <span class="blob-dot pin" /> <span class="blob-legend-k">已固定</span>
+              <span class="blob-dot pin" /> <span class="blob-legend-k">{t("已固定")}</span>
               <b>{fmtBytes(segs.pin)}</b>
             </div>
           )}
         </div>
-        <div class="blob-total">共 {count} 项 · {fmtBytes(totalBytes)}</div>
+        <div class="blob-total">{t("共 {n} 项 · {bytes}", { n: count, bytes: fmtBytes(totalBytes) })}</div>
         {actions != null && <div class="blob-actions">{actions}</div>}
         {footnote != null && <div class="blob-verify-at">{footnote}</div>}
       </div>
@@ -183,35 +184,35 @@ export function CacheRingHero({
           {state === "free" && (
             <>
               <div class="blob-ring-big">{fmtBytes(freeCount)}</div>
-              <div class="blob-ring-cap">可释放</div>
+              <div class="blob-ring-cap">{t("可释放")}</div>
             </>
           )}
           {state === "safe" && (
             <>
               <div class="blob-ring-check"><Icon name="check" cls="ico" /></div>
-              <div class="blob-ring-cap strong">都备份好了</div>
-              <div class="blob-ring-cap">暂时无需清理</div>
+              <div class="blob-ring-cap strong">{t("都备份好了")}</div>
+              <div class="blob-ring-cap">{t("暂时无需清理")}</div>
             </>
           )}
           {state === "no-anchor" && (
             <>
               <div class="blob-ring-lock"><Icon name="lock" cls="ico" /></div>
-              <div class="blob-ring-cap strong">未设置长期备份</div>
-              <div class="blob-ring-cap">指定后才能清理</div>
+              <div class="blob-ring-cap strong">{t("未设置长期备份")}</div>
+              <div class="blob-ring-cap">{t("指定后才能清理")}</div>
             </>
           )}
           {state === "unverified" && (
             <>
               <div class="blob-ring-lock"><Icon name="history" cls={"ico" + (verifying ? " spin" : "")} /></div>
-              <div class="blob-ring-cap strong">{verifying ? "检查中…" : "未检查"}</div>
-              <div class="blob-ring-cap">检查后才知道</div>
+              <div class="blob-ring-cap strong">{verifying ? t("检查中…") : t("未检查")}</div>
+              <div class="blob-ring-cap">{t("检查后才知道")}</div>
             </>
           )}
           {state === "self-full" && (
             <>
               <div class="blob-ring-check"><Icon name="check" cls="ico" /></div>
-              <div class="blob-ring-cap strong">原件都在这里</div>
-              <div class="blob-ring-cap">无需清理</div>
+              <div class="blob-ring-cap strong">{t("原件都在这里")}</div>
+              <div class="blob-ring-cap">{t("无需清理")}</div>
             </>
           )}
         </div>

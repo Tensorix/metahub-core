@@ -7,6 +7,7 @@
 import type { ComponentChildren } from "preact";
 import { Icon } from "../icons.tsx";
 import { openMenu, MenuItem } from "../ui.tsx";
+import { t } from "../i18n/t.ts";
 
 /** One setting: bold 14px title + one-line muted caption on the left, the
  *  control right-aligned. `lead` is an optional glyph tile before the text
@@ -70,7 +71,7 @@ export function SetRowSkeleton({
   control?: "none" | "switch" | "chevron" | "menu" | "button";
 }) {
   return (
-    <div class="skel-list" role="status" aria-live="polite" aria-busy="true" aria-label="正在加载">
+    <div class="skel-list" role="status" aria-live="polite" aria-busy="true" aria-label={t("正在加载")}>
       {Array.from({ length: rows }, (_, i) => (
         <div class="set-row skel" key={i} style={`--i:${Math.min(i, 4)}`}>
           <div class="set-row-line">
@@ -173,7 +174,7 @@ export function PageHeader({
 export function DangerZone({ children }: { children: ComponentChildren }) {
   return (
     <section class="danger-zone">
-      <div class="danger-zone-label">危险操作</div>
+      <div class="danger-zone-label">{t("危险操作")}</div>
       {children}
     </section>
   );

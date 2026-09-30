@@ -1,5 +1,6 @@
 /** @jsxImportSource preact */
 import { useState } from "preact/hooks";
+import { t } from "./i18n/t.ts";
 
 /** Remembered row count for a list's skeleton (session-scoped, clamp 2..8). */
 export function useSkeletonRows(key: string, fallback = 3): [number, (n: number) => void] {
@@ -25,7 +26,7 @@ export function useSkeletonRows(key: string, fallback = 3): [number, (n: number)
 /** N sheen text lines — the placeholder for any short block of prose. */
 export function SkelLines({ n = 3, cls = "" }: { n?: number; cls?: string }) {
   return (
-    <div class={"skel-lines skel-list" + (cls ? " " + cls : "")} role="status" aria-busy="true" aria-label="正在加载">
+    <div class={"skel-lines skel-list" + (cls ? " " + cls : "")} role="status" aria-busy="true" aria-label={t("正在加载")}>
       {Array.from({ length: n }, (_, i) => (
         <span class="skel-b skel-s" key={i} style={`--i:${Math.min(i, 4)}`} />
       ))}

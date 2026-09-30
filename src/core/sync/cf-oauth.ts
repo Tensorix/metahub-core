@@ -12,7 +12,9 @@
 // handed straight to deployEdge in the same position the pasted API token used
 // to occupy — nothing downstream changes, and the token is never persisted.
 
-import { MhError } from "../errors.ts";
+import { MhError, mhError } from "../errors.ts";
+import { localeFromAcceptLanguage, type Locale } from "./locale.ts";
+import { pm } from "./page-messages.ts";
 import { toB64url } from "./e2ee.ts";
 
 /** Registered OAuth client id, resolved from two layers in order:
@@ -136,7 +138,7 @@ export function parseTokenResponse(data: unknown): CfToken {
     error_description?: string;
   };
   if (!d.access_token)
-    throw new MhError("auth", `Cloudflare 授权失败：${d.error_description || d.error || "未返回 access token"}`);
+    throw mhError("auth", "Cloudflare 授权失败：{detail}", { detail: d.error_description || d.error || "未返回 access token" });
   return {
     accessToken: d.access_token,
     refreshToken: d.refresh_token ?? null,
@@ -169,11 +171,11 @@ async function exchangeCode(p: {
       body: buildTokenRequestBody(p),
     });
   } catch (e) {
-    throw new MhError("network", `无法连接 Cloudflare 授权服务：${(e as Error).message}`);
+    throw mhError("network", "无法连接 Cloudflare 授权服务：{msg}", { msg: (e as Error).message });
   }
   const data = await res.json().catch(() => null);
   if (!res.ok && !(data as { access_token?: string })?.access_token)
-    throw new MhError("auth", `Cloudflare 令牌交换失败（HTTP ${res.status}）`);
+    throw mhError("auth", "Cloudflare 令牌交换失败（HTTP {status}）", { status: res.status });
   return parseTokenResponse(data);
 }
 
@@ -186,10 +188,10 @@ export async function discoverAccounts(accessToken: string): Promise<CfAccount[]
       headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
     });
   } catch (e) {
-    throw new MhError("network", `无法读取 Cloudflare 账号列表：${(e as Error).message}`);
+    throw mhError("network", "无法读取 Cloudflare 账号列表：{msg}", { msg: (e as Error).message });
   }
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new MhError("auth", `读取 Cloudflare 账号失败（HTTP ${res.status}）`);
+  if (!res.ok) throw mhError("auth", "读取 Cloudflare 账号失败（HTTP {status}）", { status: res.status });
   return parseAccounts(data);
 }
 
@@ -250,7 +252,9 @@ export async function startCfLogin(opts: {
       const url = new URL(req.url);
       if (url.pathname !== CALLBACK_PATH) return new Response("not found", { status: 404 });
       settle(url.searchParams);
-      return new Response(CALLBACK_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+      return new Response(callbackHtml(localeFromAcceptLanguage(req.headers.get("accept-language"))), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
     },
   });
 
@@ -287,7 +291,7 @@ export async function startCfLogin(opts: {
       try {
         const q = await Promise.race([caught, timeout]);
         if (q.get("error"))
-          throw new MhError("auth", `Cloudflare 授权被拒绝：${q.get("error_description") || q.get("error")}`);
+          throw mhError("auth", "Cloudflare 授权被拒绝：{detail}", { detail: q.get("error_description") || q.get("error") || "" });
         if (q.get("state") !== state)
           throw new MhError("auth", "OAuth state 不匹配，疑似伪造回调，已中止");
         const code = q.get("code");
@@ -307,6 +311,6 @@ export async function startCfLogin(opts: {
   };
 }
 
-const CALLBACK_HTML = `<!doctype html><meta charset="utf-8"><title>MetaHub</title>
+const callbackHtml = (locale: Locale) => `<!doctype html><html lang="${locale}"><meta charset="utf-8"><title>MetaHub</title>
 <body style="font:15px system-ui;display:grid;place-items:center;height:100vh;margin:0">
-<div style="text-align:center"><h2>✅ 已授权</h2><p>可以关闭此标签页，回到 MetaHub 继续部署。</p></div>`;
+<div style="text-align:center"><h2>${pm(locale, "✅ 已授权")}</h2><p>${pm(locale, "可以关闭此标签页，回到 MetaHub 继续部署。")}</p></div>`;

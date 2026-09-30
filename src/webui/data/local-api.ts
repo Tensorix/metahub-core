@@ -9,6 +9,7 @@
 import { call, replicaActive, isNoOrigin } from "./replica.ts";
 import { ApiError, NAV_INVALIDATE, REC_INVALIDATE } from "../api.ts";
 import { ReplicaError } from "./replica.ts";
+import { t } from "../i18n/t.ts";
 
 export { replicaActive, isNoOrigin };
 
@@ -173,14 +174,14 @@ export const localSites = {
   // instead of a silent fetch against an origin that doesn't exist.
   publishSite: () =>
     Promise.reject(
-      new ApiError("此设备通过同步存储桶交换数据，不支持设备托管发布；请在在线主节点操作", "invalid_input", 400),
+      new ApiError(t("此设备通过同步存储桶交换数据，不支持设备托管发布；请在在线主节点操作"), "invalid_input", 400),
     ),
   recoverSitePublish: () =>
     Promise.reject(
-      new ApiError("此设备通过同步存储桶交换数据，不支持设备托管发布；请在在线主节点操作", "invalid_input", 400),
+      new ApiError(t("此设备通过同步存储桶交换数据，不支持设备托管发布；请在在线主节点操作"), "invalid_input", 400),
     ),
   setSiteHosting: () =>
-    Promise.reject(new ApiError("此设备没有可配置的托管入口", "invalid_input", 400)),
+    Promise.reject(new ApiError(t("此设备没有可配置的托管入口"), "invalid_input", 400)),
   verifySiteHosting: () =>
-    Promise.reject(new ApiError("此设备没有可配置的托管入口", "invalid_input", 400)),
+    Promise.reject(new ApiError(t("此设备没有可配置的托管入口"), "invalid_input", 400)),
 };

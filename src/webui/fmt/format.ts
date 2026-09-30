@@ -6,6 +6,7 @@
 // clamping, and the unchanged→null contract that keeps no-op formats out of
 // the CM undo history.
 
+import { t } from "../i18n/t.ts";
 import { langEngine, type ProviderEngine } from "./lang-map.ts";
 import { loadProvider } from "./load.ts";
 import { reindent } from "./reindent.ts";
@@ -48,7 +49,7 @@ export function formatJson(code: string): string {
   try {
     parsed = JSON.parse(stripTrailingCommas(code));
   } catch (e) {
-    throw new Error(`JSON 解析失败:${(e as Error).message}`);
+    throw new Error(t("JSON 解析失败:{msg}", { msg: (e as Error).message }));
   }
   return JSON.stringify(parsed, null, 2);
 }

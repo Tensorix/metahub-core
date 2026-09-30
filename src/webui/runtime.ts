@@ -16,6 +16,7 @@
 
 import { getReplicaBus, BusError } from "./data/replica-bus.ts";
 import { injectRuntimeTag } from "../core/inject-runtime.ts";
+import { t } from "./i18n/t.ts";
 
 const TOKEN_KEY = "mh_token";
 const RENEW_PATH = "/auth/token";
@@ -27,13 +28,13 @@ const g = globalThis as {
 
 // ---- 1. token shim --------------------------------------------------------------
 
-function saveToken(t: string): void {
+function saveToken(tok: string): void {
   try {
-    localStorage.setItem(TOKEN_KEY, t);
+    localStorage.setItem(TOKEN_KEY, tok);
   } catch {
     /* private mode */
   }
-  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(t)}; path=/; SameSite=Strict; Max-Age=31536000`;
+  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(tok)}; path=/; SameSite=Strict; Max-Age=31536000`;
 }
 
 /** localStorage token, adopting the `?token=` cookie the server persisted (and
@@ -42,8 +43,8 @@ function saveToken(t: string): void {
  *  way a QR-opened page can write. */
 function readToken(): string | null {
   try {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (t) return t;
+    const tok = localStorage.getItem(TOKEN_KEY);
+    if (tok) return tok;
   } catch {
     /* private mode */
   }
@@ -145,7 +146,7 @@ function replicaUsable(): boolean {
     document.body.replaceChildren(p);
   };
   if (!replicaUsable() || typeof Worker === "undefined") {
-    fail("当前离线，且此浏览器尚未启用本地副本。请先在线打开 Metahub，在设置中开启「离线副本」。");
+    fail(t("当前离线，且此浏览器尚未启用本地副本。请先在线打开 Metahub，在设置中开启「离线副本」。"));
     return;
   }
   void (async () => {
@@ -159,18 +160,18 @@ function replicaUsable(): boolean {
         public?: boolean;
       } | null;
       if (!row) {
-        fail("离线副本中没有这个页面。");
+        fail(t("离线副本中没有这个页面。"));
         return;
       }
       if (!row.content_type.includes("text/html")) {
-        fail("此资源不是页面，无法离线打开。");
+        fail(t("此资源不是页面，无法离线打开。"));
         return;
       }
       // Defensive: HTML always stores inline (isTextType → utf8), never as a
       // blob — but the replica now passes blob rows through, so refuse loudly
       // instead of atob-ing a bare hash into garbage.
       if (row.encoding === "blob") {
-        fail("此页面以二进制块存储，无法离线打开。");
+        fail(t("此页面以二进制块存储，无法离线打开。"));
         return;
       }
       const raw = row.encoding === "utf8" ? (row.content ?? "") : atob(row.content ?? "");
@@ -181,7 +182,7 @@ function replicaUsable(): boolean {
       document.write(html);
       document.close();
     } catch (e) {
-      fail(`离线加载失败：${(e as Error).message}`);
+      fail(t("离线加载失败：{msg}", { msg: (e as Error).message }));
     }
   })();
 };

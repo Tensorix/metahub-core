@@ -3,6 +3,7 @@
 // The "标注" button swaps in the ImageAnnotator; saving hands a flattened PNG to
 // onReplace. <ImageViewer> is shared by the in-page overlay (<ImageLightbox>, web)
 // and the frameless desktop preview window (ImagePreviewWindow).
+import { t } from "../i18n/t.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../icons.tsx";
 import { ImageAnnotator } from "./image-annotator.tsx";
@@ -97,11 +98,11 @@ export function ImageViewer({
       <div class={"lightbox-toolbar" + (draggableBar ? " app-drag" : "")} onMouseDown={(e) => e.stopPropagation()}>
         {name && <span class="lightbox-name" title={name}>{name}</span>}
         <span class="lightbox-spacer" />
-        <button title="缩小" onClick={() => setScale((s) => Math.max(MIN, s / 1.2))}><Icon name="zoomOut" /></button>
-        <button class="lightbox-pct" title="重置" onClick={reset}>{Math.round(scale * 100)}%</button>
-        <button title="放大" onClick={() => setScale((s) => Math.min(MAX, s * 1.2))}><Icon name="zoomIn" /></button>
-        <button title="标注 / 编辑" onClick={() => { reset(); setEditing(true); }}><Icon name="pencil" /></button>
-        <button title="关闭" onClick={onClose}><Icon name="x" /></button>
+        <button title={t("缩小")} onClick={() => setScale((s) => Math.max(MIN, s / 1.2))}><Icon name="zoomOut" /></button>
+        <button class="lightbox-pct" title={t("重置")} onClick={reset}>{Math.round(scale * 100)}%</button>
+        <button title={t("放大")} onClick={() => setScale((s) => Math.min(MAX, s * 1.2))}><Icon name="zoomIn" /></button>
+        <button title={t("标注 / 编辑")} onClick={() => { reset(); setEditing(true); }}><Icon name="pencil" /></button>
+        <button title={t("关闭")} onClick={onClose}><Icon name="x" /></button>
       </div>
 
       <div

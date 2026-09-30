@@ -4,6 +4,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { S3Config } from "../core/sync/storage.ts";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
+import { t } from "./i18n/t.ts";
+import { getLang, setLang, resolveLocale, systemLocale, LOCALE_NAMES, type LangChoice } from "./i18n/locale.ts";
 import { getWordCountEnabled, setWordCountEnabled } from "./wordcount.ts";
 import { timeAgo } from "./date.ts";
 import {
@@ -60,7 +62,7 @@ import {
   type StoragePeerView,
 } from "./settings/shared.ts";
 import { GROUPS, resolvePage, pageLabel, type PageId, type PageDef } from "./settings/nav.ts";
-import { SetRow, Switch, SetSection, PageHeader, DangerZone } from "./settings/primitives.tsx";
+import { SetRow, Switch, SetSection, PageHeader, DangerZone, RowSelect } from "./settings/primitives.tsx";
 import { CacheRingHero, type RingState } from "./settings/cache-ring.tsx";
 import { AuditPage } from "./settings/audit-page.tsx";
 import { ShortcutsPage } from "./settings/shortcuts-page.tsx";
@@ -68,9 +70,9 @@ import { BackupPage } from "./settings/backup-page.tsx";
 import { DevicesPage } from "./settings/devices-page.tsx";
 
 const THEMES: { value: ThemeChoice; icon: string; name: string; desc: string }[] = [
-  { value: "light", icon: "sun", name: "浅色", desc: "始终使用明亮界面" },
-  { value: "dark", icon: "moon", name: "深色", desc: "始终使用暗色界面" },
-  { value: "system", icon: "monitor", name: "跟随系统", desc: "随操作系统外观自动切换" },
+  { value: "light", icon: "sun", name: t("浅色"), desc: t("始终使用明亮界面") },
+  { value: "dark", icon: "moon", name: t("深色"), desc: t("始终使用暗色界面") },
+  { value: "system", icon: "monitor", name: t("跟随系统"), desc: t("随操作系统外观自动切换") },
 ];
 
 /** Jump to a settings page. Selection is URL-driven: app.tsx re-renders this
@@ -138,7 +140,7 @@ function DeviceGroupName() {
       if (replicaEnabled()) await replicaCall("setNodeLabel", label);
       else await api.setNodeLabel(label);
     } catch (e) {
-      toast(`重命名失败：${(e as Error).message}`);
+      toast(t("重命名失败：{msg}", { msg: (e as Error).message }));
     }
     void loadLabel();
   };
@@ -159,10 +161,10 @@ function DeviceGroupName() {
     />
   ) : (
     <>
-      <span class="set-rail-group-name">{deviceLabel || "此设备"}</span>
+      <span class="set-rail-group-name">{deviceLabel || t("此设备")}</span>
       <button
         class="set-rail-group-edit"
-        title="重命名本机"
+        title={t("重命名本机")}
         onClick={() => {
           closed.current = false;
           setEditing(true);
@@ -179,7 +181,7 @@ function DeviceGroupName() {
  *  over it — the row itself carries the product mark). */
 function groupHead(key: "device" | "workspace" | "app") {
   if (key === "device") return <DeviceGroupName />;
-  if (key === "workspace") return <span class="set-rail-group-name">工作区</span>;
+  if (key === "workspace") return <span class="set-rail-group-name">{t("工作区")}</span>;
   return null;
 }
 
@@ -226,7 +228,7 @@ function SettingsNav({ page, updatePending }: { page: PageId; updatePending?: bo
     >
       <span class="set-rail-ico">
         <Icon name={p.icon} />
-        {p.id === "about" && updatePending && <span class="nav-dot" title="有可用更新" />}
+        {p.id === "about" && updatePending && <span class="nav-dot" title={t("有可用更新")} />}
       </span>
       <span class="set-rail-label">{p.label}</span>
     </button>
@@ -235,7 +237,7 @@ function SettingsNav({ page, updatePending }: { page: PageId; updatePending?: bo
   const foot = GROUPS.find((g) => g.key === "app")?.pages.filter((p) => p.show()) ?? [];
   return (
     <div class="set-rail-col">
-      <nav class="set-rail" ref={navRef} aria-label="设置">
+      <nav class="set-rail" ref={navRef} aria-label={t("设置")}>
         <span class="set-rail-mark" />
         {GROUPS.filter((g) => g.key !== "app").map((g) => {
           const pages = g.pages.filter((p) => p.show());
@@ -259,7 +261,7 @@ function SettingsNav({ page, updatePending }: { page: PageId; updatePending?: bo
  *  way back to this index is the topbar breadcrumb's 设置 segment. */
 function SettingsIndex({ updatePending }: { updatePending?: boolean }) {
   return (
-    <nav class="set-index" aria-label="设置">
+    <nav class="set-index" aria-label={t("设置")}>
       {GROUPS.map((g) => {
         const pages = g.pages.filter((p) => p.show());
         if (pages.length === 0) return null;
@@ -271,7 +273,7 @@ function SettingsIndex({ updatePending }: { updatePending?: boolean }) {
               <button key={p.id} class="set-index-row" onClick={() => gotoPage(p.id)}>
                 <span class="set-index-ico">
                   <Icon name={p.icon} />
-                  {p.id === "about" && updatePending && <span class="nav-dot" title="有可用更新" />}
+                  {p.id === "about" && updatePending && <span class="nav-dot" title={t("有可用更新")} />}
                 </span>
                 <span class="set-index-label">{p.label}</span>
                 <span class="set-index-chev"><Icon name="chevron" /></span>
@@ -289,9 +291,17 @@ function AppearanceSettings() {
   const [theme, setThemeState] = useState<ThemeChoice>(getTheme());
   const [wordCount, setWordCountState] = useState<boolean>(getWordCountEnabled());
 
-  const pick = (t: ThemeChoice) => {
-    setTheme(t);
-    setThemeState(t);
+  const pick = (th: ThemeChoice) => {
+    setTheme(th);
+    setThemeState(th);
+  };
+
+  const [lang, setLangState] = useState<LangChoice>(getLang());
+  const pickLang = (choice: LangChoice) => {
+    const before = resolveLocale();
+    const after = setLang(choice);
+    setLangState(choice);
+    if (after !== before) location.reload();
   };
 
   const toggleWordCount = (on: boolean) => {
@@ -302,27 +312,44 @@ function AppearanceSettings() {
   return (
     <>
       <PageHeader title={pageLabel("appearance")} />
-      <SetSection label="颜色主题">
+      <SetSection label={t("颜色主题")}>
         <div class="theme-grid">
-          {THEMES.map((t) => (
+          {THEMES.map((th) => (
             <button
-              key={t.value}
-              class={"theme-card" + (theme === t.value ? " sel" : "")}
-              aria-pressed={theme === t.value}
-              onClick={() => pick(t.value)}
+              key={th.value}
+              class={"theme-card" + (theme === th.value ? " sel" : "")}
+              aria-pressed={theme === th.value}
+              onClick={() => pick(th.value)}
             >
               <span class="tc-check"><Icon name="check" /></span>
-              <span class="tc-ico"><Icon name={t.icon} /></span>
-              <span class="tc-name">{t.name}</span>
-              <span class="tc-desc">{t.desc}</span>
+              <span class="tc-ico"><Icon name={th.icon} /></span>
+              <span class="tc-name">{th.name}</span>
+              <span class="tc-desc">{th.desc}</span>
             </button>
           ))}
         </div>
       </SetSection>
-      <SetSection label="文档">
+      <SetSection label={t("语言")}>
         <SetRow
-          title="字数统计"
-          caption="在文档右下角显示字数，悬停查看字符数与预计阅读时间。"
+          title={t("语言")}
+          caption={t("更改语言后页面会重新加载。")}
+          control={
+            <RowSelect<LangChoice>
+              value={lang}
+              options={[
+                { value: "system", label: t("跟随系统"), sublabel: LOCALE_NAMES[systemLocale()] },
+                { value: "zh-CN", label: LOCALE_NAMES["zh-CN"] },
+                { value: "en", label: LOCALE_NAMES.en },
+              ]}
+              onChange={pickLang}
+            />
+          }
+        />
+      </SetSection>
+      <SetSection label={t("文档")}>
+        <SetRow
+          title={t("字数统计")}
+          caption={t("在文档右下角显示字数，悬停查看字符数与预计阅读时间。")}
           control={<Switch checked={wordCount} onChange={toggleWordCount} />}
         />
       </SetSection>
@@ -355,7 +382,7 @@ export function SettingsView({ onUpdatePending, updatePending, focusSec }: { onU
         <div class="set-main">
           {showIndex ? (
             <>
-              <PageHeader title="设置" />
+              <PageHeader title={t("设置")} />
               <SettingsIndex updatePending={updatePending} />
             </>
           ) : (
@@ -424,7 +451,7 @@ function SiteHostingSettings() {
       setSavedBase(out.publicBaseUrl);
       setBase(out.publicBaseUrl ?? "");
       setScope(out.scope);
-      toast(out.publicBaseUrl ? "入口验证成功并已保存" : "已清除设备托管入口");
+      toast(out.publicBaseUrl ? t("入口验证成功并已保存") : t("已清除设备托管入口"));
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -442,11 +469,11 @@ function SiteHostingSettings() {
       const notes = [
         ...(out.warnings ?? []),
         ...(failed.length
-          ? [`${failed.length} 个站点重新接线失败：${failed.map((x) => x.site).join("、")}`]
+          ? [t("{n} 个站点重新接线失败：{sites}", { n: failed.length, sites: failed.map((x) => x.site).join(t("、")) })]
           : []),
       ];
       toast(
-        notes.length ? `已连接 Edge；${notes.join("；")}` : "已连接 Edge",
+        notes.length ? t("已连接 Edge；{notes}", { notes: notes.join(t("；")) }) : t("已连接 Edge"),
       );
     } catch (e) {
       toast((e as Error).message);
@@ -457,9 +484,9 @@ function SiteHostingSettings() {
 
   const disconnect = async () => {
     const ok = await confirmDialog({
-      title: "断开 Edge？",
-      message: "只移除本机连接，不会删除 Cloudflare Worker 或 D1。存在活动 Room 时会拒绝断开。",
-      confirmLabel: "断开",
+      title: t("断开 Edge？"),
+      message: t("只移除本机连接，不会删除 Cloudflare Worker 或 D1。存在活动 Room 时会拒绝断开。"),
+      confirmLabel: t("断开"),
       danger: true,
     });
     if (!ok) return;
@@ -467,7 +494,7 @@ function SiteHostingSettings() {
     try {
       await api.disconnectEdge();
       load();
-      toast("已断开 Edge");
+      toast(t("已断开 Edge"));
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -478,22 +505,22 @@ function SiteHostingSettings() {
   const edgeStatusText = !edge?.configured
     ? null
     : !edge.reachable
-      ? "不可达"
+      ? t("不可达")
       : edge.aligned
-        ? "在线"
-        : "需升级";
+        ? t("在线")
+        : t("需升级");
 
   return (
     <>
       <PageHeader title={pageLabel("hosting")} />
       {!noOrigin && (
-        <SetSection label="设备托管入口">
+        <SetSection label={t("设备托管入口")}>
           <SetRow
-            title="公网入口地址"
+            title={t("公网入口地址")}
             caption={
               savedBase
-                ? `已验证 · ${scope === "public" ? "公网 HTTPS" : scope === "lan" ? "局域网" : "仅本机"}`
-                : "填写已由反向代理、隧道或公网 IP 转发到本节点的地址；保存时会访问 /health 并核对节点身份。"
+                ? t("已验证 · {scope}", { scope: scope === "public" ? t("公网 HTTPS") : scope === "lan" ? t("局域网") : t("仅本机") })
+                : t("填写已由反向代理、隧道或公网 IP 转发到本节点的地址；保存时会访问 /health 并核对节点身份。")
             }
             control={
               <>
@@ -504,30 +531,30 @@ function SiteHostingSettings() {
                   onInput={(e) => setBase((e.currentTarget as HTMLInputElement).value)}
                 />
                 <button class="btn btn-secondary" disabled={busy === "base"} onClick={saveBase}>
-                  {busy === "base" ? "验证中…" : "验证并保存"}
+                  {busy === "base" ? t("验证中…") : t("验证并保存")}
                 </button>
               </>
             }
           />
           {isDesktop() && (
             <div class="set-callout warn">
-              Desktop 内置 sidecar 只监听本机且关闭鉴权，不能直接暴露到公网。需要设备托管时请另行启动带鉴权的
-              <code> mh --server</code>，或使用下方 Edge。
+              {t("Desktop 内置 sidecar 只监听本机且关闭鉴权，不能直接暴露到公网。需要设备托管时请另行启动带鉴权的")}
+              <code> mh --server</code>{t("，或使用下方 Edge。")}
             </div>
           )}
         </SetSection>
       )}
 
-      <SetSection label="Edge 始终在线托管">
+      <SetSection label={t("Edge 始终在线托管")}>
         <div class="set-managed-note">
           {noOrigin
-            ? "此设备把数据存放在云端存储桶、不常驻在线，站点需由 Edge 托管。你的设备离线期间，Edge 继续提供最后一次同步的版本。"
-            : "Edge Room 不依赖设备在线。可一键部署到你的 Cloudflare 账户，或连接已有兼容端点。"}
+            ? t("此设备把数据存放在云端存储桶、不常驻在线，站点需由 Edge 托管。你的设备离线期间，Edge 继续提供最后一次同步的版本。")
+            : t("Edge Room 不依赖设备在线。可一键部署到你的 Cloudflare 账户，或连接已有兼容端点。")}
         </div>
         {edge?.configured ? (
           <>
             <SetRow
-              title="端点"
+              title={t("端点")}
               caption={edge.endpoint}
               control={
                 !noOrigin && edge.managed ? (
@@ -535,45 +562,50 @@ function SiteHostingSettings() {
                     class="btn btn-secondary"
                     onClick={() => openModal(<EdgeDeployModal status={edge} onDone={() => { closeModal(); load(); }} />)}
                   >
-                    升级部署…
+                    {t("升级部署…")}
                   </button>
                 ) : undefined
               }
             />
             <SetRow
-              title="状态"
+              title={t("状态")}
               caption={
-                `${edgeStatusText} · 版本 ${edge.version ?? "未知"} / ${edge.expectedVersion} · 活动 Room ${edge.rooms.length} · ` +
-                (edge.rooms.length === 0
-                  ? "暂无 Room"
-                  : edge.rooms.some((room) => room.error || room.status === "error")
-                    ? "Room 同步存在异常"
-                    : edge.rooms.some((room) => room.lastSuccessAt)
-                      ? `Room 最近同步 ${timeAgo(Math.max(...edge.rooms.map((room) => room.lastSuccessAt ?? 0)))}`
-                      : "等待首次同步") +
-                (edge.error ? ` · ${edge.error}` : "")
+                t("{status} · 版本 {version} / {expected} · 活动 Room {rooms} · {note}", {
+                  status: edgeStatusText ?? "",
+                  version: edge.version ?? t("未知"),
+                  expected: edge.expectedVersion,
+                  rooms: edge.rooms.length,
+                  note:
+                    edge.rooms.length === 0
+                      ? t("暂无 Room")
+                      : edge.rooms.some((room) => room.error || room.status === "error")
+                        ? t("Room 同步存在异常")
+                        : edge.rooms.some((room) => room.lastSuccessAt)
+                          ? t("Room 最近同步 {ago}", { ago: timeAgo(Math.max(...edge.rooms.map((room) => room.lastSuccessAt ?? 0))) })
+                          : t("等待首次同步"),
+                }) + (edge.error ? ` · ${edge.error}` : "")
               }
             />
           </>
         ) : (
           <>
             <SetRow
-              title="部署到 Cloudflare"
-              caption="在你自己的账户创建 Worker + D1（可顺带创建 R2 同步桶），断开时不会自动删除。"
+              title={t("部署到 Cloudflare")}
+              caption={t("在你自己的账户创建 Worker + D1（可顺带创建 R2 同步桶），断开时不会自动删除。")}
               control={
                 !noOrigin ? (
                   <button
                     class="btn btn-primary"
                     onClick={() => openModal(<EdgeDeployModal status={edge} onDone={() => { closeModal(); load(); }} />)}
                   >
-                    一键部署…
+                    {t("一键部署…")}
                   </button>
                 ) : undefined
               }
             />
             <SetRow
-              title="连接已有 Edge"
-              caption="任意兼容 /v1/inbox 协议的端点。"
+              title={t("连接已有 Edge")}
+              caption={t("任意兼容 /v1/inbox 协议的端点。")}
               control={
                 <>
                   <input
@@ -590,7 +622,7 @@ function SiteHostingSettings() {
                     onInput={(e) => setOwnerToken((e.currentTarget as HTMLInputElement).value)}
                   />
                   <button class="btn btn-secondary" disabled={busy === "connect"} onClick={connect}>
-                    {busy === "connect" ? "连接中…" : "连接"}
+                    {busy === "connect" ? t("连接中…") : t("连接")}
                   </button>
                 </>
               }
@@ -603,11 +635,11 @@ function SiteHostingSettings() {
         <DangerZone>
           <SetRow
             danger
-            title="断开 Edge"
-            caption="只移除本机连接，不会删除 Cloudflare Worker 或 D1；存在活动 Room 时会拒绝断开。"
+            title={t("断开 Edge")}
+            caption={t("只移除本机连接，不会删除 Cloudflare Worker 或 D1；存在活动 Room 时会拒绝断开。")}
             control={
               <button class="btn btn-ghost device-danger" disabled={busy === "disconnect"} onClick={disconnect}>
-                断开
+                {t("断开")}
               </button>
             }
           />
@@ -674,9 +706,9 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     try {
       await enableReplicaFromServer();
       setEnabled(true);
-      toast("已开始在此浏览器保存完整副本，正在下载数据…");
+      toast(t("已开始在此浏览器保存完整副本，正在下载数据…"));
     } catch (e) {
-      toast(`启用失败：${(e as Error).message}`);
+      toast(t("启用失败：{msg}", { msg: (e as Error).message }));
     } finally {
       setBusy(false);
     }
@@ -684,11 +716,11 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
 
   const disable = async () => {
     const ok = await confirmDialog({
-      title: noOrigin ? "停止使用此同步存储桶？" : "切回在线模式",
+      title: noOrigin ? t("停止使用此同步存储桶？") : t("切回在线模式"),
       message: noOrigin
-        ? "此页面没有在线主节点可回退。停止后会返回「连接同步存储桶」；已下载的数据仍保留在此浏览器里，重新连接后可从断点继续。若要同时删除本地数据，请使用下方「删除此浏览器的副本」。"
-        : "此浏览器将恢复纯在线模式。已下载的本地数据保留在此浏览器里，重新启用后从断点续传。",
-      confirmLabel: noOrigin ? "停止使用" : "切回在线模式",
+        ? t("此页面没有在线主节点可回退。停止后会返回「连接同步存储桶」；已下载的数据仍保留在此浏览器里，重新连接后可从断点继续。若要同时删除本地数据，请使用下方「删除此浏览器的副本」。")
+        : t("此浏览器将恢复纯在线模式。已下载的本地数据保留在此浏览器里，重新启用后从断点续传。"),
+      confirmLabel: noOrigin ? t("停止使用") : t("切回在线模式"),
       danger: true,
     });
     if (!ok) return;
@@ -704,7 +736,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     try {
       await disableReplica();
       setEnabled(false);
-      toast(noOrigin ? "已停止，请重新连接同步存储桶" : "已切回在线模式");
+      toast(noOrigin ? t("已停止，请重新连接同步存储桶") : t("已切回在线模式"));
       if (hadSw) location.reload();
     } finally {
       setBusy(false);
@@ -714,11 +746,11 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
   const reset = async () => {
     const bucketOnly = isNoOrigin();
     const ok = await confirmDialog({
-      title: "删除此浏览器的副本",
+      title: t("删除此浏览器的副本"),
       message: bucketOnly
-        ? "将删除此浏览器的副本并返回「连接同步存储桶」。\n① 已同步到存储桶的内容不会丢；\n② 尚未同步的本地编辑会丢失；\n③ 尚未上传的本地附件会丢失；\n④ 建议先确认上方显示“当前版本已确认”。"
-        : "将删除此浏览器里的全部本地数据并切回在线模式。\n① 已同步的内容仍在工作区主节点，不会丢；\n② 尚未同步的本地编辑会丢失；\n③ 尚未上传的本地附件会丢失；\n④ 建议先「立即同步」。",
-      confirmLabel: "删除并重置",
+        ? t("将删除此浏览器的副本并返回「连接同步存储桶」。\n① 已同步到存储桶的内容不会丢；\n② 尚未同步的本地编辑会丢失；\n③ 尚未上传的本地附件会丢失；\n④ 建议先确认上方显示“当前版本已确认”。")
+        : t("将删除此浏览器里的全部本地数据并切回在线模式。\n① 已同步的内容仍在工作区主节点，不会丢；\n② 尚未同步的本地编辑会丢失；\n③ 尚未上传的本地附件会丢失；\n④ 建议先「立即同步」。"),
+      confirmLabel: t("删除并重置"),
       danger: true,
     });
     if (!ok) return;
@@ -726,38 +758,38 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
     try {
       await resetReplica();
       setEnabled(false);
-      toast(bucketOnly ? "已删除此浏览器的副本，请重新连接同步存储桶" : "已删除此浏览器的副本");
+      toast(bucketOnly ? t("已删除此浏览器的副本，请重新连接同步存储桶") : t("已删除此浏览器的副本"));
     } catch (e) {
-      toast(`重置失败：${(e as Error).message}`);
+      toast(t("重置失败：{msg}", { msg: (e as Error).message }));
     } finally {
       setBusy(false);
     }
   };
 
   const statusLine = () => {
-    if (!enabled) return "开启后断网也能读写全部内容，改动自动同步。";
-    if (st.state === "error") return `副本异常（已自动回退在线模式）：${st.error ?? "未知错误"}`;
-    if (st.state === "hydrating") return `正在下载数据… 已接收 ${st.hydrated ?? 0} 条变更`;
+    if (!enabled) return t("开启后断网也能读写全部内容，改动自动同步。");
+    if (st.state === "error") return t("副本异常（已自动回退在线模式）：{msg}", { msg: st.error ?? t("未知错误") });
+    if (st.state === "hydrating") return t("正在下载数据… 已接收 {n} 条变更", { n: st.hydrated ?? 0 });
     if (st.lastSync) {
-      const t = fmtTime(st.lastSync.at);
+      const when = fmtTime(st.lastSync.at);
       return st.lastSync.ok
-        ? `离线可用 · 上次同步 ${t}（推送 ${st.lastSync.pushed} / 拉取 ${st.lastSync.pulled}）`
-        : `上次同步失败（${t}）：${st.lastSync.error ?? ""} — 本地读写不受影响，恢复网络后自动重试`;
+        ? t("离线可用 · 上次同步 {when}（推送 {pushed} / 拉取 {pulled}）", { when, pushed: st.lastSync.pushed, pulled: st.lastSync.pulled })
+        : t("上次同步失败（{when}）：{msg} — 本地读写不受影响，恢复网络后自动重试", { when, msg: st.lastSync.error ?? "" });
     }
-    return "等待首次同步…";
+    return t("等待首次同步…");
   };
 
   const caption = unsupported
-    ? `此浏览器暂不支持保存完整副本：${unsupported}`
+    ? t("此浏览器暂不支持保存完整副本：{reason}", { reason: unsupported })
     : statusLine() +
-      (enabled && st.node ? ` · 节点 ${st.node}` : "") +
-      (enabled && usage ? ` · 本地占用 ${usage} MB` : "");
+      (enabled && st.node ? t(" · 节点 {node}", { node: st.node }) : "") +
+      (enabled && usage ? t(" · 本地占用 {mb} MB", { mb: usage }) : "");
 
   return (
     <>
-      <SetSection label="离线副本">
+      <SetSection label={t("离线副本")}>
         <SetRow
-          title="在此浏览器保存完整副本"
+          title={t("在此浏览器保存完整副本")}
           caption={caption}
           control={
             <Switch
@@ -770,11 +802,11 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
         />
         {enabled && (
           <SetRow
-            title="立即同步"
-            caption="把本机改动推送出去，并拉取其他设备的最新内容。"
+            title={t("立即同步")}
+            caption={t("把本机改动推送出去，并拉取其他设备的最新内容。")}
             control={
               <button class="btn btn-secondary" disabled={busy} onClick={() => requestSync()}>
-                立即同步
+                {t("立即同步")}
               </button>
             }
           />
@@ -785,11 +817,11 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
         <DangerZone>
           <SetRow
             danger
-            title="删除此浏览器的副本"
-            caption="删除此浏览器里的全部本地数据并切回在线模式；未同步的编辑和未上传的附件会丢失。"
+            title={t("删除此浏览器的副本")}
+            caption={t("删除此浏览器里的全部本地数据并切回在线模式；未同步的编辑和未上传的附件会丢失。")}
             control={
               <button class="btn btn-ghost device-danger" disabled={busy} onClick={reset}>
-                删除副本
+                {t("删除副本")}
               </button>
             }
           />
@@ -807,7 +839,7 @@ function ReplicaSection({ cache }: { cache: ComponentChildren }) {
  *  without a reload — OfflinePage itself never re-renders on replica events. */
 function DeviceCacheSlot() {
   const [, bump] = useState(0);
-  useEffect(() => onReplicaStatus(() => bump((t) => t + 1)), []);
+  useEffect(() => onReplicaStatus(() => bump((n) => n + 1)), []);
   const local = scopesFor(clientMode()).find((s) => s.kind === "local");
   return local ? <LocalCacheRows scope={local} /> : null;
 }
@@ -856,15 +888,15 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
 
   const clear = async () => {
     const ok = await confirmDialog({
-      title: "清理腾空间",
-      message: `将释放约 ${fmtBytes(clearable)}。只清本机缓存，文件已存在云端，用到时自动取回。待上传的内容不会动。`,
-      confirmLabel: "清理",
+      title: t("清理腾空间"),
+      message: t("将释放约 {bytes}。只清本机缓存，文件已存在云端，用到时自动取回。待上传的内容不会动。", { bytes: fmtBytes(clearable) }),
+      confirmLabel: t("清理"),
     });
     if (!ok) return;
     setBusy(true);
     try {
       const r = await clearCache();
-      toast(r.cleared ? `已腾出 ${fmtBytes(r.freedBytes)}（${r.cleared} 项）` : "暂时没有可清理的");
+      toast(r.cleared ? t("已腾出 {bytes}（{n} 项）", { bytes: fmtBytes(r.freedBytes), n: r.cleared }) : t("暂时没有可清理的"));
       await load();
     } catch (e) {
       toast((e as Error).message);
@@ -880,7 +912,7 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
       const ok = await navigator.storage.persist();
       setPersisted(ok);
       if (!ok) setPersistDenied(true);
-      toast(ok ? "本地数据已受保护，系统不会自动清理" : "浏览器暂未授予保护");
+      toast(ok ? t("本地数据已受保护，系统不会自动清理") : t("浏览器暂未授予保护"));
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -889,14 +921,14 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
   };
 
   return (
-    <SetSection label="本机缓存" caption="只存在这台设备上；清理不影响其他设备，文件用到时自动取回。">
+    <SetSection label={t("本机缓存")} caption={t("只存在这台设备上；清理不影响其他设备，文件用到时自动取回。")}>
       {pending.count > 0 && (
         <div class="set-callout warn">
-          {pending.count} 项（约 {fmtBytes(pending.bytes)}）还没上传，仅存在这台设备上。建议先「立即同步」再清理——清理不会动这些待上传的内容。
+          {t("{n} 项（约 {bytes}）还没上传，仅存在这台设备上。建议先「立即同步」再清理——清理不会动这些待上传的内容。", { n: pending.count, bytes: fmtBytes(pending.bytes) })}
         </div>
       )}
       {stats == null ? (
-        <SetRow title="缓存占用" caption="加载中…" />
+        <SetRow title={t("缓存占用")} caption={t("加载中…")} />
       ) : (
         <CacheRingHero
           segs={{ free: clearable, keep: 0, pin: stats.pinnedBytes }}
@@ -906,23 +938,23 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
           actions={
             <>
               <button class="btn btn-secondary" disabled={busy || !hasFreeable} onClick={() => void clear()}>
-                {hasFreeable ? `清理腾出 ${fmtBytes(clearable)}` : "无需清理"}
+                {hasFreeable ? t("清理腾出 {bytes}", { bytes: fmtBytes(clearable) }) : t("无需清理")}
               </button>
               <button class="btn btn-ghost" onClick={() => openBlobManager(scope)}>
-                管理
+                {t("管理")}
               </button>
             </>
           }
         />
       )}
       <SetRow
-        title="防止浏览器自动清理"
+        title={t("防止浏览器自动清理")}
         caption={
           persisted
-            ? "已开启：系统空间紧张时不会自动清掉本地数据。"
+            ? t("已开启：系统空间紧张时不会自动清掉本地数据。")
             : persistDenied
-              ? "浏览器未授予保护；系统空间紧张时可能清理本地数据。可稍后重试，或保持定期同步。"
-              : "开启后，系统空间紧张时也不会自动清掉本地数据。浏览器授予与否由其自行决定。"
+              ? t("浏览器未授予保护；系统空间紧张时可能清理本地数据。可稍后重试，或保持定期同步。")
+              : t("开启后，系统空间紧张时也不会自动清掉本地数据。浏览器授予与否由其自行决定。")
         }
         control={
           persisted !== true ? (
@@ -931,14 +963,14 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
               disabled={busy || !navigator.storage?.persist}
               onClick={() => void requestPersist()}
             >
-              {persistDenied ? "重试" : "请求保留本地数据"}
+              {persistDenied ? t("重试") : t("请求保留本地数据")}
             </button>
           ) : undefined
         }
       />
       {usage != null && (
         <div class="set-managed-note">
-          此浏览器为本工作区共占用约 {fmtBytes(usage)}（含本地数据库与缓存）。缓存超过 {fmtBytes(BLOB_QUOTA_BYTES)} 时自动清理最久没用、已有备份的，你固定的不动。
+          {t("此浏览器为本工作区共占用约 {usage}（含本地数据库与缓存）。缓存超过 {quota} 时自动清理最久没用、已有备份的，你固定的不动。", { usage: fmtBytes(usage), quota: fmtBytes(BLOB_QUOTA_BYTES) })}
         </div>
       )}
     </SetSection>
@@ -1008,7 +1040,7 @@ function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void
       if (!l) {
         // null means the GitHub API call failed (offline / rate-limited), not
         // "no update" — saying 已是最新 here would mask the failure.
-        setErrMsg("无法获取最新版本（网络不可用或 GitHub API 受限）");
+        setErrMsg(t("无法获取最新版本（网络不可用或 GitHub API 受限）"));
         setState("error");
         return;
       }
@@ -1018,7 +1050,7 @@ function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void
         setState("available");
         onUpdatePending?.(true);
       } else {
-        toast("已是最新版本");
+        toast(t("已是最新版本"));
         setState(pendingRestart() ? "staged" : "idle");
       }
     } catch (e) {
@@ -1038,10 +1070,10 @@ function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void
         setInstalled(v);
         setState("staged");
         onUpdatePending?.(true);
-        toast(`已下载 v${v}`);
+        toast(t("已下载 v{v}", { v }));
       } else {
         // Nothing newer than what's already staged (e.g. double-click).
-        toast("已是最新版本");
+        toast(t("已是最新版本"));
         setState(pendingRestart() ? "staged" : "idle");
       }
     } catch (e) {
@@ -1055,21 +1087,21 @@ function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void
   // The update row, caption/control per state. The SetRow finally gives the
   // machine room: full error details in the caption, a full-width progress bar
   // in the detail area. Desktop only (needs the coreUpdate bridge).
-  let caption: ComponentChildren = "从 GitHub Releases 获取核心更新";
-  let control: ComponentChildren = <button class="btn btn-secondary" onClick={check}>检查更新</button>;
+  let caption: ComponentChildren = t("从 GitHub Releases 获取核心更新");
+  let control: ComponentChildren = <button class="btn btn-secondary" onClick={check}>{t("检查更新")}</button>;
   let detail: ComponentChildren = null;
   switch (state) {
     case "checking":
-      caption = "正在检查…";
-      control = <button class="btn btn-secondary" disabled>检查更新</button>;
+      caption = t("正在检查…");
+      control = <button class="btn btn-secondary" disabled>{t("检查更新")}</button>;
       break;
     case "downloading": {
       const pct =
         progress && progress.total > 0
           ? Math.min(100, Math.round((progress.received / progress.total) * 100))
           : null;
-      caption = pct != null ? `下载中 · ${pct}%` : "下载中…";
-      control = <button class="btn btn-secondary" disabled>下载</button>;
+      caption = pct != null ? t("下载中 · {pct}%", { pct }) : t("下载中…");
+      control = <button class="btn btn-secondary" disabled>{t("下载")}</button>;
       detail = (
         <div class="about-dl">
           <span class={`ver-bar${pct == null ? " indet" : ""}`}>
@@ -1080,16 +1112,16 @@ function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void
       break;
     }
     case "available":
-      caption = <span><span class="ver-dot pulse" /> 新版本 <span class="ver-num">v{latest}</span> 可用</span>;
-      control = <button class="btn btn-primary" onClick={download} title={`下载并更新到 v${latest}`}>下载</button>;
+      caption = <span><span class="ver-dot pulse" /> {t("新版本")} <span class="ver-num">v{latest}</span> {t("可用")}</span>;
+      control = <button class="btn btn-primary" onClick={download} title={t("下载并更新到 v{v}", { v: latest ?? "" })}>{t("下载")}</button>;
       break;
     case "staged":
-      caption = <span><span class="ver-dot pulse" /> <span class="ver-num">v{installed}</span> 已就绪，重启后生效</span>;
-      control = <button class="btn btn-primary" onClick={() => void cu!.restart()} title={`重启应用以更新到 v${installed}`}>重启</button>;
+      caption = <span><span class="ver-dot pulse" /> <span class="ver-num">v{installed}</span> {t("已就绪，重启后生效")}</span>;
+      control = <button class="btn btn-primary" onClick={() => void cu!.restart()} title={t("重启应用以更新到 v{v}", { v: installed ?? "" })}>{t("重启")}</button>;
       break;
     case "error":
-      caption = <span class="about-err">{errMsg || "检查失败"}</span>;
-      control = <button class="btn btn-secondary" onClick={check}>重试</button>;
+      caption = <span class="about-err">{errMsg || t("检查失败")}</span>;
+      control = <button class="btn btn-secondary" onClick={check}>{t("重试")}</button>;
       break;
   }
 
@@ -1115,23 +1147,23 @@ function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void
       </div>
 
       {cu && (
-        <SetSection label="更新">
-          <SetRow title="软件更新" caption={caption} control={control}>
+        <SetSection label={t("更新")}>
+          <SetRow title={t("软件更新")} caption={caption} control={control}>
             {detail}
           </SetRow>
         </SetSection>
       )}
 
-      <SetSection label="资源">
+      <SetSection label={t("资源")}>
         <SetRow
-          title="GitHub 仓库"
-          caption="源代码与问题反馈"
+          title={t("GitHub 仓库")}
+          caption={t("源代码与问题反馈")}
           onClick={() => open(REPO_URL)}
           control={<span class="about-ext"><Icon name="externalLink" cls="ico sm" /></span>}
         />
         <SetRow
-          title="更新日志"
-          caption="各版本的发布说明"
+          title={t("更新日志")}
+          caption={t("各版本的发布说明")}
           onClick={() => open(`${REPO_URL}/releases`)}
           control={<span class="about-ext"><Icon name="externalLink" cls="ico sm" /></span>}
         />
@@ -1205,16 +1237,16 @@ function QuickWindowSection({
         setShortcut(s.shortcut);
         setAlwaysOnTop(s.alwaysOnTop);
       })
-      .catch((e) => toast(`加载失败：${(e as Error).message}`));
+      .catch((e) => toast(t("加载失败：{msg}", { msg: (e as Error).message })));
   }, []);
 
   const applyShortcut = async (accel: string) => {
     try {
       const s = await bridge.setShortcut(accel);
       setShortcut(s.shortcut);
-      toast(`快捷键已设为 ${prettyShortcut(s.shortcut)}`);
+      toast(t("快捷键已设为 {keys}", { keys: prettyShortcut(s.shortcut) }));
     } catch (e) {
-      toast(`设置失败：${(e as Error).message}`);
+      toast(t("设置失败：{msg}", { msg: (e as Error).message }));
     }
   };
 
@@ -1237,20 +1269,20 @@ function QuickWindowSection({
       setAlwaysOnTop(await bridge.setAlwaysOnTop(next));
     } catch (e) {
       setAlwaysOnTop(!next);
-      toast(`设置失败：${(e as Error).message}`);
+      toast(t("设置失败：{msg}", { msg: (e as Error).message }));
     }
   };
 
   return (
     <SetSection label={label}>
       <SetRow
-        title="唤起快捷键"
-        caption="点击右侧按钮，然后按下你想用的组合键。"
+        title={t("唤起快捷键")}
+        caption={t("点击右侧按钮，然后按下你想用的组合键。")}
         control={
           <>
             {shortcut !== defaultShortcut && (
-              <button class="btn btn-ghost" title="重置默认" onClick={() => void applyShortcut(defaultShortcut)}>
-                重置
+              <button class="btn btn-ghost" title={t("重置默认")} onClick={() => void applyShortcut(defaultShortcut)}>
+                {t("重置")}
               </button>
             )}
             <button
@@ -1259,7 +1291,7 @@ function QuickWindowSection({
               onBlur={() => setCapturing(false)}
               onKeyDown={capturing ? onCaptureKey : undefined}
             >
-              {capturing ? "按下组合键…" : (
+              {capturing ? t("按下组合键…") : (
                 <span class="qn-keys">
                   {shortcutTokens(shortcut).map((k) => (
                     <span class={"qn-key" + (MOD_GLYPHS.has(k) ? " sym" : "")}>{k}</span>
@@ -1271,7 +1303,7 @@ function QuickWindowSection({
         }
       />
       <SetRow
-        title="默认始终置顶"
+        title={t("默认始终置顶")}
         caption={pinCaption}
         control={<Switch checked={alwaysOnTop} onChange={() => void toggleTop()} />}
       />
@@ -1285,22 +1317,22 @@ function QuickNotesSettings() {
     <>
       <PageHeader
         title={pageLabel("quicknote")}
-        sub="用全局快捷键随时唤起小窗：记录想法，或瞄一眼任务看板。小窗也可从菜单栏图标打开。"
+        sub={t("用全局快捷键随时唤起小窗：记录想法，或瞄一眼任务看板。小窗也可从菜单栏图标打开。")}
       />
       {desktop.quicknote && (
         <QuickWindowSection
-          label="快速笔记"
+          label={t("快速笔记")}
           bridge={desktop.quicknote}
           defaultShortcut={DEFAULT_SHORTCUT}
-          pinCaption="小窗浮在其他窗口之上；也可在小窗内用 📌 按钮切换。"
+          pinCaption={t("小窗浮在其他窗口之上；也可在小窗内用 📌 按钮切换。")}
         />
       )}
       {desktop.quickboard && (
         <QuickWindowSection
-          label="快速看板"
+          label={t("快速看板")}
           bridge={desktop.quickboard}
           defaultShortcut={DEFAULT_BOARD_SHORTCUT}
-          pinCaption="看板小窗浮在其他窗口之上；AI 通过 CLI 更新任务时看板实时刷新。"
+          pinCaption={t("看板小窗浮在其他窗口之上；AI 通过 CLI 更新任务时看板实时刷新。")}
         />
       )}
     </>

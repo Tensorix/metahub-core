@@ -10,6 +10,7 @@
 // reopened tomorrow still matches its own date title.
 import { RE, matchListLine, matchMediaEmbed, matchQuoteLine } from "../../core/md/grammar.ts";
 import { stripInlineTokens, tokenizeInline } from "../inline-tokens.ts";
+import { fmtDate } from "../i18n/fmt.ts";
 
 export const AUTO_TITLE_MAX = 64;
 
@@ -77,7 +78,7 @@ export function dateTitleFromHlc(hlc: string | null | undefined, now: Date = new
     const ms = Number(dash > 0 ? hlc.slice(0, dash) : hlc);
     if (Number.isFinite(ms) && ms > 0) d = new Date(ms);
   }
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+  return fmtDate(d, "longDate");
 }
 
 /** The title an auto-mode note should carry right now. Empty body → "" (so a

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MhError } from "../../core/errors.ts";
+import { MhError, mhError } from "../../core/errors.ts";
 import {
   getServerConfig,
   isCloudMetadataHost,
@@ -182,7 +182,7 @@ async function verifyBase(
       headers: { accept: "application/json" },
     });
     if (res.status < 200 || res.status >= 300)
-      throw new MhError("network", `站点入口健康检查失败（HTTP ${res.status}）`);
+      throw mhError("network", "站点入口健康检查失败（HTTP {status}）", { status: res.status });
     const body = (await limitedJson(res, HEALTH_RESPONSE_MAX)) as {
       ok?: boolean;
       node?: string;
@@ -191,10 +191,10 @@ async function verifyBase(
     if (!body?.ok || !body.node)
       throw new MhError("network", "站点入口健康响应无效");
     if (body.node !== expectedNode)
-      throw new MhError(
-        "conflict",
-        `站点入口节点不匹配（期望 ${expectedNode}，实际 ${body.node}）；这是防误配检查，不是身份认证`,
-      );
+      throw mhError("conflict", "站点入口节点不匹配（期望 {expected}，实际 {actual}）；这是防误配检查，不是身份认证", {
+        expected: expectedNode,
+        actual: body.node,
+      });
     if (
       !Array.isArray(body.capabilities) ||
       !body.capabilities.includes("site_channels")
@@ -206,8 +206,8 @@ async function verifyBase(
     return { ...base, node: body.node };
   } catch (e) {
     if (e instanceof MhError) throw e;
-    const message = (e as Error).name === "AbortError" ? "连接超时" : (e as Error).message;
-    throw new MhError("network", `无法验证站点入口：${message}`);
+    if ((e as Error).name === "AbortError") throw mhError("network", "无法验证站点入口：连接超时");
+    throw mhError("network", "无法验证站点入口：{msg}", { msg: (e as Error).message });
   } finally {
     clearTimeout(timer);
   }

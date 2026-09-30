@@ -338,3 +338,33 @@ test("database share SSR never resolves doc-cell titles (grants cannot scope doc
   expect(html).toContain(`<span class="tag">${doc.id}</span>`);
   expect(html).not.toContain("内部设计文档");
 });
+
+test("share pages follow Accept-Language: English visitors get lang=en and English chrome", async () => {
+  const ctx = makeCtx();
+  const doc = createDocument(ctx.db, { title: "", body: "" });
+  const share = createShare(ctx.db, { kind: "doc", target_id: doc.id, permission: "edit" });
+
+  const zh = await (await serveShare(htmlReq(`/share/${share.slug}`), ctx))!.text();
+  expect(zh).toContain('<html lang="zh-CN">');
+  expect(zh).toContain("通过 metahub 分享");
+  expect(zh).toContain("<title>文档</title>");
+
+  const en = await (
+    await serveShare(htmlReq(`/share/${share.slug}`, { headers: { accept: "text/html", "accept-language": "en-US,en;q=0.9" } }), ctx)
+  )!.text();
+  expect(en).toContain('<html lang="en">');
+  expect(en).toContain("Shared via metahub");
+  expect(en).toContain("<title>Document</title>");
+  expect(en).toContain('id="mh-edit" class="edit-btn">Edit document<');
+  expect(en).toContain('aria-label="Copy all"');
+  expect(en).toContain("(empty document)");
+  expect(en).not.toContain("通过 metahub 分享");
+
+  const { salt, hash } = await hashSharePassword("pw");
+  const locked = createShare(ctx.db, { kind: "doc", target_id: doc.id, pwSalt: salt, pwHash: hash });
+  const gate = await (
+    await serveShare(htmlReq(`/share/${locked.slug}`, { headers: { accept: "text/html", "accept-language": "en" } }), ctx)
+  )!.text();
+  expect(gate).toContain("protected by a passcode");
+  expect(gate).toContain(">Unlock<");
+});

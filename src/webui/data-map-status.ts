@@ -8,6 +8,7 @@ import type { DataMapIssue } from "../core/data-map.ts";
 import type { ClientMode } from "./data/replica.ts";
 import { scopesFor } from "./data/scopes.ts";
 import { timeAgo } from "./date.ts";
+import { t } from "./i18n/t.ts";
 
 export type { DataMap, DataMapState, DataPlace };
 
@@ -15,24 +16,26 @@ export type { DataMap, DataMapState, DataPlace };
  *  how many places hold it, then the one thing (if any) that needs attention. */
 export function dataMapHeadline(m: DataMap): string {
   const s = m.state;
-  const saved = `已保存在 ${s.places} 处`;
+  const n = s.places;
   switch (s.state) {
     case "no_backup":
-      return "数据只在这一处，还没有备份";
+      return t("数据只在这一处，还没有备份");
     case "pending_blobs":
-      return `${saved} · ${s.pendingBlobCount} 个附件还只在这里`;
+      return t("已保存在 {n} 处 · {m} 个附件还只在这里", { n, m: s.pendingBlobCount });
     case "unsynced_changes":
-      return `${saved} · 有改动尚未同步`;
+      return t("已保存在 {n} 处 · 有改动尚未同步", { n });
     case "peer_error": {
-      const n = (s.issues ?? []).filter((i) => i.kind === "peer_error").length || 1;
-      return `${saved} · ${n} 处同步失败`;
+      const m = (s.issues ?? []).filter((i) => i.kind === "peer_error").length || 1;
+      return t("已保存在 {n} 处 · {m} 处同步失败", { n, m });
     }
     case "syncing":
-      return `${saved} · 首次同步进行中`;
+      return t("已保存在 {n} 处 · 首次同步进行中", { n });
     case "stale":
-      return `${saved} · 备份确认已过期`;
+      return t("已保存在 {n} 处 · 备份确认已过期", { n });
     case "healthy":
-      return `已安全保存在 ${s.places} 处${s.oldestSyncedAt != null ? ` · 上次确认 ${timeAgo(s.oldestSyncedAt)}` : ""}`;
+      return s.oldestSyncedAt != null
+        ? t("已安全保存在 {n} 处 · 上次确认 {ago}", { n, ago: timeAgo(s.oldestSyncedAt) })
+        : t("已安全保存在 {n} 处", { n });
   }
 }
 
@@ -48,28 +51,29 @@ export const dataMapTone = (m: DataMap): "ok" | "warn" | "error" =>
       : "warn";
 
 const ISSUE_LABEL: Record<DataMapIssue["kind"], string> = {
-  no_backup: "尚未配置任何同步目标",
-  peer_error: "同步失败",
-  never_synced: "尚未完成首次同步",
-  behind: "有改动尚未同步",
-  stale: "备份确认已过期",
-  pending_blobs: "有附件仅在本机",
+  no_backup: t("尚未配置任何同步目标"),
+  peer_error: t("同步失败"),
+  never_synced: t("尚未完成首次同步"),
+  behind: t("有改动尚未同步"),
+  stale: t("备份确认已过期"),
+  pending_blobs: t("有附件仅在本机"),
 };
 
 /** Every concurrent problem as its own display line — the headline picks one
  *  state, these make sure the rest stay visible. */
 export function dataMapIssueLines(m: DataMap): string[] {
   return (m.state.issues ?? []).map((i) => {
-    const where = i.placeLabel ? `${i.placeLabel}：` : "";
-    const detail = i.message ? ` — ${i.message}` : "";
-    return `${where}${ISSUE_LABEL[i.kind]}${detail}`;
+    let line: string = ISSUE_LABEL[i.kind];
+    if (i.placeLabel) line = t("{place}：{issue}", { place: i.placeLabel, issue: line });
+    if (i.message) line = t("{issue} — {detail}", { issue: line, detail: i.message });
+    return line;
   });
 }
 
 export const PLACE_KIND_LABEL: Record<DataPlace["kind"], string> = {
-  self: "本机",
-  device: "设备",
-  bucket: "存储桶",
+  self: t("本机"),
+  device: t("设备"),
+  bucket: t("存储桶"),
 };
 
 /** What the data map's `self` place means on THIS surface. The map is computed
@@ -94,20 +98,20 @@ export function selfPlaceCopy(mode: ClientMode): {
 }
 
 export const PLACE_FRESHNESS_LABEL: Record<DataPlace["freshness"], string> = {
-  live: "实时（本机）",
-  current: "当前版本已确认",
-  behind: "有改动尚未同步",
-  stale: "确认已过期",
-  error: "同步失败",
-  never: "尚未同步",
-  disabled: "已停用",
+  live: t("实时（本机）"),
+  current: t("当前版本已确认"),
+  behind: t("有改动尚未同步"),
+  stale: t("确认已过期"),
+  error: t("同步失败"),
+  never: t("尚未同步"),
+  disabled: t("已停用"),
 };
 
 export const PLACE_ROLE_LABEL: Record<DataPlace["roles"][number], string> = {
-  replica: "完整副本",
-  backend: "工作区同步",
-  blob_anchor: "附件长期保存",
-  publisher: "发布快照",
+  replica: t("完整副本"),
+  backend: t("工作区同步"),
+  blob_anchor: t("附件长期保存"),
+  publisher: t("发布快照"),
 };
 
 /** Per-place caption for the expanded list: freshness + relative time + error. */
@@ -118,7 +122,7 @@ export function placeCaption(p: DataPlace): string {
     p.syncedAt != null
   )
     parts.push(timeAgo(p.syncedAt));
-  if (p.lag > 0) parts.push("尚未确认当前版本");
+  if (p.lag > 0) parts.push(t("尚未确认当前版本"));
   if (p.error) parts.push(p.error);
   return parts.join(" · ");
 }

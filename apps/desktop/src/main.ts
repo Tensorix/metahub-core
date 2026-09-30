@@ -32,6 +32,7 @@ import {
 import { spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { getLocale, setLocale, tm, type Locale } from "./i18n.ts";
 import {
   cachedBinaryPath,
   fetchLatestCoreRelease,
@@ -334,7 +335,7 @@ function createSplash(): void {
     if (splashWin === win) splashWin = null;
   });
   win.once("ready-to-show", () => win.show());
-  void win.loadFile(appFile("assets", "splash.html"));
+  void win.loadFile(appFile("assets", "splash.html"), { query: { lang: getLocale() } });
 }
 
 function closeSplash(): void {
@@ -444,7 +445,7 @@ function openPreview(p: { src: string; name?: string; blockId: string }): void {
     height: 760,
     minWidth: 480,
     minHeight: 360,
-    title: p.name || "图片预览",
+    title: p.name || tm("图片预览"),
     frame: false, // no top bar on any platform
     show: false,
     // macOS: translucent "popover" vibrancy behind a transparent window (the WebUI
@@ -601,11 +602,11 @@ function openFileWindow(absPath: string): void {
     void (async () => {
       const { response } = await dialog.showMessageBox(win, {
         type: "warning",
-        buttons: ["保存", "不保存", "取消"],
+        buttons: [tm("保存"), tm("不保存"), tm("取消")],
         defaultId: 0,
         cancelId: 2,
-        message: `是否保存对「${basename(absPath)}」的更改？`,
-        detail: "不保存将丢弃自上次保存以来的更改。",
+        message: tm("是否保存对「{name}」的更改？", { name: basename(absPath) }),
+        detail: tm("不保存将丢弃自上次保存以来的更改。"),
       });
       if (response === 2 || win.isDestroyed()) return;
       if (response === 0) {
@@ -618,9 +619,9 @@ function openFileWindow(absPath: string): void {
           if (!win.isDestroyed()) {
             await dialog.showMessageBox(win, {
               type: "error",
-              message: `无法保存「${basename(absPath)}」`,
-              detail: result?.error ?? "保存未在限定时间内完成，文件未写入磁盘。",
-              buttons: ["确定"],
+              message: tm("无法保存「{name}」", { name: basename(absPath) }),
+              detail: result?.error ?? tm("保存未在限定时间内完成，文件未写入磁盘。"),
+              buttons: [tm("确定")],
             });
           }
           return; // abort the close — the window (and the edits) stay
@@ -645,7 +646,7 @@ function openFileWindow(absPath: string): void {
     // sidecar origin, so the shell's inline script resolves from this param
     // (falling back to the OS preference) to avoid a wrong-theme flash.
     void win.loadFile(shell, {
-      query: { path: absPath, theme: nativeTheme.shouldUseDarkColors ? "dark" : "light" },
+      query: { path: absPath, theme: nativeTheme.shouldUseDarkColors ? "dark" : "light", lang: getLocale() },
     });
   } else {
     const params = new URLSearchParams({ path: absPath });
@@ -657,9 +658,10 @@ function openFileWindow(absPath: string): void {
  *  need the main window or a mini window. */
 function notifyServerUnavailable(): void {
   dialog.showErrorBox(
-    "Metahub 服务未启动",
-    `此窗口需要后台服务，但它未能启动：\n${serverGate.failure?.message ?? "未知错误"}\n\n` +
-      "文件编辑窗口不受影响；可从托盘菜单退出后重新启动 Metahub。",
+    tm("Metahub 服务未启动"),
+    tm("此窗口需要后台服务，但它未能启动：\n{msg}\n\n文件编辑窗口不受影响；可从托盘菜单退出后重新启动 Metahub。", {
+      msg: serverGate.failure?.message ?? tm("未知错误"),
+    }),
   );
 }
 
@@ -689,19 +691,67 @@ function sendMainCommand(command: MainCommand): void {
 /** macOS application menu: stock roles plus a 文件 menu with the palette entries. */
 function buildAppMenu(): Menu {
   return Menu.buildFromTemplate([
-    { role: "appMenu" },
     {
-      label: "文件",
+      role: "appMenu",
       submenu: [
-        { label: "按 ID 打开…", click: () => sendMainCommand("openById") },
-        { label: "命令面板", accelerator: "CmdOrCtrl+Shift+P", click: () => sendMainCommand("palette") },
+        { role: "about", label: tm("关于 Metahub") },
         { type: "separator" },
-        { role: "close" },
+        { role: "services", label: tm("服务") },
+        { type: "separator" },
+        { role: "hide", label: tm("隐藏 Metahub") },
+        { role: "hideOthers", label: tm("隐藏其他") },
+        { role: "unhide", label: tm("显示全部") },
+        { type: "separator" },
+        { role: "quit", label: tm("退出 Metahub") },
       ],
     },
-    { role: "editMenu" },
-    { role: "viewMenu" },
-    { role: "windowMenu" },
+    {
+      label: tm("文件"),
+      submenu: [
+        { label: tm("按 ID 打开…"), click: () => sendMainCommand("openById") },
+        { label: tm("命令面板"), accelerator: "CmdOrCtrl+Shift+P", click: () => sendMainCommand("palette") },
+        { type: "separator" },
+        { role: "close", label: tm("关闭窗口") },
+      ],
+    },
+    {
+      label: tm("编辑"),
+      submenu: [
+        { role: "undo", label: tm("撤销") },
+        { role: "redo", label: tm("重做") },
+        { type: "separator" },
+        { role: "cut", label: tm("剪切") },
+        { role: "copy", label: tm("复制") },
+        { role: "paste", label: tm("粘贴") },
+        { role: "pasteAndMatchStyle", label: tm("粘贴并匹配样式") },
+        { role: "delete", label: tm("删除") },
+        { role: "selectAll", label: tm("全选") },
+      ],
+    },
+    {
+      label: tm("显示"),
+      submenu: [
+        { role: "reload", label: tm("重新加载") },
+        { role: "forceReload", label: tm("强制重新加载") },
+        { role: "toggleDevTools", label: tm("开发者工具") },
+        { type: "separator" },
+        { role: "resetZoom", label: tm("实际大小") },
+        { role: "zoomIn", label: tm("放大") },
+        { role: "zoomOut", label: tm("缩小") },
+        { type: "separator" },
+        { role: "togglefullscreen", label: tm("切换全屏") },
+      ],
+    },
+    {
+      label: tm("窗口"),
+      role: "window",
+      submenu: [
+        { role: "minimize", label: tm("最小化") },
+        { role: "zoom", label: tm("缩放") },
+        { type: "separator" },
+        { role: "front", label: tm("全部置于顶层") },
+      ],
+    },
   ]);
 }
 
@@ -755,7 +805,7 @@ interface MiniWindowSettings {
 }
 
 interface MiniWindowSpec {
-  title: string;
+  title: "快速笔记" | "快速看板";
   /** Bare-hash entry in the shared webui bundle (see src/webui/app.tsx). */
   hash: string;
   /** IPC channel prefix ("qn" keeps its historical name for compat). */
@@ -822,7 +872,7 @@ class MiniWindow {
       ...bounds,
       minWidth: this.spec.minSize.width,
       minHeight: this.spec.minSize.height,
-      title: this.spec.title,
+      title: tm(this.spec.title),
       show: false,
       resizable: true,
       alwaysOnTop: this.settings.alwaysOnTop,
@@ -1002,20 +1052,34 @@ const miniWindows = [quickNote, quickBoard];
 
 // ---- tray ------------------------------------------------------------------
 
+function buildTrayMenu(): Menu {
+  return Menu.buildFromTemplate([
+    { label: tm("快速笔记"), click: () => quickNote.show() },
+    { label: tm("快速看板"), click: () => quickBoard.show() },
+    { type: "separator" },
+    { label: tm("退出 Metahub"), click: () => app.quit() },
+  ]);
+}
+
+function applyLocale(l: Locale, sender: Electron.WebContents | null): void {
+  if (!setLocale(l)) return;
+  if (process.platform === "darwin") Menu.setApplicationMenu(buildAppMenu());
+  tray?.setContextMenu(buildTrayMenu());
+  for (const m of miniWindows) m.win?.setTitle(tm(m.spec.title));
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed() || w === splashWin) continue;
+    if (sender && w.webContents === sender) continue;
+    w.webContents.reload();
+  }
+}
+
 function createTray(): void {
   const iconPath = appFile("assets", "trayTemplate.png");
   const image = nativeImage.createFromPath(iconPath);
   if (process.platform === "darwin") image.setTemplateImage(true);
   tray = new Tray(image);
   tray.setToolTip("Metahub");
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: "快速笔记", click: () => quickNote.show() },
-      { label: "快速看板", click: () => quickBoard.show() },
-      { type: "separator" },
-      { label: "退出 Metahub", click: () => app.quit() },
-    ]),
-  );
+  tray.setContextMenu(buildTrayMenu());
   // Left-click toggles the note (context menu still available via right-click).
   tray.on("click", () => quickNote.toggle());
 }
@@ -1024,6 +1088,9 @@ function createTray(): void {
 
 function registerIpc(): void {
   ipcMain.handle("app:get-version", () => app.getVersion());
+  ipcMain.handle("app:set-locale", (e, l: unknown) => {
+    if (l === "zh-CN" || l === "en") applyLocale(l, e.sender);
+  });
 
   // Renderer paint milestones (see preload.ts): numbers are renderer-timeOrigin
   // relative; the label resolves from the sending WebContents.
@@ -1087,11 +1154,11 @@ function registerIpc(): void {
 
     ipcMain.handle(`${p}:set-shortcut`, (_e, accel: string) => {
       const sibling = miniWindows.find((o) => o !== m && o.shortcut === accel);
-      if (sibling) throw new Error(`快捷键「${accel}」已被「${sibling.spec.title}」占用`);
+      if (sibling) throw new Error(tm("快捷键「{accel}」已被「{title}」占用", { accel, title: tm(sibling.spec.title) }));
       const prev = m.shortcut;
       if (!m.registerShortcut(accel)) {
         if (prev) m.registerShortcut(prev); // restore the working binding
-        throw new Error(`快捷键「${accel}」无法注册（可能被占用）`);
+        throw new Error(tm("快捷键「{accel}」无法注册（可能被占用）", { accel }));
       }
       m.settings.shortcut = accel;
       m.saveSettings();

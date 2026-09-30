@@ -5,6 +5,7 @@
 // an entry scrolls it to the top and drops the caret there. Owns a <nav> appended
 // to view.dom; all coord reads go through the deferred path.
 
+import { t } from "../../i18n/t.ts";
 import { render } from "preact";
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
@@ -22,7 +23,7 @@ function collect(view: EditorView): Heading[] {
   return docModel(view.state).headings.map((h) => ({
     from: h.from,
     level: h.level,
-    text: stripInlineTokens(h.text).trim() || "无标题",
+    text: stripInlineTokens(h.text).trim() || t("无标题"),
   }));
 }
 
@@ -40,7 +41,7 @@ class TocPlugin implements PluginValue {
   constructor(readonly view: EditorView) {
     this.host = document.createElement("nav");
     this.host.className = "doc-toc";
-    this.host.setAttribute("aria-label", "文档目录");
+    this.host.setAttribute("aria-label", t("文档目录"));
     view.dom.appendChild(this.host);
     this.raw = docModel(view.state).headings;
     this.headings = collect(view);
