@@ -51,6 +51,7 @@ import {
 } from "../../core/history.ts";
 import { listAuditEntries, auditEntryDetail, revertChangeGroup } from "../../core/audit.ts";
 import { search } from "../../core/search.ts";
+import { lookupCandidates } from "../../core/resolve.ts";
 import { getNodeId, setNodeLabel, displayNodes } from "../../core/node.ts";
 import {
   cacheStats,
@@ -142,6 +143,12 @@ const SearchHitSchema = z.object({
   database_id: z.string().nullable(),
   title: z.string().optional(),
   snippet: z.string(),
+});
+const LookupHitSchema = z.object({
+  kind: z.enum(["db", "doc", "rec"]),
+  id: z.string(),
+  label: z.string(),
+  database_id: z.string().nullable(),
 });
 const OkSchema = z.object({ ok: z.boolean() });
 
@@ -933,6 +940,17 @@ export const webuiRoutes: Route[] = [
     handler: handle((req, { db }) => {
       const limit = opt(req, "limit");
       return search(db, need(req, "q"), { limit: limit ? Number(limit) : undefined });
+    }),
+  },
+  {
+    method: "GET",
+    path: "/api/resolve",
+    summary:
+      "Navigable entities (db/doc/rec) matching a full id, id prefix, bare slug or name — the `mh get <ref>` rule. Query: ?ref=<text>&limit=<n>",
+    response: z.array(LookupHitSchema),
+    handler: handle((req, { db }) => {
+      const limit = opt(req, "limit");
+      return lookupCandidates(db, need(req, "ref"), { limit: limit ? Number(limit) : undefined });
     }),
   },
   {

@@ -105,6 +105,7 @@ import {
 } from "../../core/history.ts";
 import { listAuditEntries, auditEntryDetail, revertChangeGroup } from "../../core/audit.ts";
 import { search } from "../../core/search.ts";
+import { lookupCandidates } from "../../core/resolve.ts";
 import {
   resolveSite,
   resolveSiteFileRow,
@@ -1244,6 +1245,7 @@ const ops: Record<string, Op> = {
     return displayNodes(d).find((n) => n.node_id === id)!;
   },
   search: (text: string, limit?: number) => search(db!, text, { limit }),
+  resolve: (ref: string, limit?: number) => lookupCandidates(db!, ref, { limit }),
 };
 
 /** Ops that change data: a successful call schedules a push to the server. */

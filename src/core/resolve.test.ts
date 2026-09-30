@@ -6,7 +6,7 @@ import { addProperty } from "./properties.ts";
 import { createRecord } from "./records.ts";
 import { createDocument } from "./documents.ts";
 import { emit } from "./crdt.ts";
-import { resolveRef, resolveCandidates, resolveEntity } from "./resolve.ts";
+import { resolveRef, resolveCandidates, resolveEntity, lookupCandidates } from "./resolve.ts";
 import { newId, idKind } from "./ids.ts";
 
 function newDb(node = "test-node"): Database {
@@ -145,4 +145,42 @@ test("legacy prefix-less ids still resolve by exact match", () => {
   emit(db, "databases", "tasks-legacy1", "name", "Legacy");
   expect(resolveRef(db, "tasks-legacy1", { kind: "db" })).toBe("tasks-legacy1");
   expect(resolveRef(db, "tasks-legacy1")).toBe("tasks-legacy1"); // generic
+});
+
+test("lookupCandidates: navigable kinds only, owning db + record title, exact id first", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  addProperty(db, d.id, { name: "title", type: "text" });
+  const r = createRecord(db, d.id, { title: "Fix login bug" });
+  const doc = createDocument(db, { title: "Tasks", database_id: d.id });
+  const zh = createDocument(db, { title: "中文标题" });
+
+  const byName = lookupCandidates(db, "tasks");
+  expect(byName.map((c) => c.kind).sort()).toEqual(["db", "doc"]);
+  expect(byName.find((c) => c.kind === "doc")).toEqual({
+    kind: "doc",
+    id: doc.id,
+    label: "Tasks",
+    database_id: d.id,
+  });
+  expect(byName.find((c) => c.kind === "db")?.database_id).toBeNull();
+
+  expect(lookupCandidates(db, "rec_fix")).toEqual([
+    { kind: "rec", id: r.id, label: "Fix login bug", database_id: d.id },
+  ]);
+  expect(lookupCandidates(db, "中文标题")).toEqual([
+    { kind: "doc", id: zh.id, label: "中文标题", database_id: null },
+  ]);
+  expect(lookupCandidates(db, "doc_").length).toBe(2);
+  expect(lookupCandidates(db, "doc_", { limit: 1 }).length).toBe(1);
+  expect(lookupCandidates(db, "   ")).toEqual([]);
+  expect(lookupCandidates(db, "prop_").length).toBe(0);
+  expect(lookupCandidates(db, "title").some((c) => c.kind === "prop")).toBe(false);
+});
+
+test("lookupCandidates: an exact full id outranks longer prefix siblings", () => {
+  const db = newDb();
+  const a = createDocument(db, { title: "Note" });
+  const rows = lookupCandidates(db, a.id);
+  expect(rows[0]?.id).toBe(a.id);
 });

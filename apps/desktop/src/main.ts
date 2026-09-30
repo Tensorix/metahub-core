@@ -175,7 +175,8 @@ let mainWin: BrowserWindow | null = null;
 // A main-window request that arrived while the sidecar was still booting
 // (second instance, dock activate, 「在主窗口中打开」…). Coalesced — N requests
 // still yield one window, created when the server turns healthy.
-let pendingMainShow: { hash?: string; docId?: string } | null = null;
+type MainCommand = "palette" | "openById";
+let pendingMainShow: { hash?: string; docId?: string; command?: MainCommand } | null = null;
 let splashWin: BrowserWindow | null = null;
 let previewWin: BrowserWindow | null = null;
 // File-editor windows (the .txt/.md "open with" feature), one per absolute path.
@@ -662,16 +663,46 @@ function notifyServerUnavailable(): void {
   );
 }
 
-/** Deliver a doc deep-link to the main window (mh:open-doc), waiting out a
- *  fresh window's load so the renderer listener has mounted. */
-function sendOpenDoc(docId: string): void {
+/** Push a message to the main window's renderer (waits for a fresh window's load). */
+function sendToMain(channel: string, payload: unknown): void {
   if (!mainWin || mainWin.isDestroyed()) return;
   const wc = mainWin.webContents;
   const send = () => {
-    if (!wc.isDestroyed()) wc.send("mh:open-doc", { id: docId });
+    if (!wc.isDestroyed()) wc.send(channel, payload);
   };
   if (wc.isLoading()) wc.once("did-finish-load", send);
   else send();
+}
+
+/** Deliver a doc deep-link to the main window (mh:open-doc). */
+function sendOpenDoc(docId: string): void {
+  sendToMain("mh:open-doc", { id: docId });
+}
+
+/** App-menu command: raise the main window and open its palette. */
+function sendMainCommand(command: MainCommand): void {
+  showMainWindow();
+  if (serverGate.phase === "booting" && pendingMainShow) pendingMainShow.command = command;
+  else sendToMain("mh:command", { name: command });
+}
+
+/** macOS application menu: stock roles plus a 文件 menu with the palette entries. */
+function buildAppMenu(): Menu {
+  return Menu.buildFromTemplate([
+    { role: "appMenu" },
+    {
+      label: "文件",
+      submenu: [
+        { label: "按 ID 打开…", click: () => sendMainCommand("openById") },
+        { label: "命令面板", accelerator: "CmdOrCtrl+Shift+P", click: () => sendMainCommand("palette") },
+        { type: "separator" },
+        { role: "close" },
+      ],
+    },
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  ]);
 }
 
 /**
@@ -1194,9 +1225,8 @@ app.whenReady().then(() => {
       },
     );
   }
-  // Windows/Linux: drop the default File/Edit/View… menu bar on every window.
-  // macOS keeps its application menu (Cmd shortcuts live there).
-  if (process.platform !== "darwin") Menu.setApplicationMenu(null);
+  // macOS: custom application menu; Windows/Linux: no menu bar.
+  Menu.setApplicationMenu(process.platform === "darwin" ? buildAppMenu() : null);
   for (const m of miniWindows) m.loadSettings();
   // IPC first: the disk-loaded file-editor windows below need file:read-sync
   // and server:origin before any sidecar exists. Nothing in here touches the
@@ -1261,6 +1291,7 @@ function onServerReady({ fileOnlyLaunch, instantFileLaunch, launchFiles }: BootO
   if (!fileOnlyLaunch || pending) {
     createWindow(serverGate.port, pending?.hash);
     if (pending?.docId) sendOpenDoc(pending.docId);
+    if (pending?.command) sendToMain("mh:command", { name: pending.command });
   }
   // Open launch files still waiting on the server (fallback #file route — the
   // instant path already opened them at startup). openFileWindow dedupes per

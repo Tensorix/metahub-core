@@ -37,6 +37,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "back", label: "后退", group: "nav", keys: { mac: { mod: true, key: "[" }, other: { alt: true, key: "ArrowLeft" } } },
   { id: "forward", label: "前进", group: "nav", keys: { mac: { mod: true, key: "]" }, other: { alt: true, key: "ArrowRight" } } },
   { id: "search", label: "搜索", group: "nav", keys: { mod: true, key: "k" } },
+  { id: "palette", label: "命令面板", group: "nav", keys: { mod: true, shift: true, key: "p" } },
   { id: "sidebar", label: "折叠 / 展开侧栏", group: "nav", keys: { mod: true, key: "\\" } },
   { id: "tabDocs", label: "侧栏：文档", group: "nav", keys: { mod: true, key: "1" }, desktopOnly: true },
   { id: "tabDb", label: "侧栏：数据表", group: "nav", keys: { mod: true, key: "2" }, desktopOnly: true },

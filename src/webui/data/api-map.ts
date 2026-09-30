@@ -160,6 +160,10 @@ export function mapApiRequest(
       const text = q.get("q");
       return text ? { op: "search", args: [text, num(q.get("limit"))] } : null;
     }
+    case "GET /api/resolve": {
+      const ref = q.get("ref");
+      return ref ? { op: "resolve", args: [ref, num(q.get("limit"))] } : null;
+    }
 
     // sites (management ops the replica owns; file UPLOAD and publish/hosting
     // configuration stay server-only — no local counterpart, deliberate null)

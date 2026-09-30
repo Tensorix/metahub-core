@@ -55,6 +55,13 @@ export interface Hit {
   title?: string;
   snippet: string;
 }
+/** One navigable match from /api/resolve (core lookupCandidates). */
+export interface LookupHit {
+  kind: "db" | "doc" | "rec";
+  id: string;
+  label: string;
+  database_id: string | null;
+}
 export interface Peer {
   url: string;
   pull_cursor: number;
@@ -857,6 +864,11 @@ const httpApi = {
     const p = new URLSearchParams({ q: text });
     if (limit != null) p.set("limit", String(limit));
     return req<Hit[]>("GET", `/api/search?${p}`);
+  },
+  resolve: (ref: string, limit?: number) => {
+    const p = new URLSearchParams({ ref });
+    if (limit != null) p.set("limit", String(limit));
+    return req<LookupHit[]>("GET", `/api/resolve?${p}`);
   },
 
   // sync peers / pairing

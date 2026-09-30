@@ -124,6 +124,7 @@ export const localApi = {
     rpc("listLocalShares", opts.target),
   nodes: () => rpc("nodes"),
   search: (text: string, limit?: number) => rpc("search", text, limit),
+  resolve: (ref: string, limit?: number) => rpc("resolve", ref, limit),
 
   // Data map: a replica is a full node, so its own local derivation (which
   // includes the origin server as an http peer) is this device's honest

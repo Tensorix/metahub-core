@@ -71,3 +71,11 @@ test("server-only endpoints deliberately stay unmapped", () => {
   expect(map("POST", "/api/site-hosting", {}, {})).toBeNull();
   expect(map("GET", "/api/peers")).toBeNull();
 });
+
+test("resolve maps to the replica lookup op", () => {
+  expect(map("GET", "/api/resolve", { ref: "doc_ab", limit: "5" })).toEqual({
+    op: "resolve",
+    args: ["doc_ab", 5],
+  });
+  expect(map("GET", "/api/resolve", {})).toBeNull();
+});

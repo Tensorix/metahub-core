@@ -1785,37 +1785,37 @@
     min-width:0; max-width:none; max-height:60vh; max-height:60dvh; border-radius:var(--radius-lg);
     animation:sheet-in .18s ease; }
   @keyframes sheet-in { from { opacity:0; transform:translateY(12px); } }
-  .pop .lbl { font-size:var(--fs-micro); font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; padding:6px 8px 3px; }
-  .pop .item { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:var(--radius-sm); width:100%; text-align:left; color:var(--fg); font-size:var(--fs-ui); }
-  .pop .item:hover, .pop .item.sel { background:var(--hover-2); }
-  .pop .item .lico { width:28px; height:28px; display:grid; place-items:center; border:1px solid var(--line); border-radius:6px; color:var(--fg-soft); flex:none; }
-  .pop .item .lico.plain { border:0; width:22px; height:22px; }
-  .pop .item .meta { flex:1; min-width:0; }
-  .pop .item .t { font-size:var(--fs-ui); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .pop .item .d { font-size:var(--fs-xs); color:var(--muted); display:block; }
-  .pop .item .chk { color:var(--accent); margin-left:auto; }
-  .pop .item .kbd { margin-left:auto; }
-  .pop .item.danger { color:var(--danger); } .pop .item.danger .lico { color:var(--danger); }
-  .pop .sep { height:1px; background:var(--line); margin:5px 4px; }
+  :is(.pop,.palette) .lbl { font-size:var(--fs-micro); font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; padding:6px 8px 3px; }
+  :is(.pop,.palette) .item { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:var(--radius-sm); width:100%; text-align:left; color:var(--fg); font-size:var(--fs-ui); }
+  :is(.pop,.palette) .item:hover, :is(.pop,.palette) .item.sel { background:var(--hover-2); }
+  :is(.pop,.palette) .item .lico { width:28px; height:28px; display:grid; place-items:center; border:1px solid var(--line); border-radius:6px; color:var(--fg-soft); flex:none; }
+  :is(.pop,.palette) .item .lico.plain { border:0; width:22px; height:22px; }
+  :is(.pop,.palette) .item .meta { flex:1; min-width:0; }
+  :is(.pop,.palette) .item .t { font-size:var(--fs-ui); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } :is(.pop,.palette) .item .d { font-size:var(--fs-xs); color:var(--muted); display:block; }
+  :is(.pop,.palette) .item .chk { color:var(--accent); margin-left:auto; }
+  :is(.pop,.palette) .item .kbd { margin-left:auto; }
+  :is(.pop,.palette) .item.danger { color:var(--danger); } :is(.pop,.palette) .item.danger .lico { color:var(--danger); }
+  :is(.pop,.palette) .sep { height:1px; background:var(--line); margin:5px 4px; }
   .pop .typegrid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:2px 2px 4px; }
   .pop .typegrid .item { flex-direction:column; gap:5px; padding:9px 4px; text-align:center; }
   .pop .typegrid .item .lico { margin:0 auto; }
   .pop input.field { width:100%; border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:7px 9px; outline:none; background:var(--surface); margin:2px; }
   .pop input.field:focus { border-color:var(--accent); }
   /* select-cell picker: search/create input at the top of the popover */
-  .pop .selsearch { display:flex; align-items:center; gap:7px; margin:2px 2px 6px; padding:6px 9px;
+  :is(.pop,.palette) .selsearch { display:flex; align-items:center; gap:7px; margin:2px 2px 6px; padding:6px 9px;
     border:1px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); color:var(--muted);
     transition:border-color .12s ease, box-shadow .12s ease, color .12s ease; }
-  .pop .selsearch:focus-within { border-color:var(--accent); color:var(--accent);
+  :is(.pop,.palette) .selsearch:focus-within { border-color:var(--accent); color:var(--accent);
     box-shadow:0 0 0 2.5px color-mix(in srgb, var(--accent) 16%, transparent); }
-  .pop .selsearch input { flex:1; width:0; min-width:0; border:0; background:transparent; outline:none;
+  :is(.pop,.palette) .selsearch input { flex:1; width:0; min-width:0; border:0; background:transparent; outline:none;
     font:inherit; font-size:var(--fs-ui); color:var(--fg); }
-  .pop .selsearch input::placeholder { color:var(--muted); }
-  .pop .selsearch .clear { display:grid; place-items:center; width:18px; height:18px; margin:-2px -3px -2px 0;
+  :is(.pop,.palette) .selsearch input::placeholder { color:var(--muted); }
+  :is(.pop,.palette) .selsearch .clear { display:grid; place-items:center; width:18px; height:18px; margin:-2px -3px -2px 0;
     border-radius:50%; color:var(--muted); flex:none; }
-  .pop .selsearch .clear:hover { background:var(--hover-2); color:var(--fg); }
+  :is(.pop,.palette) .selsearch .clear:hover { background:var(--hover-2); color:var(--fg); }
   /* relation record picker: fixed-height list — the popover is positioned once
      on open, so async-loaded rows must scroll instead of growing off-screen */
-  .pop .rellist { max-height:264px; overflow-y:auto; }
+  :is(.pop,.palette) .rellist { max-height:264px; overflow-y:auto; }
   .optrow { display:flex; align-items:center; gap:6px; padding:3px 4px; }
   .optrow .chip { flex:1; }
   .optrow .grip { width:18px; height:22px; display:grid; place-items:center; color:var(--muted); cursor:grab; touch-action:none; flex:none; }
@@ -1861,6 +1861,11 @@
      so a confirm can appear without dismissing an open popover */
   .modal-scrim.above-menus { z-index:130; }
   .modal { background:var(--bg); border-radius:var(--radius-xl); box-shadow:var(--shadow-lg); width:440px; max-width:100%; max-height:100%; display:flex; flex-direction:column; overflow:hidden; }
+  /* command palette (palette.tsx) */
+  .palette { width:560px; align-self:flex-start; margin-top:12vh; padding:8px; max-height:min(60vh, 520px); }
+  .palette .selsearch { margin:0 0 6px; }
+  .palette .rellist { max-height:none; flex:1; min-height:0; }
+  .palette .item .d { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .modal-head { padding:20px 22px 0; }
   .modal-head h3 { margin:0; font-size:18px; font-weight:700; letter-spacing:-.01em; }
   .modal-head p { margin:6px 0 0; color:var(--muted); font-size:var(--fs-ui); }
@@ -2192,8 +2197,8 @@
     @keyframes search-reveal { from { opacity:0; transform:translateY(-8px); } }
     .btn { font-size:15px; }
     .crumb { font-size:16px; }
-    .pop .item { font-size:16px; }
-    .pop .item .t { font-size:16px; }
+    :is(.pop,.palette) .item { font-size:16px; }
+    :is(.pop,.palette) .item .t { font-size:16px; }
 
     /* Document: bigger body text, tighter side padding for narrow screens. */
     .doc { padding:24px 18px calc(36vh + env(safe-area-inset-bottom)); }
@@ -2265,7 +2270,7 @@
     .sb-tabs .add { width:40px; height:40px; display:grid; place-items:center; padding:0; }
     .iconbtn { width:40px; height:40px; }
     .btn { padding:9px 14px; min-height:40px; }
-    .pop .item { padding:11px 10px; }
+    :is(.pop,.palette) .item { padding:11px 10px; }
     /* Column/sidebar resize handles: 7px is a mouse affordance, not a finger's. */
     .col-resizer, .doc-col-resizer, .sb-resizer { width:16px; right:-8px; }
     /* cell-rectangle corner handle: big enough to grab with a finger (it is the

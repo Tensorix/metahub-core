@@ -8,6 +8,7 @@ import { clearDropMarks } from "./pointer-drag.ts";
 import type { Navigate, View } from "./view.ts";
 import { IS_DESKTOP_APP, pressed, tip } from "./shortcuts.ts";
 import { Kbd } from "./kbd.tsx";
+import { registerCommands } from "./commands.ts";
 import {
   openMenu,
   MenuItem,
@@ -146,6 +147,25 @@ export function Sidebar(props: SidebarProps) {
     const on = (e: KeyboardEvent) => keysRef.current(e);
     window.addEventListener("keydown", on);
     return () => window.removeEventListener("keydown", on);
+  }, []);
+  // Palette entries for sidebar-owned actions.
+  const cmdRef = useRef<Record<string, () => void>>({});
+  cmdRef.current = {
+    newDoc: () => newDoc(null),
+    newDb: () => openCreateDb((id) => navigate({ kind: "db", id }), props.onError),
+    tabDocs: () => { if (props.collapsed) props.onExpand(); setTab("docs"); },
+    tabDb: () => { if (props.collapsed) props.onExpand(); setTab("db"); },
+    tabSites: () => { if (props.collapsed) props.onExpand(); setTab("sites"); },
+  };
+  useEffect(() => {
+    const run = (k: string) => () => cmdRef.current[k]?.();
+    return registerCommands([
+      { id: "newDoc", label: "新建文档", group: "create", icon: "doc", shortcut: "newDoc", run: run("newDoc") },
+      { id: "newDb", label: "新建数据库", group: "create", icon: "database", shortcut: "newDb", run: run("newDb") },
+      { id: "tabDocs", order: 80, label: "侧栏：文档", group: "nav", icon: "doc", shortcut: "tabDocs", run: run("tabDocs") },
+      { id: "tabDb", order: 80, label: "侧栏：数据表", group: "nav", icon: "table", shortcut: "tabDb", run: run("tabDb") },
+      { id: "tabSites", order: 80, label: "侧栏：站点", group: "nav", icon: "globe", shortcut: "tabSites", run: run("tabSites") },
+    ]);
   }, []);
   // Follow navigation: opening a doc (search result, backlink, history) should
   // reveal it in the list. Manual tab switches don't change the view, so they

@@ -34,6 +34,8 @@ import { SyncIndicator } from "./sync-indicator.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { pressed, tip } from "./shortcuts.ts";
+import { openPalette, type PaletteMode } from "./palette.tsx";
+import { registerCommands } from "./commands.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { QuickBoard } from "./quickboard/quickboard.tsx";
@@ -259,6 +261,25 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ⌘⇧P palette (latest-closure refs).
+  const databasesRef = useRef(databases);
+  databasesRef.current = databases;
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  const showPalette = useCallback((mode: PaletteMode) => {
+    openPalette(mode, {
+      navigate: (v, o) => navigateRef.current(v, o),
+      dbName: (id) => databasesRef.current.find((d) => d.id === id)?.name,
+    });
+  }, []);
+
+  // Desktop app-menu commands (mh:command).
+  useEffect(() => {
+    const sub = typeof window !== "undefined" ? window.metahubDesktop?.onCommand : undefined;
+    if (!sub) return;
+    return sub(({ name }) => showPalette(name === "openById" ? "open" : "commands"));
+  }, [showPalette]);
+
   // Same for the quick-board window's 「在主窗口中打开」: deep-link to the
   // database, optionally requesting a view tab (consumed by DatabaseView).
   useEffect(() => {
@@ -326,6 +347,11 @@ function App() {
       if (pressed(e, "search")) {
         e.preventDefault();
         document.querySelector<HTMLInputElement>(".sb-search input")?.focus();
+        return;
+      }
+      if (pressed(e, "palette")) {
+        e.preventDefault();
+        showPalette("commands");
         return;
       }
       if (pressed(e, "sidebar")) {
@@ -514,6 +540,41 @@ function App() {
       else localStorage.removeItem(`mh.doc-wide.${activeDocId}`);
     } catch { /* private mode: the toggle just doesn't persist */ }
   };
+
+  // Palette commands owned by the app shell.
+  const cmdRef = useRef<Record<string, () => void>>({});
+  cmdRef.current = {
+    openById: () => showPalette("open"),
+    settings: () => { if (parseHash(location.hash).kind !== "settings") navigate({ kind: "settings" }); },
+    sidebar: () => { if (!window.matchMedia(MOBILE_MQ).matches) setSbCollapsed((v) => !v); },
+    search: () => document.querySelector<HTMLInputElement>(".sb-search input")?.focus(),
+    back: goBack,
+    forward: goForward,
+    toggleSource: () => docHandleRef.current?.setMode(docHandleRef.current.getMode() === "source" ? "blocks" : "source"),
+    docWide: toggleDocWide,
+    docHistory: () => { docHandleRef.current?.flushSave(); setDocHistory(true); },
+    copyDocId: () => { if (activeDocId) navigator.clipboard?.writeText(activeDocId).then(() => toast("已复制 ID")); },
+  };
+  const run = (k: string) => () => cmdRef.current[k]?.();
+  useEffect(() => registerCommands([
+    { id: "openById", label: "按 ID 打开…", group: "nav", icon: "hash", order: 0, run: run("openById") },
+    { id: "search", label: "搜索", group: "nav", icon: "search", shortcut: "search", order: 1, run: run("search") },
+    { id: "settings", label: "打开设置", group: "nav", icon: "settings", shortcut: "settings", run: run("settings") },
+    { id: "sidebar", label: "折叠 / 展开侧栏", group: "nav", icon: "monitor", shortcut: "sidebar", run: run("sidebar") },
+    ...(isDesktop ? [
+      { id: "back", label: "后退", group: "nav" as const, icon: "arrowLeft", shortcut: "back", run: run("back") },
+      { id: "forward", label: "前进", group: "nav" as const, icon: "arrowRight", shortcut: "forward", run: run("forward") },
+    ] : []),
+  ]), [isDesktop]);
+  useEffect(() => {
+    if (!activeDocId) return;
+    return registerCommands([
+      { id: "toggleSource", label: "块 / 代码方式切换", group: "doc", icon: "code", shortcut: "toggleSource", run: run("toggleSource") },
+      { id: "docWide", label: "宽屏模式", group: "doc", icon: "maximize", run: run("docWide") },
+      { id: "docHistory", label: "版本历史", group: "doc", icon: "history", run: run("docHistory") },
+      { id: "copyDocId", label: "复制 ID", group: "doc", icon: "hash", run: run("copyDocId") },
+    ]);
+  }, [activeDocId]);
 
   const moreMenu = (e: MouseEvent) => {
     if (view.kind === "doc" && activeDoc) {

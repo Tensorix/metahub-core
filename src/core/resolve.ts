@@ -161,3 +161,49 @@ export function resolveRef(
 ): string {
   return resolveEntity(db, ref, opts).id;
 }
+
+export interface LookupHit extends Candidate {
+  /** Owning database for rec/doc (null for a db itself or a root document). */
+  database_id: string | null;
+}
+
+const LOOKUP_LIMIT = 20;
+
+/** Navigable matches for `ref` (db / doc / rec) with owning database and record title; exact id first. */
+export function lookupCandidates(
+  db: DbDriver,
+  ref: string,
+  opts: { limit?: number } = {},
+): LookupHit[] {
+  const trimmed = ref.trim();
+  if (!trimmed) return [];
+  const limit = Math.max(1, Math.min(opts.limit ?? LOOKUP_LIMIT, 100));
+  const cands = resolveCandidates(db, trimmed).filter((c) => c.kind !== "prop");
+  cands.sort((a, b) => Number(b.id === trimmed) - Number(a.id === trimmed));
+
+  const titleCache = new Map<string, string | null>();
+  const out: LookupHit[] = [];
+  for (const c of cands.slice(0, limit)) {
+    if (c.kind === "db") {
+      out.push({ ...c, database_id: null });
+      continue;
+    }
+    const row = db
+      .query(`SELECT database_id FROM ${SPECS[c.kind].table} WHERE id = ?`)
+      .get(c.id) as { database_id: string | null } | null;
+    const databaseId = row?.database_id ?? null;
+    let label = c.label;
+    if (c.kind === "rec" && !label && databaseId) {
+      if (!titleCache.has(databaseId)) titleCache.set(databaseId, titlePropId(db, databaseId));
+      const tp = titleCache.get(databaseId);
+      if (tp) {
+        const t = db
+          .query(`SELECT data ->> '${tp.replace(/'/g, "''")}' AS title FROM records WHERE id = ?`)
+          .get(c.id) as { title: string | null } | null;
+        label = t?.title ? String(t.title) : "";
+      }
+    }
+    out.push({ kind: c.kind, id: c.id, label, database_id: databaseId });
+  }
+  return out;
+}

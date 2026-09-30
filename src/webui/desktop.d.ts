@@ -110,6 +110,9 @@ export interface MetahubDesktop {
    *  「在 MetaHub 中打开」 across the file://→http origin gap). Returns an
    *  unsubscribe fn. Absent on older shells. */
   onOpenDoc?: (cb: (id: string) => void) => () => void;
+  /** Main window: app-menu commands (文件 ▸ 按 ID 打开… / 命令面板). Returns an
+   *  unsubscribe fn. Absent on older shells. */
+  onCommand?: (cb: (p: { name: "palette" | "openById" }) => void) => () => void;
 }
 
 declare global {

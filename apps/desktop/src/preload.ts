@@ -130,6 +130,13 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     ipcRenderer.on("mh:open-doc", l);
     return () => ipcRenderer.removeListener("mh:open-doc", l);
   },
+  onCommand: (cb: (p: { name: "palette" | "openById" }) => void) => {
+    const l = (_e: unknown, p: { name?: string }) => {
+      if (p?.name === "palette" || p?.name === "openById") cb({ name: p.name });
+    };
+    ipcRenderer.on("mh:command", l);
+    return () => ipcRenderer.removeListener("mh:command", l);
+  },
   oauth: {
     // Open a Cloudflare consent URL in the system browser (main-process validated).
     openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke("oauth:open-external", url),
