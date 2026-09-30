@@ -525,7 +525,7 @@ export function promptDialog(opts: {
           placeholder={opts.placeholder}
           onInput={(e) => (val = (e.target as HTMLInputElement).value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") done(val.trim() || (opts.value ?? ""));
+            if (e.key === "Enter" && !imeGhost(e)) done(val.trim() || (opts.value ?? ""));
           }}
         />
       </Modal>,

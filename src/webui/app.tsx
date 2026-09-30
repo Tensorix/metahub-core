@@ -36,10 +36,10 @@ import { SyncIndicator } from "./sync-indicator.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { pressed, tip } from "./shortcuts.ts";
-import { openPalette, type PaletteMode } from "./palette.tsx";
+import { openEntry, openPalette, type PaletteMode } from "./palette.tsx";
 import { registerCommands } from "./commands.ts";
 import { recordRecent } from "./recents.ts";
-import { type View, parseHash, viewToHash } from "./view.ts";
+import { type Navigate, type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { QuickBoard } from "./quickboard/quickboard.tsx";
 import { ensureLive } from "./live.ts";
@@ -856,7 +856,7 @@ function App() {
             />
           )}
           {view.kind === "search" && (
-            <SearchView q={view.q} onOpenDoc={(id) => navigate({ kind: "doc", id })} onOpenDb={(id) => navigate({ kind: "db", id })} />
+            <SearchView q={view.q} navigate={navigate} />
           )}
           {view.kind === "settings" && <SettingsView onUpdatePending={setUpdatePending} updatePending={updatePending} focusSec={view.sec} />}
           {view.kind === "sites" && <SitesView navigate={navigate} />}
@@ -918,7 +918,7 @@ function EmptyState({ onNewDoc }: { onNewDoc: () => void }) {
   );
 }
 
-function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: string) => void; onOpenDb: (id: string) => void }) {
+function SearchView({ q, navigate }: { q: string; navigate: Navigate }) {
   const [hits, setHits] = useState<Hit[] | null>(null);
   useEffect(() => {
     setHits(null);
@@ -933,7 +933,7 @@ function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: str
         <div
           key={h.id}
           class="search-hit"
-          onClick={() => (h.type === "document" ? onOpenDoc(h.id) : h.database_id && onOpenDb(h.database_id))}
+          onClick={() => openEntry({ kind: h.type === "document" ? "doc" : "rec", id: h.id, database_id: h.database_id }, navigate)}
         >
           <div class="search-hit-head">
             <strong>{h.title || h.id}</strong>

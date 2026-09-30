@@ -22,3 +22,11 @@ export function consumeKey(e: KeyboardEvent): void {
 export function imeGhost(e: KeyboardEvent): boolean {
   return e.isComposing || e.keyCode === 229;
 }
+
+/** Inputs, textareas, selects and contentEditable hosts own their own keys. */
+export function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
+}

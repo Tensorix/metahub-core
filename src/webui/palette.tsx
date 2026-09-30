@@ -14,6 +14,7 @@ import { listRecents } from "./recents.ts";
 import { matchTitles } from "./title-match.ts";
 import type { Navigate } from "./view.ts";
 import { shortcutAvailable } from "./shortcuts.ts";
+import { imeGhost } from "./keys.ts";
 
 export type PaletteMode = "commands" | "open";
 
@@ -293,6 +294,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
           onKeyDown={(e) => {
+            if (imeGhost(e)) return;
             if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, rows.length - 1)); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
             else if (e.key === "Enter") { e.preventDefault(); if (rows[sel]) pick(rows[sel]); }
@@ -305,6 +307,9 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
         ) : (
           <Kbd combo={{ key: "Escape" }} />
         )}
+        <button class="pal-close" title={t("关闭")} onClick={closeModal}>
+          <Icon name="x" cls="ico sm" />
+        </button>
       </div>
       <div ref={listRef} class="pal-list">
         {sections.map((s) => (

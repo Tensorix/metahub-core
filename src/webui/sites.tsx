@@ -8,6 +8,7 @@ import {
   type SiteHostingInfo,
 } from "./api.ts";
 import { normalizeSiteName } from "../core/sites-core.ts";
+import { imeGhost } from "./keys.ts";
 import {
   siteChannelInput,
   siteChannels,
@@ -685,7 +686,7 @@ export function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
         placeholder={t("例如：docs、demo、status")}
         onInput={(e) => setName((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") create();
+          if (e.key === "Enter" && !imeGhost(e)) create();
         }}
       />
       <div class="field-label">{t("标题（可选）")}</div>
@@ -695,7 +696,7 @@ export function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
         placeholder={t("人类可读的标题")}
         onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") create();
+          if (e.key === "Enter" && !imeGhost(e)) create();
         }}
       />
       <div class="muted" style={{ fontSize: 12, marginTop: 10 }}>
@@ -756,7 +757,7 @@ function RenameSlugModal({ site, onRenamed }: { site: Site; onRenamed: (newName:
         value={name}
         onInput={(e) => setName((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") save();
+          if (e.key === "Enter" && !imeGhost(e)) save();
         }}
       />
       <div class="muted" style={{ fontSize: 12, marginTop: 8, fontFamily: "var(--mono)" }}>

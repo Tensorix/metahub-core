@@ -10,6 +10,7 @@ import {
   type PropConfig,
 } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
+import { imeGhost } from "./keys.ts";
 import { t } from "./i18n/t.ts";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import {
@@ -1049,6 +1050,7 @@ function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; o
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
           onKeyDown={(e) => {
+            if (imeGhost(e)) return;
             if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, rowCount - 1)); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
             else if (e.key === "Enter") { e.preventDefault(); activate(sel); }
@@ -1172,6 +1174,7 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
           onKeyDown={(e) => {
+            if (imeGhost(e)) return;
             if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, rowCount - 1)); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
             else if (e.key === "Enter") { e.preventDefault(); activate(sel); }
@@ -1294,6 +1297,7 @@ function DocMenu({ value, onPick, seed }: {
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
           onKeyDown={(e) => {
+            if (imeGhost(e)) return;
             if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, rowCount - 1)); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
             else if (e.key === "Enter") { e.preventDefault(); activate(sel); }
@@ -1587,6 +1591,7 @@ export function DbTargetList({ currentDb, target, autoFocus, placeholder = t("æ
           ref={autoFocus ? (el) => { if (el && document.activeElement !== el) el.focus(); } : undefined}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
           onKeyDown={(e) => {
+            if (imeGhost(e)) return;
             if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, shown.length - 1)); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
             else if (e.key === "Enter") { e.preventDefault(); if (shown[sel]) onPick(shown[sel]); }

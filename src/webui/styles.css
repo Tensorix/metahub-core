@@ -1870,6 +1870,8 @@
   .pal-head input::placeholder { color:var(--muted); }
   .pal-head .clear { display:grid; place-items:center; width:20px; height:20px; border-radius:50%; color:var(--muted); flex:none; }
   .pal-head .clear:hover { background:var(--hover-2); color:var(--fg); }
+  .pal-close { display:none; place-items:center; width:28px; height:28px; border-radius:50%; color:var(--muted); flex:none; }
+  .pal-close:active { background:var(--hover-2); }
   .pal-list { flex:1; min-height:0; overflow-y:auto; padding-bottom:4px; overscroll-behavior:contain; }
   .pal-sec + .pal-sec { margin-top:4px; }
   .palette .item { padding:7px 10px; }
@@ -2211,7 +2213,7 @@
     .navitem { padding:9px 8px; font-size:16px; }
     .navitem .emoji { font-size:18px; }
     .navitem .tw { width:26px; height:26px; }
-    .sb-search .kbd, .pop .item .kbd { display:none; }  /* no hardware keyboard, no shortcut hint */
+    .sb-search .kbd, :is(.pop,.palette) .item .kbd { display:none; }  /* no hardware keyboard, no shortcut hint */
     /* Search box is hidden until the header search button reveals it; it then
        slides+fades down in. Desktop base (.sb-search{display:flex}) is untouched,
        so search stays always-on there. reduced-motion is handled globally. */
@@ -2268,20 +2270,24 @@
     /* Overlays: dialogs become bottom sheets (centered cards fight the soft
        keyboard), and fixed-bottom chrome stays clear of the home indicator. */
     .modal-scrim { align-items:flex-end; padding:0; }
-    .palette { width:100%; margin-top:0; max-height:80vh; max-height:80dvh; }
-    .palette .item .meta { display:block; }
-    .palette .item .d { max-width:none; }
-    .palette .item .ret, .pal-foot .keys, .pal-head .kbd { display:none; }
-    .pal-foot .hint { margin-left:0; }
     .modal { width:100%; max-height:92vh; max-height:92dvh;
       border-radius:var(--radius-xl) var(--radius-xl) 0 0;
       padding-bottom:env(safe-area-inset-bottom);
       animation:sheet-up .22s cubic-bezier(.32,.72,0,1); }
+    .modal.palette { align-self:flex-start; margin-top:0; max-height:80vh; max-height:80dvh;
+      padding:env(safe-area-inset-top) 8px 0; border-radius:0 0 var(--radius-xl) var(--radius-xl);
+      animation:sheet-down .22s cubic-bezier(.32,.72,0,1); }
+    .palette .item .meta { display:block; }
+    .palette .item .d { max-width:none; }
+    .palette .item .ret, .pal-foot .keys, .pal-head .kbd { display:none; }
+    .pal-foot .hint { margin-left:0; }
+    .pal-close { display:grid; }
     .toasts { left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom)); }
     .toast { justify-content:center; }
     .selbar { bottom:calc(16px + env(safe-area-inset-bottom)); max-width:calc(100vw - 24px); }
   }
   @keyframes sheet-up { from { transform:translateY(100%); } }
+  @keyframes sheet-down { from { transform:translateY(-100%); } }
   /* In-flow stand-in for the old two-pane slide: only the entering view
      animates (the other is display:none, document-scroll layout above). */
   @keyframes page-in { from { transform:translateX(28px); opacity:0; } }

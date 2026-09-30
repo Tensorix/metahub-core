@@ -10,6 +10,7 @@ import type { Navigate, View } from "./view.ts";
 import { IS_DESKTOP_APP, pressed, tip } from "./shortcuts.ts";
 import { Kbd } from "./kbd.tsx";
 import { registerCommands } from "./commands.ts";
+import { imeGhost } from "./keys.ts";
 import {
   openMenu,
   MenuItem,
@@ -741,7 +742,7 @@ function CreateDbForm(props: {
         placeholder={t("例如：项目、客户、库存…")}
         value={name}
         onInput={(e) => setName((e.target as HTMLInputElement).value)}
-        onKeyDown={(e) => e.key === "Enter" && create()}
+        onKeyDown={(e) => e.key === "Enter" && !imeGhost(e) && create()}
       />
       <div class="field-label">{t("图标")}</div>
       <div class="icon-pick">
