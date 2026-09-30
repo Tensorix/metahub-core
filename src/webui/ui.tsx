@@ -720,6 +720,32 @@ export function promptDialog(opts: {
   });
 }
 
+/** Dismissible inline error strip. */
+export function ErrorBar({ msg, onClose }: { msg: string; onClose: () => void }) {
+  return (
+    <div class="error-bar" role="alert">
+      <Icon name="alert" cls="ico sm" />
+      <span class="error-msg">{msg}</span>
+      <button class="error-x" title={t("关闭")} onClick={onClose}>
+        <Icon name="x" cls="ico sm" />
+      </button>
+    </div>
+  );
+}
+
+/** Wrap `span` of `text` in <mark>. */
+export function Highlight({ text, span }: { text: string; span?: [number, number] }) {
+  if (!span || span[1] <= 0) return <>{text}</>;
+  const [s, n] = span;
+  return (
+    <>
+      {text.slice(0, s)}
+      <mark>{text.slice(s, s + n)}</mark>
+      {text.slice(s + n)}
+    </>
+  );
+}
+
 /** FTS snippets are plain text with `[..]` wrapping each matched term (see
  *  core/search.ts). Render them as text nodes with <mark> around the wrapped
  *  spans — never as HTML, so document content can't inject markup. */

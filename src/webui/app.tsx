@@ -36,9 +36,12 @@ import { SyncIndicator } from "./sync-indicator.tsx";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { pressed, tip } from "./shortcuts.ts";
-import { openEntry, openPalette, type PaletteMode } from "./palette.tsx";
+import { OPEN_PALETTE, openEntry, openPalette, type PaletteMode } from "./palette.tsx";
 import { registerCommands } from "./commands.ts";
 import { recordRecent } from "./recents.ts";
+import { docPath } from "./crumb.ts";
+import { undoableDelete } from "./undo.ts";
+import { SkelLines } from "./skeleton.tsx";
 import { type Navigate, type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { QuickBoard } from "./quickboard/quickboard.tsx";
@@ -58,6 +61,7 @@ import {
   toast,
   MOBILE_MQ,
   SnippetText,
+  ErrorBar,
 } from "./ui.tsx";
 
 // Single-page Preact app: browse/edit databases (Notion-like tables) and
@@ -287,6 +291,11 @@ function App() {
     if (!sub) return;
     return sub(({ name }) => showPalette(name === "openById" ? "open" : "commands"));
   }, [showPalette]);
+  useEffect(() => {
+    const on = () => showPalette("commands");
+    document.addEventListener(OPEN_PALETTE, on);
+    return () => document.removeEventListener(OPEN_PALETTE, on);
+  }, [showPalette]);
 
   // Same for the quick-board window's 「在主窗口中打开」: deep-link to the
   // database, optionally requesting a view tab (consumed by DatabaseView).
@@ -354,7 +363,7 @@ function App() {
       }
       if (pressed(e, "search")) {
         e.preventDefault();
-        document.querySelector<HTMLInputElement>(".sb-search input")?.focus();
+        showPalette("commands");
         return;
       }
       if (pressed(e, "palette")) {
@@ -562,8 +571,8 @@ function App() {
   cmdRef.current = {
     openById: () => showPalette("open"),
     settings: () => { if (parseHash(location.hash).kind !== "settings") navigate({ kind: "settings" }); },
+    shortcuts: () => navigate({ kind: "settings", sec: "shortcuts" }),
     sidebar: () => { if (!window.matchMedia(MOBILE_MQ).matches) setSbCollapsed((v) => !v); },
-    search: () => document.querySelector<HTMLInputElement>(".sb-search input")?.focus(),
     back: goBack,
     forward: goForward,
     toggleSource: () => docHandleRef.current?.setMode(docHandleRef.current.getMode() === "source" ? "blocks" : "source"),
@@ -574,8 +583,8 @@ function App() {
   const run = (k: string) => () => cmdRef.current[k]?.();
   useEffect(() => registerCommands([
     { id: "openById", label: t("按 ID 打开…"), en: tIn("en", "按 ID 打开…"), group: "nav", icon: "hash", order: 0, run: run("openById") },
-    { id: "search", label: t("搜索"), en: tIn("en", "搜索"), group: "nav", icon: "search", shortcut: "search", order: 1, run: run("search") },
     { id: "settings", label: t("打开设置"), en: tIn("en", "打开设置"), group: "nav", icon: "settings", shortcut: "settings", run: run("settings") },
+    { id: "shortcuts", label: t("键盘快捷键"), en: tIn("en", "键盘快捷键"), group: "nav", icon: "keyboard", run: run("shortcuts") },
     { id: "sidebar", label: t("折叠 / 展开侧栏"), en: tIn("en", "折叠 / 展开侧栏"), group: "nav", icon: "monitor", shortcut: "sidebar", run: run("sidebar") },
     ...(isDesktop ? [
       { id: "back", label: t("后退"), en: tIn("en", "后退"), group: "nav" as const, icon: "arrowLeft", shortcut: "back", run: run("back") },
@@ -633,8 +642,14 @@ function App() {
           <MenuSep />
           <MenuItem icon="trash" label={t("删除文档")} danger onClick={async () => {
             close();
-            const ok = await confirmDialog({ title: t("删除文档？"), message: t("「{title}」将被删除。", { title: activeDoc.title || t("无标题") }), confirmLabel: t("删除"), danger: true });
-            if (ok) { await api.deleteDocument(activeDoc.id); navigate({ kind: "empty" }, { replace: true }); }
+            const id = activeDoc.id;
+            await undoableDelete({
+              label: t("已删除「{title}」", { title: activeDoc.title || t("无标题") }),
+              ids: [id],
+              run: () => api.deleteDocument(id),
+              after: () => navigate({ kind: "empty" }, { replace: true }),
+              onRestored: () => navigate({ kind: "doc", id }),
+            });
           }} />
         </>
       ));
@@ -664,7 +679,15 @@ function App() {
           <MenuItem icon="trash" label={t("删除数据库")} danger onClick={async () => {
             close();
             const ok = await confirmDialog({ title: t("删除数据库？"), message: t("「{name}」及其所有记录将被永久删除。", { name: activeDb.name }), confirmLabel: t("删除"), danger: true });
-            if (ok) { await api.deleteDatabase(activeDb.id); navigate({ kind: "empty" }, { replace: true }); }
+            if (!ok) return;
+            const id = activeDb.id;
+            await undoableDelete({
+              label: t("已删除「{title}」", { title: activeDb.name }),
+              ids: [id],
+              run: () => api.deleteDatabase(id),
+              after: () => navigate({ kind: "empty" }, { replace: true }),
+              onRestored: () => navigate({ kind: "db", id }),
+            });
           }} />
         </>
       ));
@@ -694,6 +717,7 @@ function App() {
         onExpand={() => setSbCollapsed(false)}
         updatePending={updatePending}
         onError={onError}
+        onOpenPalette={() => showPalette("commands")}
       />
       <div class="main">
         {siteImmersive && view.kind === "site" && (
@@ -744,7 +768,15 @@ function App() {
             </>
           )}
           <div class="crumb">
-            {view.kind === "doc" && <><span class="emoji"><Icon name="file" cls="ico sm" /></span><span>{activeDoc?.title || t("无标题")}</span></>}
+            {view.kind === "doc" && (
+              <>
+                <span class="emoji"><Icon name="fileText" cls="ico sm" /></span>
+                <DocCrumb id={view.id} docs={docs} databases={databases} navigate={navigate} />
+                <button class="crumb-link crumb-title" {...tip(t("命令面板"), "palette")} onClick={() => showPalette("commands")}>
+                  {activeDoc?.title || t("无标题")}
+                </button>
+              </>
+            )}
             {view.kind === "db" && <><span class="emoji">{activeDb?.icon || "🗂️"}</span><span>{activeDb?.name}</span></>}
             {view.kind === "search" && <span>{t("搜索：“{q}”", { q: view.q })}</span>}
             {view.kind === "settings" && (
@@ -827,7 +859,7 @@ function App() {
               : t("⚡ 离线 — 可浏览已缓存的内容,修改会失败;恢复网络后自动恢复")}
           </div>
         )}
-        {error && <div class="error-bar" onClick={() => setError("")}>{t("⚠ {error}（点击关闭）", { error })}</div>}
+        {error && <ErrorBar msg={error} onClose={() => setError("")} />}
 
         <div class="content">
           {view.kind === "empty" && <EmptyState onNewDoc={newEmptyDoc} />}
@@ -842,9 +874,7 @@ function App() {
               onError={onError}
             />
           )}
-          {view.kind === "db" && !activeDb && (
-            <div class="empty">{navReady ? t("数据库不存在或已被删除。") : t("加载中…")}</div>
-          )}
+          {view.kind === "db" && !activeDb && (navReady ? <div class="empty">{t("数据库不存在或已被删除。")}</div> : <SkelLines n={6} cls="pad" />)}
           {view.kind === "doc" && (
             <DocView
               key={view.id}
@@ -918,17 +948,62 @@ function EmptyState({ onNewDoc }: { onNewDoc: () => void }) {
   );
 }
 
+/** Topbar ancestry for a document: db › … › parent, collapsing the middle of
+ *  deep chains into a menu. */
+function DocCrumb({ id, docs, databases, navigate }: { id: string; docs: DocSummary[]; databases: Db[]; navigate: Navigate }) {
+  const path = docPath(id, docs, databases);
+  if (!path.length) return null;
+  const go = (s: { kind: "db" | "doc"; id: string }) => navigate(s.kind === "db" ? { kind: "db", id: s.id } : { kind: "doc", id: s.id });
+  const seg = (s: (typeof path)[number]) => (
+    <button key={s.id} class="crumb-link" onClick={() => go(s)}>{s.label}</button>
+  );
+  const shown = path.length > 3 ? [path[0]!, null, path[path.length - 1]!] : path;
+  return (
+    <>
+      {shown.map((s, i) =>
+        s ? (
+          <>{seg(s)}<span class="crumb-sep">›</span></>
+        ) : (
+          <>
+            <button
+              key={"more" + i}
+              class="crumb-link crumb-more"
+              onClick={(e) => openMenu(e, (close) => (
+                <>{path.slice(1, -1).map((p) => <MenuItem key={p.id} icon={p.kind === "db" ? "database" : "fileText"} label={p.label} onClick={() => { close(); go(p); }} />)}</>
+              ))}
+            >
+              …
+            </button>
+            <span class="crumb-sep">›</span>
+          </>
+        ),
+      )}
+    </>
+  );
+}
+
 function SearchView({ q, navigate }: { q: string; navigate: Navigate }) {
   const [hits, setHits] = useState<Hit[] | null>(null);
   useEffect(() => {
-    setHits(null);
-    api.search(q).then(setHits).catch(() => setHits([]));
+    let live = true;
+    api.search(q).then((h) => live && setHits(h)).catch(() => live && setHits([]));
+    return () => { live = false; };
   }, [q]);
   return (
     <div class="db">
       <div class="db-title" style={{ marginBottom: 14 }}>{t("搜索：“{q}”", { q })}</div>
-      {hits === null && <p class="muted">{t("搜索中…")}</p>}
-      {hits?.length === 0 && <p class="muted">{t("没有匹配结果。")}</p>}
+      {hits === null && <SkelLines n={4} />}
+      {hits?.length === 0 && (
+        <div class="site-empty">
+          <div class="ei"><Icon name="search" /></div>
+          <div class="et">{t("没有找到“{q}”", { q })}</div>
+          <div class="ed">{t("换个关键词试试，或用命令面板按标题、ID 直达。")}</div>
+          <button class="btn btn-secondary" onClick={() => document.dispatchEvent(new CustomEvent(OPEN_PALETTE))}>
+            <Icon name="search" cls="ico sm" />
+            {t("打开命令面板")}
+          </button>
+        </div>
+      )}
       {hits?.map((h) => (
         <div
           key={h.id}

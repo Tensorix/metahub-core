@@ -9,7 +9,6 @@
 // For docs/databases the classic single-form flow remains (ObjectShareModal).
 // Mounted imperatively (openShareModal) so entry points are a one-liner.
 
-import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import {
   api,
@@ -32,7 +31,8 @@ import {
   siteChannels,
   type SiteChannel,
 } from "./site-status.ts";
-import { confirmDialog } from "./ui.tsx";
+import { Modal, confirmDialog, openModal, closeModal } from "./ui.tsx";
+import { RowSelect } from "./settings/primitives.tsx";
 import { t } from "./i18n/t.ts";
 import { fmtDate } from "./i18n/fmt.ts";
 import {
@@ -154,14 +154,7 @@ export function useShareActions(
 }
 
 export function openShareModal(target: ShareTarget): void {
-  injectStyle();
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const close = () => {
-    render(null, host);
-    host.remove();
-  };
-  render(<ShareModal target={target} onClose={close} />, host);
+  openModal(<ShareModal target={target} onClose={closeModal} />);
 }
 
 /** The ordered share targets as unified Scopes (current server default, then
@@ -426,15 +419,11 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
   };
 
   return (
-    <div class="mhshare-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class="mhshare-modal">
-        <div class="mhshare-head">
-          <h2>{target.title ? t("发布与分享：{title}", { title: target.title }) : t("发布与分享")}</h2>
-          <button class="mhshare-x" onClick={onClose} aria-label={t("关闭")}>
-            ✕
-          </button>
-        </div>
-
+    <Modal
+      title={target.title ? t("发布与分享：{title}", { title: target.title }) : t("发布与分享")}
+      width={520}
+      footer={<button class="btn btn-secondary" onClick={onClose} disabled={busy}>{t("关闭")}</button>}
+    >
         <div class="mhshare-body">
           {error && <p class="mhshare-err">{error}</p>}
           {flash && <p class="mhshare-ok">{flash}</p>}
@@ -554,12 +543,8 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
             />
           )}
 
-          <div class="mhshare-foot">
-            <button onClick={onClose} disabled={busy}>{t("关闭")}</button>
-          </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -638,44 +623,52 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
   }
 
   return (
-    <div class="mhshare-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class="mhshare-modal">
-        <div class="mhshare-head">
-          <h2>{target.title ? t("分享：{title}", { title: target.title }) : t("分享")}</h2>
-          <button class="mhshare-x" onClick={onClose} aria-label={t("关闭")}>
-            ✕
+    <Modal
+      title={target.title ? t("分享：{title}", { title: target.title }) : t("分享")}
+      width={520}
+      footer={
+        <>
+          <button class="btn btn-secondary" onClick={onClose}>{t("关闭")}</button>
+          <button class="btn btn-primary" disabled={busy} onClick={create}>
+            {busy ? t("创建中…") : t("创建并复制链接")}
           </button>
-        </div>
-
+        </>
+      }
+    >
         <div class="mhshare-body">
           <div class="mhshare-section">{t("新建分享")}</div>
-          <label class="mhshare-field">
+          <div class="mhshare-field">
             <span>{t("托管位置")}</span>
-            <select value={sel?.id} onChange={(e) => setSelId((e.currentTarget as HTMLSelectElement).value)}>
-              {targets.map((tgt) => (
-                <option value={tgt.id}>{tgt.label} — {tgt.subtitle}</option>
-              ))}
-            </select>
-          </label>
-          <label class="mhshare-field">
+            <RowSelect
+              value={sel?.id ?? ""}
+              options={targets.map((tgt) => ({ value: tgt.id, label: tgt.label, sublabel: tgt.subtitle }))}
+              onChange={setSelId}
+            />
+          </div>
+          <div class="mhshare-field">
             <span>{t("权限")}</span>
-            <select value={permission} disabled={s3} onChange={(e) => setPermission((e.currentTarget as HTMLSelectElement).value as "view" | "edit")}>
-              <option value="view">{t("只读")}</option>
-              <option value="edit">{s3 ? t("可编辑（仅服务器）") : t("可编辑")}</option>
-            </select>
-          </label>
+            <RowSelect
+              value={permission}
+              disabled={s3}
+              options={[
+                { value: "view", label: t("只读") },
+                { value: "edit", label: s3 ? t("可编辑（仅服务器）") : t("可编辑") },
+              ]}
+              onChange={setPermission}
+            />
+          </div>
           <label class="mhshare-field">
             <span>{t("口令")}</span>
             <input type="password" placeholder={t("可选")} value={password} onInput={(e) => setPassword((e.currentTarget as HTMLInputElement).value)} />
           </label>
-          <label class="mhshare-field">
+          <div class="mhshare-field">
             <span>{t("有效期")}</span>
-            <select value={String(eIdx)} onChange={(e) => setExpiryIdx(Number((e.currentTarget as HTMLSelectElement).value))}>
-              {expiryOpts.map((o, i) => (
-                <option value={String(i)}>{o.label}</option>
-              ))}
-            </select>
-          </label>
+            <RowSelect
+              value={String(eIdx)}
+              options={expiryOpts.map((o, i) => ({ value: String(i), label: o.label }))}
+              onChange={(v) => setExpiryIdx(Number(v))}
+            />
+          </div>
           {s3 && (
             <p class="mhshare-note">
               {t("存储桶分享是快照链接：内容是导出时的版本，之后不会随数据变化；「更新内容并续期」才会覆盖快照。")}
@@ -690,13 +683,6 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
               <a href={resultUrl} target="_blank" rel="noreferrer">{t("打开")}</a>
             </div>
           )}
-          <div class="mhshare-foot">
-            <button onClick={onClose}>{t("关闭")}</button>
-            <button class="mhshare-primary" disabled={busy} onClick={create}>
-              {busy ? t("创建中…") : t("创建并复制链接")}
-            </button>
-          </div>
-
           <div class="mhshare-section">{t("已有分享（{n}）", { n: shares.length })}</div>
           <ShareRows
             shares={shares}
@@ -707,8 +693,7 @@ function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: (
             empty={t("还没有分享这个对象。")}
           />
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -752,65 +737,3 @@ function ShareRows({
   );
 }
 
-let styled = false;
-function injectStyle() {
-  if (styled) return;
-  styled = true;
-  const css = `
-  .mhshare-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:90}
-  .mhshare-modal{background:var(--mh-bg,#fff);color:var(--mh-fg,#1f2328);width:min(480px,94vw);max-height:88vh;overflow:auto;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC",sans-serif}
-  .mhshare-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--mh-line,#e5e7eb);position:sticky;top:0;background:inherit}
-  .mhshare-head h2{font-size:16px;margin:0}
-  .mhshare-x{background:none;border:0;font-size:16px;cursor:pointer;color:var(--mh-muted,#6e7781)}
-  .mhshare-body{padding:14px 18px;display:flex;flex-direction:column;gap:10px}
-  .mhshare-section{font-size:12px;font-weight:600;color:var(--mh-muted,#6e7781);text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
-  .mhshare-field{display:flex;align-items:center;gap:12px}
-  .mhshare-field>span{width:64px;color:var(--mh-muted,#6e7781);flex:none}
-  .mhshare-field select,.mhshare-field input{flex:1;padding:8px;border:1px solid var(--mh-line,#d0d7de);border-radius:7px;background:var(--mh-card,#f6f8fa);color:inherit;min-width:0}
-  .mhshare-foot{display:flex;justify-content:flex-end;gap:8px;margin:4px 0 2px}
-  .mhshare-foot button{padding:8px 14px;border:1px solid var(--mh-line,#d0d7de);border-radius:7px;background:var(--mh-card,#f6f8fa);color:inherit;cursor:pointer}
-  .mhshare-primary{background:#0969da!important;color:#fff!important;border-color:#0969da!important}
-  .mhshare-primary:disabled{opacity:.6;cursor:default}
-  .mhshare-note{color:var(--mh-muted,#6e7781);font-size:13px;margin:2px 0}
-  .mhshare-err{color:#cf222e;font-size:13px;margin:0}
-  .mhshare-ok{color:#1a7f37;font-size:13px;margin:0}
-  .mhshare-warn{color:#bf8700;font-size:12px}
-  .mhshare-result{display:flex;gap:6px;align-items:center;padding:8px;border:1px solid var(--mh-line,#d0d7de);border-radius:7px}
-  .mhshare-result code{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
-  .mhshare-result button,.mhshare-result a{font-size:12px;padding:4px 8px;border:1px solid var(--mh-line,#d0d7de);border-radius:5px;background:var(--mh-card,#f6f8fa);color:inherit;text-decoration:none}
-  .mhshare-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
-  .mhshare-list li{border:1px solid var(--mh-line,#e5e7eb);border-radius:9px;padding:9px 11px;display:flex;flex-direction:column;gap:6px}
-  .mhshare-li-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .mhshare-badge{font-size:11px;background:var(--mh-card,#f6f8fa);border:1px solid var(--mh-line,#e5e7eb);border-radius:999px;padding:1px 8px}
-  .mhshare-src{font-weight:600;overflow-wrap:anywhere}
-  .mhshare-meta{color:var(--mh-muted,#6e7781);font-size:12px}
-  .mhshare-li-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-  .mhshare-li-actions button,.mhshare-li-actions a{font-size:13px;padding:4px 10px;border:1px solid var(--mh-line,#d0d7de);border-radius:6px;background:var(--mh-card,#f6f8fa);color:inherit;cursor:pointer;text-decoration:none}
-  .mhshare-danger{color:#cf222e!important}
-  .mhshare-form{display:flex;flex-direction:column;gap:10px;border:1px solid var(--mh-line,#e5e7eb);border-radius:9px;padding:12px}
-  .mhshare-addrow{display:flex;gap:8px}
-  .mhshare-addbtn{flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border:1px solid var(--mh-line,#d0d7de);border-radius:9px;background:none;color:inherit;cursor:pointer;text-align:left}
-  .mhshare-addbtn.sel{border-color:#0969da;box-shadow:0 0 0 1px #0969da inset}
-  .mhshare-grants{display:flex;flex-direction:column;gap:6px}
-  .mhshare-grantlist{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:4px}
-  .mhshare-grantlist li{display:flex;align-items:center;gap:14px;padding:5px 8px;border:1px solid var(--mh-line,#e5e7eb);border-radius:7px}
-  .mhshare-grantlist label{display:flex;align-items:center;gap:4px;font-size:13px;color:var(--mh-muted,#6e7781);cursor:pointer}
-  .mhshare-grantdb{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .mhshare-adv{align-self:flex-start;background:none;border:0;color:#0969da;font-size:12px;cursor:pointer;padding:0}
-  .mhshare-acard-t{font-weight:600;font-size:13.5px}
-  .mhshare-acard-d{color:var(--mh-muted,#6e7781);font-size:12px}
-  .mhshare-hostsum{flex:1;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--mh-line,#d0d7de);border-radius:7px;background:var(--mh-card,#f6f8fa);font-size:13px}
-  .mhshare-hostsum span{flex:1}
-  .mhshare-hostsum button{background:none;border:0;color:#0969da;font-size:12px;cursor:pointer;padding:0;flex:none}
-  .mhshare-badge-pub{color:#0969da;border-color:transparent;background:rgba(9,105,218,.12)}
-  .mhshare-guide{border:1px solid var(--mh-line,#d0d7de);border-left:3px solid #bf8700;border-radius:7px;padding:8px 11px;display:flex;flex-direction:column;gap:6px}
-  .mhshare-guide p{margin:0;font-size:13px;color:var(--mh-fg,#1f2328)}
-  .mhshare-guide-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .mhshare-guide-actions button{font-size:12px;padding:4px 10px;border:1px solid var(--mh-line,#d0d7de);border-radius:6px;background:var(--mh-card,#f6f8fa);color:inherit;cursor:pointer}
-  .mhshare-guide-link{border:0!important;background:none!important;color:#0969da!important;padding:4px 0!important}
-  @media (prefers-color-scheme: dark){.mhshare-modal{--mh-bg:#161b22;--mh-fg:#e6edf3;--mh-line:#30363d;--mh-muted:#8b949e;--mh-card:#0d1117}}
-  `;
-  const el = document.createElement("style");
-  el.textContent = css;
-  document.head.appendChild(el);
-}

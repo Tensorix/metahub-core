@@ -10,6 +10,7 @@
 // old ViewPlugin version crashed (and got deactivated) on the first doc change
 // while the bar was open. The bar itself is a render-only ViewPlugin.
 
+import { tip } from "../../shortcuts.ts";
 import { t } from "../../i18n/t.ts";
 import { render } from "preact";
 import { Decoration, EditorView, ViewPlugin, keymap } from "@codemirror/view";
@@ -230,15 +231,15 @@ const findBar = ViewPlugin.fromClass(
             }}
           />
           <span class="find-count">{s.matches.length ? `${s.idx + 1} / ${s.matches.length}` : (s.term ? t("无结果") : "")}</span>
-          <button class={"find-opt" + (s.opts.caseSensitive ? " on" : "")} title={t("区分大小写")} onClick={() => toggle("caseSensitive")}>Aa</button>
-          <button class={"find-opt" + (s.opts.wholeWord ? " on" : "")} title={t("全词匹配")} onClick={() => toggle("wholeWord")}>{t("全词")}</button>
-          <button class="find-nav" title={t("上一个 (Shift+Enter)")} disabled={!s.matches.length} onClick={() => step(-1)}>
+          <button class={"find-opt" + (s.opts.caseSensitive ? " on" : "")} {...tip(t("区分大小写"))} onClick={() => toggle("caseSensitive")}>Aa</button>
+          <button class={"find-opt" + (s.opts.wholeWord ? " on" : "")} {...tip(t("全词匹配"))} onClick={() => toggle("wholeWord")}>{t("全词")}</button>
+          <button class="find-nav" {...tip(t("上一个"), "findPrev")} disabled={!s.matches.length} onClick={() => step(-1)}>
             <Icon name="chevronDown" cls="ico sm find-prev" />
           </button>
-          <button class="find-nav" title={t("下一个 (Enter)")} disabled={!s.matches.length} onClick={() => step(1)}>
+          <button class="find-nav" {...tip(t("下一个"), "findNext")} disabled={!s.matches.length} onClick={() => step(1)}>
             <Icon name="chevronDown" cls="ico sm" />
           </button>
-          <button class="find-nav find-close" title={t("关闭 (Esc)")} onClick={close}>
+          <button class="find-nav find-close" {...tip(t("关闭"), "closeMenu")} onClick={close}>
             <Icon name="x" cls="ico sm" />
           </button>
         </>,

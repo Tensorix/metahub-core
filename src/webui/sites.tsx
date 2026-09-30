@@ -9,6 +9,7 @@ import {
 } from "./api.ts";
 import { normalizeSiteName } from "../core/sites-core.ts";
 import { imeGhost } from "./keys.ts";
+import { tip } from "./shortcuts.ts";
 import {
   siteChannelInput,
   siteChannels,
@@ -621,7 +622,7 @@ export function SitesView({ navigate }: { navigate: Navigate }) {
                     <Icon name="link" cls="ico sm" />
                     {pendingRollback ? t("重试回滚") : channels.length ? t("管理") : t("发布")}
                   </button>
-                  <button class="iconbtn" title={t("更多")} onClick={(e) => cardMenu(e, s)}>
+                  <button class="iconbtn" {...tip(t("更多"))} onClick={(e) => cardMenu(e, s)}>
                     <Icon name="dots" />
                   </button>
                 </div>
@@ -896,7 +897,7 @@ function SiteThumb({
       </div>
     );
   return (
-    <button class="site-thumb" title={t("打开站点")} onClick={onClick}>
+    <button class="site-thumb" {...tip(t("打开站点"))} onClick={onClick}>
       <iframe
         key={ver}
         src={"/sites/" + site.name + "/?_t=" + ver}
@@ -1068,10 +1069,10 @@ function SiteConfig({
           </div>
           <div class="acc-link">
             <span class="url">{urlShort}</span>
-            <button title={t("复制地址")} onClick={() => copyText(url)}>
+            <button {...tip(t("复制地址"))} onClick={() => copyText(url)}>
               <Icon name="copy" cls="ico sm" />
             </button>
-            <button class="accent" title={t("访问站点")} onClick={() => navigate({ kind: "site", name: site.name })}>
+            <button class="accent" {...tip(t("访问站点"))} onClick={() => navigate({ kind: "site", name: site.name })}>
               <Icon name="globe" cls="ico sm" />
             </button>
           </div>
@@ -1120,7 +1121,7 @@ function SiteConfig({
                   </span>
                   {c.url && (
                     <>
-                      <button title={t("复制地址")} onClick={() => copyText(c.url!)}>
+                      <button {...tip(t("复制地址"))} onClick={() => copyText(c.url!)}>
                         <Icon name="copy" cls="ico sm" />
                       </button>
                       <a
@@ -1128,7 +1129,7 @@ function SiteConfig({
                         target="_blank"
                         rel="noreferrer"
                         style={{ display: "grid", placeItems: "center", width: 26, height: 26, color: "var(--muted)" }}
-                        title={t("打开")}
+                        {...tip(t("打开"))}
                       >
                         <Icon name="globe" cls="ico sm" />
                       </a>
@@ -1148,7 +1149,7 @@ function SiteConfig({
               </button>
               <button
                 class="btn btn-ghost"
-                title={t("上传整个目录（保留相对路径），也可以直接拖拽目录进来")}
+                {...tip(t("上传整个目录（保留相对路径），也可以直接拖拽目录进来"))}
                 onClick={() => dirInput.current?.click()}
               >
                 <Icon name="upload" cls="ico sm" />
@@ -1196,7 +1197,7 @@ function SiteConfig({
                   </span>
                   <div class="facts">
                     <button
-                      title={t("预览")}
+                      {...tip(t("预览"))}
                       onClick={(e) => {
                         e.stopPropagation();
                         openModal(<FilePreviewModal site={site} file={f} />);
@@ -1205,7 +1206,7 @@ function SiteConfig({
                       <Icon name="eye" cls="ico sm" />
                     </button>
                     <button
-                      title={t("复制路径")}
+                      {...tip(t("复制路径"))}
                       onClick={(e) => {
                         e.stopPropagation();
                         copyText("/sites/" + site.name + "/" + f.path);
@@ -1215,7 +1216,7 @@ function SiteConfig({
                     </button>
                     <button
                       class="del"
-                      title={t("删除")}
+                      {...tip(t("删除"))}
                       onClick={(e) => {
                         e.stopPropagation();
                         removeFile(f);

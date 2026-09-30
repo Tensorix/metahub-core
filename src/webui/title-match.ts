@@ -33,3 +33,29 @@ export function matchTitles(
   }
   return [...exact, ...starts, ...contains].slice(0, limit);
 }
+
+export interface Ranked<T> {
+  item: T;
+  /** Matched span in the item's text; -1 with no query. */
+  start: number;
+  len: number;
+}
+
+/** exact > prefix > substring over arbitrary items; no query keeps the order. */
+export function rankMatches<T>(query: string, items: T[], text: (item: T) => string, limit = Infinity): Ranked<T>[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return items.slice(0, limit).map((item) => ({ item, start: -1, len: 0 }));
+  const exact: Ranked<T>[] = [];
+  const starts: Ranked<T>[] = [];
+  const contains: Ranked<T>[] = [];
+  for (const item of items) {
+    const tl = text(item).toLowerCase();
+    if (tl === q) exact.push({ item, start: 0, len: q.length });
+    else if (tl.startsWith(q)) starts.push({ item, start: 0, len: q.length });
+    else {
+      const i = tl.indexOf(q);
+      if (i >= 0) contains.push({ item, start: i, len: q.length });
+    }
+  }
+  return [...exact, ...starts, ...contains].slice(0, limit);
+}

@@ -133,11 +133,13 @@ export function AuditPage() {
         rememberRows(page.entries.length);
         setNext(page.next);
       })
-      .catch((e) => toast(String((e as Error).message)));
+      .catch((e) => {
+        setEntries((cur) => cur ?? []);
+        toast(String((e as Error).message), { tone: "error" });
+      });
   };
 
   useEffect(() => {
-    setEntries(null);
     headRef.current = null;
     load();
     // Live: any synced change (own edits, agent CLI writes via the SSE poke,
@@ -360,7 +362,7 @@ export function AuditPage() {
         {next ? (
           <button class={"audit-more" + (loadingMore ? " loading" : "")} onClick={loadMore} disabled={loadingMore}>
             <Icon name={loadingMore ? "spinner" : "chevronDown"} cls={"ico sm" + (loadingMore ? " spin" : "")} />
-            {loadingMore ? t("加载中…") : t("显示更早的记录")}
+            {t("显示更早的记录")}
           </button>
         ) : (
           entries !== null && visible.length > 0 && (

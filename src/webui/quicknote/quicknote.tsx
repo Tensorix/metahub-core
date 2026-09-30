@@ -2,17 +2,19 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, NAV_INVALIDATE, type DocSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { SkelLines } from "../skeleton.tsx";
 import { DocView, type DocViewHandle } from "../editor.tsx";
 import { pressed, tip } from "../shortcuts.ts";
 import { viewToHash } from "../view.ts";
 import { t } from "../i18n/t.ts";
+import { undoableDelete } from "../undo.ts";
 import {
+  ErrorBar,
   UiHost,
   openMenu,
   MenuItem,
   MenuLabel,
   MenuSep,
-  confirmDialog,
 } from "../ui.tsx";
 
 // The Quick Notes window: a single-page Preact view rendered from the same
@@ -195,16 +197,19 @@ export function QuickNote() {
 
   const deleteActive = async () => {
     if (!activeId || !parentId) return;
-    const ok = await confirmDialog({
-      title: t("删除笔记？"),
-      message: t("该快速笔记将被删除。"),
-      confirmLabel: t("删除"),
-      danger: true,
+    const id = activeId;
+    const parent = parentId;
+    await undoableDelete({
+      label: t("已删除笔记"),
+      ids: [id],
+      run: () => api.deleteDocument(id),
+      onRestored: async () => {
+        await reload(parent);
+        setActiveId(id);
+      },
     });
-    if (!ok) return;
-    await api.deleteDocument(activeId);
-    const list = await reload(parentId);
-    setActiveId(list[0]?.id ?? (await createNote(parentId)));
+    const list = await reload(parent);
+    setActiveId(list[0]?.id ?? (await createNote(parent)));
   };
 
   const openList = (e: MouseEvent) => {
@@ -289,11 +294,7 @@ export function QuickNote() {
         </div>
       </div>
 
-      {error && (
-        <div class="error-bar" onClick={() => setError("")}>
-          ⚠ {t("{error}（点击关闭）", { error })}
-        </div>
-      )}
+      {error && <ErrorBar msg={error} onClose={() => setError("")} />}
 
       <div class="qn-body">
         {activeId ? (
@@ -306,7 +307,7 @@ export function QuickNote() {
           />
         ) : (
           <div class="empty">
-            <div>{t("加载中…")}</div>
+            <SkelLines n={3} />
           </div>
         )}
       </div>

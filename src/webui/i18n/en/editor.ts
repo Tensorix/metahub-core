@@ -1,6 +1,12 @@
 import { plural, type Msg } from "./util.ts";
 
 export const editor = {
+  没有匹配的页面: "No matching pages",
+  没有匹配的块: "No matching blocks",
+  上一个: "Previous",
+  下一个: "Next",
+  "查找：下一个": "Find: next",
+  "查找：上一个": "Find: previous",
   文件: "File",
   纯文本: "Plain text",
   文本: "Text",
@@ -108,9 +114,6 @@ export const editor = {
   区分大小写: "Match case",
   全词匹配: "Whole word",
   全词: "Word",
-  "上一个 (Shift+Enter)": "Previous (Shift+Enter)",
-  "下一个 (Enter)": "Next (Enter)",
-  "关闭 (Esc)": "Close (Esc)",
   缩小: "Zoom out",
   重置: "Reset",
   放大: "Zoom in",

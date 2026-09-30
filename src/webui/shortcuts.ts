@@ -50,6 +50,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "save", label: t("保存到同步桶"), group: "editor", keys: { mod: true, key: "s" } },
   { id: "toggleSource", label: t("块 / 代码方式切换"), group: "editor", keys: { mod: true, key: "/" } },
   { id: "find", label: t("文内查找"), group: "editor", keys: { mod: true, key: "f" } },
+  { id: "findNext", label: t("查找：下一个"), group: "editor", keys: { key: "Enter" } },
+  { id: "findPrev", label: t("查找：上一个"), group: "editor", keys: { shift: true, key: "Enter" } },
   { id: "duplicateBlock", label: t("复制当前块"), group: "editor", keys: { mod: true, key: "d" } },
   { id: "indent", label: t("列表缩进"), group: "editor", keys: { key: "Tab" } },
   { id: "outdent", label: t("列表反缩进"), group: "editor", keys: { shift: true, key: "Tab" } },

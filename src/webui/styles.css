@@ -114,11 +114,11 @@
     background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 60%,#fff));
     display:grid; place-items:center; color:#fff; box-shadow:var(--shadow-sm); }
   .brand .mark svg { width:15px; height:15px; stroke:#fff; }
-  .sb-search { margin:0 12px 8px; display:flex; align-items:center; gap:7px; cursor:text;
+  .sb-search { margin:0 12px 8px; width:calc(100% - 24px); display:flex; align-items:center; gap:7px; cursor:pointer; text-align:left;
     background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm); padding:6px 9px; color:var(--muted);
-    box-shadow:var(--shadow-sm); transition:border-color .15s; }
-  .sb-search:focus-within { border-color:var(--accent); }
-  .sb-search input { border:0; background:none; outline:none; color:var(--fg); width:100%; }
+    box-shadow:var(--shadow-sm); transition:border-color .15s; font:inherit; }
+  .sb-search:hover, .sb-search:focus-visible { border-color:var(--line-strong); outline:none; }
+  .sb-search-ph { flex:1; min-width:0; color:var(--muted); font-size:var(--fs-ui); }
   .sb-scroll { flex:1; overflow-y:auto; padding:4px 8px 24px; }
   /* Notion-style list switcher: the active tab is an icon+label pill, inactive
      tabs are icon-only. One absolutely-positioned indicator slides & stretches
@@ -555,6 +555,8 @@
   .crumb-link { flex:none; padding:2px 5px; margin:-2px -3px; border-radius:var(--radius-sm); font-weight:500; }
   .crumb-link:hover { background:var(--hover); }
   .crumb-sep { flex:none; color:var(--muted); font-weight:400; }
+  .crumb-title { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .crumb-more { color:var(--muted); }
   .iconbtn { width:30px; height:30px; display:grid; place-items:center; border-radius:var(--radius-sm); color:var(--fg-soft); transition:background .12s; }
   .iconbtn:hover { background:var(--hover-2); color:var(--fg); }
   /* Dead end of the history (topbar back/forward). pointer-events:none also
@@ -1881,7 +1883,7 @@
   .pal-sec + .pal-sec { margin-top:4px; }
   .palette .item { padding:7px 10px; }
   .palette .item .lico.plain { color:var(--muted); }
-  .palette .item .lico .emo { font-size:15px; line-height:1; }
+  :is(.pop,.palette) .item .lico .emo { font-size:15px; line-height:1; }
   :is(.pop,.palette) .item.sub-r .meta { display:flex; align-items:baseline; gap:12px; }
   :is(.pop,.palette) .item.sub-r .t { flex:1; }
   :is(.pop,.palette) .item.sub-r .d { flex:none; max-width:42%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1996,7 +1998,69 @@
     .kg-glow { opacity:.6 !important; }
     .kg-particle { opacity:0 !important; }
   }
-  .error-bar { margin:12px 24px; padding:10px 14px; background:var(--danger-soft); color:var(--danger); border-radius:var(--radius-sm); font-size:13px; cursor:pointer; }
+  .error-bar { margin:12px 24px; padding:8px 10px 8px 12px; background:var(--danger-soft); color:var(--danger); border-radius:var(--radius-sm); font-size:13px;
+    display:flex; align-items:center; gap:8px; animation:mo-in .13s ease-out; }
+  .error-bar .error-msg { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .error-bar .error-x { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; color:inherit; flex:none; }
+  .error-bar .error-x:hover { background:color-mix(in srgb, var(--danger) 14%, transparent); }
+  .sb-empty { color:var(--muted); gap:6px; width:100%; text-align:left; }
+  .sb-empty:hover { color:var(--fg); }
+  .tbl-empty { padding:36px 20px 28px; }
+  .set-empty { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 0; }
+  .blob-mgr-empty { display:flex; flex-direction:column; align-items:center; gap:12px; }
+  .doc-skel { max-width:720px; margin:40px auto; padding:0 24px; }
+
+  /* share / publish modal (share-modal.tsx) */
+  .mhshare-body { display:flex; flex-direction:column; gap:10px; }
+  .mhshare-section { font-size:var(--fs-micro); font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:6px; }
+  .mhshare-field { display:flex; align-items:center; gap:12px; }
+  .mhshare-field > span { width:64px; color:var(--muted); flex:none; font-size:var(--fs-ui); }
+  .mhshare-field select, .mhshare-field input { flex:1; padding:7px 9px; border:1px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); color:inherit; min-width:0; font:inherit; }
+  .mhshare-field select:focus, .mhshare-field input:focus { border-color:var(--accent); outline:none; }
+  .mhshare-field .row-select { flex:1; justify-content:space-between; border:1px solid var(--line-strong); background:var(--surface); }
+  .mhshare-foot { display:flex; justify-content:flex-end; gap:8px; margin:4px 0 2px; }
+  .mhshare-foot button, .mhshare-result button, .mhshare-result a, .mhshare-li-actions button, .mhshare-li-actions a, .mhshare-guide-actions button {
+    display:inline-flex; align-items:center; gap:6px; padding:5px 11px; border:1px solid var(--line-strong); border-radius:var(--radius-sm);
+    background:var(--surface); color:inherit; font-size:var(--fs-sm); font-weight:500; text-decoration:none; cursor:pointer; transition:all .12s; }
+  .mhshare-foot button:hover, .mhshare-result button:hover, .mhshare-result a:hover, .mhshare-li-actions button:hover, .mhshare-li-actions a:hover, .mhshare-guide-actions button:hover { background:var(--hover-2); }
+  .mhshare-primary { background:var(--accent) !important; color:var(--accent-fg) !important; border-color:var(--accent) !important; }
+  .mhshare-primary:hover { filter:brightness(1.05); }
+  .mhshare-primary:disabled { opacity:.6; cursor:default; }
+  .mhshare-note { color:var(--muted); font-size:var(--fs-sm); margin:2px 0; line-height:1.5; }
+  .mhshare-err { color:var(--danger); font-size:var(--fs-sm); margin:0; }
+  .mhshare-ok { color:var(--success); font-size:var(--fs-sm); margin:0; }
+  .mhshare-warn { color:var(--fg-soft); font-size:var(--fs-xs); }
+  .mhshare-result { display:flex; gap:6px; align-items:center; padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--surface); }
+  .mhshare-result code { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--fs-xs); font-family:var(--mono); }
+  .mhshare-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; }
+  .mhshare-list li { border:1px solid var(--line); border-radius:var(--radius); padding:9px 11px; display:flex; flex-direction:column; gap:6px; }
+  .mhshare-li-main { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .mhshare-badge { font-size:var(--fs-micro); background:var(--surface-2); border:1px solid var(--line); border-radius:999px; padding:1px 8px; }
+  .mhshare-badge-pub { color:var(--accent); border-color:transparent; background:var(--accent-soft); }
+  .mhshare-src { font-weight:600; overflow-wrap:anywhere; }
+  .mhshare-meta { color:var(--muted); font-size:var(--fs-xs); }
+  .mhshare-li-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .mhshare-danger { color:var(--danger) !important; }
+  .mhshare-form { display:flex; flex-direction:column; gap:10px; border:1px solid var(--line); border-radius:var(--radius); padding:12px; }
+  .mhshare-addrow { display:flex; gap:8px; }
+  .mhshare-addbtn { flex:1; display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:9px 12px; border:1px solid var(--line-strong); border-radius:var(--radius); background:none; color:inherit; cursor:pointer; text-align:left; transition:border-color .12s, box-shadow .12s; }
+  .mhshare-addbtn:hover { background:var(--hover); }
+  .mhshare-addbtn.sel { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .mhshare-grants { display:flex; flex-direction:column; gap:6px; }
+  .mhshare-grantlist { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:4px; }
+  .mhshare-grantlist li { display:flex; align-items:center; gap:14px; padding:5px 8px; border:1px solid var(--line); border-radius:var(--radius-sm); }
+  .mhshare-grantlist label { display:flex; align-items:center; gap:4px; font-size:var(--fs-sm); color:var(--muted); cursor:pointer; }
+  .mhshare-grantdb { flex:1; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mhshare-adv { align-self:flex-start; background:none; border:0; color:var(--accent); font-size:var(--fs-xs); cursor:pointer; padding:0; }
+  .mhshare-acard-t { font-weight:600; font-size:var(--fs-ui); }
+  .mhshare-acard-d { color:var(--muted); font-size:var(--fs-xs); }
+  .mhshare-hostsum { flex:1; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); font-size:var(--fs-sm); }
+  .mhshare-hostsum span { flex:1; }
+  .mhshare-hostsum button { background:none; border:0; color:var(--accent); font-size:var(--fs-xs); cursor:pointer; padding:0; flex:none; }
+  .mhshare-guide { border:1px solid var(--line-strong); border-left:3px solid var(--accent); border-radius:var(--radius-sm); padding:8px 11px; display:flex; flex-direction:column; gap:6px; }
+  .mhshare-guide p { margin:0; font-size:var(--fs-sm); color:var(--fg); }
+  .mhshare-guide-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .mhshare-guide-link { border:0 !important; background:none !important; color:var(--accent) !important; padding:4px 0 !important; }
   .offline-bar { margin:12px 24px 0; padding:8px 14px; background:var(--surface-2); color:var(--fg-soft); border-radius:var(--radius-sm); font-size:12.5px; }
   .search-hit { margin:0 0 8px; padding:10px 14px; background:var(--surface); border-radius:var(--radius-sm); font-size:13px; cursor:pointer; }
   .search-hit-head { display:flex; align-items:baseline; gap:6px; min-width:0; }
@@ -2229,8 +2293,6 @@
        slides+fades down in. Desktop base (.sb-search{display:flex}) is untouched,
        so search stays always-on there. reduced-motion is handled globally. */
     .sb-search { display:none; }
-    .sb-search.open { display:flex; animation:search-reveal .22s cubic-bezier(.32,.72,0,1); }
-    @keyframes search-reveal { from { opacity:0; transform:translateY(-8px); } }
     .btn { font-size:15px; }
     .crumb { font-size:16px; }
     :is(.pop,.palette) .item { font-size:16px; }

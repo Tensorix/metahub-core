@@ -2,6 +2,7 @@
 // Settings modals, moved verbatim out of settings.tsx (W1 mechanical
 // extraction): Edge deploy, bucket connect/activate, add-device enrollment
 // (QR / CLI / server pairing), key rotation and the recovery-code card.
+import { SkelLines } from "../skeleton.tsx";
 import type { ComponentChild } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
@@ -853,7 +854,7 @@ export function AddDeviceModal({
           {loadErr ? (
             <div class="enroll-err">{loadErr}</div>
           ) : !config ? (
-            <div class="muted">{t("加载中…")}</div>
+            <SkelLines n={3} />
           ) : tab === "phone" ? (
             <PhoneEnroll config={config} />
           ) : (

@@ -17,7 +17,8 @@ import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 import type { Extension, EditorState, Line } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
-import { MenuLabel } from "../../ui.tsx";
+import { Highlight, MenuLabel, ReturnHint } from "../../ui.tsx";
+import { rankMatches } from "../../title-match.ts";
 import { BLOCK_MENU, type BlockType } from "../../blocks.ts";
 import { docModel } from "../doc-model";
 import type { LineInfo, LineRole } from "../blockmodel";
@@ -63,9 +64,12 @@ function slashAt(
 }
 
 function matchesFor(query: string) {
-  const q = query.toLowerCase();
-  if (!q) return BLOCK_MENU;
-  return BLOCK_MENU.filter((m) => (m.t + m.type + m.d).toLowerCase().includes(q));
+  const q = query.trim().toLowerCase();
+  if (!q) return BLOCK_MENU.map((m) => ({ m, start: -1, len: 0 }));
+  const byTitle = rankMatches(q, BLOCK_MENU, (m) => m.t);
+  const hit = new Set(byTitle.map((r) => r.item));
+  const rest = BLOCK_MENU.filter((m) => !hit.has(m) && (m.type + " " + m.d).toLowerCase().includes(q));
+  return [...byTitle.map((r) => ({ m: r.item, start: r.start, len: r.len })), ...rest.map((m) => ({ m, start: -1, len: 0 }))];
 }
 
 /** The Markdown to write for a chosen block type and the caret offset relative to
@@ -156,7 +160,7 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
         if (imeGhost(e)) return;
         if (e.key === "Escape") { this.close(); e.preventDefault(); e.stopPropagation(); return; }
         const matches = matchesFor(this.active.query);
-        if (!matches.length) return;
+        if (!matches.length) { if (e.key === "Enter" || e.key === "Tab") return; }
         if (e.key === "ArrowDown") {
           this.active.idx = Math.min(this.active.idx + 1, matches.length - 1);
           this.renderMenu(); e.preventDefault(); e.stopPropagation();
@@ -165,7 +169,7 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
           this.renderMenu(); e.preventDefault(); e.stopPropagation();
         } else if (e.key === "Enter") {
           const m = matches[Math.min(this.active.idx, matches.length - 1)];
-          if (m) this.select(m.type);
+          if (m) this.select(m.m.type);
           e.preventDefault(); e.stopPropagation();
         }
       }
@@ -213,8 +217,7 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
         const active = this.active;
         if (!active) return;
         const matches = matchesFor(active.query);
-        if (!matches.length) { if (this.menuEl) this.menuEl.style.display = "none"; return; }
-        if (active.idx > matches.length - 1) active.idx = matches.length - 1;
+        if (active.idx > matches.length - 1) active.idx = Math.max(0, matches.length - 1);
         if (!this.menuEl) {
           const el = document.createElement("div");
           el.className = "pop cm-slash-menu";
@@ -247,16 +250,21 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
         render(
           <>
             <MenuLabel>{t("基础块")}</MenuLabel>
-            {matches.map((m, i) => (
+            {matches.map(({ m, start, len }, i) => (
               <button
                 key={m.type}
-                class={"item" + (i === active.idx ? " sel" : "")}
+                class={"item sub-r" + (i === active.idx ? " sel" : "")}
                 onMouseDown={(e) => { e.preventDefault(); this.select(m.type); }}
               >
                 <span class="lico"><Icon name={m.ic} cls="ico sm" /></span>
-                <span class="meta"><span class="t">{m.t}</span><span class="d">{m.d}</span></span>
+                <span class="meta">
+                  <span class="t"><Highlight text={m.t} span={start >= 0 ? [start, len] : undefined} /></span>
+                  <span class="d">{m.d}</span>
+                </span>
+                <ReturnHint />
               </button>
             ))}
+            {!matches.length && <div class="pal-empty">{t("没有匹配的块")}</div>}
           </>,
           el,
         );

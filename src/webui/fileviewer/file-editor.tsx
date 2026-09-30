@@ -7,6 +7,7 @@
 // MetaHub button snapshots the current text into a new top-level document via
 // the ordinary api.createDocument, then can raise the main window and deep-link
 // it to the new doc over BroadcastChannel("mh-open-doc") (listener in app.tsx).
+import { SkelLines } from "../skeleton.tsx";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api.ts";
 import { CmDocBody, type CmHandle } from "../cm6/CmDocBody.tsx";
@@ -202,7 +203,7 @@ export function FileEditorWindow() {
         ) : (
           !error && (
             <div class="empty">
-              <div>{t("加载中…")}</div>
+              <SkelLines n={5} />
             </div>
           )
         )}

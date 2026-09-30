@@ -2,12 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type Prop, type Rec } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { SkelLines } from "../skeleton.tsx";
 import { BoardView } from "../board.tsx";
 import { RecordPeek, DbTargetList } from "../table.tsx";
 import { imeGhost } from "../keys.ts";
 import { SYNCED_EVENT } from "../data/replica.ts";
 import { LIVE_STATUS_EVENT, liveConnected } from "../live.ts";
-import { UiHost, openMenu, MenuLabel } from "../ui.tsx";
+import { ErrorBar, UiHost, openMenu, MenuLabel } from "../ui.tsx";
 import { viewToHash } from "../view.ts";
 import { tip } from "../shortcuts.ts";
 import { t } from "../i18n/t.ts";
@@ -243,6 +244,7 @@ export function QuickBoard() {
           ) : (
             <DbTargetList
               target={db?.id}
+              databases={dbs}
               autoFocus
               placeholder={t("搜索数据库")}
               onPick={(d) => {
@@ -294,11 +296,7 @@ export function QuickBoard() {
         </div>
       </div>
 
-      {error && (
-        <div class="error-bar" onClick={() => setError("")}>
-          ⚠ {t("{error}（点击关闭）", { error })}
-        </div>
-      )}
+      {error && <ErrorBar msg={error} onClose={() => setError("")} />}
 
       <div class="qb-body">
         {db && loaded ? (
@@ -320,9 +318,7 @@ export function QuickBoard() {
             <div class="qb-empty-sub">{t("在主窗口创建一个带「单选」属性的数据库，任务进度就会出现在这里。")}</div>
           </div>
         ) : (
-          <div class="qb-empty">
-            <div class="qb-empty-sub">{t("加载中…")}</div>
-          </div>
+          <SkelLines n={4} cls="pad" />
         )}
       </div>
 

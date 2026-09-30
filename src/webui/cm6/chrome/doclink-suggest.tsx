@@ -14,11 +14,12 @@ import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
-import { MenuLabel } from "../../ui.tsx";
+import { Highlight, MenuLabel, ReturnHint } from "../../ui.tsx";
 import { docModel } from "../doc-model";
 import { imeGhost } from "../../keys.ts";
 import { deferCoords } from "../defer";
-import { onDocTitleChange } from "../../doc-titles.ts";
+import { allDocTitles, docParentChain, onDocTitleChange } from "../../doc-titles.ts";
+import { listRecents } from "../../recents.ts";
 import { matchTitles, type TitleMatch as Match } from "../../title-match.ts";
 
 // An open trigger is the last "[[", with no closing bracket (or a nested
@@ -28,7 +29,15 @@ const OPEN_RE = /\[\[([^\[\]|\n]*)$/;
 const MENU_WIDTH = 300;
 const LIMIT = 8;
 
-const matchesFor = (query: string): Match[] => matchTitles(query, LIMIT);
+function matchesFor(query: string): Match[] {
+  if (query.trim()) return matchTitles(query, LIMIT);
+  const known = new Map(allDocTitles().map((m) => [m.id, m.title]));
+  const recent = listRecents()
+    .filter((r) => known.has(r.id))
+    .map((r) => ({ id: r.id, title: known.get(r.id)!, start: -1, len: 0 }));
+  return recent.length ? recent.slice(0, LIMIT) : matchTitles("", LIMIT);
+}
+const recentsMode = () => listRecents().some((r) => allDocTitles().some((m) => m.id === r.id));
 
 interface Active {
   openFrom: number; // position of the first "[" of the trigger
@@ -136,8 +145,8 @@ export function doclinkSuggest(): Extension {
         const active = this.active;
         if (!active) return;
         const matches = matchesFor(active.query);
-        if (!matches.length) { if (this.menuEl) this.menuEl.style.display = "none"; return; }
-        if (active.idx > matches.length - 1) active.idx = matches.length - 1;
+        if (!matches.length && !active.query.trim()) { if (this.menuEl) this.menuEl.style.display = "none"; return; }
+        if (active.idx > matches.length - 1) active.idx = Math.max(0, matches.length - 1);
         if (!this.menuEl) {
           const el = document.createElement("div");
           el.className = "pop cm-slash-menu";
@@ -164,17 +173,26 @@ export function doclinkSuggest(): Extension {
         el.style.bottom = below ? "" : `${innerHeight - coords.top + GAP}px`;
         render(
           <>
-            <MenuLabel>{t("链接到")}</MenuLabel>
-            {matches.map((m, i) => (
-              <button
-                key={m.id}
-                class={"item" + (i === active.idx ? " sel" : "")}
-                onMouseDown={(e) => { e.preventDefault(); this.select(m.id); }}
-              >
-                <span class="lico"><Icon name={m.id.startsWith("db_") ? "database" : "file"} cls="ico sm" /></span>
-                <span class="meta"><span class="t">{m.title || t("无标题")}</span><span class="d">{m.id}</span></span>
-              </button>
-            ))}
+            <MenuLabel>{!active.query.trim() && recentsMode() ? t("最近打开") : t("链接到")}</MenuLabel>
+            {matches.map((m, i) => {
+              const isDb = m.id.startsWith("db_");
+              const where = isDb ? t("数据库") : docParentChain(m.id).join(" › ");
+              return (
+                <button
+                  key={m.id}
+                  class={"item sub-r" + (i === active.idx ? " sel" : "")}
+                  onMouseDown={(e) => { e.preventDefault(); this.select(m.id); }}
+                >
+                  <span class="lico plain"><Icon name={isDb ? "database" : "fileText"} cls="ico sm" /></span>
+                  <span class="meta">
+                    <span class="t">{m.title ? <Highlight text={m.title} span={m.start >= 0 ? [m.start, m.len] : undefined} /> : t("无标题")}</span>
+                    {where && <span class="d">{where}</span>}
+                  </span>
+                  <ReturnHint />
+                </button>
+              );
+            })}
+            {!matches.length && <div class="pal-empty">{t("没有匹配的页面")}</div>}
           </>,
           el,
         );

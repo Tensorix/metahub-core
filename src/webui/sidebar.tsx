@@ -11,6 +11,8 @@ import { IS_DESKTOP_APP, pressed, tip } from "./shortcuts.ts";
 import { Kbd } from "./kbd.tsx";
 import { registerCommands } from "./commands.ts";
 import { imeGhost } from "./keys.ts";
+import { docPath } from "./crumb.ts";
+import { undoableDelete } from "./undo.ts";
 import {
   openMenu,
   MenuItem,
@@ -37,6 +39,7 @@ interface SidebarProps {
   /** Show a dot on the settings entry: a core update is staged or available. */
   updatePending?: boolean;
   onError: (msg: string) => void;
+  onOpenPalette: () => void;
 }
 
 let dragId: string | null = null;
@@ -75,13 +78,7 @@ function isDbCollapsed(db: Db): boolean {
 
 export function Sidebar(props: SidebarProps) {
   const { view, navigate } = props;
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [q, setQ] = useState("");
-  // Mobile only: the search box is hidden until the header's search button
-  // reveals it (CSS-gated, like the sites/settings .sb-act buttons). Desktop
-  // ignores this and always shows the box.
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [version, setVersion] = useState<string | null>(null);
   const startResize = useResize(props.onResize);
 
@@ -89,15 +86,11 @@ export function Sidebar(props: SidebarProps) {
     api.version().then((v) => setVersion(v.version)).catch(() => setVersion(null));
   }, []);
 
-  // Focus the input as it reveals so the soft keyboard comes up immediately.
-  useEffect(() => {
-    if (searchOpen) searchRef.current?.focus();
-  }, [searchOpen]);
-
   const toggle = (id: string) => {
     const next = new Set(expanded);
     next.has(id) ? next.delete(id) : next.add(id);
     setExpanded(next);
+    saveExpanded(next);
   };
 
   const [sec, setSec] = useState<SecState>(loadSec);
@@ -174,10 +167,18 @@ export function Sidebar(props: SidebarProps) {
   // never get yanked back. The id dep matters — doc→doc back/forward must
   // retrigger even though kind stays "doc".
   useEffect(() => {
-    if (view.kind === "doc") setTab("docs");
-    else if (view.kind === "db") setTab("db");
+    if (view.kind === "doc") {
+      setTab("docs");
+      const chain = docPath(view.id, props.docs, []).filter((s) => s.kind === "doc").map((s) => s.id);
+      if (chain.some((id) => !expanded.has(id))) {
+        const next = new Set(expanded);
+        for (const id of chain) next.add(id);
+        setExpanded(next);
+        saveExpanded(next);
+      }
+    } else if (view.kind === "db") setTab("db");
     else if (view.kind === "site" || view.kind === "sites") setTab("sites");
-  }, [view.kind, "id" in view ? view.id : ""]);
+  }, [view.kind, "id" in view ? view.id : "", props.docs]);
 
   // The 站点 pane's list. Fetched on each activation (cheap — keeps it honest
   // after CLI-side changes) and on SITES_CHANGED broadcasts from SitesView's
@@ -298,10 +299,14 @@ export function Sidebar(props: SidebarProps) {
               danger: true,
             });
             if (ok)
-              guard(async () => {
-                await api.deleteDatabase(db.id);
-                leaveIfActive(db.id);
-              });
+              guard(() =>
+                undoableDelete({
+                  label: t("已删除「{title}」", { title: db.name }),
+                  ids: [db.id],
+                  run: () => api.deleteDatabase(db.id),
+                  after: () => leaveIfActive(db.id),
+                }),
+              );
           }}
         />
       </>
@@ -385,19 +390,17 @@ export function Sidebar(props: SidebarProps) {
           danger
           onClick={async () => {
             close();
-            const ok = await confirmDialog({
-              title: t("删除文档？"),
-              message: childCount
-                ? t("「{title}」及其 {n} 个子页将被删除。", { title: d.title || t("无标题"), n: childCount })
-                : t("「{title}」将被删除。", { title: d.title || t("无标题") }),
-              confirmLabel: t("删除"),
-              danger: true,
-            });
-            if (ok)
-              guard(async () => {
-                await deleteDocTree(props.docs, d.id);
-                leaveIfActive(d.id);
-              });
+            const ids = docTreeIds(props.docs, d.id);
+            guard(() =>
+              undoableDelete({
+                label: childCount
+                  ? t("已删除「{title}」及 {n} 个子页", { title: d.title || t("无标题"), n: childCount })
+                  : t("已删除「{title}」", { title: d.title || t("无标题") }),
+                ids,
+                run: () => deleteDocTree(props.docs, d.id),
+                after: () => leaveIfActive(d.id),
+              }),
+            );
           }}
         />
       </>
@@ -468,11 +471,7 @@ export function Sidebar(props: SidebarProps) {
             buttons instead of the desktop .sb-footer rows, freeing the bottom.
             The search button reveals the (mobile-hidden) search box below.
             Sites has no entry here — it's a first-class .sb-tabs tab now. */}
-        <button
-          class={"sb-act" + (searchOpen ? " active" : "")}
-          {...tip(t("搜索"), "search")}
-          onClick={() => setSearchOpen((v) => !v)}
-        >
+        <button class="sb-act" {...tip(t("搜索"), "search")} onClick={props.onOpenPalette}>
           <Icon name="search" cls="ico" />
         </button>
         <button
@@ -526,23 +525,11 @@ export function Sidebar(props: SidebarProps) {
         </button>
       </div>
 
-      <div class={"sb-search" + (searchOpen ? " open" : "")} onClick={(e) => (e.currentTarget.querySelector("input") as HTMLInputElement)?.focus()}>
+      <button class="sb-search" onClick={props.onOpenPalette}>
         <Icon name="search" cls="ico sm" />
-        <input
-          ref={searchRef}
-          placeholder={t("搜索…")}
-          value={q}
-          onInput={(e) => setQ((e.target as HTMLInputElement).value)}
-          onKeyDown={(e) => {
-            // entering search pushes once; re-searching within it replaces, so
-            // one back press leaves search instead of replaying every query
-            if (e.key === "Enter" && q.trim())
-              navigate({ kind: "search", q: q.trim() }, { replace: view.kind === "search" });
-          }}
-        />
-        {/* the shortcut itself lives in app.tsx (global keydown) */}
+        <span class="sb-search-ph">{t("搜索…")}</span>
         <Kbd id="search" />
-      </div>
+      </button>
 
       <div class="sb-scroll">
         <div
@@ -552,12 +539,22 @@ export function Sidebar(props: SidebarProps) {
           {tab === "docs" ? (
             <>
               {renderTree(null)}
-              {props.docs.length === 0 && <div class="navitem muted">{t("暂无文档")}</div>}
+              {props.docs.length === 0 && (
+                <button class="navitem sb-empty" onClick={() => newDoc(null)}>
+                  <Icon name="plus" cls="ico sm" />
+                  <span>{t("还没有文档，新建一个")}</span>
+                </button>
+              )}
             </>
           ) : tab === "db" ? (
             <>
               {props.databases.filter((db) => !isDbCollapsed(db)).map((db) => dbItem(db))}
-              {props.databases.length === 0 && <div class="navitem muted">{t("暂无数据表")}</div>}
+              {props.databases.length === 0 && (
+                <button class="navitem sb-empty" onClick={() => openCreateDb((id) => navigate({ kind: "db", id }), props.onError)}>
+                  <Icon name="plus" cls="ico sm" />
+                  <span>{t("还没有数据表，新建一个")}</span>
+                </button>
+              )}
               {props.databases.some(isDbCollapsed) && (
                 <>
                   <button class="sb-subfold" onClick={() => patchSec({ dbHidden: !sec.dbHidden })} aria-expanded={!!sec.dbHidden}>
@@ -588,7 +585,12 @@ export function Sidebar(props: SidebarProps) {
                   </span>
                 </div>
               ))}
-              {sites?.length === 0 && <div class="navitem muted">{t("暂无站点")}</div>}
+              {sites?.length === 0 && (
+                <button class="navitem sb-empty" onClick={() => openModal(<NewSiteModal onCreated={(s) => navigate({ kind: "site", name: s.name, tab: "config" })} />)}>
+                  <Icon name="plus" cls="ico sm" />
+                  <span>{t("还没有站点，新建一个")}</span>
+                </button>
+              )}
             </>
           )}
         </div>
@@ -644,6 +646,27 @@ function isAncestor(docs: DocSummary[], ancestorId: string, nodeId: string): boo
   }
   return false;
 }
+const EXPANDED_KEY = "mh.sb.expanded";
+function loadExpanded(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]");
+    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveExpanded(s: Set<string>): void {
+  try {
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify([...s]));
+  } catch {
+    /* private mode */
+  }
+}
+
+function docTreeIds(docs: DocSummary[], id: string): string[] {
+  return [id, ...docs.filter((d) => d.parent_id === id).flatMap((d) => docTreeIds(docs, d.id))];
+}
+
 async function deleteDocTree(docs: DocSummary[], id: string) {
   for (const child of docs.filter((d) => d.parent_id === id)) await deleteDocTree(docs, child.id);
   await api.deleteDocument(id);

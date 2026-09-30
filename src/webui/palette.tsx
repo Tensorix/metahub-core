@@ -7,15 +7,18 @@ import { api, type Db, type DocSummary, type Hit, type LookupHit } from "./api.t
 import { Icon } from "./icons.tsx";
 import { Kbd } from "./kbd.tsx";
 import { t } from "./i18n/t.ts";
-import { MenuItem, MenuLabel, ReturnHint, SnippetText, closeModal, openModal } from "./ui.tsx";
+import { Highlight, MenuItem, MenuLabel, ReturnHint, SnippetText, closeModal, openModal } from "./ui.tsx";
 import { COMMAND_GROUPS, commandMatches, listCommands, onCommandsChange, type Command } from "./commands.ts";
 import { resolveLocale } from "./i18n/locale.ts";
 import { listRecents } from "./recents.ts";
 import { matchTitles } from "./title-match.ts";
+import { dbName, docPath } from "./crumb.ts";
 import type { Navigate } from "./view.ts";
 import { imeGhost } from "./keys.ts";
 
 export type PaletteMode = "commands" | "open";
+/** document event: any surface can ask the app shell to open the palette. */
+export const OPEN_PALETTE = "mh-open-palette";
 
 export interface PaletteCtx {
   navigate: Navigate;
@@ -59,7 +62,7 @@ const kindNoun = (k: Kind) => (k === "doc" ? t("文档##kind") : k === "db" ? t(
 const untitled = (k: Kind) => (k === "db" ? t("未命名数据库") : k === "doc" ? t("无标题") : t("未命名记录"));
 const kindOf = (id: string): Kind => (id.startsWith("db_") ? "db" : id.startsWith("rec_") ? "rec" : "doc");
 
-type Row = { key: string; cmd: Command } | { key: string; entry: Entry };
+type Row = { key: string; cmd: Command } | { key: string; entry: Entry } | { key: string; search: string };
 interface Section {
   key: string;
   label: string | null;
@@ -91,18 +94,6 @@ function useDebounced<T>(active: boolean, key: string, ms: number, run: () => Pr
   return val;
 }
 
-function Highlight({ text, span }: { text: string; span?: [number, number] }) {
-  if (!span || span[1] <= 0) return <>{text}</>;
-  const [s, n] = span;
-  return (
-    <>
-      {text.slice(0, s)}
-      <mark>{text.slice(s, s + n)}</mark>
-      {text.slice(s + n)}
-    </>
-  );
-}
-
 /** Client-side highlight for snippets that carry no `[..]` markers (CJK LIKE fallback). */
 function Snippet({ text, q }: { text: string; q: string }) {
   if (/\[[^\[\]]*\]/.test(text) || !q) return <SnippetText text={text} />;
@@ -131,23 +122,10 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
   const ownerOf = (id: string, kind: Kind, fallback: string | null): string | null =>
     kind === "doc" ? (docById.get(id)?.database_id ?? fallback) : kind === "rec" ? fallback : null;
 
-  /** Top-down path: [db name] › ancestor titles (docs), or the db name (records). */
   const crumb = (e: Entry): string => {
-    const parts: string[] = [];
-    if (e.kind === "doc") {
-      let cur = docById.get(e.id);
-      const seen = new Set<string>();
-      while (cur?.parent_id && !seen.has(cur.parent_id)) {
-        seen.add(cur.parent_id);
-        cur = docById.get(cur.parent_id);
-        if (cur) parts.unshift(cur.title || t("无标题"));
-      }
-      const dbId = cur?.database_id ?? e.database_id;
-      if (dbId) parts.unshift(dbById.get(dbId)?.name || t("未命名数据库"));
-    } else if (e.kind === "rec" && e.database_id) {
-      parts.push(dbById.get(e.database_id)?.name || t("未命名数据库"));
-    }
-    return parts.join(" › ");
+    if (e.kind === "doc") return docPath(e.id, docs, dbs).map((s) => s.label).join(" › ");
+    if (e.kind === "rec" && e.database_id) return dbName(e.database_id, dbs);
+    return "";
   };
 
   const resolved = useDebounced<LookupHit[]>(!!ref, ref, 120, () => api.resolve(ref, 20), []);
@@ -221,6 +199,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
       if (open.length) sections.push({ key: "open", label: t("打开"), rows: open });
       if (cmds.length) sections.push({ key: "cmds", label: t("命令"), rows: cmds });
       if (content.length) sections.push({ key: "content", label: t("内容匹配"), rows: content });
+      sections.push({ key: "search", label: null, rows: [{ key: "s", search: q }] });
     }
   }
 
@@ -233,16 +212,29 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
   const pick = (r: Row) => {
     closeModal();
     if ("cmd" in r) r.cmd.run();
+    else if ("search" in r) ctx.navigate({ kind: "search", q: r.search });
     else openEntry(r.entry, ctx.navigate);
   };
 
-  const empty = rows.length === 0;
+  const empty = rows.every((r) => "search" in r);
   const notFound = empty && !!q && looksLikeId(ref);
 
   let idx = 0;
   const renderRow = (r: Row) => {
     const i = idx++;
     const isSel = i === sel;
+    if ("search" in r) {
+      return (
+        <MenuItem
+          key={r.key}
+          icon="search"
+          label={t("在全部内容中搜索 “{q}”", { q: r.search })}
+          sel={isSel}
+          onHover={() => setSelIdx(i)}
+          onClick={() => pick(r)}
+        />
+      );
+    }
     if ("cmd" in r) {
       return (
         <MenuItem

@@ -16,6 +16,7 @@ import type { Scope } from "./data/scopes.ts";
 import { shareTargetUrl } from "./data/share-targets.ts";
 import { isNoOrigin } from "./data/replica.ts";
 import { confirmDialog } from "./ui.tsx";
+import { RowSelect } from "./settings/primitives.tsx";
 import { t } from "./i18n/t.ts";
 import {
   DEVICE_OPTION_SUFFIX,
@@ -369,25 +370,26 @@ export function LinkShareForm({
         gotoSettings={gotoSettings}
         syncing={syncing}
       />
-      <label class="mhshare-field">
+      <div class="mhshare-field">
         <span>{t("权限")}</span>
-        <select value={permission} onChange={(e) => setPermission((e.currentTarget as HTMLSelectElement).value as "view" | "edit")}>
-          <option value="view">{t("只读")}</option>
-          <option value="edit">{t("可编辑")}</option>
-        </select>
-      </label>
+        <RowSelect
+          value={permission}
+          options={[{ value: "view", label: t("只读") }, { value: "edit", label: t("可编辑") }]}
+          onChange={setPermission}
+        />
+      </div>
       <label class="mhshare-field">
         <span>{t("口令")}</span>
         <input type="password" placeholder={t("可选")} value={password} onInput={(e) => setPassword((e.currentTarget as HTMLInputElement).value)} />
       </label>
-      <label class="mhshare-field">
+      <div class="mhshare-field">
         <span>{t("有效期")}</span>
-        <select value={String(expiryIdx)} onChange={(e) => setExpiryIdx(Number((e.currentTarget as HTMLSelectElement).value))}>
-          {EXPIRY.map((o, i) => (
-            <option value={String(i)}>{o.label}</option>
-          ))}
-        </select>
-      </label>
+        <RowSelect
+          value={String(expiryIdx)}
+          options={EXPIRY.map((o, i) => ({ value: String(i), label: o.label }))}
+          onChange={(v) => setExpiryIdx(Number(v))}
+        />
+      </div>
       <GrantsEditor dbs={dbs} draft={grantDraft} onToggle={toggleGrant} />
       <p class="mhshare-note">
         {t("站点页面与管理界面同源运行：站点内的脚本可以以你的身份读写整个工作区。只发布你信任的代码。")}

@@ -11,6 +11,7 @@
 import { api, NAV_INVALIDATE, type DocSummary, type Db } from "./api";
 
 const titles = new Map<string, string>();
+const owners = new Map<string, { parent_id: string | null; database_id: string | null }>();
 let state: "empty" | "fresh" | "stale" = "empty";
 let inflight: Promise<void> | null = null;
 const listeners = new Set<() => void>();
@@ -24,7 +25,11 @@ export function onDocTitleChange(fn: () => void): () => void {
 /** Fill the map from lists the caller already holds (App.reloadNav). */
 export function primeDocTitles(docs: DocSummary[], dbs: Db[]): void {
   const next = new Map<string, string>();
-  for (const d of docs) next.set(d.id, d.title ?? "");
+  owners.clear();
+  for (const d of docs) {
+    next.set(d.id, d.title ?? "");
+    owners.set(d.id, { parent_id: d.parent_id ?? null, database_id: d.database_id ?? null });
+  }
   for (const d of dbs) next.set(d.id, d.name ?? "");
   const changed =
     state === "empty" ||
@@ -83,4 +88,21 @@ if (typeof document !== "undefined") {
   document.addEventListener(NAV_INVALIDATE, () => {
     if (state === "fresh") state = "stale";
   });
+}
+
+/** Top-down location labels for a doc from the primed map: [db] › ancestors. */
+export function docParentChain(id: string): string[] {
+  const out: string[] = [];
+  let cur = owners.get(id);
+  const seen = new Set<string>([id]);
+  let dbId = cur?.database_id ?? null;
+  while (cur?.parent_id && !seen.has(cur.parent_id)) {
+    const pid = cur.parent_id;
+    seen.add(pid);
+    out.unshift(titles.get(pid) || "");
+    cur = owners.get(pid);
+    if (cur?.database_id) dbId = cur.database_id;
+  }
+  if (dbId) out.unshift(titles.get(dbId) || "");
+  return out;
 }

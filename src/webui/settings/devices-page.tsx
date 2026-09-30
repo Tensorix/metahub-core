@@ -338,7 +338,15 @@ export function DevicesPage() {
         </SetSection>
       ) : (
         <SetSection label={t("最近 30 天")} count={recent.length}>
-          {recent.length === 0 ? <div class="muted">{t("还没有其他设备。")}</div> : recent.map(row)}
+          {recent.length === 0 ? (
+            <div class="set-empty">
+              <span class="muted">{t("还没有其他设备。")}</span>
+              <button class="btn btn-secondary" onClick={addDevice}>
+                <Icon name="plus" cls="ico sm" />
+                {t("添加设备")}
+              </button>
+            </div>
+          ) : recent.map(row)}
         </SetSection>
       )}
       {stale.length > 0 && (

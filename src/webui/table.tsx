@@ -12,14 +12,19 @@ import {
 import { Icon, TYPE_ICON } from "./icons.tsx";
 import { imeGhost } from "./keys.ts";
 import { tip } from "./shortcuts.ts";
+import { undoableDelete } from "./undo.ts";
+import { rankMatches } from "./title-match.ts";
+import { docParentChain } from "./doc-titles.ts";
 import { t } from "./i18n/t.ts";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import {
   openMenu,
   closeMenu,
+  Highlight,
   MenuItem,
   MenuLabel,
   MenuSep,
+  ReturnHint,
   confirmDialog,
   useDrawerResize,
   useDrawerTransition,
@@ -69,7 +74,7 @@ function PopOutBoard({ dbId }: { dbId: string }) {
   return (
     <button
       class="popout-btn"
-      title={t("在浮窗中打开这个数据库的看板")}
+      {...tip(t("在浮窗中打开这个数据库的看板"))}
       onClick={() => {
         // Point the quick-board window at this database: localStorage covers
         // a cold mount, the broadcast switches an already-warm hidden window
@@ -254,12 +259,19 @@ export function DatabaseView({
   const newRecord = () => createRecordWith({});
 
   const deleteRecords = (ids: string[]) =>
-    guard(async () => {
-      await Promise.all(ids.map((id) => api.deleteRecord(id)));
-      setRecords((rs) => rs.filter((r) => !ids.includes(r.id)));
-      setSel(new Set());
-      if (peek && ids.includes(peek)) closePeek();
-    });
+    guard(() =>
+      undoableDelete({
+        label: t("已删除 {n} 条记录", { n: ids.length }),
+        ids,
+        run: () => Promise.all(ids.map((id) => api.deleteRecord(id))),
+        after: () => {
+          setRecords((rs) => rs.filter((r) => !ids.includes(r.id)));
+          setSel(new Set());
+          if (peek && ids.includes(peek)) closePeek();
+        },
+        onRestored: () => void reload(),
+      }),
+    );
 
   const duplicateRecord = (rec: Rec) =>
     guard(async () => {
@@ -774,6 +786,17 @@ export function DatabaseView({
               </tbody>
             </table>
           </div>
+          {sorted.length === 0 && (
+            <div class="site-empty tbl-empty">
+              <div class="ei"><Icon name="table" /></div>
+              <div class="et">{t("还没有记录")}</div>
+              <div class="ed">{t("新建一条记录，或从 CLI 导入。")}</div>
+              <button class="btn btn-primary" onClick={newRecord}>
+                <Icon name="plus" cls="ico sm" />
+                {t("新建记录")}
+              </button>
+            </div>
+          )}
           <div class="addrow" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建记录")}</div>
           </div>
         </div>
@@ -923,7 +946,7 @@ function CellView({
       <div class="firstcell">
         {body}
         <div class="rowactions">
-          <button class="rowopen" title={t("打开")} onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+          <button class="rowopen" {...tip(t("打开"))} onClick={(e) => { e.stopPropagation(); onOpen(); }}>
             <Icon name="openPeek" cls="ico sm" />
           </button>
         </div>
@@ -1006,7 +1029,7 @@ function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; o
   const listRef = useRef<HTMLDivElement>(null);
 
   const q = query.trim();
-  const filtered = q ? opts.filter((o) => o.toLowerCase().includes(q.toLowerCase())) : opts;
+  const filtered = rankMatches(q, opts, (o) => o).map((r) => r.item);
   const canCreate = q.length > 0 && !opts.includes(q);
   const rowCount = filtered.length + (canCreate ? 1 : 0);
   const sel = Math.min(selIdx, Math.max(0, rowCount - 1));
@@ -1058,14 +1081,16 @@ function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; o
             else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
           }}
         />
+        <ClearQuery query={query} onClear={() => { setQuery(""); setSelIdx(0); }} />
       </div>
-      <div ref={listRef}>
+      <div ref={listRef} class="rellist">
         {filtered.map((o, i) => (
           <button key={o} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(o)} onMouseEnter={() => setSelIdx(i)}>
             <Chip text={o} />
-            {isOn(o) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
+            {isOn(o) ? <span class="chk"><Icon name="check" cls="ico sm" /></span> : <ReturnHint />}
           </button>
         ))}
+        {!filtered.length && !canCreate && <div class="pal-empty">{opts.length ? t("没有匹配的选项") : t("还没有选项，输入名称创建")}</div>}
         {canCreate && (
           <button
             class={"item" + (sel === filtered.length ? " sel" : "")}
@@ -1128,11 +1153,10 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
   const q = query.trim();
   // Records legally share titles (unlike select options), so everything below
   // keys and checks by record id, and "创建" stays available on an exact match.
-  const matches = q
-    ? all.filter((r) => (r.title ?? "").toLowerCase().includes(q.toLowerCase()))
-    : all;
+  const ranked = rankMatches(q, all, (r) => r.title ?? "");
+  const matches = ranked.map((r) => r.item);
   const CAP = 50;
-  const shown = matches.slice(0, CAP);
+  const shown = ranked.slice(0, CAP);
   // No text property in the target db → nowhere to write the new title.
   const titleProp = target ? relationTitleProp(target) : null;
   const canCreate = !!target && q.length > 0 && !!titleProp;
@@ -1163,7 +1187,7 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
       })
       .catch((e) => toast(t("创建记录失败：{msg}", { msg: (e as Error).message })));
   };
-  const activate = (i: number) => { if (i < shown.length) pick(shown[i]!.id); else create(); };
+  const activate = (i: number) => { if (i < shown.length) pick(shown[i]!.item.id); else create(); };
 
   return (
     <>
@@ -1182,18 +1206,21 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
             else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
           }}
         />
+        <ClearQuery query={query} onClear={() => { setQuery(""); setSelIdx(0); }} />
       </div>
       <div ref={listRef} class="rellist">
-        {!target && <MenuLabel>{t("该属性未设置关联目标")}</MenuLabel>}
-        {target && state === "loading" && <MenuLabel>{t("加载中…")}</MenuLabel>}
-        {target && state === "error" && <MenuLabel>{t("无法加载目标数据表")}</MenuLabel>}
+        {!target && <div class="pal-empty">{t("该属性未设置关联目标")}</div>}
+        {target && state === "error" && <div class="pal-empty">{t("无法加载目标数据表")}</div>}
         {target && state !== "loading" && state !== "error" && all.length === 0 && (
-          <MenuLabel>{t("目标数据表暂无记录")}</MenuLabel>
+          <div class="pal-empty">{t("目标数据表暂无记录")}</div>
         )}
-        {shown.map((r, i) => (
+        {target && state !== "error" && all.length > 0 && !shown.length && !canCreate && (
+          <div class="pal-empty">{t("没有匹配的记录")}</div>
+        )}
+        {shown.map(({ item: r }, i) => (
           <button key={r.id} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(r.id)} onMouseEnter={() => setSelIdx(i)}>
             <Chip text={relationLabel(target, r.id)} />
-            {cur.includes(r.id) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
+            {cur.includes(r.id) ? <span class="chk"><Icon name="check" cls="ico sm" /></span> : <ReturnHint />}
           </button>
         ))}
         {matches.length > CAP && <MenuLabel>{t("还有 {n} 条，继续输入过滤", { n: matches.length - CAP })}</MenuLabel>}
@@ -1254,11 +1281,10 @@ function DocMenu({ value, onPick, seed }: {
   const q = query.trim();
   // Documents legally share titles, so everything below keys and checks by doc
   // id, and "创建" stays available on an exact match.
-  const matches = q
-    ? all.filter((d) => d.title.toLowerCase().includes(q.toLowerCase()))
-    : all;
+  const ranked = rankMatches(q, all, (d) => d.title);
+  const matches = ranked.map((r) => r.item);
   const CAP = 50;
-  const shown = matches.slice(0, CAP);
+  const shown = ranked.slice(0, CAP);
   const canCreate = q.length > 0;
   const rowCount = shown.length + (canCreate ? 1 : 0);
   const sel = Math.min(selIdx, Math.max(0, rowCount - 1));
@@ -1286,7 +1312,7 @@ function DocMenu({ value, onPick, seed }: {
       })
       .catch((e) => toast(t("创建文档失败：{msg}", { msg: (e as Error).message })));
   };
-  const activate = (i: number) => { if (i < shown.length) pick(shown[i]!.id); else create(); };
+  const activate = (i: number) => { if (i < shown.length) pick(shown[i]!.item.id); else create(); };
 
   return (
     <>
@@ -1305,15 +1331,24 @@ function DocMenu({ value, onPick, seed }: {
             else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
           }}
         />
+        <ClearQuery query={query} onClear={() => { setQuery(""); setSelIdx(0); }} />
       </div>
       <div ref={listRef} class="rellist">
-        {all.length === 0 && !canCreate && <MenuLabel>{t("暂无文档，输入标题创建")}</MenuLabel>}
-        {shown.map((d, i) => (
-          <button key={d.id} class={"item" + (i === sel ? " sel" : "")} onClick={() => pick(d.id)} onMouseEnter={() => setSelIdx(i)}>
-            <Chip text={docLabel(d.id).label} />
-            {cur.includes(d.id) && <span class="chk"><Icon name="check" cls="ico sm" /></span>}
-          </button>
-        ))}
+        {all.length === 0 && !canCreate && <div class="pal-empty">{t("暂无文档，输入标题创建")}</div>}
+        {all.length > 0 && !shown.length && <div class="pal-empty">{t("没有匹配的文档")}</div>}
+        {shown.map(({ item: d, start, len }, i) => {
+          const where = docParentChain(d.id).join(" › ");
+          return (
+            <button key={d.id} class={"item sub-r" + (i === sel ? " sel" : "")} onClick={() => pick(d.id)} onMouseEnter={() => setSelIdx(i)}>
+              <span class="lico plain"><Icon name="fileText" cls="ico sm" /></span>
+              <span class="meta">
+                <span class="t">{d.title ? <Highlight text={d.title} span={start >= 0 ? [start, len] : undefined} /> : t("无标题")}</span>
+                {where && <span class="d">{where}</span>}
+              </span>
+              {cur.includes(d.id) ? <span class="chk"><Icon name="check" cls="ico sm" /></span> : <ReturnHint />}
+            </button>
+          );
+        })}
         {matches.length > CAP && <MenuLabel>{t("还有 {n} 条，继续输入过滤", { n: matches.length - CAP })}</MenuLabel>}
         {canCreate && (
           <button
@@ -1479,12 +1514,12 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
                   {/* mousedown preventDefault keeps focus on the input so blur
                       (= the commit/cancel path) fires exactly once, on our terms */}
                   <button
-                    class="x ok" title={t("确认")}
+                    class="x ok" {...tip(t("确认"))}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => editRef.current?.blur()}
                   ><Icon name="check" cls="ico sm" /></button>
                   <button
-                    class="x cancel" title={t("取消")}
+                    class="x cancel" {...tip(t("取消"))}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       if (editRef.current) editRef.current.dataset.cancel = "1";
@@ -1495,9 +1530,9 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
               ) : (
                 <>
                   <span class="grip" onPointerDown={(e) => startOptDrag(e, o)}><Icon name="grip" cls="ico sm" /></span>
-                  <button class="optlabel" title={t("重命名选项")} onClick={() => setEditing(o)}><Chip text={o} /></button>
-                  <button class="x" title={t("重命名选项")} onClick={() => setEditing(o)}><Icon name="pencil" cls="ico sm" /></button>
-                  <button class="x del" title={t("删除选项")} onClick={() => removeOpt(o)}><Icon name="x" cls="ico sm" /></button>
+                  <button class="optlabel" {...tip(t("重命名选项"))} onClick={() => setEditing(o)}><Chip text={o} /></button>
+                  <button class="x" {...tip(t("重命名选项"))} onClick={() => setEditing(o)}><Icon name="pencil" cls="ico sm" /></button>
+                  <button class="x del" {...tip(t("删除选项"))} onClick={() => removeOpt(o)}><Icon name="x" cls="ico sm" /></button>
                 </>
               )}
             </div>
@@ -1557,25 +1592,32 @@ function uniquePropName(base: string, existing: Prop[]): string {
 /** Searchable database list for pick-a-database menus: relation targets here,
  *  the quick board's switcher (quickboard.tsx). Every database is listed —
  *  self-relation is legal, so the current table appears too, just labeled. */
-export function DbTargetList({ currentDb, target, autoFocus, placeholder = t("搜索数据表"), onPick }: {
+export function DbTargetList({ currentDb, target, autoFocus, placeholder = t("搜索数据表"), databases, onPick }: {
   /** labels the matching row 「当前表」 (relation pickers — self-relation cue) */
   currentDb?: string; target?: string;
   /** steal focus only in the dedicated pick step — ColMenu has a rename input on top */
   autoFocus?: boolean;
   placeholder?: string;
+  /** Caller-held list (skips the fetch). */
+  databases?: Db[];
   onPick: (d: Db) => void;
 }) {
-  const [dbs, setDbs] = useState<Db[] | null>(null);
+  const [fetched, setFetched] = useState<Db[] | null>(null);
   const [query, setQuery] = useState("");
   const [selIdx, setSelIdx] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { api.listDatabases().then(setDbs).catch(() => setDbs([])); }, []);
+  useEffect(() => {
+    if (databases) return;
+    api.listDatabases().then(setFetched).catch(() => setFetched([]));
+  }, [!!databases]);
+  const dbs = databases ?? fetched;
 
   const q = query.trim().toLowerCase();
   const all = dbs ?? [];
-  const matches = q ? all.filter((d) => (d.name || t("未命名数据库")).toLowerCase().includes(q)) : all;
+  const ranked = rankMatches(q, all, (d) => d.name || t("未命名数据库"));
+  const matches = ranked.map((r) => r.item);
   const CAP = 50;
-  const shown = matches.slice(0, CAP);
+  const shown = ranked.slice(0, CAP);
   const sel = Math.min(selIdx, Math.max(0, shown.length - 1));
   useEffect(() => {
     listRef.current?.querySelector(".item.sel")?.scrollIntoView({ block: "nearest" });
@@ -1595,39 +1637,36 @@ export function DbTargetList({ currentDb, target, autoFocus, placeholder = t("�
             if (imeGhost(e)) return;
             if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(Math.min(sel + 1, shown.length - 1)); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setSelIdx(Math.max(sel - 1, 0)); }
-            else if (e.key === "Enter") { e.preventDefault(); if (shown[sel]) onPick(shown[sel]); }
+            else if (e.key === "Enter") { e.preventDefault(); if (shown[sel]) onPick(shown[sel].item); }
             else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
           }}
         />
-        {query && (
-          <button
-            class="clear"
-            title={t("清空")}
-            onMouseDown={(e) => e.preventDefault() /* keep the input focused */}
-            onClick={() => { setQuery(""); setSelIdx(0); }}
-          >
-            <Icon name="x" cls="ico sm" />
-          </button>
-        )}
+        <ClearQuery query={query} onClear={() => { setQuery(""); setSelIdx(0); }} />
       </div>
       <div ref={listRef} class="rellist">
-        {shown.length === 0 && <MenuLabel>{t("无匹配结果")}</MenuLabel>}
-        {shown.map((d, i) => (
-          <MenuItem
-            key={d.id}
-            icon="database"
-            label={d.name || t("未命名数据库")}
-            sublabel={d.id === currentDb ? t("当前表") : undefined}
-            sub="right"
-            checked={d.id === target}
-            sel={i === sel}
-            onHover={() => setSelIdx(i)}
-            onClick={() => onPick(d)}
-          />
+        {shown.length === 0 && <div class="pal-empty">{all.length ? t("没有匹配的数据表") : t("还没有数据库")}</div>}
+        {shown.map(({ item: d, start, len }, i) => (
+          <button key={d.id} class={"item sub-r" + (i === sel ? " sel" : "")} onClick={() => onPick(d)} onMouseEnter={() => setSelIdx(i)}>
+            <span class="lico plain"><span class="emo">{d.icon || "🗂️"}</span></span>
+            <span class="meta">
+              <span class="t"><Highlight text={d.name || t("未命名数据库")} span={start >= 0 ? [start, len] : undefined} /></span>
+              {d.id === currentDb && <span class="d">{t("当前表")}</span>}
+            </span>
+            {d.id === target ? <span class="chk"><Icon name="check" cls="ico sm" /></span> : <ReturnHint />}
+          </button>
         ))}
         {matches.length > CAP && <MenuLabel>{t("还有 {n} 条，继续输入过滤", { n: matches.length - CAP })}</MenuLabel>}
       </div>
     </>
+  );
+}
+
+function ClearQuery({ query, onClear }: { query: string; onClear: () => void }) {
+  if (!query) return null;
+  return (
+    <button class="clear" {...tip(t("清空"))} onMouseDown={(e) => e.preventDefault()} onClick={onClear}>
+      <Icon name="x" cls="ico sm" />
+    </button>
   );
 }
 
@@ -1678,7 +1717,15 @@ function openSortMenu(e: MouseEvent, props: Prop[], cur: { id: string; desc: boo
     <>
       <MenuLabel>{t("排序依据")}</MenuLabel>
       {props.map((p) => (
-        <MenuItem key={p.id} icon={TYPE_ICON[p.type]} label={p.name} onClick={() => { setSort({ id: p.id, desc: cur?.id === p.id ? !cur.desc : false }); close(); }} />
+        <MenuItem
+          key={p.id}
+          icon={TYPE_ICON[p.type]}
+          label={p.name}
+          sublabel={cur?.id === p.id ? (cur.desc ? t("降序") : t("升序")) : undefined}
+          sub="right"
+          checked={cur?.id === p.id}
+          onClick={() => { setSort({ id: p.id, desc: cur?.id === p.id ? !cur.desc : false }); close(); }}
+        />
       ))}
       {cur && (<><MenuSep /><MenuItem icon="x" label={t("清除排序")} onClick={() => { setSort(null); close(); }} /></>)}
     </>
@@ -1692,11 +1739,7 @@ function openRowMenu(e: MouseEvent, rec: Rec, onOpen: () => void, onDup: () => v
       <MenuItem icon="cornerUpRight" label={t("打开记录")} onClick={() => { close(); onOpen(); }} />
       <MenuItem icon="copy" label={t("复制记录")} onClick={() => { close(); onDup(); }} />
       <MenuSep />
-      <MenuItem icon="trash" label={t("删除记录")} danger onClick={async () => {
-        close();
-        const ok = await confirmDialog({ title: t("删除记录？"), message: t("确定删除这条记录？"), confirmLabel: t("删除"), danger: true });
-        if (ok) onDel();
-      }} />
+      <MenuItem icon="trash" label={t("删除记录")} danger onClick={() => { close(); onDel(); }} />
     </>
   ));
 }
@@ -1725,18 +1768,18 @@ export function RecordPeek({
         <div class="peek-head">
           <button class="iconbtn" {...tip(t("关闭"))} onClick={close}><Icon name="x" /></button>
           {hist && (
-            <button class="iconbtn" title={t("返回字段")} onClick={() => setHist(false)}>
+            <button class="iconbtn" {...tip(t("返回字段"))} onClick={() => setHist(false)}>
               <Icon name="arrowLeft" />
             </button>
           )}
           <div style={{ flex: 1 }} />
-          <button class="iconbtn" title={t("更多")} onClick={(e) =>
+          <button class="iconbtn" {...tip(t("更多"))} onClick={(e) =>
             openMenu(e, (close) => (
               <>
                 <MenuItem icon="history" label={t("版本历史")} checked={hist} onClick={() => { close(); setHist(!hist); }} />
                 <MenuItem icon="copy" label={t("复制记录")} onClick={() => { close(); onDuplicate(); }} />
                 <MenuSep />
-                <MenuItem icon="trash" label={t("删除记录")} danger onClick={async () => { close(); const ok = await confirmDialog({ title: t("删除记录？"), message: t("确定删除这条记录？"), confirmLabel: t("删除"), danger: true }); if (ok) onDelete(); }} />
+                <MenuItem icon="trash" label={t("删除记录")} danger onClick={() => { close(); onDelete(); }} />
               </>
             ))
           }><Icon name="dots" /></button>
@@ -1830,7 +1873,7 @@ function PeekDocs({ props, rec }: { props: Prop[]; rec: Rec }) {
         })}
         <div style={{ flex: 1 }} />
         {!activeMissing && (
-          <a class="iconbtn peekdocs-open" title={t("在主视图打开")} href={`#/doc/${encodeURIComponent(activeId)}`}>
+          <a class="iconbtn peekdocs-open" {...tip(t("在主视图打开"))} href={`#/doc/${encodeURIComponent(activeId)}`}>
             <Icon name="cornerUpRight" cls="ico sm" />
           </a>
         )}

@@ -5,6 +5,7 @@ import type { S3Config } from "../core/sync/storage.ts";
 import { Icon } from "./icons.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { t } from "./i18n/t.ts";
+import { tip } from "./shortcuts.ts";
 import { getLang, setLang, resolveLocale, systemLocale, LOCALE_NAMES, type LangChoice } from "./i18n/locale.ts";
 import { getWordCountEnabled, setWordCountEnabled } from "./wordcount.ts";
 import { timeAgo } from "./date.ts";
@@ -62,7 +63,7 @@ import {
   type StoragePeerView,
 } from "./settings/shared.ts";
 import { GROUPS, resolvePage, pageLabel, type PageId, type PageDef } from "./settings/nav.ts";
-import { SetRow, Switch, SetSection, PageHeader, DangerZone, RowSelect } from "./settings/primitives.tsx";
+import { SetRow, Switch, SetSection, PageHeader, DangerZone, RowSelect, SetRowSkeleton } from "./settings/primitives.tsx";
 import { CacheRingHero, type RingState } from "./settings/cache-ring.tsx";
 import { AuditPage } from "./settings/audit-page.tsx";
 import { ShortcutsPage } from "./settings/shortcuts-page.tsx";
@@ -164,7 +165,7 @@ function DeviceGroupName() {
       <span class="set-rail-group-name">{deviceLabel || t("此设备")}</span>
       <button
         class="set-rail-group-edit"
-        title={t("重命名本机")}
+        {...tip(t("重命名本机"))}
         onClick={() => {
           closed.current = false;
           setEditing(true);
@@ -928,7 +929,7 @@ function LocalCacheRows({ scope }: { scope: Scope }) {
         </div>
       )}
       {stats == null ? (
-        <SetRow title={t("缓存占用")} caption={t("加载中…")} />
+        <SetRowSkeleton rows={1} />
       ) : (
         <CacheRingHero
           segs={{ free: clearable, keep: 0, pin: stats.pinnedBytes }}
@@ -1281,7 +1282,7 @@ function QuickWindowSection({
         control={
           <>
             {shortcut !== defaultShortcut && (
-              <button class="btn btn-ghost" title={t("重置默认")} onClick={() => void applyShortcut(defaultShortcut)}>
+              <button class="btn btn-ghost" {...tip(t("重置默认"))} onClick={() => void applyShortcut(defaultShortcut)}>
                 {t("重置")}
               </button>
             )}

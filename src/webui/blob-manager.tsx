@@ -10,6 +10,7 @@
 //   - 无源 PWA 壳：走浏览器 Cache Storage（blob-store.ts）+ worker 的 blobRefs。
 // UI 只认 BlobRow，单一来源、零重复。
 
+import { SkelLines } from "./skeleton.tsx";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { timeAgo } from "./date.ts";
@@ -455,9 +456,14 @@ function BlobManager({ source }: { source: BlobSource }) {
         {err ? (
           <div class="blob-mgr-empty">{t("无法读取：{err}", { err })}</div>
         ) : !rows ? (
-          <div class="blob-mgr-empty">{t("加载中…")}</div>
+          <SkelLines n={5} cls="pad" />
         ) : filtered.length === 0 ? (
-          <div class="blob-mgr-empty">{rows.length ? t("没有符合条件的项") : t("这台设备还没有缓存的 blob")}</div>
+          <div class="blob-mgr-empty">
+            {rows.length ? t("没有符合条件的项") : t("这台设备还没有缓存的 blob")}
+            {rows.length > 0 && (
+              <button class="btn btn-secondary" onClick={() => { setQuery(""); setTypeF("all"); setStatusF("all"); }}>{t("清除筛选")}</button>
+            )}
+          </div>
         ) : (
           <div class="blob-mgr-list">
             <div class="blob-mgr-row blob-mgr-head">

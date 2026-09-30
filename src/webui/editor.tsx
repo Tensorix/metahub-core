@@ -5,6 +5,7 @@ import { clientMode, onReplicaStatus, replicaActive, replicaStatus, SYNCED_EVENT
 import type { ReplicaStatus } from "./data/db-worker.ts";
 import { sameDay } from "./date.ts";
 import { t } from "./i18n/t.ts";
+import { SkelLines } from "./skeleton.tsx";
 import { fmtDate } from "./i18n/fmt.ts";
 import { Icon } from "./icons.tsx";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
@@ -466,7 +467,7 @@ export function DocView({
     splitDocTop(v, moved);
   };
 
-  if (loading) return <div class="empty">{t("加载中…")}</div>;
+  if (loading) return <SkelLines n={7} cls="doc-skel" />;
 
   // Move the caret to the very start of the body and focus it (title → body).
   // enterDocTop opens a fresh line first when the doc starts with a void, so the

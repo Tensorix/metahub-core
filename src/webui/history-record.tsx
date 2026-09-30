@@ -47,7 +47,10 @@ function FieldHistoryModal({
     api
       .recordFieldHistory(recId, propId)
       .then(setEntries)
-      .catch((e) => toast(String((e as Error).message)));
+      .catch((e) => {
+        setEntries([]);
+        toast(String((e as Error).message), { tone: "error" });
+      });
   }, [recId, propId]);
   return (
     <Modal
@@ -116,7 +119,10 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
         setEntries(acts);
         setNames(new Map(props.map((p) => [p.id, p.name])));
       })
-      .catch((e) => toast(String((e as Error).message)));
+      .catch((e) => {
+        setEntries([]);
+        toast(String((e as Error).message), { tone: "error" });
+      });
   }, [dbId]);
 
   // Filter options come from the loaded feed itself — no extra requests. The
@@ -198,7 +204,9 @@ export function DbActivityPanel({ dbId, onClose }: { dbId: string; onClose: () =
         </div>
         <div class="peek-body hist-feed">
           {entries === null && <SkelLines n={4} cls="pad" />}
-          {entries !== null && visible.length === 0 && <div class="muted pad">{t("暂无动态。")}</div>}
+          {entries !== null && visible.length === 0 && (
+            <div class="muted pad">{filterRec != null || filterNode != null ? t("没有符合筛选的动态。") : t("暂无动态。")}</div>
+          )}
           {visible.map((e) => {
             const key = e.record_id + e.version;
             const all = expanded.has(key);
