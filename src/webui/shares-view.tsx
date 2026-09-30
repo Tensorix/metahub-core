@@ -226,6 +226,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
               key={k}
               label={SOURCE_KIND_LABEL[k]}
               sublabel={t("{n} 个分享", { n: sourceCounts[k] ?? 0 })}
+              sub="right"
               checked={filter.source === k}
               onClick={() => {
                 close();

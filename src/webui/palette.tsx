@@ -7,13 +7,12 @@ import { api, type Db, type DocSummary, type Hit, type LookupHit } from "./api.t
 import { Icon } from "./icons.tsx";
 import { Kbd } from "./kbd.tsx";
 import { t } from "./i18n/t.ts";
-import { MenuItem, MenuLabel, SnippetText, closeModal, openModal } from "./ui.tsx";
+import { MenuItem, MenuLabel, ReturnHint, SnippetText, closeModal, openModal } from "./ui.tsx";
 import { COMMAND_GROUPS, commandMatches, listCommands, onCommandsChange, type Command } from "./commands.ts";
 import { resolveLocale } from "./i18n/locale.ts";
 import { listRecents } from "./recents.ts";
 import { matchTitles } from "./title-match.ts";
 import type { Navigate } from "./view.ts";
-import { shortcutAvailable } from "./shortcuts.ts";
 import { imeGhost } from "./keys.ts";
 
 export type PaletteMode = "commands" | "open";
@@ -251,7 +250,8 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
           icon={r.cmd.icon}
           label={r.cmd.label}
           sublabel={showEn && r.cmd.en !== r.cmd.label ? r.cmd.en : undefined}
-          shortcut={r.cmd.shortcut && shortcutAvailable(r.cmd.shortcut) ? r.cmd.shortcut : undefined}
+          shortcut={r.cmd.shortcut}
+          sub="right"
           sel={isSel}
           onHover={() => setSelIdx(i)}
           onClick={() => pick(r)}
@@ -269,7 +269,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
       untitled(e.kind)
     );
     return (
-      <button key={r.key} class={"item" + (isSel ? " sel" : "")} onClick={() => pick(r)} onMouseEnter={() => setSelIdx(i)}>
+      <button key={r.key} class={"item sub-r" + (isSel ? " sel" : "")} onClick={() => pick(r)} onMouseEnter={() => setSelIdx(i)}>
         <span class="lico plain">{emoji ? <span class="emo">{emoji}</span> : <Icon name={KIND_ICON[e.kind]} cls="ico sm" />}</span>
         <span class="meta">
           <span class="t">{title}</span>
@@ -279,7 +279,7 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
             where && <span class="d crumb">{where}</span>
           )}
         </span>
-        <span class="ret" aria-hidden="true"><kbd class="kbd"><span class="key sym">↵</span></kbd></span>
+        <ReturnHint />
       </button>
     );
   };

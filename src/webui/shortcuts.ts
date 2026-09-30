@@ -90,6 +90,7 @@ const KEY_GLYPH: Record<string, string> = {
   ArrowUp: "↑",
   ArrowDown: "↓",
   Escape: "Esc",
+  Enter: "↵",
   Tab: "Tab",
 };
 

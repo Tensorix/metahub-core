@@ -651,7 +651,7 @@ export function NewSiteModal({ onCreated }: { onCreated: (s: Site) => void }) {
     try {
       slug = normalizeSiteName(name);
     } catch {
-      return toast(t("请填写站点名称"));
+      return toast(t("请填写站点名称"), { tone: "error" });
     }
     try {
       const site = await api.createSite({ name: slug, title: title.trim() || undefined });

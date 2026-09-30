@@ -3,7 +3,8 @@ import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "./icons.tsx";
 import { t } from "./i18n/t.ts";
-import { consumeKey, imeGhost } from "./keys.ts";
+import { consumeKey, imeGhost, isEditableTarget } from "./keys.ts";
+import { shortcutAvailable } from "./shortcuts.ts";
 import { Kbd } from "./kbd.tsx";
 
 // Imperative UI primitives (Toast / Menu / Modal) backed by tiny external
@@ -35,13 +36,41 @@ function makeStore<T>(init: T) {
 }
 
 // ---- toasts ----------------------------------------------------------------
-type Toast = { id: number; msg: string };
+export type ToastTone = "ok" | "error" | "info";
+export interface ToastOpts {
+  tone?: ToastTone;
+  action?: { label: string; run: () => void | Promise<void> };
+  ms?: number;
+}
+type Toast = { id: number; msg: string; tone: ToastTone; action?: ToastOpts["action"]; leaving?: boolean };
 const toastStore = makeStore<Toast[]>([]);
 let toastSeq = 0;
-export function toast(msg: string) {
+const toastTimers = new Map<number, { t: number; due: number; left: number }>();
+function armToast(id: number, left: number): void {
+  toastTimers.set(id, { t: window.setTimeout(() => dismissToast(id), left), due: Date.now() + left, left });
+}
+function pauseToast(id: number): void {
+  const r = toastTimers.get(id);
+  if (!r) return;
+  clearTimeout(r.t);
+  r.left = Math.max(600, r.due - Date.now());
+}
+function resumeToast(id: number): void {
+  const r = toastTimers.get(id);
+  if (r) armToast(id, r.left);
+}
+function dismissToast(id: number): void {
+  const r = toastTimers.get(id);
+  if (r) clearTimeout(r.t);
+  toastTimers.delete(id);
+  toastStore.set(toastStore.get().map((x) => (x.id === id ? { ...x, leaving: true } : x)));
+  setTimeout(() => toastStore.set(toastStore.get().filter((x) => x.id !== id)), 160);
+}
+export function toast(msg: string, opts: ToastOpts = {}): { dismiss: () => void } {
   const id = ++toastSeq;
-  toastStore.set([...toastStore.get(), { id, msg }]);
-  setTimeout(() => toastStore.set(toastStore.get().filter((x) => x.id !== id)), 2600);
+  toastStore.set([...toastStore.get(), { id, msg, tone: opts.tone ?? "ok", action: opts.action }]);
+  armToast(id, opts.ms ?? (opts.action ? 7000 : 2600));
+  return { dismiss: () => dismissToast(id) };
 }
 
 // ---- upload progress tray --------------------------------------------------
@@ -110,25 +139,43 @@ function UploadTray() {
 }
 
 // ---- menu / popover --------------------------------------------------------
-export type MenuAnchor = { x: number; y: number } | { rect: DOMRect } | MouseEvent;
-type MenuState = { render: (close: () => void) => ComponentChildren; anchor: MenuAnchor; minWidth?: number } | null;
+export type MenuAnchor = { x: number; y: number } | { rect: DOMRect } | MouseEvent | HTMLElement;
+type ResolvedAnchor = { x: number; y: number } | { rect: DOMRect };
+type MenuState = {
+  render: (close: () => void) => ComponentChildren;
+  anchor: ResolvedAnchor;
+  minWidth?: number;
+  kb: boolean;
+  restore: HTMLElement | null;
+} | null;
 const menuStore = makeStore<MenuState>(null);
 export function openMenu(
   anchor: MenuAnchor,
   render: (close: () => void) => ComponentChildren,
   opts: { minWidth?: number } = {},
 ) {
-  menuStore.set({ render, anchor, minWidth: opts.minWidth });
+  let a: ResolvedAnchor;
+  let kb = false;
+  if (anchor instanceof HTMLElement) {
+    a = { rect: anchor.getBoundingClientRect() };
+    kb = true;
+  } else if (anchor instanceof MouseEvent) {
+    kb = anchor.detail === 0 && anchor.clientX === 0 && anchor.clientY === 0;
+    const el = (anchor.currentTarget ?? anchor.target) as HTMLElement | null;
+    a = kb && el?.getBoundingClientRect ? { rect: el.getBoundingClientRect() } : { x: anchor.clientX, y: anchor.clientY };
+  } else a = anchor;
+  menuStore.set({ render, anchor: a, minWidth: opts.minWidth, kb, restore: document.activeElement as HTMLElement | null });
 }
 export function closeMenu() {
   menuStore.set(null);
 }
 
-function anchorPoint(a: MenuAnchor): { x: number; y: number; bottom?: number } {
-  if (a instanceof MouseEvent) return { x: a.clientX, y: a.clientY };
-  if ("rect" in a) return { x: a.rect.left, y: a.rect.bottom, bottom: a.rect.bottom };
+function anchorPoint(a: ResolvedAnchor): { x: number; y: number } {
+  if ("rect" in a) return { x: a.rect.left, y: a.rect.bottom };
   return { x: a.x, y: a.y };
 }
+
+const ROVING_KEYS = /^(ArrowDown|ArrowUp|Home|End)$/;
 
 function MenuHost() {
   const state = menuStore.use();
@@ -139,16 +186,36 @@ function MenuHost() {
   // The editor's slash menu / format bar render their own .pop and stay
   // caret-anchored on purpose. Read per open; menus never survive a rotation.
   const sheet = matchMedia(MOBILE_MQ).matches;
-  // Escape closes the open menu (capture phase: the menu is the topmost layer).
+  // Escape closes the open menu (capture phase: the menu is the topmost layer);
+  // ↑↓/Home/End move real focus between items unless an inner input owns keys.
   useEffect(() => {
     if (!state) return;
     const on = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || imeGhost(e)) return;
+      if (imeGhost(e)) return;
+      if (e.key === "Escape") {
+        if (modalStore.get()?.aboveMenus) return;
+        consumeKey(e);
+        closeMenu();
+        return;
+      }
+      if (!ROVING_KEYS.test(e.key) || isEditableTarget(e.target)) return;
+      const pop = ref.current;
+      if (!pop) return;
+      const items = Array.from(pop.querySelectorAll<HTMLButtonElement>("button.item:not(:disabled)"));
+      if (!items.length) return;
+      const cur = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next =
+        e.key === "ArrowDown" ? (cur + 1) % items.length
+        : e.key === "ArrowUp" ? (cur - 1 + items.length) % items.length
+        : e.key === "Home" ? 0 : items.length - 1;
       consumeKey(e);
-      closeMenu();
+      items[next]!.focus();
     };
     window.addEventListener("keydown", on, true);
-    return () => window.removeEventListener("keydown", on, true);
+    return () => {
+      window.removeEventListener("keydown", on, true);
+      if (state.restore?.isConnected) state.restore.focus();
+    };
   }, [state]);
   useLayoutEffect(() => {
     if (!state || !ref.current || sheet) return setPos(null);
@@ -158,6 +225,7 @@ function MenuHost() {
       left: Math.min(x, innerWidth - r.width - 10),
       top: Math.min(y + 4, innerHeight - r.height - 10),
     });
+    if (state.kb) ref.current.querySelector<HTMLElement>("button.item, input")?.focus();
   }, [state, sheet]);
   if (!state) return null;
   return (
@@ -295,6 +363,7 @@ export function MenuItem({
   icon,
   label,
   sublabel,
+  sub = "stack",
   shortcut,
   danger,
   checked,
@@ -304,18 +373,25 @@ export function MenuItem({
 }: {
   icon?: string;
   label: ComponentChildren;
-  sublabel?: string;
-  /** Shortcut id (shortcuts.ts) rendered as a key-cap badge on the right. */
+  sublabel?: ComponentChildren;
+  /** Sublabel placement: stacked under the title, or right-aligned muted text. */
+  sub?: "stack" | "right";
+  /** Shortcut id (shortcuts.ts) rendered as a key-cap badge when available on this platform. */
   shortcut?: string;
   danger?: boolean;
   checked?: boolean;
-  /** keyboard-navigation highlight (search-driven lists) */
+  /** keyboard-navigation highlight (search-driven lists); the selected row shows ↵ */
   sel?: boolean;
   onHover?: () => void;
   onClick: () => void;
 }) {
+  const managed = sel !== undefined;
   return (
-    <button class={"item" + (danger ? " danger" : "") + (sel ? " sel" : "")} onClick={onClick} onMouseEnter={onHover}>
+    <button
+      class={"item" + (danger ? " danger" : "") + (sel ? " sel" : "") + (sub === "right" ? " sub-r" : "")}
+      onClick={onClick}
+      onMouseEnter={onHover}
+    >
       {icon && (
         <span class="lico plain">
           <Icon name={icon} cls="ico sm" />
@@ -325,13 +401,23 @@ export function MenuItem({
         <span class="t">{label}</span>
         {sublabel && <span class="d">{sublabel}</span>}
       </span>
-      {shortcut && <Kbd id={shortcut} />}
+      {shortcut && shortcutAvailable(shortcut) && <Kbd id={shortcut} />}
       {checked && (
         <span class="chk">
           <Icon name="check" cls="ico sm" />
         </span>
       )}
+      {managed && !checked && <ReturnHint />}
     </button>
+  );
+}
+
+/** ↵ glyph shown on the keyboard-selected row of a search-driven list. */
+export function ReturnHint() {
+  return (
+    <span class="ret" aria-hidden="true">
+      <kbd class="kbd"><span class="key sym">↵</span></kbd>
+    </span>
   );
 }
 
@@ -340,7 +426,7 @@ export function MenuItem({
 // mounted by its parent, so to play the CSS transition we mount with open=false
 // (translateX(100%)) and flip to true on the next frame; on close we slide out
 // first, then let the parent unmount after the animation finishes.
-export function useDrawerTransition(onClose: () => void, durationMs = 240) {
+export function useDrawerTransition(onClose: () => void, durationMs = 240, opts: { esc?: boolean } = {}) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     const r = requestAnimationFrame(() => setOpen(true));
@@ -350,7 +436,34 @@ export function useDrawerTransition(onClose: () => void, durationMs = 240) {
     setOpen(false);
     setTimeout(onClose, durationMs);
   };
+  useEscape(close, opts.esc ?? true);
   return { open, close };
+}
+
+const escStack: symbol[] = [];
+/** Escape closes the topmost drawer; menus and modals above it win, and inner
+ *  editable fields keep their own Escape. */
+export function useEscape(onEsc: () => void, enabled = true) {
+  const cb = useRef(onEsc);
+  cb.current = onEsc;
+  useEffect(() => {
+    if (!enabled) return;
+    const me = Symbol();
+    escStack.push(me);
+    const on = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || imeGhost(e)) return;
+      if (menuStore.get() || modalStore.get()) return;
+      if (escStack[escStack.length - 1] !== me) return;
+      if (isEditableTarget(e.target)) return;
+      consumeKey(e);
+      cb.current();
+    };
+    window.addEventListener("keydown", on, true);
+    return () => {
+      window.removeEventListener("keydown", on, true);
+      escStack.splice(escStack.indexOf(me), 1);
+    };
+  }, [enabled]);
 }
 
 /** Drag-to-resize for right-anchored drawers (.peek): render `handle` as the
@@ -399,12 +512,20 @@ export function useDrawerResize(storageKey: string, min = 380) {
 // dialog can stack on top of an open popover without dismissing it. Off by
 // default: some modals (blob manager) open menus of their own and rely on the
 // menu layer sitting above the scrim.
-const modalStore = makeStore<{ node: VNode; aboveMenus?: boolean } | null>(null);
+type ModalState = { node: VNode; aboveMenus?: boolean; closing?: boolean } | null;
+const modalStore = makeStore<ModalState>(null);
+let modalCloseTimer = 0;
 export function openModal(node: VNode, opts: { aboveMenus?: boolean } = {}) {
+  clearTimeout(modalCloseTimer);
   modalStore.set({ node, aboveMenus: opts.aboveMenus });
 }
 export function closeModal() {
-  modalStore.set(null);
+  const s = modalStore.get();
+  if (!s || s.closing) return;
+  modalStore.set({ ...s, closing: true });
+  modalCloseTimer = window.setTimeout(() => {
+    if (modalStore.get()?.closing) modalStore.set(null);
+  }, 120);
 }
 
 export function Modal({
@@ -412,37 +533,101 @@ export function Modal({
   sub,
   children,
   footer,
+  hint,
+  onEnter,
   width,
 }: {
   title: string;
   sub?: string;
   children: ComponentChildren;
   footer?: ComponentChildren;
+  /** Key hints rendered at the left of the footer (e.g. ↵ 确定 · Esc 取消). */
+  hint?: ComponentChildren;
+  /** Enter anywhere in the dialog (outside buttons / textareas) confirms. */
+  onEnter?: () => void;
   width?: number;
 }) {
   return (
-    <div class="modal" style={{ width }} onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      style={{ width }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={onEnter ? (e) => {
+        if (e.key !== "Enter" || e.defaultPrevented || imeGhost(e)) return;
+        const el = e.target as HTMLElement;
+        if (el.tagName === "BUTTON" || el.tagName === "TEXTAREA" || el.isContentEditable) return;
+        consumeKey(e);
+        onEnter();
+      } : undefined}
+    >
       <div class="modal-head">
         <h3>{title}</h3>
         {sub && <p>{sub}</p>}
       </div>
       <div class="modal-body">{children}</div>
-      {footer && <div class="modal-foot">{footer}</div>}
+      {(footer || hint) && (
+        <div class="modal-foot">
+          {hint && <span class="modal-hint">{hint}</span>}
+          {footer}
+        </div>
+      )}
     </div>
   );
 }
 
+/** Footer hint for confirm-style dialogs: ↵ <confirm> · Esc 取消. */
+export function EnterEscHint({ confirm }: { confirm: string }) {
+  return (
+    <>
+      <Kbd combo={{ key: "Enter" }} /> {confirm}
+      <Kbd combo={{ key: "Escape" }} /> {t("取消")}
+    </>
+  );
+}
+
+const MODAL_FOCUS = ["[autofocus]", "input:not([type=checkbox]):not([type=hidden])", "textarea", ".btn-danger", ".btn-primary", "button"];
+function focusFirst(root: HTMLElement | null): void {
+  if (!root) return;
+  for (const sel of MODAL_FOCUS) {
+    const el = root.querySelector<HTMLElement>(sel);
+    if (el) {
+      el.focus();
+      return;
+    }
+  }
+}
+
 function ModalHost() {
   const state = modalStore.use();
+  const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!state) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeModal();
-    addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
-  }, [state]);
+    if (!state || state.closing) return;
+    const restore = document.activeElement as HTMLElement | null;
+    focusFirst(host.current);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || imeGhost(e)) return;
+      if (menuStore.get() && !state.aboveMenus) return;
+      consumeKey(e);
+      closeModal();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      if (restore?.isConnected) restore.focus();
+    };
+  }, [state?.node]);
   return (
     <div
-      class={"modal-scrim" + (state ? " open" : "") + (state?.aboveMenus ? " above-menus" : "")}
+      ref={host}
+      class={
+        "modal-scrim" +
+        (state && !state.closing ? " open" : "") +
+        (state?.closing ? " closing" : "") +
+        (state?.aboveMenus ? " above-menus" : "")
+      }
       onMouseDown={(e) => e.target === e.currentTarget && closeModal()}
     >
       {state?.node}
@@ -467,6 +652,8 @@ export function confirmDialog(opts: {
     openModal(
       <Modal
         title={opts.title}
+        onEnter={() => done(true)}
+        hint={<EnterEscHint confirm={opts.confirmLabel ?? t("确定")} />}
         footer={
           <>
             <button class="btn btn-secondary" onClick={() => done(false)}>
@@ -474,6 +661,7 @@ export function confirmDialog(opts: {
             </button>
             <button
               class={"btn " + (opts.danger ? "btn-danger" : "btn-primary")}
+              autofocus
               onClick={() => done(true)}
             >
               {opts.confirmLabel ?? t("确定")}
@@ -506,6 +694,8 @@ export function promptDialog(opts: {
     openModal(
       <Modal
         title={opts.title}
+        onEnter={() => done(val.trim() || (opts.value ?? ""))}
+        hint={<EnterEscHint confirm={opts.confirmLabel ?? t("保存")} />}
         footer={
           <>
             <button class="btn btn-secondary" onClick={() => done(null)}>
@@ -520,13 +710,10 @@ export function promptDialog(opts: {
         {opts.label && <div class="field-label">{opts.label}</div>}
         <input
           class="text-input"
-          autofocus
+          ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
           value={opts.value ?? ""}
           placeholder={opts.placeholder}
           onInput={(e) => (val = (e.target as HTMLInputElement).value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !imeGhost(e)) done(val.trim() || (opts.value ?? ""));
-          }}
         />
       </Modal>,
     );
@@ -551,9 +738,19 @@ export function UiHost() {
       <TooltipHost />
       <div class="toasts">
         {toasts.map((item) => (
-          <div key={item.id} class="toast">
-            <Icon name="check" cls="ico sm" />
-            <span>{item.msg}</span>
+          <div
+            key={item.id}
+            class={"toast " + item.tone + (item.leaving ? " leaving" : "")}
+            onMouseEnter={() => pauseToast(item.id)}
+            onMouseLeave={() => resumeToast(item.id)}
+          >
+            <Icon name={item.tone === "error" ? "alert" : "check"} cls="ico sm" />
+            <span class="toast-msg">{item.msg}</span>
+            {item.action && (
+              <button class="toast-act" onClick={() => { void item.action!.run(); dismissToast(item.id); }}>
+                {item.action.label}
+              </button>
+            )}
           </div>
         ))}
       </div>

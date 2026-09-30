@@ -1788,6 +1788,7 @@
   :is(.pop,.palette) .lbl { font-size:var(--fs-micro); font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; padding:6px 8px 3px; }
   :is(.pop,.palette) .item { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:var(--radius-sm); width:100%; text-align:left; color:var(--fg); font-size:var(--fs-ui); }
   :is(.pop,.palette) .item:hover, :is(.pop,.palette) .item.sel { background:var(--hover-2); }
+  :is(.pop,.palette) .item:focus-visible { outline:none; background:var(--hover-2); box-shadow:inset 0 0 0 1.5px var(--accent); }
   :is(.pop,.palette) .item .lico { width:28px; height:28px; display:grid; place-items:center; border:1px solid var(--line); border-radius:6px; color:var(--fg-soft); flex:none; }
   :is(.pop,.palette) .item .lico.plain { border:0; width:22px; height:22px; }
   :is(.pop,.palette) .item .meta { flex:1; min-width:0; }
@@ -1860,7 +1861,11 @@
   /* opt-in (openModal aboveMenus): stack one dialog over the menu layer (115)
      so a confirm can appear without dismissing an open popover */
   .modal-scrim.above-menus { z-index:130; }
-  .modal { background:var(--bg); border-radius:var(--radius-xl); box-shadow:var(--shadow-lg); width:440px; max-width:100%; max-height:100%; display:flex; flex-direction:column; overflow:hidden; }
+  .modal { background:var(--bg); border-radius:var(--radius-xl); box-shadow:var(--shadow-lg); width:440px; max-width:100%; max-height:100%; display:flex; flex-direction:column; overflow:hidden;
+    animation:mo-in .13s ease-out; }
+  @keyframes mo-in { from { opacity:0; transform:translateY(6px) scale(.98); } }
+  @keyframes mo-out { to { opacity:0; transform:translateY(4px) scale(.985); } }
+  .modal-scrim.closing .modal { animation:mo-out .12s ease-in forwards; }
   /* command palette (palette.tsx) */
   .palette { width:600px; align-self:flex-start; margin-top:11vh; padding:0 8px 0; max-height:min(64vh, 560px);
     animation:pal-in .13s ease-out; }
@@ -1877,16 +1882,15 @@
   .palette .item { padding:7px 10px; }
   .palette .item .lico.plain { color:var(--muted); }
   .palette .item .lico .emo { font-size:15px; line-height:1; }
-  .palette .item .meta { display:flex; align-items:baseline; gap:12px; }
-  .palette .item .t { flex:1; }
-  .palette .item .d { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .palette .item .d { flex:none; max-width:42%; }
-  .palette .item .d.snip { flex:1 1 100%; }
+  :is(.pop,.palette) .item.sub-r .meta { display:flex; align-items:baseline; gap:12px; }
+  :is(.pop,.palette) .item.sub-r .t { flex:1; }
+  :is(.pop,.palette) .item.sub-r .d { flex:none; max-width:42%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .palette .item .d.snip { flex:1 1 100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .palette .item:has(.snip) .meta { flex-wrap:wrap; gap:1px 12px; }
-  .palette mark { background:transparent; color:var(--accent); font-weight:600; }
-  .palette .item .ret { margin-left:auto; flex:none; opacity:0; transition:opacity .1s; }
-  .palette .item.sel .ret { opacity:1; }
-  .pal-empty { padding:22px 12px 20px; text-align:center; color:var(--muted); font-size:var(--fs-ui); }
+  :is(.pop,.palette) mark { background:transparent; color:var(--accent); font-weight:600; }
+  :is(.pop,.palette) .item .ret { margin-left:auto; flex:none; opacity:0; transition:opacity .1s; }
+  :is(.pop,.palette) .item.sel .ret, :is(.pop,.palette) .item:focus-visible .ret { opacity:1; }
+  :is(.pop,.palette) .pal-empty { padding:22px 12px 20px; text-align:center; color:var(--muted); font-size:var(--fs-ui); }
   .pal-foot { display:flex; align-items:center; gap:12px; padding:8px 10px 9px; margin:4px -8px 0; border-top:1px solid var(--line); color:var(--muted); font-size:var(--fs-xs); }
   .pal-foot .keys { display:flex; align-items:center; gap:4px 10px; flex-wrap:wrap; }
   .pal-foot .kbd { margin-right:2px; }
@@ -1895,7 +1899,8 @@
   .modal-head h3 { margin:0; font-size:18px; font-weight:700; letter-spacing:-.01em; }
   .modal-head p { margin:6px 0 0; color:var(--muted); font-size:var(--fs-ui); }
   .modal-body { padding:18px 22px; overflow-y:auto; }
-  .modal-foot { display:flex; justify-content:flex-end; gap:8px; padding:14px 22px; background:var(--surface); border-top:1px solid var(--line); }
+  .modal-foot { display:flex; justify-content:flex-end; align-items:center; gap:8px; padding:14px 22px; background:var(--surface); border-top:1px solid var(--line); }
+  .modal-hint { margin-right:auto; display:flex; align-items:center; gap:4px 8px; color:var(--muted); font-size:var(--fs-xs); }
   .field-label { font-size:12px; font-weight:600; color:var(--fg-soft); margin:12px 0 5px; }
   .field-label:first-child { margin-top:0; }
   .text-input { width:100%; border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:9px 11px; outline:none; background:var(--surface); font-size:var(--fs-body); }
@@ -1918,6 +1923,12 @@
   .toast { background:var(--fg); color:var(--bg); padding:10px 14px; border-radius:9px; font-size:13px; box-shadow:var(--shadow-lg);
     display:flex; align-items:center; gap:8px; animation:slidein .2s ease; }
   @keyframes slidein { from { opacity:0; transform:translateX(-12px); } }
+  .toast.error { background:var(--danger); color:#fff; }
+  .toast.leaving { animation:toast-out .16s ease-in forwards; pointer-events:none; }
+  @keyframes toast-out { to { opacity:0; transform:translateX(-8px); } }
+  .toast-msg { min-width:0; }
+  .toast-act { margin-left:4px; padding:3px 9px; border-radius:6px; font-weight:600; color:inherit; background:color-mix(in srgb, var(--bg) 16%, transparent); white-space:nowrap; }
+  .toast-act:hover { background:color-mix(in srgb, var(--bg) 28%, transparent); }
 
   /* misc */
   .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%;
@@ -2274,12 +2285,14 @@
       border-radius:var(--radius-xl) var(--radius-xl) 0 0;
       padding-bottom:env(safe-area-inset-bottom);
       animation:sheet-up .22s cubic-bezier(.32,.72,0,1); }
+    .modal-scrim.closing .modal { animation:sheet-out .16s ease-in forwards; }
+    .modal-scrim.closing .modal.palette { animation:sheet-down-out .16s ease-in forwards; }
     .modal.palette { align-self:flex-start; margin-top:0; max-height:80vh; max-height:80dvh;
       padding:env(safe-area-inset-top) 8px 0; border-radius:0 0 var(--radius-xl) var(--radius-xl);
       animation:sheet-down .22s cubic-bezier(.32,.72,0,1); }
-    .palette .item .meta { display:block; }
-    .palette .item .d { max-width:none; }
-    .palette .item .ret, .pal-foot .keys, .pal-head .kbd { display:none; }
+    :is(.pop,.palette) .item.sub-r .meta { display:block; }
+    :is(.pop,.palette) .item.sub-r .d { max-width:none; }
+    :is(.pop,.palette) .item .ret, .pal-foot .keys, .pal-head .kbd, .modal-hint { display:none; }
     .pal-foot .hint { margin-left:0; }
     .pal-close { display:grid; }
     .toasts { left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom)); }
@@ -2288,6 +2301,8 @@
   }
   @keyframes sheet-up { from { transform:translateY(100%); } }
   @keyframes sheet-down { from { transform:translateY(-100%); } }
+  @keyframes sheet-out { to { transform:translateY(100%); } }
+  @keyframes sheet-down-out { to { transform:translateY(-100%); } }
   /* In-flow stand-in for the old two-pane slide: only the entering view
      animates (the other is display:none, document-scroll layout above). */
   @keyframes page-in { from { transform:translateX(28px); opacity:0; } }

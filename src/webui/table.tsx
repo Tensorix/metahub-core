@@ -11,6 +11,7 @@ import {
 } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
 import { imeGhost } from "./keys.ts";
+import { tip } from "./shortcuts.ts";
 import { t } from "./i18n/t.ts";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import {
@@ -1617,6 +1618,7 @@ export function DbTargetList({ currentDb, target, autoFocus, placeholder = t("�
             icon="database"
             label={d.name || t("未命名数据库")}
             sublabel={d.id === currentDb ? t("当前表") : undefined}
+            sub="right"
             checked={d.id === target}
             sel={i === sel}
             onHover={() => setSelIdx(i)}
@@ -1721,7 +1723,7 @@ export function RecordPeek({
       <div class={"peek" + (open ? " open" : "")} style={width != null ? { width: `${width}px` } : undefined}>
         {handle}
         <div class="peek-head">
-          <button class="iconbtn" onClick={close}><Icon name="x" /></button>
+          <button class="iconbtn" {...tip(t("关闭"))} onClick={close}><Icon name="x" /></button>
           {hist && (
             <button class="iconbtn" title={t("返回字段")} onClick={() => setHist(false)}>
               <Icon name="arrowLeft" />
