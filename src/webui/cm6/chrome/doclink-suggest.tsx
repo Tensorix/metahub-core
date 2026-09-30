@@ -18,7 +18,8 @@ import { MenuLabel } from "../../ui.tsx";
 import { docModel } from "../doc-model";
 import { imeGhost } from "../../keys.ts";
 import { deferCoords } from "../defer";
-import { allDocTitles, onDocTitleChange } from "../../doc-titles.ts";
+import { onDocTitleChange } from "../../doc-titles.ts";
+import { matchTitles, type TitleMatch as Match } from "../../title-match.ts";
 
 // An open trigger is the last "[[", with no closing bracket (or a nested
 // opener) between it and the caret. `|` also closes the door: past the pipe
@@ -27,24 +28,7 @@ const OPEN_RE = /\[\[([^\[\]|\n]*)$/;
 const MENU_WIDTH = 300;
 const LIMIT = 8;
 
-interface Match {
-  id: string;
-  title: string;
-}
-
-function matchesFor(query: string): Match[] {
-  const q = query.trim().toLowerCase();
-  const all = allDocTitles();
-  if (!q) return all.slice(0, LIMIT);
-  const starts: Match[] = [];
-  const contains: Match[] = [];
-  for (const m of all) {
-    const title = m.title.toLowerCase();
-    if (title.startsWith(q) || m.id.startsWith(q)) starts.push(m);
-    else if (title.includes(q) || m.id.includes(q)) contains.push(m);
-  }
-  return [...starts, ...contains].slice(0, LIMIT);
-}
+const matchesFor = (query: string): Match[] => matchTitles(query, LIMIT);
 
 interface Active {
   openFrom: number; // position of the first "[" of the trigger

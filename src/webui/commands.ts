@@ -6,6 +6,8 @@ export type CommandGroup = "nav" | "create" | "doc";
 export interface Command {
   id: string;
   label: string;
+  /** English name (tIn("en", key)) — matched alongside `label`, shown as a hint in other locales. */
+  en: string;
   group: CommandGroup;
   icon?: string;
   /** shortcuts.ts id, shown as a key-cap badge. */
@@ -49,4 +51,19 @@ export function listCommands(): Command[] {
 export function onCommandsChange(cb: () => void): () => void {
   listeners.add(cb);
   return () => listeners.delete(cb);
+}
+
+const initials = (s: string) =>
+  s
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .map((w) => w[0]!)
+    .join("")
+    .toLowerCase();
+
+/** Case-insensitive substring on the localized label or the English name, or the English initials (`os` → Open settings). */
+export function commandMatches(c: Pick<Command, "label" | "en">, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return c.label.toLowerCase().includes(q) || c.en.toLowerCase().includes(q) || initials(c.en).startsWith(q);
 }

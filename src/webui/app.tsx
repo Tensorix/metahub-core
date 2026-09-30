@@ -26,7 +26,7 @@ import { DocView, type DocMode, type DocViewHandle } from "./editor.tsx";
 import { SettingsView } from "./settings.tsx";
 import { resolvePage, pageLabel } from "./settings/nav.ts";
 import { LANG_KEY, resolveLocale } from "./i18n/locale.ts";
-import { t } from "./i18n/t.ts";
+import { t, tIn } from "./i18n/t.ts";
 import { cmpVer } from "./version.ts";
 import { SitesView, SiteView, openSiteMenu } from "./sites.tsx";
 import type { Site } from "./api.ts";
@@ -38,6 +38,7 @@ import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { pressed, tip } from "./shortcuts.ts";
 import { openPalette, type PaletteMode } from "./palette.tsx";
 import { registerCommands } from "./commands.ts";
+import { recordRecent } from "./recents.ts";
 import { type View, parseHash, viewToHash } from "./view.ts";
 import { QuickNote } from "./quicknote/quicknote.tsx";
 import { QuickBoard } from "./quickboard/quickboard.tsx";
@@ -56,6 +57,7 @@ import {
   promptDialog,
   toast,
   MOBILE_MQ,
+  SnippetText,
 } from "./ui.tsx";
 
 // Single-page Preact app: browse/edit databases (Notion-like tables) and
@@ -226,6 +228,7 @@ function App() {
     pendingFocusTitle.current = !!opts?.focusTitle && v.kind === "doc";
     setView(v);
   };
+  useEffect(() => recordRecent(view), [view]);
 
   useEffect(() => {
     // Normalize a stray non-route hash (e.g. a browser opening /#quick) so
@@ -266,12 +269,15 @@ function App() {
   // ⌘⇧P palette (latest-closure refs).
   const databasesRef = useRef(databases);
   databasesRef.current = databases;
+  const docsRef = useRef(docs);
+  docsRef.current = docs;
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const showPalette = useCallback((mode: PaletteMode) => {
     openPalette(mode, {
       navigate: (v, o) => navigateRef.current(v, o),
-      dbName: (id) => databasesRef.current.find((d) => d.id === id)?.name,
+      docs: () => docsRef.current,
+      databases: () => databasesRef.current,
     });
   }, []);
 
@@ -567,22 +573,22 @@ function App() {
   };
   const run = (k: string) => () => cmdRef.current[k]?.();
   useEffect(() => registerCommands([
-    { id: "openById", label: t("按 ID 打开…"), group: "nav", icon: "hash", order: 0, run: run("openById") },
-    { id: "search", label: t("搜索"), group: "nav", icon: "search", shortcut: "search", order: 1, run: run("search") },
-    { id: "settings", label: t("打开设置"), group: "nav", icon: "settings", shortcut: "settings", run: run("settings") },
-    { id: "sidebar", label: t("折叠 / 展开侧栏"), group: "nav", icon: "monitor", shortcut: "sidebar", run: run("sidebar") },
+    { id: "openById", label: t("按 ID 打开…"), en: tIn("en", "按 ID 打开…"), group: "nav", icon: "hash", order: 0, run: run("openById") },
+    { id: "search", label: t("搜索"), en: tIn("en", "搜索"), group: "nav", icon: "search", shortcut: "search", order: 1, run: run("search") },
+    { id: "settings", label: t("打开设置"), en: tIn("en", "打开设置"), group: "nav", icon: "settings", shortcut: "settings", run: run("settings") },
+    { id: "sidebar", label: t("折叠 / 展开侧栏"), en: tIn("en", "折叠 / 展开侧栏"), group: "nav", icon: "monitor", shortcut: "sidebar", run: run("sidebar") },
     ...(isDesktop ? [
-      { id: "back", label: t("后退"), group: "nav" as const, icon: "arrowLeft", shortcut: "back", run: run("back") },
-      { id: "forward", label: t("前进"), group: "nav" as const, icon: "arrowRight", shortcut: "forward", run: run("forward") },
+      { id: "back", label: t("后退"), en: tIn("en", "后退"), group: "nav" as const, icon: "arrowLeft", shortcut: "back", run: run("back") },
+      { id: "forward", label: t("前进"), en: tIn("en", "前进"), group: "nav" as const, icon: "arrowRight", shortcut: "forward", run: run("forward") },
     ] : []),
   ]), [isDesktop]);
   useEffect(() => {
     if (!activeDocId) return;
     return registerCommands([
-      { id: "toggleSource", label: t("块 / 代码方式切换"), group: "doc", icon: "code", shortcut: "toggleSource", run: run("toggleSource") },
-      { id: "docWide", label: t("宽屏模式"), group: "doc", icon: "maximize", run: run("docWide") },
-      { id: "docHistory", label: t("版本历史"), group: "doc", icon: "history", run: run("docHistory") },
-      { id: "copyDocId", label: t("复制 ID"), group: "doc", icon: "hash", run: run("copyDocId") },
+      { id: "toggleSource", label: t("块 / 代码方式切换"), en: tIn("en", "块 / 代码方式切换"), group: "doc", icon: "code", shortcut: "toggleSource", run: run("toggleSource") },
+      { id: "docWide", label: t("宽屏模式"), en: tIn("en", "宽屏模式"), group: "doc", icon: "maximize", run: run("docWide") },
+      { id: "docHistory", label: t("版本历史"), en: tIn("en", "版本历史"), group: "doc", icon: "history", run: run("docHistory") },
+      { id: "copyDocId", label: t("复制 ID"), en: tIn("en", "复制 ID"), group: "doc", icon: "hash", run: run("copyDocId") },
     ]);
   }, [activeDocId]);
 
@@ -910,14 +916,6 @@ function EmptyState({ onNewDoc }: { onNewDoc: () => void }) {
       <button class="estate-link" onClick={onNewDoc}>{t("＋ 新建文档")}</button>
     </div>
   );
-}
-
-/** FTS snippets are plain text with `[..]` wrapping each matched term (see
- *  core/search.ts). Render them as text nodes with <mark> around the wrapped
- *  spans — never as HTML, so document content can't inject markup. */
-function SnippetText({ text }: { text: string }) {
-  const parts = text.split(/\[([^\[\]]*)\]/g);
-  return <>{parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : p))}</>;
 }
 
 function SearchView({ q, onOpenDoc, onOpenDb }: { q: string; onOpenDoc: (id: string) => void; onOpenDb: (id: string) => void }) {

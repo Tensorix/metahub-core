@@ -1862,10 +1862,33 @@
   .modal-scrim.above-menus { z-index:130; }
   .modal { background:var(--bg); border-radius:var(--radius-xl); box-shadow:var(--shadow-lg); width:440px; max-width:100%; max-height:100%; display:flex; flex-direction:column; overflow:hidden; }
   /* command palette (palette.tsx) */
-  .palette { width:560px; align-self:flex-start; margin-top:12vh; padding:8px; max-height:min(60vh, 520px); }
-  .palette .selsearch { margin:0 0 6px; }
-  .palette .rellist { max-height:none; flex:1; min-height:0; }
-  .palette .item .d { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .palette { width:600px; align-self:flex-start; margin-top:11vh; padding:0 8px 0; max-height:min(64vh, 560px);
+    animation:pal-in .13s ease-out; }
+  @keyframes pal-in { from { opacity:0; transform:translateY(-6px) scale(.985); } }
+  .pal-head { display:flex; align-items:center; gap:10px; padding:13px 8px 12px 10px; margin:0 0 6px; border-bottom:1px solid var(--line); color:var(--muted); }
+  .pal-head input { flex:1; width:0; min-width:0; border:0; background:transparent; outline:none; font:inherit; font-size:16px; color:var(--fg); }
+  .pal-head input::placeholder { color:var(--muted); }
+  .pal-head .clear { display:grid; place-items:center; width:20px; height:20px; border-radius:50%; color:var(--muted); flex:none; }
+  .pal-head .clear:hover { background:var(--hover-2); color:var(--fg); }
+  .pal-list { flex:1; min-height:0; overflow-y:auto; padding-bottom:4px; overscroll-behavior:contain; }
+  .pal-sec + .pal-sec { margin-top:4px; }
+  .palette .item { padding:7px 10px; }
+  .palette .item .lico.plain { color:var(--muted); }
+  .palette .item .lico .emo { font-size:15px; line-height:1; }
+  .palette .item .meta { display:flex; align-items:baseline; gap:12px; }
+  .palette .item .t { flex:1; }
+  .palette .item .d { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .palette .item .d { flex:none; max-width:42%; }
+  .palette .item .d.snip { flex:1 1 100%; }
+  .palette .item:has(.snip) .meta { flex-wrap:wrap; gap:1px 12px; }
+  .palette mark { background:transparent; color:var(--accent); font-weight:600; }
+  .palette .item .ret { margin-left:auto; flex:none; opacity:0; transition:opacity .1s; }
+  .palette .item.sel .ret { opacity:1; }
+  .pal-empty { padding:22px 12px 20px; text-align:center; color:var(--muted); font-size:var(--fs-ui); }
+  .pal-foot { display:flex; align-items:center; gap:12px; padding:8px 10px 9px; margin:4px -8px 0; border-top:1px solid var(--line); color:var(--muted); font-size:var(--fs-xs); }
+  .pal-foot .keys { display:flex; align-items:center; gap:4px 10px; flex-wrap:wrap; }
+  .pal-foot .kbd { margin-right:2px; }
+  .pal-foot .hint { margin-left:auto; white-space:nowrap; }
   .modal-head { padding:20px 22px 0; }
   .modal-head h3 { margin:0; font-size:18px; font-weight:700; letter-spacing:-.01em; }
   .modal-head p { margin:6px 0 0; color:var(--muted); font-size:var(--fs-ui); }
@@ -2245,6 +2268,11 @@
     /* Overlays: dialogs become bottom sheets (centered cards fight the soft
        keyboard), and fixed-bottom chrome stays clear of the home indicator. */
     .modal-scrim { align-items:flex-end; padding:0; }
+    .palette { width:100%; margin-top:0; max-height:80vh; max-height:80dvh; }
+    .palette .item .meta { display:block; }
+    .palette .item .d { max-width:none; }
+    .palette .item .ret, .pal-foot .keys, .pal-head .kbd { display:none; }
+    .pal-foot .hint { margin-left:0; }
     .modal { width:100%; max-height:92vh; max-height:92dvh;
       border-radius:var(--radius-xl) var(--radius-xl) 0 0;
       padding-bottom:env(safe-area-inset-bottom);

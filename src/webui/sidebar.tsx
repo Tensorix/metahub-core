@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type PropType, type PropConfig, type Site } from "./api.ts";
 import { NewSiteModal, SITES_CHANGED, openSiteMenu } from "./sites.tsx";
-import { t } from "./i18n/t.ts";
+import { t, tIn } from "./i18n/t.ts";
 import { Icon } from "./icons.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
@@ -161,11 +161,11 @@ export function Sidebar(props: SidebarProps) {
   useEffect(() => {
     const run = (k: string) => () => cmdRef.current[k]?.();
     return registerCommands([
-      { id: "newDoc", label: t("新建文档"), group: "create", icon: "doc", shortcut: "newDoc", run: run("newDoc") },
-      { id: "newDb", label: t("新建数据库"), group: "create", icon: "database", shortcut: "newDb", run: run("newDb") },
-      { id: "tabDocs", order: 80, label: t("侧栏：文档"), group: "nav", icon: "doc", shortcut: "tabDocs", run: run("tabDocs") },
-      { id: "tabDb", order: 80, label: t("侧栏：数据表"), group: "nav", icon: "table", shortcut: "tabDb", run: run("tabDb") },
-      { id: "tabSites", order: 80, label: t("侧栏：站点"), group: "nav", icon: "globe", shortcut: "tabSites", run: run("tabSites") },
+      { id: "newDoc", label: t("新建文档"), en: tIn("en", "新建文档"), group: "create", icon: "fileText", shortcut: "newDoc", run: run("newDoc") },
+      { id: "newDb", label: t("新建数据库"), en: tIn("en", "新建数据库"), group: "create", icon: "database", shortcut: "newDb", run: run("newDb") },
+      { id: "tabDocs", order: 80, label: t("侧栏：文档"), en: tIn("en", "侧栏：文档"), group: "nav", icon: "fileText", shortcut: "tabDocs", run: run("tabDocs") },
+      { id: "tabDb", order: 80, label: t("侧栏：数据表"), en: tIn("en", "侧栏：数据表"), group: "nav", icon: "table", shortcut: "tabDb", run: run("tabDb") },
+      { id: "tabSites", order: 80, label: t("侧栏：站点"), en: tIn("en", "侧栏：站点"), group: "nav", icon: "globe", shortcut: "tabSites", run: run("tabSites") },
     ]);
   }, []);
   // Follow navigation: opening a doc (search result, backlink, history) should

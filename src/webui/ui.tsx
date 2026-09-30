@@ -533,6 +533,14 @@ export function promptDialog(opts: {
   });
 }
 
+/** FTS snippets are plain text with `[..]` wrapping each matched term (see
+ *  core/search.ts). Render them as text nodes with <mark> around the wrapped
+ *  spans — never as HTML, so document content can't inject markup. */
+export function SnippetText({ text }: { text: string }) {
+  const parts = text.split(/\[([^\[\]]*)\]/g);
+  return <>{parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : p))}</>;
+}
+
 /** The single mount point for all imperative UI. Place once at app root. */
 export function UiHost() {
   const toasts = toastStore.use();

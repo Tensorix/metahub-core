@@ -1,11 +1,17 @@
 /** @jsxImportSource preact */
-// ⌘⇧P palette: registered commands + entities resolved via /api/resolve. `open` mode = 「按 ID 打开…」.
-import { useEffect, useRef, useState } from "preact/hooks";
-import { api, type LookupHit } from "./api.ts";
+// ⌘⇧P palette: recents, registered commands, local title matches, /api/resolve
+// hits and full-text hits in one list. `open` mode = 「按 ID 打开…」.
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
+import { api, type Db, type DocSummary, type Hit, type LookupHit } from "./api.ts";
 import { Icon } from "./icons.tsx";
+import { Kbd } from "./kbd.tsx";
 import { t } from "./i18n/t.ts";
-import { MenuItem, MenuLabel, closeModal, openModal } from "./ui.tsx";
-import { COMMAND_GROUPS, listCommands, onCommandsChange, type Command } from "./commands.ts";
+import { MenuItem, MenuLabel, SnippetText, closeModal, openModal } from "./ui.tsx";
+import { COMMAND_GROUPS, commandMatches, listCommands, onCommandsChange, type Command } from "./commands.ts";
+import { resolveLocale } from "./i18n/locale.ts";
+import { listRecents } from "./recents.ts";
+import { matchTitles } from "./title-match.ts";
 import type { Navigate } from "./view.ts";
 import { shortcutAvailable } from "./shortcuts.ts";
 
@@ -13,8 +19,8 @@ export type PaletteMode = "commands" | "open";
 
 export interface PaletteCtx {
   navigate: Navigate;
-  /** Database display name for a hit's owning db (undefined while nav loads). */
-  dbName: (id: string) => string | undefined;
+  docs: () => DocSummary[];
+  databases: () => Db[];
 }
 
 /** Input → resolver ref: hash link (deepest id), `[[id|text]]`, or the text itself. */
@@ -29,66 +35,197 @@ export function refFromInput(text: string): string {
 
 const looksLikeId = (ref: string) => /^(doc|db|rec)_/.test(ref);
 
-export function openHit(hit: LookupHit, navigate: Navigate): void {
-  if (hit.kind === "doc") navigate({ kind: "doc", id: hit.id });
-  else if (hit.kind === "db") navigate({ kind: "db", id: hit.id });
-  else if (hit.database_id) navigate({ kind: "db", id: hit.database_id, rec: hit.id });
+type Kind = LookupHit["kind"];
+
+interface Entry {
+  kind: Kind;
+  id: string;
+  label: string;
+  database_id: string | null;
+  /** Highlighted span of `label`. */
+  hl?: [number, number];
+  /** Full-text snippet (content hits only). */
+  snippet?: string;
 }
 
-const HIT_ICON: Record<LookupHit["kind"], string> = { doc: "doc", db: "database", rec: "table" };
-const HIT_NOUN: Record<LookupHit["kind"], string> = { doc: t("文档"), db: t("数据库"), rec: t("记录") };
+export function openEntry(e: { kind: Kind; id: string; database_id: string | null }, navigate: Navigate): void {
+  if (e.kind === "doc") navigate({ kind: "doc", id: e.id });
+  else if (e.kind === "db") navigate({ kind: "db", id: e.id });
+  else if (e.database_id) navigate({ kind: "db", id: e.database_id, rec: e.id });
+}
 
-type Row = { key: string; cmd: Command } | { key: string; hit: LookupHit };
+const KIND_ICON: Record<Kind, string> = { doc: "fileText", db: "database", rec: "table" };
+const kindNoun = (k: Kind) => (k === "doc" ? t("文档##kind") : k === "db" ? t("数据库") : t("记录"));
+const untitled = (k: Kind) => (k === "db" ? t("未命名数据库") : k === "doc" ? t("无标题") : t("未命名记录"));
+const kindOf = (id: string): Kind => (id.startsWith("db_") ? "db" : id.startsWith("rec_") ? "rec" : "doc");
+
+type Row = { key: string; cmd: Command } | { key: string; entry: Entry };
+interface Section {
+  key: string;
+  label: string | null;
+  rows: Row[];
+}
 
 export function openPalette(mode: PaletteMode, ctx: PaletteCtx): void {
   openModal(<Palette mode={mode} ctx={ctx} />);
 }
 
+function useDebounced<T>(active: boolean, key: string, ms: number, run: () => Promise<T>, empty: T): T {
+  const [val, setVal] = useState<T>(empty);
+  const seq = useRef(0);
+  useEffect(() => {
+    const my = ++seq.current;
+    if (!active) {
+      setVal(empty);
+      return;
+    }
+    const timer = setTimeout(() => {
+      run().then(
+        (v) => my === seq.current && setVal(v),
+        () => my === seq.current && setVal(empty),
+      );
+    }, ms);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, key]);
+  return val;
+}
+
+function Highlight({ text, span }: { text: string; span?: [number, number] }) {
+  if (!span || span[1] <= 0) return <>{text}</>;
+  const [s, n] = span;
+  return (
+    <>
+      {text.slice(0, s)}
+      <mark>{text.slice(s, s + n)}</mark>
+      {text.slice(s + n)}
+    </>
+  );
+}
+
+/** Client-side highlight for snippets that carry no `[..]` markers (CJK LIKE fallback). */
+function Snippet({ text, q }: { text: string; q: string }) {
+  if (/\[[^\[\]]*\]/.test(text) || !q) return <SnippetText text={text} />;
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  return <Highlight text={text} span={i >= 0 ? [i, q.length] : undefined} />;
+}
+
 function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<LookupHit[]>([]);
-  const [resolvedFor, setResolvedFor] = useState("");
   const [selIdx, setSelIdx] = useState(0);
   const [, bump] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const seq = useRef(0);
-
   useEffect(() => onCommandsChange(() => bump((n) => n + 1)), []);
 
+  const q = query.trim();
+  const ql = q.toLowerCase();
+  const showEn = resolveLocale() !== "en";
   const ref = refFromInput(query);
-  useEffect(() => {
-    if (!ref) {
-      seq.current++;
-      setHits([]);
-      setResolvedFor("");
-      return;
+  const idMode = mode === "open" || looksLikeId(ref);
+
+  const docs = ctx.docs();
+  const dbs = ctx.databases();
+  const docById = useMemo(() => new Map(docs.map((d) => [d.id, d])), [docs]);
+  const dbById = useMemo(() => new Map(dbs.map((d) => [d.id, d])), [dbs]);
+
+  const ownerOf = (id: string, kind: Kind, fallback: string | null): string | null =>
+    kind === "doc" ? (docById.get(id)?.database_id ?? fallback) : kind === "rec" ? fallback : null;
+
+  /** Top-down path: [db name] › ancestor titles (docs), or the db name (records). */
+  const crumb = (e: Entry): string => {
+    const parts: string[] = [];
+    if (e.kind === "doc") {
+      let cur = docById.get(e.id);
+      const seen = new Set<string>();
+      while (cur?.parent_id && !seen.has(cur.parent_id)) {
+        seen.add(cur.parent_id);
+        cur = docById.get(cur.parent_id);
+        if (cur) parts.unshift(cur.title || t("无标题"));
+      }
+      const dbId = cur?.database_id ?? e.database_id;
+      if (dbId) parts.unshift(dbById.get(dbId)?.name || t("未命名数据库"));
+    } else if (e.kind === "rec" && e.database_id) {
+      parts.push(dbById.get(e.database_id)?.name || t("未命名数据库"));
     }
-    const my = ++seq.current;
-    const timer = setTimeout(() => {
-      api.resolve(ref, 20)
-        .then((rows) => {
-          if (my !== seq.current) return;
-          setHits(rows);
-          setResolvedFor(ref);
-        })
-        .catch(() => {
-          if (my !== seq.current) return;
-          setHits([]);
-          setResolvedFor(ref);
-        });
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [ref]);
+    return parts.join(" › ");
+  };
 
-  const q = query.trim().toLowerCase();
-  const cmds =
-    mode === "open" ? [] : q ? listCommands().filter((c) => c.label.toLowerCase().includes(q)) : listCommands();
-  const hitRows: Row[] = hits.map((h) => ({ key: "h:" + h.id, hit: h }));
-  const cmdRows: Row[] = cmds.map((c) => ({ key: "c:" + c.id, cmd: c }));
-  const idFirst = looksLikeId(ref);
-  const rows: Row[] = idFirst ? [...hitRows, ...cmdRows] : [...cmdRows, ...hitRows];
+  const resolved = useDebounced<LookupHit[]>(!!ref, ref, 120, () => api.resolve(ref, 20), []);
+  const searchable = mode !== "open" && !looksLikeId(ref) && (q.length >= 2 || /[^\x00-\x7f]/.test(q));
+  const found = useDebounced<Hit[]>(searchable, q, 200, () => api.search(q, 6), []);
+
+  const sections: Section[] = [];
+  const seen = new Set<string>();
+  const entryRow = (e: Entry): Row | null => {
+    if (seen.has(e.id)) return null;
+    seen.add(e.id);
+    return { key: "e:" + e.id, entry: e };
+  };
+  const cmdRow = (c: Command): Row => ({ key: "c:" + c.id, cmd: c });
+
+  if (!q) {
+    const recent: Row[] = [];
+    for (const r of listRecents()) {
+      const label = r.kind === "doc" ? docById.get(r.id)?.title : dbById.get(r.id)?.name;
+      if (label === undefined) continue;
+      const row = entryRow({ kind: r.kind, id: r.id, label, database_id: ownerOf(r.id, r.kind, null) });
+      if (row) recent.push(row);
+    }
+    if (recent.length) sections.push({ key: "recent", label: t("最近打开"), rows: recent });
+    if (mode !== "open") {
+      const all = listCommands();
+      for (const g of COMMAND_GROUPS) {
+        const rows = all.filter((c) => c.group === g.key).map(cmdRow);
+        if (rows.length) sections.push({ key: "g:" + g.key, label: g.label, rows });
+      }
+    }
+  } else {
+    const open: Row[] = [];
+    const exact = resolved.filter((h) => h.id === ref);
+    for (const h of exact) {
+      const row = entryRow({ ...h });
+      if (row) open.push(row);
+    }
+    for (const m of matchTitles(ql, 8)) {
+      const kind = kindOf(m.id);
+      const row = entryRow({
+        kind,
+        id: m.id,
+        label: m.title,
+        database_id: ownerOf(m.id, kind, null),
+        hl: m.start >= 0 ? [m.start, m.len] : undefined,
+      });
+      if (row) open.push(row);
+    }
+    for (const h of resolved) {
+      const row = entryRow({ ...h, database_id: ownerOf(h.id, h.kind, h.database_id) });
+      if (row) open.push(row);
+    }
+    const cmds = mode === "open" ? [] : listCommands().filter((c) => commandMatches(c, q)).map(cmdRow);
+    const content: Row[] = [];
+    for (const h of found) {
+      const kind: Kind = h.type === "document" ? "doc" : "rec";
+      const row = entryRow({
+        kind,
+        id: h.id,
+        label: h.title ?? (kind === "doc" ? docById.get(h.id)?.title ?? "" : ""),
+        database_id: h.database_id,
+        snippet: h.snippet,
+      });
+      if (row) content.push(row);
+    }
+    if (idMode) {
+      if (open.length) sections.push({ key: "open", label: t("打开"), rows: open });
+      if (cmds.length) sections.push({ key: "cmds", label: t("命令"), rows: cmds });
+    } else {
+      if (open.length) sections.push({ key: "open", label: t("打开"), rows: open });
+      if (cmds.length) sections.push({ key: "cmds", label: t("命令"), rows: cmds });
+      if (content.length) sections.push({ key: "content", label: t("内容匹配"), rows: content });
+    }
+  }
+
+  const rows = sections.flatMap((s) => s.rows);
   const sel = Math.min(selIdx, Math.max(0, rows.length - 1));
-
   useEffect(() => {
     listRef.current?.querySelector(".item.sel")?.scrollIntoView({ block: "nearest" });
   }, [sel, rows.length]);
@@ -96,59 +233,62 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
   const pick = (r: Row) => {
     closeModal();
     if ("cmd" in r) r.cmd.run();
-    else openHit(r.hit, ctx.navigate);
+    else openEntry(r.entry, ctx.navigate);
   };
 
-  const settled = resolvedFor === ref;
-  const empty = rows.length === 0 && (!ref || settled);
-  const notFound = empty && !!ref && looksLikeId(ref);
+  const empty = rows.length === 0;
+  const notFound = empty && !!q && looksLikeId(ref);
 
-  const renderRows = (list: Row[], offset: number) =>
-    list.map((r, i) => {
-      const idx = offset + i;
-      if ("cmd" in r) {
-        return (
-          <MenuItem
-            key={r.key}
-            icon={r.cmd.icon}
-            label={r.cmd.label}
-            shortcut={r.cmd.shortcut && shortcutAvailable(r.cmd.shortcut) ? r.cmd.shortcut : undefined}
-            sel={idx === sel}
-            onHover={() => setSelIdx(idx)}
-            onClick={() => pick(r)}
-          />
-        );
-      }
-      const h = r.hit;
-      const owner = h.database_id ? ctx.dbName(h.database_id) : undefined;
-      const where = [HIT_NOUN[h.kind], owner ? `· ${owner}` : "", h.id].filter(Boolean).join(" ");
+  let idx = 0;
+  const renderRow = (r: Row) => {
+    const i = idx++;
+    const isSel = i === sel;
+    if ("cmd" in r) {
       return (
         <MenuItem
           key={r.key}
-          icon={HIT_ICON[h.kind]}
-          label={h.label || (h.kind === "db" ? t("未命名数据库") : h.kind === "doc" ? t("无标题") : t("未命名记录"))}
-          sublabel={where}
-          sel={idx === sel}
-          onHover={() => setSelIdx(idx)}
+          icon={r.cmd.icon}
+          label={r.cmd.label}
+          sublabel={showEn && r.cmd.en !== r.cmd.label ? r.cmd.en : undefined}
+          shortcut={r.cmd.shortcut && shortcutAvailable(r.cmd.shortcut) ? r.cmd.shortcut : undefined}
+          sel={isSel}
+          onHover={() => setSelIdx(i)}
           onClick={() => pick(r)}
         />
       );
-    });
-
-  const first = idFirst ? hitRows : cmdRows;
-  const second = idFirst ? cmdRows : hitRows;
-  const label = (list: Row[]) => (list === hitRows ? t("打开") : null);
-
-  const sections: { key: string; label: string | null; list: Row[]; offset: number }[] = [];
-  if (first.length) sections.push({ key: "a", label: label(first), list: first, offset: 0 });
-  if (second.length) sections.push({ key: "b", label: label(second), list: second, offset: first.length });
+    }
+    const e = r.entry;
+    const emoji = e.kind === "db" ? dbById.get(e.id)?.icon || "🗂️" : null;
+    const where = idMode ? e.id : crumb(e);
+    const title: ComponentChildren = e.label ? (
+      <Highlight text={e.label} span={e.hl} />
+    ) : e.kind === "rec" && e.snippet ? (
+      kindNoun(e.kind)
+    ) : (
+      untitled(e.kind)
+    );
+    return (
+      <button key={r.key} class={"item" + (isSel ? " sel" : "")} onClick={() => pick(r)} onMouseEnter={() => setSelIdx(i)}>
+        <span class="lico plain">{emoji ? <span class="emo">{emoji}</span> : <Icon name={KIND_ICON[e.kind]} cls="ico sm" />}</span>
+        <span class="meta">
+          <span class="t">{title}</span>
+          {e.snippet ? (
+            <span class="d snip"><Snippet text={e.snippet} q={q} /></span>
+          ) : (
+            where && <span class="d crumb">{where}</span>
+          )}
+        </span>
+        <span class="ret" aria-hidden="true"><kbd class="kbd"><span class="key sym">↵</span></kbd></span>
+      </button>
+    );
+  };
 
   return (
     <div class="modal palette" onMouseDown={(e) => e.stopPropagation()}>
-      <div class="selsearch">
-        <Icon name={mode === "open" ? "hash" : "search"} cls="ico sm" />
+      <div class="pal-head">
+        <Icon name={mode === "open" ? "hash" : "search"} cls="ico" />
         <input
-          placeholder={mode === "open" ? t("输入 ID、前缀或名称") : t("输入命令、ID 或名称")}
+          placeholder={mode === "open" ? t("输入 ID、前缀或名称") : t("搜索页面、输入命令或粘贴 ID")}
           value={query}
           ref={(el) => { if (el && document.activeElement !== el) el.focus(); }}
           onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setSelIdx(0); }}
@@ -158,43 +298,32 @@ function Palette({ mode, ctx }: { mode: PaletteMode; ctx: PaletteCtx }) {
             else if (e.key === "Enter") { e.preventDefault(); if (rows[sel]) pick(rows[sel]); }
           }}
         />
-        {query && (
+        {query ? (
           <button class="clear" title={t("清空")} onMouseDown={(e) => e.preventDefault()} onClick={() => { setQuery(""); setSelIdx(0); }}>
             <Icon name="x" cls="ico sm" />
           </button>
+        ) : (
+          <Kbd combo={{ key: "Escape" }} />
         )}
       </div>
-      <div ref={listRef} class="rellist">
-        {sections.map((s) => {
-          const grouped = s.list === cmdRows && !q;
-          if (!grouped) {
-            return (
-              <div key={s.key}>
-                {s.label && <MenuLabel>{s.label}</MenuLabel>}
-                {renderRows(s.list, s.offset)}
-              </div>
-            );
-          }
-          let off = s.offset;
-          return (
-            <div key={s.key}>
-              {COMMAND_GROUPS.map((g) => {
-                const part = s.list.filter((r) => "cmd" in r && r.cmd.group === g.key);
-                if (!part.length) return null;
-                const start = off;
-                off += part.length;
-                return (
-                  <div key={g.key}>
-                    <MenuLabel>{g.label}</MenuLabel>
-                    {renderRows(part, start)}
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
-        {notFound && <MenuLabel>{t("未找到 {ref}，可能未同步或已删除", { ref })}</MenuLabel>}
-        {empty && !notFound && <MenuLabel>{ref ? t("无匹配") : t("暂无可用命令")}</MenuLabel>}
+      <div ref={listRef} class="pal-list">
+        {sections.map((s) => (
+          <div key={s.key} class="pal-sec">
+            {s.label && <MenuLabel>{s.label}</MenuLabel>}
+            {s.rows.map(renderRow)}
+          </div>
+        ))}
+        {notFound && <div class="pal-empty">{t("未找到 {ref}，可能未同步或已删除", { ref })}</div>}
+        {empty && !notFound && q && <div class="pal-empty">{t("没有匹配的页面或命令")}</div>}
+        {empty && !q && <div class="pal-empty">{t("暂无可用命令")}</div>}
+      </div>
+      <div class="pal-foot">
+        <span class="keys">
+          <kbd class="kbd"><span class="key sym">↑</span><span class="key sym">↓</span></kbd> {t("选择")}
+          <kbd class="kbd"><span class="key sym">↵</span></kbd> {t("打开")}
+          <kbd class="kbd"><span class="key">Esc</span></kbd> {t("关闭")}
+        </span>
+        <span class="hint">{t("可粘贴 ID 或链接")}</span>
       </div>
     </div>
   );
