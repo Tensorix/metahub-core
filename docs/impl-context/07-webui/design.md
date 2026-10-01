@@ -116,9 +116,9 @@ v1（§1–6）把"查看 + 常见编辑"做扎实，但编辑面仍偏简陋：
 
 ### 7.3 v1 范围外（避免改 schema，明确标注）
 - 数据库描述字段、文档独立 emoji 图标（需加列）。
-- 保存视图 / 持久化筛选排序（v2 排序为客户端临时态；看板/日历占位）。
+- ~~保存视图 / 持久化筛选排序~~——已于 [31-table-views](../31-table-views/design.md) 落地（视图存 `db.meta.views`，筛选/排序/隐藏/分组字段/计算行随库同步）。
 - ~~文档同级顺序~~、表格行手动拖拽顺序的**持久化**（跨层级移动 `parent_id` 已持久化）。
-  - **后续补充**：文档同级顺序已落地——documents 新增 `order_key`（per-parent fractional index），WebUI 侧栏拖拽走 `PATCH /api/document/move`（`moveDocument` before/after/into），父级与顺序由 core `placeInSiblings` 一处保持一致；详见 [data-model.md](../../system-design/data-model.md) 的 documents 段。表格行手动排序仍为缺口。
+  - **后续补充**：文档同级顺序已落地——documents 新增 `order_key`（per-parent fractional index），WebUI 侧栏拖拽走 `PATCH /api/document/move`（`moveDocument` before/after/into），父级与顺序由 core `placeInSiblings` 一处保持一致；详见 [data-model.md](../../system-design/data-model.md) 的 documents 段。表格行手动排序后来也已落地（records `order_key` + `PATCH /api/record/order`）。
 
 ### 7.4 涉及文件（增量）
 - 后端：改 `src/core/databases.ts`、`src/core/properties.ts`、`src/core/sync/webui-routes.ts`；新增 `src/core/{databases,properties}.test.ts`。

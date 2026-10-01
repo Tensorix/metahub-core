@@ -277,11 +277,8 @@ export function Sidebar(props: SidebarProps) {
           label={isDbCollapsed(db) ? t("移出折叠组") : t("折叠此数据库")}
           onClick={() => {
             close();
-            // meta is a whole-object register — merge the current value in.
             guard(async () => {
-              await api.updateDatabase(db.id, {
-                meta: { ...(db.meta ?? {}), collapsed: !isDbCollapsed(db) },
-              });
+              await api.updateDatabase(db.id, { meta: { collapsed: !isDbCollapsed(db) } });
             });
           }}
         />

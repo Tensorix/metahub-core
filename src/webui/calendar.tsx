@@ -20,15 +20,22 @@ export function CalendarView({
   onCommitValue,
   onCreate,
   onOpenRecord,
+  dateField,
+  onDateFieldChange,
 }: {
   props: Prop[];
   records: Rec[];
   onCommitValue: (rec: Rec, prop: Prop, value: unknown) => void;
   onCreate: (values: Record<string, unknown>) => void;
   onOpenRecord: (id: string) => void;
+  /** Controlled date property id (saved on the view); omit for per-mount state. */
+  dateField?: string | null;
+  onDateFieldChange?: (id: string) => void;
 }) {
   const dateProps = props.filter((p) => p.type === "date");
-  const [dateId, setDateId] = useState<string | null>(null);
+  const [ownDateId, setOwnDateId] = useState<string | null>(null);
+  const dateId = dateField !== undefined ? dateField : ownDateId;
+  const setDateId = (id: string) => { onDateFieldChange?.(id); if (dateField === undefined) setOwnDateId(id); };
   const dateProp = props.find((p) => p.id === dateId) ?? dateProps[0] ?? null;
   const now = today();
   const [cursor, setCursor] = useState<{ y: number; m: number }>({ y: now.getFullYear(), m: now.getMonth() });

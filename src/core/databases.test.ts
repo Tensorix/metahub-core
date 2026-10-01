@@ -10,6 +10,7 @@ import {
 } from "./databases.ts";
 import { addProperty, listProperties } from "./properties.ts";
 import { createRecord, listRecords } from "./records.ts";
+import { changesSince, ingest } from "./crdt.ts";
 
 function newDb(node = "test-node"): Database {
   const db = new Database(":memory:");
@@ -110,9 +111,11 @@ test("meta is a generic replicated JSON register (round-trip, clear, duplicate)"
   expect(set.meta).toEqual({ collapsed: true, tag: "site" });
   expect(getDatabase(db, d.id)!.meta).toEqual({ collapsed: true, tag: "site" });
 
-  // whole-object register: an update replaces, callers merge beforehand
-  const replaced = updateDatabase(db, d.id, { meta: { collapsed: true, tag: "site" } });
-  expect(replaced.meta).toEqual({ collapsed: true, tag: "site" });
+  // merge patch over per-key registers: untouched keys survive, null deletes
+  const patched = updateDatabase(db, d.id, { meta: { tag: "app" } });
+  expect(patched.meta).toEqual({ collapsed: true, tag: "app" });
+  expect(updateDatabase(db, d.id, { meta: { tag: null } }).meta).toEqual({ collapsed: true });
+  updateDatabase(db, d.id, { meta: { tag: "site" } });
 
   // a duplicate carries the source's meta MINUS `collapsed`: a copy of a folded
   // database must not be born hidden in the sidebar's collapsed group
@@ -172,4 +175,25 @@ test("duplicateDatabase keeps cross-database relation cells pointing at the orig
   const dupOwner = listProperties(db, dup.id).find((p) => p.name === "Owner")!;
   expect(dupOwner.config?.database).toBe(people.id);
   expect(listRecords(db, dup.id)[0]!.cells[dupOwner.id]).toEqual([alice.id]);
+});
+
+test("meta keys written on two nodes both survive a sync (per-key registers)", () => {
+  const a = newDb("node-a");
+  const b = newDb("node-b");
+  const d = createDatabase(a, { name: "Shared" });
+  ingest(b, changesSince(a, ""));
+  updateDatabase(a, d.id, { meta: { collapsed: true } });
+  updateDatabase(b, d.id, { meta: { views: [{ id: "v1", name: "All" }] } });
+  ingest(b, changesSince(a, ""));
+  ingest(a, changesSince(b, ""));
+  expect(getDatabase(a, d.id)!.meta).toEqual({ collapsed: true, views: [{ id: "v1", name: "All" }] });
+  expect(getDatabase(b, d.id)!.meta).toEqual({ collapsed: true, views: [{ id: "v1", name: "All" }] });
+
+  // unchanged values emit nothing; a clear removes every key
+  const before = changesSince(a, "").length;
+  updateDatabase(a, d.id, { meta: { collapsed: true } });
+  expect(changesSince(a, "").length).toBe(before);
+  expect(updateDatabase(a, d.id, { meta: null }).meta).toBeNull();
+  ingest(b, changesSince(a, ""));
+  expect(getDatabase(b, d.id)!.meta).toBeNull();
 });

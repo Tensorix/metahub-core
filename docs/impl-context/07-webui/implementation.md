@@ -70,8 +70,8 @@ v1（design §1–6）把整个前端塞在单个 `src/webui/app.tsx`(~500 行)�
 ## 5. v1 范围外（未改 schema，明确标注）
 
 - 数据库描述字段、文档独立 emoji 图标（需加列）。
-- 保存视图 / 持久化筛选排序（当前排序为客户端临时态；看板/日历为占位 tab）。
-- ~~文档同级顺序~~、表格行手动拖拽顺序的**持久化**（跨层级移动 `parent_id` 已持久化）。文档同级顺序已于后续补上(documents `order_key` + `moveDocument`)；表格行手动排序仍为缺口。
+- ~~保存视图 / 持久化筛选排序~~——见 [31-table-views](../31-table-views/design.md)。
+- ~~文档同级顺序~~、表格行手动拖拽顺序的**持久化**（跨层级移动 `parent_id` 已持久化）。文档同级顺序已于后续补上(documents `order_key` + `moveDocument`)；表格行手动排序也已落地（records `order_key` + `moveRecord`）。
 - 关系列的目标库选择器（v1 走文本解析）；行内格式条依赖 `execCommand`。
 
 ## 6. 测试与验证

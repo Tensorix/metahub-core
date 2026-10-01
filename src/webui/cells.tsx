@@ -7,6 +7,7 @@ import type { Prop, PropType } from "./api.ts";
 import { relationTitle, onRelationTitleChange } from "./relation-titles.ts";
 import { docLinkTitle, onDocTitleChange } from "./doc-titles.ts";
 import { t } from "./i18n/t.ts";
+import { Icon } from "./icons.tsx";
 
 // ---- option colors (stable per string) ----
 const HUES = [4, 28, 45, 130, 165, 200, 220, 255, 290, 330];
@@ -107,12 +108,23 @@ export function CellDisplay({ prop, val }: { prop: Prop; val: unknown }) {
   if (prop.type === "multi_select")
     return <>{(val as unknown[]).map((x) => <Chip key={String(x)} text={String(x)} />)}</>;
   if (prop.type === "url")
-    return <a href={String(val)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{String(val)}</a>;
-  return <span>{String(val)}</span>;
+    return (
+      <a class="cell-url" href={String(val)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+        <span>{String(val)}</span>
+        <Icon name="externalLink" cls="ico sm" />
+      </a>
+    );
+  if (prop.type === "number") return <span class="num">{String(val)}</span>;
+  return <span class="txt">{String(val)}</span>;
 }
 
-export function coerceInput(_type: PropType, raw: string): unknown {
-  // relation/doc never reach here — they edit through their pickers.
+export function coerceInput(type: PropType, raw: string): unknown {
+  if (type === "number") {
+    const s = raw.trim();
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : raw;
+  }
   return raw;
 }
 

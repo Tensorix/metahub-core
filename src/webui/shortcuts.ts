@@ -17,7 +17,7 @@ export interface Combo {
   key: string;
 }
 
-export type ShortcutGroup = "nav" | "create" | "editor" | "quicknote";
+export type ShortcutGroup = "nav" | "create" | "editor" | "table" | "quicknote";
 
 export interface Shortcut {
   id: string;
@@ -31,6 +31,7 @@ export const SHORTCUT_GROUPS: { key: ShortcutGroup; label: string }[] = [
   { key: "nav", label: t("导航") },
   { key: "create", label: t("新建") },
   { key: "editor", label: t("编辑器") },
+  { key: "table", label: t("数据表") },
   { key: "quicknote", label: t("快速笔记") },
 ];
 
@@ -55,6 +56,16 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "duplicateBlock", label: t("复制当前块"), group: "editor", keys: { mod: true, key: "d" } },
   { id: "indent", label: t("列表缩进"), group: "editor", keys: { key: "Tab" } },
   { id: "outdent", label: t("列表反缩进"), group: "editor", keys: { shift: true, key: "Tab" } },
+  { id: "tableEdit", label: t("编辑单元格"), group: "table", keys: { key: "Enter" } },
+  { id: "tableOpen", label: t("打开记录"), group: "table", keys: { mod: true, key: "Enter" } },
+  { id: "tableSelectRow", label: t("选中整行"), group: "table", keys: { shift: true, key: " " } },
+  { id: "tableSelectAll", label: t("选中全部单元格"), group: "table", keys: { mod: true, key: "a" } },
+  { id: "tableCopy", label: t("复制单元格"), group: "table", keys: { mod: true, key: "c" } },
+  { id: "tablePaste", label: t("粘贴到单元格"), group: "table", keys: { mod: true, key: "v" } },
+  { id: "tableDuplicate", label: t("复制记录"), group: "table", keys: { mod: true, key: "d" } },
+  { id: "tableClear", label: t("清空单元格"), group: "table", keys: { key: "Delete" } },
+  { id: "tableUndo", label: t("撤销单元格修改"), group: "table", keys: { mod: true, key: "z" } },
+  { id: "tableRedo", label: t("重做"), group: "table", keys: { mod: true, shift: true, key: "z" } },
   { id: "qnNew", label: t("新建笔记"), group: "quicknote", keys: { mod: true, key: "n" }, desktopOnly: true },
   { id: "qnPrev", label: t("上一条笔记"), group: "quicknote", keys: { mod: true, key: "[" }, desktopOnly: true },
   { id: "qnNext", label: t("下一条笔记"), group: "quicknote", keys: { mod: true, key: "]" }, desktopOnly: true },
@@ -87,6 +98,8 @@ export function pressed(e: KeyboardEvent, id: string): boolean {
 }
 
 const KEY_GLYPH: Record<string, string> = {
+  " ": "Space",
+  Delete: "⌫",
   ArrowLeft: "←",
   ArrowRight: "→",
   ArrowUp: "↑",

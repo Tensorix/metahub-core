@@ -91,6 +91,7 @@ const DatabaseSchema = z.object({
   id: z.string(),
   name: z.string(),
   icon: z.string().nullable(),
+  meta: z.record(z.string(), z.any()).nullable(),
   created_hlc: z.string(),
 });
 const PropertySchema = z.object({
@@ -156,6 +157,7 @@ const CreateDatabaseReq = z.object({ name: z.string(), icon: z.string().optional
 const UpdateDatabaseReq = z.object({
   name: z.string().optional(),
   icon: z.string().nullable().optional(),
+  meta: z.record(z.string(), z.any()).nullable().optional().describe("Merge patch over per-key metadata; null value deletes a key, null object clears all"),
 });
 const DuplicateDatabaseReq = z.object({
   name: z.string().optional().describe("Name for the copy (defaults to the source name)"),
@@ -523,7 +525,7 @@ export const webuiRoutes: Route[] = [
   {
     method: "PATCH",
     path: "/api/database",
-    summary: "Rename a database or change its icon. Query: ?id=<id>",
+    summary: "Rename a database, change its icon or patch its metadata. Query: ?id=<id>",
     request: UpdateDatabaseReq,
     response: DatabaseSchema,
     handler: handle(async (req, { db }) => {

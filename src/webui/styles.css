@@ -1140,11 +1140,16 @@
   .db-icon { width:38px; height:38px; border-radius:9px; background:var(--surface-2); display:grid; place-items:center; font-size:20px; }
   .db-title { font-size:27px; font-weight:700; letter-spacing:-.02em; outline:none; }
   .db-desc { color:var(--muted); font-size:13px; margin-top:2px; }
-  .views { display:flex; align-items:center; gap:2px; border-bottom:1px solid var(--line); margin:16px 0 0; }
-  .view-tab { display:flex; align-items:center; gap:6px; padding:8px 11px; font-size:var(--fs-ui); font-weight:500; color:var(--muted);
-    border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .12s; }
+  .views { display:flex; align-items:center; gap:2px; border-bottom:1px solid var(--line); margin:16px 0 0; overflow-x:auto; scrollbar-width:none; }
+  .views::-webkit-scrollbar { display:none; }
+  .view-tab { display:flex; align-items:center; gap:6px; padding:8px 9px; font-size:var(--fs-ui); font-weight:500; color:var(--muted); cursor:pointer;
+    border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .12s; white-space:nowrap; border-radius:var(--radius-sm) var(--radius-sm) 0 0; }
   .view-tab.active { color:var(--fg); border-bottom-color:var(--accent); }
-  .view-tab:hover { color:var(--fg); } .view-tab svg { width:14px; height:14px; }
+  .view-tab:hover { color:var(--fg); background:var(--hover); } .view-tab svg { width:14px; height:14px; }
+  .view-tab .caret { width:12px; height:12px; color:var(--muted); margin-left:-2px; opacity:0; transition:opacity .12s; }
+  .view-tab.active:hover .caret { opacity:1; }
+  .view-add { width:28px; height:28px; display:grid; place-items:center; color:var(--muted); border-radius:var(--radius-sm); margin-left:2px; flex:none; }
+  .view-add:hover { background:var(--hover-2); color:var(--fg); }
   /* 浮窗看板 (right end of the toolbar / board bar, desktop only): a quiet
      Notion-style secondary pill — visible as a feature entry, never louder
      than 新建. Hover lifts the pill and nudges the icon's top kanban card up
@@ -1160,12 +1165,56 @@
   .popout-btn:active { transform:translateY(0); box-shadow:var(--shadow-sm); }
   .popout-btn .i-card { transition:transform .18s ease; }
   .popout-btn:hover .i-card { transform:translateY(-2px); }
-  .toolbar { display:flex; align-items:center; gap:2px; padding:10px 0; }
+  .toolbar { display:flex; align-items:center; gap:2px; padding:8px 0 6px; flex-wrap:wrap; }
   .toolbar .spacer { flex:1; }
-  .tbtn { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:var(--radius-sm); color:var(--fg-soft); font-size:13px; font-weight:500; }
+  .tbtn { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:var(--radius-sm); color:var(--fg-soft); font-size:13px; font-weight:500; white-space:nowrap; }
   .tbtn:hover { background:var(--hover-2); color:var(--fg); }
   .tbtn.on { color:var(--accent); }
-  .tablewrap { border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow-sm); }
+  .tbtn.on:hover { background:var(--accent-soft); }
+  .tbtn.icon { padding:5px 7px; }
+  .tb-n { display:inline-grid; place-items:center; min-width:17px; height:17px; padding:0 5px; border-radius:999px; background:var(--accent-soft); color:var(--accent);
+    font-size:var(--fs-micro); font-weight:700; font-variant-numeric:tabular-nums; }
+  .tb-search { display:flex; align-items:center; gap:6px; padding:4px 8px; margin-left:2px; border:1px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--bg);
+    color:var(--muted); min-width:220px; transition:border-color .12s, box-shadow .12s; animation:pal-in .13s ease; }
+  .tb-search:focus-within { border-color:var(--accent); color:var(--accent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--accent) 16%, transparent); }
+  .tb-search input { flex:1; width:0; min-width:0; border:0; outline:none; background:transparent; font:inherit; font-size:13px; color:var(--fg); }
+  .tb-search .clear { display:grid; place-items:center; width:18px; height:18px; border-radius:50%; color:var(--muted); flex:none; }
+  .tb-search .clear:hover { background:var(--hover-2); color:var(--fg); }
+  /* active filter / sort chips under the toolbar (Notion's rule row) */
+  .tb-chips { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:0 0 10px; }
+  .chip-rule { display:inline-flex; align-items:center; gap:5px; padding:3px 6px 3px 8px; border:1px solid var(--line-strong); border-radius:999px; background:var(--bg);
+    font-size:var(--fs-sm); color:var(--fg-soft); max-width:360px; transition:border-color .12s, background .12s; }
+  .chip-rule:hover { border-color:var(--accent); background:var(--accent-soft); }
+  .chip-rule > svg { width:13px; height:13px; color:var(--muted); flex:none; }
+  .chip-rule .k { font-weight:600; color:var(--fg); white-space:nowrap; }
+  .chip-rule .v { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chip-rule .x { display:grid; place-items:center; width:16px; height:16px; border-radius:50%; color:var(--muted); margin-left:2px; }
+  .chip-rule .x:hover { background:var(--hover-2); color:var(--fg); }
+  .chip-rule.op { color:var(--accent); border-style:dashed; padding:3px 9px; font-weight:600; }
+  .chip-rule.sort .k::before { content:""; }
+  /* filter rule editor popover */
+  .fr { min-width:272px; }
+  .fr .lbl { display:flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font-size:var(--fs-sm); color:var(--fg); }
+  .fr-conds { display:flex; flex-wrap:wrap; gap:4px; padding:2px 4px 8px; }
+  .fr-cond { padding:3px 9px; border-radius:999px; border:1px solid var(--line); font-size:var(--fs-sm); color:var(--fg-soft); background:var(--bg); white-space:nowrap; }
+  .fr-cond:hover { background:var(--hover-2); color:var(--fg); }
+  .fr-cond.on { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+  .fr .dp { padding:0; }
+  .fr-refs { display:flex; flex-wrap:wrap; gap:4px; padding:4px 8px 6px; font-size:var(--fs-sm); }
+  .pop input.field { font:inherit; font-size:var(--fs-ui); color:var(--fg); }
+  /* sort rows + property visibility rows in their popovers */
+  .sortrow .sortname { flex:1; display:flex; align-items:center; gap:6px; min-width:0; font-size:var(--fs-ui); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sortrow .sortname svg { color:var(--muted); flex:none; }
+  .sortrow .sortdir { display:inline-flex; align-items:center; gap:4px; padding:3px 7px; border-radius:var(--radius-sm); font-size:var(--fs-sm); color:var(--fg-soft); white-space:nowrap; }
+  .sortrow .sortdir:hover { background:var(--hover-2); color:var(--fg); }
+  .flipv { transform:scaleY(-1); }
+  .proprow-v .optlabel { gap:6px; align-items:center; font-size:var(--fs-ui); color:var(--fg); }
+  .proprow-v .optlabel svg { color:var(--muted); flex:none; }
+  .proprow-v .optlabel .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .proprow-v.off .optlabel { color:var(--muted); }
+  .proprow-v .x:disabled { opacity:.35; cursor:default; }
+  .proprow-v .x:disabled:hover { background:none; color:var(--muted); }
+  .tablewrap { border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
   .tablescroll { overflow-x:auto; }
   /* fixed layout + max-content: each <col> width is authoritative, so the table
      is exactly the sum of its columns and resizing one column never redistributes
@@ -1174,12 +1223,26 @@
   table.grid { border-collapse:collapse; table-layout:fixed; width:max-content; min-width:100%; }
   table.grid th, table.grid td { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:0; text-align:left; }
   table.grid th:last-child, table.grid td:last-child { border-right:0; }
-  table.grid tbody tr:last-child td { border-bottom:0; }
-  thead th { background:var(--surface); position:relative; user-select:none; font-weight:600; color:var(--fg-soft); }
-  .colhead { display:flex; align-items:center; gap:7px; padding:9px 11px; font-size:13px; cursor:pointer; }
-  .colhead:hover { background:var(--hover); }
-  .colhead .ti { color:var(--muted); } .colhead .ti svg { width:14px; height:14px; }
+  table.grid tbody tr:last-child td { border-bottom:1px solid var(--line); }
+  thead th { background:var(--bg); position:relative; user-select:none; font-weight:500; color:var(--muted); }
+  .colhead { display:flex; align-items:center; gap:7px; padding:8px 11px; font-size:13px; cursor:pointer; min-height:36px; }
+  .colhead:hover { background:var(--hover); color:var(--fg-soft); }
+  .colhead .ti { color:var(--muted); display:flex; } .colhead .ti svg { width:14px; height:14px; }
   .colhead .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .colhead .sortmark { width:12px; height:12px; color:var(--accent); flex:none; }
+  .colhead .caret { width:12px; height:12px; color:var(--muted); flex:none; opacity:0; transition:opacity .12s; }
+  .colhead:hover .caret { opacity:1; }
+  table.grid.nowrap .cell { flex-wrap:nowrap; overflow:hidden; }
+  table.grid.nowrap .cell .txt { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  table.grid tfoot td { border-right:0; border-bottom:0; background:var(--bg); }
+  table.grid tfoot td.calc { height:32px; cursor:pointer; padding:0 11px; font-size:var(--fs-xs); color:var(--muted); text-align:right; white-space:nowrap; user-select:none; }
+  table.grid tfoot td.calc:hover { background:var(--hover); }
+  table.grid tfoot td.calc .k { display:inline-flex; align-items:center; gap:2px; }
+  table.grid tfoot td.calc .k.ghost { opacity:0; transition:opacity .12s; }
+  table.grid tfoot td.calc .k.ghost svg { width:11px; height:11px; }
+  table.grid tfoot:hover td.calc .k.ghost { opacity:.75; }
+  table.grid tfoot td.calc.on .k { margin-right:6px; }
+  table.grid tfoot td.calc.on .v { color:var(--fg); font-weight:600; font-variant-numeric:tabular-nums; }
   .col-resizer { position:absolute; top:0; right:-4px; width:7px; height:100%; cursor:col-resize; z-index:2; touch-action:none; }
   .addcol { min-width:46px; } .addcol .colhead { justify-content:flex-start; color:var(--muted); }
   /* trailing filler column: empty canvas to the right of the data, not a real cell */
@@ -1193,13 +1256,17 @@
      .cell (only as tall as its content), so a taller sibling row never leaves a
      gap of un-tinted space at the bottom of the hovered cell. */
   td.cell-td { transition:background .1s; }
-  td.cell-td:hover { background:var(--hover); } .cell.center { justify-content:center; }
+  .cell.center { justify-content:center; }
   tbody tr { transition:background .08s; }
   tbody tr:hover { background:var(--hover); }
   tbody tr.sel { background:var(--accent-soft); }
   /* cell range selection: per-cell fill; the accent rectangle outline is drawn via inline box-shadow on edge cells. Placed after :hover so it wins on equal specificity. */
   td.cell-td.cellsel, td.cell-td.cellsel:hover { background:var(--accent-soft); }
   body.cell-selecting { user-select:none; cursor:cell; }
+  td.cell-td.fillsel { background:var(--accent-soft); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+  .cell-fill-handle { position:absolute; right:-4px; bottom:-4px; width:8px; height:8px; border-radius:2px; background:var(--accent);
+    border:1.5px solid var(--bg); cursor:crosshair; z-index:4; touch-action:none; }
+  .cell-fill-handle::after { content:""; position:absolute; inset:-6px; }
   body.cell-selecting .cell { cursor:cell; }
   /* column reorder still marks the target <th>; rows use the .rowdrop line below */
   table.grid th.drop-before { box-shadow:inset 2px 0 0 0 var(--accent); }
@@ -1260,18 +1327,52 @@
   /* doc chip whose target is deleted/unsynced: muted + dashed, same cue as the
      editor's .cm-doclink-missing pill */
   a.chip.rel.doc-missing { background:transparent; color:var(--muted); outline:1px dashed var(--line-strong); outline-offset:-1px; }
-  .addrow { display:flex; align-items:center; gap:7px; padding:9px 12px; color:var(--muted); font-size:13px; cursor:pointer; border-top:1px solid var(--line); }
+  .addrow { display:flex; align-items:center; gap:7px; padding:8px 12px; color:var(--muted); font-size:13px; cursor:pointer; border-radius:var(--radius-sm); margin-top:2px; }
   .addrow:hover { background:var(--hover); color:var(--fg-soft); }
+  .addrow svg { width:14px; height:14px; }
   .gridfoot { display:flex; gap:18px; color:var(--muted); font-size:12px; padding:8px 2px; }
-  input.inlineedit { width:100%; border:0; outline:2px solid var(--accent); border-radius:4px; padding:7px 9px; background:var(--bg); color:var(--fg); font:inherit; }
+  .inlineedit { width:100%; border:0; outline:2px solid var(--accent); border-radius:4px; padding:7px 9px; background:var(--bg); color:var(--fg); font:inherit; }
+  textarea.inlineedit { resize:none; overflow:hidden; line-height:1.45; display:block; }
+  .inlineedit.num { text-align:right; font-variant-numeric:tabular-nums; }
   /* Overlay cell editor: floats over the td; the display content underneath
      stays in flow so the row height never changes while editing. Padding on the
-     input matches .cell (8px 11px) so the text doesn't shift on entering edit. */
+     input matches .cell (8px 11px) so the text doesn't shift on entering edit;
+     a multi-line text editor grows downward over the rows below. */
   .celledit { position:absolute; top:0; left:0; width:100%; min-height:100%; z-index:10;
     display:flex; align-items:stretch; background:var(--bg); border-radius:var(--radius-sm);
     box-shadow:0 0 0 2px var(--accent), var(--shadow-md); }
-  .celledit input.inlineedit { width:100%; min-width:0; border:0; outline:0; border-radius:inherit;
+  .celledit .inlineedit { width:100%; min-width:0; border:0; outline:0; border-radius:inherit;
     padding:8px 11px; background:transparent; }
+  .celledit textarea.inlineedit { min-height:37px; }
+  .cell.num { justify-content:flex-end; font-variant-numeric:tabular-nums; }
+  .cell .txt { white-space:pre-wrap; }
+  .cell-url { display:inline-flex; align-items:center; gap:4px; max-width:100%; min-width:0; color:var(--accent); text-decoration:none; }
+  .cell-url span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cell-url svg { flex:none; width:12px; height:12px; opacity:0; transition:opacity .1s; }
+  .cell-url:hover span { text-decoration:underline; text-underline-offset:2px; }
+  td.cell-td:hover .cell-url svg { opacity:.7; }
+  /* loading skeleton: the real grid's cells, sheen bars for content */
+  table.grid.skel { pointer-events:none; }
+  table.grid.skel .skel-t { display:block; height:13px; width:calc(38% + var(--i, 0) * 11%); border-radius:4px; }
+  table.grid.skel th .skel-t { height:12px; width:calc(30% + var(--i, 0) * 9%); }
+  /* date picker (date-picker.tsx) */
+  .dp { padding:2px; }
+  .dp .selsearch.invalid { border-color:var(--danger); }
+  .dp-nav { display:flex; align-items:center; gap:4px; padding:2px 2px 6px; }
+  .dp-nav .iconbtn.sm { width:26px; height:26px; }
+  .dp-title { flex:1; text-align:center; font-size:var(--fs-ui); font-weight:600; color:var(--fg); }
+  .dp-grid { display:grid; grid-template-columns:repeat(7, 32px); gap:2px; justify-content:center; }
+  .dp-head span { text-align:center; font-size:var(--fs-micro); color:var(--muted); font-weight:600; padding:2px 0 4px; }
+  .dp-day { width:32px; height:30px; border-radius:var(--radius-sm); font-size:var(--fs-sm); color:var(--fg); display:grid; place-items:center;
+    font-variant-numeric:tabular-nums; }
+  .dp-day.dim { color:var(--muted); opacity:.55; }
+  .dp-day:hover { background:var(--hover-2); }
+  .dp-day.focus { box-shadow:inset 0 0 0 1.5px var(--accent); }
+  .dp-day.today { font-weight:700; color:var(--accent); }
+  .dp-day.picked { background:var(--accent); color:var(--accent-fg); }
+  .dp-day.picked:hover { background:var(--accent); }
+  .dp-foot { display:flex; align-items:center; gap:2px; padding:8px 2px 2px; margin-top:4px; border-top:1px solid var(--line); }
+  .dp-hint { margin-left:auto; font-size:var(--fs-xs); color:var(--muted); padding-right:4px; }
 
   /* ---- sites (站点管理) ---- */
   .sites-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(264px, 1fr)); gap:14px; margin-top:4px; }
@@ -1620,6 +1721,11 @@
   .proprow .v { flex:1; padding:7px 8px; border-radius:var(--radius-sm); cursor:text; min-height:33px; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
   .proprow .v:hover { background:var(--hover); }
   .peek-divider { height:1px; background:var(--line); margin:22px 0 18px; }
+  .peek-hidden-toggle { display:flex; align-items:center; gap:6px; padding:7px 8px; margin:2px 0; border-radius:var(--radius-sm); color:var(--muted); font-size:13px; width:100%; text-align:left; }
+  .peek-hidden-toggle:hover { background:var(--hover); color:var(--fg-soft); }
+  .peek-hidden-toggle svg { transition:transform .15s; }
+  .peek-hidden-toggle svg.down { transform:rotate(90deg); }
+  .peek-head .peek-nav { display:flex; gap:2px; margin-left:4px; }
   /* linked-document tabs + embedded editor below the peek's property list */
   .peekdocs-tabs { display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-bottom:6px; }
   .peekdocs-tab { border:0; background:none; font:inherit; font-size:var(--fs-sm); font-weight:500; color:var(--muted);

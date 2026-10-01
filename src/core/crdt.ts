@@ -319,6 +319,17 @@ function materialize(
     return;
   }
 
+  if (dataset === "databases" && col.startsWith("meta.")) {
+    ensureRow(db, "databases", rowId);
+    const key = col.slice(5);
+    if (valueJson === null) {
+      db.query(`UPDATE databases SET meta = json_remove(coalesce(meta, '{}'), '$."' || ? || '"') WHERE id = ?`).run(key, rowId);
+    } else {
+      db.query(`UPDATE databases SET meta = json_set(coalesce(meta, '{}'), '$."' || ? || '"', json(?)) WHERE id = ?`).run(key, valueJson, rowId);
+    }
+    return;
+  }
+
   const d = DOMAIN[dataset];
   if (!d || !d.cols.has(col)) return; // unknown dataset/column -> ignore (forward-compat)
 

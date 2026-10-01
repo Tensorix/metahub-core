@@ -10,8 +10,10 @@ import {
   type PropConfig,
 } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
-import { imeGhost } from "./keys.ts";
-import { tip } from "./shortcuts.ts";
+import { imeGhost, isEditableTarget } from "./keys.ts";
+import { openDatePicker } from "./date-picker.tsx";
+import { useSkeletonRows } from "./skeleton.tsx";
+import { tip, pressed } from "./shortcuts.ts";
 import { undoableDelete } from "./undo.ts";
 import { rankMatches } from "./title-match.ts";
 import { docParentChain } from "./doc-titles.ts";
@@ -26,13 +28,14 @@ import {
   MenuSep,
   ReturnHint,
   confirmDialog,
+  promptDialog,
   useDrawerResize,
   useDrawerTransition,
   toast,
   type MenuAnchor,
 } from "./ui.tsx";
 import { SYNCED_EVENT } from "./data/replica.ts";
-import { DB_TABS, type DbTab } from "./view.ts";
+import { type DbTab } from "./view.ts";
 import { Chip, CellDisplay, coerceInput, cellText, optColor, relationLabel, docLabel, isPlainTextEditable } from "./cells.tsx";
 import {
   relationTitleList,
@@ -57,13 +60,13 @@ import {
 } from "./pointer-drag.ts";
 import { type CellPos, type CellSel, normRect, edgeShadow } from "./cell-select.ts";
 import { plainPasteHandlers } from "./plain-edit.ts";
+import {
+  normalizeViews, emptyView, newViewId, applyFilter, applySort, searchRecords, calcKindsFor, calcLabel, computeCalc, condsFor,
+  type ViewDef, type Layout, type CalcKind, type FilterRule,
+} from "./view-model.ts";
+import { ViewTabs, ViewToolbar, ChipRow, openRuleEditor, type ViewPatch, type PickRefs } from "./view-bar.tsx";
+import { parseGrid, pastePatches, type CellPatch } from "./table-paste.ts";
 
-const VIEW_TABS: [string, string][] = [
-  [t("表格"), "list"],
-  [t("看板"), "group"],
-  [t("日历"), "calendar"],
-  [t("时间轴"), "timeline"],
-];
 
 /** 「浮窗看板」— summon the desktop quick-board window on this database. Sits
  *  at the right end of the row under the view tabs (table toolbar / board
@@ -120,9 +123,53 @@ export function DatabaseView({
   const [props, setProps] = useState<Prop[]>([]);
   const [records, setRecords] = useState<Rec[]>([]);
   const shared = useSharedTargets();
-  const [tab, setTab] = useState(0);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [sort, setSort] = useState<{ id: string; desc: boolean } | null>(null);
+  // Saved views live in db.meta.views (replicated); the active one is a device
+  // preference. Edits are debounced into one PATCH per burst.
+  const [views, setViews] = useState<ViewDef[]>(() => normalizeViews(db.meta?.views));
+  const viewsRef = useRef(views);
+  viewsRef.current = views;
+  const [activeViewId, setActiveViewId] = useState<string>(() => localStorage.getItem(`mh.db.view.${db.id}`) ?? "");
+  const view = views.find((v) => v.id === activeViewId) ?? views[0]!;
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistViews = (next: ViewDef[]) => {
+    setViews(next);
+    viewsRef.current = next;
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      persistTimer.current = null;
+      api.updateDatabase(db.id, { meta: { views: viewsRef.current } }).catch((e) => onError(String(e.message)));
+    }, 300);
+  };
+  const updateView = (patch: ViewPatch, id = view.id) => persistViews(viewsRef.current.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+  const selectView = (id: string) => {
+    setActiveViewId(id);
+    localStorage.setItem(`mh.db.view.${db.id}`, id);
+    setCellSel(null);
+    setSel(new Set());
+  };
+  const createView = (layout: Layout, name: string) => {
+    const v = emptyView(layout, name);
+    persistViews([...viewsRef.current, v]);
+    selectView(v.id);
+  };
+  const duplicateView = (id: string) => {
+    const src = viewsRef.current.find((v) => v.id === id);
+    if (!src) return;
+    const copy: ViewDef = { ...src, id: newViewId(), name: t("{name} 副本", { name: src.name }) };
+    const i = viewsRef.current.indexOf(src);
+    persistViews([...viewsRef.current.slice(0, i + 1), copy, ...viewsRef.current.slice(i + 1)]);
+    selectView(copy.id);
+  };
+  const deleteView = (id: string) => {
+    const next = viewsRef.current.filter((v) => v.id !== id);
+    if (!next.length) return;
+    persistViews(next);
+    if (id === view.id) selectView(next[0]!.id);
+  };
+  const sort = view.sort;
+  const sorting = sort.length > 0;
+  const [query, setQuery] = useState("");
   // seed: type-to-edit's first character — the editor opens with it, replacing the old value.
   const [editing, setEditing] = useState<{ rec: string; prop: string; seed?: string } | null>(null);
   // Mirror for the SYNCED_EVENT handler below (its closure outlives renders).
@@ -170,20 +217,34 @@ export function DatabaseView({
   const guard = (fn: () => Promise<void>) => fn().catch((e) => onError(String(e.message)));
 
   const [loaded, setLoaded] = useState(false);
+  const [skelRows, rememberRows] = useSkeletonRows("table", 4);
   const reload = async () => {
     const [p, r] = await Promise.all([api.listProperties(db.id), api.listRecords(db.id)]);
     setProps(p);
     setRecords(r);
     setLoaded(true);
+    rememberRows(r.length);
   };
   useEffect(() => {
     setSel(new Set());
     setPeek(null);
-    setTab(0);
     setCellSel(null);
     setEditing(null);
+    setQuery("");
+    undoRef.current = { past: [], future: [] };
+    const vs = normalizeViews(db.meta?.views);
+    setViews(vs);
+    viewsRef.current = vs;
+    setActiveViewId(localStorage.getItem(`mh.db.view.${db.id}`) ?? vs[0]!.id);
     reload().catch((e) => onError(String(e.message)));
   }, [db.id]);
+  // A sync (or another tab) rewrote the saved views: adopt them unless a local
+  // edit is still waiting to be flushed.
+  useEffect(() => {
+    if (persistTimer.current) return;
+    const next = normalizeViews(db.meta?.views);
+    if (JSON.stringify(next) !== JSON.stringify(viewsRef.current)) { setViews(next); viewsRef.current = next; }
+  }, [db.meta]);
 
   // Peek ⇄ hash. Every internal open/close goes through these two so the hash
   // always mirrors the drawer; the effect below covers the other direction
@@ -197,8 +258,8 @@ export function DatabaseView({
   // requested tab, not on the reset's 表格.
   useEffect(() => {
     if (!tabReq) return;
-    const i = DB_TABS.indexOf(tabReq);
-    if (i >= 0) setTab(i);
+    const target = views.find((v) => v.layout === tabReq);
+    if (target) selectView(target.id);
     onTabReq(null);
   }, [tabReq]);
   // Dangling deep link (deleted record / forward reference): explain and clear —
@@ -236,27 +297,63 @@ export function DatabaseView({
 
   // Optimistic: apply locally and exit edit mode synchronously, reconcile with
   // the server response in the background, roll back via reload() on failure.
-  const commit = (rec: Rec, prop: Prop, value: unknown) => {
-    setEditing(null);
-    setRecords((rs) => rs.map((r) =>
-      r.id === rec.id
-        ? { ...r, cells: { ...r.cells, [prop.id]: value }, values: { ...r.values, [prop.name]: value } }
-        : r,
-    ));
-    api.updateRecord(rec.id, { [prop.id]: value })
-      .then((updated) => setRecords((rs) => rs.map((r) => (r.id === updated.id ? updated : r))))
+  // Every write goes through applyCells so one call = one undo step.
+  const undoRef = useRef<{ past: CellEdit[][]; future: CellEdit[][] }>({ past: [], future: [] });
+  const applyCells = (patches: CellPatch[], opts: { history?: boolean } = {}): Promise<void> => {
+    const byRec = new Map<string, Record<string, unknown>>();
+    const edits: CellEdit[] = [];
+    for (const p of patches) {
+      const rec = recordsRef.current.find((r) => r.id === p.recId);
+      if (!rec) continue;
+      edits.push({ recId: p.recId, propId: p.propId, before: rec.cells[p.propId] ?? null, after: p.value });
+      let patch = byRec.get(p.recId);
+      if (!patch) { patch = {}; byRec.set(p.recId, patch); }
+      patch[p.propId] = p.value;
+    }
+    if (!edits.length) return Promise.resolve();
+    if (opts.history !== false) { undoRef.current.past.push(edits); undoRef.current.future = []; }
+    const nameOf = new Map(props.map((p) => [p.id, p.name]));
+    setRecords((rs) => rs.map((r) => {
+      const patch = byRec.get(r.id);
+      if (!patch) return r;
+      const values = { ...r.values };
+      for (const [pid, v] of Object.entries(patch)) { const n = nameOf.get(pid); if (n) values[n] = v; }
+      return { ...r, cells: { ...r.cells, ...patch }, values };
+    }));
+    return Promise.all([...byRec].map(([id, patch]) => api.updateRecord(id, patch)))
+      .then((updates) => setRecords((rs) => rs.map((r) => updates.find((u) => u.id === r.id) ?? r)))
       .catch((e) => {
         onError(String(e.message));
         reload().catch((err) => onError(String(err.message)));
       });
   };
+  const commit = (rec: Rec, prop: Prop, value: unknown) => {
+    setEditing(null);
+    void applyCells([{ recId: rec.id, propId: prop.id, value }]);
+  };
+  const undoCells = () => {
+    const g = undoRef.current.past.pop();
+    if (!g) return;
+    undoRef.current.future.push(g);
+    void applyCells(g.map((e) => ({ recId: e.recId, propId: e.propId, value: e.before })), { history: false });
+    toast(t("已撤销"));
+  };
+  const redoCells = () => {
+    const g = undoRef.current.future.pop();
+    if (!g) return;
+    undoRef.current.past.push(g);
+    void applyCells(g.map((e) => ({ recId: e.recId, propId: e.propId, value: e.after })), { history: false });
+    toast(t("已重做"));
+  };
 
-  const createRecordWith = (values: Record<string, unknown>) =>
+  const [pendingEdit, setPendingEdit] = useState<string | null>(null);
+  const createRecordWith = (values: Record<string, unknown>, edit = false) =>
     guard(async () => {
       const rec = await api.createRecord(db.id, values);
       setRecords((rs) => [...rs, rec]);
+      if (edit) setPendingEdit(rec.id);
     });
-  const newRecord = () => createRecordWith({});
+  const newRecord = () => createRecordWith({}, true);
 
   const deleteRecords = (ids: string[]) =>
     guard(() =>
@@ -280,15 +377,16 @@ export function DatabaseView({
         const i = rs.findIndex((r) => r.id === rec.id);
         return [...rs.slice(0, i + 1), copy, ...rs.slice(i + 1)];
       });
+      await api.moveRecord(copy.id, rec.id, "after");
     });
 
   const moveRecordLocal = (srcId: string, targetId: string, where: DropWhere) => {
-    if (srcId === targetId || sort) return;
+    if (srcId === targetId || sorting) return;
     setRecords((rs) => reorderById(rs, srcId, targetId, where));
   };
 
   const persistRecordMove = (srcId: string, targetId: string, where: DropWhere) => {
-    if (srcId === targetId || sort) return;
+    if (srcId === targetId || sorting) return;
     moveRecordLocal(srcId, targetId, where);
     api.moveRecord(srcId, targetId, where).catch((e) => {
       onError(String(e.message));
@@ -299,15 +397,25 @@ export function DatabaseView({
   const persistColumnMove = (srcId: string, targetId: string, where: DropWhere) => {
     if (srcId === targetId) return;
     setProps((cur) => {
-      const ordered = reorderById(cur, srcId, targetId, where).map((p, i) => ({ ...p, position: i + 1 }));
+      const moved = reorderById(cur, srcId, targetId, where);
+      const i = moved.findIndex((p) => p.id === srcId);
+      const before = moved[i - 1]?.position;
+      const after = moved[i + 1]?.position;
+      let position: number;
+      if (before == null && after == null) return cur;
+      if (before == null) position = after! - 1;
+      else if (after == null) position = before + 1;
+      else position = (before + after) / 2;
+      const collides = position === before || position === after;
+      const ordered = collides
+        ? moved.map((p, k) => ({ ...p, position: k + 1 }))
+        : moved.map((p) => (p.id === srcId ? { ...p, position } : p));
       const prev = new Map(cur.map((p) => [p.id, p.position]));
       const changed = ordered.filter((p) => prev.get(p.id) !== p.position);
-      if (changed.length) {
-        Promise.all(changed.map((p) => api.updateProperty(p.id, { position: p.position }))).catch((e) => {
-          onError(String(e.message));
-          reload().catch((err) => onError(String(err.message)));
-        });
-      }
+      Promise.all(changed.map((p) => api.updateProperty(p.id, { position: p.position }))).catch((e) => {
+        onError(String(e.message));
+        reload().catch((err) => onError(String(err.message)));
+      });
       return ordered;
     });
   };
@@ -333,7 +441,7 @@ export function DatabaseView({
   };
 
   const startRowDrag = (e: any, recId: string) => {
-    if (sort || e.button !== 0) return;
+    if (sorting || e.button !== 0) return;
     // The handle lives outside the table now, so resolve the row from the table itself.
     const source = tableRef.current?.querySelector<HTMLElement>(`tr[data-row-id="${recId}"]`);
     if (!source) return;
@@ -386,12 +494,15 @@ export function DatabaseView({
     });
   };
 
+  // Press-and-release inside one cell edits it; crossing the 4px drag threshold
+  // rubber-bands a range instead. Shift+click only extends the selection.
   const startCellSelect = (e: any, ri: number, ci: number) => {
     if (e.button !== 0) return;
-    // Let inputs / buttons / links handle their own clicks (checkbox, row-open, edit input, url).
-    if ((e.target as HTMLElement).closest("input,button,a")) return;
-    const anchor = e.shiftKey && cellSel ? cellSel.a : { r: ri, c: ci };
+    if ((e.target as HTMLElement).closest("input,textarea,button,a,.celledit,.cell-fill-handle")) return;
+    const extend = e.shiftKey && cellSel;
+    const anchor = extend ? cellSel.a : { r: ri, c: ci };
     setCellSel({ a: anchor, b: { r: ri, c: ci } });
+    if (sel.size) setSel(new Set());
     startPointerDrag(e, {
       onStart: () => document.body.classList.add("cell-selecting"),
       onMove: (ev) => {
@@ -399,15 +510,15 @@ export function DatabaseView({
         if (!td || td.dataset.r == null) return;
         setCellSel({ a: anchor, b: { r: Number(td.dataset.r), c: Number(td.dataset.c) } });
       },
-      onEnd: () => document.body.classList.remove("cell-selecting"),
+      onEnd: (ev, active) => {
+        document.body.classList.remove("cell-selecting");
+        if (active || extend || ev.type === "pointercancel") return;
+        activateCell(ri, ci);
+      },
     });
   };
 
   // ---- keyboard cell navigation / editing ----
-  // "editable" = the free-text inline editor applies; checkbox toggles in
-  // place, select/multi_select/relation/doc edit through their picker popovers.
-  const isEditable = (pt: PropType) =>
-    pt !== "checkbox" && pt !== "select" && pt !== "multi_select" && pt !== "relation" && pt !== "doc";
   const clampN = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
   const scrollCellIntoView = (r: number, c: number) =>
     requestAnimationFrame(() => {
@@ -416,48 +527,73 @@ export function DatabaseView({
     });
   const selectCell = (r: number, c: number) => {
     setCellSel({ a: { r, c }, b: { r, c } });
+    if (sel.size) setSel(new Set());
     scrollCellIntoView(r, c);
   };
+  const lastRowClick = useRef<string | null>(null);
+  const toggleRow = (id: string, shift: boolean) => {
+    setSel((s) => {
+      const n = new Set(s);
+      const anchor = lastRowClick.current;
+      if (shift && anchor) {
+        const ids = sorted.map((r) => r.id);
+        const i = ids.indexOf(anchor), j = ids.indexOf(id);
+        if (i >= 0 && j >= 0) {
+          for (let k = Math.min(i, j); k <= Math.max(i, j); k++) n.add(ids[k]!);
+          return n;
+        }
+      }
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+    lastRowClick.current = id;
+    setCellSel(null);
+  };
+  const cellAnchor = (r: number, c: number): MenuAnchor => {
+    const td = document.querySelector(`td.cell-td[data-r="${r}"][data-c="${c}"]`);
+    return td ? { rect: td.getBoundingClientRect() } : { x: innerWidth / 2, y: innerHeight / 3 };
+  };
+
+  /** Open the cell's editor: the inline text editor for free-text types, a
+   *  picker popover anchored at the cell for the rest, a toggle for checkbox.
+   *  `seed` is the type-to-edit first character (replaces the old value /
+   *  pre-fills the picker's search). */
+  const activateCell = (r: number, c: number, seed?: string) => {
+    const recRow = sorted[r];
+    const p = cols[c];
+    if (!recRow || !p) return;
+    selectCell(r, c);
+    const val = recRow.cells[p.id];
+    const set = (v: unknown) => commit(recRow, p, v);
+    switch (p.type) {
+      case "checkbox": set(!val); return;
+      case "select": case "multi_select": openSelectMenu(cellAnchor(r, c), p, val, set, seed); return;
+      case "relation": openRelationMenu(cellAnchor(r, c), p, val, set, seed, () => relCreated(p)); return;
+      case "doc": openDocMenu(cellAnchor(r, c), val, set, seed); return;
+      case "date": openDatePicker(cellAnchor(r, c), val, set, seed); return;
+      default: setEditing({ rec: recRow.id, prop: p.id, seed });
+    }
+  };
+  const isInline = (pt: PropType) => pt === "text" || pt === "number" || pt === "url";
   const startEditAt = (r: number, c: number, seed?: string) => {
     const rec = sorted[r];
-    const p = props[c];
+    const p = cols[c];
     if (!rec || !p) return;
     selectCell(r, c);
-    // checkbox/select columns: keyboard just selects; their value UI stays click-driven.
-    if (isEditable(p.type)) setEditing({ rec: rec.id, prop: p.id, seed });
+    if (isInline(p.type)) setEditing({ rec: rec.id, prop: p.id, seed });
   };
   const moveEditNeighbor = (r: number, c: number, dc: number) => {
     const nc = c + dc;
-    if (nc < 0 || nc >= props.length) { selectCell(r, c); return; }
+    if (nc < 0 || nc >= cols.length) { selectCell(r, c); return; }
     startEditAt(r, nc);
   };
-
-  /** Keyboard-opened record picker: anchor the popover at the cell's rect
-   *  (there is no MouseEvent to anchor to). */
-  const openRelationAt = (r: number, c: number, seed?: string) => {
-    const recRow = sorted[r];
-    const p = props[c];
-    if (!recRow || !p) return;
-    selectCell(r, c);
-    const td = document.querySelector(`td.cell-td[data-r="${r}"][data-c="${c}"]`);
-    const anchor: MenuAnchor = td
-      ? { rect: td.getBoundingClientRect() }
-      : { x: innerWidth / 2, y: innerHeight / 3 };
-    openRelationMenu(anchor, p, recRow.cells[p.id], (v) => commit(recRow, p, v), seed, () => relCreated(p));
-  };
-
-  /** Keyboard-opened document picker — same cell-rect anchoring as openRelationAt. */
-  const openDocAt = (r: number, c: number, seed?: string) => {
-    const recRow = sorted[r];
-    const p = props[c];
-    if (!recRow || !p) return;
-    selectCell(r, c);
-    const td = document.querySelector(`td.cell-td[data-r="${r}"][data-c="${c}"]`);
-    const anchor: MenuAnchor = td
-      ? { rect: td.getBoundingClientRect() }
-      : { x: innerWidth / 2, y: innerHeight / 3 };
-    openDocMenu(anchor, recRow.cells[p.id], (v) => commit(recRow, p, v), seed);
-  };
+  useEffect(() => {
+    if (!pendingEdit) return;
+    const r = sorted.findIndex((x) => x.id === pendingEdit);
+    if (r < 0) return;
+    setPendingEdit(null);
+    startEditAt(r, 0);
+  }, [pendingEdit, records]);
 
   /** The picker created a record in prop's target db — a self-relation means
    *  the current table just grew a row it doesn't know about. */
@@ -465,50 +601,137 @@ export function DatabaseView({
     if (p.config?.database === db.id) reload().catch(() => {});
   };
 
-  // Apply a value to every cell in the current selection, batching all changed
-  // columns per record into a single updateRecord call.
-  const applyToSelection = (valueFor: (p: Prop) => unknown) =>
-    guard(async () => {
-      if (!cellSel) return;
-      const { r0, r1, c0, c1 } = normRect(cellSel);
-      const cols = props.slice(c0, c1 + 1);
-      const rows = sorted.slice(r0, r1 + 1);
-      const updates = await Promise.all(rows.map((rec) => {
-        const patch: Record<string, unknown> = {};
-        for (const p of cols) patch[p.id] = valueFor(p);
-        return api.updateRecord(rec.id, patch);
-      }));
-      setRecords((rs) => rs.map((r) => updates.find((u) => u.id === r.id) ?? r));
+  const rectPatches = (rect: { r0: number; r1: number; c0: number; c1: number }, valueFor: (p: Prop, r: number) => unknown): CellPatch[] => {
+    const out: CellPatch[] = [];
+    for (let r = rect.r0; r <= rect.r1; r++) {
+      const rec = sorted[r];
+      if (!rec) continue;
+      for (let c = rect.c0; c <= rect.c1; c++) {
+        const p = cols[c];
+        if (!p) continue;
+        out.push({ recId: rec.id, propId: p.id, value: valueFor(p, r) });
+      }
+    }
+    return out;
+  };
+  // Apply a value to every cell in the current selection (one undo step).
+  const applyToSelection = (valueFor: (p: Prop) => unknown) => {
+    if (!cellSel) return;
+    void applyCells(rectPatches(normRect(cellSel), (p) => valueFor(p)));
+  };
+
+  // Fill handle: drag the selection's bottom-right corner down to repeat the
+  // selected block over the rows below (Excel-style cyclic fill).
+  const [fillTo, setFillTo] = useState<number | null>(null);
+  const fillToRef = useRef<number | null>(null);
+  const startFill = (e: any) => {
+    if (e.button !== 0 || !cellSel) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const base = normRect(cellSel);
+    startPointerDrag(e, {
+      threshold: 2,
+      onStart: () => document.body.classList.add("cell-selecting"),
+      onMove: (ev) => {
+        const td = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.("td.cell-td") as HTMLElement | null;
+        if (!td || td.dataset.r == null) return;
+        const r = Number(td.dataset.r);
+        const to = r > base.r1 ? r : null;
+        fillToRef.current = to;
+        setFillTo(to);
+      },
+      onEnd: (_ev, active) => {
+        document.body.classList.remove("cell-selecting");
+        const to = fillToRef.current;
+        fillToRef.current = null;
+        setFillTo(null);
+        if (!active || to == null) return;
+        const h = base.r1 - base.r0 + 1;
+        const patches = rectPatches({ r0: base.r1 + 1, r1: to, c0: base.c0, c1: base.c1 }, (p, r) => {
+          const src = sorted[base.r0 + ((r - base.r0) % h)];
+          return src?.cells[p.id] ?? null;
+        });
+        void applyCells(patches);
+        setCellSel({ a: { r: base.r0, c: base.c0 }, b: { r: to, c: base.c1 } });
+      },
     });
+  };
 
   const copySelection = async () => {
     if (!cellSel) return;
     const { r0, r1, c0, c1 } = normRect(cellSel);
-    const cols = props.slice(c0, c1 + 1);
+    const span = cols.slice(c0, c1 + 1);
     const tsv = sorted.slice(r0, r1 + 1)
-      .map((rec) => cols.map((p) => cellText(p, rec.cells[p.id])).join("\t"))
+      .map((rec) => span.map((p) => cellText(p, rec.cells[p.id])).join("\t"))
       .join("\n");
     try { await navigator.clipboard.writeText(tsv); } catch { /* clipboard blocked */ }
   };
 
-  // Number columns compare numerically ("9" < "10"); empty/non-numeric cells
-  // sort first. Everything else compares as zh-collated text.
-  const sortProp = sort ? props.find((p) => p.id === sort.id) : undefined;
-  const sortNum = (v: unknown) => {
-    const n = v == null || v === "" ? NaN : Number(v);
-    return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
+  // Bulk-edit one property across the selected rows: pick the property, then
+  // its value through the same picker the cell uses.
+  const openSetPropMenu = (e: MouseEvent, ids: string[]) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const anchor: MenuAnchor = { rect };
+    const set = (p: Prop) => (v: unknown) => void applyCells(ids.map((id) => ({ recId: id, propId: p.id, value: v })));
+    openMenu(e, (close) => (
+      <>
+        <MenuLabel>{t("设置属性")}</MenuLabel>
+        {props.filter((p) => p.type !== "relation" && p.type !== "doc").map((p) => (
+          <MenuItem key={p.id} icon={TYPE_ICON[p.type]} label={p.name} onClick={() => {
+            close();
+            const apply = set(p);
+            if (p.type === "select" || p.type === "multi_select") openSelectMenu(anchor, p, null, apply);
+            else if (p.type === "date") openDatePicker(anchor, null, apply);
+            else if (p.type === "checkbox") openMenu(anchor, (c2) => (
+              <>
+                <MenuItem icon="check" label={t("勾选")} onClick={() => { c2(); apply(true); }} />
+                <MenuItem icon="x" label={t("取消勾选")} onClick={() => { c2(); apply(false); }} />
+              </>
+            ));
+            else promptDialog({ title: p.name, confirmLabel: t("应用") }).then((v) => { if (v !== null) apply(coerceInput(p.type, v)); });
+          }} />
+        ))}
+      </>
+    ));
   };
-  const sorted = sort
-    ? [...records].sort((a, b) => {
-        const av = a.cells[sort.id];
-        const bv = b.cells[sort.id];
-        const cmp =
-          sortProp?.type === "number"
-            ? sortNum(av) - sortNum(bv)
-            : String(av ?? "").localeCompare(String(bv ?? ""), "zh");
-        return (sort.desc ? -1 : 1) * cmp;
-      })
-    : records;
+
+  const colMenuCtx: ColMenuCtx = {
+    view,
+    records,
+    setSort: (propId, desc) => {
+      const rest = view.sort.filter((x) => x.prop !== propId);
+      updateView({ sort: desc == null ? rest : [{ prop: propId, desc }, ...rest] });
+    },
+    addFilter: (p, anchor) => {
+      const conds = condsFor(p.type);
+      const rule: FilterRule = { id: newViewId().replace("v_", "f_"), prop: p.id, cond: conds[0]!.id, value: p.type === "checkbox" ? true : undefined };
+      const rules = [...view.filter.rules, rule];
+      updateView({ filter: { ...view.filter, rules } });
+      openRuleEditor(anchor, p, rule,
+        (next) => updateView({ filter: { ...viewsRef.current.find((v) => v.id === view.id)!.filter, rules: viewsRef.current.find((v) => v.id === view.id)!.filter.rules.map((r) => (r.id === next.id ? next : r)) } }),
+        () => updateView({ filter: { ...view.filter, rules: viewsRef.current.find((v) => v.id === view.id)!.filter.rules.filter((r) => r.id !== rule.id) } }),
+        pickRefs);
+    },
+    hide: (propId) => updateView({ hidden: [...view.hidden.filter((h) => h !== propId), propId] }),
+    toggleWrap: () => updateView({ wrap: view.wrap === false }),
+    insert: (p, where, anchor) => openAddCol(anchor, db.id, props, reload, positionNear(props, p, where)),
+    duplicate: (p) =>
+      guard(async () => {
+        const cfg = { ...(p.config ?? {}) };
+        const created = await api.createProperty({ db: db.id, name: uniquePropName(t("{name} 副本", { name: p.name }), props), type: p.type, config: Object.keys(cfg).length ? cfg : undefined });
+        await api.updateProperty(created.id, { position: positionNear(props, p, "after") });
+        await reload();
+      }),
+  };
+
+  // Visible rows = filter → search → sort; visible columns = minus hidden.
+  // Cell coordinates (r, c) index these two arrays everywhere below.
+  const cols = view.layout === "table" ? props.filter((p) => !view.hidden.includes(p.id)) : props;
+  const sorted = applySort(searchRecords(applyFilter(records, props, view.filter), props, query), props, sort);
+  const pickRefs: PickRefs = (anchor, prop, current, onPick) => {
+    if (prop.type === "doc") openDocMenu(anchor, current, (v) => onPick(Array.isArray(v) ? (v as string[]) : []));
+    else openRelationMenu(anchor, prop, current, (v) => onPick(Array.isArray(v) ? (v as string[]) : []));
+  };
 
   const peekRec = records.find((r) => r.id === peek) ?? null;
   const cr = cellSel ? normRect(cellSel) : null;
@@ -518,65 +741,107 @@ export function DatabaseView({
   // printable character starts editing with it (replacing the old value).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!cellSel || editing) return;
-      const ae = document.activeElement as HTMLElement | null;
-      const tag = (ae?.tagName || "").toLowerCase();
-      if (tag === "input" || tag === "textarea" || ae?.isContentEditable) return;
+      if (editing || e.defaultPrevented || imeGhost(e)) return;
+      if (isEditableTarget(document.activeElement)) return;
+      if (pressed(e, "tableUndo")) { e.preventDefault(); undoCells(); return; }
+      if (pressed(e, "tableRedo")) { e.preventDefault(); redoCells(); return; }
+      if (peek && (e.metaKey || e.ctrlKey) && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        const i = sorted.findIndex((r) => r.id === peek);
+        const nb = sorted[i + (e.key === "ArrowUp" ? -1 : 1)];
+        if (nb) { e.preventDefault(); openPeek(nb.id); }
+        return;
+      }
+      if (!cellSel) return;
       const single = cellSel.a.r === cellSel.b.r && cellSel.a.c === cellSel.b.c;
       const { r, c } = cellSel.b;
+      const rect = normRect(cellSel);
       const ARROWS: Record<string, [number, number]> = {
         ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
       };
       if (e.key in ARROWS) {
         e.preventDefault();
         const [dr, dc] = ARROWS[e.key]!;
-        const b = { r: clampN(r + dr, 0, sorted.length - 1), c: clampN(c + dc, 0, props.length - 1) };
+        const far = e.metaKey || e.ctrlKey;
+        const b = far
+          ? { r: dr ? (dr < 0 ? 0 : sorted.length - 1) : r, c: dc ? (dc < 0 ? 0 : cols.length - 1) : c }
+          : { r: clampN(r + dr, 0, sorted.length - 1), c: clampN(c + dc, 0, cols.length - 1) };
         setCellSel(e.shiftKey ? { a: cellSel.a, b } : { a: b, b });
         scrollCellIntoView(b.r, b.c);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+      } else if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        const b = { r, c: e.key === "Home" ? 0 : cols.length - 1 };
+        setCellSel(e.shiftKey ? { a: cellSel.a, b } : { a: b, b });
+        scrollCellIntoView(b.r, b.c);
+      } else if (pressed(e, "tableCopy")) {
         e.preventDefault();
         copySelection();
+      } else if (pressed(e, "tableSelectAll")) {
+        e.preventDefault();
+        if (sorted.length && cols.length) setCellSel({ a: { r: 0, c: 0 }, b: { r: sorted.length - 1, c: cols.length - 1 } });
+      } else if (pressed(e, "tableOpen")) {
+        e.preventDefault();
+        if (sorted[r]) openPeek(sorted[r].id);
+      } else if (pressed(e, "tableSelectRow")) {
+        e.preventDefault();
+        setSel(new Set(sorted.slice(rect.r0, rect.r1 + 1).map((x) => x.id)));
+        setCellSel(null);
+      } else if (pressed(e, "tableDuplicate")) {
+        e.preventDefault();
+        for (const rec of sorted.slice(rect.r0, rect.r1 + 1)) duplicateRecord(rec);
       } else if (e.key === "Escape") {
         setCellSel(null);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         applyToSelection(() => null);
-      } else if (single && (e.key === "Enter" || e.key === "F2")) {
+      } else if (single && (e.key === "Enter" || e.key === "F2" || (e.key === " " && cols[c]?.type === "checkbox"))) {
         e.preventDefault();
-        if (props[c]?.type === "relation") openRelationAt(r, c);
-        else if (props[c]?.type === "doc") openDocAt(r, c);
-        else startEditAt(r, c);
-      } else if (single && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
+        activateCell(r, c);
+      } else if (single && e.key === " ") {
+        e.preventDefault();
+        if (sorted[r]) openPeek(sorted[r].id);
+      } else if (single && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
         // Type-to-edit. Known limit: an IME composition's first key (keyCode 229)
-        // can't seed the editor — enter editing via Enter / double-click first.
-        const p = props[c];
-        if (!p) return;
-        if (p.type === "relation") {
-          // seed the picker's search instead of the (removed) free-text editor
-          e.preventDefault();
-          openRelationAt(r, c, e.key);
-          return;
-        }
-        if (p.type === "doc") {
-          e.preventDefault();
-          openDocAt(r, c, e.key);
-          return;
-        }
-        if (!isEditable(p.type) || p.type === "date") return; // date: Enter/F2 only
+        // can't seed the editor — enter editing via Enter / click first.
+        const p = cols[c];
+        if (!p || p.type === "checkbox") return;
         if (p.type === "number" && !/[0-9.+-]/.test(e.key)) return;
+        if (p.type === "date" && !/[0-9]/.test(e.key)) return;
         e.preventDefault();
-        startEditAt(r, c, e.key);
+        activateCell(r, c, e.key);
       }
     };
+    const onPaste = (e: ClipboardEvent) => {
+      if (!cellSel || editing || isEditableTarget(document.activeElement)) return;
+      const text = e.clipboardData?.getData("text/plain");
+      if (!text) return;
+      e.preventDefault();
+      const grid = parseGrid(text);
+      if (!grid.length) return;
+      const rect = normRect(cellSel);
+      const one = grid.length === 1 && grid[0]!.length === 1;
+      const target = one ? rect : { r0: rect.r0, r1: rect.r0 + grid.length - 1, c0: rect.c0, c1: rect.c0 + Math.max(...grid.map((g) => g.length)) - 1 };
+      const tiled = one
+        ? Array.from({ length: target.r1 - target.r0 + 1 }, () => Array.from({ length: target.c1 - target.c0 + 1 }, () => grid[0]![0]!))
+        : grid;
+      const { patches, skipped } = pastePatches(tiled, sorted, cols, target.r0, target.c0);
+      void applyCells(patches);
+      const r1 = clampN(target.r1, 0, sorted.length - 1), c1 = clampN(target.c1, 0, cols.length - 1);
+      setCellSel({ a: { r: target.r0, c: target.c0 }, b: { r: r1, c: c1 } });
+      if (skipped) toast(t("{n} 个单元格因类型不匹配未写入", { n: skipped }));
+    };
     addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
-  }, [cellSel, editing, records, props, sort]);
+    document.addEventListener("paste", onPaste);
+    return () => {
+      removeEventListener("keydown", onKey);
+      document.removeEventListener("paste", onPaste);
+    };
+  }, [cellSel, editing, records, props, view, query, sel, peek]);
 
   return (
     <div
       class="db"
       onPointerDown={(e) => {
-        if (!(e.target as HTMLElement).closest("td.cell-td, .cellselbar")) setCellSel(null);
+        if (!(e.target as HTMLElement).closest("td.cell-td, .cellselbar, .peek, .scrim, .selbar")) setCellSel(null);
       }}
     >
       <div class="db-head">
@@ -586,6 +851,12 @@ export function DatabaseView({
             class="db-title"
             contentEditable
             {...plainPasteHandlers()}
+            onKeyDown={(e) => {
+              if (imeGhost(e)) return;
+              const el = e.target as HTMLElement;
+              if (e.key === "Enter") { e.preventDefault(); el.blur(); }
+              else if (e.key === "Escape") { e.preventDefault(); el.textContent = db.name; el.blur(); }
+            }}
             onBlur={(e) => {
               const name = (e.target as HTMLElement).textContent?.trim() || db.name;
               if (name !== db.name) guard(async () => { await api.updateDatabase(db.id, { name }); });
@@ -605,52 +876,63 @@ export function DatabaseView({
         )}
       </div>
 
-      <div class="views">
-        {VIEW_TABS.map(([label, ic], i) => (
-          <div key={label} class={"view-tab" + (i === tab ? " active" : "")} onClick={() => setTab(i)}>
-            <Icon name={ic} />
-            {label}
-          </div>
-        ))}
-        <div class="spacer" style={{ flex: 1 }} />
+      <ViewTabs
+        views={views}
+        activeId={view.id}
+        onSelect={selectView}
+        onCreate={createView}
+        onRename={(id, name) => updateView({ name }, id)}
+        onDuplicate={duplicateView}
+        onDelete={deleteView}
+      >
         <button class="btn btn-primary" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建")}</button>
-      </div>
+      </ViewTabs>
 
-      {tab === 0 && (
-        <div class="toolbar">
-          <button class="tbtn" onClick={(e) => openSortMenu(e, props, sort, setSort)}>
-            <Icon name="sort" cls="ico sm" />{t("排序")}
-          </button>
-          <div class="spacer" />
-          <PopOutBoard dbId={db.id} />
-        </div>
-      )}
+      <ViewToolbar
+        props={props}
+        view={view}
+        onChange={(patch) => updateView(patch)}
+        onReorder={persistColumnMove}
+        pickRefs={pickRefs}
+        query={query}
+        onQuery={setQuery}
+      >
+        {view.layout !== "board" && <PopOutBoard dbId={db.id} />}
+      </ViewToolbar>
+      <ChipRow props={props} view={view} onChange={(patch) => updateView(patch)} pickRefs={pickRefs} />
 
-      {tab === 1 ? (
+      {view.layout === "board" ? (
         <BoardView
           props={props}
-          records={records}
+          records={sorted}
           onCommitValue={commit}
           onCreate={createRecordWith}
           onOpenRecord={openPeek}
           onMove={persistRecordMove}
+          group={view.group ?? null}
+          onGroupChange={(id) => updateView({ group: id })}
           barExtra={<PopOutBoard dbId={db.id} />}
         />
-      ) : tab === 2 ? (
+      ) : view.layout === "calendar" ? (
         <CalendarView
           props={props}
-          records={records}
+          records={sorted}
           onCommitValue={commit}
           onCreate={createRecordWith}
           onOpenRecord={openPeek}
+          dateField={view.dateProp ?? null}
+          onDateFieldChange={(id) => updateView({ dateProp: id })}
         />
-      ) : tab === 3 ? (
+      ) : view.layout === "timeline" ? (
         <TimelineView
           props={props}
-          records={records}
+          records={sorted}
           onCommitValue={commit}
           onCreate={createRecordWith}
           onOpenRecord={openPeek}
+          startField={view.start ?? null}
+          endField={view.end === null ? "none" : (view.end ?? null)}
+          onFieldsChange={(f) => updateView({ ...(f.start ? { start: f.start } : {}), ...(f.end !== undefined ? { end: f.end === "none" ? null : f.end } : {}) })}
         />
       ) : (
         <div
@@ -661,10 +943,10 @@ export function DatabaseView({
         >
           {grip && (
             <button
-              class={"rowgrip-ext" + (sort ? " is-disabled" : "")}
+              class={"rowgrip-ext" + (sorting ? " is-disabled" : "")}
               style={{ top: grip.top + grip.height / 2 }}
-              title={sort ? t("清除排序后可拖拽移动") : t("拖拽移动")}
-              aria-disabled={sort ? "true" : undefined}
+              title={sorting ? t("清除排序后可拖拽移动") : t("拖拽移动")}
+              aria-disabled={sorting ? "true" : undefined}
               onPointerDown={(e) => startRowDrag(e, grip.id)}
             >
               <Icon name="grip" cls="ico sm" />
@@ -673,10 +955,35 @@ export function DatabaseView({
           {dropY != null && <div class="rowdrop" style={{ top: dropY }} />}
           <div class="tablewrap">
           <div class="tablescroll">
-            <table class="grid" ref={tableRef}>
+            {!loaded ? (
+              <table class="grid skel skel-list" aria-busy="true">
+                <colgroup>
+                  <col style={{ width: 38 }} />
+                  {[0, 1, 2, 3].map((i) => <col key={i} style={{ width: i === 0 ? 240 : 150 }} />)}
+                  <col />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="selcell" />
+                    {[0, 1, 2, 3].map((i) => <th key={i}><div class="colhead"><span class="skel-b skel-t" style={`--i:${i}`} /></div></th>)}
+                    <th class="addcol" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: skelRows }, (_, r) => (
+                    <tr key={r}>
+                      <td class="selcell" />
+                      {[0, 1, 2, 3].map((i) => <td key={i} class="cell-td"><div class="cell"><span class="skel-b skel-t" style={`--i:${(r + i) % 5}`} /></div></td>)}
+                      <td class="filler" />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+            <table class={"grid" + (view.wrap === false ? " nowrap" : "")} ref={tableRef}>
               <colgroup>
                 <col style={{ width: 38 }} />
-                {props.map((p) => (
+                {cols.map((p) => (
                   <col key={p.id} data-col-id={p.id} style={{ width: colWidth(p) }} />
                 ))}
                 <col />
@@ -687,12 +994,15 @@ export function DatabaseView({
                     <input
                       type="checkbox"
                       checked={sel.size > 0 && sel.size === records.length}
-                      onChange={(e) =>
-                        setSel((e.target as HTMLInputElement).checked ? new Set(records.map((r) => r.id)) : new Set())
-                      }
+                      onChange={(e) => {
+                        setSel((e.target as HTMLInputElement).checked ? new Set(records.map((r) => r.id)) : new Set());
+                        setCellSel(null);
+                      }}
                     />
                   </th>
-                  {props.map((p) => (
+                  {cols.map((p) => {
+                    const sr = sort.find((x) => x.prop === p.id);
+                    return (
                     <th key={p.id} data-col-id={p.id}>
                       <div
                         class="colhead"
@@ -704,11 +1014,13 @@ export function DatabaseView({
                             e.stopPropagation();
                             return;
                           }
-                          openColMenu(e, p, db.id, reload, props);
+                          openColMenu(e, p, db.id, reload, props, colMenuCtx);
                         }}
                       >
                         <span class="ti"><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /></span>
                         <span class="nm">{p.name}</span>
+                        {sr && <Icon name="arrowUp" cls={"ico sm sortmark" + (sr.desc ? " flipv" : "")} />}
+                        <Icon name="chevronDown" cls="ico sm caret" />
                       </div>
                       <ColResizer
                         colId={p.id}
@@ -719,7 +1031,8 @@ export function DatabaseView({
                         }}
                       />
                     </th>
-                  ))}
+                    );
+                  })}
                   <th class="addcol">
                     <div class="colhead" title={t("新建属性")} onClick={(e) => openAddCol(e, db.id, props, reload)}>
                       <Icon name="plus" cls="ico sm" />
@@ -738,30 +1051,30 @@ export function DatabaseView({
                       <input
                         type="checkbox"
                         checked={sel.has(rec.id)}
-                        onChange={() =>
-                          setSel((s) => { const n = new Set(s); n.has(rec.id) ? n.delete(rec.id) : n.add(rec.id); return n; })
-                        }
+                        onClick={(e) => toggleRow(rec.id, e.shiftKey)}
                       />
                     </td>
-                    {props.map((p, ci) => {
+                    {cols.map((p, ci) => {
                       const inSel = cr != null && ri >= cr.r0 && ri <= cr.r1 && ci >= cr.c0 && ci <= cr.c1;
+                      const inFill = cr != null && fillTo != null && ri > cr.r1 && ri <= fillTo && ci >= cr.c0 && ci <= cr.c1;
                       const boxShadow = cr ? edgeShadow(cr, ri, ci) : undefined;
+                      const corner = cr != null && ri === cr.r1 && ci === cr.c1;
                       return (
                         <td
                           key={p.id}
-                          class={"cell-td" + (inSel ? " cellsel" : "")}
+                          class={"cell-td" + (inSel ? " cellsel" : "") + (inFill ? " fillsel" : "")}
                           data-r={ri}
                           data-c={ci}
                           style={boxShadow ? { boxShadow } : undefined}
                           onPointerDown={(e) => startCellSelect(e, ri, ci)}
                         >
+                          {corner && <div class="cell-fill-handle" onPointerDown={startFill} />}
                           <CellView
                             rec={rec}
                             prop={p}
                             first={ci === 0}
                             editing={editing?.rec === rec.id && editing?.prop === p.id}
                             seed={editing?.rec === rec.id && editing?.prop === p.id ? editing.seed : undefined}
-                            onEdit={() => { selectCell(ri, ci); setEditing({ rec: rec.id, prop: p.id }); }}
                             onCommit={(v) => commit(rec, p, v)}
                             onDone={(end) => {
                               setEditing(null);
@@ -774,7 +1087,6 @@ export function DatabaseView({
                               else if (end.reason === "enter") selectCell(clampN(ri + 1, 0, sorted.length - 1), ci);
                             }}
                             onOpen={() => openPeek(rec.id)}
-                            onRelCreated={() => relCreated(p)}
                             onRowMenu={(e) => openRowMenu(e, rec, () => openPeek(rec.id), () => duplicateRecord(rec), () => deleteRecords([rec.id]))}
                           />
                         </td>
@@ -784,9 +1096,32 @@ export function DatabaseView({
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr>
+                  <td class="selcell" />
+                  {cols.map((p) => {
+                    const kind = view.calc?.[p.id];
+                    return (
+                      <td key={p.id} class={"calc" + (kind ? " on" : "")} onClick={(e) => openCalcMenu(e, p, kind, (k) => {
+                        const calc = { ...(view.calc ?? {}) };
+                        if (k) calc[p.id] = k; else delete calc[p.id];
+                        updateView({ calc });
+                      })}>
+                        {kind ? (
+                          <><span class="k">{calcLabel(kind)}</span><span class="v">{computeCalc(kind, p, sorted.map((r) => r.cells[p.id]))}</span></>
+                        ) : (
+                          <span class="k ghost">{t("计算")}<Icon name="chevronDown" cls="ico sm" /></span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td class="filler" />
+                </tr>
+              </tfoot>
             </table>
+            )}
           </div>
-          {sorted.length === 0 && (
+          {loaded && sorted.length === 0 && records.length === 0 && (
             <div class="site-empty tbl-empty">
               <div class="ei"><Icon name="table" /></div>
               <div class="et">{t("还没有记录")}</div>
@@ -797,19 +1132,33 @@ export function DatabaseView({
               </button>
             </div>
           )}
+          {loaded && sorted.length === 0 && records.length > 0 && (
+            <div class="site-empty tbl-empty">
+              <div class="ei"><Icon name="filter" /></div>
+              <div class="et">{t("没有符合条件的记录")}</div>
+              <div class="ed">{query ? t("换个关键词，或清除筛选条件。") : t("调整或清除筛选条件后会再次显示记录。")}</div>
+              <button class="btn btn-secondary" onClick={() => { setQuery(""); updateView({ filter: { op: "and", rules: [] } }); }}>
+                {t("清除筛选")}
+              </button>
+            </div>
+          )}
           <div class="addrow" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建记录")}</div>
           </div>
         </div>
       )}
 
       <div class="gridfoot">
-        <span>{t("共 {n} 条记录", { n: records.length })}</span>
-        <span>{t("{n} 个属性", { n: props.length })}</span>
+        <span>{sorted.length === records.length ? t("共 {n} 条记录", { n: records.length }) : t("显示 {m} / {n} 条记录", { m: sorted.length, n: records.length })}</span>
+        {view.layout === "table" && cols.length < props.length && <span>{t("{n} 列已隐藏", { n: props.length - cols.length })}</span>}
       </div>
 
       {sel.size > 0 && (
         <div class="selbar">
           <span class="cnt">{t("{n} 已选", { n: sel.size })}</span>
+          {sel.size === 1 && (
+            <button onClick={() => openPeek([...sel][0]!)}><Icon name="openPeek" cls="ico sm" />{t("打开")}</button>
+          )}
+          <button onClick={(e) => openSetPropMenu(e, [...sel])}><Icon name="pencil" cls="ico sm" />{t("设置属性…")}</button>
           <button onClick={() => guard(async () => { for (const id of sel) await duplicateRecord(records.find((r) => r.id === id)!); })}>
             <Icon name="copy" cls="ico sm" />{t("复制")}
           </button>
@@ -848,11 +1197,17 @@ export function DatabaseView({
           onDuplicate={() => duplicateRecord(peekRec)}
           onReverted={() => reload().catch((e) => onError(String(e.message)))}
           onRelCreated={relCreated}
+          hidden={view.hidden}
+          prevId={sorted[sorted.findIndex((r) => r.id === peekRec.id) - 1]?.id ?? null}
+          nextId={sorted[sorted.findIndex((r) => r.id === peekRec.id) + 1]?.id ?? null}
+          onNavigate={openPeek}
         />
       )}
     </div>
   );
 }
+
+type CellEdit = { recId: string; propId: string; before: unknown; after: unknown };
 
 // ---- cell ----
 /** How an editing session ended: cancel discards; every other reason carries
@@ -862,9 +1217,9 @@ type EditEnd =
   | { reason: "cancel" }
   | { reason: "blur" | "enter" | "tab" | "shifttab"; changed: boolean; value: unknown };
 
-/** Single-field inline editor for text/number/date/url values. Shared by the
- *  grid cells and the record peek panel. relation never comes through here —
- *  it edits via the record picker (openRelationMenu).
+/** Single-field inline editor for text/number/url values. Shared by the grid
+ *  cells and the record peek panel. Text grows with its content (Shift+Enter
+ *  for a newline); date/select/relation/doc edit through their pickers.
  *
  *  Uncontrolled on purpose: the DOM value is seeded once on mount. A controlled
  *  `value=` prop would be re-applied by any parent re-render that lands before
@@ -882,13 +1237,21 @@ function InlineEditInput({
   onDone: (end: EditEnd) => void;
 }) {
   const initial = val == null ? "" : String(val);
-  const ref = useRef<HTMLInputElement>(null);
+  const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const done = useRef(false);
+  const multiline = prop.type === "text";
+  const grow = () => {
+    const el = ref.current;
+    if (!el || !multiline) return;
+    el.style.height = "0";
+    el.style.height = `${el.scrollHeight}px`;
+  };
   useEffect(() => {
     const el = ref.current!;
     el.value = seed ?? initial;
     el.focus();
-    try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* number/date inputs throw */ }
+    el.setSelectionRange(el.value.length, el.value.length);
+    grow();
   }, []);
   // Single exit point: Enter/Escape/Tab unmount the input, which fires a blur —
   // the `done` flag keeps that trailing blur from reporting a second end.
@@ -899,28 +1262,42 @@ function InlineEditInput({
     const raw = ref.current!.value;
     onDone({ reason, changed: raw !== initial, value: coerceInput(prop.type, raw) });
   };
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (imeGhost(e)) return;
+    if (e.key === "Enter" && !(multiline && e.shiftKey)) { e.preventDefault(); finish("enter"); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish("cancel"); }
+    else if (e.key === "Tab" && captureTab) { e.preventDefault(); finish(e.shiftKey ? "shifttab" : "tab"); }
+  };
+  if (multiline) {
+    return (
+      <textarea
+        ref={ref as any}
+        class="inlineedit"
+        rows={1}
+        onInput={grow}
+        onBlur={() => finish("blur")}
+        onKeyDown={onKeyDown}
+      />
+    );
+  }
   return (
     <input
-      ref={ref}
-      class="inlineedit"
-      type={prop.type === "number" ? "number" : prop.type === "date" ? "date" : "text"}
+      ref={ref as any}
+      class={"inlineedit" + (prop.type === "number" ? " num" : "")}
+      type="text"
+      inputMode={prop.type === "number" ? "decimal" : prop.type === "url" ? "url" : "text"}
       onBlur={() => finish("blur")}
-      onKeyDown={(e) => {
-        if (e.isComposing || e.keyCode === 229) return; // IME: Enter confirms the candidate, not the cell
-        if (e.key === "Enter") { e.preventDefault(); finish("enter"); }
-        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish("cancel"); }
-        else if (e.key === "Tab" && captureTab) { e.preventDefault(); finish(e.shiftKey ? "shifttab" : "tab"); }
-      }}
+      onKeyDown={onKeyDown}
     />
   );
 }
 
 function CellView({
-  rec, prop, first, editing, seed, onEdit, onCommit, onDone, onOpen, onRowMenu, onRelCreated,
+  rec, prop, first, editing, seed, onCommit, onDone, onOpen, onRowMenu,
 }: {
   rec: Rec; prop: Prop; first: boolean; editing: boolean; seed?: string;
-  onEdit: () => void; onCommit: (v: unknown) => void; onDone: (end: EditEnd) => void;
-  onOpen: () => void; onRowMenu: (e: MouseEvent) => void; onRelCreated: () => void;
+  onCommit: (v: unknown) => void; onDone: (end: EditEnd) => void;
+  onOpen: () => void; onRowMenu: (e: MouseEvent) => void;
 }) {
   const val = rec.cells[prop.id];
 
@@ -932,17 +1309,11 @@ function CellView({
     );
   }
 
-  // Single click selects the cell (handled by the <td> pointer handler); double click edits.
-  const onActivate = (e: MouseEvent) => {
-    if (prop.type === "select" || prop.type === "multi_select") openSelectMenu(e, prop, val, onCommit);
-    else if (prop.type === "relation") openRelationMenu(e, prop, val, onCommit, undefined, onRelCreated);
-    else if (prop.type === "doc") openDocMenu(e, val, onCommit);
-    else onEdit();
-  };
-
+  // Click/keyboard activation is owned by the <td> (DatabaseView.activateCell).
   const body = <CellDisplay prop={prop} val={val} />;
+  const cls = "cell" + (prop.type === "number" ? " num" : "");
   const display = first ? (
-    <div class="cell" onDblClick={onActivate} onContextMenu={(e) => { e.preventDefault(); onRowMenu(e); }}>
+    <div class={cls} onContextMenu={(e) => { e.preventDefault(); onRowMenu(e); }}>
       <div class="firstcell">
         {body}
         <div class="rowactions">
@@ -953,16 +1324,15 @@ function CellView({
       </div>
     </div>
   ) : (
-    <div class="cell" onDblClick={onActivate}>{body}</div>
+    <div class={cls}>{body}</div>
   );
 
   // The editor overlays the td (.celledit is absolute over the relative cell-td)
   // while the display content stays in flow — the row height never changes.
-  // select / multi_select never enter the editing state (menu opens on click).
   return (
     <>
       {display}
-      {editing && prop.type !== "select" && prop.type !== "multi_select" && (
+      {editing && (
         <div class="celledit">
           <InlineEditInput prop={prop} val={val} seed={seed} captureTab onDone={onDone} />
         </div>
@@ -1007,24 +1377,25 @@ function ColResizer({ colId, startWidth, onCommit }: { colId: string; startWidth
 }
 
 // ---- select / multi-select editor menu ----
-function openSelectMenu(e: MouseEvent, prop: Prop, val: unknown, onCommit: (v: unknown) => void) {
-  e.stopPropagation();
+function openSelectMenu(anchor: MenuAnchor, prop: Prop, val: unknown, onCommit: (v: unknown) => void, seed?: string) {
+  if (anchor instanceof MouseEvent) anchor.stopPropagation();
   const multi = prop.type === "multi_select";
   const options = prop.config?.options ?? [];
-  openMenu(e, (close) => (
+  openMenu(anchor, (close) => (
     <SelectMenu
       multi={multi}
       options={options}
       value={val}
       prop={prop}
+      seed={seed}
       onPick={(v) => { onCommit(v); if (!multi) close(); }}
     />
   ), { minWidth: 220 });
 }
-function SelectMenu({ multi, options, value, onPick, prop }: { multi: boolean; options: string[]; value: unknown; onPick: (v: unknown) => void; prop: Prop }) {
+function SelectMenu({ multi, options, value, onPick, prop, seed }: { multi: boolean; options: string[]; value: unknown; onPick: (v: unknown) => void; prop: Prop; seed?: string }) {
   const [opts, setOpts] = useState<string[]>(options);
   const [cur, setCur] = useState<unknown>(value);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(seed ?? "");
   const [selIdx, setSelIdx] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -1373,11 +1744,26 @@ function DocMenu({ value, onPick, seed }: {
 }
 
 // ---- column header menu ----
-function openColMenu(e: MouseEvent, prop: Prop, dbId: string, reload: () => Promise<void>, allProps: Prop[]) {
+/** What the column header menu needs from the page: the view (sort/hide/wrap),
+ *  the records (to count cells a type change would clear) and the insert/
+ *  duplicate actions that touch positions. */
+type ColMenuCtx = {
+  view: ViewDef;
+  records: Rec[];
+  setSort: (propId: string, desc: boolean | null) => void;
+  addFilter: (prop: Prop, anchor: MenuAnchor) => void;
+  hide: (propId: string) => void;
+  toggleWrap: () => void;
+  insert: (prop: Prop, where: DropWhere, anchor: MenuAnchor) => void;
+  duplicate: (prop: Prop) => void;
+};
+function openColMenu(e: MouseEvent, prop: Prop, dbId: string, reload: () => Promise<void>, allProps: Prop[], ctx: ColMenuCtx) {
   e.stopPropagation();
-  openMenu(e, (close) => <ColMenu prop={prop} dbId={dbId} reload={reload} close={close} allProps={allProps} />, { minWidth: 252 });
+  const anchor: MenuAnchor = { rect: (e.currentTarget as HTMLElement).getBoundingClientRect() };
+  openMenu(e, (close) => <ColMenu prop={prop} dbId={dbId} reload={reload} close={close} allProps={allProps} ctx={ctx} anchor={anchor} />, { minWidth: 252 });
 }
-function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: string; reload: () => Promise<void>; close: () => void; allProps: Prop[] }) {
+function ColMenu({ prop, dbId, reload, close, allProps, ctx, anchor }: { prop: Prop; dbId: string; reload: () => Promise<void>; close: () => void; allProps: Prop[]; ctx: ColMenuCtx; anchor: MenuAnchor }) {
+  const [step, setStep] = useState<"main" | "type">("main");
   const [name, setName] = useState(prop.name);
   const [type, setType] = useState<PropType>(prop.type);
   const [options, setOptions] = useState<string[]>(prop.config?.options ?? []);
@@ -1388,7 +1774,22 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
   const persist = (patch: { name?: string; type?: PropType; config?: PropConfig }) =>
     api.updateProperty(prop.id, patch).then(reload).catch((e) => toast(t("更新属性失败：{msg}", { msg: (e as Error).message })));
 
-  const changeType = (pt: PropType) => {
+  const filledCells = ctx.records.filter((r) => {
+    const v = r.cells[prop.id];
+    return !(v == null || v === "" || (Array.isArray(v) && v.length === 0));
+  }).length;
+  const changeType = async (pt: PropType) => {
+    if (pt === type) return;
+    if (filledCells > 0) {
+      const ok = await confirmDialog({
+        title: t("更改属性类型？"),
+        message: t("改为「{type}」会清空这一列的 {n} 个单元格，可在版本历史中回滚。", { type: TYPE_META[pt].t, n: filledCells }),
+        confirmLabel: t("更改"),
+        danger: true,
+        aboveMenus: true,
+      });
+      if (!ok) return;
+    }
     setType(pt);
     if (pt === "relation") {
       // relation is only valid with a target database — without one, defer the
@@ -1465,15 +1866,43 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
     });
   };
 
+  const sr = ctx.view.sort.find((x) => x.prop === prop.id);
+  const isTitle = allProps[0]?.id === prop.id;
+  if (step === "main") {
+    return (
+      <>
+        <input
+          class="field"
+          value={name}
+          ref={(el) => { if (el && document.activeElement !== el && !el.dataset.touched) { el.dataset.touched = "1"; el.focus(); el.select(); } }}
+          onInput={(e) => setName((e.target as HTMLInputElement).value)}
+          onBlur={() => name && name !== prop.name && persist({ name })}
+          onKeyDown={(e) => { if (imeGhost(e)) return; if (e.key === "Enter") { (e.target as HTMLInputElement).blur(); close(); } }}
+        />
+        <MenuItem icon={TYPE_ICON[type]} label={t("类型")} sublabel={TYPE_META[type].t} sub="right" onClick={() => setStep("type")} />
+        <MenuSep />
+        <MenuItem icon="arrowUp" label={t("升序")} checked={!!sr && !sr.desc} onClick={() => { close(); ctx.setSort(prop.id, sr && !sr.desc ? null : false); }} />
+        <MenuItem icon="arrowDown" label={t("降序")} checked={!!sr && sr.desc} onClick={() => { close(); ctx.setSort(prop.id, sr && sr.desc ? null : true); }} />
+        <MenuItem icon="filter" label={t("筛选此列")} onClick={() => { close(); ctx.addFilter(prop, anchor); }} />
+        {!isTitle && <MenuItem icon="eyeOff" label={t("隐藏")} onClick={() => { close(); ctx.hide(prop.id); }} />}
+        <MenuSep />
+        <MenuItem icon="arrowLeft" label={t("左侧插入列")} onClick={() => { close(); ctx.insert(prop, "before", anchor); }} />
+        <MenuItem icon="arrowRight" label={t("右侧插入列")} onClick={() => { close(); ctx.insert(prop, "after", anchor); }} />
+        <MenuItem icon="copy" label={t("复制列")} onClick={() => { close(); ctx.duplicate(prop); }} />
+        <MenuItem icon="wrapText" label={t("换行文本")} checked={ctx.view.wrap !== false} onClick={() => { close(); ctx.toggleWrap(); }} />
+        <MenuSep />
+        <MenuItem icon="trash" label={t("删除属性")} danger onClick={async () => {
+          close();
+          const ok = await confirmDialog({ title: t("删除属性？"), message: t("「{name}」及其所有单元格数据将被移除。", { name: prop.name }), confirmLabel: t("删除"), danger: true });
+          if (ok) api.deleteProperty(prop.id).then(reload).catch((e) => toast(t("更新属性失败：{msg}", { msg: (e as Error).message })));
+        }} />
+      </>
+    );
+  }
   return (
     <>
-      <input
-        class="field"
-        value={name}
-        onInput={(e) => setName((e.target as HTMLInputElement).value)}
-        onBlur={() => name && name !== prop.name && persist({ name })}
-        onKeyDown={(e) => { if (e.key === "Enter") { (e.target as HTMLInputElement).blur(); close(); } }}
-      />
+      <MenuItem icon="arrowLeft" label={t("返回")} sublabel={prop.name} sub="right" onClick={() => setStep("main")} />
+      <MenuSep />
       <MenuLabel>{t("属性类型")}</MenuLabel>
       <div class="typegrid">
         {(Object.keys(TYPE_META) as PropType[]).map((pt) => (
@@ -1560,19 +1989,6 @@ function ColMenu({ prop, dbId, reload, close, allProps }: { prop: Prop; dbId: st
           />
         </>
       )}
-      <MenuSep />
-      <MenuItem icon="cornerUpRight" label={t("在右侧插入列")} onClick={() => {
-        close();
-        api.createProperty({ db: dbId, name: uniquePropName(t("新属性"), allProps), type: "text" })
-          .then(reload)
-          .catch((e) => toast(t("新建属性失败：{msg}", { msg: (e as Error).message })));
-      }} />
-      <MenuSep />
-      <MenuItem icon="trash" label={t("删除属性")} danger onClick={async () => {
-        close();
-        const ok = await confirmDialog({ title: t("删除属性？"), message: t("「{name}」及其所有单元格数据将被移除。", { name: prop.name }), confirmLabel: t("删除"), danger: true });
-        if (ok) api.deleteProperty(prop.id).then(reload);
-      }} />
     </>
   );
 }
@@ -1670,17 +2086,25 @@ function ClearQuery({ query, onClear }: { query: string; onClear: () => void }) 
   );
 }
 
-function openAddCol(e: MouseEvent, dbId: string, allProps: Prop[], reload: () => Promise<void>) {
-  e.stopPropagation();
-  openMenu(e, (close) => <AddColMenu dbId={dbId} allProps={allProps} reload={reload} close={close} />);
+function openAddCol(e: MouseEvent | MenuAnchor, dbId: string, allProps: Prop[], reload: () => Promise<void>, position?: number) {
+  if (e instanceof MouseEvent) e.stopPropagation();
+  openMenu(e, (close) => <AddColMenu dbId={dbId} allProps={allProps} reload={reload} close={close} position={position} />);
 }
-function AddColMenu({ dbId, allProps, reload, close }: { dbId: string; allProps: Prop[]; reload: () => Promise<void>; close: () => void }) {
+/** Fractional position that slots a new column before/after `prop`. */
+function positionNear(allProps: Prop[], prop: Prop, where: DropWhere): number {
+  const i = allProps.findIndex((p) => p.id === prop.id);
+  const nb = where === "before" ? allProps[i - 1] : allProps[i + 1];
+  if (!nb) return where === "before" ? prop.position - 1 : prop.position + 1;
+  return (prop.position + nb.position) / 2;
+}
+function AddColMenu({ dbId, allProps, reload, close, position }: { dbId: string; allProps: Prop[]; reload: () => Promise<void>; close: () => void; position?: number }) {
   // relation can't be created from the type alone — it needs a target database,
   // so picking it swaps the menu to a second step instead of creating.
   const [pickTarget, setPickTarget] = useState(false);
   const create = (pt: PropType, config: PropConfig | undefined, base: string) => {
     close();
     api.createProperty({ db: dbId, name: uniquePropName(base, allProps), type: pt, config })
+      .then((p) => (position == null ? p : api.updateProperty(p.id, { position })))
       .then(reload)
       .catch((e) => toast(t("新建属性失败：{msg}", { msg: (e as Error).message })));
   };
@@ -1712,22 +2136,14 @@ function AddColMenu({ dbId, allProps, reload, close }: { dbId: string; allProps:
   );
 }
 
-function openSortMenu(e: MouseEvent, props: Prop[], cur: { id: string; desc: boolean } | null, setSort: (s: { id: string; desc: boolean } | null) => void) {
+function openCalcMenu(e: MouseEvent, prop: Prop, cur: CalcKind | undefined, onPick: (k: CalcKind | null) => void) {
   openMenu(e, (close) => (
     <>
-      <MenuLabel>{t("排序依据")}</MenuLabel>
-      {props.map((p) => (
-        <MenuItem
-          key={p.id}
-          icon={TYPE_ICON[p.type]}
-          label={p.name}
-          sublabel={cur?.id === p.id ? (cur.desc ? t("降序") : t("升序")) : undefined}
-          sub="right"
-          checked={cur?.id === p.id}
-          onClick={() => { setSort({ id: p.id, desc: cur?.id === p.id ? !cur.desc : false }); close(); }}
-        />
+      <MenuLabel>{t("计算")}</MenuLabel>
+      <MenuItem label={t("无")} checked={!cur} onClick={() => { close(); onPick(null); }} />
+      {calcKindsFor(prop.type).map((k) => (
+        <MenuItem key={k} label={calcLabel(k)} checked={cur === k} onClick={() => { close(); onPick(k); }} />
       ))}
-      {cur && (<><MenuSep /><MenuItem icon="x" label={t("清除排序")} onClick={() => { setSort(null); close(); }} /></>)}
     </>
   ));
 }
@@ -1746,14 +2162,43 @@ function openRowMenu(e: MouseEvent, rec: Rec, onOpen: () => void, onDup: () => v
 
 // ---- record peek panel ----
 export function RecordPeek({
-  db, props, rec, onClose, onCommit, onDelete, onDuplicate, onReverted, onRelCreated,
+  db, props, rec, onClose, onCommit, onDelete, onDuplicate, onReverted, onRelCreated, hidden = [], prevId, nextId, onNavigate,
 }: {
   db: Db; props: Prop[]; rec: Rec;
   onClose: () => void; onCommit: (p: Prop, v: unknown) => void; onDelete: () => void; onDuplicate: () => void;
   onReverted: () => void; onRelCreated: (p: Prop) => void;
+  /** Property ids the current view hides: folded under a toggle row here. */
+  hidden?: string[];
+  /** Neighbours in the current view's visible order (↑/↓ in the drawer head). */
+  prevId?: string | null; nextId?: string | null; onNavigate?: (id: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [hist, setHist] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenSet = new Set(hidden);
+  const shownProps = props.filter((p) => !hiddenSet.has(p.id));
+  const hiddenProps = props.filter((p) => hiddenSet.has(p.id));
+  const propRow = (p: Prop) => (
+    <div key={p.id} class="proprow">
+      <div
+        class="k"
+        onClick={(e) =>
+          openMenu(e, (close) => (
+            <MenuItem icon="history" label={t("字段修改历史")} onClick={() => { close(); openFieldHistory(rec.id, p.id, p.name); }} />
+          ))
+        }
+      ><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span></div>
+      <PeekValue
+        prop={p}
+        rec={rec}
+        editing={editing === p.id}
+        onEdit={() => setEditing(p.id)}
+        onCommit={(v) => { onCommit(p, v); setEditing(null); }}
+        onCloseEdit={() => setEditing(null)}
+        onRelCreated={() => onRelCreated(p)}
+      />
+    </div>
+  );
   const { open, close } = useDrawerTransition(onClose);
   const { width, handle } = useDrawerResize("mh.peekW");
   const titleProp = props[0];
@@ -1772,11 +2217,22 @@ export function RecordPeek({
               <Icon name="arrowLeft" />
             </button>
           )}
+          {onNavigate && (
+            <div class="peek-nav">
+              <button class="iconbtn" {...tip(t("上一条"))} disabled={!prevId} onClick={() => prevId && onNavigate(prevId)}><Icon name="arrowUp" /></button>
+              <button class="iconbtn" {...tip(t("下一条"))} disabled={!nextId} onClick={() => nextId && onNavigate(nextId)}><Icon name="arrowDown" /></button>
+            </div>
+          )}
           <div style={{ flex: 1 }} />
           <button class="iconbtn" {...tip(t("更多"))} onClick={(e) =>
             openMenu(e, (close) => (
               <>
                 <MenuItem icon="history" label={t("版本历史")} checked={hist} onClick={() => { close(); setHist(!hist); }} />
+                <MenuItem icon="link" label={t("复制链接")} onClick={() => {
+                  close();
+                  const url = `${location.origin}${location.pathname}#/db/${encodeURIComponent(db.id)}/${encodeURIComponent(rec.id)}`;
+                  navigator.clipboard.writeText(url).then(() => toast(t("已复制链接")), () => toast(t("复制失败")));
+                }} />
                 <MenuItem icon="copy" label={t("复制记录")} onClick={() => { close(); onDuplicate(); }} />
                 <MenuSep />
                 <MenuItem icon="trash" label={t("删除记录")} danger onClick={() => { close(); onDelete(); }} />
@@ -1796,27 +2252,14 @@ export function RecordPeek({
               >
                 {titleProp ? String(rec.cells[titleProp.id] ?? t("无标题")) : t("无标题")}
               </h2>
-              {props.map((p) => (
-                <div key={p.id} class="proprow">
-                  <div
-                    class="k"
-                    onClick={(e) =>
-                      openMenu(e, (close) => (
-                        <MenuItem icon="history" label={t("字段修改历史")} onClick={() => { close(); openFieldHistory(rec.id, p.id, p.name); }} />
-                      ))
-                    }
-                  ><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span></div>
-                  <PeekValue
-                    prop={p}
-                    rec={rec}
-                    editing={editing === p.id}
-                    onEdit={() => setEditing(p.id)}
-                    onCommit={(v) => { onCommit(p, v); setEditing(null); }}
-                    onCloseEdit={() => setEditing(null)}
-                    onRelCreated={() => onRelCreated(p)}
-                  />
-                </div>
-              ))}
+              {shownProps.map(propRow)}
+              {hiddenProps.length > 0 && (
+                <button class="peek-hidden-toggle" onClick={() => setShowHidden(!showHidden)}>
+                  <Icon name="chevron" cls={"ico sm" + (showHidden ? " down" : "")} />
+                  {showHidden ? t("收起隐藏的属性") : t("还有 {n} 个隐藏的属性", { n: hiddenProps.length })}
+                </button>
+              )}
+              {showHidden && hiddenProps.map(propRow)}
               <PeekDocs props={props} rec={rec} />
             </>
           )}
@@ -1902,6 +2345,8 @@ function PeekValue({ prop, rec, editing, onEdit, onCommit, onCloseEdit, onRelCre
     return <div class="v" onClick={(e) => openRelationMenu(e as unknown as MouseEvent, prop, val, onCommit, undefined, onRelCreated)}><CellDisplay prop={prop} val={val} /></div>;
   if (prop.type === "doc")
     return <div class="v" onClick={(e) => openDocMenu(e as unknown as MouseEvent, val, onCommit)}><CellDisplay prop={prop} val={val} /></div>;
+  if (prop.type === "date")
+    return <div class="v" onClick={(e) => openDatePicker(e as unknown as MouseEvent, val, onCommit)}><CellDisplay prop={prop} val={val} /></div>;
   if (editing) {
     // No captureTab: in the peek panel Tab follows native focus order and the
     // resulting blur commits. onCommit closes the editor via the parent.

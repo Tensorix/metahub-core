@@ -10,8 +10,9 @@ export interface DatabaseRow {
   id: string;
   name: string;
   icon: string | null;
-  /** Generic replicated metadata (one LWW register). Domain-neutral by design:
-   *  consumers own their keys (e.g. the WebUI sidebar's `collapsed` flag). */
+  /** Generic replicated metadata, one LWW register per top-level key.
+   *  Domain-neutral by design: consumers own their keys (the WebUI sidebar's
+   *  `collapsed` flag, the table's saved `views`). */
   meta: Record<string, unknown> | null;
   created_hlc: string;
 }
@@ -23,7 +24,21 @@ const DATABASE_SELECT = DATABASE_COLS.join(", ");
 
 function rowOut(r: (Omit<DatabaseRow, "meta"> & { meta: string | null }) | null): DatabaseRow | null {
   if (!r) return null;
-  return { ...r, meta: r.meta === null ? null : JSON.parse(r.meta) };
+  const meta = r.meta === null ? null : (JSON.parse(r.meta) as Record<string, unknown> | null);
+  return { ...r, meta: meta && Object.keys(meta).length ? meta : null };
+}
+
+/** One oplog register per meta key (`meta.<key>`), so two writers of different
+ *  keys never clobber each other. `null` removes a key; keys whose value is
+ *  unchanged emit nothing. */
+function emitMetaPatch(db: DbDriver, id: string, cur: Record<string, unknown> | null, patch: Record<string, unknown>): void {
+  for (const [k, v] of Object.entries(patch)) {
+    if (k.includes(".")) throw new MhError("invalid_input", `meta key must not contain ".": ${k}`);
+    const next = v === undefined ? null : v;
+    const prev = cur && k in cur ? cur[k] : null;
+    if (JSON.stringify(prev ?? null) === JSON.stringify(next ?? null)) continue;
+    emit(db, "databases", id, `meta.${k}`, next === null ? undefined : next);
+  }
 }
 
 export const createDatabase = grouped(function createDatabase(
@@ -45,16 +60,14 @@ export const updateDatabase = grouped(function updateDatabase(
   if (!getDatabase(db, id)) throw new MhError("not_found", `no such database: ${id}`);
   if (fields.name !== undefined) emit(db, "databases", id, "name", fields.name);
   if (fields.icon !== undefined) emit(db, "databases", id, "icon", fields.icon);
-  // Whole-object LWW register: callers merge into the current meta themselves.
-  // TODO(meta-per-key): BEFORE a second meta key ships, switch to per-key
-  // emits (one register per key). With one whole-object register, two writers
-  // of DIFFERENT keys (offline devices, racing tabs) each emit a full object
-  // missing the other's key, and LWW silently drops one — a structural lost
-  // update the caller-side merge cannot prevent.
+  // `meta` is a merge patch over per-key registers: only the keys given change,
+  // null deletes a key, and `meta: null` clears every key.
   if (fields.meta !== undefined) {
     if (fields.meta !== null && (typeof fields.meta !== "object" || Array.isArray(fields.meta)))
       throw new MhError("invalid_input", "meta must be a JSON object or null");
-    emit(db, "databases", id, "meta", fields.meta);
+    const cur = getDatabase(db, id)!.meta;
+    const patch = fields.meta ?? Object.fromEntries(Object.keys(cur ?? {}).map((k) => [k, null]));
+    emitMetaPatch(db, id, cur, patch);
   }
   return getDatabase(db, id)!;
 });
@@ -84,7 +97,7 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
   // closed) — the user just created it and expects to see it.
   if (src.meta !== null) {
     const { collapsed: _hidden, ...meta } = src.meta as Record<string, unknown>;
-    if (Object.keys(meta).length) emit(db, "databases", dup.id, "meta", meta);
+    emitMetaPatch(db, dup.id, null, meta);
   }
   const propIdMap = new Map<string, string>();
   const selfRelNew = new Set<string>(); // copy-side prop ids whose relation targets the copy

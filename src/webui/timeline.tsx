@@ -22,16 +22,28 @@ export function TimelineView({
   records,
   onCommitValue,
   onOpenRecord,
+  startField,
+  endField,
+  onFieldsChange,
 }: {
   props: Prop[];
   records: Rec[];
   onCommitValue: (rec: Rec, prop: Prop, value: unknown) => void;
   onCreate: (values: Record<string, unknown>) => void;
   onOpenRecord: (id: string) => void;
+  /** Controlled start/end property ids (saved on the view); omit for per-mount state. */
+  startField?: string | null;
+  endField?: string | null | "none";
+  onFieldsChange?: (f: { start?: string; end?: string | "none" }) => void;
 }) {
   const dateProps = props.filter((p) => p.type === "date");
-  const [startId, setStartId] = useState<string | null>(null);
-  const [endId, setEndId] = useState<string | null | "none">(null);
+  const [ownStartId, setOwnStartId] = useState<string | null>(null);
+  const [ownEndId, setOwnEndId] = useState<string | null | "none">(null);
+  const controlled = startField !== undefined;
+  const startId = controlled ? startField : ownStartId;
+  const endId = controlled ? (endField ?? null) : ownEndId;
+  const setStartId = (id: string) => { onFieldsChange?.({ start: id }); if (!controlled) setOwnStartId(id); };
+  const setEndId = (id: string | "none") => { onFieldsChange?.({ end: id }); if (!controlled) setOwnEndId(id); };
   const startProp = props.find((p) => p.id === startId) ?? dateProps[0] ?? null;
   const endProp =
     endId === "none" ? null : (props.find((p) => p.id === endId) ?? dateProps.find((p) => p !== startProp) ?? null);
