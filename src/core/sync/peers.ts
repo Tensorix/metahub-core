@@ -3,7 +3,7 @@
 // plus replication cursors and last-sync status. `syncAllPeers` is what the
 // server's auto-sync timer calls each tick.
 
-import type { DbDriver } from "../driver.ts";
+import { writeTx, type DbDriver } from "../driver.ts";
 import { MhError, errorCode } from "../errors.ts";
 import { syncWithPeer, type SyncResult } from "./client.ts";
 import { storageUrl } from "./storage-url.ts";
@@ -418,7 +418,7 @@ export async function rotateStoragePeer(
  * peer that never sent a self_url have a null peer_url and can't be revoked here.
  */
 export function removePeer(db: DbDriver, url: string): boolean {
-  const tx = db.transaction(() => {
+  return writeTx(db, () => {
     const changed = db.query("DELETE FROM peers WHERE url = ?").run(url).changes > 0;
     db.query("DELETE FROM peer_grants WHERE peer_url = ?").run(url);
     // Drop any storage-sync per-node cursors for this peer (no-op for http peers).
@@ -427,7 +427,6 @@ export function removePeer(db: DbDriver, url: string): boolean {
     db.query("DELETE FROM room_rows WHERE peer_key = ?").run(url);
     return changed;
   });
-  return tx();
 }
 
 export function setPeerEnabled(db: DbDriver, url: string, enabled: boolean): boolean {
@@ -552,7 +551,7 @@ async function syncPeerOnce(
     // The data sync SUCCEEDED past this point: local follow-up work (rollback
     // bookkeeping, channel reconcile) must never rewrite the peer status to
     // "error" or flip the outcome — it degrades to warnings instead.
-    const warnings: string[] = [];
+    const warnings: string[] = [...(result.warnings ?? [])];
     try {
       if (peer?.kind !== "s3" && peer?.kind !== "room") clearCoveredSiteRollbacks(db, url);
     } catch (e) {

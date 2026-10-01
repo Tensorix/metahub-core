@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
-import { repairHub, validateHub, rematerializeAll } from "../../core/integrity.ts";
+import { repairHub, validateHub, rematerializeAll, repairClock } from "../../core/integrity.ts";
 import { print, table } from "../output.ts";
 
 export default defineCommand({
@@ -18,9 +18,28 @@ export default defineCommand({
       description:
         "First rebuild every replicated table from the oplog (fixes a dropped/emptied/corrupted table; local-only, emits nothing)",
     },
+    clock: {
+      type: "boolean",
+      description:
+        "Restamp oplog rows dated more than 5 min in the future with this clock and reset the logical clock (fixes clock_skew; local-only, peers re-pull the rows)",
+    },
   },
   run: ({ args }) => {
     const db = openMetahub();
+
+    if (args.clock) {
+      const r = repairClock(db);
+      print(r, () =>
+        r.restamped === 0
+          ? r.clockReset
+            ? "Logical clock reset to wall time; no future-dated changes."
+            : "No future-dated changes; clock is sane."
+          : `Restamped ${r.restamped} change(s): ${Object.entries(r.byNode)
+              .map(([n, k]) => `${n}=${k}`)
+              .join(", ")}`,
+      );
+      return;
+    }
 
     if (args.rematerialize && !args["dry-run"]) {
       const replayed = rematerializeAll(db);

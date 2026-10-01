@@ -33,6 +33,8 @@
 
 故 `mh doc edit --old --new` 把 `--old`(精确、唯一,否则需 `--replace-all`)作为主守卫:不读拿不到 `--old`,漂移则报 `anchor not found` 逼重读。`--if-match <version>`(version 来自 `documentVersion`)是**可选**陈旧兜底,不强制——因为块级 CRDT 已保证并发不丢数据,守卫只是「别基于陈旧内容编辑」的礼貌检查。
 
+**同段并发语义(2026-10-01 统一)**:`editDocument` 原有「单块内改动直接改该块 text 寄存器」的快路径已删除,所有编辑路径(`doc edit` / `doc update --body` / WebUI 整篇保存)一律走 `reconcileBody`——改一段 = 墓碑旧块 + 插入新块。两台设备并发改同一段落时,双方的新块都存活、相邻出现(由 `order_key, id` 定序),而不是后到者静默覆盖前者;重复段由人或 agent 事后合并。代价是单块编辑也会换块 id、多几条 op。见 [31-concurrent-writers](../31-concurrent-writers/design.md)。
+
 ### 2.5 三条写路径
 
 - **`createDocument(body)` / `appendDocument` / `prependDocument`**:parse → 在边界 key 间 `keysBetween` → emit 新块。

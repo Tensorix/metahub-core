@@ -505,7 +505,7 @@ export function writeFileRow(
   if (same) return { ...same, changed: false };
   const existing = fileIdFor(db, siteId, cleanPath);
   const id = existing ?? newId("sf", cleanPath);
-  withChangeGroup(null, () => {
+  withChangeGroup(db, null, () => {
     if (!existing) {
       const first = emit(db, "site_files", id, "site_id", siteId);
       emit(db, "site_files", id, "path", cleanPath);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { repairClock } from "../../core/integrity.ts";
 import { MhError } from "../../core/errors.ts";
 import { errorResponse, type Route, type RouteCtx } from "../../core/sync/routes.ts";
 import {
@@ -984,6 +985,14 @@ export const webuiRoutes: Route[] = [
       "Drop locally-cached blob bytes a full blob device durably holds (the reference stays; bytes re-download on demand). Returns bytes freed.",
     response: ClearResultSchema,
     handler: handle((_req, { db }) => clearCache(db)),
+  },
+  {
+    method: "POST",
+    path: "/api/repair/clock",
+    summary:
+      "Restamp oplog rows dated more than 5 min in the future with this clock and reset the logical clock (fixes clock_skew; local-only).",
+    response: z.object({ restamped: z.number(), byNode: z.record(z.string(), z.number()) }),
+    handler: handle(async (_req, { db }) => repairClock(db)),
   },
   {
     method: "POST",

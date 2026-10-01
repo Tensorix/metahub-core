@@ -56,6 +56,8 @@ field is a real failure, not a no-op.
 | `stale` / `conflict` | 5 | doc changed since your `--if-match` read / name taken | re-read, then retry |
 | `auth` | 6 | missing or invalid token | supply `--token`, then retry |
 | `network` | 7 | peer unreachable or replied non-OK | retryable with backoff |
+| `busy` | 9 | another process holds the write lock | nothing was written — retry the same command after a short backoff |
+| `clock_skew` | 10 | this device's clock is >5 min ahead of wall time | run `mh repair --clock`, then retry |
 | — | 1 | uncategorized failure | read the message |
 | — | 98 | server port already in use | pick another `--port` |
 

@@ -19,10 +19,10 @@
 
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
-import { changesAfterSeq, ingest, CHANGE_SELECT, type Change } from "../crdt.ts";
+import { changesAfterSeq, ingestDetailed, CHANGE_SELECT, type Change } from "../crdt.ts";
 import { isElectedPublisher } from "./publisher-lease.ts";
 import { MhError, errorCode } from "../errors.ts";
-import type { SyncResult } from "./client.ts";
+import { skewWarnings, type SyncResult } from "./client.ts";
 import {
   encryptBytes,
   decryptBytes,
@@ -800,11 +800,12 @@ export async function syncWithStorage(
   // runs when opts.publish, and a publisher always pulls, so it never sees [].
   let snapKeys: string[] = [];
   let pulled = 0;
+  const skewed: Record<string, number> = {};
   if (opts.pull ?? true) {
     snapKeys = (await client.list(snapshotRoot(base)))
       .map((o) => o.key)
       .filter((k) => k.endsWith(".snap"));
-    pulled += await pullSnapshots(db, peerUrl, snapKeys, client, key);
+    pulled += await pullSnapshots(db, peerUrl, snapKeys, client, key, skewed);
 
     // …then each other node's new segments.
     for (const remote of await listRemoteNodes(client, base)) {
@@ -828,7 +829,7 @@ export async function syncWithStorage(
         // Count only changes NEW to our oplog (ingest's return), not the segment's
         // raw size — a re-read of already-known data is not sync progress and must
         // not keep the auto-sync backoff (server.ts) flagged "busy".
-        pulled += ingest(db, changes);
+        pulled += collectSkew(skewed, ingestDetailed(db, changes));
         setStorageCursor(db, peerUrl, remote, seg.key);
       }
     }
@@ -883,19 +884,26 @@ export async function syncWithStorage(
     if (ownCount >= threshold) await publishSnapshot(db, client, config, opts.snapshotRetainSegments);
   }
 
-  return { pushed, pulled, pendingPush };
+  const warnings = skewWarnings(peerUrl, skewed);
+  return { pushed, pulled, pendingPush, ...(warnings.length ? { warnings } : {}) };
 }
 
 /** Ingest only the snapshots we don't already cover, then prune the consumed set
  *  to keys still present so it stays bounded as old snapshots GC. ⑤b: a small
  *  frontier sidecar (.vc) lets a caught-up consumer skip the whole-hub body GET;
  *  newest-first so ingesting the latest dominates (and thus skips) older ones. */
+function collectSkew(into: Record<string, number>, r: { received: number; skewed: Record<string, number> }): number {
+  for (const [n, k] of Object.entries(r.skewed)) into[n] = (into[n] ?? 0) + k;
+  return r.received;
+}
+
 async function pullSnapshots(
   db: DbDriver,
   peerUrl: string,
   present: string[],
   client: StorageClient,
   key: Uint8Array | null,
+  skewed: Record<string, number> = {},
 ): Promise<number> {
   if (present.length === 0) return 0;
   const consumed = getSnapshotConsumed(db, peerUrl);
@@ -919,7 +927,7 @@ async function pullSnapshots(
     // puller that's barely behind doesn't report a huge false "pulled" that pins
     // the auto-sync backoff at full cadence. The frontier advance below still
     // walks all changes (idempotent max).
-    pulled += ingest(db, changes);
+    pulled += collectSkew(skewed, ingestDetailed(db, changes));
     consumed.add(k);
     for (const c of changes)
       if (!local[c.node_id] || c.hlc > local[c.node_id]!) local[c.node_id] = c.hlc;

@@ -105,7 +105,7 @@ export function readPolicy(db: DbDriver): BlobPolicy {
  *  (object storage as a durable full library). Bucket urls never match a node id,
  *  so isFullBlobNode()/isClearable() are unaffected — they're a visible guardrail. */
 export const setFullNodes = (db: DbDriver, nodeIds: string[]): void => {
-  withChangeGroup(null, () => {
+  withChangeGroup(db, null, () => {
     // de-dupe, keep order
     const seen = new Set<string>();
     const list = nodeIds.filter((n) => n && !seen.has(n) && seen.add(n) != null);

@@ -1,6 +1,6 @@
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
-import { ingest, changesAfterSeq, type Change } from "../crdt.ts";
+import { ingestDetailed, changesAfterSeq, type Change } from "../crdt.ts";
 import { type SyncResponse, SYNC_PATH } from "./protocol.ts";
 import { MhError } from "../errors.ts";
 
@@ -33,6 +33,16 @@ export interface SyncResult {
   received?: number;
   /** Storage-sync only: local own ops exist but were deferred by push batching. */
   pendingPush?: boolean;
+  /** Non-fatal problems this round (e.g. clock-skew refusals in either direction). */
+  warnings?: string[];
+}
+
+/** Human-readable warnings for changes refused as clock-skewed, per author node. */
+export function skewWarnings(source: string, skewed: Record<string, number>): string[] {
+  return Object.entries(skewed).map(
+    ([node, n]) =>
+      `${source}: refused ${n} change(s) from device ${node} stamped more than 5 min in the future — run \`mh repair --clock\` on that device`,
+  );
 }
 
 export interface SyncOpts {
@@ -119,7 +129,8 @@ export async function syncWithPeer(
   // so re-pulled-but-known data doesn't read as activity (consistent with the
   // storage path; keeps the auto-sync backoff honest). `received` carries the
   // response page size separately so paginated hydration can break on it.
-  const pulled = ingest(db, changes);
+  const r = ingestDetailed(db, changes);
+  const pulled = r.received;
   setPeer(db, url, {
     pull_cursor: data.cursor,
     // Rows this round just ingested came FROM the peer — advance past them so
@@ -127,5 +138,15 @@ export async function syncWithPeer(
     push_cursor: advanceAckedPrefix(db, toPush.cursor, changes),
   });
 
-  return { pushed: toPush.changes.length, pulled, received: changes.length };
+  const warnings = skewWarnings(url, r.skewed);
+  if (data.skewed_rejected)
+    warnings.push(
+      `${url} refused ${data.skewed_rejected} of this device's change(s) as stamped more than 5 min in the future — run \`mh repair --clock\` here`,
+    );
+  return {
+    pushed: toPush.changes.length,
+    pulled,
+    received: changes.length,
+    ...(warnings.length ? { warnings } : {}),
+  };
 }

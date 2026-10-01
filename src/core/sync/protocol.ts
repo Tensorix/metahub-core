@@ -36,6 +36,10 @@ export const SyncResponseSchema = z.object({
   node_id: z.string().describe("Server's node id"),
   changes: z.array(ChangeSchema).describe("Server changes after `since`"),
   cursor: z.number().describe("New server cursor for the client to store"),
+  skewed_rejected: z
+    .number()
+    .optional()
+    .describe("Pushed changes the server refused for being stamped >5 min in the future"),
 });
 
 export const HealthResponseSchema = z.object({

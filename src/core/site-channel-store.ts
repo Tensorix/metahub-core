@@ -1,4 +1,4 @@
-import type { DbDriver } from "./driver.ts";
+import { writeTx, type DbDriver } from "./driver.ts";
 import { emit, grouped, withChangeGroup } from "./crdt.ts";
 import { MhError } from "./errors.ts";
 import { newId } from "./ids.ts";
@@ -185,7 +185,7 @@ export const putSiteChannel = grouped(function putSiteChannel(
     policy_json: input.policy == null ? null : JSON.stringify(input.policy),
     desired_state: input.desiredState ?? "active",
   };
-  db.transaction(() => {
+  writeTx(db, () => {
     if (!existing) {
       const first = emit(db, "site_channels", id, "site_id", input.siteId);
       emit(db, "site_channels", id, "created_hlc", first.hlc);
@@ -194,7 +194,7 @@ export const putSiteChannel = grouped(function putSiteChannel(
       if (existing && (existing as unknown as Record<string, unknown>)[col] === value) continue;
       emit(db, "site_channels", id, col, value);
     }
-  })();
+  });
   return getSiteChannelRow(db, id)!;
 });
 
@@ -326,8 +326,7 @@ export function applySiteUpdate(
   opts: ApplySiteUpdateOpts,
   hooks?: { recordPublic?: (site: SiteRow) => void },
 ): SiteRow {
-  return db.transaction(() =>
-    withChangeGroup("site.update", () => {
+  return withChangeGroup(db, "site.update", () => {
       const updated = updateSite(db, siteId, {
         ...opts,
         visibility: opts.visibility === "public" ? "private" : opts.visibility,
@@ -337,21 +336,18 @@ export function applySiteUpdate(
       if (opts.name !== undefined)
         updatePublicSiteChannelUrls(db, siteId, updated.name);
       return getSite(db, siteId)!;
-    }),
-  )();
+  });
 }
 
 /** All-or-nothing site delete: tombstone + channel revocations commit
  * together, and a missing site revokes nothing. Callers run the (async)
  * reconciler AFTER this returns — never inside the transaction. */
 export function applySiteDelete(db: DbDriver, siteId: string): boolean {
-  return db.transaction(() =>
-    withChangeGroup("site.delete", () => {
-      if (!deleteSite(db, siteId)) return false;
-      revokeAllSiteChannels(db, siteId);
-      return true;
-    }),
-  )();
+  return withChangeGroup(db, "site.delete", () => {
+    if (!deleteSite(db, siteId)) return false;
+    revokeAllSiteChannels(db, siteId);
+    return true;
+  });
 }
 
 /** Site deletion first requests teardown for every channel. Link controllers

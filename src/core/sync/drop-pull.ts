@@ -17,7 +17,7 @@
 // node-local drop_rejects table and deleted right away (garbage must not eat
 // inbox capacity, and it never touches the oplog).
 
-import type { DbDriver } from "../driver.ts";
+import { writeTx, type DbDriver } from "../driver.ts";
 import type { Change } from "../crdt.ts";
 import { getNodeId } from "../node.ts";
 import { ingest } from "../crdt.ts";
@@ -180,12 +180,12 @@ function applyDropV2(
   };
   const before = (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number | null }).s ?? 0;
   const ids: string[] = [];
-  db.transaction(() => {
+  writeTx(db, () => {
     for (const intent of payload.intents) {
       applyGuestIntent(db, policy, { guestNode: payload.guest_node }, intent, { clock: "submitted", now });
       ids.push(intent.intentId);
     }
-  })();
+  });
   const ingested = (
     db.query("SELECT COUNT(*) AS n FROM crdt_changes WHERE seq > ?").get(before) as { n: number }
   ).n;

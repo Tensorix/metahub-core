@@ -453,32 +453,8 @@ export const editDocument = grouped(function editDocument(
       `${count} matches for --old; add surrounding context or use --replace-all`,
     );
 
-  // Fast path: edit stays within single blocks and introduces no block break.
-  if (!opts.old.includes("\n\n")) {
-    const affected = blocks.filter((b) => b.text.includes(opts.old));
-    // Function replacer → the new text is written verbatim; a string replacement
-    // would expand `$&`/`$$`/`` $` ``/`$'` in the user's value.
-    const next = affected.map((b) =>
-      opts.replaceAll
-        ? b.text.replaceAll(opts.old, () => opts.new)
-        : b.text.replace(opts.old, () => opts.new),
-    );
-    if (next.every((t) => t.length > 0 && !t.includes("\n\n"))) {
-      const targets = opts.replaceAll ? affected : affected.slice(0, 1);
-      // Skip a no-op emit (old === new) so a pure no-change doesn't bump the
-      // version, and `changed` reports the real effect.
-      let wrote = false;
-      targets.forEach((b, i) => {
-        if (next[i] !== b.text) {
-          emit(db, "doc_blocks", b.id, "text", next[i]!);
-          wrote = true;
-        }
-      });
-      return { id, changed: wrote, replaced: opts.replaceAll ? count : 1, version: documentVersion(db, id) };
-    }
-  }
-
-  // General path: rewrite the body and reconcile (handles spans/splits/merges).
+  // Function replacer → the new text is written verbatim; a string replacement
+  // would expand `$&`/`$$`/`` $` ``/`$'` in the user's value.
   const newBody = opts.replaceAll
     ? body.replaceAll(opts.old, () => opts.new)
     : body.replace(opts.old, () => opts.new);

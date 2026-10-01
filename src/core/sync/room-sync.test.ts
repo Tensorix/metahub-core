@@ -532,7 +532,7 @@ test("evict → re-enter on the next round keeps the owner baseline (no oplog fo
 
 function moveOp(node: string, recId: string, dbId: string, hlcTail: string): Change {
   return {
-    hlc: `99999999999999${hlcTail}-0000-${node}`,
+    hlc: `${String(Date.now() + 60_000).padStart(15, "0").slice(0, 14)}${hlcTail}-0000-${node}`,
     node_id: node,
     dataset: "records",
     row_id: recId,
@@ -683,7 +683,7 @@ test("the owner refuses non-guest-authored ops from a room", async () => {
       ...resp,
       changes: [
         {
-          hlc: "999999999999999-0000-nodeB",
+          hlc: `${String(Date.now() + 60_000).padStart(15, "0")}-0000-nodeB`,
           node_id: "nodeB", // impersonating an owner device
           dataset: "records",
           row_id: "rec-fake",

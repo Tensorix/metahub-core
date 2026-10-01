@@ -117,7 +117,7 @@ export function setNodeLabel(db: DbDriver, label: string | null, nodeId?: string
   if (id === getNodeId(db)) mirrorLegacySelfLabel(db, next);
   if (cur && cur.label === next) return;
   if (!cur && next == null) return;
-  withChangeGroup("node", () => {
+  withChangeGroup(db, "node", () => {
     emit(db, "nodes", id, "label", next);
   });
 }
@@ -150,7 +150,7 @@ export function describeSelf(db: DbDriver, info: SelfDescription = {}): NodeMeta
     if (seed) fields.label = seed;
   }
   if (Object.keys(fields).length > 0) {
-    withChangeGroup("node", () => {
+    withChangeGroup(db, "node", () => {
       for (const [col, v] of Object.entries(fields)) emit(db, "nodes", id, col, v);
     });
   }

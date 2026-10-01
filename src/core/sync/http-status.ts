@@ -13,6 +13,8 @@ const STATUS: Partial<Record<MhErrorCode, number>> = {
   conflict: 409,
   auth: 401,
   rate_limited: 429,
+  busy: 503,
+  clock_skew: 409,
 };
 
 /** HTTP status for an MhError code (400 fallback for unknown/absent codes). */

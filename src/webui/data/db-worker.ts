@@ -106,6 +106,7 @@ import {
   listDatabaseActivity,
 } from "../../core/history.ts";
 import { listAuditEntries, auditEntryDetail, revertChangeGroup } from "../../core/audit.ts";
+import { repairClock } from "../../core/integrity.ts";
 import { search } from "../../core/search.ts";
 import { lookupCandidates } from "../../core/resolve.ts";
 import {
@@ -1001,6 +1002,7 @@ const ops: Record<string, Op> = {
     listDatabaseActivity(db!, dbId, { limit }),
 
   // audit
+  repairClock: () => repairClock(db!),
   listAuditEntries: (opts?: { limit?: number; before?: string; actor?: string }) =>
     listAuditEntries(db!, opts ?? {}),
   auditEntryDetail: (txn: string) => auditEntryDetail(db!, txn),

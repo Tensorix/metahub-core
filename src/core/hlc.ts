@@ -1,4 +1,5 @@
 import type { DbDriver } from "./driver.ts";
+import { mhError } from "./errors.ts";
 
 // Hybrid Logical Clock. String form `<millis:15>-<counter:hex4>-<node>` so that
 // lexicographic order == causal/total order (ASCII, fixed-width numeric parts).
@@ -14,6 +15,22 @@ export interface Hlc {
  *  break the lexicographic == causal ordering, so producers carry into millis
  *  instead (see nextHlc/observeHlc). */
 export const MAX_HLC_COUNTER = 0xffff;
+
+/** Remote timestamps further in the future than this are rejected at the
+ *  replication boundary, and a persisted local clock that far ahead refuses to
+ *  mint until `mh repair --clock` restamps the offending rows. */
+export const HLC_MAX_SKEW_MS = 5 * 60_000;
+
+/** Upper bound (exclusive) on acceptable HLC strings as of `now`: anything
+ *  lexicographically above it is more than HLC_MAX_SKEW_MS in the future. */
+export function hlcSkewBound(now: number): string {
+  return formatHlc({ millis: now + HLC_MAX_SKEW_MS, counter: MAX_HLC_COUNTER, node: "~~~~~~~~" });
+}
+
+/** Whether an HLC string claims a time more than HLC_MAX_SKEW_MS past `now`. */
+export function isSkewedHlc(hlc: string, now: number): boolean {
+  return hlc > hlcSkewBound(now);
+}
 
 /** Carry a counter overflow into millis so the hex4 field stays fixed-width.
  *  Ordering is preserved: (millis+1, 0) sorts after (millis, 0xffff). */
@@ -60,6 +77,12 @@ function writeLast(db: DbDriver, h: Hlc): void {
 /** Issue a new timestamp for a local event, advancing the persisted clock. */
 export function nextHlc(db: DbDriver, node: string, now = Date.now()): string {
   const last = readLast(db, node);
+  if (last.millis > now + HLC_MAX_SKEW_MS)
+    throw mhError(
+      "clock_skew",
+      "本机逻辑时钟比系统时间超前 {min} 分钟（系统时钟曾被调错，或收到过时钟错误设备的数据），运行 mh repair --clock 修复",
+      { min: Math.ceil((last.millis - now) / 60_000) },
+    );
   const millis = Math.max(last.millis, now);
   const counter = millis === last.millis ? last.counter + 1 : 0;
   // Counter overflow (e.g. >65k writes inside one frozen millisecond, a real
@@ -84,6 +107,7 @@ export function observeHlc(
   // NaN back). Anonymous write-inbox ops make this reachable, so drop the poison
   // here as the last line of defense (the drop/grants layers reject it earlier).
   if (!Number.isFinite(r.millis) || !Number.isFinite(r.counter)) return;
+  if (r.millis > now + HLC_MAX_SKEW_MS) return;
   const millis = Math.max(last.millis, r.millis, now);
   let counter: number;
   if (millis === last.millis && millis === r.millis)
@@ -93,4 +117,15 @@ export function observeHlc(
   else counter = 0;
   // Same overflow carry as nextHlc (a remote counter of 0xffff lands here).
   writeLast(db, { ...carryCounter(millis, counter), node });
+}
+
+/** The persisted local clock, or null before the first mint. */
+export function persistedHlc(db: DbDriver): Hlc | null {
+  const row = db.query("SELECT value FROM meta WHERE key = 'hlc'").get() as { value: string } | null;
+  return row ? parseHlc(row.value) : null;
+}
+
+/** Reset the persisted clock to wall time (repairClock, after the future rows are gone). */
+export function resetHlc(db: DbDriver, node: string, now = Date.now()): void {
+  writeLast(db, { millis: now, counter: 0, node });
 }

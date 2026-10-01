@@ -7,6 +7,8 @@ import {
   nextHlc,
   observeHlc,
   MAX_HLC_COUNTER,
+  HLC_MAX_SKEW_MS,
+  isSkewedHlc,
   type Hlc,
 } from "./hlc.ts";
 
@@ -79,4 +81,27 @@ test("sustained same-millisecond issuance never breaks ordering", () => {
     expect(h.length).toBe(prev.length || h.length);
     prev = h;
   }
+});
+
+test("nextHlc refuses to mint while the persisted clock is more than HLC_MAX_SKEW_MS ahead", () => {
+  const db = makeDb();
+  const now = 1_000_000_000;
+  nextHlc(db, "n", now + HLC_MAX_SKEW_MS + 1);
+  expect(() => nextHlc(db, "n", now)).toThrow(/mh repair --clock/);
+  nextHlc(db, "n", now + HLC_MAX_SKEW_MS + 2);
+});
+
+test("observeHlc ignores a remote timestamp more than HLC_MAX_SKEW_MS in the future", () => {
+  const db = makeDb();
+  const now = 1_000_000_000;
+  observeHlc(db, "n", formatHlc({ millis: now + HLC_MAX_SKEW_MS + 60_000, counter: 0, node: "r" }), now);
+  expect(parseHlc(nextHlc(db, "n", now)).millis).toBe(now);
+  observeHlc(db, "n", formatHlc({ millis: now + 1000, counter: 0, node: "r" }), now);
+  expect(parseHlc(nextHlc(db, "n", now)).millis).toBe(now + 1000);
+});
+
+test("isSkewedHlc / hlcSkewBound bracket the window regardless of counter and node", () => {
+  const now = 1_000_000_000;
+  expect(isSkewedHlc(formatHlc({ millis: now + HLC_MAX_SKEW_MS, counter: MAX_HLC_COUNTER, node: "zzzzzzzz" }), now)).toBe(false);
+  expect(isSkewedHlc(formatHlc({ millis: now + HLC_MAX_SKEW_MS + 1, counter: 0, node: "00000000" }), now)).toBe(true);
 });

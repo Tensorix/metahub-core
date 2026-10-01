@@ -3,7 +3,7 @@
 // it runs both on Bun (bun:sqlite) and in a browser worker (sqlite-wasm).
 // Opening the on-disk database lives in db.ts, which composes these.
 
-import type { DbDriver } from "./driver.ts";
+import { writeTx, type DbDriver } from "./driver.ts";
 import { CORE_SCHEMA, FTS_SCHEMA } from "./schema.ts";
 import { backfillRecordOrderKeys } from "./records.ts";
 import { backfillDocumentOrderKeys } from "./documents.ts";
@@ -53,7 +53,7 @@ export function migrateRecords(db: DbDriver): void {
 
   if (!tableExists(db, "record_values")) return;
 
-  const tx = db.transaction(() => {
+  writeTx(db, () => {
     // Fold each record's cells into a JSON object keyed by property id.
     db.exec(`
       UPDATE records SET data = coalesce((
@@ -65,7 +65,6 @@ export function migrateRecords(db: DbDriver): void {
     db.exec("DROP TABLE record_values");
     backfillRecordOrderKeys(db);
   });
-  tx();
 
   backfillRecordOrderKeys(db);
 }
@@ -192,7 +191,7 @@ export function migrateOplog(db: DbDriver): void {
  */
 export function migrateCrdtChangesSeq(db: DbDriver): void {
   if (hasColumn(db, "crdt_changes", "seq")) return;
-  const tx = db.transaction(() => {
+  writeTx(db, () => {
     db.exec(`
       DROP TABLE IF EXISTS crdt_changes_new;
       CREATE TABLE crdt_changes_new (
@@ -221,7 +220,6 @@ export function migrateCrdtChangesSeq(db: DbDriver): void {
     `);
     if (tableExists(db, "peers")) db.exec("UPDATE peers SET push_cursor = 0, pull_cursor = 0");
   });
-  tx();
 }
 
 /**
@@ -289,7 +287,7 @@ export function migrateStoragePeerUrls(db: DbDriver): void {
   if (renames.length === 0) return;
 
   const map = new Map(renames.map(({ oldUrl, newUrl }) => [oldUrl, newUrl]));
-  const tx = db.transaction(() => {
+  writeTx(db, () => {
     for (const { oldUrl, newUrl } of renames) {
       if (tableExists(db, "storage_cursors"))
         db.query("UPDATE storage_cursors SET peer_url = ? WHERE peer_url = ?").run(newUrl, oldUrl);
@@ -303,7 +301,6 @@ export function migrateStoragePeerUrls(db: DbDriver): void {
         setFullNodes(db, fullNodes.map((n) => map.get(n) ?? n));
     }
   });
-  tx();
 }
 
 /**
@@ -403,12 +400,12 @@ function replayDataset(db: DbDriver, dataset: string): void {
     )
     .all(dataset, since) as (Change & { seq: number })[];
   if (changes.length === 0) return;
-  db.transaction((rows: (Change & { seq: number })[]) => {
-    for (const change of rows) applyChange(db, change);
+  writeTx(db, () => {
+    for (const change of changes) applyChange(db, change);
     db.query(
       "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(key, String(rows[rows.length - 1]!.seq));
-  })(changes);
+    ).run(key, String(changes[changes.length - 1]!.seq));
+  });
 }
 
 export function migrateSiteChannels(db: DbDriver): void {

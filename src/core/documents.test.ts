@@ -101,7 +101,7 @@ test("listDocuments filters by parent_id", () => {
   expect(kids.every((d) => d.parent_id === parent.id)).toBe(true);
 });
 
-test("single-block edit preserves block identity", () => {
+test("single-block edit replaces the block (tombstone + fresh id), neighbours keep identity", () => {
   const db = makeNode("aaaa");
   const doc = createDocument(db, { title: "T", body: "one\n\ntwo\n\nthree" });
   const before = blockIds(db, doc.id);
@@ -109,7 +109,30 @@ test("single-block edit preserves block identity", () => {
   const r = editDocument(db, doc.id, { old: "two", new: "TWO" });
   expect(r.changed).toBe(true);
   expect(getDocument(db, doc.id)!.body).toBe("one\n\nTWO\n\nthree");
-  expect(blockIds(db, doc.id)).toEqual(before); // same ids, in place
+  const after = blockIds(db, doc.id);
+  expect(after[0]).toBe(before[0]);
+  expect(after[2]).toBe(before[2]);
+  expect(after[1]).not.toBe(before[1]);
+});
+
+test("concurrent edits to the SAME block on two nodes both survive as adjacent paragraphs", () => {
+  const a = makeNode("aaaa");
+  const doc = createDocument(a, { title: "T", body: "alpha\n\nbeta\n\ngamma" });
+  const b = makeNode("bbbb");
+  ingest(b, changesSince(a, ""));
+
+  editDocument(a, doc.id, { old: "beta", new: "beta by A" });
+  editDocument(b, doc.id, { old: "beta", new: "beta by B" });
+  ingest(a, changesSince(b, ""));
+  ingest(b, changesSince(a, ""));
+
+  const body = getDocument(a, doc.id)!.body!;
+  expect(body).toContain("beta by A");
+  expect(body).toContain("beta by B");
+  expect(body).not.toContain("\nbeta\n");
+  expect(body.startsWith("alpha\n\n")).toBe(true);
+  expect(body.endsWith("\n\ngamma")).toBe(true);
+  expect(getDocument(b, doc.id)!.body).toBe(body);
 });
 
 test("edit errors on missing anchor and ambiguous match", () => {

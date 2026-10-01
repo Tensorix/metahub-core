@@ -1,6 +1,6 @@
 import type { ZodType } from "zod";
 import type { Database } from "bun:sqlite";
-import { ingest, changesAfterSeq } from "../crdt.ts";
+import { ingestDetailed, changesAfterSeq } from "../crdt.ts";
 import {
   SyncRequestSchema,
   SyncResponseSchema,
@@ -37,6 +37,8 @@ const HTTP_STATUS: Record<MhErrorCode, number> = {
   auth: 401,
   network: 502,
   rate_limited: 429,
+  busy: 503,
+  clock_skew: 409,
   port_in_use: 500,
 };
 
@@ -48,6 +50,7 @@ export function errorResponse(e: unknown, req?: Request): Response {
   const code = errorCode(e);
   return Response.json(code ? { error: message, code } : { error: message }, {
     status: code ? HTTP_STATUS[code] : 400,
+    ...(code === "busy" ? { headers: { "retry-after": "1" } } : {}),
   });
 }
 
@@ -74,12 +77,18 @@ const syncRoutes: Route[] = [
     response: SyncResponseSchema,
     async handler(req, { db, node }) {
       const body = (await req.json()) as SyncRequest;
-      ingest(db, body.changes ?? []);
+      const r = ingestDetailed(db, body.changes ?? []);
+      const skewed = Object.values(r.skewed).reduce((a, b) => a + b, 0);
       const batch = changesAfterSeq(db, body.since ?? 0, {
         limit: body.limit,
         excludeDatasets: body.exclude_datasets,
       });
-      return Response.json({ node_id: node, changes: batch.changes, cursor: batch.cursor });
+      return Response.json({
+        node_id: node,
+        changes: batch.changes,
+        cursor: batch.cursor,
+        ...(skewed ? { skewed_rejected: skewed } : {}),
+      });
     },
   },
   {

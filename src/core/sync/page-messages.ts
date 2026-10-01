@@ -2,6 +2,8 @@ import type { Locale } from "./locale.ts";
 import { MhError } from "../errors.ts";
 
 const EN = {
+  "本机逻辑时钟比系统时间超前 {min} 分钟（系统时钟曾被调错，或收到过时钟错误设备的数据），运行 mh repair --clock 修复": "This device's logical clock is {min} min ahead of wall time (the system clock was wrong, or data arrived from a device with a wrong clock); run mh repair --clock",
+  "数据库正被另一个进程写入，请稍后重试": "The database is being written by another process; retry shortly",
   "通过 metahub 分享": "Shared via metahub",
   "由 metahub 托管": "Hosted by metahub",
   "（空文档）": "(empty document)",

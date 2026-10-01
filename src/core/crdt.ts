@@ -1,6 +1,6 @@
-import type { DbDriver } from "./driver.ts";
+import { writeTx, type DbDriver } from "./driver.ts";
 import { getNodeId } from "./node.ts";
-import { nextHlc, observeHlc } from "./hlc.ts";
+import { nextHlc, observeHlc, isSkewedHlc } from "./hlc.ts";
 import { serializeDocBlocks } from "./blocks.ts";
 import { randomSuffix } from "./ids.ts";
 import { noteChange } from "./history-cache.ts";
@@ -96,12 +96,12 @@ export function withNodeId<T>(node: string | null, fn: () => T): T {
  * and the process actor tag (if set) prefixes both as its own segment
  * ("ai/revert:xxxxxxxx") — see parseTxn() in history.ts for the grammar.
  */
-export function withChangeGroup<T>(label: string | null, fn: () => T): T {
+export function withChangeGroup<T>(db: DbDriver, label: string | null, fn: () => T): T {
   if (currentTxn !== null) return fn();
   currentTxn =
     (currentActor ? currentActor + "/" : "") + (label ? label + ":" : "") + randomSuffix(8);
   try {
-    return fn();
+    return writeTx(db, fn);
   } finally {
     currentTxn = null;
   }
@@ -117,22 +117,22 @@ export function withChangeGroup<T>(label: string | null, fn: () => T): T {
  * Nested inside its own group (createRecord's grouped()) the explicit id wins,
  * because withChangeGroup early-returns when a txn is already set.
  */
-export function withTxnId<T>(txn: string, fn: () => T): T {
+export function withTxnId<T>(db: DbDriver, txn: string, fn: () => T): T {
   const prev = currentTxn;
   currentTxn = txn;
   try {
-    return fn();
+    return writeTx(db, fn);
   } finally {
     currentTxn = prev;
   }
 }
 
 /** Wrap a mutator so its body runs inside one change group. */
-export function grouped<A extends unknown[], R>(
-  fn: (...args: A) => R,
+export function grouped<D extends DbDriver, A extends unknown[], R>(
+  fn: (db: D, ...args: A) => R,
   label: string | null = null,
-): (...args: A) => R {
-  return (...args) => withChangeGroup(label, () => fn(...args));
+): (db: D, ...args: A) => R {
+  return (db, ...args) => withChangeGroup(db, label, () => fn(db, ...args));
 }
 
 // Domain tables addressable by id, with their write-allowed columns. `col` is
@@ -422,18 +422,21 @@ export function emit(
   col: string,
   value: unknown,
 ): Change {
-  const node = currentNodeOverride ?? getNodeId(db);
-  const change: Change = {
-    hlc: nextHlc(db, node),
-    node_id: node,
-    dataset,
-    row_id: rowId,
-    col,
-    value: value === undefined ? null : JSON.stringify(value),
-    txn: currentTxn,
+  const mint = (): Change => {
+    const node = currentNodeOverride ?? getNodeId(db);
+    const change: Change = {
+      hlc: nextHlc(db, node),
+      node_id: node,
+      dataset,
+      row_id: rowId,
+      col,
+      value: value === undefined ? null : JSON.stringify(value),
+      txn: currentTxn,
+    };
+    applyChange(db, change);
+    return change;
   };
-  applyChange(db, change);
-  return change;
+  return currentTxn !== null ? mint() : writeTx(db, mint);
 }
 
 /** Apply multiple local field writes to the same row. */
@@ -455,20 +458,39 @@ export function emitFields(
  *  the honest "received" count. Re-ingesting data we already hold returns 0, so
  *  this is a reliable progress signal for the auto-sync backoff (a round that
  *  only re-reads known data must not count as activity). */
+export interface IngestResult {
+  received: number;
+  /** Changes refused for claiming a time > HLC_MAX_SKEW_MS in the future, by author node. */
+  skewed: Record<string, number>;
+}
+
 export function ingest(
   db: DbDriver,
   changes: Change[],
   opts: { now?: number } = {},
 ): number {
+  return ingestDetailed(db, changes, opts).received;
+}
+
+export function ingestDetailed(
+  db: DbDriver,
+  changes: Change[],
+  opts: { now?: number } = {},
+): IngestResult {
   const now = opts.now ?? Date.now();
   pruneExpiredIntentReceipts(db, now);
   const node = getNodeId(db);
   let received = 0;
   let poisoned = 0;
-  const tx = db.transaction((cs: Change[]) => {
-    for (const c of cs) {
+  const skewed: Record<string, number> = {};
+  const tx = () => {
+    for (const c of changes) {
       if (isExpiredIntentReceipt(c, now)) continue;
-      observeHlc(db, node, c.hlc);
+      if (isSkewedHlc(c.hlc, now)) {
+        skewed[c.node_id] = (skewed[c.node_id] ?? 0) + 1;
+        continue;
+      }
+      observeHlc(db, node, c.hlc, now);
       // Isolate a poison change (e.g. a malformed register that trips a NOT NULL
       // or other SQLite constraint) to that one change instead of aborting the
       // whole batch: SQLite's default ABORT rolls back only the failed statement,
@@ -483,10 +505,12 @@ export function ingest(
         );
       }
     }
-  });
-  tx(changes);
+  };
+  writeTx(db, tx);
   if (poisoned) console.error(`[ingest] ${poisoned} change(s) skipped this batch (see above)`);
-  return received;
+  for (const [n, k] of Object.entries(skewed))
+    console.error(`[ingest] refused ${k} change(s) from node ${n}: stamped more than 5 min in the future (that device should run mh repair --clock)`);
+  return { received, skewed };
 }
 
 /** All oplog changes with HLC strictly greater than `since` (test/debug helper). */

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { writeTx } from "./driver.ts";
 import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { changesAfterSeq, ingest, type Change } from "./crdt.ts";
@@ -184,7 +185,7 @@ export async function restoreSnapshot(
   await writeSnapshot(await createSnapshot(db), safetyPath);
 
   let applied = 0;
-  const tx = db.transaction(() => {
+  writeTx(db, () => {
     // Every replicated table (tables.ts) plus the oplog itself and the peer
     // cursors — derived, so a new synced table can't be left holding stale rows.
     for (const t of ["crdt_changes", ...SYNCED_TABLES, "peers"])
@@ -206,7 +207,6 @@ export async function restoreSnapshot(
         "INSERT INTO peers (url, pull_cursor, push_cursor) VALUES (?, ?, ?)",
       ).run(p.url, p.pull_cursor, p.push_cursor);
   });
-  tx();
   rebuildDeclaredIndexes(db);
   const repaired = repairHub(db).applied;
 

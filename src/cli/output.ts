@@ -1,4 +1,4 @@
-import { errorCode, type MhErrorCode } from "../core/errors.ts";
+import { asMhError, type MhErrorCode } from "../core/errors.ts";
 
 function wantJson(): boolean {
   const argv = process.argv;
@@ -37,6 +37,8 @@ const EXIT_CODES: Record<MhErrorCode, number> = {
   auth: 6,
   network: 7,
   rate_limited: 8,
+  busy: 9,
+  clock_skew: 10,
   port_in_use: 98, // historical: pre-dates the code taxonomy
 };
 
@@ -67,7 +69,8 @@ export function guard(
     try {
       await fn(ctx.args);
     } catch (e) {
-      fail(e instanceof Error ? e.message : String(e), errorCode(e) ?? 1);
+      const mh = asMhError(e);
+      fail(mh ? mh.message : e instanceof Error ? e.message : String(e), mh?.code ?? 1);
     }
   };
 }

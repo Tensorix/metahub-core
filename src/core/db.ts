@@ -37,6 +37,7 @@ function appKind(): NodeApp {
 export function openMetahub(): Database {
   ensureDirs();
   const db = new Database(dbPath(), { create: true });
+  db.exec("PRAGMA busy_timeout = 5000;");
   db.exec("PRAGMA journal_mode = WAL;");
   initSchema(db);
   // Self-description is a no-op unless something changed (node.ts), so every

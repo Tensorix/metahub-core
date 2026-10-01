@@ -19,7 +19,7 @@
 //      after a grants change): on mismatch, full reconcile — all partition
 //      winners plus the authoritative member key set.
 
-import type { DbDriver } from "../driver.ts";
+import { writeTx, type DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
 import { getNodeId } from "../node.ts";
 import { ingest, type Change } from "../crdt.ts";
@@ -222,13 +222,13 @@ export async function syncWithRoom(
   // are room-authored, hence evidently room-held: they join the shadow too
   // (member ones — a row we are evicting this same round must not re-enter),
   // so a guest-created record is not re-baselined back at the room next round.
-  db.transaction(() => {
+  writeTx(db, () => {
     applyPartitionDiff(db, cfg.peerKey, {
       entered: [...prep.shipped, ...pulledMemberRows(db, cfg, resp.changes)],
       left: prep.diff.left,
     });
     writeCursors(db, cfg.peerKey, { pull: resp.cursor, push: prep.pushCursor });
-  })();
+  });
 
   // Answer need_baseline: re-judge each row against CURRENT membership.
   if (resp.need_baseline.length > 0) await healBaselines(db, cfg, transport, resp.need_baseline);
@@ -280,14 +280,14 @@ async function healBaselines(
   }
   const resp = await roundTrip(db, cfg, transport, changes, evict);
   if (resp.share_state === "expired") return;
-  db.transaction(() => {
+  writeTx(db, () => {
     applyPartitionDiff(db, cfg.peerKey, {
       entered: [...entered, ...pulledMemberRows(db, cfg, resp.changes)],
       left: evict,
     });
     const cur = readCursors(db, cfg.peerKey);
     writeCursors(db, cfg.peerKey, { pull: resp.cursor, push: cur.push });
-  })();
+  });
 }
 
 /** Digest-mismatch repair: resend every partition winner plus the
@@ -303,11 +303,11 @@ async function fullReconcile(
   const winners = partitionWinners(db, cfg.scope);
   const resp = await roundTrip(db, cfg, transport, winners, [], members);
   if (resp.share_state === "expired") return;
-  db.transaction(() => {
+  writeTx(db, () => {
     resetPartitionShadow(db, cfg.peerKey, members);
     const cur = readCursors(db, cfg.peerKey);
     writeCursors(db, cfg.peerKey, { pull: resp.cursor, push: cur.push });
-  })();
+  });
 }
 
 /** Send one auxiliary request (heal/reconcile) and ingest its guest pull. */

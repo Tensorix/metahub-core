@@ -2,7 +2,8 @@ import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runSchema } from "./db.ts";
 import { emit, ingest, changesSince } from "./crdt.ts";
-import { validateHub, repairHub } from "./integrity.ts";
+import { validateHub, repairHub, repairClock } from "./integrity.ts";
+import { nextHlc, parseHlc, HLC_MAX_SKEW_MS } from "./hlc.ts";
 import { createDatabase, deleteDatabase } from "./databases.ts";
 import { addProperty, removeProperty } from "./properties.ts";
 import { createRecord, getRecord } from "./records.ts";
@@ -360,4 +361,61 @@ test("dead_cell_ref repair converges across nodes", () => {
   expect(fullSnapshot(a)).toEqual(fullSnapshot(b));
   expect(repairHub(a).applied).toBe(0);
   expect(repairHub(b).applied).toBe(0);
+});
+
+test("repairClock restamps future-dated rows, keeps values and order, resets the clock, re-syncs them", () => {
+  const db = makeNode("aaaa");
+  const dbRow = createDatabase(db, { name: "T" });
+  const now = Date.now();
+  // Drag the persisted clock a day into the future, then write "there".
+  db.query("UPDATE meta SET value = ? WHERE key = 'hlc'").run(
+    `${String(now + 86_400_000).padStart(15, "0")}-0000-aaaa`,
+  );
+  const far = ingest(
+    db,
+    [
+      {
+        hlc: `${String(now + 86_400_000 + 5).padStart(15, "0")}-0000-bbbb`,
+        node_id: "bbbb",
+        dataset: "databases",
+        row_id: dbRow.id,
+        col: "icon",
+        value: JSON.stringify("🚀"),
+      },
+    ],
+    { now: now + 86_400_000 + 10 },
+  );
+  expect(far).toBe(1);
+  const futureSeq = (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number }).s;
+
+  expect(() => nextHlc(db, "aaaa", now)).toThrow(/clock/);
+  expect(validateHub(db, { now }).issues.map((i) => i.category)).toContain("clock_skew");
+
+  const r = repairClock(db, now);
+  expect(r.restamped).toBe(1);
+  expect(r.clockReset).toBe(true);
+  expect(r.byNode).toEqual({ bbbb: 1 });
+  expect(validateHub(db, { now }).issues.filter((i) => i.category === "clock_skew")).toEqual([]);
+  expect(parseHlc(nextHlc(db, "aaaa", now)).millis).toBe(now);
+  const row = db
+    .query("SELECT seq, hlc, node_id, value FROM crdt_changes WHERE col = 'icon'")
+    .get() as { seq: number; hlc: string; node_id: string; value: string };
+  expect(row.seq).toBeGreaterThan(futureSeq);
+  expect(row.node_id).toBe("bbbb");
+  expect(parseHlc(row.hlc).millis).toBeLessThanOrEqual(now + HLC_MAX_SKEW_MS);
+  expect(db.query("SELECT icon FROM databases WHERE id = ?").get(dbRow.id)).toEqual({ icon: "🚀" });
+  expect(repairClock(db, now)).toEqual({ restamped: 0, byNode: {}, clockReset: false });
+});
+
+test("repairClock resets a dragged-ahead clock even when no future rows remain", () => {
+  const db = makeNode("aaaa");
+  const now = Date.now();
+  db.query("INSERT INTO meta (key, value) VALUES ('hlc', ?)").run(
+    `${String(now + 86_400_000).padStart(15, "0")}-0000-aaaa`,
+  );
+  expect(() => nextHlc(db, "aaaa", now)).toThrow(/clock/);
+  expect(validateHub(db, { now }).issues.map((i) => i.category)).toContain("clock_skew");
+  expect(repairClock(db, now)).toEqual({ restamped: 0, byNode: {}, clockReset: true });
+  expect(parseHlc(nextHlc(db, "aaaa", now)).millis).toBe(now);
+  expect(validateHub(db, { now }).ok).toBe(true);
 });

@@ -504,6 +504,14 @@ export function currentToken(): string | null {
   return storedToken();
 }
 
+async function isBusyResponse(res: Response): Promise<boolean> {
+  const body = (await res
+    .clone()
+    .json()
+    .catch(() => null)) as { code?: string } | null;
+  return body?.code === "busy";
+}
+
 /** fetch with the stored Bearer token; on 401, swap an in-grace token for the
  *  current one via /auth/token and retry once (seamless rotation). */
 export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
@@ -511,7 +519,11 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
   const tok = storedToken();
   const headers = new Headers(init.headers);
   if (tok && !headers.has("authorization")) headers.set("authorization", `Bearer ${tok}`);
-  const res = await fetch(url, { ...init, headers });
+  let res = await fetch(url, { ...init, headers });
+  if (res.status === 503 && (await isBusyResponse(res))) {
+    await new Promise((r) => setTimeout(r, 300));
+    res = await fetch(url, { ...init, headers });
+  }
   if (res.status !== 401 || !tok) return res;
 
   const renewed = await fetch(apiUrl(RENEW_PATH), {

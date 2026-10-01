@@ -5,6 +5,7 @@ import {
   emit,
   emitFields,
   ingest,
+  withChangeGroup,
   changesSince,
   changesAfterSeq,
   withNodeId,
@@ -12,7 +13,8 @@ import {
   RECORD_META,
   NOT_NULL_ZERO_COLS,
 } from "./crdt.ts";
-import { nextHlc, parseHlc, formatHlc } from "./hlc.ts";
+import { nextHlc, parseHlc, formatHlc, HLC_MAX_SKEW_MS } from "./hlc.ts";
+import { ingestDetailed } from "./crdt.ts";
 import {
   INTENT_RECEIPT_DATASET,
   INTENT_REPLAY_WINDOW_MS,
@@ -296,4 +298,35 @@ test("a change that cannot materialize is rejected wholesale — never a strande
   // And nothing exports the rejected winner onward.
   const exported = changesAfterSeq(b, 0).changes.filter((c) => c.hlc === poison.hlc);
   expect(exported).toEqual([]);
+});
+
+test("ingest refuses changes stamped more than HLC_MAX_SKEW_MS in the future and reports them by node", () => {
+  const db = makeNode("hosthost");
+  const now = 1_700_000_000_000;
+  const far = formatHlc({ millis: now + HLC_MAX_SKEW_MS + 60_000, counter: 0, node: "badclock" });
+  const near = formatHlc({ millis: now + 1000, counter: 0, node: "okclockk" });
+  const r = ingestDetailed(
+    db,
+    [
+      { hlc: far, node_id: "badclock", dataset: "databases", row_id: "db_x", col: "name", value: JSON.stringify("future") },
+      { hlc: near, node_id: "okclockk", dataset: "databases", row_id: "db_y", col: "name", value: JSON.stringify("fine") },
+    ],
+    { now },
+  );
+  expect(r).toEqual({ received: 1, skewed: { badclock: 1 } });
+  expect(db.query("SELECT COUNT(*) AS n FROM crdt_changes").get()).toEqual({ n: 1 });
+  expect(db.query("SELECT name FROM databases WHERE id = 'db_y'").get()).toEqual({ name: "fine" });
+  expect(parseHlc(nextHlc(db, "hosthost", now)).millis).toBe(now + 1000);
+});
+
+test("a group that throws mid-way leaves no partial rows (change group = transaction)", () => {
+  const db = makeNode("nodea");
+  expect(() =>
+    withChangeGroup(db, null, () => {
+      emit(db, "databases", "db_half", "name", "half");
+      throw new Error("boom");
+    }),
+  ).toThrow("boom");
+  expect(db.query("SELECT COUNT(*) AS n FROM crdt_changes WHERE row_id = 'db_half'").get()).toEqual({ n: 0 });
+  expect(db.query("SELECT COUNT(*) AS n FROM databases WHERE id = 'db_half'").get()).toEqual({ n: 0 });
 });

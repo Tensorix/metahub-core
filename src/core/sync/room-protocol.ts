@@ -19,7 +19,7 @@
 //     attributed to the visitor's per-session guest sub id;
 //   - grants are parsed default-deny from the snapshot in room_config.
 
-import type { DbDriver } from "../driver.ts";
+import { writeTx, type DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
 import { noteChange } from "../history-cache.ts";
 import { ingest, CHANGE_COLS, type Change } from "../crdt.ts";
@@ -220,13 +220,12 @@ export function roomPutBlobChunk(
   total: number,
   bytes: Uint8Array,
 ): void {
-  const tx = db.transaction(() => {
+  writeTx(db, () => {
     if (idx === 0) db.query("DELETE FROM room_blobs WHERE hash = ?").run(hash);
     db.query(
       "INSERT OR REPLACE INTO room_blobs (hash, idx, total, bytes) VALUES (?, ?, ?, ?)",
     ).run(hash, idx, total, bytes);
   });
-  tx();
 }
 
 /** Reassemble a blob's bytes, or null while the chunk set is incomplete. */

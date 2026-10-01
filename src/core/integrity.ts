@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { emit, grouped, applyChange, CHANGE_SELECT, DOMAIN, type Change } from "./crdt.ts";
 import { PROP_TYPES, type PropertyConfig } from "./properties.ts";
-import type { DbDriver } from "./driver.ts";
+import { writeTx, type DbDriver } from "./driver.ts";
+import { nextHlc, resetHlc, hlcSkewBound, persistedHlc, HLC_MAX_SKEW_MS } from "./hlc.ts";
+import { getNodeId } from "./node.ts";
+import { invalidateHistory } from "./history-cache.ts";
 
 // ---- materialization repair --------------------------------------------------
 // The oplog is the source of truth; every DOMAIN table is a cache of its
@@ -16,10 +19,10 @@ export function rematerializeDataset(db: DbDriver, dataset: string): number {
   const changes = db
     .query(`SELECT ${CHANGE_SELECT} FROM crdt_changes WHERE dataset = ? ORDER BY seq`)
     .all(dataset) as Change[];
-  db.transaction((rows: Change[]) => {
+  writeTx(db, () => {
     db.query(`DELETE FROM ${d.table}`).run();
-    for (const c of rows) applyChange(db, c);
-  })(changes);
+    for (const c of changes) applyChange(db, c);
+  });
   return changes.length;
 }
 
@@ -54,7 +57,8 @@ export type IssueCategory =
   | "dup_path"
   | "dup_name"
   | "parent_cycle"
-  | "bad_config";
+  | "bad_config"
+  | "clock_skew";
 
 export interface Issue {
   category: IssueCategory;
@@ -444,10 +448,77 @@ function detectBadConfig(db: Database): Issue[] {
   return out;
 }
 
+// ---- clock skew ---------------------------------------------------------------
+
+function detectClockSkew(db: DbDriver, now: number): Issue[] {
+  const rows = db
+    .query("SELECT node_id, COUNT(*) AS n FROM crdt_changes WHERE hlc > ? GROUP BY node_id")
+    .all(hlcSkewBound(now)) as { node_id: string; n: number }[];
+  const issues: Issue[] = rows.map((r) => ({
+    category: "clock_skew" as const,
+    entity: "nodes",
+    id: r.node_id,
+    detail: `${r.n} change(s) stamped more than 5 min in the future — run \`mh repair --clock\``,
+    fixable: false,
+  }));
+  const local = persistedHlc(db);
+  if (local && local.millis > now + HLC_MAX_SKEW_MS)
+    issues.push({
+      category: "clock_skew",
+      entity: "meta",
+      id: "hlc",
+      detail: `local logical clock is ${Math.ceil((local.millis - now) / 60_000)} min ahead of wall time — writes refuse until \`mh repair --clock\``,
+      fixable: false,
+    });
+  return issues;
+}
+
+export interface ClockRepairResult {
+  restamped: number;
+  byNode: Record<string, number>;
+  clockReset: boolean;
+}
+
+/** Restamp every oplog row claiming a time more than HLC_MAX_SKEW_MS past `now`
+ *  with fresh timestamps from this clock (relative order kept, node ids kept),
+ *  reset the persisted clock, and re-materialize the touched registers. Rows get
+ *  new seqs so peers re-pull them. Local-only; idempotent once the clock is sane. */
+export function repairClock(db: DbDriver, now = Date.now()): ClockRepairResult {
+  return writeTx(db, () => {
+    const rows = db
+      .query(`SELECT seq, ${CHANGE_SELECT} FROM crdt_changes WHERE hlc > ? ORDER BY hlc, seq`)
+      .all(hlcSkewBound(now)) as (Change & { seq: number })[];
+    const byNode: Record<string, number> = {};
+    const local = persistedHlc(db);
+    const clockReset = rows.length > 0 || (local != null && local.millis > now + HLC_MAX_SKEW_MS);
+    if (clockReset) resetHlc(db, getNodeId(db), now);
+    if (rows.length === 0) return { restamped: 0, byNode, clockReset };
+    const touched = new Map<string, Change>();
+    for (const r of rows) {
+      db.query("DELETE FROM crdt_changes WHERE seq = ?").run(r.seq);
+      const { seq: _seq, ...c } = r;
+      const change: Change = { ...c, hlc: nextHlc(db, r.node_id, now) };
+      applyChange(db, change);
+      touched.set(`${c.dataset}\u0000${c.row_id}\u0000${c.col}`, change);
+      byNode[r.node_id] = (byNode[r.node_id] ?? 0) + 1;
+    }
+    for (const c of touched.values()) {
+      const winner = db
+        .query(
+          `SELECT ${CHANGE_SELECT} FROM crdt_changes WHERE dataset = ? AND row_id = ? AND col = ? ORDER BY hlc DESC LIMIT 1`,
+        )
+        .get(c.dataset, c.row_id, c.col) as Change | null;
+      if (winner) applyChange(db, winner);
+    }
+    invalidateHistory(db);
+    return { restamped: rows.length, byNode, clockReset };
+  });
+}
+
 // ---- public API ------------------------------------------------------------
 
 /** Read-only scan of all logical invariants. Never mutates. */
-export function validateHub(db: Database): IntegrityReport {
+export function validateHub(db: Database, opts: { now?: number } = {}): IntegrityReport {
   const issues = [
     ...detectBrokenRefs(db),
     ...detectOrphanCells(db),
@@ -456,6 +527,7 @@ export function validateHub(db: Database): IntegrityReport {
     ...detectCycleIssues(db),
     ...detectDupNames(db),
     ...detectBadConfig(db),
+    ...detectClockSkew(db, opts.now ?? Date.now()),
   ];
   const counts: Record<string, number> = {};
   for (const i of issues) counts[i.category] = (counts[i.category] ?? 0) + 1;

@@ -79,3 +79,7 @@ test("resolve maps to the replica lookup op", () => {
   });
   expect(map("GET", "/api/resolve", {})).toBeNull();
 });
+
+test("clock repair maps to the replica op", () => {
+  expect(map("POST", "/api/repair/clock")).toEqual({ op: "repairClock", args: [] });
+});

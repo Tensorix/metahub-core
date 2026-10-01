@@ -23,6 +23,12 @@ export type MhErrorCode =
   | "network"
   /** Too many requests in the window — retry later (HTTP 429, exit 8). */
   | "rate_limited"
+  /** Another process holds the write lock; nothing was written — retry the
+   *  same call after a short backoff (HTTP 503, exit 9). */
+  | "busy"
+  /** A clock is more than HLC_MAX_SKEW_MS ahead of wall time; writes refuse
+   *  until `mh repair --clock` (HTTP 409, exit 10). */
+  | "clock_skew"
   /** The requested listen port is taken (exit 98, historical). */
   | "port_in_use";
 
@@ -47,7 +53,23 @@ export function mhError(code: MhErrorCode, key: string, params?: MsgParams): MhE
   return new MhError(code, interpolateMsg(key, params), { key, params });
 }
 
+const SQLITE_BUSY_RE = /^SQLITE_(BUSY|LOCKED)/;
+
+function isSqliteBusy(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const code = (e as { code?: unknown }).code;
+  if (typeof code === "string" && SQLITE_BUSY_RE.test(code)) return true;
+  return e.message === "database is locked";
+}
+
+/** Normalize a thrown value to an MhError when it maps to one of our codes. */
+export function asMhError(e: unknown): MhError | null {
+  if (e instanceof MhError) return e;
+  if (isSqliteBusy(e)) return mhError("busy", "数据库正被另一个进程写入，请稍后重试");
+  return null;
+}
+
 /** The error's code, for errors that carry one (anything else → undefined). */
 export function errorCode(e: unknown): MhErrorCode | undefined {
-  return e instanceof MhError ? e.code : undefined;
+  return asMhError(e)?.code;
 }

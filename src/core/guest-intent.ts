@@ -10,7 +10,7 @@
 //
 // PORTABLE, driver-only.
 
-import type { DbDriver } from "./driver.ts";
+import { writeTx, type DbDriver } from "./driver.ts";
 import { MhError } from "./errors.ts";
 import type { DatabaseRow } from "./databases.ts";
 import {
@@ -20,7 +20,7 @@ import {
   type PreparedRecordCell,
   type RecordRow,
 } from "./records.ts";
-import { formatHlc, parseHlc } from "./hlc.ts";
+import { formatHlc, parseHlc, HLC_MAX_SKEW_MS } from "./hlc.ts";
 import { ingest, withNodeId, withTxnId, type Change } from "./crdt.ts";
 import { randomSuffix } from "./ids.ts";
 import { fnv1a64Hex } from "./hash.ts";
@@ -39,9 +39,6 @@ import {
   type GrantPrincipal,
 } from "./grants-core.ts";
 
-// Same clamp as drop-protocol's DROP_HLC_SKEW_MS. Kept local so the portable
-// runtime core does not pull the seal/drop stack into a Room bundle.
-const HLC_SKEW_MS = 5 * 60_000;
 const INTENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 /** Kept as a public re-export for callers/tests that treat receipts as protocol state. */
@@ -114,7 +111,7 @@ export function applyGuestIntent(
     kind: policy.audience,
     guestNode: session.guestNode,
   };
-  const tx = db.transaction(() => {
+  return writeTx(db, () => {
     const prepared = prepareIntent(db, policy, principal, intent, opts.clock);
     const txn = intentTxnPrefix(session.guestNode, intent.intentId) + prepared.fingerprint;
     const receipt = readReceipt(
@@ -169,7 +166,6 @@ export function applyGuestIntent(
       acceptedNow,
     );
   });
-  return tx();
 }
 
 /** Resolve grants and normalize/coerce the request once before idempotency. */
@@ -253,7 +249,7 @@ function applyAuthority(
   txn: string,
   acceptedNow: number,
 ): RecordRow {
-  return withTxnId(txn, () =>
+  return withTxnId(db, txn, () =>
     withNodeId(principal.guestNode, () => {
       if (intent.action === "createRecord")
         assertGuestCreateCapacity(db, prepared.database, policy.limits);
@@ -488,7 +484,7 @@ function isRecordRow(value: unknown): value is RecordRow {
 
 function clampMillis(submittedAt: number, now: number): number {
   const safeNow = Math.max(0, Math.trunc(Number.isFinite(now) ? now : Date.now()));
-  const ceil = safeNow + HLC_SKEW_MS;
+  const ceil = safeNow + HLC_MAX_SKEW_MS;
   if (!Number.isFinite(submittedAt)) return safeNow;
   return Math.max(0, Math.min(Math.trunc(submittedAt), ceil));
 }

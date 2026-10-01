@@ -89,6 +89,8 @@ export const localApi = {
   recordFieldHistory: (id: string, prop: string) => rpc("recordFieldHistory", id, prop),
   revertRecord: (id: string, to: string) => rpc("revertRecord", id, to),
 
+  repairClock: () => rpc("repairClock"),
+
   // audit
   auditList: (opts?: { limit?: number; before?: string; actor?: string }) =>
     rpc("listAuditEntries", opts),

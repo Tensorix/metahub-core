@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
+import { asMhError, errorCode, MhError } from "../core/errors.ts";
 
 // The CLI's exit-code/error-code contract (SKILL.md "you almost always get
 // JSON"): agents dispatch on `code` + exit status, so these are load-bearing.
@@ -184,4 +185,13 @@ test("sync-all preserves per-target JSON but exits 7 when any target fails", () 
     url: "http://127.0.0.1:1",
     ok: false,
   });
+});
+
+test("asMhError maps a SQLite busy/locked error to code busy (exit 9)", () => {
+  const busy = Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+  expect(asMhError(busy)?.code).toBe("busy");
+  const snapshot = Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY_SNAPSHOT" });
+  expect(errorCode(snapshot)).toBe("busy");
+  expect(errorCode(new Error("boom"))).toBeUndefined();
+  expect(asMhError(new MhError("stale", "x"))?.code).toBe("stale");
 });

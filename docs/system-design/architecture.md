@@ -91,6 +91,10 @@ core 现在要在**四个运行时**上跑同一份领域代码:Bun(CLI/server)�
 4. `applyChange` 判断当前 change 是否为该 register 的最大 HLC。
 5. 如果胜出,物化到领域表。
 
+**并发写入**(见 [31-concurrent-writers](../impl-context/31-concurrent-writers/design.md)):`mh` CLI 每次调用是独立进程,与 `--server`/桌面 sidecar 共用同一个 SQLite 文件。`openMetahub` 设 `busy_timeout=5000`;每个 `grouped()` 变更器 / `withChangeGroup` / `withTxnId` 以及所有「先读后写」的内部事务都经 `writeTx()`(`BEGIN IMMEDIATE`,`src/core/driver.ts`)执行——WAL 下 deferred 事务读后升级写锁遇到并发提交会直接 `SQLITE_BUSY_SNAPSHOT`、busy handler 不生效,只有 IMMEDIATE 会排队。于是一次命令的全部 emit(含 HLC 铸造)在一把写锁内:要么整条落地、要么整条不写,跨进程不会出现半截记录、孤儿块或重复 HLC。超时仍撞锁时抛 `busy`(CLI exit 9 / HTTP 503 + Retry-After),语义是「什么都没写,可原样重试」。
+
+**时钟偏差上限**:`HLC_MAX_SKEW_MS`(5 分钟,`src/core/hlc.ts`)。`ingest` 拒收时间戳超前本机 5 分钟以上的远端 change(按作者节点计数,经 `SyncResult.warnings` 上报,游标照常前进);`observeHlc` 不被这类时间戳拖动;`nextHlc` 发现持久化时钟已超前系统时间 5 分钟以上则抛 `clock_skew`(exit 10 / HTTP 409),而不是静默继续铸造未来时间戳赢下所有 LWW。`mh doctor` 报告 `clock_skew`(未来行按节点计数 + 本机时钟超前),`mh repair --clock` / `POST /api/repair/clock`(`repairClock`)把所有未来行按原序重盖为本机时钟(保留 node_id,新 seq 让 peer 重拉)、重置持久化时钟并重算受影响寄存器的胜者。
+
 当前 register 由 `(dataset, row_id, col)` 定义。记录单元格也是 register,其中 `col` 是 property id。
 
 所有公开变更函数由 `grouped()`/`withChangeGroup`(`crdt.ts`)包裹:一次逻辑变更的全部 emit 共享一个 `txn` 分组 id(嵌套调用保持外层),供历史按"修订"聚簇;repair/revert 用带前缀的 label 标记来源。txn 随 sync 复制,不参与 LWW。
@@ -317,5 +321,4 @@ schema 刻意只有主键、无 FK/UNIQUE(per-field LWW oplog 需要前向引用
 
 以下问题存在,但当前用户体验复盘中暂不作为优先级核心:
 
-- 同进程或多进程并发写入的 SQLite lock 体验。
 - 同步服务和快照导入的安全边界。

@@ -44,6 +44,9 @@ export function mapApiRequest(
     case "GET /api/database/activity":
       return db ? { op: "listDatabaseActivity", args: [db, num(q.get("limit"))] } : null;
 
+    case "POST /api/repair/clock":
+      return { op: "repairClock", args: [] };
+
     // audit
     case "GET /api/audit":
       return {

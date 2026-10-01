@@ -239,7 +239,7 @@ test("a txn larger than the fetch window lists whole, without cross-page duplica
   const { d } = seed(db);
   const rec = createRecord(db, d.id, { title: "big" });
   // 900 registers in one txn > the limit:1 fetch window (chunk = 800).
-  withTxnId("bigtxn00", () => {
+  withTxnId(db, "bigtxn00", () => {
     for (let i = 0; i < 900; i++) emit(db, "records", rec.id, `p${i}`, i);
   });
   const p1 = listAuditEntries(db, { limit: 1 });
@@ -256,7 +256,7 @@ test("revert and detail exclude protocol rows minted under the same txn", () => 
   const { d } = seed(db);
   // A share-guest intent: business write + intent receipt share one txn.
   let recId = "";
-  withTxnId("intent:guest:i1:fp", () => {
+  withTxnId(db, "intent:guest:i1:fp", () => {
     recId = createRecord(db, d.id, { title: "From guest" }).id;
     emit(db, "intent_receipts", "guest:i1", "result", { ok: true });
   });

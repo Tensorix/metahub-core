@@ -1,6 +1,6 @@
 # 目标差距与用户体验优先级
 
-本文按用户体验整理优先级。当前阶段暂不讨论同步安全性和并发写锁。
+本文按用户体验整理优先级。当前阶段暂不讨论同步安全性(并发写锁已落地,见 [31-concurrent-writers](../impl-context/31-concurrent-writers/design.md))。
 
 ## 产品目标
 

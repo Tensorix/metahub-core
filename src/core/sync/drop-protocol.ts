@@ -13,7 +13,7 @@
 import type { DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
 import { randomSuffix } from "../ids.ts";
-import { parseHlc } from "../hlc.ts";
+import { parseHlc, HLC_MAX_SKEW_MS } from "../hlc.ts";
 import type { Change } from "../crdt.ts";
 import { checkGuestChanges, type GrantSet } from "../grants-core.ts";
 import type { GuestIntent } from "../guest-intent.ts"; // type-only: no runtime pull into the SDK bundle
@@ -27,7 +27,7 @@ export const DROP_ENVELOPE_MAX_BYTES = 64 * 1024;
 /** Reject any change whose HLC claims to be further in the future than this —
  *  ingest() observeHlc's every change unconditionally, so an unclamped remote
  *  timestamp would permanently poison the local clock (design.md §7 red line 6). */
-export const DROP_HLC_SKEW_MS = 5 * 60_000;
+export const DROP_HLC_SKEW_MS = HLC_MAX_SKEW_MS;
 /** Inbox guest identity: "g" + 8 base36, minted per visitor, localStorage-persisted.
  *  9 chars total — structurally distinct from real 8-char node ids. */
 export const GUEST_NODE_RE = /^g[0-9a-z]{8}$/;

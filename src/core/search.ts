@@ -1,4 +1,4 @@
-import type { DbDriver } from "./driver.ts";
+import { writeTx, type DbDriver } from "./driver.ts";
 import { ftsAvailable } from "./schema-init.ts";
 import { changesAfterSeq } from "./crdt.ts";
 
@@ -169,17 +169,17 @@ function ensureIndex(db: DbDriver): boolean {
   if (!ftsAvailable(db)) return false;
   const version = readMeta(db, "search_index_version");
   const seq = readMeta(db, "search_seq");
-  db.transaction(() => {
+  writeTx(db, () => {
     if (version !== SEARCH_INDEX_VERSION || seq === null) fullRebuild(db);
     else incrementalUpdate(db);
-  })();
+  });
   return true;
 }
 
 /** Force a full rebuild of the search index (maintenance / repair). */
 export function rebuildSearchIndex(db: DbDriver): boolean {
   if (!ftsAvailable(db)) return false;
-  db.transaction(() => fullRebuild(db))();
+  writeTx(db, () => fullRebuild(db));
   return true;
 }
 

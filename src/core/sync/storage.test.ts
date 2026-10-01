@@ -463,7 +463,7 @@ test("snapshots sharing a max-HLC but differing in content get distinct keys, bo
   emit(a, "records", "rec-A", "fa", "1");
   emit(b, "records", "rec-B", "fb", "2");
   const X: Change = {
-    hlc: "999999999999999-0000-sharedXX",
+    hlc: `${String(Date.now() + 60_000).padStart(15, "0")}-0000-sharedXX`,
     node_id: "sharedXX",
     dataset: "records",
     row_id: "rec-X",

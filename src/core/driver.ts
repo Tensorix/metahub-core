@@ -18,8 +18,17 @@ export interface Stmt {
   run(...params: SqlBindable[]): { changes: number };
 }
 
+export type TxFn<A extends unknown[], R> = ((...args: A) => R) & {
+  immediate?: (...args: A) => R;
+};
+
 export interface DbDriver {
   query(sql: string): Stmt;
   exec(sql: string): void;
-  transaction<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R;
+  transaction<A extends unknown[], R>(fn: (...args: A) => R): TxFn<A, R>;
+}
+
+export function writeTx<R>(db: DbDriver, fn: () => R): R {
+  const tx = db.transaction(fn);
+  return (tx.immediate ?? tx)();
 }
