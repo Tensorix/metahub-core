@@ -1250,7 +1250,8 @@
   body.col-resizing { user-select:none; cursor:col-resize; }
   table.grid .selcell { width:38px; min-width:38px; max-width:38px; text-align:center; }
   /* relative: anchors the .celledit overlay editor to the cell */
-  td.cell-td { position:relative; vertical-align:top; }
+  td.cell-td { position:relative; vertical-align:top; user-select:none; }
+  td.cell-td .celledit, td.cell-td .celledit * { user-select:text; }
   .cell { padding:8px 11px; min-height:37px; cursor:text; word-break:break-word; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
   /* hover/active tint goes on the <td> (always full row height) not the inner
      .cell (only as tall as its content), so a taller sibling row never leaves a
@@ -1331,7 +1332,7 @@
   .addrow:hover { background:var(--hover); color:var(--fg-soft); }
   .addrow svg { width:14px; height:14px; }
   .gridfoot { display:flex; gap:18px; color:var(--muted); font-size:12px; padding:8px 2px; }
-  .inlineedit { width:100%; border:0; outline:2px solid var(--accent); border-radius:4px; padding:7px 9px; background:var(--bg); color:var(--fg); font:inherit; }
+  .inlineedit { width:100%; border:0; outline:2px solid var(--accent); border-radius:0; padding:7px 9px; background:var(--bg); color:var(--fg); font:inherit; }
   textarea.inlineedit { resize:none; overflow:hidden; line-height:1.45; display:block; }
   .inlineedit.num { text-align:right; font-variant-numeric:tabular-nums; }
   /* Overlay cell editor: floats over the td; the display content underneath
@@ -1339,8 +1340,8 @@
      input matches .cell (8px 11px) so the text doesn't shift on entering edit;
      a multi-line text editor grows downward over the rows below. */
   .celledit { position:absolute; top:0; left:0; width:100%; min-height:100%; z-index:10;
-    display:flex; align-items:stretch; background:var(--bg); border-radius:var(--radius-sm);
-    box-shadow:0 0 0 2px var(--accent), var(--shadow-md); }
+    display:flex; align-items:stretch; background:var(--bg); border-radius:0;
+    box-shadow:inset 0 0 0 2px var(--accent), var(--shadow-md); }
   .celledit .inlineedit { width:100%; min-width:0; border:0; outline:0; border-radius:inherit;
     padding:8px 11px; background:transparent; }
   .celledit textarea.inlineedit { min-height:37px; }

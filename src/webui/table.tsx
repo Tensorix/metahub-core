@@ -495,7 +495,11 @@ export function DatabaseView({
   };
 
   // Press-and-release inside one cell edits it; crossing the 4px drag threshold
-  // rubber-bands a range instead. Shift+click only extends the selection.
+  // rubber-bands a range instead. Shift+click only extends the selection. The
+  // editor mounts on the trailing click (after the browser has settled its own
+  // mouseup), never on pointerup — mounting a focused input under a still-open
+  // native text selection drags that selection into the input.
+  const clickArm = useRef<{ r: number; c: number } | null>(null);
   const startCellSelect = (e: any, ri: number, ci: number) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("input,textarea,button,a,.celledit,.cell-fill-handle")) return;
@@ -512,10 +516,14 @@ export function DatabaseView({
       },
       onEnd: (ev, active) => {
         document.body.classList.remove("cell-selecting");
-        if (active || extend || ev.type === "pointercancel") return;
-        activateCell(ri, ci);
+        clickArm.current = active || extend || ev.type === "pointercancel" ? null : { r: ri, c: ci };
       },
     });
+  };
+  const cellClick = (ri: number, ci: number) => {
+    const arm = clickArm.current;
+    clickArm.current = null;
+    if (arm && arm.r === ri && arm.c === ci) activateCell(ri, ci);
   };
 
   // ---- keyboard cell navigation / editing ----
@@ -1067,8 +1075,9 @@ export function DatabaseView({
                           data-c={ci}
                           style={boxShadow ? { boxShadow } : undefined}
                           onPointerDown={(e) => startCellSelect(e, ri, ci)}
+                          onClick={() => cellClick(ri, ci)}
                         >
-                          {corner && <div class="cell-fill-handle" onPointerDown={startFill} />}
+                          {corner && !(editing?.rec === rec.id && editing?.prop === p.id) && <div class="cell-fill-handle" onPointerDown={startFill} />}
                           <CellView
                             rec={rec}
                             prop={p}
