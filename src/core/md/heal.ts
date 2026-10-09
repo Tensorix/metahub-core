@@ -22,38 +22,13 @@
 //     when the user next saves; stored bodies are never mass-rewritten (a
 //     write migration would churn every synced peer for a cosmetic fix).
 
-import { RE, isFenceClose, matchQuoteLine } from "./grammar.ts";
+import { fenceMask, matchQuoteLine } from "./grammar.ts";
 
 /** `- [ ]` / `- [x]` (any list glyph, any indent) with nothing after the `]`. */
 const LEGACY_EMPTY_TODO = /^[ \t]*[-*+][ \t]+\[[ xX]\]$/;
 const BARE_QUOTE = /^[ \t]*>$/;
 /** Fast bail: any line that IS one of the two legacy forms. */
 const MAYBE_LEGACY = /^[ \t]*(?:[-*+][ \t]+\[[ xX]\]|>)$/m;
-
-/** Lines covered by a CLOSED fence (opener + matching closer), as a boolean
- *  mask. Mirrors the scanners' rule; tables/media lines can't collide with the
- *  legacy patterns (whole-line matches), so fences are the only voids that
- *  matter here. */
-function fenceMask(lines: string[]): boolean[] {
-  const mask = new Array<boolean>(lines.length).fill(false);
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i]!.match(RE.fenceOpen);
-    if (!m) continue;
-    const ch = m[1]![0]!;
-    const len = m[1]!.length;
-    let close = -1;
-    for (let j = i + 1; j < lines.length; j++) {
-      if (isFenceClose(lines[j]!, ch, len)) {
-        close = j;
-        break;
-      }
-    }
-    if (close === -1) continue; // unclosed opener is prose — healable region
-    for (let j = i; j <= close; j++) mask[j] = true;
-    i = close;
-  }
-  return mask;
-}
 
 export function healLegacyMarkdown(src: string): string {
   if (!MAYBE_LEGACY.test(src)) return src;

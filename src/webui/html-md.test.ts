@@ -124,3 +124,58 @@ test("mixed ChatGPT-style answer round-trips into structured blocks", () => {
   expect(types).toContain("code");
   expect(blocks.filter((b) => b.type === "code")[0]?.content).toContain("BrowserWindow");
 });
+
+// ---- editor dialect: a newline separates blocks, a blank line IS a block ----
+
+test("paragraphs paste tight: one line per block, no blank separators", () => {
+  expect(htmlToMarkdown("<p>123</p><p>456</p><p>789</p>")).toBe("123\n456\n789");
+  expect(htmlToMarkdown("<div>123</div><div>456</div><div>789</div>")).toBe("123\n456\n789");
+  expect(htmlToMarkdown("<h1>T</h1><p>x</p><h2>U</h2><p>y</p>")).toBe("# T\nx\n## U\ny");
+  expect(htmlToMarkdown("<blockquote><p>a</p><p>b</p></blockquote>")).toBe("> a\n> b");
+  expect(htmlToMarkdown("<p>a<br>b</p>")).toBe("a\nb");
+});
+
+test("loose <li><p> lists paste tight with canonical markers", () => {
+  expect(htmlToMarkdown("<ol><li><p>123</p></li><li><p>456</p></li><li><p>789</p></li></ol>")).toBe(
+    "1. 123\n2. 456\n3. 789",
+  );
+  expect(htmlToMarkdown("<ul><li>a</li><li>b</li></ul>")).toBe("- a\n- b");
+  expect(htmlToMarkdown('<ol start="3"><li>c</li><li>d</li></ol>')).toBe("3. c\n4. d");
+  expect(htmlToMarkdown("<p>intro</p><ul><li>a</li></ul><p>outro</p>")).toBe("intro\n- a\noutro");
+});
+
+test("nested list content indents by the editor's 2-space unit", () => {
+  expect(htmlToMarkdown("<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>")).toBe("- a\n  - b\n- c");
+  expect(htmlToMarkdown("<ol><li>a<ol><li>b</li></ol></li></ol>")).toBe("1. a\n  1. b");
+  expect(htmlToMarkdown("<ul><li><p>a</p><p>b</p></li></ul>")).toBe("- a\n  b");
+  expect(htmlToMarkdown('<ul><li><input type="checkbox" checked> done</li><li><input type="checkbox"> todo</li></ul>')).toBe(
+    "- [x] done\n- [ ] todo",
+  );
+});
+
+test("explicit empty blocks in the source stay as blank lines", () => {
+  expect(htmlToMarkdown("<p>a</p><p></p><p>b</p>")).toBe("a\n\nb");
+  expect(htmlToMarkdown("<p>a</p><p><br></p><p>b</p>")).toBe("a\n\nb");
+  expect(htmlToMarkdown("<div>a</div><div><br></div><div>b</div>")).toBe("a\n\nb");
+  expect(htmlToMarkdown("<p>a</p><p>&nbsp;</p><p>b</p>")).toBe("a\n\nb");
+  expect(htmlToMarkdown("<p>a</p><p><span><br></span></p><p>b</p>")).toBe("a\n\nb");
+  expect(htmlToMarkdown("<p>a<br><br>b</p>")).toBe("a\n\nb");
+  expect(htmlToMarkdown("<p>a<br><br><br>b</p>")).toBe("a\n\n\nb");
+  // A layout shell with no text is not an empty line.
+  expect(htmlToMarkdown("<p>a</p><div><svg></svg></div><p>b</p>")).toBe("a\nb");
+  // Leading / trailing empties are trimmed; a forged marker in the input is inert.
+  expect(htmlToMarkdown("<p></p><p>a</p><p><br></p>")).toBe("a");
+  expect(htmlToMarkdown("<p>a\uE000</p><p>b</p>")).toBe("a\nb");
+});
+
+test("blank lines inside fenced code are content and survive", () => {
+  expect(htmlToMarkdown("<p>x</p><pre><code>a\n\nb</code></pre><p>y</p>")).toBe("x\n```\na\n\nb\n```\ny");
+  expect(htmlToMarkdown('<pre><code class="language-ts">\n\nconst a = 1;\n\n\n</code></pre>')).toBe(
+    "```ts\n\n\nconst a = 1;\n\n\n```",
+  );
+});
+
+test("table followed by a paragraph stays a table then prose", () => {
+  const html = "<table><thead><tr><th>A</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table><p>after</p>";
+  expect(htmlToMarkdown(html)).toBe("| A   |\n| --- |\n| 1   |\nafter");
+});

@@ -214,6 +214,31 @@ export function isFenceClose(line: string, char: string, len: number): boolean {
   return trimmed.length >= len;
 }
 
+/** Lines covered by a CLOSED fence (opener + matching closer), as a boolean
+ *  mask. Mirrors the scanners' rule: an unclosed opener is prose, so only a
+ *  paired fence masks its lines. Used wherever a line pass must leave code/html
+ *  bodies untouched (heal, paste tightening). */
+export function fenceMask(lines: string[]): boolean[] {
+  const mask = new Array<boolean>(lines.length).fill(false);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i]!.match(RE.fenceOpen);
+    if (!m) continue;
+    const ch = m[1]![0]!;
+    const len = m[1]!.length;
+    let close = -1;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (isFenceClose(lines[j]!, ch, len)) {
+        close = j;
+        break;
+      }
+    }
+    if (close === -1) continue;
+    for (let j = i; j <= close; j++) mask[j] = true;
+    i = close;
+  }
+  return mask;
+}
+
 export function cleanLang(lang: string): string {
   return lang.trim().replace(/[^A-Za-z0-9_+.#-]/g, "");
 }
