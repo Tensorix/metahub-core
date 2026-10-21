@@ -8,7 +8,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { S3Config } from "../../core/sync/storage.ts";
 import { encodeEnroll } from "../../core/sync/enroll.ts";
-import { Icon, CUBE_OUTER, CUBE_INNER } from "../icons.tsx";
+import { Icon } from "../icons.tsx";
+import { brandImage, useBrand, useBrandTone } from "../brand.tsx";
 import {
   api,
   currentToken,
@@ -511,6 +512,8 @@ type AddTab = "phone" | "cli" | "server";
  *  vars (--qr-fg / --qr-bg on .qr-box) so it adapts to light/dark with zero JS.
  *  ECC "H" (30% recovery) keeps it scannable despite the centre logo cut-out. */
 function QrSvg({ data }: { data: string }) {
+  const brand = useBrand();
+  const brandTone = useBrandTone();
   const qr = qrcode(0, "H");
   qr.addData(data);
   qr.make();
@@ -544,7 +547,6 @@ function QrSvg({ data }: { data: string }) {
   );
 
   const badge = logo + 0.6; // bg rect rounds the square hole + covers its edges
-  const s = (logo * 0.62) / 24; // scale the 24-unit cube path to ~62% of clear-zone
 
   return (
     <div class="qr-box">
@@ -554,20 +556,8 @@ function QrSvg({ data }: { data: string }) {
         {eye(0, n - 7)}
         {eye(n - 7, 0)}
         <rect x={mid - badge / 2} y={mid - badge / 2} width={badge} height={badge} rx={badge * 0.26} ry={badge * 0.26} fill="var(--qr-bg)" />
-        <g
-          class="qr-cube"
-          transform={`translate(${mid} ${mid}) scale(${s}) translate(-12 -12)`}
-          fill="none"
-          stroke="var(--qr-fg)"
-          stroke-width={1.6}
-          stroke-linejoin="round"
-          stroke-linecap="round"
-        >
-          <path class="qr-cube-edge qr-cube-outer" pathLength={1} d={CUBE_OUTER} />
-          <path class="qr-cube-edge qr-cube-inner" pathLength={1} d={CUBE_INNER} />
-          <path class="qr-cube-glint" pathLength={1} d={CUBE_OUTER} />
-          <path class="qr-cube-glint" pathLength={1} d={CUBE_INNER} />
-        </g>
+        <image href={brandImage(brand, 192, brandTone)}
+          x={mid - logo / 2} y={mid - logo / 2} width={logo} height={logo} />
       </svg>
     </div>
   );

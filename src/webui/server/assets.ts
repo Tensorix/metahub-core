@@ -5,7 +5,7 @@ import { join, dirname } from "node:path";
 // compiled binaries carry the stylesheet with no extra asset file. In dev the
 // file is re-read from disk per request instead — see getCss().
 import APP_CSS from "../styles.css" with { type: "text" };
-import { ICON_192, ICON_512, ICON_180 } from "./icons.ts";
+import { ICON_192, ICON_512, ICON_180, ICON_32 } from "./icons.ts";
 import { FMT_PROVIDERS, type FmtProvider } from "../fmt/manifest.ts";
 import pkg from "../../../package.json" with { type: "json" };
 
@@ -50,6 +50,7 @@ const HTML = `<!doctype html>
      is right before the bundle runs. -->
 <script>try{var l=localStorage.getItem('mh-lang');if(l!=='zh-CN'&&l!=='en'){var ls=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language];l='en';for(var i=0;i<ls.length;i++){var g=ls[i]||'';if(/^zh\\b/i.test(g)){l='zh-CN';break}if(/^en\\b/i.test(g))break}}document.documentElement.lang=l}catch(e){}</script>
 <link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
 <link rel="stylesheet" href="/webui.css">
 </head>
@@ -295,6 +296,7 @@ const MANIFEST = JSON.stringify({
 });
 
 const ICONS: Record<string, string> = {
+  "/icons/icon-32.png": ICON_32,
   "/icons/icon-192.png": ICON_192,
   "/icons/icon-512.png": ICON_512,
   "/icons/icon-180.png": ICON_180,

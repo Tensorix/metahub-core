@@ -53,14 +53,11 @@
   .mark {
     width: 56px;
     height: 56px;
-    border-radius: 14px;
-    background: var(--accent);
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 8px 24px rgba(74, 85, 214, 0.28);
   }
-  .mark svg { display: block; }
+  .mark img { display: block; width: 56px; height: 56px; }
   .title {
     font-size: 19px;
     font-weight: 600;
@@ -87,10 +84,7 @@
 <body>
   <div class="wrap">
     <div class="mark" aria-hidden="true">
-      <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
-        <path d="M4 18V6l8 5 8-5v12" stroke="#fff" stroke-width="2.2"
-              stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
+      <img src="brand-icon.png" width="56" height="56" alt="" />
     </div>
     <div class="title">Metahub</div>
     <div class="spinner" role="status" aria-label="正在启动"></div>

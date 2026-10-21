@@ -4,6 +4,7 @@ import { api, type Db, type DocSummary, type PropType, type PropConfig, type Sit
 import { NewSiteModal, SITES_CHANGED, openSiteMenu } from "./sites.tsx";
 import { t, tIn } from "./i18n/t.ts";
 import { Icon } from "./icons.tsx";
+import { BrandMark } from "./brand.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
 import { clearDropMarks } from "./pointer-drag.ts";
 import type { Navigate, View } from "./view.ts";
@@ -458,7 +459,7 @@ export function Sidebar(props: SidebarProps) {
     >
       <div class="sb-head">
         <div class="brand">
-          <span class="mark"><Icon name="cube" /></span>Metahub
+          <span class="mark"><BrandMark /></span>Metahub
         </div>
         {/* Mobile-only slot (CSS-gated): the phone home is the sidebar, so the
             ambient sync indicator lives up here; desktop uses the footer slot. */}

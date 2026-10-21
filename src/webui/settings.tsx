@@ -3,6 +3,8 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { S3Config } from "../core/sync/storage.ts";
 import { Icon } from "./icons.tsx";
+import { setBrand, setBrandTone } from "./brand-preference.ts";
+import { BrandMark, useBrand, useBrandTone } from "./brand.tsx";
 import { getTheme, setTheme, type ThemeChoice } from "./theme.ts";
 import { t } from "./i18n/t.ts";
 import { tip } from "./shortcuts.ts";
@@ -289,6 +291,8 @@ function SettingsIndex({ updatePending }: { updatePending?: boolean }) {
 
 /** The 外观 page: theme grid + word count row (old blocks unchanged). */
 function AppearanceSettings() {
+  const brand = useBrand();
+  const brandTone = useBrandTone();
   const [theme, setThemeState] = useState<ThemeChoice>(getTheme());
   const [wordCount, setWordCountState] = useState<boolean>(getWordCountEnabled());
 
@@ -326,6 +330,31 @@ function AppearanceSettings() {
               <span class="tc-ico"><Icon name={th.icon} /></span>
               <span class="tc-name">{th.name}</span>
               <span class="tc-desc">{th.desc}</span>
+            </button>
+          ))}
+        </div>
+      </SetSection>
+      <SetSection label={t("Logo 配色")}>
+        <div class="theme-grid brand-grid">
+          {(["color", "blue"] as const).map((variant) => (
+            <button type="button" class={"theme-card" + (brand === variant ? " sel" : "")}
+              aria-pressed={brand === variant} onClick={() => setBrand(variant)}>
+              <span class="tc-check"><Icon name="check" /></span>
+              <span class="brand-preview"><BrandMark variant={variant} /></span>
+              <span class="tc-name">{variant === "color" ? t("彩色（默认）") : t("蓝色单色")}</span>
+            </button>
+          ))}
+        </div>
+        <p class="brand-caption">{t("应用内标识与浏览器图标即时切换，选择保存在当前设备。安装图标使用默认彩色版。")}</p>
+      </SetSection>
+      <SetSection label={t("Logo 底色")}>
+        <div class="theme-grid brand-grid">
+          {(["light", "dark"] as const).map((tone) => (
+            <button type="button" class={"theme-card" + (brandTone === tone ? " sel" : "")}
+              aria-pressed={brandTone === tone} onClick={() => setBrandTone(tone)}>
+              <span class="tc-check"><Icon name="check" /></span>
+              <span class="brand-preview"><BrandMark tone={tone} /></span>
+              <span class="tc-name">{tone === "light" ? t("浅底 Logo") : t("深底 Logo")}</span>
             </button>
           ))}
         </div>
@@ -1135,7 +1164,7 @@ function AboutPage({ onUpdatePending }: { onUpdatePending?: (p: boolean) => void
     <>
       <PageHeader title={pageLabel("about")} />
       <div class="about-hero">
-        <span class="about-mark"><Icon name="cube" /></span>
+        <span class="about-mark"><BrandMark /></span>
         <div class="about-id">
           <div class="about-name">Metahub</div>
           <div class="about-vers">

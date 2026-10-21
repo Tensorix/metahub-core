@@ -1,6 +1,13 @@
 import { plural, type Msg } from "./util.ts";
 
 export const settings = {
+  "Logo 底色": "Logo background",
+  "浅底 Logo": "Light logo",
+  "深底 Logo": "Dark logo",
+  "Logo 配色": "Logo colors",
+  "彩色（默认）": "Color (default)",
+  "蓝色单色": "Monochrome blue",
+  "应用内标识与浏览器图标即时切换，选择保存在当前设备。安装图标使用默认彩色版。": "App logos and the browser icon update instantly. Your choice is saved on this device. Installed icons use the default color version.",
   浅色: "Light",
   始终使用明亮界面: "Always use the light interface",
   深色: "Dark",

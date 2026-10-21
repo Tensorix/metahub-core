@@ -110,10 +110,9 @@
     height:var(--rz-guide-h, 100%); }
   .sb-head { display:flex; align-items:center; gap:8px; padding:14px 14px 10px; }
   .brand { display:flex; align-items:center; gap:8px; flex:1; font-weight:700; font-size:15px; letter-spacing:-.01em; }
-  .brand .mark { width:24px; height:24px; border-radius:7px;
-    background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 60%,#fff));
-    display:grid; place-items:center; color:#fff; box-shadow:var(--shadow-sm); }
-  .brand .mark svg { width:15px; height:15px; stroke:#fff; }
+  .brand .mark { width:24px; height:24px; display:grid; place-items:center; }
+  .brand-icon { display:block; position:relative; width:100%; height:100%; overflow:hidden; }
+  .brand-icon > img { display:block; position:absolute; max-width:none; }
   .sb-search { margin:0 12px 8px; width:calc(100% - 24px); display:flex; align-items:center; gap:7px; cursor:pointer; text-align:left;
     background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm); padding:6px 9px; color:var(--muted);
     box-shadow:var(--shadow-sm); transition:border-color .15s; font:inherit; }
@@ -416,10 +415,7 @@
      mark sizes to a nav-icon's proportions scaled up; the version line reuses
      .ver-num so App/Core/Web digits stay mono and tabular everywhere. */
   .about-hero { display:flex; align-items:center; gap:16px; padding:6px 2px 2px; }
-  .about-mark { flex:none; display:grid; place-items:center; width:44px; height:44px;
-    border-radius:11px; border:1px solid var(--line-strong); background:var(--surface);
-    color:var(--fg-soft); }
-  .about-mark .ico { width:26px; height:26px; }
+  .about-mark { flex:none; display:grid; place-items:center; width:44px; height:44px; }
   .about-name { font-size:15px; font-weight:650; letter-spacing:-.01em; }
   .about-vers { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px;
     margin-top:2px; color:var(--muted); font-size:var(--fs-micro); }
@@ -469,6 +465,9 @@
   .theme-card.sel .tc-ico { background:var(--accent); color:var(--accent-fg); }
   .theme-card.sel .tc-check { opacity:1; transform:scale(1); }
   @media (max-width:560px) { .theme-grid { grid-template-columns:1fr; } }
+  .brand-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,120px),1fr)); }
+  .brand-preview { display:block; width:56px; height:56px; }
+  .brand-caption { margin:12px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }
   .theme-card:disabled { opacity:.55; cursor:not-allowed; }
   .theme-card:disabled:hover { transform:none; border-color:var(--line-strong); }
 

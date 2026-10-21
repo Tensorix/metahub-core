@@ -33,6 +33,8 @@ import type { Site } from "./api.ts";
 import { openShareModal } from "./share-modal.tsx";
 import { ShareView } from "./shares-view.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
+import { syncBrandFavicon } from "./brand.tsx";
+import { subscribeBrand } from "./brand-preference.ts";
 import { syncResolvedTheme, syncThemeColor } from "./theme.ts";
 import { useHistoryNav, goBack, goForward } from "./nav-history.ts";
 import { pressed, tip } from "./shortcuts.ts";
@@ -88,6 +90,10 @@ function useIsMobile(): boolean {
 }
 
 function App() {
+  useEffect(() => {
+    syncBrandFavicon();
+    return subscribeBrand(syncBrandFavicon);
+  }, []);
   const [databases, setDatabases] = useState<Db[]>([]);
   const [docs, setDocs] = useState<DocSummary[]>([]);
   const [view, setView] = useState<View>(() => parseHash(location.hash));
