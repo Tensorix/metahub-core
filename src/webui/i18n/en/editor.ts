@@ -57,7 +57,6 @@ export const editor = {
   上传任意文件: "Upload any file",
   "嵌入并渲染 HTML": "Embed and render HTML",
   "保存失败：{msg}": "Save failed: {msg}",
-  已合并其他设备的修改: "Merged changes from another device",
   "加载中…": "Loading…",
   "文档已被其他端修改，自动保存已暂停。": "This document was changed elsewhere; autosave is paused.",
   "载入最新（弃本地改动）": "Load latest (discard local changes)",
