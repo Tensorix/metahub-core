@@ -25,6 +25,28 @@ brew install --cask tensorix/tap/metahub-app
 
 未签名（开源）。经 Homebrew 安装的 App 不会被浏览器隔离；若 Gatekeeper 仍拦截，加 `--no-quarantine`。CLI 是单独的 formula：`brew install tensorix/tap/metahub-cli`。两者都由 CI 在每次发布时保持最新（见 `apps/desktop/scripts/gen-cask.ts`、`scripts/gen-formula.ts` 与 `update-tap` job）。Tap 仓库：<https://github.com/Tensorix/homebrew-tap>。
 
+## 从浏览器打开文档
+
+安装包含 `mh` 协议注册的桌面版后，可使用 `mh://doc/<文档ID>`：
+
+```html
+<a href="mh://doc/doc_meeting-notes-a1b2c3">在 Metahub 中打开</a>
+```
+
+也支持 `mh://document/open?id=<文档ID>`。请使用当前 App 所连接资料库中真实的
+`doc_…` 文档 ID。链接只定位文档，不授予访问权限、不导入文档，也不切换资料库；
+文档不存在时沿用文档页现有错误提示。其他路由或额外参数不接受。
+
+macOS 通过 `open-url` 接收，Windows/Linux 通过启动参数或 `second-instance`
+接收。未启动时等待后台服务和页面就绪后打开文档；已启动时恢复并聚焦主窗口，
+再打开对应文档。页面就绪前连续收到多条链接时，以最后一篇文档为准。
+
+协议注册属于**桌面外壳**，只更新 core 边车不会生效，需要安装新版桌面 App。
+Linux 使用 deb 或完成桌面集成的 AppImage。开发及测试隔离实例不抢占已安装
+App 的协议，可通过 `bun run dev -- mh://doc/<文档ID>` 测试启动参数入口。
+macOS 安装新版后可用 `open 'mh://doc/<文档ID>'`，分别在 App 已运行和完全退出时
+检查；浏览器可能先询问是否允许打开 App。
+
 ## 开发
 
 ```sh

@@ -5,6 +5,14 @@
  * global shortcut / always-on-top behaviour (see src/webui/desktop.d.ts).
  */
 import { contextBridge, ipcRenderer } from "electron";
+import { createDocumentLinkInbox } from "./document-link-inbox";
+
+// did-finish-load can precede the WebUI's effect subscription. Listen now so
+// links received during cold startup or renderer loading are not lost.
+const documentLinkInbox = createDocumentLinkInbox();
+ipcRenderer.on("mh:open-doc", (_event, payload: { id?: unknown }) => {
+  if (typeof payload?.id === "string" && payload.id) documentLinkInbox.receive(payload.id);
+});
 
 // File-editor windows get their path via additionalArguments; read the content
 // synchronously HERE, before any page script runs, so the renderer's first
@@ -124,15 +132,8 @@ contextBridge.exposeInMainWorld("metahubDesktop", {
     // window attach API-dependent features late instead of waiting to open.
     origin: () => ipcRenderer.invoke("server:origin"),
   },
-  // Main window: deep-link a doc pushed from the main process (file-editor
-  // 「在 MetaHub 中打开」 across the file://→http origin gap).
-  onOpenDoc: (cb: (id: string) => void) => {
-    const l = (_e: unknown, p: { id?: string }) => {
-      if (p?.id) cb(p.id);
-    };
-    ipcRenderer.on("mh:open-doc", l);
-    return () => ipcRenderer.removeListener("mh:open-doc", l);
-  },
+  // Main window: external mh:// links and file-editor 「在 MetaHub 中打开」.
+  onOpenDoc: (cb: (id: string) => void) => documentLinkInbox.subscribe(cb),
   onCommand: (cb: (p: { name: "palette" | "openById" }) => void) => {
     const l = (_e: unknown, p: { name?: string }) => {
       if (p?.name === "palette" || p?.name === "openById") cb({ name: p.name });

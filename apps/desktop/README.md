@@ -41,6 +41,33 @@ Gatekeeper still blocks it, add `--no-quarantine`. The CLI is a separate formula
 release (see `apps/desktop/scripts/gen-cask.ts`, `scripts/gen-formula.ts`, and
 the `update-tap` jobs). Tap repo: <https://github.com/Tensorix/homebrew-tap>.
 
+## Open a document from a browser
+
+Install a desktop build containing the `mh` protocol registration, then link to
+`mh://doc/<document-id>`, for example:
+
+```html
+<a href="mh://doc/doc_meeting-notes-a1b2c3">Open in Metahub</a>
+```
+
+`mh://document/open?id=<document-id>` is also supported. Use the actual `doc_…`
+ID of a document available in this app's current hub. These links do not grant
+access, import documents, or switch hubs; missing documents use the existing
+document view's error handling. Other routes/parameters are rejected.
+
+macOS delivers links via `open-url`; Windows/Linux pass them in launch arguments
+or `second-instance`. Cold launches wait for the sidecar and renderer, and warm
+launches restore/focus the main window and open the document. When several links
+arrive before the UI is ready, the latest document wins.
+
+Protocol registration ships with the **desktop shell**, so updating only the
+core sidecar is insufficient. Install/update the desktop app (on Linux use the
+deb or a desktop-integrated AppImage). Development/scratch instances do not claim
+the installed app's protocol; test the launch-argument path with
+`bun run dev -- mh://doc/<document-id>`. For an installed macOS build, test
+`open 'mh://doc/<document-id>'` both while the app is running and after quitting.
+Browsers may ask permission before opening the app.
+
 ## Develop
 
 ```sh

@@ -44,6 +44,7 @@ import {
   removeQuarantinedServiceWorkerStorage,
 } from "./service-worker-cleanup";
 import { tagToVersion } from "./version-util";
+import { DOCUMENT_PROTOCOL, installDocumentLinks } from "./document-links";
 
 // Startup timing: one line per cold-start milestone, relative to process start.
 // Cheap and permanent — this is how we keep the cold-start budget honest.
@@ -105,15 +106,25 @@ if (legacyServiceWorkerCleanup.warning) {
 // its file args to the running instance instead of booting a second sidecar /
 // tray / shortcut. The lock is scoped to userData, so an MH_TEST_USER_DATA
 // scratch instance (redirected above) still coexists with the real app.
-if (!app.requestSingleInstanceLock()) {
+const ownsInstanceLock = app.requestSingleInstanceLock();
+if (!ownsInstanceLock) {
   app.quit();
 } else {
+  // Installer metadata registers the scheme on every supported platform. Only
+  // the packaged app claims it at runtime; development/scratch instances must
+  // not replace the user's installed handler.
+  if (app.isPackaged && !process.env.MH_TEST_USER_DATA) {
+    if (!app.setAsDefaultProtocolClient(DOCUMENT_PROTOCOL)) {
+      console.warn("[desktop] could not register mh URL protocol");
+    }
+  }
   app.on("second-instance", (_e, argv, workingDirectory) => {
     // Relative paths in the forwarded argv are relative to the SECOND
     // instance's cwd — resolve against it, not our own.
     const files = fileArgsFrom(argv, workingDirectory);
+    const openedDocument = documentLinks.handleArguments(argv);
     if (files.length > 0) files.forEach(queueOpenFile);
-    else showMainWindow();
+    else if (!openedDocument) showMainWindow();
   });
 }
 
@@ -189,6 +200,13 @@ const fileDirty = new Map<string, boolean>();
 const allowedFilePaths = new Set<string>();
 // open-file fires before the sidecar port is known — queue and drain later.
 const pendingOpenFiles: string[] = [];
+// Register before whenReady for macOS cold launches. The initial hash covers a
+// newly created renderer; IPC also navigates an already-open main window.
+const documentLinks = installDocumentLinks(app, (id) => {
+  showMainWindow(`#/doc/${id}`, id);
+});
+// Consume launch argv before later OS events, so newer requests always win.
+if (ownsInstanceLock) documentLinks.handleArguments(process.argv);
 function serverOrigin(): string {
   return `http://127.0.0.1:${serverGate.port}`;
 }
@@ -763,10 +781,8 @@ function buildAppMenu(): Menu {
  *
  * While the sidecar is still booting the request is queued (coalesced) and
  * honored when it turns healthy; after a failed boot it surfaces the failure
- * instead of loading a dead URL. `hash`/`docId` only apply to the cold-create
- * path (the "在主窗口中打开" / 导入 flows, where the renderer's broadcast is
- * necessarily lost during window creation); an existing window is just raised —
- * its navigation rides BroadcastChannel.
+ * instead of loading a dead URL. `hash` applies to cold creation; `docId` also
+ * navigates an existing window over IPC (including external mh:// links).
  */
 function showMainWindow(hash?: string, docId?: string): void {
   if (serverGate.phase === "booting") {
@@ -1279,6 +1295,7 @@ function killSidecar(): void {
 // ---- lifecycle -------------------------------------------------------------
 
 app.whenReady().then(() => {
+  if (!ownsInstanceLock) return; // a protocol handoff must never start a second sidecar
   perf("app ready");
   if (legacyServiceWorkerCleanup.quarantined.length > 0) {
     void removeQuarantinedServiceWorkerStorage(legacyServiceWorkerCleanup.quarantined).then(

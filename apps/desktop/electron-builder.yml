@@ -6,6 +6,13 @@ productName: Metahub
 executableName: metahub-desktop
 copyright: Copyright © Tensorix
 
+# Browser → desktop document links. Generates macOS CFBundleURLTypes,
+# Windows installer URL registration and Linux x-scheme-handler/mh metadata.
+protocols:
+  - name: Metahub document
+    schemes: [mh]
+    role: Viewer
+
 # We never use electron-updater (the shell is updated manually; core updates via
 # core-updater.ts). But electron-builder still needs a publish provider to
 # compute update-channel metadata during packaging — without it, zip/deb targets
