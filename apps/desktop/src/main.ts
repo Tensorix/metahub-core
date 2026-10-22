@@ -46,6 +46,7 @@ import {
 } from "./service-worker-cleanup";
 import { tagToVersion } from "./version-util";
 import { DOCUMENT_PROTOCOL, installDocumentLinks } from "./document-links";
+import { installDocumentWindows } from "./document-windows";
 
 // Startup timing: one line per cold-start milestone, relative to process start.
 // Cheap and permanent — this is how we keep the cold-start budget honest.
@@ -221,6 +222,14 @@ const saveWaiters = new Map<number, (r?: SaveResult) => void>();
 const forceClosing = new WeakSet<BrowserWindow>();
 let tray: Tray | null = null;
 let quitting = false;
+let quitPending = false;
+const documentWindows = installDocumentWindows({
+  origin: () => serverGate.whenReady().then(serverOrigin),
+  preload: () => appFile("dist", "preload.js"),
+  openMain: (id) => showMainWindow(`#/doc/${id}`, id),
+  routeLinks: routeExternalLinks,
+  quitting: () => quitting,
+});
 
 // ---- sidecar ---------------------------------------------------------------
 
@@ -559,6 +568,37 @@ function waitForSaveDone(win: BrowserWindow, ms: number): Promise<SaveResult | u
   });
 }
 
+const pendingFileCloses = new Map<BrowserWindow, Promise<boolean>>();
+function confirmFileClose(win: BrowserWindow, path: string): Promise<boolean> {
+  if (!fileDirty.get(path) || win.isDestroyed()) return Promise.resolve(true);
+  const pending = pendingFileCloses.get(win);
+  if (pending) return pending;
+  const task = (async () => {
+    const { response } = await dialog.showMessageBox(win, {
+      type: "warning", buttons: [tm("保存"), tm("不保存"), tm("取消")], defaultId: 0, cancelId: 2,
+      message: tm("是否保存对「{name}」的更改？", { name: basename(path) }),
+      detail: tm("不保存将丢弃自上次保存以来的更改。"),
+    });
+    if (response === 2) return false;
+    if (response === 0 && !win.isDestroyed()) {
+      const waiting = waitForSaveDone(win, 10_000);
+      win.webContents.send("file:request-save");
+      const result = await waiting;
+      if (fileDirty.get(path)) {
+        if (!win.isDestroyed()) await dialog.showMessageBox(win, {
+          type: "error", message: tm("无法保存「{name}」", { name: basename(path) }),
+          detail: result?.error ?? tm("保存未在限定时间内完成，文件未写入磁盘。"), buttons: [tm("确定")],
+        });
+        return false;
+      }
+    }
+    return true;
+  })();
+  pendingFileCloses.set(win, task);
+  void task.finally(() => pendingFileCloses.delete(win));
+  return task;
+}
+
 /**
  * Open (or focus) the standalone file-editor window for a .txt/.md path.
  * Preferred: the disk-loaded shell (dist/file-editor.html + its own small
@@ -618,37 +658,9 @@ function openFileWindow(absPath: string): void {
   win.on("close", (e) => {
     if (quitting || forceClosing.has(win) || !fileDirty.get(absPath)) return;
     e.preventDefault();
-    void (async () => {
-      const { response } = await dialog.showMessageBox(win, {
-        type: "warning",
-        buttons: [tm("保存"), tm("不保存"), tm("取消")],
-        defaultId: 0,
-        cancelId: 2,
-        message: tm("是否保存对「{name}」的更改？", { name: basename(absPath) }),
-        detail: tm("不保存将丢弃自上次保存以来的更改。"),
-      });
-      if (response === 2 || win.isDestroyed()) return;
-      if (response === 0) {
-        win.webContents.send("file:request-save");
-        const result = await waitForSaveDone(win, 3_000);
-        // file:write clears the dirty flag only on a successful write, so a
-        // still-dirty file here means the save failed or timed out. The user
-        // chose 保存 — closing anyway would silently discard their edits.
-        if (fileDirty.get(absPath)) {
-          if (!win.isDestroyed()) {
-            await dialog.showMessageBox(win, {
-              type: "error",
-              message: tm("无法保存「{name}」", { name: basename(absPath) }),
-              detail: result?.error ?? tm("保存未在限定时间内完成，文件未写入磁盘。"),
-              buttons: [tm("确定")],
-            });
-          }
-          return; // abort the close — the window (and the edits) stay
-        }
-      }
-      forceClosing.add(win);
-      if (!win.isDestroyed()) win.close();
-    })();
+    void confirmFileClose(win, absPath).then((ok) => {
+      if (ok && !win.isDestroyed()) { forceClosing.add(win); win.close(); }
+    });
   });
   win.on("closed", () => {
     fileWins.delete(absPath);
@@ -1195,6 +1207,8 @@ function registerIpc(): void {
   }
 
   // Open the frameless image-preview window for a doc image (see openPreview).
+  documentWindows.registerIpc();
+  void documentWindows.ready().catch(() => {});
   ipcMain.handle("preview:open", (_e, p: { src: string; name?: string; blockId: string }) => openPreview(p));
 
   // File-editor window bridge. Reads/writes are gated on allowedFilePaths —
@@ -1424,10 +1438,24 @@ app.on("window-all-closed", () => {
   // no-op: tray + global shortcut keep the app alive
 });
 
-app.on("before-quit", () => {
-  quitting = true;
-  globalShortcut.unregisterAll();
-  killSidecar();
+app.on("before-quit", (event) => {
+  if (quitting) return;
+  event.preventDefault();
+  if (quitPending) return;
+  quitPending = true;
+  void (async () => {
+    try {
+      if (!await documentWindows.prepareQuit()) return;
+      for (const [path, win] of fileWins) if (!await confirmFileClose(win, path)) return;
+      // Only stop the sidecar AFTER every renderer has confirmed durability.
+      quitting = true;
+      globalShortcut.unregisterAll();
+      app.quit();
+    } finally {
+      quitPending = false;
+      if (!quitting) documentWindows.resumeAll();
+    }
+  })().catch((error) => console.error("[desktop] quit save failed", error));
 });
 app.on("will-quit", killSidecar);
 process.on("exit", killSidecar);

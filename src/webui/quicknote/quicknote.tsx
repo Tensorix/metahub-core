@@ -1,3 +1,4 @@
+import { DOCUMENT_RECOVER } from "../document-lifecycle.ts";
 /** @jsxImportSource preact */
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, NAV_INVALIDATE, type DocSummary } from "../api.ts";
@@ -63,6 +64,11 @@ export function QuickNote() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    const recover = (event: Event) => setActiveId((event as CustomEvent<{ id: string }>).detail.id);
+    window.addEventListener(DOCUMENT_RECOVER, recover);
+    return () => window.removeEventListener(DOCUMENT_RECOVER, recover);
+  }, []);
   const docHandleRef = useRef<DocViewHandle | null>(null);
 
   const qn = typeof window !== "undefined" ? window.metahubDesktop?.quicknote : undefined;

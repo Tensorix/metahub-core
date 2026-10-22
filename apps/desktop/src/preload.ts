@@ -71,6 +71,22 @@ window.addEventListener("load", () => {
 });
 
 contextBridge.exposeInMainWorld("metahubDesktop", {
+  documents: {
+    initialId: process.argv.find((arg) => arg.startsWith("--mh-document="))?.slice("--mh-document=".length) ?? null,
+    open: (id: string) => ipcRenderer.invoke("documents:open", id),
+    openMain: (id: string) => ipcRenderer.invoke("documents:open-main", id),
+    setDirty: (dirty: boolean) => ipcRenderer.send("documents:dirty", dirty),
+    saveDone: (requestId: number, result: { ok: boolean; error?: string }) => ipcRenderer.send("documents:saved", requestId, result),
+    onRequestSave: (cb: (requestId: number) => void) => {
+      const listener = (_event: unknown, id: number) => cb(id);
+      ipcRenderer.on("documents:save", listener);
+      return () => ipcRenderer.removeListener("documents:save", listener);
+    },
+    onResume: (cb: () => void) => {
+      ipcRenderer.on("documents:resume", cb);
+      return () => ipcRenderer.removeListener("documents:resume", cb);
+    },
+  },
   platform: process.platform,
   versions: {
     electron: process.versions.electron,

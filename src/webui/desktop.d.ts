@@ -9,6 +9,16 @@ export interface QuickNoteSettings {
 }
 
 export interface MetahubDesktop {
+  documents?: {
+    /** Set only on a native document window; routes cannot change its identity. */
+    initialId: string | null;
+    open: (id: string) => Promise<void>;
+    openMain: (id: string) => Promise<void>;
+    setDirty: (dirty: boolean) => void;
+    saveDone: (requestId: number, result: { ok: boolean; error?: string }) => void;
+    onRequestSave: (cb: (requestId: number) => void) => () => void;
+    onResume: (cb: () => void) => () => void;
+  };
   platform: NodeJS.Platform;
   versions: { electron: string; chrome: string; node: string };
   /** Electron shell (desktop app) version, from the main process. */

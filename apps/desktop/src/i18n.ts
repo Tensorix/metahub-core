@@ -6,6 +6,13 @@ export type Locale = "zh-CN" | "en";
 type Params = Record<string, string | number>;
 
 const EN = {
+  "保存未完成，请重试。": "Saving did not finish. Please try again.",
+  "文档尚未保存": "Document has unsaved changes",
+  "请先处理未保存的修改。": "Please resolve your unsaved changes first.",
+  "放弃未保存修改": "Discard Unsaved Changes",
+  "窗口已关闭": "Window closed",
+  "重试": "Retry",
+
   文件: "File",
   "按 ID 打开…": "Open by ID…",
   命令面板: "Command Palette",

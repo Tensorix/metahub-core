@@ -9,7 +9,10 @@ import { SkelLines } from "./skeleton.tsx";
 import { fmtDate } from "./i18n/fmt.ts";
 import { Icon } from "./icons.tsx";
 import { openShareModal, useSharedTargets } from "./share-modal.tsx";
-import { toast } from "./ui.tsx";
+import { toast, confirmDialog } from "./ui.tsx";
+import { DocumentSaveQueue, type DocumentSaveResult, type DocumentSaveState } from "./document-save.ts";
+import { createDocumentRefresh } from "./document-refresh.ts";
+import { claimDocumentDraft, documentCloseInProgress, registerDocumentEditor, reportDocumentDirty } from "./document-lifecycle.ts";
 import { CmDocBody, type CmHandle } from "./cm6/CmDocBody.tsx";
 import { handleClickBelow } from "./cm6/click-below.ts";
 import { docModel } from "./cm6/doc-model.ts";
@@ -28,7 +31,7 @@ export interface DocViewHandle {
   getMode: () => DocMode;
   setMode: (mode: DocMode) => void;
   snapshotMarkdown: () => string;
-  flushSave: () => Promise<void>;
+  flushSave: () => Promise<DocumentSaveResult>;
   /** Re-fetch the document from the server (e.g. after a history revert). */
   reload: () => void;
   /** Caret into the title (deferred until the title mounts). */
@@ -43,6 +46,7 @@ export function DocView({
   onError,
   onModeChange,
   onHandle,
+  onSaveState,
 }: {
   docId: string;
   wide?: boolean;
@@ -58,6 +62,7 @@ export function DocView({
   onError: (m: string) => void;
   onModeChange?: (mode: DocMode) => void;
   onHandle?: (handle: DocViewHandle | null) => void;
+  onSaveState?: (state: DocumentSaveState) => void;
 }) {
   const sourceRef = useRef("");
   const titleRef = useRef("");
@@ -71,11 +76,12 @@ export function DocView({
   // ---- save pipeline state ----
   // version: the if_match token from the last read/save; dirty: unsaved local
   // edits exist; conflict: a save was rejected as stale (banner shown).
-  const docVersionRef = useRef<string | null>(null);
-  const dirtyRef = useRef(false);
+  const callbacks = useRef({ onSaveState, onError });
+  callbacks.current = { onSaveState, onError };
   const retryDelayRef = useRef(0);
-  const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
   const [conflict, setConflict] = useState(false);
+  const mounted = useRef(true);
   // Handle to the single-document CM6 editor. Its doc IS the Markdown body, so
   // snapshot = getDoc() and remote merges push via setDoc().
   const cmRef = useRef<CmHandle | null>(null);
@@ -100,6 +106,44 @@ export function DocView({
       !!autoTitle && !manualTitleRef.current &&
       isAutoTitleState(d.title ?? "", d.body ?? "", createdHlcRef.current);
   };
+
+  const saverRef = useRef<DocumentSaveQueue | null>(null);
+  if (!saverRef.current) saverRef.current = new DocumentSaveQueue({
+    snapshot: () => {
+      const body = cmRef.current?.getDoc() ?? sourceRef.current;
+      if (autoTitle && autoModeRef.current && !manualTitleRef.current && document.activeElement !== titleElRef.current) {
+        titleRef.current = autoTitleFor(body, createdHlcRef.current);
+        if (titleElRef.current) titleElRef.current.textContent = titleRef.current;
+      }
+      return { title: titleRef.current, body };
+    },
+    write: (snapshot, version, force) => api.updateDocument(docId, {
+      ...snapshot, ...(!force && version && !replicaActive() ? { if_match: version } : {}),
+    }),
+    isConflict: (error) => error instanceof ApiError && error.code === "stale",
+    changed: (state) => {
+      setConflict(state === "conflict");
+      callbacks.current.onSaveState?.(state);
+      reportDocumentDirty();
+      if (state === "saved") retryDelayRef.current = 0;
+      if (state === "error") {
+        if (!mounted.current) return;
+        callbacks.current.onError(saverRef.current!.error);
+        retryDelayRef.current = Math.min(Math.max(retryDelayRef.current * 2, 1000), 30000);
+        clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => void saverRef.current?.save(), retryDelayRef.current);
+      }
+    },
+  });
+  const saver = saverRef.current;
+  useEffect(() => {
+    mounted.current = true;
+    const unregister = registerDocumentEditor({
+      id: docId, dirty: () => saver.dirty, flush: () => saver.flush(),
+      snapshot: () => ({ title: titleRef.current, body: sourceRef.current, version: saver.version, error: saver.error }),
+    });
+    return () => { mounted.current = false; unregister(); };
+  }, [saver]);
 
   /** Rewrite the image void the user opened in the preview to point at `url`
    *  (annotation write-back). CM6 block ids are ephemeral, so the src string is
@@ -184,13 +228,22 @@ export function DocView({
   const loadDoc = () => {
     setLoading(true);
     setConflict(false);
-    api
-      .getDocument(docId)
-      .then((d) => {
+    claimDocumentDraft(docId).then(async (draft) => {
+        if (!mounted.current) return;
+        if (draft) {
+          draft.accept();
+          titleRef.current = draft.title;
+          sourceRef.current = draft.body;
+          saver.restoreDraft(draft.version, draft.error);
+          setLoading(false);
+          setVersion((v) => v + 1);
+          return;
+        }
+        const d = await api.getDocument(docId);
+        if (!mounted.current) return;
         titleRef.current = d.title ?? "";
         sourceRef.current = d.body ?? "";
-        docVersionRef.current = d.version ?? null;
-        dirtyRef.current = false;
+        saver.reset(d.version ?? null);
         inferAutoMode(d);
         setLoading(false);
         setVersion((v) => v + 1);
@@ -223,7 +276,7 @@ export function DocView({
   // lost to a casual tab close — ask the browser to confirm.
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
-      if (!dirtyRef.current) return;
+      if (!saver.dirty || documentCloseInProgress()) return;
       e.preventDefault();
       e.returnValue = ""; // Chrome requires returnValue for the prompt to show
     };
@@ -231,105 +284,49 @@ export function DocView({
     return () => window.removeEventListener("beforeunload", warn);
   }, []);
 
-  // Remote-merge refresh (local-replica mode): a background sync that touched
-  // documents/doc_blocks may have merged edits into the open doc. Flush any
-  // pending keystrokes first (block-level CRDT merges them), then re-read; a
-  // version match means this doc wasn't affected. Replaces the HTTP-mode
-  // stale banner — there is no "conflict" to resolve, merge already happened.
+  // HTTP windows use optimistic versions, not a shared CRDT editor. Never
+  // replace a dirty buffer after a failed save, or apply a read overtaken by
+  // keystrokes/a newer save. Local-replica sync retains its flush-first flow.
   useEffect(() => {
-    const onSynced = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { datasets?: string[] } | undefined;
-      if (!detail?.datasets?.some((d) => d === "documents" || d === "doc_blocks")) return;
-      void (async () => {
-        try {
-          if (dirtyRef.current) await flushSave();
-          const d = await api.getDocument(docId);
-          if (d.version != null && d.version === docVersionRef.current) return;
-          // Push the merged body into the one CM document; setDoc's prefix/suffix
-          // diff preserves the caret when the remote change was elsewhere.
-          titleRef.current = d.title ?? "";
-          sourceRef.current = d.body ?? "";
-          cmRef.current?.setDoc(d.body ?? "");
-          docVersionRef.current = d.version ?? null;
-          dirtyRef.current = false;
-          inferAutoMode(d);
-          setConflict(false);
-          setVersion((v) => v + 1);
-          toast(t("已合并其他设备的修改"));
-        } catch {
-          // Doc deleted remotely or replica hiccup — the nav refresh handles it.
-        }
-      })();
+    let disposed = false;
+    const refresh = createDocumentRefresh(async () => {
+      if (saver.dirty) {
+        if (!replicaActive()) return;
+        const result = await saver.flush();
+        if (!result.ok) return;
+      }
+      const revision = saver.revision;
+      const version = saver.version;
+      const d = await api.getDocument(docId);
+      if (disposed || !saver.canRefresh(revision, version)) return;
+      if (d.version != null && d.version === saver.version) return;
+      titleRef.current = d.title ?? "";
+      sourceRef.current = d.body ?? "";
+      cmRef.current?.setDoc(sourceRef.current);
+      saver.reset(d.version ?? null);
+      inferAutoMode(d);
+      setVersion((v) => v + 1);
+    }, (error) => callbacks.current.onError(String((error as Error).message)));
+    const onSynced = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { datasets?: string[] } | undefined;
+      if (detail?.datasets?.some((d) => d === "documents" || d === "doc_blocks")) void refresh.request();
     };
     document.addEventListener(SYNCED_EVENT, onSynced);
-    return () => document.removeEventListener(SYNCED_EVENT, onSynced);
+    return () => { disposed = true; refresh.dispose(); document.removeEventListener(SYNCED_EVENT, onSynced); };
   }, [docId]);
 
   const scheduleSave = () => {
-    dirtyRef.current = true;
+    // Keep a detached editor's final buffer available to the close registry.
+    sourceRef.current = cmRef.current?.getDoc() ?? sourceRef.current;
+    saver.edit();
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(save, 700);
+    saveTimer.current = setTimeout(() => void saver.save(), 700);
   };
   const snapshotMarkdown = () => cmRef.current?.getDoc() ?? sourceRef.current;
-  // Saves are serialized through a chain so a debounced save never races a
-  // flush: the later save reads the version the earlier one returned, keeping
-  // if_match conflicts to *real* concurrent edits (CLI, sync, other windows).
-  //
-  // Local-replica path: no if_match. A single local writer can't race itself,
-  // and remote edits arrive through /sync where the CRDT merges at block
-  // level — the stale/conflict machinery is an HTTP-mode concept. Remote
-  // changes to the open doc surface via the SYNCED_EVENT refresh above.
-  const doSave = (opts: { force?: boolean } = {}) => {
-    const body = snapshotMarkdown();
-    // Auto-title (quicknote): derive here, not in scheduleSave — doSave runs
-    // serialized on the save chain and is the one place that reads the final
-    // body snapshot. Skipped while the title has focus so we never fight a
-    // caret; the next save catches up (unless the user typed there, which
-    // latches manual via onInput). Writing textContent directly follows the
-    // uncontrolled-title reseed convention above.
-    if (autoTitle && autoModeRef.current && !manualTitleRef.current
-        && document.activeElement !== titleElRef.current) {
-      const next = autoTitleFor(body, createdHlcRef.current);
-      if (next !== titleRef.current) {
-        titleRef.current = next;
-        const el = titleElRef.current;
-        if (el && el.textContent !== next) el.textContent = next;
-      }
-    }
-    return api
-      .updateDocument(docId, {
-        title: titleRef.current,
-        body,
-        ...(opts.force || docVersionRef.current == null || replicaActive()
-          ? {}
-          : { if_match: docVersionRef.current }),
-      })
-      .then((d) => {
-        docVersionRef.current = d.version ?? null;
-        dirtyRef.current = false;
-        retryDelayRef.current = 0;
-        setConflict(false);
-      })
-      .catch((e) => {
-        if (e instanceof ApiError && e.code === "stale") {
-          // Someone else changed this doc since we read it. Stop auto-saving
-          // and let the user pick a side (banner below) instead of clobbering.
-          setConflict(true);
-          return;
-        }
-        // Transient failure (server restart, network blip): keep the work
-        // dirty, surface the error, and retry with backoff until a save lands.
-        onError(String((e as Error).message));
-        retryDelayRef.current = Math.min(Math.max(retryDelayRef.current * 2, 1_000), 30_000);
-        clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(save, retryDelayRef.current);
-      });
-  };
-  const save = (opts: { force?: boolean } = {}) =>
-    (saveChainRef.current = saveChainRef.current.then(() => doSave(opts)));
+  const save = (opts: { force?: boolean } = {}) => saver.save(opts.force);
   const flushSave = async () => {
     clearTimeout(saveTimer.current);
-    await save();
+    return saver.flush();
   };
 
   const setDisplayMode = (next: DocMode) => {
@@ -510,10 +507,21 @@ export function DocView({
       {conflict && (
         <div class="doc-conflict" role="alert">
           <span class="doc-conflict-msg">{t("文档已被其他端修改，自动保存已暂停。")}</span>
-          <button class="btn btn-secondary" onClick={() => loadDoc()}>
+          <button class="btn btn-secondary" onClick={async () => {
+            if (await confirmDialog({ title: t("载入最新版本？"), message: t("未保存的本地改动将被丢弃。"), danger: true })) loadDoc();
+          }}>
             {t("载入最新（弃本地改动）")}
           </button>
-          <button class="btn btn-danger" onClick={() => void save({ force: true })}>
+          <button class="btn btn-secondary" onClick={async () => {
+            try {
+              const copy = await api.createDocument({ title: `${titleRef.current || t("无标题")} — ${t("本地草稿")}`, body: snapshotMarkdown() });
+              toast(t("草稿已另存为文档"));
+              if (window.metahubDesktop?.documents) await window.metahubDesktop.documents.open(copy.id);
+            } catch (error) { onError(String((error as Error).message)); }
+          }}>{t("另存草稿")}</button>
+          <button class="btn btn-danger" onClick={async () => {
+            if (await confirmDialog({ title: t("用本地版本覆盖？"), message: t("其他位置的修改将被当前草稿替换。"), danger: true })) await save({ force: true });
+          }}>
             {t("用本地版本覆盖")}
           </button>
         </div>

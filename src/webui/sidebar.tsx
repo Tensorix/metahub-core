@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type PropType, type PropConfig, type Site } from "./api.ts";
 import { NewSiteModal, SITES_CHANGED, openSiteMenu } from "./sites.tsx";
 import { t, tIn } from "./i18n/t.ts";
+import { openDocumentWindow } from "./document-window-actions.ts";
 import { Icon } from "./icons.tsx";
 import { BrandMark } from "./brand.tsx";
 import { SyncIndicator } from "./sync-indicator.tsx";
@@ -348,6 +349,10 @@ export function Sidebar(props: SidebarProps) {
     const childCount = props.docs.filter((x) => x.parent_id === d.id).length;
     openMenu(e, (close) => (
       <>
+        {window.metahubDesktop?.documents && <>
+          <MenuItem icon="externalLink" label={t("在独立窗口中打开")} onClick={() => { close(); void openDocumentWindow(d.id); }} />
+          <MenuSep />
+        </>}
         <MenuItem icon="plus" label={t("新建子页")} onClick={() => { close(); newDoc(d.id); }} />
         <MenuItem
           icon="hash"

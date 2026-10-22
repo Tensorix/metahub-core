@@ -1,6 +1,23 @@
 import { plural, type Msg } from "./util.ts";
 
 export const editor = {
+  "在独立窗口中打开": "Open in Separate Window",
+  "无法打开独立窗口：{msg}": "Could not open window: {msg}",
+  "已保存到本机": "Saved on this device",
+  "有未保存修改": "Unsaved changes",
+  "需要处理冲突": "Resolve conflict",
+  "保存失败": "Save failed",
+  "文档尚未保存，草稿已保留。": "Document not saved. Your draft has been retained.",
+  "查看草稿": "View draft",
+  "文档不存在或已被删除。未保存内容仍可导出。": "This document no longer exists. You can still export your unsaved work.",
+  "载入最新版本？": "Load the latest version?",
+  "未保存的本地改动将被丢弃。": "Your unsaved local changes will be discarded.",
+  "用本地版本覆盖？": "Replace with your local version?",
+  "其他位置的修改将被当前草稿替换。": "Changes made elsewhere will be replaced with this draft.",
+  "本地草稿": "Local draft",
+  "另存草稿": "Save draft as new document",
+  "草稿已另存为文档": "Draft saved as a new document",
+
   没有匹配的页面: "No matching pages",
   没有匹配的块: "No matching blocks",
   上一个: "Previous",

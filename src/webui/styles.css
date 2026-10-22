@@ -2915,3 +2915,37 @@
     .blob-mgr-row { grid-template-columns:26px 30px minmax(0,1fr) auto auto 28px; }
     .blob-mgr-age { display:none; }
   }
+
+  /* Standalone library document: the same editor, with a compact native shell. */
+  .document-window { min-width:0; height:100dvh; }
+  .dw-titlebar { display:flex; align-items:center; justify-content:flex-end; gap:12px;
+    height:48px; flex:none; padding:0 12px; background:var(--surface); border-bottom:1px solid var(--line);
+    -webkit-app-region:drag; }
+  .dw-window-title { position:absolute; left:50%; transform:translateX(-50%); display:flex;
+    align-items:center; gap:8px; max-width:calc(100% - 220px); font-size:var(--fs-ui); font-weight:500; }
+  .dw-window-title span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .dw-titlebar .iconbtn { -webkit-app-region:no-drag; }
+  .document-window .dw-toolbar { padding:0 16px; min-height:48px; gap:12px; -webkit-app-region:no-drag; }
+  .dw-toolbar .crumb { min-width:0; color:var(--muted); font-size:var(--fs-sm); }
+  .dw-path { display:flex; align-items:center; gap:8px; min-width:0; }
+  .dw-path .crumb-link { max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dw-current { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg-soft); }
+  .dw-save { display:flex; align-items:center; gap:6px; flex:none; font-size:var(--fs-xs); color:var(--muted);
+    padding:6px 4px; border-radius:var(--radius-sm); }
+  .dw-save:not(:disabled):hover { background:var(--hover); }
+  .dw-save-saved .ico { color:var(--success); }
+  .dw-save-error, .dw-save-conflict { color:var(--danger); }
+  .dw-content .doc { padding-top:64px; padding-bottom:24vh; }
+  .dw-content .doc-title { overflow-wrap:anywhere; }
+  .dw-footer { display:flex; align-items:center; height:30px; flex:none; padding:0 18px;
+    border-top:1px solid var(--line); color:var(--muted); font-size:var(--fs-xs); }
+  .document-window .doc-wc { bottom:5px; right:16px; border:0; box-shadow:none; background:transparent; }
+  .document-window .doc-toc { top:120px; }
+  .document-window .find-bar { top:102px; }
+  @media (max-width:720px) {
+    .dw-save span { display:none; }
+    .dw-path { display:none; }
+    .document-window .dw-toolbar { gap:8px; padding:0 12px; }
+    .dw-content .doc { padding:36px 32px 24vh; }
+    .dw-content .doc-title { font-size:32px; }
+  }

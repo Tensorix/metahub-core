@@ -49,6 +49,9 @@ import { QuickNote } from "./quicknote/quicknote.tsx";
 import { QuickBoard } from "./quickboard/quickboard.tsx";
 import { ensureLive } from "./live.ts";
 import { ImagePreviewWindow } from "./media/image-preview-window.tsx";
+import { DocumentWindow } from "./document-window.tsx";
+import { openDocumentWindow } from "./document-window-actions.ts";
+import { DOCUMENT_RECOVER } from "./document-lifecycle.ts";
 import { FileEditorWindow } from "./fileviewer/file-editor.tsx";
 import { DocHistoryPanel } from "./history.tsx";
 import { DbActivityPanel } from "./history-record.tsx";
@@ -239,6 +242,11 @@ function App() {
     setView(v);
   };
   useEffect(() => recordRecent(view), [view]);
+  useEffect(() => {
+    const recover = (event: Event) => navigate({ kind: "doc", id: (event as CustomEvent<{ id: string }>).detail.id });
+    window.addEventListener(DOCUMENT_RECOVER, recover);
+    return () => window.removeEventListener(DOCUMENT_RECOVER, recover);
+  }, []);
 
   useEffect(() => {
     // Normalize a stray non-route hash (e.g. a browser opening /#quick) so
@@ -521,7 +529,8 @@ function App() {
   // Shared by the button click and the ⌘S shortcut.
   const saveToBucket = async () => {
     try {
-      await docHandleRef.current?.flushSave();
+      const result = await docHandleRef.current?.flushSave();
+      if (result && !result.ok) throw new Error(result.error);
       await syncReplicaNow();
       const st = replicaStatus();
       if (st.bucketError) throw new Error(st.bucketError);
@@ -600,6 +609,7 @@ function App() {
   useEffect(() => {
     if (!activeDocId) return;
     return registerCommands([
+      ...(window.metahubDesktop?.documents ? [{ id: "openDocumentWindow", label: t("在独立窗口中打开"), en: tIn("en", "在独立窗口中打开"), group: "doc" as const, icon: "externalLink" as const, run: () => void openDocumentWindow(activeDocId) }] : []),
       { id: "toggleSource", label: t("块 / 代码方式切换"), en: tIn("en", "块 / 代码方式切换"), group: "doc", icon: "code", shortcut: "toggleSource", run: run("toggleSource") },
       { id: "docWide", label: t("宽屏模式"), en: tIn("en", "宽屏模式"), group: "doc", icon: "maximize", run: run("docWide") },
       { id: "docHistory", label: t("版本历史"), en: tIn("en", "版本历史"), group: "doc", icon: "history", run: run("docHistory") },
@@ -611,6 +621,10 @@ function App() {
     if (view.kind === "doc" && activeDoc) {
       openMenu(e, (close) => (
         <>
+          {window.metahubDesktop?.documents && <>
+            <MenuItem icon="externalLink" label={t("在独立窗口中打开")} onClick={() => { close(); void openDocumentWindow(activeDoc.id); }} />
+            <MenuSep />
+          </>}
           <MenuItem icon="code" label={docMode === "source" ? t("块方式显示") : t("代码方式显示")} shortcut="toggleSource" checked={docMode === "source"} onClick={() => {
             close();
             docHandleRef.current?.setMode(docMode === "source" ? "blocks" : "source");
@@ -1110,7 +1124,10 @@ if (typeof window !== "undefined" && window.metahubDesktop) {
 // preload bridge), so a browser hitting `/#quick` just gets the full app.
 // The desktop image-preview window loads this same bundle at `…/#preview?…`. It's
 // a standalone full-window viewer — never boot the sidebar/replica app there.
-if (location.hash.startsWith("#preview")) {
+if (window.metahubDesktop?.documents?.initialId) {
+  document.body.classList.add("document-window-shell");
+  render(<DocumentWindow id={window.metahubDesktop.documents.initialId} />, document.getElementById("app")!);
+} else if (location.hash.startsWith("#preview")) {
   document.body.classList.add("preview-window");
   render(<ImagePreviewWindow />, document.getElementById("app")!);
 } else if (location.hash.startsWith("#file") && clientMode().surface === "desktop") {
