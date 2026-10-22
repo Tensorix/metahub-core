@@ -9,6 +9,7 @@
 
 import { join } from "node:path";
 import { shellHtml } from "../src/webui/share/share-shell.ts";
+import { BRAND_IMAGES } from "../src/webui/brand-images.ts";
 
 const outArg = process.argv.indexOf("--out");
 const OUT = outArg >= 0 ? process.argv[outArg + 1]! : "dist/share-viewer";
@@ -30,6 +31,10 @@ async function main() {
   const js = await result.outputs[0]!.text();
   await Bun.write(join(OUT, "share-viewer.js"), js);
   await Bun.write(join(OUT, "index.html"), shellHtml());
+  for (const tone of ["light", "dark"] as const) {
+    await Bun.write(join(OUT, `brand-${tone}.png`), Buffer.from(BRAND_IMAGES.color[tone][192], "base64"));
+  }
+  await Bun.write(join(OUT, "favicon.png"), Buffer.from(BRAND_IMAGES.color.light[32], "base64"));
   await Bun.write(join(OUT, "_redirects"), REDIRECTS);
   await Bun.write(join(OUT, "_headers"), HEADERS);
   console.log(`share-viewer → ${OUT}  (${(js.length / 1024).toFixed(1)} KB js + index.html + _redirects/_headers)`);

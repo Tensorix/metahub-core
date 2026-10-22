@@ -16,6 +16,7 @@ import { pm, type PageMsgKey } from "../../core/sync/page-messages.ts";
 
 const LOCALE = localeFromTags(navigator.languages?.length ? navigator.languages : [navigator.language]);
 const m = (key: PageMsgKey) => pm(LOCALE, key);
+const brandMark = `<picture class="share-brand-mark" aria-hidden="true"><source media="(prefers-color-scheme:dark)" srcset="./brand-dark.png"><img src="./brand-light.png" width="192" height="192" alt=""></picture>`;
 
 interface Manifest {
   v: 1;
@@ -132,7 +133,7 @@ async function main() {
     const manifest = JSON.parse(json) as Manifest;
     document.title = manifest.title || pm(LOCALE, "分享");
 
-    const title = `<header class="mh"><h1 class="title">${escapeHtml(manifest.title || pm(LOCALE, "分享"))}</h1><div class="mh-tools">${copyButtonHtml(LOCALE)}</div></header>`;
+    const title = `<header class="mh"><h1 class="title" id="share-title">${escapeHtml(manifest.title || pm(LOCALE, "分享"))}</h1></header>`;
     const copySource =
       manifest.kind === "doc"
         ? manifest.body ?? ""
@@ -145,7 +146,7 @@ async function main() {
         ? `<article class="doc">${renderMarkdown(manifest.body ?? "") || `<p class="muted">${escapeHtml(pm(LOCALE, "（空文档）"))}</p>`}</article>`
         : renderTable(manifest);
     const tpl = document.createElement("template");
-    tpl.innerHTML = `<div class="mh-view">${title}${inner}<footer class="mh">${escapeHtml(pm(LOCALE, "通过 metahub 分享"))}</footer>${copySourceHtml(copySource)}</div>`;
+    tpl.innerHTML = `<div class="mh-view"><div class="share-topbar"><div class="share-brand">${brandMark}<span>metahub</span></div><div class="mh-tools">${copyButtonHtml(LOCALE)}</div></div><main class="share-content" aria-labelledby="share-title">${title}${inner}</main><footer class="mh">${escapeHtml(pm(LOCALE, "通过 metahub 分享"))}</footer>${copySourceHtml(copySource)}</div>`;
     const wanted = detachBlobRefs(tpl.content);
     set("");
     root.append(tpl.content);
@@ -167,7 +168,22 @@ async function main() {
     );
     for (const hash of wanted) if (!manifest.blobs?.[hash]) attachBlob(hash, null);
   } catch (e) {
-    set(`<p class="err">${escapeHtml((e as Error).message)}</p>`);
+    const reason = e instanceof Error ? e.message : String(e);
+    const incomplete = reason === m("链接缺少分享数据") || reason === m("链接缺少密钥") || e instanceof URIError;
+    document.title = `${m("无法打开这份分享")} · metahub`;
+    set(`<div class="share-error">
+      <header class="share-error-brand">${brandMark}<span>metahub</span></header>
+      <main class="share-error-main" aria-labelledby="share-error-title">
+        <div class="share-error-emblem">${brandMark}<svg class="share-error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 13-1 1a4 4 0 0 1-6-6l3-3a4 4 0 0 1 6 0m2 6 1-1a4 4 0 0 1 6 6l-3 3a4 4 0 0 1-6 0M3 21l3-3M18 6l3-3"/></svg></div>
+        <h1 id="share-error-title">${escapeHtml(m("无法打开这份分享"))}</h1>
+        <p class="share-error-reason" role="alert">${escapeHtml(reason)}</p>
+        <div class="share-error-help"><p>${escapeHtml(m(incomplete ? "请从原消息中重新复制完整链接，再打开试试。" : "请检查网络连接后重试，或联系分享者确认链接是否仍然有效。"))}</p>
+        ${incomplete ? `<p>${escapeHtml(m("如果仍然无法打开，请联系分享者重新发送链接。"))}</p>` : ""}</div>
+        ${incomplete ? "" : `<button class="share-error-retry" type="button">${escapeHtml(m("重新加载"))}</button>`}
+      </main>
+      <footer class="mh">${escapeHtml(m("通过 metahub 分享"))}</footer>
+    </div>`);
+    root.querySelector(".share-error-retry")?.addEventListener("click", () => location.reload());
   }
 }
 
