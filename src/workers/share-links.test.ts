@@ -79,6 +79,19 @@ test("create, resolve, optimistic renew, expiry and irreversible revoke", async 
   }
 });
 
+test("renew accepts Cloudflare weakened ETags but rejects stale revisions", async () => {
+  const f = await fixture();
+  try {
+    const d = descriptor(f.now());
+    expect((await f.send("PUT", d, { "if-none-match": "*" })).status).toBe(201);
+    expect((await f.send("PUT", d, { "if-match": 'W/"1"' })).status).toBe(200);
+    expect((await f.send("PUT", d, { "if-match": 'W/"1"' })).status).toBe(409);
+    expect((await f.send("PUT", d, { "if-match": '"2"' })).status).toBe(200);
+  } finally {
+    f.db.close();
+  }
+});
+
 test("capability is mandatory and binds the ID, including before creation", async () => {
   const f = await fixture();
   try {

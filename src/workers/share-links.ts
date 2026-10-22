@@ -118,7 +118,9 @@ export function createShareLinksHandler(sql: ShareLinkSql, now = Date.now) {
       )
         return fail(400, "invalid_descriptor");
       if (row) {
-        if (req.headers.get("if-match") !== `"${row.version}"`)
+        // Cloudflare compression may weaken the ETag. It still identifies the
+        // same database revision, independent of the response encoding.
+        if (req.headers.get("if-match")?.replace(/^W\//, "") !== `"${row.version}"`)
           return fail(409, "version_conflict");
         const updated = await sql.first<{ version: number }>(
           "UPDATE share_links SET descriptor = ?, expires_at = ?, version = version + 1 WHERE id = ? AND owner_hash = ? AND version = ? AND revoked = 0 RETURNING version",
