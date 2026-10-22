@@ -68,6 +68,7 @@ jobs:
       - name: Migrate short-link database
         uses: cloudflare/wrangler-action@v3
         with:
+          wranglerVersion: "4.86.0"
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: d1 migrations apply SHARE_LINKS --remote --config dist/wrangler.json
@@ -77,6 +78,7 @@ jobs:
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
+          wranglerVersion: "4.86.0"
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: dist
