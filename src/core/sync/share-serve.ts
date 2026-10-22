@@ -33,6 +33,7 @@ import { serveGrantedApi, grantedDepsFromPolicy } from "./grants-routes.ts";
 import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
 import { readGuestSession, mintGuestSession, type GuestSessionScope } from "./guest-session.ts";
 import { renderMarkdown, escapeHtml } from "./share-render.ts";
+import { SHARE_FILE_CSS } from "./share-file-styles.ts";
 import { COPY_CSS, copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "./share-copy.ts";
 import { pickLocale, type Locale } from "./locale.ts";
 import { pm } from "./page-messages.ts";
@@ -650,7 +651,7 @@ function pageShell(
   .tag{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:12px}
   .muted{color:var(--muted)} .mh-img{text-align:center}
   .mh-media{text-align:center} .mh-media video,.mh-media audio{max-width:100%}
-  .mh-file a{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;color:var(--accent);text-decoration:none}
+  ${SHARE_FILE_CSS}
   .mh-doclink{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 5px;white-space:nowrap}
   .mh-doclink::before{content:"📄";font-size:.85em;margin-right:3px}
   iframe.mh-embed{width:100%;border:1px solid var(--line);border-radius:8px;min-height:240px}

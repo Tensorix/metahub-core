@@ -1,4 +1,5 @@
 import { COPY_CSS } from "../../core/sync/share-copy.ts";
+import { SHARE_FILE_CSS } from "../../core/sync/share-file-styles.ts";
 import { pm } from "../../core/sync/page-messages.ts";
 
 export const SHELL_CSS = `:root{--bg:#fbfbfa;--fg:#2c2c30;--muted:#6b6b75;--line:#e4e4e7;--accent:#4a55d6;--card:#f1f1ef;--paper:#fff;--accent-soft:#eef0ff;--accent-fg:#fff;color-scheme:light}
@@ -14,7 +15,7 @@ article.doc blockquote{margin:.8em 0;padding:.2em 1em;border-left:3px solid var(
 table.db,article.doc table{border-collapse:collapse;width:100%;font-size:14px}table.db td,table.db th,article.doc td,article.doc th{border:1px solid var(--line);padding:7px 10px;text-align:left}
 table.db th{background:var(--card)}.table-wrap{overflow:auto}.tag{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:12px}
 .mh-img{text-align:center}.mh-media{text-align:center}.mh-media video,.mh-media audio{max-width:100%}
-.mh-file a{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;color:var(--accent);text-decoration:none}
+${SHARE_FILE_CSS}
 a[data-blob][aria-disabled="true"]{pointer-events:none;color:var(--muted)}
 .mh-doclink{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 5px;white-space:nowrap}.mh-doclink::before{content:"📄";font-size:.85em;margin-right:3px}
 iframe.mh-embed{width:100%;border:1px solid var(--line);border-radius:8px;min-height:240px}
