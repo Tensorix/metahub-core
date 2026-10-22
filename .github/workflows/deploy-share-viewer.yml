@@ -23,6 +23,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      migrate_database:
+        description: "Apply D1 migrations (disable only when the production schema is already current)"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -66,6 +71,7 @@ jobs:
         run: bun run scripts/configure-share-viewer.ts
 
       - name: Migrate short-link database
+        if: github.event_name != 'workflow_dispatch' || inputs.migrate_database
         uses: cloudflare/wrangler-action@v3
         with:
           wranglerVersion: "4.86.0"
