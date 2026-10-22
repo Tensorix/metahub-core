@@ -1,0 +1,76 @@
+name: Deploy Website
+
+# Static assets only: no Worker application code, no Core build or release tag.
+# The existing CLOUDFLARE_API_TOKEN must support Workers deployment and the
+# metahub.tensorix.org custom domain (see website/README.md).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy-website.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-website-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Validate & deploy website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require main branch
+        env:
+          DEPLOY_REF: ${{ github.ref }}
+        run: |
+          if [ "$DEPLOY_REF" != 'refs/heads/main' ]; then
+            echo '::error::Production website deployments must run from main.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Validate static website
+        run: bun website/check.ts
+
+      - name: Check deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo '::error::Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets.'
+            exit 1
+          fi
+
+      - name: Deploy static assets to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          wranglerVersion: '4.86.0'
+          packageManager: bun
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: website
+          command: deploy --config wrangler.jsonc
+
+      - name: Verify public website
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --max-time 30 \
+                https://metahub.tensorix.org/ -o /tmp/metahub-website.html && \
+                cmp -s website/public/index.html /tmp/metahub-website.html; then
+              echo 'Website deployed: https://metahub.tensorix.org/' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Waiting for homepage update (attempt $attempt/6)"
+            sleep 5
+          done
+          echo '::error::Public homepage did not match the deployed source.'
+          exit 1

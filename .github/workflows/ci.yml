@@ -4,7 +4,7 @@ name: CI
 # release.yml 里会用到的构建/编译/冒烟链路先走一遍，别等到打 tag 那一刻才炸。
 #
 # 分两档控成本：
-#   - checks        : 每次 push/PR 都跑。快（缓存命中约十几秒）——test + 打包 +
+#   - checks        : 每次 push/PR 都跑；仅官网变更只校验静态站点。其他变更跑快档（缓存命中约十几秒）——test + 打包 +
 #                     宿主单平台 compile + 三个冒烟（版本自洽 / WebUI 能 serve / skill 内嵌）。
 #   - release-dryrun: 只在 main 分支（push 到 main 或 PR→main）跑。慢（几分钟）——
 #                     6 平台交叉编译 + 全平台 sidecars + npm 打包，全部只验证、不上传。
@@ -14,6 +14,9 @@ on:
   push:
     branches: ["**"] # 匹配所有分支，但不匹配 tag —— tag 交给 release.yml，避免重复跑
   pull_request:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -29,35 +32,52 @@ jobs:
   checks:
     name: Fast checks
     runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.scope.outputs.core }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
+      - name: Detect change scope
+        id: scope
+        run: bun scripts/ci-scope.ts
+
+      - name: Check website
+        run: bun website/check.ts
+
       # bun 全局包缓存：key 绑 bun.lock，依赖没变则 install 秒回；
       # 变了则 restore-keys 退回上一版缓存做部分复用，不会真·全冷装。
       - uses: actions/cache@v4
+        if: steps.scope.outputs.core == 'true'
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
 
       - run: bun install --frozen-lockfile
+        if: steps.scope.outputs.core == 'true'
       - run: bun test
+        if: steps.scope.outputs.core == 'true'
 
       # 打包 dist（webui bundle / sw / lib）——test 不覆盖打包这一步。
       - run: bun run build
+        if: steps.scope.outputs.core == 'true'
 
       # 宿主单平台 compile + 三个冒烟：verifyBinaryVersion（tag/版本自洽守卫）、
       # smokeWebui（编译出的二进制真能 serve WebUI，防 500 回归）、smokeSkill（/mh skill 内嵌）。
       - name: Host binary + smoke
+        if: steps.scope.outputs.core == 'true'
         run: bun run build:binaries:host
 
   # ── 慢档：只在 main（push 到 main 或 PR→main）作为合并门禁 ──────────────
   release-dryrun:
     name: Release dry-run (all platforms, no upload)
-    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    needs: checks
+    if: needs.checks.outputs.core == 'true' && (github.ref == 'refs/heads/main' || github.base_ref == 'main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

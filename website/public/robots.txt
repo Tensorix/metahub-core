@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://metahub.tensorix.org/sitemap.xml

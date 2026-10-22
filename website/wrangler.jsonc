@@ -1,0 +1,8 @@
+{
+  "name": "metahub-website",
+  "account_id": "35df29b3356c5a027687485d5079ec53",
+  "compatibility_date": "2026-10-22",
+  "assets": { "directory": "./public", "not_found_handling": "404-page" },
+  "routes": [{ "pattern": "metahub.tensorix.org", "custom_domain": true }],
+  "workers_dev": true
+}
