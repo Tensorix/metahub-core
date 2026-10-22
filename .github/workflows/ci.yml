@@ -60,6 +60,9 @@ jobs:
 
       - run: bun install --frozen-lockfile
         if: steps.scope.outputs.core == 'true'
+      - name: Generate desktop version for lifecycle tests
+        if: steps.scope.outputs.core == 'true'
+        run: bun apps/desktop/scripts/gen-core-version.ts
       - run: bun test
         if: steps.scope.outputs.core == 'true'
 
