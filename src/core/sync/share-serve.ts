@@ -1,3 +1,4 @@
+import { THEME_CSS } from "../ui-theme.ts";
 // Public, token-exempt serving of a share (/share/<slug>...). Mounted in
 // server.ts BEFORE the route matcher and deliberately NOT wrapped in withShim,
 // so a share page never carries the master-token runtime (/mh-runtime.js).
@@ -626,14 +627,13 @@ function pageShell(
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 <style>
-  :root{--bg:#ffffff;--fg:#1f2328;--muted:#6e7781;--line:#d0d7de;--accent:#0969da;--card:#f6f8fa}
-  @media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8b949e;--line:#30363d;--accent:#4493f8;--card:#161b22}}
+  ${THEME_CSS}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
   .wrap{max-width:820px;margin:0 auto;padding:32px 20px 80px}
   header.mh{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:14px}
   header.mh h1.title{font-size:22px;margin:0}
-  .edit-btn{background:var(--accent);color:#fff;border:0;border-radius:7px;height:32px;padding:0 14px;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit}
+  .edit-btn{background:var(--accent);color:var(--accent-fg);border:0;border-radius:7px;height:32px;padding:0 14px;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit}
   ${COPY_CSS}
   .hint{color:var(--muted);font-size:13px;margin:0 0 14px}
   article.doc h1,article.doc h2,article.doc h3{line-height:1.3;margin:1.4em 0 .5em}
@@ -647,7 +647,7 @@ function pageShell(
   article.doc td,article.doc th,table.db td,table.db th{border:1px solid var(--line);padding:7px 10px;text-align:left}
   table.db th{background:var(--card)}
   .table-wrap{overflow:auto}
-  td[contenteditable]{outline:none} td.saving{opacity:.5} td.saved{background:rgba(46,160,67,.18)}
+  td[contenteditable]{outline:none} td.saving{opacity:.5} td.saved{background:color-mix(in srgb,var(--success) 18%,transparent)}
   .tag{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:12px}
   .muted{color:var(--muted)} .mh-img{text-align:center}
   .mh-media{text-align:center} .mh-media video,.mh-media audio{max-width:100%}
@@ -660,8 +660,8 @@ function pageShell(
   .row{display:flex;gap:10px;align-items:center;margin:10px 0}
   form.pw{max-width:320px;margin:12vh auto 0;display:flex;flex-direction:column;gap:12px}
   form.pw input{padding:9px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--fg)}
-  form.pw button{padding:9px;border:0;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer}
-  form.pw .err{color:#f85149;font-size:13px;margin:0}
+  form.pw button{padding:9px;border:0;border-radius:7px;background:var(--accent);color:var(--accent-fg);cursor:pointer}
+  form.pw .err{color:var(--danger);font-size:13px;margin:0}
   footer.mh{margin-top:48px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:12px;text-align:center}
 </style></head><body>
 ${opts.bare ? `<div class="wrap">${inner}</div>` : `<div class="wrap">

@@ -26,12 +26,11 @@ export const COPY_CSS = `.mh-tools{display:flex;align-items:center;gap:8px;flex:
 .copy-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .copy-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .copy-btn .ic-check{display:none}
-.copy-btn.done{color:var(--ok,#1a7f37);border-color:var(--ok,#1a7f37)}
+.copy-btn.done{color:var(--success);border-color:var(--success)}
 .copy-btn.done .ic-copy{display:none}.copy-btn.done .ic-check{display:block}
 .copy-btn.done .ic-check path{stroke-dasharray:24;stroke-dashoffset:24;animation:mh-draw .22s ease-out forwards}
-.copy-btn.fail{color:#cf222e;border-color:#cf222e}
+.copy-btn.fail{color:var(--danger);border-color:var(--danger)}
 @keyframes mh-draw{to{stroke-dashoffset:0}}
-@media (prefers-color-scheme:dark){:root{--ok:#3fb950}}
 @media (max-width:480px){.copy-btn span{display:none}.copy-btn{padding:0 9px}}
 @media (prefers-reduced-motion:reduce){.copy-btn .ic-check path{animation:none;stroke-dashoffset:0}}`;
 

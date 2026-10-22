@@ -1,3 +1,4 @@
+import { THEME_CSS } from "../ui-theme.ts";
 import type { DbDriver } from "../driver.ts";
 import type { RouteCtx } from "./routes.ts";
 import {
@@ -254,8 +255,7 @@ function notFoundResponse(locale: Locale, title: string, detail: string): Respon
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 <style>
-  :root{--bg:#ffffff;--fg:#1f2328;--muted:#6e7781;--line:#d0d7de;--accent:#0969da;--card:#f6f8fa}
-  @media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8b949e;--line:#30363d;--accent:#4493f8;--card:#161b22}}
+  ${THEME_CSS}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
     min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px}

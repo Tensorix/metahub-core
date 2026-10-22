@@ -1,3 +1,4 @@
+import { THEME_CSS } from "../../../src/core/ui-theme.ts";
 /**
  * Build the disk-loaded file-editor shell (the .txt/.md "open with" window).
  *
@@ -30,6 +31,7 @@ const HTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Metahub</title>
 <script>try{var sp=new URLSearchParams(location.search),q=sp.get('theme'),d=q?q==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.resolved=d?'dark':'light';var l=sp.get('lang');if(l==='en'||l==='zh-CN')document.documentElement.lang=l}catch(e){}</script>
+<style>${THEME_CSS}html,body{background:var(--bg);color:var(--fg)}</style>
 <link rel="stylesheet" href="./file-editor.css">
 </head>
 <body>
@@ -65,6 +67,6 @@ if (js.includes("mh-fmt-")) {
 }
 
 await Bun.write(join(outdir, "file-editor.js"), js);
-await Bun.write(join(outdir, "file-editor.css"), Bun.file(join(repoRoot, "src", "webui", "styles.css")));
+await Bun.write(join(outdir, "file-editor.css"), THEME_CSS + await Bun.file(join(repoRoot, "src", "webui", "styles.css")).text());
 await Bun.write(join(outdir, "file-editor.html"), HTML);
 console.log(`file-editor shell → ${outdir} (${(js.length / 1024).toFixed(0)} KB js)`);

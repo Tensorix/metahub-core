@@ -1,3 +1,4 @@
+import { THEME_CSS, THEME_INIT_SCRIPT, LIGHT_THEME } from "../ui-theme.ts";
 // Token gate for the server. In --debug mode auth is disabled entirely. Otherwise
 // a single token guards every request. A token may arrive three ways so both
 // programmatic clients and browsers work:
@@ -163,18 +164,8 @@ const EYE_SVG = '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><ci
 const EYE_OFF_SVG =
   '<path d="M4 4l16 16M9.5 9.5a3 3 0 0 0 4 4M6.5 6.7C4.5 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3-.4 4.4-1.1M9.5 5.2A9.7 9.7 0 0 1 12 5c4 0 8 3 10 7-.6 1.3-1.5 2.5-2.5 3.5"/>';
 
-// Two palettes mirrored *by literal value* from src/webui/styles.css :root and
-// :root[data-resolved="dark"] — the page carries no stylesheet, so the tokens
-// it themes with are inlined here. Change styles.css → change these too.
 const UNLOCK_CSS = `
-  :root{color-scheme:light;
-    --bg:#ffffff;--surface:#fbfbfa;--surface-2:#f1f1ef;--fg:#2c2c30;--fg-soft:#5b5b62;
-    --muted:#75757f;--line:#ebebe8;--line-strong:#dededb;--accent:#4a55d6;--accent-fg:#ffffff;
-    --accent-soft:#eef0ff;--danger:#d6473b;--danger-soft:#fdeceb;--code-bg:#f8f8f6}
-  :root[data-resolved="dark"]{color-scheme:dark;
-    --bg:#1a1a1c;--surface:#202022;--surface-2:#2a2a2d;--fg:#e6e6e9;--fg-soft:#b4b4bb;
-    --muted:#8b8b95;--line:#2c2c30;--line-strong:#3a3a40;--accent:#7b86ff;--accent-fg:#14141a;
-    --accent-soft:#23243a;--danger:#f87168;--danger-soft:#341e1c;--code-bg:#26262a}
+  ${THEME_CSS}
   *{box-sizing:border-box}
   html,body{margin:0;min-height:100%}
   body{font-family:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
@@ -261,17 +252,9 @@ export function unlockPage(locale: Locale = "zh-CN"): string {
   return `<!doctype html><html lang="${locale}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#ffffff">
+<meta name="theme-color" content="${LIGHT_THEME.bg}">
 <title>${m("验证访问令牌 · metahub")}</title>
-<script>
-  // FOUC-guard theme resolution, same key/logic as src/webui/theme.ts.
-  try {
-    var mt = localStorage.getItem("mh-theme");
-    var dark = mt === "dark" || (mt !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
-    document.documentElement.dataset.resolved = dark ? "dark" : "light";
-    document.head.querySelector('meta[name=theme-color]').setAttribute("content", dark ? "#1a1a1c" : "#ffffff");
-  } catch (e) {}
-</script>
+<script>${THEME_INIT_SCRIPT}</script>
 <style>${UNLOCK_CSS}</style></head><body>
 <div class="boot" id="boot"><svg viewBox="0 0 24 24">${CUBE_SVG}</svg></div>
 <form class="card" id="f" style="display:none" autocomplete="on">

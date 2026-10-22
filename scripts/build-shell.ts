@@ -30,6 +30,7 @@ const PATHS = [
   "/metahub-sdk.js",
   "/manifest.webmanifest",
   "/sqlite3.wasm",
+  "/icons/icon-32.png",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/icon-180.png",

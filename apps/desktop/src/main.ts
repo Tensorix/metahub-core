@@ -1,3 +1,4 @@
+import { LIGHT_THEME, DARK_THEME } from "../../../src/core/ui-theme.ts";
 /**
  * Electron main process for the Metahub desktop app.
  *
@@ -345,7 +346,7 @@ function createSplash(): void {
     show: false,
     skipTaskbar: true,
     title: "Metahub",
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_THEME.bg : LIGHT_THEME.bg,
   });
   splashWin = win;
   perfWindow(win, "splash");
@@ -382,7 +383,7 @@ function createWindow(port: number, hash?: string): void {
     minWidth: 720,
     minHeight: 480,
     title: "Metahub",
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_THEME.bg : LIGHT_THEME.bg,
     // Stay hidden until the renderer has painted its first frame, then reveal
     // and hand off from the splash — no white flash, no blank window.
     show: false,
@@ -471,7 +472,7 @@ function openPreview(p: { src: string; name?: string; blockId: string }): void {
     // platforms get a plain opaque dark frameless window.
     ...(isMac
       ? { vibrancy: "popover" as const, visualEffectState: "active" as const, backgroundColor: "#00000000" }
-      : { backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff" }),
+      : { backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_THEME.bg : LIGHT_THEME.bg }),
     webPreferences: {
       preload: appFile("dist", "preload.js"),
       contextIsolation: true,
@@ -589,7 +590,7 @@ function openFileWindow(absPath: string): void {
     minWidth: 480,
     minHeight: 360,
     title: basename(absPath),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1c" : "#ffffff",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_THEME.bg : LIGHT_THEME.bg,
     show: false,
     // Same chrome policy as the main window: inset traffic lights on macOS
     // (the .fw-bar reserves space for them), native frame elsewhere.

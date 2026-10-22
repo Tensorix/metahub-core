@@ -1,3 +1,4 @@
+import { THEME_CSS, THEME_INIT_SCRIPT, LIGHT_THEME } from "../../core/ui-theme.ts";
 import { fileURLToPath } from "node:url";
 import { readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -28,7 +29,7 @@ const HTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <!-- Mobile browser chrome (status/address bar) tints to theme-color; app.tsx
      keeps #theme-color-meta in sync with the active theme + visible surface. -->
-<meta name="theme-color" id="theme-color-meta" content="#ffffff" />
+<meta name="theme-color" id="theme-color-meta" content="${LIGHT_THEME.bg}" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <title>Metahub</title>
@@ -43,9 +44,10 @@ const HTML = `<!doctype html>
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
 <!-- FOUC guard: resolve the stored choice (system → OS preference) to an
      explicit data-resolved before first paint. CSS keys off data-resolved
-     alone, so the dark palette exists exactly once — see styles.css. Dark also
+     alone, so the dark palette exists exactly once — see core/ui-theme.ts. Dark also
      pre-tints the status bar (hex mirrors --bg) so the first frame isn't white. -->
-<script>try{var t=localStorage.getItem('mh-theme'),d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.resolved=d?'dark':'light';if(d)document.getElementById('theme-color-meta').content='#1a1a1c'}catch(e){}</script>
+<style>${THEME_CSS}html,body{background:var(--bg);color:var(--fg)}</style>
+<script>${THEME_INIT_SCRIPT}</script>
 <!-- Same for the UI language: mirror src/webui/i18n/locale.ts so <html lang>
      is right before the bundle runs. -->
 <script>try{var l=localStorage.getItem('mh-lang');if(l!=='zh-CN'&&l!=='en'){var ls=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language];l='en';for(var i=0;i<ls.length;i++){var g=ls[i]||'';if(/^zh\\b/i.test(g)){l='zh-CN';break}if(/^en\\b/i.test(g))break}}document.documentElement.lang=l}catch(e){}</script>
@@ -235,9 +237,9 @@ const getSdk = bundleGetter({ key: "sdk", entry: "../../sdk/client.ts", dist: "m
  *  next refresh), the build-time inlined copy otherwise. */
 async function getCss(): Promise<string> {
   if (RUNNING_FROM_SOURCE) {
-    return Bun.file(fileURLToPath(new URL("../styles.css", import.meta.url))).text();
+    return THEME_CSS + await Bun.file(fileURLToPath(new URL("../styles.css", import.meta.url))).text();
   }
-  return APP_CSS;
+  return THEME_CSS + APP_CSS;
 }
 
 /** /webui.js with the package version stamped into the __MH_WEBUI_VERSION__
@@ -287,8 +289,8 @@ const MANIFEST = JSON.stringify({
   start_url: "/",
   scope: "/",
   display: "standalone",
-  background_color: "#ffffff",
-  theme_color: "#ffffff",
+  background_color: LIGHT_THEME.bg,
+  theme_color: LIGHT_THEME.bg,
   icons: [
     { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
     { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },

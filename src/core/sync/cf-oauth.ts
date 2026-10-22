@@ -1,3 +1,4 @@
+import { THEME_CSS } from "../ui-theme.ts";
 // "Sign in with Cloudflare" — OAuth 2.0 Authorization Code + PKCE (S256) for the
 // Edge deploy flow, replacing manual Account ID + API token entry. This is a
 // PUBLIC client (no secret): the client_id is not sensitive and ships in the
@@ -311,6 +312,6 @@ export async function startCfLogin(opts: {
   };
 }
 
-const callbackHtml = (locale: Locale) => `<!doctype html><html lang="${locale}"><meta charset="utf-8"><title>MetaHub</title>
+const callbackHtml = (locale: Locale) => `<!doctype html><html lang="${locale}"><meta charset="utf-8"><title>MetaHub</title><style>${THEME_CSS}body{background:var(--bg);color:var(--fg)}h2{color:var(--success)}p{color:var(--muted)}</style>
 <body style="font:15px system-ui;display:grid;place-items:center;height:100vh;margin:0">
 <div style="text-align:center"><h2>${pm(locale, "✅ 已授权")}</h2><p>${pm(locale, "可以关闭此标签页，回到 MetaHub 继续部署。")}</p></div>`;

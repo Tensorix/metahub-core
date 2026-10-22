@@ -1,3 +1,4 @@
+import { THEME_CSS, THEME_INIT_SCRIPT } from "../core/ui-theme.ts";
 // Service worker for the WebUI PWA. Built standalone (the api-map import is
 // inlined by the bundler; no exports) so the bundle stays a plain classic
 // script — registered without `type: "module"`, which keeps older Safari happy.
@@ -86,6 +87,10 @@ const SHELL_PATHS = [
   "/webui.js",
   "/webui.css",
   "/manifest.webmanifest",
+  "/icons/icon-32.png",
+  "/icons/icon-180.png",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
   "/db-worker.js",
   "/mh-runtime.js",
 ];
@@ -376,7 +381,7 @@ function bootstrapShell(site: string, path: string, req: Request): Response {
   const args = `${JSON.stringify(site)},${JSON.stringify(path)}`;
   const lang = localeFromAcceptLanguage(req.headers.get("accept-language"));
   return new Response(
-    `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="/mh-runtime.js"></script></head><body><p style="font:14px system-ui;color:#888;margin:2em">${tIn(lang, "正在从本地副本加载…")}</p><script>__mhOfflineBootstrap(${args})</script></body></html>`,
+    `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${THEME_CSS}html,body{background:var(--bg);color:var(--fg)}</style><script>${THEME_INIT_SCRIPT}</script><script src="/mh-runtime.js"></script></head><body><p style="font:14px system-ui;color:var(--muted);margin:2em">${tIn(lang, "正在从本地副本加载…")}</p><script>__mhOfflineBootstrap(${args})</script></body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8", "x-mh-source": "bootstrap" } },
   );
 }

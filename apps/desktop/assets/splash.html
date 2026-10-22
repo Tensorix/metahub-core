@@ -8,23 +8,25 @@
   Cold-start splash. Self-contained on purpose: it is shown before the Bun
   sidecar (and therefore the WebUI) is up, so it cannot fetch anything — no
   CDN fonts, no external assets. System fonts only, so it paints instantly.
-  Palette mirrors src/core/sync/webui.ts; dark/light follow the OS.
+  Palette mirrors src/core/ui-theme.ts; dark/light follow the OS.
 -->
 <style>
   :root {
+    color-scheme: light;
     --bg: #ffffff;
-    --fg: #2c2c30;
-    --muted: #8a8a93;
-    --line: #ebebe8;
-    --accent: #4a55d6;
+    --fg: #37352f;
+    --muted: #6f6d66;
+    --line: #eae9e6;
+    --accent: #3867b2;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #1a1a1c;
-      --fg: #e6e6e9;
-      --muted: #7d7d86;
-      --line: #2c2c30;
-      --accent: #7b86ff;
+      color-scheme: dark;
+      --bg: #191919;
+      --fg: #e8e7e4;
+      --muted: #aaa8a2;
+      --line: #30302f;
+      --accent: #8aaddb;
     }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }

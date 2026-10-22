@@ -141,7 +141,7 @@ function replicaUsable(): boolean {
     // this is the one fail() sink that isn't a static template — never let it
     // parse as markup.
     const p = document.createElement("p");
-    p.style.cssText = "font:14px system-ui;color:#888;margin:2em";
+    p.style.cssText = "font:14px system-ui;color:var(--muted);margin:2em";
     p.textContent = msg;
     document.body.replaceChildren(p);
   };

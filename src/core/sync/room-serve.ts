@@ -1,3 +1,4 @@
+import { THEME_CSS } from "../ui-theme.ts";
 // The room's HTTP surface (/r/<slug>/*) — PORTABLE, driver-only, pure
 // (Request → Response) over injected host deps, so the exact same handler runs
 // inside the MhRoom Durable Object (src/workers/room.ts over DoSqlDriver) and
@@ -473,16 +474,15 @@ function serveRoomFile(db: DbDriver, cfg: RoomConfig, path: string, locale: Loca
 // the markdown engine out of the DO bundle.
 
 const PAGE_CSS = `
-  :root{--bg:#ffffff;--fg:#1f2328;--muted:#6e7781;--line:#d0d7de;--accent:#0969da;--card:#f6f8fa}
-  @media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8b949e;--line:#30363d;--accent:#4493f8;--card:#161b22}}
+  ${THEME_CSS}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
     min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px}
   main{max-width:420px;width:100%}
   form.pw{display:flex;flex-direction:column;gap:12px}
   form.pw input{padding:9px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--fg)}
-  form.pw button{padding:9px;border:0;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer}
-  .err{color:#f85149;font-size:13px;margin:0}
+  form.pw button{padding:9px;border:0;border-radius:7px;background:var(--accent);color:var(--accent-fg);cursor:pointer}
+  .err{color:var(--danger);font-size:13px;margin:0}
   .muted{color:var(--muted);font-size:14px}
   h1{font-size:20px;margin:0 0 10px;text-align:center}
   footer{margin-top:34px;color:var(--muted);font-size:12px;text-align:center}`;

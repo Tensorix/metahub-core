@@ -1,8 +1,7 @@
 // Appearance theme: light / dark / system-follow. The choice is *resolved*
 // (system → the OS preference) onto <html data-resolved="light|dark"> and
 // re-themes the whole UI instantly via the CSS variable overrides in
-// src/webui/styles.css — which therefore carries a single dark palette block,
-// no prefers-color-scheme duplicate. An inline script in the HTML shell does
+// src/core/ui-theme.ts. An inline script in the HTML shell does
 // the same resolution before first paint (FOUC guard); this module keeps it in
 // sync on change, and app.tsx re-runs it when the OS flips while on "system".
 
@@ -33,7 +32,7 @@ export function setTheme(t: ThemeChoice): void {
 // <meta name="theme-color">. Keep it matching the surface actually filling the
 // top of the screen so the notch area blends in: on the mobile home that's the
 // full-page sidebar (--sidebar); content views and desktop use the page bg.
-// Read the resolved *token* (a hex literal in styles.css) rather than an
+// Read the resolved *token* (a hex literal in core/ui-theme.ts) rather than an
 // element's computed backgroundColor: some mobile browsers ignore theme-color
 // updates in rgb() form, and the token already tracks the active theme —
 // including a manual light/dark/system toggle, which prefers-color-scheme
