@@ -1,6 +1,6 @@
 // Static, data-blind viewer for object-storage shares (deployed to Cloudflare
-// Pages / any static host). It receives the presigned manifest URL + the per-
-// share key (or salt) in the URL fragment (#m=…&k=… / &s=…), fetches the
+// Pages / any static host). It resolves /s/:id through the optional short-link
+// API or reads a legacy #m=…&k=… / &s=… link. Keys stay in the fragment. It fetches the
 // ciphertext directly from the bucket, decrypts it in-browser, and renders with
 // the SAME runtime-agnostic renderer the server uses (share-render.ts).
 //
@@ -10,13 +10,16 @@
 
 import { renderMarkdown, escapeHtml } from "../../core/sync/share-render.ts";
 import { copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "../../core/sync/share-copy.ts";
-import { decryptBytes, deriveShareKey, fromB64 } from "../../core/sync/e2ee.ts";
+import { decryptBytes, deriveShareKey } from "../../core/sync/e2ee.ts";
+import { decodeLinkKey } from "../../core/sync/share-link.ts";
+import { loadShareLink } from "./share-link-loader.ts";
 import { localeFromTags } from "../../core/sync/locale.ts";
 import { pm, type PageMsgKey } from "../../core/sync/page-messages.ts";
 
 const LOCALE = localeFromTags(navigator.languages?.length ? navigator.languages : [navigator.language]);
 const m = (key: PageMsgKey) => pm(LOCALE, key);
-const brandMark = `<picture class="share-brand-mark" aria-hidden="true"><source media="(prefers-color-scheme:dark)" srcset="./brand-dark.png"><img src="./brand-light.png" width="192" height="192" alt=""></picture>`;
+const assetBase = /^\/s\//.test(location.pathname) ? "/" : "./";
+const brandMark = `<picture class="share-brand-mark" aria-hidden="true"><source media="(prefers-color-scheme:dark)" srcset="${assetBase}brand-dark.png"><img src="${assetBase}brand-light.png" width="192" height="192" alt=""></picture>`;
 
 interface Manifest {
   v: 1;
@@ -26,18 +29,6 @@ interface Manifest {
   properties?: { id: string; name: string; type: string }[];
   records?: { cells: Record<string, unknown> }[];
   blobs?: Record<string, { url: string; ct: string }>;
-}
-
-/** Manual fragment parse: only `m` is percent-encoded (it's a full URL); `k`/`s`
- *  are raw base64 left untouched (URLSearchParams would turn '+' into a space). */
-function parseHash(): { m?: string; k?: string; s?: string } {
-  const out: Record<string, string> = {};
-  for (const part of location.hash.replace(/^#/, "").split("&")) {
-    const i = part.indexOf("=");
-    if (i < 0) continue;
-    out[part.slice(0, i)] = part.slice(i + 1);
-  }
-  return { m: out.m ? decodeURIComponent(out.m) : undefined, k: out.k, s: out.s };
 }
 
 function cellHtml(type: string, value: unknown): string {
@@ -113,14 +104,14 @@ async function main() {
   const root = document.getElementById("app")!;
   const set = (html: string) => (root.innerHTML = html);
   try {
-    const { m: manifestUrl, k, s } = parseHash();
+    const { m: manifestUrl, k, s } = await loadShareLink(new URL(location.href));
     if (!manifestUrl) throw new Error(pm(LOCALE, "链接缺少分享数据"));
 
     let key: Uint8Array;
-    if (k) key = fromB64(k);
+    if (k) key = decodeLinkKey(k);
     else if (s) {
       const pw = window.prompt(pm(LOCALE, "请输入分享口令")) ?? "";
-      key = await deriveShareKey(pw, fromB64(s));
+      key = await deriveShareKey(pw, decodeLinkKey(s));
     } else throw new Error(pm(LOCALE, "链接缺少密钥"));
 
     const enc = new Uint8Array(await (await fetch(manifestUrl)).arrayBuffer());
@@ -168,7 +159,9 @@ async function main() {
     );
     for (const hash of wanted) if (!manifest.blobs?.[hash]) attachBlob(hash, null);
   } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
+    const reason = e instanceof Error && e.message === "share_unavailable"
+      ? m("链接已失效或密钥不正确")
+      : e instanceof Error ? e.message : String(e);
     const incomplete = reason === m("链接缺少分享数据") || reason === m("链接缺少密钥") || e instanceof URIError;
     document.title = `${m("无法打开这份分享")} · metahub`;
     set(`<div class="share-error">

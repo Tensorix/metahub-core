@@ -148,7 +148,7 @@ export function legacyShareRowView(s: ShareListItem, now = Date.now()): ChannelR
   const actions: ChannelRowAction[] = [];
   let warnLine: string | undefined;
   if (s.lifecycle === "cleanup_pending") {
-    warnLine = t("撤销已请求，等待 Edge 确认销毁");
+    warnLine = s3 ? t("远端尚未确认完成撤销，管理记录已保留，请重试撤销。") : t("撤销已请求，等待 Edge 确认销毁");
     actions.push("revokeShare");
   } else if (expired && !s3) {
     warnLine = t("链接已过期 — 过期链接无法访问，可重新创建");

@@ -46,6 +46,7 @@ export function bucketShareItem(bucket: { url: string; label: string | null }, m
     expiresAt: m.presign_exp,
     hasPassword: m.has_password,
     contentUpdatedAt: m.content_updated_at ?? m.created_at,
+    ...(m.revoking ? { lifecycle: "cleanup_pending" as const } : {}),
   };
 }
 

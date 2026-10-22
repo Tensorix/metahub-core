@@ -109,7 +109,9 @@ export function useShareActions(
     try {
       const result = await api.revokeShare(s.slug, s.sourceUrl);
       if (result.status === "cleanup_pending") {
-        onError(t("撤销已提交，但 Edge 尚未确认销毁 Room；本地保留管理记录并会继续重试。"));
+        onError(s.transport === "s3"
+          ? t("远端尚未确认完成撤销，管理记录已保留，请重试撤销。")
+          : t("撤销已提交，但 Edge 尚未确认销毁 Room；本地保留管理记录并会继续重试。"));
         notifySharesChanged();
         reload();
         return;

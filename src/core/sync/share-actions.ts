@@ -40,6 +40,7 @@ import {
   deleteBucketShareObjects,
 } from "./share-export.ts";
 import { MAX_PRESIGN_SECONDS } from "./storage-s3-sign.ts";
+import { bucketShareUrl } from "./share-short-links.ts";
 import {
   absoluteShareUrl,
   bucketShareItem,
@@ -254,11 +255,6 @@ function viewerOriginOf(base: string): string | undefined {
   }
 }
 
-function bucketLink(base: string, manifestUrl: string, keyB64?: string, saltB64?: string): string {
-  const frag = `m=${encodeURIComponent(manifestUrl)}&` + (keyB64 ? `k=${keyB64}` : `s=${saltB64}`);
-  return `${base}/#${frag}`;
-}
-
 /** The legal-combination matrix in ONE place. Every rule names the conflict and
  *  the way out, so surfaces (CLI flags, WebUI selects, remote peers) fail the
  *  same way instead of each scattering its own throws. */
@@ -317,7 +313,7 @@ export async function createShareAction(db: DbDriver, req: CreateShareRequest): 
       permission: "view",
       transport: "s3",
       hosting: "s3",
-      url: bucketLink(base, out.manifestUrl, out.keyB64, out.saltB64),
+      url: await bucketShareUrl(config, slug, base, out),
       expiresAt: out.presignExp,
       source: `桶 ${label}`,
     };
@@ -708,7 +704,12 @@ export async function revokeShareAction(db: DbDriver, slug: string): Promise<Rev
   }
   const owner = await bucketOwning(db, slug);
   if (!owner) return { ok: false, status: "not_found" };
-  await deleteBucketShareObjects(JSON.parse(owner.peer.config!) as S3Config, slug);
+  try {
+    await deleteBucketShareObjects(JSON.parse(owner.peer.config!) as S3Config, slug);
+  } catch {
+    if (owner.item) primeRemoteShare(db, owner.peer.url, { ...owner.item, lifecycle: "cleanup_pending" });
+    return { ok: false, status: "cleanup_pending" };
+  }
   dropRemoteShare(db, owner.peer.url, slug);
   return { ok: true, status: "revoked" };
 }
@@ -758,7 +759,7 @@ export async function renewShareAction(
     permission: "view",
     transport: "s3",
     hosting: "s3",
-    url: bucketLink(base, out.manifestUrl, out.keyB64, out.saltB64),
+    url: await bucketShareUrl(config, slug, base, out),
     expiresAt: out.presignExp,
     source: `桶 ${p.label ?? p.url}`,
   };

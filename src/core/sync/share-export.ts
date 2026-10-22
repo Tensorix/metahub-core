@@ -25,6 +25,7 @@ import { listRecords } from "../records.ts";
 import { resolveBlobBytes, hasBlobBytesResolver, blobContentType } from "../blobs-core.ts";
 import { storageClientFor, bucketCorsAdmin, type S3Config } from "./storage.ts";
 import { presignGet, MAX_PRESIGN_SECONDS } from "./storage-s3-sign.ts";
+import { revokeBucketShortLinks } from "./share-short-links.ts";
 import {
   encryptBytes,
   decryptBytes,
@@ -68,6 +69,8 @@ export interface BucketShareMeta {
    *  presign_exp: re-signing the link does not touch this. Older metas lack the
    *  field — readers fall back to created_at. */
   content_updated_at?: number;
+  /** Revocation intent survives failures and is visible on other devices. */
+  revoking?: boolean;
 }
 
 export interface BucketShareLink {
@@ -266,6 +269,7 @@ export async function renewBucketShare(
 ): Promise<BucketShareLink> {
   const meta = await readMeta(config, slug);
   if (!meta) throw new MhError("not_found", `no such bucket share: ${slug}`);
+  if (meta.revoking) throw new MhError("conflict", "share revocation is pending; retry revocation instead");
   const shareKey = fromB64(meta.key);
   const exp = clampExpiry(expiresSec);
   const { manifestUrl, objects, title } = await writeShareObjects(db, {
@@ -316,6 +320,7 @@ export async function represignBucketShare(
 ): Promise<BucketShareLink> {
   const meta = await readMeta(config, slug);
   if (!meta) throw new MhError("not_found", `no such bucket share: ${slug}`);
+  if (meta.revoking) throw new MhError("conflict", "share revocation is pending; retry revocation instead");
   const client = storageClientFor(config);
   const root = sharesRoot(config.prefix);
   const shareKey = fromB64(meta.key);
@@ -364,15 +369,19 @@ export async function listBucketShares(config: S3Config): Promise<BucketShareMet
   return out;
 }
 
-/** Delete a bucket share's objects. meta.json is deleted FIRST so the share
- *  immediately disappears from listings even if the rest is slow. */
+/** Keep owner metadata until aliases and objects are confirmed removed, so a
+ * failed revocation remains discoverable and retryable across devices. */
 export async function deleteBucketShareObjects(config: S3Config, slug: string): Promise<void> {
   const client = storageClientFor(config);
   const root = sharesRoot(config.prefix);
-  await client.del(metaKey(root, slug)).catch(() => undefined);
-  const meta = await readMeta(config, slug).catch(() => null); // may already be gone
-  const objs = meta?.objects ?? (await client.list(`${root}/${slug}/`).catch(() => [])).map((o) => o.key);
-  for (const key of objs) await client.del(key).catch(() => undefined);
+  const meta = await readMeta(config, slug);
+  if (meta) await client.put(metaKey(root, slug), await metaBytes(config, { ...meta, revoking: true }), { contentType: "application/octet-stream" });
+  await revokeBucketShortLinks(config, slug);
+  const objs = new Set([...(meta?.objects ?? []), ...(await client.list(`${root}/${slug}/`)).map((o) => o.key)]);
+  const metaPath = metaKey(root, slug);
+  for (const key of objs) if (key !== metaPath && !key.includes(`/links/`)) await client.del(key);
+  for (const key of objs) if (key.includes(`/links/`)) await client.del(key);
+  await client.del(metaPath);
 }
 
 function clampExpiry(sec: number): number {

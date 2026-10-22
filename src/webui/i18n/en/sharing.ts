@@ -40,6 +40,7 @@ export const sharing = {
   本设备未记录已验证入口: "No verified entry recorded on this device",
   撤销链接: "Revoke link",
   "撤销已请求，等待 Edge 确认销毁": "Revoke requested, waiting for Edge to confirm teardown",
+  "远端尚未确认完成撤销，管理记录已保留，请重试撤销。": "Remote cleanup is not confirmed. Management records are retained; retry revocation.",
   "撤销已请求，等待控制设备上线完成清理": "Revoke requested, waiting for the controlling device to come online and clean up",
   "撤销已请求，等待控制设备完成清理": "Revoke requested, waiting for the controlling device to clean up",
   "撤销已提交，但 Edge 尚未确认销毁 Room；本地保留管理记录并会继续重试。": "Revoke submitted, but Edge has not confirmed the Room teardown yet; the local record is kept and retries continue.",

@@ -3,7 +3,7 @@ name: Deploy Share Viewer
 # 把对象存储分享查看器（只读、数据盲）发布到 Cloudflare Pages。
 #
 # 查看器 = mh share create --transport s3 生成的链接的静态渲染端：
-# 从链接 fragment（#m=<预签名 manifest>&k=<密钥>）拉取密文、浏览器内解密、渲染。
+# D1 解析短链 /s/:id；密钥仅在 #k= 后。旧 #m=...&k=... 链接继续可用。
 # 不持有任何桶凭据，不需要 Service Worker，体积极小。
 # 通过 cfg_share_viewer_url 或 mh share create --viewer 指向此站。
 #
@@ -12,8 +12,9 @@ name: Deploy Share Viewer
 #   - workflow_dispatch（Actions 页面手动点按，便于首次/临时发布）
 #
 # 需要的仓库 secrets（与 deploy-shell.yml 共用，无需额外添加）：
-#   - CLOUDFLARE_API_TOKEN  权限 = Account › Cloudflare Pages › Edit
+#   - CLOUDFLARE_API_TOKEN  权限 = Account › Cloudflare Pages › Edit + D1 › Edit
 #   - CLOUDFLARE_ACCOUNT_ID  Cloudflare 仪表盘右下角的 Account ID
+# 仓库变量 SHARE_LINKS_DATABASE_ID：预先创建的 metahub-share-links D1 UUID。
 #
 # 前置：Pages 项目须已存在（仪表盘建一次，或 `wrangler pages project create
 # metahub-share --production-branch=main`）。项目名见下方 --project-name。
@@ -53,8 +54,23 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - name: Test short links and legacy compatibility
+        run: bun test src/workers/share-links.test.ts src/core/sync/share-short-links.test.ts src/core/sync/share-actions.test.ts src/core/sync/share-export.test.ts src/webui/share/share-link-loader.test.ts src/webui/share/share-shell.test.ts
+
       - name: Build share viewer
         run: bun run build:share-viewer --out dist/share-viewer
+
+      - name: Configure short-link database
+        env:
+          SHARE_LINKS_DATABASE_ID: ${{ vars.SHARE_LINKS_DATABASE_ID }}
+        run: bun run scripts/configure-share-viewer.ts
+
+      - name: Migrate short-link database
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: d1 migrations apply SHARE_LINKS --remote --config dist/wrangler.json
 
       # wrangler pages deploy：--branch=main 指向项目的生产分支 → 正式部署
       # （不传时会用 tag 名当分支 → 落成 preview 部署，拿不到生产域名）。
@@ -63,4 +79,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist/share-viewer --project-name=metahub-share --branch=main
+          workingDirectory: dist
+          command: pages deploy share-viewer --project-name=metahub-share --branch=main

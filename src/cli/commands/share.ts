@@ -189,7 +189,7 @@ const revoke = defineCommand({
       { ...result, revoked: result.ok ? args.slug : null },
       () =>
         result.status === "cleanup_pending"
-          ? `revocation pending: Edge has not confirmed room destruction for ${args.slug}`
+          ? `revocation pending: remote cleanup has not been confirmed for ${args.slug}; retry revoke`
           : result.ok
             ? `revoked ${args.slug}`
             : `no such share: ${args.slug}`,
