@@ -1,6 +1,6 @@
 import { FlashList } from "@shopify/flash-list";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 
 import { AdaptiveFab } from "@/components/AdaptiveFab";
@@ -18,6 +18,9 @@ export default function DatabaseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { client } = useSession();
+  const pending = useRef(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const { tokens } = useTheme();
   const [sort, setSort] = useState<SortSpec | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
@@ -29,7 +32,7 @@ export default function DatabaseScreen() {
       client.listProperties(id),
       // Sort by property id — names are ambiguous under duplicate columns.
       client.listRecords(id, {
-        limit: 500,
+
         ...(sort ? { sort: `${sort.dir === "desc" ? "-" : ""}${sort.propId}` } : {}),
       }),
     ]);
@@ -56,8 +59,11 @@ export default function DatabaseScreen() {
     async (presetOption: string | null) => {
       const values =
         presetOption && groupProp ? { [groupProp.id]: presetOption } : {};
-      const rec = await client.createRecord(id, values).catch(() => null);
-      if (rec && "id" in rec) router.push(`/record/${rec.id}`);
+      if (pending.current) return;
+      pending.current = true; setCreating(true); setMutationError(null);
+      try { const rec = await client.createRecord(id, values); if ("id" in rec) router.push(`/record/${rec.id}`); }
+      catch { setMutationError("创建记录失败，请重试"); }
+      finally { pending.current = false; setCreating(false); }
     },
     [client, id, groupProp, router],
   );
@@ -88,6 +94,8 @@ export default function DatabaseScreen() {
           ),
         }}
       />
+      {mutationError ? <ErrorBanner message={mutationError} /> : null}
+      {loading ? <Text style={{ color: tokens.muted }}>加载中…</Text> : null}
       {error ? (
         <ErrorBanner message="加载失败，请检查与服务器的连接" onRetry={refetch} />
       ) : null}
@@ -99,11 +107,14 @@ export default function DatabaseScreen() {
           onOpenRecord={(rid) => router.push(`/record/${rid}`)}
           onAddRecord={(preset) => void addRecord(preset)}
           onMoveRecord={(rid, option) => {
-            if (!groupProp) return;
+            if (!groupProp || pending.current) return;
+            pending.current = true;
+            setMutationError(null);
             void client
               .updateRecord(rid, { [groupProp.id]: option ?? null })
               .then(() => refetch())
-              .catch(() => {});
+              .catch(() => setMutationError("移动记录失败，请重试"))
+              .finally(() => { pending.current = false; });
           }}
         />
       ) : (
@@ -133,7 +144,7 @@ export default function DatabaseScreen() {
         sort={sort}
         onChange={setSort}
       />
-      <AdaptiveFab label="新建记录" onPress={() => void addRecord(null)} />
+      <AdaptiveFab label={creating ? "创建中…" : "新建记录"} onPress={() => void addRecord(null)} />
     </View>
   );
 }

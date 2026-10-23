@@ -1,8 +1,5 @@
-// Auth-aware fetch + the endpoints the public SDK deliberately omits.
-// The SDK (createClient) never renews an explicitly-passed token, so renewal
-// lives here: on 401, swap the in-grace token via GET /auth/token, persist it,
-// notify the session (which rebuilds the SDK client), and retry once.
-// Mirrors src/webui/api.ts authFetch.
+// Auth-aware transport shared by SDK CRUD, history, and the live stream.
+// A session owns token persistence and invalid-credential recovery.
 
 import type {
   RecordRevision,
@@ -10,6 +7,7 @@ import type {
   RevertRecordResult,
 } from "../../../../../src/core/history.ts";
 
+import { createAuthTransport } from "../auth/transport";
 import type { Credentials } from "../auth/credentials";
 import { MetahubError } from "./sdk";
 
@@ -18,10 +16,17 @@ export type { RecordRevision, RecordVersionState, RevertRecordResult };
 const q = encodeURIComponent;
 
 export interface MobileApi {
-  fetch(path: string, init?: RequestInit): Promise<Response>;
+  fetch(
+    path: string,
+    init?: RequestInit,
+    transport?: (url: string, init?: RequestInit) => Promise<Response>,
+  ): Promise<Response>;
+  fetchUrl(url: string, init?: RequestInit): Promise<Response>;
+  dispose(): void;
   req<T>(method: string, path: string, body?: unknown): Promise<T>;
   readonly baseUrl: string;
   readonly token: string;
+  readonly authInvalid: boolean;
   health(): Promise<{ ok: boolean; node?: string; version?: string }>;
   version(): Promise<{ version: string }>;
   renew(): Promise<void>;
@@ -34,42 +39,18 @@ export interface MobileApi {
 export function createMobileApi(
   creds: Credentials,
   onToken?: (token: string) => void,
+  onInvalid?: () => void,
 ): MobileApi {
   const base = creds.baseUrl.replace(/\/$/, "");
-  let token = creds.token;
+  const auth = createAuthTransport(base, creds.token, { onToken, onInvalid });
+  const authFetch: MobileApi["fetch"] = (path, init, transport) =>
+    auth.fetchUrl(base + path, init, transport);
 
-  const exec = (path: string, init: RequestInit = {}): Promise<Response> => {
-    const headers = new Headers(init.headers);
-    headers.set("authorization", `Bearer ${token}`);
-    return fetch(base + path, { ...init, headers });
-  };
-
-  // Persistence is the session's job (via onToken) — it knows which server
-  // this api belongs to and guards against a late renewal from a server the
-  // user has since switched away from.
-  const adoptToken = (t: string) => {
-    token = t;
-    onToken?.(t);
-  };
-
-  /** On 401, an in-grace token swaps itself for the current one (seamless
-   *  30-day rotation); a second 401 means the credential is truly dead. */
-  const authFetch = async (path: string, init: RequestInit = {}): Promise<Response> => {
-    let res = await exec(path, init);
-    if (res.status === 401) {
-      const renewed = await exec("/auth/token").catch(() => null);
-      const d = renewed?.ok
-        ? ((await renewed.json().catch(() => null)) as { token?: string } | null)
-        : null;
-      if (d?.token) {
-        adoptToken(d.token);
-        res = await exec(path, init);
-      }
-    }
-    return res;
-  };
-
-  const req = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
+  const req = async <T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<T> => {
     const init: RequestInit = { method };
     if (body !== undefined) {
       init.body = JSON.stringify(body);
@@ -77,36 +58,39 @@ export function createMobileApi(
     }
     const res = await authFetch(path, init);
     if (!res.ok) {
-      const d = (await res.json().catch(() => null)) as
-        | { error?: string; code?: string }
-        | null;
-      throw new MetahubError(d?.error ?? `HTTP ${res.status}`, d?.code, res.status);
+      const d = (await res.json().catch(() => null)) as {
+        error?: string;
+        code?: string;
+      } | null;
+      throw new MetahubError(
+        d?.error ?? `HTTP ${res.status}`,
+        d?.code,
+        res.status,
+      );
     }
     return (await res.json()) as T;
   };
 
   return {
     fetch: authFetch,
+    fetchUrl: auth.fetchUrl,
+    dispose: auth.dispose,
     req,
     baseUrl: base,
+    get authInvalid() {
+      return auth.invalid;
+    },
     get token() {
-      return token;
+      return auth.token;
     },
     health: () => req("GET", "/health"),
     version: () => req("GET", "/api/version"),
     recordHistory: (id) => req("GET", `/api/record/history?id=${q(id)}`),
     recordAt: (id, version) =>
       req("GET", `/api/record/at?id=${q(id)}&version=${q(version)}`),
-    revertRecord: (id, to) => req("POST", `/api/record/revert?id=${q(id)}`, { to }),
-    // Proactive renewal on launch/foreground keeps the 30-day rotation
-    // healthy even though data requests rarely see a 401.
-    renew: async () => {
-      const res = await exec("/auth/token").catch(() => null);
-      const d = res?.ok
-        ? ((await res.json().catch(() => null)) as { token?: string } | null)
-        : null;
-      if (d?.token && d.token !== token) adoptToken(d.token);
-    },
+    revertRecord: (id, to) =>
+      req("POST", `/api/record/revert?id=${q(id)}`, { to }),
+    renew: auth.renew,
   };
 }
 
@@ -115,11 +99,15 @@ export function createMobileApi(
 export async function verifyServer(
   baseUrl: string,
   token: string,
-): Promise<{ ok: true; version: string } | { ok: false; reason: "unreachable" | "auth" }> {
+): Promise<
+  { ok: true; version: string } | { ok: false; reason: "unreachable" | "auth" }
+> {
   const base = baseUrl.replace(/\/$/, "");
   let health: Response;
   try {
-    health = await fetch(`${base}/health`, { signal: AbortSignal.timeout(8000) });
+    health = await fetch(`${base}/health`, {
+      signal: AbortSignal.timeout(8000),
+    });
   } catch {
     return { ok: false, reason: "unreachable" };
   }
@@ -128,7 +116,9 @@ export async function verifyServer(
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(8000),
   }).catch(() => null);
-  if (!ver?.ok) return { ok: false, reason: "auth" };
+  if (!ver || (ver.status !== 401 && ver.status !== 403 && !ver.ok))
+    return { ok: false, reason: "unreachable" };
+  if (!ver.ok) return { ok: false, reason: "auth" };
   const d = (await ver.json().catch(() => null)) as { version?: string } | null;
   return { ok: true, version: d?.version ?? "?" };
 }

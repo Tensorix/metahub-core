@@ -1,6 +1,12 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { verifyServer } from "@/lib/api/mobile-api";
 import { parseQrPayload } from "@/lib/auth/credentials";
@@ -31,18 +37,25 @@ export default function ScanScreen() {
     }
     handled.current = true;
     setBusy(true);
-    const result = await verifyServer(parsed.baseUrl, parsed.token);
-    if (!result.ok) {
+    try {
+      const result = await verifyServer(parsed.baseUrl, parsed.token);
+      if (!result.ok) {
+        setBusy(false);
+        handled.current = false;
+        setMessage(
+          result.reason === "unreachable"
+            ? "连不上服务器——确认手机和服务器在同一网络"
+            : "服务器可达，但二维码里的令牌无效或已过期",
+        );
+        return;
+      }
+      await connect({ baseUrl: parsed.baseUrl, token: parsed.token });
+    } catch {
+      setMessage("连接或保存失败，请重试");
+    } finally {
       setBusy(false);
       handled.current = false;
-      setMessage(
-        result.reason === "unreachable"
-          ? "连不上服务器——确认手机和服务器在同一网络"
-          : "服务器可达，但二维码里的令牌无效或已过期",
-      );
-      return;
     }
-    await connect({ baseUrl: parsed.baseUrl, token: parsed.token });
   };
 
   if (!permission?.granted) {
@@ -55,7 +68,13 @@ export default function ScanScreen() {
           onPress={requestPermission}
           style={[styles.btn, { backgroundColor: tokens.accent }]}
         >
-          <Text style={{ color: tokens.accentFg, fontSize: fs.body, fontWeight: "600" }}>
+          <Text
+            style={{
+              color: tokens.accentFg,
+              fontSize: fs.body,
+              fontWeight: "600",
+            }}
+          >
             允许使用相机
           </Text>
         </Pressable>
@@ -86,7 +105,13 @@ export default function ScanScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, padding: 24 },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+    padding: 24,
+  },
   hint: { fontSize: fs.ui, textAlign: "center" },
   btn: {
     paddingHorizontal: 24,
