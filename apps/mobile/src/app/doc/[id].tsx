@@ -1,6 +1,13 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Linking, StyleSheet, View } from "react-native";
+import {
+  ActivityIndicator,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { WebView } from "react-native-webview";
 
 import { useSession } from "@/lib/auth/session";
@@ -15,14 +22,26 @@ import { useTheme } from "@/lib/theme";
  *  reads) so repeat loads and cookie-jar edge cases stay authenticated. */
 export default function DocScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  return <DocumentEditor key={id} id={id} />;
+}
+
+function DocumentEditor({ id }: { id: string }) {
   const router = useRouter();
   const { creds } = useSession();
   const { tokens, pref } = useTheme();
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const webRef = useRef<WebView>(null);
 
   const origin = creds.baseUrl;
-  const url = `${origin}/?token=${encodeURIComponent(creds.token)}#/doc/${id}`;
+  const [url, setUrl] = useState(
+    () =>
+      `${origin}/?token=${encodeURIComponent(creds.token)}#/doc/${encodeURIComponent(id)}`,
+  );
+  const leave = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)");
+  };
   // Strict origin compare — a prefix test would also match e.g. :51735 when
   // the server runs on :5173.
   const sameOrigin = (u: string): boolean => {
@@ -46,15 +65,51 @@ export default function DocScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
-      {/* The WebUI mobile doc page brings its own back-arrow topbar; keep the
-          native header hidden to avoid a double chrome. */}
-      <Stack.Screen options={{ headerShown: false }} />
+      <Stack.Screen
+        options={{
+          headerShown: !loaded || !!error,
+          title: "文档",
+          headerLeft: () => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="返回"
+              onPress={leave}
+              hitSlop={12}
+            >
+              <Text style={{ color: tokens.accent }}>返回</Text>
+            </Pressable>
+          ),
+        }}
+      />
       <WebView
         ref={webRef}
         source={{ uri: url }}
         style={[styles.web, { backgroundColor: tokens.bg }]}
         injectedJavaScriptBeforeContentLoaded={bootstrap}
-        onLoadEnd={() => setLoaded(true)}
+        onLoadStart={() => {
+          setLoaded(false);
+          setError(null);
+        }}
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          setLoaded(false);
+          setError("文档加载失败，请检查网络后重试");
+        }}
+        onHttpError={({ nativeEvent }) => {
+          // Only a main-document failure replaces the page; asset errors
+          // must not cover an otherwise usable editor.
+          if (
+            nativeEvent.url.split("#")[0] !== url.split("#")[0] &&
+            nativeEvent.url.split("#")[0] !== `${origin}/`
+          )
+            return;
+          setLoaded(false);
+          setError(
+            nativeEvent.statusCode === 401 || nativeEvent.statusCode === 403
+              ? "访问凭据已失效，请返回设置更新连接令牌"
+              : `文档加载失败（${nativeEvent.statusCode}）`,
+          );
+        }}
         // Same-origin stays in the WebView (doclinks, hash nav); the WebUI's
         // own back arrow from a doc goes home — catch that and pop natively.
         onShouldStartLoadWithRequest={(req) => {
@@ -72,16 +127,47 @@ export default function DocScreen() {
             return;
           }
           // …and "back to home" inside the WebUI pops this native screen.
-          if (loaded && (hash === "/" || hash === "")) router.back();
+          if (loaded && !error && (hash === "/" || hash === "")) leave();
         }}
         // iOS inline media + keyboard behavior for the editor.
         allowsInlineMediaPlayback
         keyboardDisplayRequiresUserAction={false}
         webviewDebuggingEnabled={__DEV__}
       />
-      {!loaded ? (
+      {!loaded || error ? (
         <View style={[styles.loading, { backgroundColor: tokens.bg }]}>
-          <ActivityIndicator color={tokens.accent} />
+          {error ? (
+            <>
+              <Text
+                accessibilityRole="alert"
+                style={{ color: tokens.fg, padding: 24 }}
+              >
+                {error}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setError(null);
+                  setLoaded(false);
+                  const retryUrl = `${origin}/?token=${encodeURIComponent(creds.token)}#/doc/${encodeURIComponent(id)}`;
+                  if (retryUrl === url) webRef.current?.reload();
+                  else setUrl(retryUrl);
+                }}
+                style={{ padding: 16 }}
+              >
+                <Text style={{ color: tokens.accent }}>重试</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={leave}
+                style={{ padding: 16 }}
+              >
+                <Text style={{ color: tokens.accent }}>返回</Text>
+              </Pressable>
+            </>
+          ) : (
+            <ActivityIndicator color={tokens.accent} />
+          )}
         </View>
       ) : null}
     </View>

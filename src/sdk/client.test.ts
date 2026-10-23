@@ -416,3 +416,31 @@ test("createClient exposes the full typed method surface", () => {
     expect(typeof (api as Record<string, unknown>)[m]).toBe("function");
   }
 });
+
+test("explicit-token SDK requests keep the default single-response 401 behavior", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    calls.push(String(input));
+    return Response.json({ error: "expired" }, { status: 401 });
+  }) as typeof fetch;
+  await expect(createClient({ baseUrl: "https://sdk", token: "explicit" }).listDatabases()).rejects.toThrow("expired");
+  expect(calls).toEqual(["https://sdk/api/databases"]);
+});
+
+test("SDK injected transport handles manifest discovery and CRUD without global fetch", async () => {
+  globalThis.fetch = (async () => { throw new Error("Unexpected global fetch"); }) as typeof fetch;
+  const calls: string[] = [];
+  const client = createClient({
+    baseUrl: "https://sdk",
+    manifestUrl: "https://sdk/manifest.json",
+    token: "explicit",
+    fetch: async (url, init) => {
+      calls.push(url);
+      if (url.endsWith("manifest.json")) return new Response(null, { status: 404 });
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer explicit");
+      return Response.json([]);
+    },
+  });
+  await client.listDatabases();
+  expect(calls).toEqual(["https://sdk/manifest.json", "https://sdk/api/databases"]);
+});
