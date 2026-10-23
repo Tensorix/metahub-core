@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   FlatList,
   Pressable,
@@ -10,6 +10,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { ErrorBanner } from "@/components/ErrorBanner";
+import { scheduleSearch } from "@/lib/api/request-state";
+import { useApiData } from "@/lib/api/hooks";
 import { EmptyState } from "@/components/EmptyState";
 import type { SearchHitInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
@@ -21,25 +24,17 @@ export default function SearchScreen() {
   const { client } = useSession();
   const { tokens } = useTheme();
   const [q, setQ] = useState("");
-  const [hits, setHits] = useState<SearchHitInfo[] | null>(null);
-  const gen = useRef(0);
-
-  const onQuery = (text: string) => {
-    setQ(text);
-    gen.current++;
-    if (!text.trim()) setHits(null);
-  };
-
+  const [debounced, setDebounced] = useState(q);
   useEffect(() => {
-    const text = q.trim();
-    if (!text) return;
-    const g = ++gen.current;
-    const t = setTimeout(async () => {
-      const res = await client.search(text, 50).catch(() => null);
-      if (g === gen.current && res) setHits(res);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [q, client]);
+    return scheduleSearch(() => setDebounced(q));
+  }, [q]);
+  const fetchSearch = useCallback(async () => {
+    const text = debounced.trim();
+    if (!text) return null;
+    return client.search(text, 50);
+  }, [debounced, client]);
+  const { data: hits, error, loading, refetch } = useApiData(fetchSearch);
+  const onQuery = setQ;
 
   const open = (hit: SearchHitInfo) => {
     if (hit.type === "document") router.push(`/doc/${hit.id}`);
@@ -64,8 +59,10 @@ export default function SearchScreen() {
           returnKeyType="search"
         />
       </View>
+      {error && q === debounced ? <ErrorBanner message="搜索失败，请重试" onRetry={refetch} /> : null}
+      {(loading || q !== debounced) && q.trim() ? <Text style={{ color: tokens.muted }}>搜索中…</Text> : null}
       <FlatList
-        data={hits ?? []}
+        data={q === debounced ? hits ?? [] : []}
         keyExtractor={(h) => `${h.type}:${h.id}`}
         keyboardShouldPersistTaps="handled"
         renderItem={({ item }) => (
@@ -84,7 +81,7 @@ export default function SearchScreen() {
           </Pressable>
         )}
         ListEmptyComponent={
-          hits !== null && q.trim() ? (
+          !loading && q === debounced && !error && hits !== null && q.trim() ? (
             <EmptyState title="没有匹配结果" />
           ) : null
         }

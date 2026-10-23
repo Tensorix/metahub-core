@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -55,17 +55,37 @@ export function HistorySheet({
   const [preview, setPreview] = useState<RecordVersionState | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [actionError, setActionError] = useState<string | null>(null);
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current++;
+    // Reset previews when opening another record or reopening the sheet.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPreview(null);
+    setBusy(false);
+    setActionError(null);
+    // This is a request generation token, not a native node ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { generation.current++; };
+  }, [recordId, visible]);
+
   const fetchHistory = useCallback(
     () => (visible ? api.recordHistory(recordId) : Promise.resolve([])),
     [api, recordId, visible],
   );
-  const { data: revisions, loading } = useApiData(fetchHistory);
+  const { data: revisions, loading, error, refetch } = useApiData(fetchHistory);
 
   const openPreview = async (rev: RecordRevision) => {
+    if (busy) return;
+    const current = generation.current;
     setBusy(true);
-    const state = await api.recordAt(recordId, rev.version).catch(() => null);
-    setBusy(false);
-    if (state) setPreview(state);
+    setActionError(null);
+    try {
+      const state = await api.recordAt(recordId, rev.version);
+      if (current === generation.current) setPreview(state);
+    } catch (e) {
+      if (current === generation.current) setActionError(e instanceof Error ? e.message : String(e));
+    } finally { if (current === generation.current) setBusy(false); }
   };
 
   const restore = (state: RecordVersionState) => {
@@ -75,8 +95,10 @@ export function HistorySheet({
         text: "恢复",
         style: "destructive",
         onPress: async () => {
+          const current = generation.current;
           setBusy(true);
           const r = await api.revertRecord(recordId, state.version).catch(() => null);
+          if (current !== generation.current) return;
           setBusy(false);
           if (r) {
             setPreview(null);
@@ -90,22 +112,23 @@ export function HistorySheet({
     ]);
   };
 
+  const close = () => { if (!busy) onClose(); };
   const propName = (pid: string) => props.find((p) => p.id === pid)?.name ?? pid;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.scrim} onPress={onClose} />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      <Pressable style={styles.scrim} onPress={close} />
       <View style={[styles.sheet, { backgroundColor: tokens.surface }]}>
         <View style={[styles.grabber, { backgroundColor: tokens.lineStrong }]} />
         {preview ? (
           <>
             <View style={styles.head}>
-              <Pressable hitSlop={10} onPress={() => setPreview(null)}>
+              <Pressable hitSlop={10} disabled={busy} onPress={() => setPreview(null)}>
                 <Text style={{ color: tokens.accent, fontSize: fs.ui }}>‹ 返回</Text>
               </Pressable>
               <Text style={[styles.title, { color: tokens.fg }]}>版本预览</Text>
               <Pressable hitSlop={10} onPress={() => restore(preview)} disabled={busy}>
-                <Text style={{ color: tokens.danger, fontSize: fs.ui }}>恢复</Text>
+                <Text style={{ color: tokens.danger, fontSize: fs.ui }}>{busy ? "恢复中…" : "恢复"}</Text>
               </Pressable>
             </View>
             <FlatList
@@ -138,18 +161,20 @@ export function HistorySheet({
             <View style={styles.head}>
               <View style={styles.headSide} />
               <Text style={[styles.title, { color: tokens.fg }]}>版本历史</Text>
-              <Pressable hitSlop={10} onPress={onClose} style={styles.headSide}>
+              <Pressable hitSlop={10} disabled={busy} onPress={close} style={styles.headSide}>
                 <Text style={{ color: tokens.accent, fontSize: fs.ui, textAlign: "right" }}>
                   完成
                 </Text>
               </Pressable>
             </View>
             {loading || busy ? <ActivityIndicator color={tokens.accent} /> : null}
+            {error || actionError ? <Pressable onPress={() => { setActionError(null); void refetch(); }}><Text style={[styles.empty, { color: tokens.danger }]}>{actionError ?? error?.message} · 点按重试</Text></Pressable> : null}
             <FlatList
               data={revisions ?? []}
               keyExtractor={(rev) => rev.version}
               renderItem={({ item: rev }) => (
                 <Pressable
+                  disabled={busy}
                   onPress={() => void openPreview(rev)}
                   style={({ pressed }) => [
                     styles.revRow,
@@ -173,7 +198,7 @@ export function HistorySheet({
                 </Pressable>
               )}
               ListEmptyComponent={
-                loading ? null : (
+                loading || error || actionError ? null : (
                   <Text style={[styles.empty, { color: tokens.muted }]}>暂无历史</Text>
                 )
               }

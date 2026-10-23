@@ -1,5 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
+  TextInput,
   FlatList,
   Modal,
   Pressable,
@@ -24,6 +26,9 @@ export interface Candidate {
  *  one fetch pass. Kept outside the SwiftUI <Host> (RN views can't nest in
  *  it) — the form renders plain text from these, the picker lives in a Modal. */
 export function useRefData(props: PropInfo[]): {
+  loading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
   candidates: (prop: PropInfo) => Candidate[];
   titleOf: (prop: PropInfo, id: string) => string;
   refDisplay: (prop: PropInfo, value: unknown) => string;
@@ -48,7 +53,7 @@ export function useRefData(props: PropInfo[]): {
             return;
           }
           const [records, targetProps] = await Promise.all([
-            client.listRecords(target, { limit: 500 }),
+            client.listRecords(target, {}),
             client.listProperties(target),
           ]);
           out.set(
@@ -67,7 +72,7 @@ export function useRefData(props: PropInfo[]): {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, key]);
-  const { data } = useApiData(fetchAll);
+  const { data, loading, error, refetch } = useApiData(fetchAll);
 
   const candidates = useCallback(
     (prop: PropInfo) => data?.get(prop.id) ?? [],
@@ -89,7 +94,7 @@ export function useRefData(props: PropInfo[]): {
     [titleOf],
   );
 
-  return { candidates, titleOf, refDisplay };
+  return { candidates, titleOf, refDisplay, loading, error, refetch };
 }
 
 /** Multi-select picker over a relation/doc target set (RN modal sheet).
@@ -101,19 +106,28 @@ export function RefPickerSheet({
   initialSelected,
   onChange,
   onClose,
+  loading = false,
+  error,
+  onRetry,
 }: {
   prop: PropInfo;
   candidates: Candidate[];
   initialSelected: string[];
   onChange: (next: string[]) => void;
   onClose: () => void;
+  loading?: boolean;
+  error?: Error | null;
+  onRetry?: () => void;
 }) {
   const { tokens } = useTheme();
   const [selected, setSelected] = useState(initialSelected);
+  const latest = useRef(selected);
+  const [query, setQuery] = useState("");
   const target = prop.type === "relation" ? (prop.config?.database as string) : "docs";
 
   const toggle = (id: string, on: boolean) => {
-    const next = on ? [...selected, id] : selected.filter((s) => s !== id);
+    const next = on ? [...new Set([...latest.current, id])] : latest.current.filter((s) => s !== id);
+    latest.current = next;
     setSelected(next);
     onChange(next);
   };
@@ -129,8 +143,11 @@ export function RefPickerSheet({
             <Text style={{ color: tokens.accent, fontSize: fs.ui }}>完成</Text>
           </Pressable>
         </View>
+        <TextInput accessibilityLabel="搜索关联项" placeholder="搜索关联项" value={query} onChangeText={setQuery} style={{ padding: 16, color: tokens.fg }} />
+        {loading ? <ActivityIndicator color={tokens.accent} /> : null}
+        {error ? <Pressable onPress={onRetry}><Text style={[styles.empty, { color: tokens.danger }]}>加载失败，点按重试</Text></Pressable> : null}
         <FlatList
-          data={candidates}
+          data={candidates.filter(c => c.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()) || c.id.includes(query))}
           keyExtractor={(c) => c.id}
           renderItem={({ item }) => {
             const on = selected.includes(item.id);
@@ -154,7 +171,7 @@ export function RefPickerSheet({
           }}
           ListEmptyComponent={
             <Text style={[styles.empty, { color: tokens.muted }]}>
-              {!target ? "该关联列未配置目标数据库" : "没有可选项"}
+              {loading ? "正在加载…" : error ? "暂时无法加载选项" : !target ? "该关联列未配置目标数据库" : query ? "没有匹配项" : "没有可选项"}
             </Text>
           }
           contentContainerStyle={styles.listContent}

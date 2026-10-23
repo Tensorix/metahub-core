@@ -20,12 +20,14 @@ import { fs, radii } from "@/lib/theme/tokens";
 export function ServerForm({
   onVerified,
   submitLabel = "连接",
+  initialUrl = "",
 }: {
   onVerified: (creds: Credentials) => Promise<void>;
   submitLabel?: string;
+  initialUrl?: string;
 }) {
   const { tokens } = useTheme();
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(initialUrl);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,17 +45,17 @@ export function ServerForm({
       return;
     }
     setBusy(true);
-    const result = await verifyServer(baseUrl, tok);
-    if (!result.ok) {
-      setBusy(false);
-      setError(
-        result.reason === "unreachable"
-          ? "连不上服务器——确认手机和服务器在同一网络，且服务器以 --host 0.0.0.0 启动"
-          : "服务器可达，但令牌无效或已过期",
-      );
-      return;
-    }
     try {
+      const result = await verifyServer(baseUrl, tok);
+      if (!result.ok) {
+        setBusy(false);
+        setError(
+          result.reason === "unreachable"
+            ? "连不上服务器——确认手机和服务器在同一网络，且服务器以 --host 0.0.0.0 启动"
+            : "服务器可达，但令牌无效或已过期",
+        );
+        return;
+      }
       await onVerified({ baseUrl, token: tok });
     } catch {
       setError("保存失败，请重试");
@@ -63,13 +65,21 @@ export function ServerForm({
   };
 
   const pasteToken = async () => {
-    const text = (await Clipboard.getStringAsync()).trim();
-    if (text) setToken(text);
+    try {
+      const text = (await Clipboard.getStringAsync()).trim();
+      if (text) setToken(text);
+    } catch {
+      setError("无法读取剪贴板，请手动输入令牌");
+    }
   };
 
   const inputStyle = [
     styles.input,
-    { backgroundColor: tokens.surface, borderColor: tokens.line, color: tokens.fg },
+    {
+      backgroundColor: tokens.surface,
+      borderColor: tokens.line,
+      color: tokens.fg,
+    },
   ];
 
   return (

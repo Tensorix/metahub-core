@@ -108,7 +108,11 @@ export class LiveFeed {
     for (const fn of this.changeListeners) fn(change);
   };
 
-  private queue(datasets: string[], rowIds: string[], truncated: boolean): void {
+  private queue(
+    datasets: string[],
+    rowIds: string[],
+    truncated: boolean,
+  ): void {
     for (const d of datasets) this.pendDatasets.add(d);
     for (const r of rowIds) this.pendRowIds.add(r);
     if (truncated) this.pendTruncated = true;
@@ -139,7 +143,11 @@ export class LiveFeed {
     this.setConnected(true);
     if (typeof data.cursor === "number") this.cursor = data.cursor;
     if (event === "changes")
-      this.queue(data.datasets ?? [], data.rowIds ?? [], data.truncated === true);
+      this.queue(
+        data.datasets ?? [],
+        data.rowIds ?? [],
+        data.truncated === true,
+      );
   }
 
   private async runLoop(gen: number): Promise<void> {
@@ -149,21 +157,35 @@ export class LiveFeed {
       let stallTimer: ReturnType<typeof setTimeout> | null = null;
       try {
         const path =
-          this.cursor != null ? `/api/changes?since=${this.cursor}` : "/api/changes";
-        const res = await expoFetch(this.api.baseUrl + path, {
-          signal: ctrl.signal,
-          headers: {
-            accept: "text/event-stream",
-            authorization: `Bearer ${this.api.token}`,
+          this.cursor != null
+            ? `/api/changes?since=${this.cursor}`
+            : "/api/changes";
+        const res = await this.api.fetch(
+          path,
+          {
+            signal: ctrl.signal,
+            headers: {
+              accept: "text/event-stream",
+              authorization: `Bearer ${this.api.token}`,
+            },
           },
-        });
-        if (res.status === 401) {
-          // Stream can't ride authFetch (needs expo/fetch for streaming);
-          // rotate the token here and let the retry loop reconnect.
-          await this.api.renew().catch(() => {});
-          throw new Error("changes stream: 401");
+          expoFetch,
+        );
+        if (gen !== this.generation) {
+          void res.body?.cancel().catch(() => {});
+          return;
         }
-        if (!res.ok || !res.body) throw new Error(`changes stream: ${res.status}`);
+        if (res.status === 401) {
+          // A rejected credential is terminal until reconnect. A renewal
+          // transport failure still retries with normal network backoff.
+          if (this.api.authInvalid) {
+            this.setConnected(false);
+            return;
+          }
+          throw new Error("changes stream: temporary auth renewal failure");
+        }
+        if (!res.ok || !res.body)
+          throw new Error(`changes stream: ${res.status}`);
         const reader = res.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -187,7 +209,9 @@ export class LiveFeed {
       }
       this.setConnected(false);
       if (gen !== this.generation) return;
-      await new Promise((r) => setTimeout(r, this.backoff + Math.random() * 250));
+      await new Promise((r) =>
+        setTimeout(r, this.backoff + Math.random() * 250),
+      );
       this.backoff = Math.min(this.backoff * 2, BACKOFF_MAX_MS);
     }
   }

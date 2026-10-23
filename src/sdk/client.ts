@@ -25,6 +25,8 @@ import {
 export interface SdkOptions {
   /** API origin; defaults to same-origin (hosted pages). */
   baseUrl?: string;
+  /** Optional transport for callers that manage authentication themselves. */
+  fetch?: (input: string, init?: RequestInit) => Promise<Response>;
   /** Explicit Bearer token; defaults to the browser's stored one. */
   token?: string;
   /** Password for the sealed write-drop fallback, when the site's grant set one. */
@@ -181,6 +183,7 @@ function resolveEndpoint(endpoint: string | undefined, fallback: string): string
 }
 
 export function createClient(opts: SdkOptions = {}) {
+  const transport = opts.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init));
   const base = (opts.baseUrl ?? detectBase()).replace(/\/$/, "");
   const pathMounted = isGuestMountBase(base);
   const discoverManifest =
@@ -221,7 +224,7 @@ export function createClient(opts: SdkOptions = {}) {
       const headers: Record<string, string> = { ...extraHeaders };
       if (body !== undefined) headers["content-type"] = "application/json";
       if (token) headers["authorization"] = `Bearer ${token}`;
-      return fetch(endpoint + path, {
+      return transport(endpoint + path, {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -232,7 +235,7 @@ export function createClient(opts: SdkOptions = {}) {
     let res = await exec(token);
     // Transparent renewal: an in-grace token swaps itself for the current one.
     if (res.status === 401 && token && !opts.token) {
-      const renewed = await fetch(renewUrl, {
+      const renewed = await transport(renewUrl, {
         headers: { authorization: `Bearer ${token}` },
       }).catch(() => null);
       const d = renewed?.ok ? ((await renewed.json()) as { token?: string }) : null;
@@ -263,7 +266,7 @@ export function createClient(opts: SdkOptions = {}) {
     const pending = (async () => {
       let res: Response;
       try {
-        res = await fetch(manifestUrl, {
+        res = await transport(manifestUrl, {
           signal:
             typeof AbortSignal !== "undefined" &&
             typeof AbortSignal.timeout === "function"
@@ -577,7 +580,7 @@ export function createClient(opts: SdkOptions = {}) {
             // 404 is terminal; 426 (alive), other statuses and network errors
             // all keep retrying.
             if (!opened && attempt >= 3) {
-              fetch(probeUrl)
+              transport(probeUrl)
                 .then((res) => {
                   if (stopped) return;
                   if (res.status === 404) terminate();

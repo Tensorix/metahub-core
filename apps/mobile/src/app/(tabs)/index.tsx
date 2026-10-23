@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -67,7 +67,10 @@ function flattenDocs(docs: DocSummaryInfo[], expanded: Set<string>): DocRow[] {
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { client } = useSession();
+  const { client, creds } = useSession();
+  const pending = useRef(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const { tokens } = useTheme();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -113,6 +116,8 @@ export default function HomeScreen() {
         ListHeaderComponent={
           <View style={styles.header}>
             <Text style={[styles.title, { color: tokens.fg }]}>Metahub</Text>
+            <Text style={{ color: tokens.muted }}>{creds.baseUrl}</Text>
+            {mutationError ? <ErrorBanner message={mutationError} /> : null}
             {error ? (
               <ErrorBanner message="加载失败，请检查与服务器的连接" onRetry={refetch} />
             ) : null}
@@ -168,10 +173,13 @@ export default function HomeScreen() {
         contentContainerStyle={styles.listContent}
       />
       <AdaptiveFab
-        label="新建文档"
+        label={creating ? "创建中…" : "新建文档"}
         onPress={async () => {
-          const doc = await client.createDocument({ title: "" }).catch(() => null);
-          if (doc) router.push(`/doc/${doc.id}`);
+          if (pending.current) return;
+          pending.current = true; setCreating(true); setMutationError(null);
+          try { const doc = await client.createDocument({ title: "" }); router.push(`/doc/${doc.id}`); }
+          catch { setMutationError("创建文档失败，请重试"); }
+          finally { pending.current = false; setCreating(false); }
         }}
       />
     </SafeAreaView>

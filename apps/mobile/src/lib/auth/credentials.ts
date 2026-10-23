@@ -16,7 +16,15 @@ export async function listServers(): Promise<Credentials[]> {
   if (raw) {
     try {
       const arr = JSON.parse(raw) as Credentials[];
-      if (Array.isArray(arr)) return arr.filter((s) => s.baseUrl && s.token);
+      if (Array.isArray(arr))
+        return arr.filter(
+          (s) =>
+            s &&
+            typeof s.baseUrl === "string" &&
+            typeof s.token === "string" &&
+            normalizeBaseUrl(s.baseUrl) === s.baseUrl &&
+            !!s.token.trim(),
+        );
     } catch {
       /* corrupted list — rebuild from active creds below */
     }
@@ -49,6 +57,7 @@ export async function loadCredentials(): Promise<Credentials | null> {
     SecureStore.getItemAsync(TOKEN_KEY),
   ]);
   if (!baseUrl || !token) return null;
+  if (normalizeBaseUrl(baseUrl) !== baseUrl || !token.trim()) return null;
   return { baseUrl, token };
 }
 
@@ -78,6 +87,7 @@ export function normalizeBaseUrl(input: string): string | null {
   try {
     const u = new URL(s);
     if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (u.username || u.password) return null;
     // Origin only — the server's routes are exact-match from /.
     return u.origin;
   } catch {
