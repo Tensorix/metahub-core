@@ -156,17 +156,17 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 
 ---
 
-## 7. 标题与保存桥接 `src/webui/editor.tsx`（`DocView`,~489 行)
+## 7. 标题与保存桥接 `src/webui/editor.tsx`（`DocView`）
 
 渲染:`<div class="doc">` → `.doc-title`(contentEditable) + `.doc-meta`(`<SyncStamp/>` + 已分享徽标) + `<CmDocBody>`。
 - **标题是 contentEditable、不是块、无 data-bid**。它经 effect 用 `el.textContent = titleRef.current` **播种**(`titleElRef`,依赖 `[version]`——加载/远端合并才 bump);**写 textContent 不是 innerHTML**,故同步来的标题永不注入 HTML(消除存储型 XSS),打字也不触发重渲染重置光标。
-- **保存**:`scheduleSave`(700ms 防抖)→ 串行 `save` 链 → `doSave` → `api.updateDocument(docId,{title, body:snapshotMarkdown()})`;`snapshotMarkdown()` = `cmRef.getDoc()`。
+- **保存**:`scheduleSave`(700ms 防抖)→ `DocumentSaveQueue.save()`(`document-save.ts`)→ `api.updateDocument`。快照取当前标题与 `cmRef.getDoc()`;HTTP 模式带 `if_match`,本地副本省略。请求成功只确认发出时的 revision,请求期间新输入仍 dirty;stale 阻止自动重试,普通错误按 1s 起、最高 30s 退避重试。`flush()` 等待在途请求并保存后续 dirty revision。
 - **标题↔正文导航**:`focusTitle(offset?)`;`enterBody()`→ `enterDocTop(view)`(文档以 void 开头时先开空行);标题 `onKeyDown` 里 Enter/↓ 末行 → `enterBody`;正文首行再上 → `onExitTop`=`focusTitle`(CmDocBody 的 `structureKeymap({onExitTop})`)。`caretLineEdge` 现在**只**服务标题的首/末行判定。
 - **正文首行 Backspace 并入标题**(`onMergeTop`→`mergeIntoTitle`):文档最开头按 Backspace 时,"上一个块"就是标题——首行文本接到标题末尾,光标停在**接缝处**(`focusTitle(seam)`)。实现要点:一律经 `titleElRef` 拿元素(**不用全局 `.doc-title` 查询**——快速笔记窗口里也嵌着同一套组件);插入走 `insertPlainText` 以触发 `onInput`(顺带完成扁平化 + `titleRef` + 保存);Range 兜底路径不发 input 事件,所以要手动同步 `titleRef.current`。没挂标题时返回 false,让 CM 自己处理这个键。
 - **标题只吃纯文本**(`webui/plain-edit.ts`):标题类可编辑宿主(文档标题、数据库名、记录 peek 标题)存的是纯字符串,但裸 contentEditable 会把剪贴板的 `text/html` 原样插进来——Word/Excel/Numbers 带来的 `<span style="font-size:11pt">`/`<font>` 内联样式会盖过宿主的类选择器(inline style 赢、font-size 还继承),标题当场变小;更糟的是某些 flavor 携带 `<style>` 元素,一旦落进页面就是**全文档**生效。对策是根本不让 markup 进来:取 `text/plain`、按文本插入,单行宿主再把换行折成空格。
 - **IME**:标题处理器仍 `if (e.isComposing || e.keyCode===229) return`;正文侧 IME 在 CM 层(inline 装饰跨合成 remap、表格/代码 void 的 composing 守卫)。拼写替换/扩展/自动填充这类**不发 input 事件**的外部改写,靠播种 effect 里的一致性检查兜回 `titleRef`。
 
-**core 侧**:`reconcileBody`(`documents.ts`)对 body 做**文本级 diff**,只对变化块 emit `doc_blocks`(text/blank_after/__deleted);**无 `documents/body` 寄存器**。本地 replica 路径不带 `if_match`(单本地写者;远端经 `/sync` 块级合并),HTTP 模式才有 stale/`409`。
+**core 侧**:`reconcileBody`(`documents.ts`)对 body 做**文本级 diff**,只对变化块 emit `doc_blocks`(text/blank_after/__deleted);**无 `documents/body` 寄存器**。本地 replica 路径不带 `if_match`(远端经 `/sync` 块级合并),HTTP 模式有 stale/`409` 与草稿冲突提示。`document-refresh.ts` 防过期读取覆盖新编辑;`document-lifecycle.ts` 管关闭 flush 和 renderer 内 detached 草稿接管。主窗口、独立文档窗、快速笔记与嵌入编辑器复用该协议,磁盘文件编辑器另走文件保存。详见 [document-windows.md](./document-windows.md)。
 
 ---
 
@@ -216,6 +216,6 @@ CM6 编辑器扫描(`blockmodel.ts`)、保存解析器(`blocks.ts` 直接 re-exp
 | 标题纯文本纪律 | `src/webui/plain-edit.ts`(`plainTextFrom`/`insertPlainText`),文档标题/数据库名/记录 peek 标题共用 |
 | 共享语法(core) | `src/core/md/grammar.ts`(`RE`/`matchListLine`/`matchQuoteLine`/`matchMediaEmbed`/`safeUrl`/`HTML_FENCE`)、`src/core/md/inline.ts`(`tokenizeInline`)、`src/core/md/heal.ts`(`healLegacyMarkdown`);parity `cm6/grammar-parity.test.ts` |
 | 保存解析器 / 序列化 | `src/webui/blocks.ts` `blocksFromBody`/`bodyFromBlocks`/`parseLeafBlock`/`parseTableBlock`/`renderBlock`/`renderListBlock`/`shouldPersist`/`startsLeafBlock`/`fenceFor`/`blockToText`;行内桥 `src/webui/markdown.tsx`(现仅表格单元格 contenteditable 用) |
-| 编辑器外壳 / 保存 | `src/webui/editor.tsx` `DocView`、`.doc-title`(textContent 播种)、`scheduleSave`/`save`/`snapshotMarkdown`(=getDoc)、`focusTitle`/`enterBody`;`src/webui/api.ts` `updateDocument`;`src/core/documents.ts` `updateDocument`/`reconcileBody`/`liveBlocks` |
+| 编辑器外壳 / 保存 | `src/webui/editor.tsx` `DocView`、`.doc-title`(textContent 播种)、`scheduleSave`/`DocumentSaveQueue`/`snapshotMarkdown`(=getDoc)、`focusTitle`/`enterBody`;`src/webui/api.ts` `updateDocument`;`src/core/documents.ts` `updateDocument`/`reconcileBody`/`liveBlocks` |
 
 相关历史文档:[02-edit-editor-selection](../impl-context/02-edit-editor-selection/)、[04-block-level-doc-crdt](../impl-context/04-block-level-doc-crdt/)、[07-webui](../impl-context/07-webui/)(均为 CM6 重写前的阶段性记录,仅作历史参考)。

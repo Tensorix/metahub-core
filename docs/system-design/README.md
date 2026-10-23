@@ -4,6 +4,8 @@
 
 旧的 `docs/impl-context/*` 仍保留为阶段性设计和实现记录;本目录作为当前状态的总览入口,后续实现发生变化时优先更新这里。
 
+最近一次代码对照：2026-10-24，基线 `1899618`（package 0.5.4）。复核发现、验证结果及覆盖范围见 [review-2026-10-24.md](./review-2026-10-24.md)。当前设计以代码和已验证行为为准，历史设计记录不代表每项仍有效。
+
 ## 项目定位
 
 Metahub 当前是一个基于 Bun + SQLite 的本地知识库 CLI,同时面向 AI Agent 和人类用户:
@@ -15,13 +17,17 @@ Metahub 当前是一个基于 Bun + SQLite 的本地知识库 CLI,同时面向 A
 - 实体 id 带类型前缀且可用前缀/名字引用,配合当前库上下文(`mh use`)与 Tab 补全,降低人/AI 的 id 心智负担。
 - 可把文档/数据表/站点**有档位地**对外发布:公开站点与分享链接可开出窄的、表×操作的**匿名访客数据面**;设备离线时,访客写入经 Edge 写信箱(密文)或常在线房间兜住。
 
-当前系统已经具备基础 typed table(含标题化的 relation/doc 引用列)、Markdown 文档、全文检索、修订历史与回滚(实体粒度,含 schema 回滚与 oplog 压缩)、**工作区级操作审计与按变更组回滚**(agent 写入自动带 `ai` 归因)、快照恢复、多设备同步、**CLI 写入实时推送到打开着的界面**、对外发布与访客写入、以及"数据在哪/谁碰得到/丢了怎么办"的信任面。对于记账和 IM 历史消息场景,目前还处于“可手动建表 + 基础查询”的 MVP 状态,尚未形成领域化模板、批量导入、聚合、上下文检索等完整流程。
+当前系统已经具备基础 typed table(含标题化的 relation/doc 引用列)、Markdown 文档、全文检索、修订历史与回滚(实体粒度,含 schema 回滚与 oplog 压缩)、**工作区级操作审计与按变更组回滚**(agent 写入自动带 `ai` 归因)、快照恢复、多设备同步、**CLI 写入实时推送到打开着的界面**、对外发布与访客写入、以及"数据在哪/谁碰得到/丢了怎么办"的信任面。对于记账和 IM 历史消息场景,目前还处于“可手动建表 + 基础查询”的 MVP 状态,尚未形成领域化模板、业务键去重/原子批量导入、服务端聚合、上下文检索等完整流程。
 
 ## 文档地图
 
 - [architecture.md](./architecture.md): 当前架构、模块边界、读写路径、同步和快照。
 - [data-model.md](./data-model.md): SQLite schema、CRDT oplog、记录 JSON 存储、文档 block 存储。
 - [webui-editor.md](./webui-editor.md): WebUI 文档编辑器前端块模型、Markdown 往返、渲染 DOM 结构与块间/标题导航（做 Markdown 渲染相关改动先看这里）。
+- [table-views.md](./table-views.md): 保存视图、客户端查询、键级元数据合并与表格交互。
+- [document-windows.md](./document-windows.md): 独立文档窗口、保存冲突、关闭握手与草稿保护边界。
+- [sharing-dialog.md](./sharing-dialog.md): 文档/数据库的托管优先分享列表，与站点发布流程的边界。
+- [review-2026-10-24.md](./review-2026-10-24.md): 本轮代码复核、确认缺陷、模块覆盖及验证结果。
 - [capabilities.md](./capabilities.md): 当前 CLI 和 core 已实现功能清单。
 - [usage-flows.md](./usage-flows.md): 当前已有能力下的记账、IM、文档、同步使用流程。
 - [gaps-and-priorities.md](./gaps-and-priorities.md): 和目标体验之间的差距及用户体验优先级。
@@ -44,5 +50,6 @@ Metahub 当前是一个基于 Bun + SQLite 的本地知识库 CLI,同时面向 A
 2. 改命令、输出、用户流程时更新 `capabilities.md` 和 `usage-flows.md`。
 3. 改模块边界、同步、快照、构建方式时更新 `architecture.md`。
 4. 完成或新增目标差距时更新 `gaps-and-priorities.md`。
-5. 改 WebUI 编辑器块模型、Markdown 往返、渲染结构或块间/标题导航时更新 `webui-editor.md`。
+5. 改表格视图与元数据合并时同步 `table-views.md` 和 `data-model.md`；改文档窗口生命周期或分享流程时同步各自专题。
+6. 改 WebUI 编辑器块模型、Markdown 往返、渲染结构或块间/标题导航时更新 `webui-editor.md`。
 

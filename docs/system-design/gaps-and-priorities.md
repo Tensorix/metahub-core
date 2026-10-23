@@ -1,6 +1,6 @@
 # 目标差距与用户体验优先级
 
-本文按用户体验整理优先级。当前阶段暂不讨论同步安全性(并发写锁已落地,见 [31-concurrent-writers](../impl-context/31-concurrent-writers/design.md))。
+本文按用户体验整理优先级。2026-10-24 已按当前代码复核；具体缺陷及验证边界见 [复核记录](./review-2026-10-24.md)。并发写锁已落地，见 [31-concurrent-writers](../impl-context/31-concurrent-writers/design.md)。
 
 ## 产品目标
 
@@ -66,7 +66,7 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 - **PWA 离线副本 + 多设备接入**:浏览器成一等 CRDT 节点(离线读写全部内容);设备接入支持 HTTP 配对码与对象存储桶扫码 enroll(离线 store-and-forward)。
 - **文档表格与 TOC**:GFM 文档表格(Notion 式行列手柄)与目录 + 滚动高亮已实现(此前列在"未实现")。
 
-仍未做(编辑侧):文档数学公式/脚注/callout、按 block id 或行号的精确编辑、返回具体 changed block、浏览器副本**离线**取图。
+仍未做(编辑侧):文档数学公式/脚注/callout、按 block id 或行号的精确编辑、返回具体 changed block。浏览器已支持离线缓存图片及待上传 spool，但尚未缓存的附件不能凭 oplog 离线重建。
 
 ## 已改善: 对外发布、访客写入与信任面(0.4.x)
 
@@ -93,18 +93,24 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 - **加载态与列表体验**:骨架屏取代「加载中…」(记住行数、真实行形状)、分享页状态驱动列表、站点升为一等视图、环境同步指示器。
 - **表层级注册表**:`src/core/tables.ts` 成为 content / system / local 三层的唯一权威(测试钉死),`DOMAIN`、快照清空清单、审计排除集等由它派生;配套 `mh repair --rematerialize` 可从 oplog 整表重建。
 
-仍未做:关联列的**反向链接**与按引用筛选(`relation contains` 仍在 P1 的查询缺口里);审计的跨设备聚合视图与导出;桌面小窗之外的多窗口工作区。
+仍未做:关联列的**反向链接**与服务端按引用筛选(WebUI 已有 `has_any`，core/CLI 的 contains 仍在 P1);审计的跨设备聚合视图与导出;通用多窗口工作区布局保存。按文档 ID 去重的独立编辑窗口已实现，见 [document-windows.md](./document-windows.md)。
+
+## 已改善: 保存视图、离线附件与独立文档窗口
+
+保存视图已覆盖四布局、客户端筛选/多列排序/计算与隐藏列，配置随 `meta.views` 同步；活动视图选择为本机偏好。离线附件使用缓存与 pending spool 分层；文档窗口复用保存队列和关闭握手。相关决策与边界见 [table-views.md](./table-views.md)、[architecture.md](./architecture.md)、[document-windows.md](./document-windows.md)。
 
 ## P0: 当前体验硬伤
 
+本次确认应先修复的实现问题：CSV 导入可能修改目标库以外记录；重名列 CSV 导出有损。数据库复制后保存视图仍引用源库属性 ID、以及翻译字典门禁失败也已记录，均尚未修复。具体触发和建议见 [复核记录](./review-2026-10-24.md)。
+
 ### 友好参数错误
 
-当前非法 `--limit` 可能冒出 SQLite `datatype mismatch`。JSON parse、未知字段、类型错误也需要更稳定的错误结构。
+当前非法 `--limit` 可能冒出 SQLite `datatype mismatch`。JSON parse 已统一成 `invalid_input`(exit 2)，未知属性与类型校验也已走 `MhError` 分类；数值参数校验仍不完整。
 
 建议:
 
 - CLI 层先校验 number 参数。
-- 错误返回稳定 code,例如 `INVALID_LIMIT`、`UNKNOWN_PROPERTY`、`TYPE_MISMATCH`。
+- 沿用已有小写 `MhErrorCode` 与退出码契约，补齐输入校验；不要把这里的建议误当成已有大写错误码。
 
 ### 明确 unset 语义
 
@@ -132,7 +138,7 @@ mh record update <recordId> --unset fieldA,fieldB
 
 ### 查询 DSL
 
-当前只有 `{field:value}` 等值过滤。
+core/CLI/REST 当前只有 `{field:value}` 等值过滤。WebUI 的 `view-model.ts` 已实现客户端范围/contains、多列排序及聚合，并通过保存视图持久化；下列缺口指服务端查询，不能再概括为整个产品没有筛选。
 
 建议新增:
 
@@ -148,7 +154,7 @@ mh record update <recordId> --unset fieldA,fieldB
 
 ### multi_select / relation contains
 
-当前数组字段按 JSON 完全相等比较,不符合 Notion-like 使用预期。
+core `listRecords` 的数组字段仍按 JSON 完全相等比较；WebUI 已支持 multi_select 的 has_any/has_all/has_none 与 relation/doc 的 has_any。需要把这些语义扩展为服务端查询能力。
 
 建议:
 
@@ -214,12 +220,7 @@ mh ledger summary --month 2026-05
 
 ### 导入和去重
 
-未实现:
-
-- CSV 导入。
-- JSONL 导入。
-- source_id 去重。
-- upsert。
+已实现 `mh sync rows.csv <db-ref>` 向已有数据库逐行导入，无 id 新建、已有 id 更新；已知边界见 [复核记录](./review-2026-10-24.md)。尚未实现 JSONL 导入、source_id 去重、按业务唯一键 upsert 和整批原子导入。
 
 ## P3: IM 历史消息体验
 
@@ -318,6 +319,6 @@ Agent 导入 IM 和账单时需要批量写:
 - `record list --columns date,amount,category,note`。
 - CJK 宽度正确的表格输出。
 - 复杂字段可折叠显示。
-- CSV/JSONL export。
+- JSONL export（CSV 已由文件同步与 WebUI 导出支持）。
 - `prop rename`、`prop reorder` 等直观命令。
 

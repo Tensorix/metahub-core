@@ -91,15 +91,15 @@ mh record delete <ref>
 - relation 字段的值接受引用(在目标库内按 id/前缀/名字解析,数组逐个;完整 `rec_` id 直通);`doc` 字段同理,解析范围是全部文档。
 - `record list` / `record get` 的 **TTY 人读输出**把 relation/doc 值标题化,JSON 输出保持裸 id。
 
-当前未实现:
+core/CLI 查询当前未实现（WebUI 客户端能力另见下文）:
 
 - range 查询,例如 date between、amount gt/lt。
 - contains 查询,例如 tag contains、relation contains、text contains。
 - 多条件逻辑 DSL,例如 AND/OR。
 - 聚合,例如 sum amount、group by category。
 - cursor pagination。
-- bulk create/import。
-- 去重键或 upsert。
+- 专用 bulk create/import 命令或批次事务（`mh sync CSV <db>` 已可逐行导入）。
+- 业务去重键或按业务键 upsert（CSV 的记录 id 更新已支持，但存在复核记录中的归属校验缺陷）。
 
 ## 文档
 
@@ -355,7 +355,7 @@ mh compact [--keep <days>] [--dry-run] [--no-vacuum]   # 默认 keep 90 天;0 = 
 当前能力:
 
 - 保留窗口式 oplog 压缩:窗口内历史完整,窗口外每 register 坍缩为"截止点胜者"(头部物化状态逐字节不变);窗口外的 `history`/`revert` 退化为单一基线。
-- 安全不变量:只删 LWW 输家(任何 peer 拿到幸存者即收敛)、墓碑胜者必存活(不复活已删行)、保护 `MAX(rowid)` 行(防 SQLite rowid 复用跳 peer 游标)。
+- 安全不变量:只删 LWW 输家(任何 peer 拿到幸存者即收敛)、墓碑胜者必存活(不复活已删行)、防御性保留 `MAX(rowid)` 行(稳定、不复用的游标保证来自 AUTOINCREMENT seq)。
 - **纯本地操作**(不 emit、不同步),各节点独立清理;配套 blob GC(删不再被引用的 cache 文件)与 `VACUUM` 还盘。
 
 当前未实现:自动定时压缩(规划归 `mh config`)、"彻底抹除已删数据"(需全 peer 墓碑确认)。
@@ -396,7 +396,7 @@ mh status [--json]           # 数据在哪几处、每处有多新
 当前能力:
 
 - 一轮 push/pull(单次轮回即双向:同时推本地、拉远端)。
-- 基于 rowid cursor 防止 HLC 漂移漏同步。
+- 基于显式 AUTOINCREMENT seq cursor 防止 HLC 漂移、编号复用或 VACUUM 重编号漏同步。
 - 通过 CRDT oplog 最终一致。
 - **多设备配对 + 自动同步**:一次性配对码引导、交换长期 per-peer 凭据,server 内置定时器周期性双向同步已配对 peer(默认 30s);`/sync` 鉴权(主 token 或配对凭据)。统一入口 `mh config`(方向键交互向导 `@clack/prompts` + `--flag`)/ WebUI 设置页。撤销:`peer rm`(连带吊销)/ `grant revoke`。见 [11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md)。
 - **浏览器离线副本(PWA)**:WebUI 设置页一键启用——自助配对(页面持主 token 自己铸码兑换凭据,在「已授权设备」可单独吊销)、按 `limit` 分页水合全量 oplog 至 OPFS、之后读写走本地 + 后台 `syncWithPeer()`,离线可查看编辑全部内容(含托管站点页的读写),回网块级合并。需 HTTPS(secure context)+ OPFS(Safari 17+);不满足时设置页显示原因并自动回落纯在线模式。见 [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
@@ -453,7 +453,7 @@ mh config backup recovery             # 打印恢复码卡(MH1-… 56 字符)
 mh sync <doc-ref> notes.md     # 导出文档正文 → markdown
 mh sync <db-ref>  rows.csv     # 导出数据表 → CSV（表头=属性名，首列 id）
 mh sync notes.md  <doc-ref>    # 导入 markdown → 更新已存在文档正文
-mh sync rows.csv  <db-ref>     # 导入 CSV → 数据表（有 id 列则按 id upsert，否则新建）
+mh sync rows.csv  <db-ref>     # 导入 CSV → 已有数据表（有 id 列则查现有记录更新，否则新建；见下方边界）
 ```
 
 当前能力:
@@ -468,6 +468,7 @@ mh sync rows.csv  <db-ref>     # 导入 CSV → 数据表（有 id 列则按 id 
 
 - 导入新建实体(导入只更新已解析到的现有文档/数据表)。
 - 整库/整目录的批量导出(一次一个实体)。
+- CSV 当前逐行写入，不是整文件原子事务，也不是按业务唯一键 upsert。已确认的缺陷：id 更新未限定目标库，重名普通属性导出经 name-keyed values 会丢失区分；见 [复核记录](./review-2026-10-24.md)。
 - 文档导出携带标题/front-matter(只写正文,保证往返无损)。
 
 ## WebUI 与 HTTP API
@@ -556,7 +557,7 @@ POST /v1/inbox/<drop_id>/envelopes     # 访客投递密文信封（Turnstile / 
   - **表格**：按类型行内编辑（checkbox/select/multi_select/relation/doc/text/number/date/url）、列头菜单（改名/**改类型**/选项管理/排序/插入/删列）、加列、行菜单、多选删除、记录侧栏 peek、彩色 select chip。
     - **select 选项就地编辑**：pill 本身变成输入框(同样的度量、色相匹配的焦点环),支持新增/改名/拖拽排序/删除;改名与删除经 core **级联重写**所有用旧值的单元格。
     - **引用类型列**(`relation` / `doc`)：单元格显示**目标标题胶囊**(同步标题表,按目标库分桶,失效时继续显示旧标题不闪烁),点击走记录选择器(搜索 / 新建 / 多选)而不是自由文本;新建 relation 列会进入第二步挑目标库(可搜索的 `DbTargetList`,自引用单独标注),列头菜单可看到并改当前目标;胶囊点击跳 `#/db/<db>/<rec>` 深链(与 peek 双向同步)。单元格读写一律按**属性 id**（record 响应的 `cells` 字段；`values` 按名供 CLI/agent），重名列互不串扰；新建列默认名自动去重（「日期」→「日期 2」）。
-    - **覆盖式单元格编辑器**（v3.3）：编辑器悬浮于单元格上方（行高不变）；双击或选中后直接打字进入（打字替换原值）；点击别处/Enter/Tab 均提交、Esc 放弃，值不变不发请求/不写历史；乐观更新即时生效、失败 toast+回滚；中文 IME 选词 Enter 不误提交。
+    - **覆盖式单元格编辑器**（v3.3）：编辑器悬浮于单元格上方（行高不变）；单击或选中后直接打字进入（打字替换原值）；点击别处/Enter/Tab 均提交、Esc 放弃，值不变不发请求/不写历史；乐观更新即时生效、失败 toast+回滚；中文 IME 选词 Enter 不误提交。
     - **电子表格键盘**（v3.3）：方向键移动选中格（Shift 扩展为框选）、Enter/F2 进编辑、编辑中 Tab/Shift+Tab 提交并左右走格、Enter 提交并下移一行、Delete 清空；框选 Cmd/Ctrl+C 复制 TSV、底部操作条复制/填充/清空。
   - **文档**：基于 **CodeMirror 6** 的所见即所得编辑器(v3.4,文档 = 单份 Markdown 文本、块是派生模型、装饰驱动;详见 [webui-editor.md](./webui-editor.md))。
     - **块**:光标感知的 reveal-to-edit——标题/引用/列表/待办/分隔线渲成块样式,光标进入则标记复现;`/` 斜杠菜单、悬停 gutter 的 +/grip 拖拽(改类型/重排)、选区浮动格式条、行内实时预览(粗体/斜体/代码/删除线/链接/行内图)。Typora 风格快捷输入(空格/回车提交 marker)、Tab/Shift+Tab 缩进、有序列表**字面序号权威**。
@@ -568,7 +569,7 @@ POST /v1/inbox/<drop_id>/envelopes     # 访客投递密文信封（Turnstile / 
   - **版本历史**：文档「…」菜单 → 右侧抽屉（修订列表 + 任意版本只读预览 + 「对比当前」git 式行级 diff，行内改动深浅双层高亮）；记录 peek「…」菜单 → 历史视图（逐修订字段 diff、恢复）；数据库「…」菜单 →「最近动态」（表级活动流只读抽屉）。恢复带 `if_match`（409 stale → 提示刷新重试）；repair 修订默认隐藏（「显示修复」开关）；设备名经 `/api/nodes` 解析。
   - **设置页(Notion 化)**：两组 + 一个无头组、共九页(`settings/nav.ts` 是导航单一来源)——**设备**组:外观 / 快速笔记(仅桌面) / 离线与缓存(桌面隐藏);**工作区**组:数据与备份 / 设备 / **操作审计** / 站点与发布;末尾无头组:**快捷键**(移动端隐藏)与**关于**(版本与更新)。原语是 `SetRow`(粗标题 + 灰副标 + 右对齐控件),一物一家、不重复摆放;`#/settings?sec=<page>` 是公共深链约定(旧的章节 id 经 `LEGACY_SEC` 映射)。见 [25-trust-and-settings](../impl-context/25-trust-and-settings/design.md)。
   - **发布对话框(受众优先)**：站点分支第一屏只问**"谁可以访问？"**(有链接的人 / 任何人 / 仅自己),托管是**派生摘要行**("Edge 始终在线 — 你的设备离线也能访问 · 更改"),数据授权折叠进"高级"。站点卡片副标题与 SitePeek 的**访问渠道**区块由同一份派生给出(受众徽章 + 托管 + 状态 + URL + 复制/打开)。托管不可用时是**内联引导块 + 深链到设置**,不是提交时才抛错。见 [24-sites-ux-refresh](../impl-context/24-sites-ux-refresh/design.md)。
-  - **顶栏菜单**（v3.1+）：「分享」打开**能力分享弹窗**——选受众/目标(本机 server / 已配对 peer server / 挂载的对象存储桶 / Edge 房间)、权限 view|edit(edit 仅 server)、可选密码 + 过期 + 数据授权,并管理/撤销/续期已有分享(另有全局「分享」视图);此外仍可复制链接与导出(文档=Markdown、数据库=CSV)。「…」菜单含**创建副本**（文档=标题+全部块、数据库=属性列+全部记录，服务端 core 级原子复制、单一修订随 sync 收敛，完成后跳转副本；后缀「副本」是 WebUI 文案，core 不写死 locale）、视图切换、版本历史、重命名、删除。
+  - **顶栏菜单**：「分享」按对象分流。文档/数据库使用 **hosting-first 链接列表**：有链接先管理，没有链接直接创建；先选设备/server 或桶，再选权限与期限，密码折叠在更多设置；创建发送 `grants: null`。桶固定为只读快照且最长七天，续期与更新内容分开；站点仍使用受众优先的发布流程。详见 [sharing-dialog.md](./sharing-dialog.md)。此外仍可复制链接与导出(文档=Markdown、数据库=CSV)。「…」菜单含**创建副本**（文档=标题+全部块、数据库=属性列+全部记录，服务端 core 级原子复制、单一修订随 sync 收敛，完成后跳转副本；后缀「副本」是 WebUI 文案，core 不写死 locale）、视图切换、版本历史、重命名、删除。
   - **站点是一等视图**(0.5.x)：侧栏第三个标签列出站点;`#/site/<name>` 是**沉浸式访问页**(浮动导航、无顶栏),`#/site/<name>?view=config` 是整页**配置页**(身份卡 + 缩略 iframe + 两栏小节,顶栏与 doc/db 一致)。旧的 peek 抽屉与 `tb-seg` 已删除。
   - **分享视图**(0.5.x)：全局「分享」页把本机 server 分享 + 每个挂载桶 + 每个已配对 peer 的分享聚成一张**状态驱动**的列表——一行 = 对象 · 状态 · **一个**主操作 + 溢出菜单,链接就地显示,按状态/来源过滤并带计数,过期项沉到独立分组可批量清理。全部派生在纯函数模块 `shares-model.ts` 里(有单测),视图只剩接线与 JSX。
   - **实时刷新**(0.5.x)：window(HTTP)模式挂着 `GET /api/changes` 的 SSE 流,CLI / agent 在终端写入后 1~2 秒内,打开的表格、文档、侧栏、快速看板自动跟上,不必手动刷新(见 [architecture.md](./architecture.md) 的「实时变更推送架构」)。
@@ -580,7 +581,7 @@ POST /v1/inbox/<drop_id>/envelopes     # 访客投递密文信封（Turnstile / 
 - 所有写操作复用 CLI 同款 core 函数,经 CRDT oplog 落库,可随 `mh sync` 复制。
 - REST 路由与 `/sync`、`/health` 同表(`routes.ts`),自动进 OpenAPI;id 通过 query 参数携带。
 - WebUI 资源(含 Preact)单独打包 `dist/webui.js`,懒加载,不影响 CLI 启动性能。
-- **暂未做**（需加 schema/后续）：数据库描述字段与文档独立图标、保存视图/持久化筛选排序（当前排序为客户端临时态、看板/日历占位）、同级/行手动顺序持久化；文档数学公式、脚注、callout（文档表格与 TOC 已实现）。
+- **保存视图与布局已实现**：表格/看板/日历/时间轴共用 `meta.views`，可保存筛选、多列排序、隐藏列、分组/日期字段与计算配置；记录行序和文档同级顺序已通过 fractional `order_key` 持久化并同步。筛选/聚合只处理客户端加载记录，服务端 DSL、分页、虚拟滚动、每视图列宽仍未实现。详见 [table-views.md](./table-views.md)。数据库描述、文档独立图标、数学公式、脚注、callout 仍未实现。
 - **静态站点托管**:AI agent 用 `mh site create|scaffold|put|upload|list|files|access|grant|rm|delete` 发布站点,`--server` 在 `/sites/<name>/` serve(`serveSite` 懒加载,默认 `index.html`,`--spa` 时无扩展名 miss 回退);站点/文件进 CRDT oplog 随 `mh sync` 复制(文本/小二进制内联;图片与大二进制走 `cache/` blob,字节不进 oplog、**按需**跨机取回,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))。见 [08-agent-sites](../impl-context/08-agent-sites/design.md)。
   - **WebUI 站点管理**(v2.9 起,0.5.x 改版):侧栏第三个标签列出站点,进入是沉浸式访问页,`?view=config` 是整页配置(改名/标题/可见性/SPA/文件上传预览删除/发布渠道);`POST/PATCH/DELETE /api/site*` 提供对应写接口,仍是同一套 `emit()`。见 [08-agent-sites §6](../impl-context/08-agent-sites/design.md) / [24-sites-ux-refresh](../impl-context/24-sites-ux-refresh/design.md)。
   - **站点读写数据正式化 + 离线**(v3,2026-06-11):站点页同源调用 `/api/*` 的写路径纳入契约;可选 SDK `/metahub-sdk.js`(类型化方法 + code 化错误 + token 续期,裸 fetch 永远等价)。启用离线副本的浏览器里站点页**离线可打开**(含从未访问过的——站点文件随 oplog 在副本里,SW 网关从副本 serve,冷启动走自举壳页)、**离线可读写数据**,回网自动同步。信任模型显式化:站点同源=持有完整 hub 读写权限,只发布自产站点。见 [08-agent-sites v3](../impl-context/08-agent-sites/design.md) / [16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
@@ -590,16 +591,17 @@ POST /v1/inbox/<drop_id>/envelopes     # 访客投递密文信封（Turnstile / 
 
 当前未实现/限制:
 
-- blob 字节不进 oplog(按设计),但已可**按需**跨机取回(`/blob/<hash>`:本地 → HTTP peer → 桶,见 [22-blob-sync](../impl-context/22-blob-sync/design.md));浏览器副本**离线**仍取不到图(待浏览器侧 Cache Storage/OPFS spool)。
-- 表格无分页、无范围/contains 过滤(沿用 `listRecords` 现状)。
+- blob 字节不进 oplog(按设计),但已可**按需**跨机取回(`/blob/<hash>`:本地 → HTTP peer → 桶,见 [22-blob-sync](../impl-context/22-blob-sync/design.md));浏览器已有 Cache Storage 字节缓存与 IndexedDB 离线上传 spool，本地持有的图片/附件可离线使用；未下载的附件仍需在线取回。
+- core/REST 无分页、无范围/contains DSL；WebUI 已有客户端日期范围、文本包含、多选/关联包含筛选与列计算。
 - 快速加属性覆盖 text/number/checkbox/date/url 与 relation(带挑目标库的第二步);`doc` 与 select/multi_select 的初始选项仍以 CLI 建列更直接。
-- 无并发编辑冲突的用户可见提示(底层 CRDT 仍按字段 LWW 收敛)。
+- HTTP 文档编辑已有 stale 冲突提示，可载入最新、另存草稿或显式覆盖；这不是所有实体的通用冲突解决器，本地副本仍按 CRDT 字段/块合并。
 
 ## 桌面端(Electron + Bun 边车)
 
 已实现(`apps/desktop`,见 [12-desktop-app](../impl-context/12-desktop-app/design.md) / [30-mini-windows-and-file-editor](../impl-context/30-mini-windows-and-file-editor/design.md)):
 
 - **主窗口**加载边车在回环临时端口提供的同一份 WebUI;macOS 无标题栏 + 红绿灯让位(判据是 `body.desktop-mac`),Windows/Linux 隐藏 Electron 菜单。
+- **文档独立窗口**：从菜单/命令面板打开，按文档 ID 去重并聚焦已有窗口。与主窗口复用保存队列，关闭/退出前 flush，失败可重试、取消或放弃；草稿只在 renderer 生命周期内保留，不是崩溃恢复日志。见 [document-windows.md](./document-windows.md)。
 - **快速笔记**小窗(`#quick`,全局快捷键 / 托盘唤起 / 可置顶 / mac 半透明):笔记 = 挂在通用父级下的普通文档,首行镜像成标题(纯函数推断,日期兜底),**core 不含 quicknote 概念**。
 - **快速看板**小窗(`#board`):一个库的看板,看哪个库/按哪列分组是本机选择;靠实时变更流保持新鲜(agent 跑 `mh record update` 时卡片自己会动),带 live 连接状态点与「在主应用中打开」深链。
 - **`.md` / `.txt` 打开方式**:注册为 Alternate 编辑器,双击得到独立编辑器窗,直接读写磁盘文件(`⌘S` 写回),不产生文档记录;「导入到 MetaHub」把当前文本存成新文档并让主窗口跳过去。文件 I/O 留在主进程且**只接受本进程打开过的路径**。正式包走磁盘加载的独立壳,首帧就已经画着正文(preload 同步初读),不等边车启动。

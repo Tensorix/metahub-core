@@ -13,7 +13,7 @@ system(metahub 自己的工作区级状态:同步,永不进 share 分区,操作�
   blob_policy                  -- 附件长期保存策略(单行)
   nodes                        -- 设备名册:每台设备自描述 + 共享设备名
 
-local(只属于这台机器,永不进 oplog)
+local(表本身不作为业务 dataset 复制;crdt_changes 是承载可复制 Change 的本地日志)
   meta / crdt_changes / peers / peer_grants / pairing_codes / storage_cursors
   room_rows                    -- 房间分区影子
   drop_rejects                 -- 写信箱被拒信封台账
@@ -33,7 +33,7 @@ local(只属于这台机器,永不进 oplog)
 
 - `node_id`: 当前节点稳定 id。
 - `hlc`: 当前节点最后一次 Hybrid Logical Clock。
-- `search_seq`: 搜索索引(`search_fts`)已处理到的 `crdt_changes.rowid` 增量游标;`search_index_version`: 索引逻辑版本号(规则变更时 bump → 触发全量重建)。两者取代旧的 `search_hlc`(见 [14-incremental-search-index](../impl-context/14-incremental-search-index/design.md))。
+- `search_seq`: 搜索索引(`search_fts`)已处理到的 `crdt_changes.seq` 增量游标;`search_index_version`: 索引逻辑版本号(规则变更时 bump → 触发全量重建)。两者取代旧的 `search_hlc`(见 [14-incremental-search-index](../impl-context/14-incremental-search-index/design.md))。
 - `current_db`: 「当前数据库」指针(本机 UI 上下文,不进 oplog、不随 sync)。读取时惰性校验所指库是否仍存在,失效则自动清除(见 `src/core/context.ts`)。
 - `auth_token` / `auth_token_exp` / `auth_token_prev` / `auth_token_prev_exp`: 持久化的服务器鉴权 token、其过期时刻(epoch ms)、上一代 token 及其可被交换的截止时刻(本机服务器密钥,不进 oplog、不随 sync;见 `src/core/sync/token.ts`、[10-persistent-token](../impl-context/10-persistent-token/design.md))。
 - `cfg_host` / `cfg_port` / `cfg_sync_interval` / `cfg_auto_sync` / `cfg_blob_quota` / `cfg_public_base_url`: `mh config` 持久化的服务器级设置(绑定地址、端口、自动同步间隔 ms、自动同步开关、blob 配额、对外可达 base URL),`--server` 启动时作默认值(CLI flag 覆盖);本机配置,不进 oplog、不随 sync(见 `src/core/config.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。
@@ -90,7 +90,9 @@ interface Change {
 
 物化时同一 register 中 HLC 最大的 change 胜出。
 
-表还有一个显式主键 `seq INTEGER PRIMARY KEY AUTOINCREMENT`,是**复制游标**依据(peer 的 pull/push 按 `seq` 单调推进,永不回退)。旧库经 `migrateCrdtChangesSeq`(schema-init.ts)补 `seq`。有了声明式 `seq`,过去"保护 `MAX(rowid)` 行防 rowid 复用"的做法退化为**纯防御性下限**、不再是承重逻辑。
+表还有一个显式主键 `seq INTEGER PRIMARY KEY AUTOINCREMENT`,是**复制游标**依据(peer 的 pull/push 按 `seq` 单调推进,永不回退)。旧库经 `migrateCrdtChangesSeq`(schema-init.ts)补 `seq`。迁移保留旧 rowid 的数值到 seq,并将已有 peers 的 push/pull 游标归零,以修复可能已被旧 VACUUM 卡住的进度;S3 对象 key 游标不受影响。`seq` 不在 wire `Change` 中,各节点按本地插入顺序独立分配。
+
+有了声明式 `seq`,过去"保护 `MAX(rowid)` 行防 rowid 复用"的做法退化为**纯防御性下限**、不再是承重逻辑。
 
 **oplog 即历史**:表是 append-only(`INSERT OR IGNORE`,旧版本永不覆盖),任意时点 T 的状态 = 每个 register 取 `hlc ≤ T` 的最大值,据此 `src/core/history.ts` 提供修订列表/时点重建/回滚(回滚是正向写入,见 [15-history-rollback-compaction](../impl-context/15-history-rollback-compaction/design.md))。
 
@@ -100,7 +102,7 @@ interface Change {
 
 **oplog-only 数据集**:`intent_receipts` 没有物化表——它只作为 CRDT 寄存器活在 oplog 里,是访客写入(GuestIntent)的**幂等回执**。选它而不是查业务单元格的 txn,是因为历史压缩可能在重放窗口内抹掉后者;选它而不是新建一张 node-local 表,是因为那会让幂等状态在不同运行时之间分裂。协议 GC 在有界窗口后删除回执,复制过滤防止其复活(`src/core/intent-retention.ts`)。
 
-**压缩**(`mh compact`,`src/core/compact.ts`):保留窗口(默认 90 天)外每 register 只留"截止点胜者",删除被取代的输家;墓碑胜者必存活、`MAX(rowid)` 行受保护(防 SQLite rowid 复用使 peer 游标跳过新变更)、纯本地不复制。头部物化状态压缩前后逐字节不变;窗口外历史坍缩为基线,配套 blob GC + VACUUM。
+**压缩**(`mh compact`,`src/core/compact.ts`):保留窗口(默认 90 天)外每 register 只留"截止点胜者",删除被取代的输家;墓碑胜者必存活、`MAX(rowid)` 行受保护(防御性保留高水位;真正防复用与 VACUUM 重编号由 AUTOINCREMENT seq 保证)、纯本地不复制。头部物化状态压缩前后逐字节不变;窗口外历史坍缩为基线,配套 blob GC + VACUUM。
 
 ## databases
 
@@ -112,8 +114,9 @@ databases(id, name, icon, meta, created_hlc, __deleted)
 
 当前支持 create/list/get/**duplicate**/**update**/delete。删除是软删除,写入 `__deleted = 1`。**删除会级联**(删除节点在删除时一次性 emit):其下 properties / records 跟随软删,documents 改为 detach(置空 `database_id`,内容作为独立文档保留)。见下文「完整性约束」。
 
-`meta` 是**通用复制元数据**:一个 JSON 对象的**整对象 LWW 寄存器**(登记进 `crdt.ts` 的 `DOMAIN`:`databases` 列 = `name/icon/meta/created_hlc/__deleted`)。设计上**领域中立**——消费方自定义 key(当前唯一用例是 WebUI 侧栏的 `collapsed` 折叠标记)。`updateDatabase` 写入时校验必须是 JSON 对象或 null;`getDatabase`/`listDatabases` 经 `rowOut` 把列里的 JSON 串 `JSON.parse` 回对象。旧库经 `migrateDatabases`(schema-init.ts)加列并**从赢家 oplog 回填**(按最大 HLC 取该库 `meta` 变更的胜者,与 `applyChange` 的 LWW 规则一致),使升级后看到 peer 早已达成的状态。
-> ⚠️ 整对象寄存器:两个离线设备各写**不同** key 时,各自 emit 的完整对象都缺对方 key,LWW 会静默丢一个(结构性丢更新)。当前仅 `collapsed` 一个 key 故潜伏;第二个 key 落地前应改为**按 key 分寄存器**(见 `databases.ts` 的 `TODO(meta-per-key)`)。
+`meta` 是**通用复制元数据,按顶层键 LWW**。`updateDatabase({meta: patch})` 对每个键写 `databases/meta.<key>` 寄存器,`crdt.ts materialize` 用 `json_set/json_remove` 物化到 JSON 列。只改传入的键;键值 `null` 删除该键,`meta: null` 删除当前可见的全部键;未变的值不 emit,键名禁止含 `.`。因此分别修改 `collapsed` 与 `views` 不互相覆盖;但 **整个 views 数组仍是一个寄存器**,并发编辑不同视图也可能 last-wins,不是逐视图 CRDT。
+
+当前消费方为侧栏 `collapsed` 和保存视图 `views`。视图模型与客户端求值见 [table-views.md](./table-views.md)。`getDatabase/listDatabases` 将 JSON 串还原为对象,空对象对外返回 null。旧的整对象 `meta` 寄存器仍被识别;`migrateDatabases` 只在缺少列时回填旧整对象胜者,不能据此宣称混合版本的整对象写入与新 `meta.*` 写入有独立键合并保证。
 
 ## properties
 
@@ -207,7 +210,7 @@ documents(id, title, body, database_id, parent_id, created_hlc, order_key, __del
 
 当前 `body` 是缓存列,不是文档正文的权威来源。对于 block-managed 文档,正文由 `doc_blocks` 重算。
 
-`order_key` 与 records 同为 fractional index,但**作用域按 `parent_id` 分组**(同一父级下的兄弟,`NULL` = 顶层):展示时 `listDocuments` 按 `ORDER BY order_key IS NULL, order_key, created_hlc, id` 排,`NULL` 兜底回落到创建时间,故旧库未回填前顺序不变。`createDocument` 追加到同级末尾;`moveDocument(before|after|into)` 是**唯一**的放置入口——因为 reparent 必然进入新的兄弟作用域,父级与顺序由内部 `placeInSiblings` 一处保持一致。迁移 `migrateDocuments` 幂等回填(按现有 `created_hlc` 顺序),首次拖拽后才真正落键。
+`order_key` 与 records 同为 fractional index,但**作用域按 `parent_id` 分组**(同一父级下的兄弟,`NULL` = 顶层):展示时 `listDocuments` 按 `ORDER BY order_key IS NULL, order_key, created_hlc, id` 排,`NULL` 兜底回落到创建时间,故旧库未回填前顺序不变。`createDocument` 追加到同级末尾;`moveDocument(before|after|into)` 是**唯一**的放置入口——因为 reparent 必然进入新的兄弟作用域,父级与顺序由内部 `placeInSiblings` 一处保持一致。迁移 `migrateDocuments` 幂等回填(按现有 `created_hlc` 顺序),迁移即写入缺失键,后续拖拽再改变相应键。
 
 删除文档会**级联**:`deleteDocument` 软删自身后,软删其 `doc_blocks`(派生正文)、并把直接子文档 unparent(置空 `parent_id`,作为顶层文档保留)。改 `parent_id`/排序时 core 做防环校验;sync 仍可能合出环,由 `repairHub` 兜底打断(见「完整性约束」)。
 
@@ -347,7 +350,7 @@ blob_policy(id="default", full_nodes, redundancy, __deleted)                    
 
 ## 完整性约束(invariant)
 
-schema **刻意只保留主键,不加 FK / UNIQUE**:per-field LWW oplog 需要前向引用(单元格写入可先于父行到达)、并发同名创建都要存活才能收敛、回放必须幂等——这些都会被 SQL 硬约束破坏。因此跨实体引用(`database_id` / `parent_id` / `site_id` / `doc_id`、记录 JSON 的 property key)都是**弱引用**,完整性改在 core 层做**最终一致**的逻辑约束(`src/core/integrity.ts`,见 [13-data-integrity](../impl-context/13-data-integrity/design.md))。
+领域实体表**刻意不加 FK 或业务名称 UNIQUE**:per-field LWW oplog 需要前向引用(单元格写入可先于父行到达)、并发同名创建都要存活才能收敛、回放必须幂等——这些都会被 SQL 硬约束破坏。因此跨实体引用(`database_id` / `parent_id` / `site_id` / `doc_id`、记录 JSON 的 property key)都是**弱引用**,完整性改在 core 层做**最终一致**的逻辑约束(`src/core/integrity.ts`,见 [13-data-integrity](../impl-context/13-data-integrity/design.md))。
 
 两条贯穿设计的硬性原则:
 
@@ -376,4 +379,4 @@ search_fts(kind, id, database_id, title, body)
 - document: title + body。
 - record: 文本类属性值 group concat 后作为 body。
 
-索引维护为**增量**:搜索前按 `meta.search_seq`(`crdt_changes.rowid` 游标)读取游标之后的新变更,归并出受影响的文档/记录,只删除并重写这些对象的 FTS 行。全量重建仅作兜底:首次建索引、`search_index_version` 升级、快照 reset、或手动修复(`rebuildSearchIndex`)。删库/删属性经级联产生的 `__deleted` 变更也会经增量路由自动从索引移除。详见 [14-incremental-search-index](../impl-context/14-incremental-search-index/design.md)。
+索引维护为**增量**:搜索前按 `meta.search_seq`(`crdt_changes.seq` 游标)读取游标之后的新变更,归并出受影响的文档/记录,只删除并重写这些对象的 FTS 行。全量重建仅作兜底:首次建索引、`search_index_version` 升级、快照 reset、或手动修复(`rebuildSearchIndex`)。删库/删属性经级联产生的 `__deleted` 变更也会经增量路由自动从索引移除。详见 [14-incremental-search-index](../impl-context/14-incremental-search-index/design.md)。

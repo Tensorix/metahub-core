@@ -55,6 +55,7 @@ CLI (src/cli)              桌面端 (apps/desktop)        浏览器 PWA(离线�
   | 窗口 | 入口 | 说明 |
   | --- | --- | --- |
   | 主窗口 | `#/…` 路由 | 完整应用 |
+  | 文档独立窗口 | 标准文档 hash + preload `documents.initialId` | 按文档 ID 复用窗口,共用 sidecar;保存与关闭协议见 [document-windows.md](./document-windows.md) |
   | 快速笔记 | `#quick` | 小窗;笔记 = 挂在通用 `parent_id` 下的普通文档,**core 不含 quicknote 概念** |
   | 快速看板 | `#board` | 小窗;一个库的看板,看哪个库是本机选择;实时推送是它的存在意义 |
   | 文件编辑器 | `#file?path=…` | `.md`/`.txt` 的「打开方式」;直接编辑磁盘文件,**不经文档记录**;正式包走磁盘加载的独立壳(不经边车,首帧即有正文) |
@@ -99,6 +100,8 @@ core 现在要在**四个运行时**上跑同一份领域代码:Bun(CLI/server)�
 
 所有公开变更函数由 `grouped()`/`withChangeGroup`(`crdt.ts`)包裹:一次逻辑变更的全部 emit 共享一个 `txn` 分组 id(嵌套调用保持外层),供历史按"修订"聚簇;repair/revert 用带前缀的 label 标记来源。txn 随 sync 复制,不参与 LWW。
 
+文档窗口与磁盘文件窗口都复用文档编辑表面,但持久化和关闭握手各自独立;不把磁盘路径当文档 ID。
+
 新建实体的 `row_id` 带类型前缀(`<kind>_<slug>-<rand>`,见 `src/core/ids.ts`),对 oplog/物化/同步完全不透明;旧的无前缀 id 与之共存。
 
 ## 引用解析路径
@@ -120,7 +123,7 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 - 记录从 `records.data` JSON 中读取 property id 到 value 的映射,再映射回属性名。
 - 文档读取 `documents.body`,该字段是从 `doc_blocks` 重算出来的缓存。
 - 搜索读取 `search_fts`,不可用或无命中时降级 LIKE。
-- **引用类型列的显示标题**:`relation`/`doc` 单元格存的是目标 id 数组,显示时经 `records.recordTitleMap` / `documents.documentTitleMap` 折成标题。记录标题的定义只有一条——**按 position 排序的第一个 text 属性**(`resolve.ts titlePropId`),因此显示出来的字符串原样打回去还能解析回同一行。CLI 的人读输出、CSV 导出、分享 SSR、WebUI 胶囊四面共用这条规则;**JSON 输出保持裸 id**(标题会变,id 不会)。见 [27-relation-and-doc-properties](../impl-context/27-relation-and-doc-properties/design.md)。
+- **引用类型列的显示标题**:`relation`/`doc` 单元格存的是目标 id 数组,显示时经 `records.recordTitleMap` / `documents.documentTitleMap` 折成标题。记录标题的定义只有一条——**按 position 排序的第一个 text 属性**(`resolve.ts titlePropId`),唯一标题可以按名称解析回目标;同名目标会报歧义,需要使用 id。CLI 的人读输出、CSV 导出、分享 SSR、WebUI 胶囊四面共用这条规则;**JSON 输出保持裸 id**(标题会变,id 不会)。见 [27-relation-and-doc-properties](../impl-context/27-relation-and-doc-properties/design.md)。
 
 ## 查询路径
 
@@ -129,10 +132,10 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 - `filter` 支持 `{field: value}` 等值过滤。
 - scalar 值下推到 SQL。
 - array/object/null 值在 JS 层过滤。
-- `sort` 支持单字段排序,默认 `created_hlc`。
+- 显式 `sort` 支持单字段排序;不传 sort 时按 `order_key IS NULL, order_key, id` 保留手动行序,`created`/`created_hlc` 可显式选择创建时间。
 - `limit` 在没有 JS 过滤时下推到 SQL。
 
-当前没有正式查询 DSL,也没有范围查询、contains、聚合和 cursor pagination。
+core/CLI/REST 当前没有正式查询 DSL、范围/contains 运算、聚合和 cursor pagination。WebUI 已在加载的记录上实现客户端筛选、多列排序与计算,配置保存在 `databases.meta.views`;这不等于服务端查询已实现。见 [table-views.md](./table-views.md)。
 
 ## 文档架构
 
@@ -152,7 +155,7 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 搜索模块当前实现:
 
 - 优先使用 SQLite FTS5。
-- 用 `meta.search_seq`(`crdt_changes.rowid` 游标)+ `meta.search_index_version` 记录索引进度与版本。
+- 用 `meta.search_seq`(`crdt_changes.seq` 游标)+ `meta.search_index_version` 记录索引进度与版本。
 - 搜索前**增量**维护:只读取游标之后的 oplog 变更,归并受影响对象,重写其 `search_fts` 行;首次建索引 / 版本升级 / 快照 reset / 手动修复时才全量重建。整个增量更新与游标推进在同一事务内,保证不漏索引。
 - FTS 无命中或不可用时使用 LIKE 子串搜索。
 
@@ -165,7 +168,7 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 - 服务端也是一个 Metahub 节点。
 - `POST /sync` 接收客户端 changes,服务端 ingest 后返回服务端游标之后的 changes。
 - 客户端用 `peers` 表记录 `pull_cursor` 和 `push_cursor`。
-- 游标基于 SQLite `rowid`,避免 HLC 时钟漂移导致漏同步。
+- 游标基于显式 `seq INTEGER PRIMARY KEY AUTOINCREMENT`(SQLite rowid 的稳定别名),避免 HLC 偏移、删除后的编号复用和 VACUUM 重编号导致漏同步。seq 是本地游标,不随 Change 传输。
 - 请求可带可选 `limit`(分页拉取——浏览器副本首次水合按 2000/轮循环)与 `exclude_datasets`(部分副本,协议就绪、UI 未开)。游标语义:分页未尽停在末行;扫尽跳到高水位(免重扫排除尾);**永不回退**(防 compact 后回拉旧数据)。
 - **浏览器也是一等节点**:启用「离线副本」的浏览器经自助配对持有可单独吊销的凭据,在 db-worker 里原样跑 `syncWithPeer()` 与服务器互同步(见下「PWA 离线架构」)。
 - **三类对端一张表**:`peers.kind` 现有 `http`(对等设备)、`s3`(数据盲桶转发)、`room`(某个分享的 Edge 房间)。房间不是"另一台设备"——它只承载**一个分享的分区**,所以数据地图刻意把它排除在"我的数据存在几处"之外。
@@ -178,9 +181,9 @@ CLI 在调用 core 写/读函数前,先把用户输入的「引用」解析成�
 
 `Bun.serve()` 的 fetch handler 用精确路径匹配分发。core 侧路由表 `src/core/sync/routes.ts` 合并 `syncRoutes`(`/sync`、`/health`)、`sitesRoutes`(`/api/sites` 等)、`peersRoutes`(`src/core/sync/peers-routes.ts`,含 `POST /api/pair` 配对握手)与 `blobRoutes`(`src/core/sync/blob-routes.ts`,`GET /blob/<hash>`、`POST /api/blob`、`GET /api/blobs/has`);WebUI 的 `/api/*`(`webuiRoutes`)、**分享路由**(`/api/share`、`/api/shares`,`src/webui/server/share-routes.ts`)与**实时变更流**(`GET /api/changes`,`src/webui/server/changes-route.ts`)从 `src/webui/server/` 注入。合并后的路由表既被 fetch handler 命中,也被 `openapi.ts` 遍历生成 OpenAPI(`/docs`、`/docs.json`),无 codegen。静态站点 `startsWith("/sites/")`、公开分享 `startsWith("/share/")`(在 token 门禁**前**、原样返回)各用一个**前缀分支**处理。
 
-- **REST API**(`src/webui/server/routes.ts` 的 `webuiRoutes`):一组只读 + 写入路由,**复用与 CLI 同一套 core 函数**(`listDatabases`/`updateDatabase`/`listRecords`/`createRecord`/`updateProperty`/`updateDocument`/`search` 等),因此写操作同样经 `emit()` 进 CRDT oplog、随 sync 复制。id 用 query 参数携带(`?db=`/`?id=`),以保持精确路径匹配与 OpenAPI 生成不变;`Route.method` 扩展出 `PATCH`/`DELETE`。handler 统一包一层 try/catch,异常转 `{error}` 400。
+- **REST API**(`src/webui/server/routes.ts` 的 `webuiRoutes`):一组只读 + 写入路由,**复用与 CLI 同一套 core 函数**(`listDatabases`/`updateDatabase`/`listRecords`/`createRecord`/`updateProperty`/`updateDocument`/`search` 等),因此写操作同样经 `emit()` 进 CRDT oplog、随 sync 复制。id 用 query 参数携带(`?db=`/`?id=`),以保持精确路径匹配与 OpenAPI 生成不变;`Route.method` 扩展出 `PATCH`/`DELETE`。handler 经 `jsonHandler`/`errorResponse` 返回 `{error, code?}`;状态码按错误分类映射,如 stale/conflict=409、not_found=404、busy=503(带 Retry-After),不是一律 400。
 - **浏览器 WebUI**(`src/webui/`,Preact):根路径 `/` 返回 HTML 外壳,`/webui.js`/`/webui.css` 返回应用 bundle/样式。服务模块 `src/webui/server/assets.ts` 的 `serveWebui`(经 `server.ts` 懒加载)优先读打包产物 `dist/webui.js`,开发态(从源码运行、无 dist)即时 `Bun.build` 兜底并缓存。应用入口 `app.tsx`,主要子目录:`cm6/`(CodeMirror 6 文档编辑器 + `chrome/`/`voids/`)、`fmt/`(代码格式化引擎)、`media/`(图片/表格/代码等 void 组件)、`share/`(分享 viewer)、`quicknote/`、`quickboard/`(桌面快速看板小窗)、`fileviewer/`(桌面 `.md`/`.txt` 文件编辑器窗 + 其磁盘加载入口)、`settings/`(设置页:`nav.ts` 导航单一来源 + 每页一文件)、`server/`(资源/路由服务)、`data/`(浏览器副本),以及 `api/icons/ui/blocks/markdown/sidebar/live/shortcuts/skeleton` 等;行/行内语法在 `src/core/md/`。文档编辑详见 [webui-editor.md](./webui-editor.md);历史实现见 [07-webui](../impl-context/07-webui/implementation.md)。
-- **CLI 性能隔离**:WebUI 与 Preact 单独打包为 `dist/webui.js`,**不进入 `cli.js` 的启动 import 图**;懒加载使其仅在浏览器首次访问 `/` 时载入,普通 `mh <命令>` 启动不受影响。
+- **CLI 性能隔离**:浏览器应用与 Preact 单独打包为 `dist/webui.js`,不作为浏览器组件进入 CLI。CLI 入口仍静态导入服务端 assets/routes 接线;浏览器 bundle 的读取/开发态构建由资源层执行,`--server` 额外调用 `warmWebui()` 预热。不能把该边界表述为整个 WebUI 服务端模块不进入 CLI import 图。
 - **静态站点托管**(`src/core/sync/sites-serve.ts`,经 `server.ts` 懒加载):`/sites/<name>/<path...>` 按名字 resolve 站点、查 `site_files`(默认 `index.html`,`spa=1` 时无扩展名的 miss 回退 `index.html`),返回字节 + MIME;站点经 `mh site` CLI 发布,文件经 `emit()` 进 CRDT(见 [08-agent-sites](../impl-context/08-agent-sites/design.md))。**站点分支自治**:公开站点(`visibility='public'`)免 token **原样返回**(不套 shim);私有站点由 `serveSite` 自己再跑一次 token 门禁,并且**私有与不存在的响应完全一致**(反枚举)。`/sites/<name>/api/*` 是访客数据面(见下),持 token 的同源请求则被**进程内转发**回主路由表——重写成 `/api/*` 后按普通 API 调用分发,不额外开一套实现。
 - **鉴权**(`src/core/sync/auth.ts`、`src/core/sync/token.ts`):fetch handler 顶部一处 token 门禁,`--debug` 跳过。`/sync` **不再豁免**——经 `acceptsSyncToken` 单独门禁,接受**主 token 或任一配对凭据**(旧的开放信任对等模型已移除,凭据由配对分发,见 `src/core/sync/pairing.ts`、[11-device-pairing-sync](../impl-context/11-device-pairing-sync/design.md))。仅 `/health`、`/auth/token`、`/api/pair` 豁免该 token 门禁(分别为:peer 健康检查;让持过期 token 者仍能换新;配对握手在 handler 内用一次性配对码自证)。其余请求需经 `Authorization: Bearer`/Cookie `mh_token`/`?token=` 携带 token。**token 默认持久化在 `~/.metahub` 的 `meta` 表**(非 `--token`/`METAHUB_TOKEN` 静态覆盖时),带 TTL(默认 30 天,env `METAHUB_TOKEN_TTL`),到期或 `mh token refresh` 时**惰性轮换**(以 DB 为单一来源、每请求读,故另一进程刷新立即生效);轮换后旧 token 在宽限期内(默认 7 天,env `METAHUB_TOKEN_GRACE`)仍可经 `GET /auth/token` 换到新 token,实现浏览器**无感续期**。浏览器导航无 token 返回**解锁页**(`unlockPage()`,0.3.x 重做:与 WebUI 匹配的明暗主题 + cube 标记、**进入前内联校验** token(不再盲存后 reload)、支持粘贴 `…?token=xxx` 登录链接、16px 输入防 iOS 缩放、安全区适配;成功后存 `localStorage`+cookie)。解锁页先尝试 `/auth/token` 静默续期;响应带 `x-mh-unlock` 头供 Service Worker 识别拒缓存。其后 HTML 响应经 `withShim` 注入 `<script src="/mh-runtime.js">` 页面运行时——承接旧内联 fetch 套壳的 token 职责(自动带 `Bearer`、401 换取重试一次),并叠加 SW 注册与离线 RPC 桥(`--debug` 也注入,离线桥与 token 无关)。SW 注册**在桌面外壳窗口里跳过**(`runtime.ts` 门禁 `isSecureContext && !metahubDesktop`;`app.tsx` 进一步只在持副本的客户端注册),否则 SW 的 network-first 兜底会把桌面窗口钉在过期缓存壳上(见记忆 `desktop-windows-no-sw`)。PWA 安装元数据(`/manifest.webmanifest`、`/icons/*`、`/sw.js`)豁免 token 门禁,`/metahub-sdk.js` 同理(公开分享页/站点页要 import 它,且它不携带任何机密)。见 [10-persistent-token](../impl-context/10-persistent-token/design.md)、[16-pwa-offline](../impl-context/16-pwa-offline/design.md)。
   - **Cookie 只是只读的环境权限**:`cookieMutationRejection` 要求一切**改状态**的 `/api` 请求显式出示 token——否则同源的站点页能凭所有者的 cookie 直接改工作区。
@@ -262,9 +265,9 @@ CLI 与 `mh --server` 是**两个进程**共享一个 SQLite 文件(WAL),服务�
 - **立场:全量副本,不是请求缓存。** 否决了 REST 变更队列(块级合并退化整文档 LWW、客户端复刻冲突逻辑)与手写 IndexedDB 物化器(fork `crdt.ts` 语义必漂移);浏览器在 OPFS 跑 sqlite-wasm + **同一份 core**,离线编辑/冲突合并/历史/FTS 搜索都是既有代码换运行时。
 - **分层**:`/mh-runtime.js` 注入运行时(token shim + SW 注册 + RPC 桥)→ Service Worker(壳缓存 + 离线网关)→ `ReplicaBus`(Web Locks 选主 + BroadcastChannel 跨标签代理,sahpool 单连接故一浏览器一 worker)→ db-worker(`WasmDriver implements DbDriver`,SAVEPOINT 嵌套事务)。
 - **本地优先门面**:`api.ts` 导出的 `api` 是 Proxy——副本启用**且完成首次全量水合**后数据方法走本地,否则逐调用回落 HTTP(永久保留;管理面恒走 HTTP)。水合前绝不展示半空库。
-- **编辑语义**:本地路径不带 `if_match`(单写者不自我竞争;stale 是 HTTP 模式概念);远端变更经 `synced` 事件触发编辑器/表格的原位合并刷新(先 flush 未保存键入,块级 CRDT 兜底)。
+- **编辑语义**:本地副本路径不带 `if_match`;HTTP 文档保存携带版本,stale 时保留草稿并等待用户处理。`DocumentSaveQueue` 只确认本次请求发送的 revision,读取结果仅在 `canRefresh` 通过后替换正文;`document-refresh.ts` 合并通知但不丢弃读取期间的新通知。见 [document-windows.md](./document-windows.md)。
 - **SW 网关**:`/api/*`、`/sites/*` 网络失败→映射为副本 op→经 MessageChannel 问页面 client 执行;**非 GET 永不超时竞速**(防双写);离线直开从未访问的站点走「自举壳页」——壳页自己从副本拉真实 HTML 并 `document.write` 原位替换。解锁页带 `x-mh-unlock` 头,SW 拒缓存(否则离线启动被砖)。
-- **约束**:需要 secure context(HTTPS 或 localhost;`--tls-cert/--tls-key` 直出或 Caddy/Tailscale Serve 反代,iPhone 需受信证书)+ OPFS(Safari 17+);iOS 非主屏访问有 ~7 天存储回收,主屏豁免。站点 blob 编码文件字节不进 oplog,离线 404。
+- **约束**:需要 secure context(HTTPS 或 localhost;`--tls-cert/--tls-key` 直出或 Caddy/Tailscale Serve 反代,iPhone 需受信证书)+ OPFS(Safari 17+);iOS 非主屏访问有 ~7 天存储回收,主屏豁免。blob 字节不进 oplog;已缓存或仍在本地 spool 的附件可离线读取,本地没有且所有远端不可达时才返回 404。
 - **踩坑规约**:SW 源文件顶层变量禁用与 WorkerGlobalScope 属性同名的标识符(打包降级 `var` 会把原型 getter 遮蔽成 `undefined`,worker 评估期即死且页面无报错);SW 注册失败必须 `console.warn`。
 
 ## 历史与回滚架构
@@ -288,7 +291,7 @@ oplog 是 append-only 的,历史是纯读侧能力(`src/core/history.ts`,见 [15
 
 ## 存储压缩架构
 
-`mh compact`(`src/core/compact.ts`)做保留窗口式 oplog 压缩:窗口外每 register 只留"截止点胜者"。四条承重不变量:只删 LWW 输家(收敛不变)、墓碑胜者存活(不复活)、保护 `MAX(rowid)` 行(防 rowid 复用跳 peer 游标)、纯本地不复制(各节点独立清理)。配套 blob GC(引用集 = 剩余 oplog `site_files.content` ∪ 物化行 ∪ `doc_blocks` 里 `/blob/<hash>` 文档插图,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))与 `VACUUM`。代价:窗口外 `history`/`revert` 坍缩为基线。
+`mh compact`(`src/core/compact.ts`)做保留窗口式 oplog 压缩:窗口外每 register 只留"截止点胜者"。四条承重不变量:只删 LWW 输家(收敛不变)、墓碑胜者存活(不复活)、防御性保护 `MAX(rowid)` 行(稳定与不复用保证来自显式 AUTOINCREMENT seq)、纯本地不复制(各节点独立清理)。配套 blob GC(引用集 = 剩余 oplog `site_files.content` ∪ 物化行 ∪ `doc_blocks` 里 `/blob/<hash>` 文档插图,见 [22-blob-sync](../impl-context/22-blob-sync/design.md))与 `VACUUM`。代价:窗口外 `history`/`revert` 坍缩为基线。
 
 ## 快照架构
 
@@ -296,7 +299,7 @@ oplog 是 append-only 的,历史是纯读侧能力(`src/core/history.ts`,见 [15
 
 - `changes`: 全量 CRDT oplog。
 - `meta`: `node_id` 和 `hlc`。
-- `peers`: 同步游标。
+- `peers`: 仅 URL 与 pull/push 游标，不含 token、kind/config 等完整连接信息。
 - `blobs`: cache 文件的 base64 内容。
 
 恢复有两种模式:
@@ -304,11 +307,13 @@ oplog 是 append-only 的,历史是纯读侧能力(`src/core/history.ts`,见 [15
 - merge: 将包内 oplog ingest 到当前库。
 - reset: 先保存安全快照,再清空领域表和 oplog,重放包内 changes。
 
+快照不是完整机器配置备份：不包含本机 shares、peer_grants、Edge 凭据与全部 meta 配置。reset 删除并重建 peers 时只恢复包内三列，S3/room 连接和配对凭据不能据此自动还原；本机其他非同步表也并非全部清空。迁移设备后应重新核对连接及发布状态。
+
 两种模式在重建索引后都会跑一次 `repairHub`,把合入数据可能破坏的不变量确定性修好(见下「完整性架构」)。
 
 ## 完整性架构
 
-schema 刻意只有主键、无 FK/UNIQUE(per-field LWW oplog 需要前向引用、并发同名存活、幂等回放),完整性改在 core 层做最终一致约束(`src/core/integrity.ts`,见 [13-data-integrity](../impl-context/13-data-integrity/design.md)):
+领域实体表刻意不加 FK/业务名称 UNIQUE(协议日志仍有寄存器+HLC 去重 UNIQUE,本机分享 request_id 也有唯一索引)(per-field LWW oplog 需要前向引用、并发同名存活、幂等回放),完整性改在 core 层做最终一致约束(`src/core/integrity.ts`,见 [13-data-integrity](../impl-context/13-data-integrity/design.md)):
 
 - `validateHub(db)` 只读体检,`repairHub(db)` 确定性、幂等修复(循环到不动点,改动经 `emit()` 进 oplog 随 sync 复制)。
 - **两条铁律**:① 修复只针对 tombstone(`__deleted=1`),容忍 absence(可能是尚未到达的前向引用);② 修复是收敛态的纯函数,winner 用全序 `(created_hlc, id)`,故各节点独立修复后既收敛又有效。
@@ -322,3 +327,18 @@ schema 刻意只有主键、无 FK/UNIQUE(per-field LWW oplog 需要前向引用
 以下问题存在,但当前用户体验复盘中暂不作为优先级核心:
 
 - 同步服务和快照导入的安全边界。
+
+
+## 浏览器附件字节层
+
+`src/webui/data/blob-store.ts` 在页面、db-worker 与 SW 间共享同源存储。IndexedDB `mh-blobs/spool` 保管离线新建、尚未成功上传的唯一字节副本;Cache Storage `mh-blob-v1` 与 IndexedDB LRU 元数据保存可重新获取的缓存。缓存目标上限 200 MiB,超额回收到约 80%,pin 与 pending spool 不参加自动淘汰。
+
+`sw.ts resolveBlobBytesFor` 依次查缓存、源站网络、worker(spool/桶),远端返回必须通过 hash 校验再缓存,防止静态托管的 HTML fallback 或登录页污染图片。`api.ts drainBlobSpool` 向源站上传;无可达源站且挂桶时 worker 向桶排空,成功后移入缓存并移除 spool。离线支持限于本地已持有的字节,不意味着初次水合会下载全部附件。
+
+## 独立分享查看器、短链接与官网
+
+- `scripts/build-share-viewer.ts` 输出 `dist/share-viewer`;`src/workers/share-viewer.ts` 将 `/api/*` 交给 `share-links.ts`,其它是静态查看器资源。此 D1 短链接服务与用户自行部署的 Edge Worker 是不同产物。
+- 默认短链 `/s/<id>#k=<key>` 的内容密钥留在 fragment;有密码时由接收者本地派生。D1 仅存预签名 manifest 描述符、过期、salt、管理能力哈希、版本及撤销状态,不存明文内容或内容密钥。管理 capability 与查看能力分离,条件写入用 ETag。失败可回退旧长链接,但已签发短链仍依赖解析 API。
+- 续期不更新快照内容,更新快照是另一操作;稳定短 URL 不取消 S3 签名最长七天的约束。撤销需确认短链别名与桶对象清理,未完成返回 `cleanup_pending`。部署与协议详见 [share-viewer README](../../deploy/share-viewer/README.md),界面决策见 [sharing-dialog.md](./sharing-dialog.md)。
+- `website/public` 是独立静态营销官网,由 Workers Static Assets 托管;没有资料库后端。预览 `bun website/serve.ts`,校验 `bun website/check.ts`,布局规范在 `website/DESIGN.md`,不覆盖 WebUI 设计规范。
+- CI 用 `scripts/ci-scope.ts` 区分官网单独变更与 core 变更。core 快档先生成桌面版本模块,再跑 Bun tests、build、宿主二进制冒烟;main 额外走跨平台 dry-run。workerd 驱动契约在独立测试包,不属于根目录 Bun 测试的覆盖保证。当前核验结果见 [review-2026-10-24.md](./review-2026-10-24.md)。
