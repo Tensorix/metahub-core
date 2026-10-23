@@ -70,6 +70,7 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
   /** Rows whose primary action is in flight (button disabled, label "处理中…"). */
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [clearing, setClearing] = useState(false);
+  const [expiredOpen, setExpiredOpen] = useState(false);
   const [skelRows, rememberRows] = useSkeletonRows("shares");
 
   const reload = () => {
@@ -317,15 +318,16 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
           </div>
         </div>
         <span class={"shv-status tone-" + st.tone}>
-          {st.tone === "busy" ? <span class="sync-ring" aria-hidden="true" /> : <span class="shv-dot" aria-hidden="true" />}
+          {st.tone === "busy" ? <span class="sync-ring" aria-hidden="true" /> : <Icon name="clock" cls="ico" />}
           {st.label}
         </span>
         <div class="shv-actions">
           <button
-            class={"btn btn-secondary" + (pa.danger ? " txt-danger" : "")}
+            class={"btn btn-secondary" + (pa.kind === "copy" ? " shv-copy" : "") + (pa.danger ? " txt-danger" : "")}
             disabled={pa.disabled || isBusy}
             onClick={() => void runPrimary(s, pa)}
           >
+            {pa.kind === "copy" && !isBusy && <Icon name="link" cls="ico" />}
             {isBusy ? t("处理中…") : pa.label}
           </button>
           <button class="iconbtn" title={t("更多")} onClick={(e) => openRowMenu(e as unknown as MouseEvent, s, st)}>
@@ -340,29 +342,17 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
     <div class="db shares-page">
       <div class="db-head">
         <div>
-          <div class="db-title">{t("分享")}</div>
+          <h1 class="db-title"><Icon name="share" cls="ico" />{t("分享")}</h1>
           <div class="db-desc">{t("所有对外公开的链接都在这里：谁能看、看到哪个版本、还能看多久。")}</div>
         </div>
       </div>
       <div class="shv-toolbar">
-        <div class="shv-search">
-          <Icon name="search" cls="ico sm" />
-          <input
-            placeholder={t("搜索标题 / 链接…")}
-            value={filter.q}
-            onInput={(e) => {
-              const q = (e.currentTarget as HTMLInputElement).value;
-              setFilter((f) => ({ ...f, q }));
-            }}
-          />
-        </div>
         <div class="shv-tools-right">
-          <div class="shv-seg" role="tablist">
+          <div class="shv-seg" role="group" aria-label={t("分享")}>
             {STATUS_FILTERS.map((f) => (
               <button
                 key={f.id}
-                role="tab"
-                aria-selected={filter.status === f.id}
+                aria-pressed={filter.status === f.id}
                 class={"shv-seg-btn" + (filter.status === f.id ? " active" : "")}
                 onClick={() => setFilter((x) => ({ ...x, status: f.id }))}
               >
@@ -370,6 +360,18 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
                 <span class="n">{shares == null ? <span class="skel-b skel-n" aria-hidden="true" /> : counts[f.id]}</span>
               </button>
             ))}
+          </div>
+          <div class="shv-search">
+            <Icon name="search" cls="ico sm" />
+            <input
+              aria-label={t("搜索标题 / 链接…")}
+              placeholder={t("搜索标题 / 链接…")}
+              value={filter.q}
+              onInput={(e) => {
+                const q = (e.currentTarget as HTMLInputElement).value;
+                setFilter((f) => ({ ...f, q }));
+              }}
+            />
           </div>
           <button
             class={"btn btn-secondary shv-src" + (filter.source !== "all" ? " on" : "")}
@@ -382,6 +384,9 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
         </div>
       </div>
 
+      {(shares == null && !loadErr || shown.length > 0) && <div class="shv-columns" aria-hidden="true">
+        <span>{t("分享内容")}</span><span>{t("到期状态")}</span><span>{t("操作")}</span>
+      </div>}
       {shares == null && loadErr != null ? (
         <div class="site-empty">
           <div class="ei"><Icon name="cloudOff" /></div>
@@ -413,13 +418,16 @@ export function ShareView({ onNavigate }: { onNavigate: Navigate }) {
             <>
               {filter.status !== "expired" && (
                 <div class="shv-group-head">
-                  {t("已过期")}<span class="n">{expired.length}</span>
+                  <button class="shv-group-toggle" aria-expanded={expiredOpen} aria-controls="shv-expired" onClick={() => setExpiredOpen(!expiredOpen)}>
+                    <Icon name={expiredOpen ? "chevronDown" : "chevron"} cls="ico" />
+                    {t("已过期")}<span class="n">{expired.length}</span>
+                  </button>
                   <button class="btn btn-secondary" disabled={clearing} onClick={() => void clearExpired(expired)}>
                     {clearing ? t("清理中…") : t("清理全部已过期")}
                   </button>
                 </div>
               )}
-              <ul class="shv-list">{expired.map(renderRow)}</ul>
+              <ul id="shv-expired" class="shv-list" hidden={filter.status !== "expired" && !expiredOpen}>{expired.map(renderRow)}</ul>
             </>
           )}
         </>

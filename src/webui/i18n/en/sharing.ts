@@ -1,6 +1,9 @@
 import { plural, type Msg } from "./util.ts";
 
 export const sharing = {
+  "到期状态": "Expiration",
+  "操作": "Actions",
+  "分享内容": "Shared content",
   "Edge 托管 · 设备离线仍可访问": "Edge hosted · reachable while offline",
   修改: "Update",
   全部: "All",

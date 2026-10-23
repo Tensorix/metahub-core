@@ -1543,6 +1543,73 @@
     .shv-group-head .btn { margin-left:0; width:100%; justify-content:center; padding:7px 10px; }
   }
 
+  /* Share workspace: quiet Notion-like controls and aligned document rows. */
+  .shares-page { --shv-quiet:color-mix(in srgb,var(--fg) 4%,var(--bg)); --shv-rule:color-mix(in srgb,var(--fg) 8%,var(--bg)); container-type:inline-size; }
+  .shares-page .db-head { margin-bottom:28px; }
+  .shares-page .db-title { display:flex; align-items:center; gap:14px; margin:0; font-size:32px; line-height:1.35; }
+  .shares-page .db-title > .ico { width:27px; height:27px; flex:none; }
+  .shares-page .db-desc { max-width:none; margin-top:12px; line-height:1.7; }
+  .shv-toolbar { margin-bottom:20px; padding:8px 0; }
+  .shv-tools-right { display:flex; width:100%; gap:24px; margin:0; }
+  .shv-seg { gap:8px; border:0; padding:0; background:none; flex:none; }
+  .shv-seg-btn { min-height:34px; padding:7px 12px; border-radius:6px; gap:3px; transition:background .15s; }
+  .shv-seg-btn:hover { background:var(--shv-quiet); }
+  .shv-seg-btn.active { background:color-mix(in srgb,var(--fg) 6%,var(--bg)); box-shadow:none; }
+  .shv-seg-btn .n { font-family:inherit; min-width:1ch; color:var(--fg-soft); }
+  .shv-search { margin-left:auto; max-width:300px; padding:8px 12px; background:var(--shv-quiet); border:1px solid transparent; border-radius:7px; }
+  .shv-search input::placeholder { color:var(--fg-soft); }
+  .shv-search:focus-within { border-color:var(--accent); }
+  .shv-src.btn { background:none; border-color:transparent; box-shadow:none; padding:7px 4px; white-space:nowrap; }
+  .shv-columns { display:grid; grid-template-columns:minmax(0,1fr) 172px 142px; gap:20px; padding:10px 16px; border-radius:6px; background:var(--shv-quiet); color:var(--fg-soft); font-size:12px; }
+  .shv-list { gap:0; }
+  .shv-list[hidden] { display:none; }
+  .shv-row { grid-template-columns:28px minmax(0,1fr) 172px 142px; gap:16px 20px; min-height:96px; padding:20px 16px; border:0; border-bottom:1px solid var(--shv-rule); border-radius:0; background:none; transition:background .15s; }
+  .shv-row:hover { background:color-mix(in srgb,var(--fg) 2%,var(--bg)); box-shadow:none; border-color:var(--shv-rule); }
+  .shv-ico, .shv-ico.k-doc, .shv-ico.k-site { width:28px; height:32px; border-radius:0; background:none; color:var(--fg-soft); }
+  .shv-ico svg { width:24px; height:24px; stroke-width:1.5; }
+  .shv-title { font-size:15px; font-weight:550; line-height:1.5; }
+  .shv-sub { margin-top:5px; font-size:12px; color:var(--fg-soft); }
+  .shv-status { justify-self:start; min-width:0; padding:5px 8px; gap:6px; border-radius:5px; font-size:12px; }
+  .shv-status .ico { width:14px; height:14px; flex:none; }
+  .shv-status.tone-ok { color:var(--success); background:color-mix(in srgb,var(--success) 8%,var(--bg)); }
+  .shv-status.tone-warn { background:color-mix(in srgb,var(--warning) 8%,var(--bg)); }
+  .shv-status.tone-muted { background:var(--shv-quiet); color:var(--fg-soft); }
+  .shv-actions { justify-content:space-between; gap:12px; }
+  .shv-actions .btn { min-height:30px; min-width:88px; border-radius:6px; }
+  .shv-actions .shv-copy { background:none; border-color:transparent; box-shadow:none; }
+  .shv-actions .ico { width:15px; height:15px; }
+  .shv-group-head { margin:16px 0; font-weight:400; }
+  .shv-group-toggle { display:flex; align-items:center; gap:10px; padding:6px; color:var(--fg); border-radius:6px; }
+  .shv-group-toggle:hover { background:var(--shv-quiet); }
+  .shv-group-toggle .ico { width:14px; height:14px; color:var(--fg-soft); }
+  .shv-group-head .n { font-family:inherit; background:var(--shv-quiet); padding:2px 7px; border-radius:5px; color:var(--fg-soft); }
+  .shv-group-head .btn { background:none; border-color:transparent; box-shadow:none; color:var(--fg-soft); }
+  .shares-page button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  @container (max-width:850px) {
+    .shv-tools-right { flex-wrap:wrap; gap:12px; }
+    .shv-seg { width:100%; }
+    .shv-search { margin-left:0; max-width:none; }
+    .shv-columns { grid-template-columns:minmax(0,1fr) 145px 124px; gap:12px; }
+    .shv-row { grid-template-columns:24px minmax(0,1fr) 145px 124px; gap:12px; }
+  }
+  @container (max-width:600px) {
+    .shv-columns { display:none; }
+    .shv-seg { gap:3px; }
+    .shv-seg-btn { flex:1; min-width:0; justify-content:center; padding:8px 3px; font-size:12px; gap:2px; }
+    .shv-seg-btn .n { margin-left:2px; font-size:11px; }
+    .shv-src { flex:none; }
+    .shv-toolbar { margin-bottom:8px; }
+    .shv-row { grid-template-columns:24px minmax(0,1fr); padding:18px 4px; }
+    .shv-title { white-space:normal; display:block; overflow-wrap:anywhere; }
+    .shv-sub { flex-wrap:wrap; white-space:normal; overflow-wrap:anywhere; }
+    .shv-sub > * { flex-shrink:1; min-width:0; }
+    .shv-status { grid-column:2; }
+    .shv-actions { grid-column:2; justify-content:flex-start; }
+    .shv-actions .btn { flex:none; min-height:36px; }
+    .shv-actions .iconbtn { margin-left:auto; }
+    .shv-group-head .btn { width:auto; margin-left:auto; }
+  }
+
   /* in-context "已分享" badge on docs / tables / site cards */
   .share-badge { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:6px; color:var(--accent);
     background:var(--accent-soft); flex:none; cursor:pointer; transition:filter .12s; }
