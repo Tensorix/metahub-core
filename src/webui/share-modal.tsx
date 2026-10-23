@@ -6,7 +6,7 @@
 //     expanding its own form (share-modal-forms.tsx).
 // "仅自己" is not a creation mode: it is the 停止公开访问 action on the public
 // row. Nothing here ever rewrites the user's in-progress choices on refresh.
-// For docs/databases the classic single-form flow remains (ObjectShareModal).
+// Documents/databases use a focused link detail and creation flow.
 // Mounted imperatively (openShareModal) so entry points are a one-liner.
 
 import { useEffect, useState } from "preact/hooks";
@@ -14,7 +14,6 @@ import {
   api,
   type ShareTargetOpt,
   type ShareListItem,
-  type CreateShareBody,
   type GrantOp,
   type EdgeStatus,
   type Site,
@@ -22,7 +21,7 @@ import {
   SHARES_CHANGED,
   notifySharesChanged,
 } from "./api.ts";
-import { buildShareTargets, shareTargetUrl } from "./data/share-targets.ts";
+import { buildShareTargets } from "./data/share-targets.ts";
 import { onReplicaStatus } from "./data/replica.ts";
 import type { Scope } from "./data/scopes.ts";
 import { isNoOrigin } from "./data/replica.ts";
@@ -32,19 +31,17 @@ import {
   type SiteChannel,
 } from "./site-status.ts";
 import { Modal, confirmDialog, openModal, closeModal } from "./ui.tsx";
-import { RowSelect } from "./settings/primitives.tsx";
 import { t } from "./i18n/t.ts";
 import { fmtDate } from "./i18n/fmt.ts";
 import {
   channelRowView,
   legacyShareRowView,
   grantSetToDraft,
-  EXPIRY,
-  expiryIndexFor,
   type ChannelRowAction,
   type ChannelRowView,
   type GrantDraft,
 } from "./share-modal-model.ts";
+import { ObjectShareDialog } from "./object-share-dialog.tsx";
 import { LinkShareForm, PublicPublishForm } from "./share-modal-forms.tsx";
 
 // Re-exports kept stable for existing consumers/tests.
@@ -550,192 +547,8 @@ function SitePublishModal({ target, onClose }: { target: ShareTarget; onClose: (
   );
 }
 
-// ── docs / databases: the classic single-form flow ────────────────────────────
-
+// Documents and databases use a task-focused link detail and creation flow.
 function ObjectShareModal({ target, onClose }: { target: ShareTarget; onClose: () => void }) {
   const [targets] = useShareTargets();
-  const [selId, setSelId] = useState("server");
-  const [permission, setPermission] = useState<"view" | "edit">("view");
-  const [password, setPassword] = useState("");
-  const [expiryIdx, setExpiryIdx] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [shares, setShares] = useState<ShareListItem[]>([]);
-  const [flash, setFlash] = useState("");
-  const [resultUrl, setResultUrl] = useState("");
-
-  const refreshShares = () =>
-    api.listShares({ target: target.ref }).then(setShares).catch(() => undefined);
-  useEffect(() => {
-    refreshShares();
-  }, []);
-
-  // "重新创建链接" on an expired row: pre-fill the form above it. The password
-  // is deliberately NOT carried over (it isn't recoverable, and silently
-  // dropping it would publish an unprotected link).
-  const recreateFrom = (s: ShareListItem) => {
-    setPermission(s.permission === "edit" ? "edit" : "view");
-    setPassword("");
-    setExpiryIdx(expiryIndexFor(s.expiresAt, Date.now()));
-    setError("");
-    setFlash(
-      s.hasPassword
-        ? t("已按过期链接预填上方表单；原口令无法恢复，请重新设置。")
-        : t("已按过期链接预填上方表单。"),
-    );
-  };
-
-  const sel = targets.find((tgt) => tgt.id === selId) ?? targets[0];
-  const s3 = sel?.kind === "bucket";
-  useEffect(() => {
-    if (s3 && permission === "edit") setPermission("view");
-  }, [s3]);
-  const expiryOpts = s3 ? EXPIRY.filter((e) => e.ms == null || e.ms <= 604_800_000) : EXPIRY;
-  const eIdx = Math.min(expiryIdx, expiryOpts.length - 1);
-
-  async function create() {
-    setBusy(true);
-    setError("");
-    setResultUrl("");
-    try {
-      const body: CreateShareBody = {
-        kind: target.kind,
-        ref: target.ref,
-        transport: s3 ? "s3" : "server",
-        hosting: "server",
-        permission,
-        password: password || null,
-        expiresMs: expiryOpts[eIdx]?.ms ?? null,
-        server: s3 ? null : sel ? shareTargetUrl(sel, location.origin) : null,
-        bucketUrl: s3 && sel ? shareTargetUrl(sel, location.origin) : null,
-        grants: null,
-      };
-      const r = await api.createShare(body);
-      copy(r.url);
-      setResultUrl(r.url);
-      setFlash(t("已通过「{source}」上线，地址已复制", { source: r.source }));
-      setPassword("");
-      notifySharesChanged();
-      refreshShares();
-    } catch (e) {
-      setError((e as Error).message || t("创建失败"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal
-      title={target.title ? t("分享：{title}", { title: target.title }) : t("分享")}
-      width={520}
-      footer={
-        <>
-          <button class="btn btn-secondary" onClick={onClose}>{t("关闭")}</button>
-          <button class="btn btn-primary" disabled={busy} onClick={create}>
-            {busy ? t("创建中…") : t("创建并复制链接")}
-          </button>
-        </>
-      }
-    >
-        <div class="mhshare-body">
-          <div class="mhshare-section">{t("新建分享")}</div>
-          <div class="mhshare-field">
-            <span>{t("托管位置")}</span>
-            <RowSelect
-              value={sel?.id ?? ""}
-              options={targets.map((tgt) => ({ value: tgt.id, label: tgt.label, sublabel: tgt.subtitle }))}
-              onChange={setSelId}
-            />
-          </div>
-          <div class="mhshare-field">
-            <span>{t("权限")}</span>
-            <RowSelect
-              value={permission}
-              disabled={s3}
-              options={[
-                { value: "view", label: t("只读") },
-                { value: "edit", label: s3 ? t("可编辑（仅服务器）") : t("可编辑") },
-              ]}
-              onChange={setPermission}
-            />
-          </div>
-          <label class="mhshare-field">
-            <span>{t("口令")}</span>
-            <input type="password" placeholder={t("可选")} value={password} onInput={(e) => setPassword((e.currentTarget as HTMLInputElement).value)} />
-          </label>
-          <div class="mhshare-field">
-            <span>{t("有效期")}</span>
-            <RowSelect
-              value={String(eIdx)}
-              options={expiryOpts.map((o, i) => ({ value: String(i), label: o.label }))}
-              onChange={(v) => setExpiryIdx(Number(v))}
-            />
-          </div>
-          {s3 && (
-            <p class="mhshare-note">
-              {t("存储桶分享是快照链接：内容是导出时的版本，之后不会随数据变化；「更新内容并续期」才会覆盖快照。")}
-            </p>
-          )}
-          {error && <p class="mhshare-err">{error}</p>}
-          {flash && <p class="mhshare-ok">{flash}</p>}
-          {resultUrl && (
-            <div class="mhshare-result">
-              <code>{resultUrl}</code>
-              <button onClick={() => copy(resultUrl)}>{t("复制")}</button>
-              <a href={resultUrl} target="_blank" rel="noreferrer">{t("打开")}</a>
-            </div>
-          )}
-          <div class="mhshare-section">{t("已有分享（{n}）", { n: shares.length })}</div>
-          <ShareRows
-            shares={shares}
-            reload={refreshShares}
-            onFlash={setFlash}
-            onError={setError}
-            onRecreate={recreateFrom}
-            empty={t("还没有分享这个对象。")}
-          />
-        </div>
-    </Modal>
-  );
+  return <ObjectShareDialog target={target} targets={targets} onClose={onClose} />;
 }
-
-/** Reusable list of shares with copy / renew / revoke / open actions (the
- *  non-site modal, and any external manager view). */
-function ShareRows({
-  shares,
-  reload,
-  onFlash,
-  onError,
-  onRecreate,
-  empty,
-}: {
-  shares: ShareListItem[];
-  reload: () => void;
-  onFlash: (s: string) => void;
-  onError: (s: string) => void;
-  /** Pre-fill the host's create form from an expired row. Hosts without a form
-   *  omit it and ChannelRow then hides the action instead of showing a dead one. */
-  onRecreate?: (s: ShareListItem) => void;
-  empty: string;
-}) {
-  const legacy = useShareActions(reload, onFlash, onError);
-  if (shares.length === 0) return <p class="mhshare-note">{empty}</p>;
-  return (
-    <ul class="mhshare-list">
-      {shares.map((s) => (
-        <ChannelRow
-          key={s.slug}
-          view={legacyShareRowView(s)}
-          on={{
-            copyShare: () => legacy.copyShare(s),
-            renewLink: () => legacy.renew(s),
-            refreshExport: () => legacy.refreshExport(s),
-            revokeShare: () => legacy.revoke(s),
-            ...(onRecreate ? { recreate: () => onRecreate(s) } : {}),
-          }}
-        />
-      ))}
-    </ul>
-  );
-}
-

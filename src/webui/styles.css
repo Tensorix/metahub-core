@@ -2165,6 +2165,93 @@
   .doc-skel { max-width:720px; margin:40px auto; padding:0 24px; }
 
   /* share / publish modal (share-modal.tsx) */
+  /* Hosting-first object sharing: compact link rows and disclosed details. */
+  .modal:has(.share-dialog) { border-radius:12px; }
+  .modal:has(.share-dialog) .modal-head { position:relative; display:flex; align-items:baseline; gap:12px; padding:24px 56px 0 28px; min-width:0; }
+  .modal:has(.share-dialog) .modal-head h3 { font-size:18px; font-weight:600; letter-spacing:0; padding:0; margin:0; flex:none; max-width:100%; }
+  .modal:has(.share-dialog) .modal-head p { margin:0; font-size:var(--fs-ui); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .modal-close { position:absolute; right:16px; top:18px; color:var(--muted); }
+  .modal:has(.share-dialog) .modal-body { padding:22px 28px 16px; }
+  .modal:has(.share-dialog) .modal-foot { background:var(--bg); padding:12px 28px; justify-content:space-between; gap:12px; }
+  .modal:has(.share-dialog) .modal-foot .btn { min-height:36px; font-weight:500; box-shadow:none; }
+  .share-dialog { display:flex; flex-direction:column; gap:20px; font-size:var(--fs-ui); }
+  .share-host { padding-bottom:20px; border-bottom:1px solid var(--line); }
+  .share-host-label { display:block; margin-bottom:10px; color:var(--muted); font-size:var(--fs-sm); }
+  .share-host-control { display:flex; align-items:center; gap:10px; min-width:0; }
+  .share-host-control > .ico { width:20px; height:20px; color:var(--fg-soft); }
+  .share-host-control select { flex:1; min-width:0; min-height:40px; padding:8px 10px; border:1px solid var(--line-strong); border-radius:var(--radius-sm); background:var(--bg); color:var(--fg); font:inherit; font-weight:500; }
+  .share-host-behavior { margin:12px 0 0 30px; }
+  .share-host-behavior strong { color:var(--fg-soft); font-size:var(--fs-sm); font-weight:500; }
+  .share-host-behavior p { margin:5px 0 0; color:var(--muted); font-size:var(--fs-sm); line-height:1.65; }
+  .share-list-heading { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:var(--fs-sm); padding-bottom:8px; }
+  .share-link-list { list-style:none; padding:0; margin:0; }
+  .share-link-list > li + li { border-top:1px solid var(--line); }
+  .share-link-row { display:flex; align-items:center; gap:12px; padding:16px 0; }
+  .share-link-row > .ico { flex:none; width:20px; height:20px; color:var(--fg-soft); }
+  .share-link-info { flex:1; min-width:0; }
+  .share-link-name { display:flex; align-items:center; gap:4px; max-width:100%; color:var(--fg); font-size:var(--fs-ui); font-weight:600; text-align:left; border-radius:var(--radius-sm); }
+  .share-link-name > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .share-link-name > .ico { flex:none; color:var(--muted); width:12px; }
+  .share-link-meta { display:flex; flex-wrap:wrap; gap:2px 8px; margin-top:4px; font-variant-numeric:tabular-nums; font-size:var(--fs-xs); color:var(--muted); line-height:1.6; }
+  .share-link-meta > span { white-space:nowrap; }
+  .share-link-meta > span + span::before { content:"·"; margin-right:8px; }
+  .share-link-actions { display:flex; align-items:center; gap:6px; flex:none; }
+  .share-link-actions .btn { min-height:32px; min-width:84px; justify-content:center; padding:5px 9px; font-size:var(--fs-sm); font-weight:500; box-shadow:none; white-space:nowrap; }
+  .share-link-actions .iconbtn { width:32px; height:32px; color:var(--muted); }
+  .share-link-detail { margin:0 0 16px 32px; }
+  .share-link-detail > p, .share-link-warning { margin:0 0 12px; color:var(--muted); font-size:var(--fs-sm); line-height:1.65; }
+  .share-link-warning { margin:4px 0 0; }
+  .share-link-name:hover { background:var(--hover); }
+  .share-link-name:focus-visible, .share-secondary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  @media (max-width:560px) {
+    .share-link-row { flex-wrap:wrap; gap:8px; }
+    .share-link-info { flex-basis:calc(100% - 32px); }
+    .share-link-actions { margin-left:28px; }
+    .share-link-actions .btn, .share-link-actions .iconbtn { min-height:40px; }
+  }
+  .share-facts { margin:0; display:flex; flex-direction:column; gap:12px; }
+  .share-facts > div { display:flex; gap:20px; align-items:baseline; }
+  .share-facts dt { flex:0 0 88px; color:var(--muted); font-size:var(--fs-sm); }
+  .share-facts dd { margin:0; flex:1; text-align:right; color:var(--fg-soft); font-size:var(--fs-sm); overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+  .share-explanation { margin:-6px 0 0; font-size:var(--fs-sm); line-height:1.7; color:var(--muted); }
+  .share-details { color:var(--fg-soft); font-size:var(--fs-sm); }
+  .share-details summary { cursor:pointer; padding:4px 0; line-height:1.5; }
+  .share-details summary:hover { color:var(--fg); }
+  .share-details summary:focus-visible { outline:2px solid var(--accent); outline-offset:4px; border-radius:2px; }
+  .share-details summary::marker { color:var(--muted); font-size:10px; }
+  .share-details summary > span { margin-left:10px; color:var(--muted); font-size:var(--fs-xs); }
+  .share-details > div, .share-details > dl { margin-top:16px; }
+  .share-secondary { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font-size:var(--fs-sm); border-radius:var(--radius-sm); }
+  .share-secondary { padding:6px 0; }
+  .share-secondary:hover { color:var(--fg); }
+  .share-dialog button:disabled, .modal:has(.share-dialog) .modal-foot button:disabled { cursor:default; opacity:.5; }
+  .share-settings { display:flex; flex-direction:column; gap:8px; }
+  .share-setting { display:flex; align-items:center; gap:16px; min-height:38px; }
+  .share-setting > span { flex:0 0 90px; color:var(--fg-soft); font-size:var(--fs-sm); }
+  .share-setting select { flex:1; min-width:0; max-width:100%; min-height:34px; font:inherit; font-size:var(--fs-ui); color:var(--fg); border:1px solid var(--line); border-radius:var(--radius-sm); padding:5px 8px; background:var(--bg); }
+  .share-setting select:disabled { color:var(--muted); background:var(--surface); opacity:1; }
+  .share-setting input, .share-url { min-width:0; flex:1; min-height:34px; border:1px solid var(--line); border-radius:var(--radius-sm); padding:6px 9px; background:var(--bg); color:var(--fg); font-size:var(--fs-ui); }
+  .share-setting input::placeholder { color:var(--muted); }
+  .share-setting input:focus-visible, .share-url:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .share-dialog > .share-details { border-top:1px solid var(--line); padding-top:12px; }
+  .share-url { display:block; width:100%; margin-top:12px; }
+  .share-message { margin:0; padding:10px 12px; background:var(--surface); border-radius:var(--radius-sm); color:var(--fg-soft); font-size:var(--fs-sm); line-height:1.6; overflow-wrap:anywhere; }
+  .share-message.error { color:var(--danger); background:var(--danger-soft); }
+  .share-load-error p { margin-top:0; color:var(--muted); }
+  .share-loading { display:grid; gap:14px; padding:4px 0; }
+  .share-loading span { height:14px; background:var(--surface-2); border-radius:3px; }
+  .share-loading span:first-child { width:55%; }
+  .share-loading span:last-child { width:75%; }
+  .share-sr-status { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+  @media (max-width:560px) {
+    .modal:has(.share-dialog) .modal-head { padding:22px 52px 0 20px; gap:10px; }
+    .modal:has(.share-dialog) .modal-body { padding:20px 20px 12px; }
+    .modal:has(.share-dialog) .modal-foot { padding:14px 20px; flex-wrap:wrap; }
+    .modal:has(.share-dialog) .modal-foot .btn, .share-secondary { min-height:40px; }
+    .share-setting { gap:12px; }
+    .share-setting > span { flex-basis:80px; }
+    .share-setting select, .share-setting input { min-height:40px; }
+  }
   .mhshare-body { display:flex; flex-direction:column; gap:10px; }
   .mhshare-section { font-size:var(--fs-micro); font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:6px; }
   .mhshare-field { display:flex; align-items:center; gap:12px; }

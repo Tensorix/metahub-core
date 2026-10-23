@@ -536,6 +536,7 @@ export function Modal({
   hint,
   onEnter,
   width,
+  onClose,
 }: {
   title: string;
   sub?: string;
@@ -546,6 +547,7 @@ export function Modal({
   /** Enter anywhere in the dialog (outside buttons / textareas) confirms. */
   onEnter?: () => void;
   width?: number;
+  onClose?: () => void;
 }) {
   return (
     <div
@@ -564,8 +566,9 @@ export function Modal({
       } : undefined}
     >
       <div class="modal-head">
+        {onClose && <button class="iconbtn modal-close" aria-label={t("关闭")} onClick={onClose}><Icon name="x" /></button>}
         <h3>{title}</h3>
-        {sub && <p>{sub}</p>}
+        {sub && <p title={sub}>{sub}</p>}
       </div>
       <div class="modal-body">{children}</div>
       {(footer || hint) && (
