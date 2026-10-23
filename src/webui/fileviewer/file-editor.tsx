@@ -11,7 +11,8 @@ import { SkelLines } from "../skeleton.tsx";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api.ts";
 import { CmDocBody, type CmHandle } from "../cm6/CmDocBody.tsx";
-import { UiHost, toast } from "../ui.tsx";
+import { ErrorBar, UiHost, toast } from "../ui.tsx";
+import { Icon } from "../icons.tsx";
 import { t } from "../i18n/t.ts";
 
 function parseHash(): { path: string } {
@@ -159,34 +160,38 @@ export function FileEditorWindow() {
   return (
     <div class="fw">
       <div class="fw-bar">
-        <span class="fw-name" title={path}>
-          {name || path}
-          {dirty && <span class="fw-dirty"> •</span>}
-        </span>
+        <div class="fw-title" title={path}>
+          <Icon name="fileText" cls="ico sm" />
+          <span class="fw-name">{name || path}</span>
+          {dirty && <span class="fw-dirty" aria-hidden="true" />}
+        </div>
+        {text !== null && <span class={`fw-status${dirty ? " is-dirty" : ""}`} role="status" title={dirty ? t("有未保存修改") : t("已保存到本机")}>
+          <Icon name={dirty ? "upload" : "check"} cls="ico sm" />
+          <span>{dirty ? t("有未保存修改") : t("已保存到本机")}</span>
+        </span>}
         <div class="fw-actions">
-          <button class="btn btn-ghost" onClick={toggleSource}>
-            {source ? t("预览模式") : t("源码模式")}
+          <button class="btn btn-ghost fw-mode" title={source ? t("预览模式") : t("源码模式")} aria-label={source ? t("预览模式") : t("源码模式")} disabled={text === null} onClick={toggleSource}>
+            <Icon name={source ? "fileText" : "code"} cls="ico sm" />
+            <span>{source ? t("预览模式") : t("源码模式")}</span>
           </button>
           {importedId && (
-            <button class="btn btn-secondary" onClick={openInMain}>
-              {t("在 MetaHub 中打开")}
+            <button class="btn btn-ghost fw-open" title={t("在 MetaHub 中打开")} aria-label={t("在 MetaHub 中打开")} onClick={openInMain}>
+              <Icon name="externalLink" cls="ico sm" />
+              <span>{t("在 MetaHub 中打开")}</span>
             </button>
           )}
           <button
-            class="btn btn-primary"
+            class="btn btn-secondary fw-import"
             disabled={importing || importedFresh || text === null}
             onClick={() => void doImport()}
           >
-            {importedFresh ? t("已导入 ✓") : importing ? t("导入中…") : t("导入到 MetaHub")}
+            <Icon name={importedFresh ? "check" : "download"} cls="ico sm" />
+            <span>{importedFresh ? t("已导入 ✓") : importing ? t("导入中…") : t("导入到 MetaHub")}</span>
           </button>
         </div>
       </div>
 
-      {error && (
-        <div class="error-bar" onClick={() => setError("")}>
-          ⚠ {t("{error}（点击关闭）", { error })}
-        </div>
-      )}
+      {error && <ErrorBar msg={error} onClose={() => setError("")} />}
 
       <div class="fw-body">
         {text !== null ? (

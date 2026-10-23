@@ -114,10 +114,6 @@ export function DocumentWindow({ id }: { id: string }) {
   const label = saving === "saved" ? t("已保存到本机") : saving === "saving" ? t("保存中…") : saving === "conflict" ? t("需要处理冲突") : saving === "error" ? t("保存失败") : t("有未保存修改");
   return <>
     <div class="document-window main">
-      <div class="dw-titlebar">
-        <div class="dw-window-title"><Icon name="fileText" cls="ico sm" /><span>{title}</span></div>
-        <button class="iconbtn" {...tip(t("在主窗口中打开"))} onClick={() => void bridge.openMain(id).catch((e) => setError(e.message))}><Icon name="externalLink" /></button>
-      </div>
       <div class="topbar dw-toolbar">
         <div class="crumb">
           <Icon name="fileText" cls="ico sm" />
@@ -125,13 +121,14 @@ export function DocumentWindow({ id }: { id: string }) {
             <button class="crumb-link" onClick={() => { location.hash = `#/${segment.kind}/${segment.id}`; }}>{segment.label}</button>
             <span class="crumb-sep">/</span>
           </span>)}
-          <span class="dw-current">{title}</span>
+          <span class="dw-current" title={title}>{title}</span>
         </div>
         <button class={`dw-save dw-save-${saving}`} title={label} aria-label={label} onClick={() => void handle.current?.flushSave()} disabled={!handle.current || saving === "saving" || saving === "saved"}>
           <Icon name={saving === "saved" ? "check" : saving === "error" || saving === "conflict" ? "alert" : "upload"} cls="ico sm" />
           <span role="status">{label}</span>
         </button>
         <button class="btn btn-secondary" disabled={!active} onClick={() => openShareModal({ kind: "doc", ref: id, title })}><Icon name="share" cls="ico sm" /><span>{t("分享")}</span></button>
+        <button class="iconbtn" {...tip(t("在主窗口中打开"))} onClick={() => void bridge.openMain(id).catch((e) => setError(e.message))}><Icon name="externalLink" /></button>
         <button class="iconbtn" {...tip(t("更多"))} onClick={menu}><Icon name="dots" /></button>
       </div>
       {error && <ErrorBar msg={error} onClose={() => setError("")} />}

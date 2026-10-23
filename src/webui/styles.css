@@ -2675,22 +2675,31 @@
   /* File-editor window (desktop, loaded at #file?path=… — the .txt/.md "open
      with" surface). Same shell idiom as quicknote: top bar = drag region with
      opted-out buttons, single full-bleed column, popups clamped below the bar. */
-  body.file-window { --pop-top-inset:46px; }
+  body.file-window { --pop-top-inset:48px; }
   body.file-window #app { display:block; width:100vw; height:100vh; height:100dvh; }
   .fw { display:flex; flex-direction:column; width:100%; height:100vh; height:100dvh; overflow:hidden; background:var(--bg); }
-  .fw-bar { display:flex; align-items:center; gap:8px; padding:7px 12px;
+  .fw-bar { display:flex; align-items:center; gap:12px; padding:0 16px; height:48px; flex:none;
     user-select:none; -webkit-app-region:drag;
     background:var(--surface); border-bottom:1px solid var(--line); }
   /* macOS only: clear the inset traffic lights (frame is native elsewhere). */
-  body.desktop-mac .fw-bar { padding-left:84px; }
-  .fw-name { flex:1; min-width:0; font-size:13px; font-weight:600; color:var(--fg-soft);
+  body.desktop-mac .fw-bar { padding-left:88px; }
+  .fw-title { display:flex; align-items:center; gap:8px; flex:1; min-width:0; color:var(--muted); }
+  .fw-name { min-width:0; font-size:var(--fs-sm); font-weight:500; color:var(--fg-soft);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .fw-dirty { color:var(--accent); font-size:15px; }
-  .fw-actions { display:flex; align-items:center; gap:6px; -webkit-app-region:no-drag; }
-  .fw-actions .btn { padding:4px 10px; font-size:12px; }
+  .fw-dirty { width:6px; height:6px; flex:none; border-radius:50%; background:var(--accent); }
+  .fw-status { display:flex; align-items:center; gap:6px; flex:none; color:var(--muted); font-size:var(--fs-xs); white-space:nowrap; }
+  .fw-status:not(.is-dirty) .ico { color:var(--success); }
+  .fw-actions { display:flex; align-items:center; gap:6px; flex:none; -webkit-app-region:no-drag; }
+  .fw-actions .btn { min-height:30px; font-size:var(--fs-sm); }
+  .fw-body .doc { padding-top:64px; padding-bottom:24vh; }
   .fw-body { flex:1; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; -webkit-app-region:no-drag; }
-  /* Bar is ~45px, not the main ~50px topbar the find bar assumes. */
-  body.file-window .find-bar { top:52px; }
+  body.file-window .find-bar { top:54px; }
+  @media (max-width:720px) {
+    .fw-bar { gap:8px; padding-right:12px; padding-left:12px; }
+    .fw-status span, .fw-mode span, .fw-open span { display:none; }
+    .fw-mode, .fw-open { width:30px; padding:0; justify-content:center; }
+    .fw-body .doc { padding:36px 32px 24vh; }
+  }
 
   /* No-origin bootstrap: enroll screen + hydration splash (data-blind shell). */
   .enroll-splash { min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; }
@@ -2918,14 +2927,11 @@
 
   /* Standalone library document: the same editor, with a compact native shell. */
   .document-window { min-width:0; height:100dvh; }
-  .dw-titlebar { display:flex; align-items:center; justify-content:flex-end; gap:12px;
-    height:48px; flex:none; padding:0 12px; background:var(--surface); border-bottom:1px solid var(--line);
-    -webkit-app-region:drag; }
-  .dw-window-title { position:absolute; left:50%; transform:translateX(-50%); display:flex;
-    align-items:center; gap:8px; max-width:calc(100% - 220px); font-size:var(--fs-ui); font-weight:500; }
-  .dw-window-title span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .dw-titlebar .iconbtn { -webkit-app-region:no-drag; }
-  .document-window .dw-toolbar { padding:0 16px; min-height:48px; gap:12px; -webkit-app-region:no-drag; }
+  .document-window .dw-toolbar { padding:0 16px; height:48px; min-height:48px; flex:none;
+    flex-wrap:nowrap; gap:12px; background:var(--surface); -webkit-app-region:drag; }
+  body.desktop-mac .document-window .dw-toolbar { padding-left:88px; }
+  .document-window .dw-toolbar button { -webkit-app-region:no-drag; }
+  .dw-toolbar > button, .dw-toolbar .crumb > .ico { flex:none; }
   .dw-toolbar .crumb { min-width:0; color:var(--muted); font-size:var(--fs-sm); }
   .dw-path { display:flex; align-items:center; gap:8px; min-width:0; }
   .dw-path .crumb-link { max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -2940,8 +2946,8 @@
   .dw-footer { display:flex; align-items:center; height:30px; flex:none; padding:0 18px;
     border-top:1px solid var(--line); color:var(--muted); font-size:var(--fs-xs); }
   .document-window .doc-wc { bottom:5px; right:16px; border:0; box-shadow:none; background:transparent; }
-  .document-window .doc-toc { top:120px; }
-  .document-window .find-bar { top:102px; }
+  .document-window .doc-toc { top:72px; }
+  .document-window .find-bar { top:54px; }
   @media (max-width:720px) {
     .dw-save span { display:none; }
     .dw-path { display:none; }

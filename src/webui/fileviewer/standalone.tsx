@@ -14,6 +14,13 @@ import { FileEditorWindow } from "./file-editor.tsx";
 document.body.classList.add("desktop", "file-window");
 if (window.metahubDesktop?.platform === "darwin") document.body.classList.add("desktop-mac");
 
+// The disk shell follows nativeTheme at launch; keep following OS changes
+// without consulting the unrelated file:// localStorage preference.
+const appearance = matchMedia("(prefers-color-scheme: dark)");
+appearance.addEventListener("change", (event) => {
+  document.documentElement.dataset.resolved = event.matches ? "dark" : "light";
+});
+
 void window.metahubDesktop?.server?.origin().then((o) => {
   if (!o) return;
   setApiBase(o);
