@@ -190,7 +190,6 @@ export const settings = {
   笔记列表: "Note list",
   取消置顶: "Unpin from top",
   始终置顶: "Always on top",
-  "{error}（点击关闭）": "{error} (click to dismiss)",
   "此浏览器不支持 Web Worker。": "This browser does not support Web Workers.",
   "需要 HTTPS（安全上下文）。当前是 http:// 访问，浏览器不开放离线所需的 OPFS 与 Service Worker——给服务器配置 TLS（--tls-cert/--tls-key，或 Caddy / Tailscale Serve 反代；iPhone 需要受信任的证书），或在本机用 localhost 访问。": "HTTPS (a secure context) is required. This page is served over http://, so the browser withholds the OPFS and Service Worker features offline mode needs. Configure TLS on the server (--tls-cert/--tls-key, or a Caddy / Tailscale Serve reverse proxy; iPhone needs a trusted certificate), or open it locally via localhost.",
   "此浏览器不支持 OPFS 本地存储（需要 Safari 17+ / Chrome / Firefox 较新版本）。": "This browser does not support OPFS local storage (requires Safari 17+ or a recent Chrome / Firefox).",

@@ -99,7 +99,7 @@ core/CLI 查询当前未实现（WebUI 客户端能力另见下文）:
 - 聚合,例如 sum amount、group by category。
 - cursor pagination。
 - 专用 bulk create/import 命令或批次事务（`mh sync CSV <db>` 已可逐行导入）。
-- 业务去重键或按业务键 upsert（CSV 的记录 id 更新已支持，但存在复核记录中的归属校验缺陷）。
+- 业务去重键或按业务键 upsert（CSV 的记录 id 更新已支持，且已校验目标库归属）。
 
 ## 文档
 
@@ -451,7 +451,7 @@ mh config backup recovery             # 打印恢复码卡(MH1-… 56 字符)
 
 ```bash
 mh sync <doc-ref> notes.md     # 导出文档正文 → markdown
-mh sync <db-ref>  rows.csv     # 导出数据表 → CSV（表头=属性名，首列 id）
+mh sync <db-ref>  rows.csv     # 导出数据表 → CSV（表头=无歧义属性名或属性 ID，首列 id）
 mh sync notes.md  <doc-ref>    # 导入 markdown → 更新已存在文档正文
 mh sync rows.csv  <db-ref>     # 导入 CSV → 已有数据表（有 id 列则查现有记录更新，否则新建；见下方边界）
 ```
@@ -468,7 +468,7 @@ mh sync rows.csv  <db-ref>     # 导入 CSV → 已有数据表（有 id 列则�
 
 - 导入新建实体(导入只更新已解析到的现有文档/数据表)。
 - 整库/整目录的批量导出(一次一个实体)。
-- CSV 当前逐行写入，不是整文件原子事务，也不是按业务唯一键 upsert。已确认的缺陷：id 更新未限定目标库，重名普通属性导出经 name-keyed values 会丢失区分；见 [复核记录](./review-2026-10-24.md)。
+- CSV 当前逐行写入，不是整文件原子事务，也不是按业务唯一键 upsert。每行在写事务内校验 id 的目标库归属；重名/保留名列以属性 ID 导出并按 ID 导回，普通列保持名称。修复记录见 [复核记录](./review-2026-10-24.md)。
 - 文档导出携带标题/front-matter(只写正文,保证往返无损)。
 
 ## WebUI 与 HTTP API

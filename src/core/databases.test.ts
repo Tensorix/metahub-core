@@ -197,3 +197,28 @@ test("meta keys written on two nodes both survive a sync (per-key registers)", (
   ingest(b, changesSince(a, ""));
   expect(getDatabase(b, d.id)!.meta).toBeNull();
 });
+
+test("duplicateDatabase remaps every saved view reference and self-relation filter", () => {
+  const db = newDb();
+  const src = createDatabase(db, { name: "Views" });
+  const title = addProperty(db, src.id, { name: "Title", type: "text" });
+  const rel = addProperty(db, src.id, { name: "Self", type: "relation", config: { database: src.id } });
+  const row = createRecord(db, src.id, { Title: "Row" });
+  const view = { id: "v_one", name: title.id, layout: "table", hidden: [title.id],
+    sort: [{ prop: title.id, desc: true }], filter: { op: "and", rules: [
+      { id: "f1", prop: rel.id, cond: "has_any", value: [row.id, "rec_missing"] },
+      { id: "f2", prop: title.id, cond: "is", value: row.id },
+    ] }, group: title.id, dateProp: title.id, start: title.id, end: null, calc: { [title.id]: "count" } };
+  updateDatabase(db, src.id, { meta: { views: [view], collapsed: true, extension: { text: title.id } } });
+  const copy = duplicateDatabase(db, src.id);
+  const [newTitle, newRel] = listProperties(db, copy.id);
+  const newRow = listRecords(db, copy.id)[0]!;
+  expect(copy.meta).toEqual({ extension: { text: title.id }, views: [{ ...view,
+    hidden: [newTitle!.id], sort: [{ prop: newTitle!.id, desc: true }],
+    filter: { op: "and", rules: [
+      { id: "f1", prop: newRel!.id, cond: "has_any", value: [newRow.id, "rec_missing"] },
+      { id: "f2", prop: newTitle!.id, cond: "is", value: row.id },
+    ] }, group: newTitle!.id, dateProp: newTitle!.id, start: newTitle!.id, calc: { [newTitle!.id]: "count" },
+  }] });
+  expect(getDatabase(db, src.id)!.meta!.views).toEqual([view]);
+});

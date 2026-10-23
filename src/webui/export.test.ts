@@ -69,3 +69,9 @@ test("databaseToCsv renders doc cells as titles with id fallback", () => {
     'id,任务,参考文档\nrec_1,a,"设计说明, doc_ghost"\nrec_2,b,',
   );
 });
+
+test("CSV export uses IDs for ambiguous and reserved names, keeping cells distinct", () => {
+  const props = [prop("p1", "Title", "text"), prop("p2", "title", "text"), prop("p3", "id", "text"), prop("p4", "p1", "text")];
+  expect(databaseToCsv(props, [{ id: "rec_1", database_id: "db_1", values: {}, cells: { p1: "a", p2: "b", p3: "c", p4: "d" } }]))
+    .toBe("id,p1,p2,p3,p4\nrec_1,a,b,c,d");
+});

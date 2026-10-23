@@ -188,3 +188,49 @@ test("CSV exports doc cells as titles (id fallback) and imports them back", asyn
   await syncFiles(db, path, tasks.id);
   expect(listRecords(db, tasks.id, {})[0]!.values.Docs).toEqual([other.id]);
 });
+
+test("CSV rejects another database's record without changing either table", async () => {
+  const db = newDb();
+  const a = createDatabase(db, { name: "A" });
+  const b = createDatabase(db, { name: "B" });
+  addProperty(db, a.id, { name: "Title", type: "text" });
+  addProperty(db, b.id, { name: "Title", type: "text" });
+  const r = createRecord(db, b.id, { Title: "keep" });
+  const path = tmpPath("cross.csv");
+  await Bun.write(path, `id,Title\n${r.id},overwrite`);
+  await expect(syncFiles(db, path, a.id)).rejects.toMatchObject({ code: "invalid_input" });
+  expect(listRecords(db, a.id)).toHaveLength(0);
+  expect(listRecords(db, b.id)[0]!.values.Title).toBe("keep");
+});
+
+test("CSV round-trips duplicate names and reserved id property without losing cells", async () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Duplicate" });
+  const a = addProperty(db, d.id, { name: "Title", type: "text" });
+  const b = addProperty(db, d.id, { name: "title", type: "number" });
+  const c = addProperty(db, d.id, { name: "id", type: "text" });
+  const r = createRecord(db, d.id, { [a.id]: "first", [b.id]: 42, [c.id]: "user id" });
+  const path = tmpPath("dup.csv");
+  await syncFiles(db, d.id, path);
+  expect(await Bun.file(path).text()).toBe(`id,${a.id},${b.id},${c.id}\n${r.id},first,42,user id`);
+  await syncFiles(db, path, d.id);
+  expect(listRecords(db, d.id)).toEqual([r]);
+  await Bun.write(path, "Title\nambiguous");
+  await expect(syncFiles(db, path, d.id)).rejects.toMatchObject({ code: "ambiguous" });
+  await Bun.write(path, `${a.id},${a.id}\nx,y`);
+  await expect(syncFiles(db, path, d.id)).rejects.toMatchObject({ code: "invalid_input" });
+});
+
+test("CSV ID headers decode references by type and unknown record IDs still create", async () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Refs" });
+  const a = addProperty(db, d.id, { name: "Ref", type: "doc" });
+  const b = addProperty(db, d.id, { name: "Ref", type: "text" });
+  const doc = createDocument(db, { title: "Target" });
+  const path = tmpPath("refs.csv");
+  await Bun.write(path, `id,${a.id},${b.id}\nunknown,Target,literal`);
+  await syncFiles(db, path, d.id);
+  const row = listRecords(db, d.id)[0]!;
+  expect(row.id).not.toBe("unknown");
+  expect(row.cells).toEqual({ [a.id]: [doc.id], [b.id]: "literal" });
+});

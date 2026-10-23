@@ -1,8 +1,10 @@
+import { csvPropertyHeaders } from "../csv-columns.ts";
+import { writeTx } from "../driver.ts";
 import type { Database } from "bun:sqlite";
 import { resolveEntity, type Candidate } from "../resolve.ts";
 import { getDocument, updateDocument, documentTitleMap } from "../documents.ts";
 import { listProperties, type PropertyRow } from "../properties.ts";
-import { listRecords, getRecord, createRecord, updateRecord, recordTitleMap } from "../records.ts";
+import { listRecords, getRecord, createRecord, updateRecord, recordTitleMap, resolveData } from "../records.ts";
 import { toCsv, parseCsv } from "../csv.ts";
 import { encodeRelationCell, decodeRelationCell } from "../relation-cells.ts";
 import { MhError } from "../errors.ts";
@@ -73,13 +75,13 @@ async function exportDb(db: Database, id: string, path: string): Promise<FileSyn
   const docTitles = props.some((p) => p.type === "doc") ? documentTitleMap(db) : new Map<string, string>();
   const titlesFor = (p: PropertyRow) =>
     p.type === "doc" ? docTitles : (relTitles.get(p.config?.database ?? "") ?? new Map<string, string>());
-  const header = ["id", ...props.map((p) => p.name)];
+  const header = ["id", ...csvPropertyHeaders(props)];
   const rows = recs.map((r) => [
     r.id,
     ...props.map((p) =>
       p.type === "relation" || p.type === "doc"
         ? encodeRelationCell(r.cells[p.id], titlesFor(p))
-        : cellToString(r.values[p.name]),
+        : cellToString(r.cells[p.id]),
     ),
   ]);
   const csv = toCsv([header, ...rows]);
@@ -98,29 +100,38 @@ async function importDb(db: Database, id: string, path: string): Promise<FileSyn
   if (grid.length === 0) return { direction: "import", kind: "db", id, path, rows: 0 };
   const header = grid[0]!;
   const idCol = header.indexOf("id");
-  // Column name → prop, first live match wins (same aliasing as name-keyed
-  // `values`). Only relation/doc columns need the type: their cells decode via
-  // the relation-cell codec (quote-aware ", " title list; whole-cell JSON id
-  // arrays as the legacy/escape-hatch form), then coerce resolves each element
-  // — ids pass through, titles resolve by name, loud on ambiguity or a miss.
-  const propByName = new Map<string, PropertyRow>();
-  for (const p of listProperties(db, id)) if (!propByName.has(p.name)) propByName.set(p.name, p);
+  if (header.filter((key) => key === "id").length > 1)
+    throw new MhError("invalid_input", "duplicate CSV record id column");
+  const props = listProperties(db, id);
+  const seen = new Set<string>();
+  const columns = header.map((key, col) => {
+    if (col === idCol) return null;
+    const p = resolveData(props, { [key]: null })[0]!.prop;
+    if (seen.has(p.id)) throw new MhError("invalid_input", `duplicate CSV property: ${key}`);
+    seen.add(p.id);
+    return p;
+  });
   let count = 0;
   for (let i = 1; i < grid.length; i++) {
-    const cells = grid[i]!;
-    const data: Record<string, unknown> = {};
-    for (let c = 0; c < header.length; c++) {
-      if (c === idCol) continue;
-      const raw = cells[c];
-      if (raw == null || raw === "") continue; // leave unset cells untouched
-      const colType = propByName.get(header[c]!)?.type;
-      data[header[c]!] =
-        colType === "relation" || colType === "doc" ? decodeRelationCell(raw) : parseCell(raw);
-    }
-    const rowId = idCol >= 0 ? cells[idCol]?.trim() : undefined;
-    if (rowId && getRecord(db, rowId)) updateRecord(db, rowId, data);
-    else createRecord(db, id, data);
-    count++;
+    writeTx(db, () => {
+      const cells = grid[i]!;
+      const data: Record<string, unknown> = {};
+      for (let c = 0; c < header.length; c++) {
+        if (c === idCol) continue;
+        const raw = cells[c];
+        if (raw == null || raw === "") continue; // leave unset cells untouched
+        const colType = columns[c]!.type;
+        data[columns[c]!.id] =
+          colType === "relation" || colType === "doc" ? decodeRelationCell(raw) : parseCell(raw);
+      }
+      const rowId = idCol >= 0 ? cells[idCol]?.trim() : undefined;
+      const existing = rowId ? getRecord(db, rowId) : null;
+      if (existing && existing.database_id !== id)
+        throw new MhError("invalid_input", `CSV row ${i + 1}: record ${rowId} belongs to another database`);
+      if (existing) updateRecord(db, rowId!, data);
+      else createRecord(db, id, data);
+      count++;
+    });
   }
   return { direction: "import", kind: "db", id, path, rows: count };
 }

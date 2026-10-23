@@ -1,3 +1,4 @@
+import { csvPropertyHeaders } from "../core/csv-columns.ts";
 import { toCsv } from "../core/csv.ts";
 import { encodeRelationCell } from "../core/relation-cells.ts";
 import { api, type Prop, type Rec } from "./api.ts";
@@ -74,7 +75,7 @@ export function databaseToCsv(
   records: readonly Rec[],
   relTitles?: Map<string, Map<string, string>>,
 ): string {
-  const header = ["id", ...props.map((p) => p.name)];
+  const header = ["id", ...csvPropertyHeaders(props)];
   const rows = records.map((r) => [
     r.id,
     ...props.map((p) =>

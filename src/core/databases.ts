@@ -1,3 +1,4 @@
+import { copyViews } from "./copy-views.ts";
 import type { DbDriver } from "./driver.ts";
 import { newId } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
@@ -92,13 +93,6 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
     name: opts.name ?? src.name,
     icon: (opts.icon ?? src.icon) ?? undefined,
   });
-  // Copy meta minus `collapsed`: a duplicate of a folded database must not be
-  // born hidden inside the sidebar's collapsed tail group (which defaults to
-  // closed) — the user just created it and expects to see it.
-  if (src.meta !== null) {
-    const { collapsed: _hidden, ...meta } = src.meta as Record<string, unknown>;
-    emitMetaPatch(db, dup.id, null, meta);
-  }
   const propIdMap = new Map<string, string>();
   const selfRelNew = new Set<string>(); // copy-side prop ids whose relation targets the copy
   for (const p of listProperties(db, id)) {
@@ -135,6 +129,13 @@ export const duplicateDatabase = grouped(function duplicateDatabase(
         patch[nid] = v.map((x) => recIdMap.get(String(x)) ?? x);
     }
     if (Object.keys(patch).length) updateRecord(db, recIdMap.get(r.id)!, patch);
+  }
+  // Copy views only after both ID maps exist; a copied database starts expanded.
+  if (src.meta !== null) {
+    const { collapsed: _hidden, ...meta } = src.meta;
+    if ("views" in meta) meta.views = copyViews(meta.views, propIdMap, recIdMap,
+      new Set(listProperties(db, id).filter((p) => p.type === "relation" && p.config?.database === id).map((p) => p.id)));
+    emitMetaPatch(db, dup.id, null, meta);
   }
   return getDatabase(db, dup.id)!;
 });
