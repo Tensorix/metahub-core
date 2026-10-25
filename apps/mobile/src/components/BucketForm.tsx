@@ -8,13 +8,13 @@ import {
 } from "react-native";
 import { decodeEnroll } from "../../../../src/core/sync/enroll.ts";
 import {
-  provisionMasterKey,
   storageClientFor,
   type S3Config,
 } from "../../../../src/core/sync/storage.ts";
 import { storageUrl } from "../../../../src/core/sync/storage-url.ts";
 import { initializeNativeSyncRuntime } from "@/lib/sync/runtime";
 import type { Credentials } from "@/lib/auth/credentials";
+import { resolveBucketEnrollment } from "@/lib/auth/bucket-enrollment";
 import { useTheme } from "@/lib/theme";
 
 export function BucketForm({
@@ -36,6 +36,8 @@ export function BucketForm({
   const [accessKeyId, setAccessKeyId] = useState("");
   const [secretAccessKey, setSecretAccessKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [unlockMethod, setUnlockMethod] = useState<"passphrase" | "recovery">("passphrase");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = (
@@ -99,20 +101,22 @@ export function BucketForm({
         url.password
       )
         throw new Error("存储桶地址无效");
-      const config: S3Config = {
+      const settings: S3Config = {
         ...data,
         region: data.region || "auto",
         prefix: data.prefix || "metahub",
         encrypt: data.encrypt !== false,
         publish: false,
       };
-      if (config.encrypt && !passphrase)
-        throw new Error("请输入存储桶解密密码");
-      const client = storageClientFor(config, { signal: attempt.signal });
-      if (config.encrypt)
-        config.masterKey =
-          (await provisionMasterKey(client, config, passphrase)) ?? undefined;
-      else await client.list(`${config.prefix}/`);
+      const client = storageClientFor(settings, { signal: attempt.signal });
+      const config = await resolveBucketEnrollment(
+        client,
+        settings,
+        unlockMethod === "recovery"
+          ? { method: "recovery", recoveryCode }
+          : { method: "passphrase", passphrase },
+        attempt.signal,
+      );
       if (attempt.signal.aborted) return;
       await onVerified({
         baseUrl: storageUrl(config.endpoint, config.bucket, config.prefix),
@@ -152,7 +156,35 @@ export function BucketForm({
       ) : (
         input("接入码或链接", code, setCode, true)
       )}
-      {input("解密密码", passphrase, setPassphrase, true)}
+      <View style={{ flexDirection: "row", gap: 16 }}>
+        {(["passphrase", "recovery"] as const).map((method) => (
+          <Pressable
+            key={method}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: unlockMethod === method, disabled: busy }}
+            disabled={busy}
+            onPress={() => {
+              setUnlockMethod(method);
+              setError(null);
+            }}
+            style={{ paddingVertical: 8 }}
+          >
+            <Text style={{ color: unlockMethod === method ? tokens.accent : tokens.muted }}>
+              {method === "passphrase" ? "使用解密密码" : "使用恢复码"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {unlockMethod === "recovery" ? (
+        <>
+          {input("恢复码", recoveryCode, setRecoveryCode, true)}
+          <Text style={{ color: tokens.muted }}>
+            输入以 MH1 开头的恢复码，仅用于在此设备解密已有数据。
+          </Text>
+        </>
+      ) : (
+        input("解密密码", passphrase, setPassphrase, true)
+      )}
       {error ? (
         <Text accessibilityLiveRegion="polite" style={{ color: tokens.danger }}>
           {error}
