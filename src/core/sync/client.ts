@@ -3,6 +3,7 @@ import { getNodeId } from "../node.ts";
 import { ingestDetailed, changesAfterSeq, type Change } from "../crdt.ts";
 import { type SyncResponse, SYNC_PATH } from "./protocol.ts";
 import { MhError } from "../errors.ts";
+import { withSyncBudget } from "./transport.ts";
 
 interface PeerCursors {
   pull_cursor: number;
@@ -31,8 +32,11 @@ export interface SyncResult {
    *  `pulled`: a page of all-known changes ingests 0 but may not be the last
    *  page (e.g. after a cursor reset re-pulls data we already hold). */
   received?: number;
-  /** Storage-sync only: local own ops exist but were deferred by push batching. */
+  /** More local ops remain after this round. Drain bounded HTTP rounds while
+   * this is true OR `received` fills the requested pull page. */
   pendingPush?: boolean;
+  /** Storage transports set this when a bounded pull still has objects remaining. */
+  pendingPull?: boolean;
   /** Non-fatal problems this round (e.g. clock-skew refusals in either direction). */
   warnings?: string[];
 }
@@ -50,11 +54,17 @@ export interface SyncOpts {
   token?: string;
   /** Max changes to pull this round — chunked initial hydration. */
   pullLimit?: number;
+  /** Max changes to push this round. Omit to preserve the full-push behavior. */
+  pushLimit?: number;
   /** Datasets this replica opts out of (partial replica, e.g. site_files). */
   excludeDatasets?: string[];
   /** Hard transport budget. Every sync is bounded even when the peer accepts
    * the TCP connection but never replies. */
   timeoutMs?: number;
+  /** Session-owned transport (for example a credential-scoped fetch). */
+  fetch?: typeof fetch;
+  /** Cancel an in-flight round when its session is disposed. */
+  signal?: AbortSignal;
 }
 
 const changeKey = (c: Pick<Change, "hlc" | "node_id" | "dataset" | "row_id" | "col">): string =>
@@ -101,11 +111,16 @@ export async function syncWithPeer(
   const node = getNodeId(db);
   const peer = getPeer(db, url);
   const bearer = o.token ?? peer.token ?? undefined;
-  const toPush = changesAfterSeq(db, peer.push_cursor);
+  if (o.pushLimit != null && (!Number.isSafeInteger(o.pushLimit) || o.pushLimit <= 0))
+    throw new RangeError("sync pushLimit must be a positive integer");
+  if (o.pullLimit != null && (!Number.isSafeInteger(o.pullLimit) || o.pullLimit <= 0))
+    throw new RangeError("sync pullLimit must be a positive integer");
+  const toPush = changesAfterSeq(db, peer.push_cursor, { limit: o.pushLimit });
 
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (bearer) headers.authorization = `Bearer ${bearer}`;
-  const res = await fetch(new URL(SYNC_PATH, url), {
+  const data = await withSyncBudget(async (signal) => {
+  const res = await (o.fetch ?? fetch)(new URL(SYNC_PATH, url), {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -115,7 +130,7 @@ export async function syncWithPeer(
       ...(o.pullLimit != null ? { limit: o.pullLimit } : {}),
       ...(o.excludeDatasets?.length ? { exclude_datasets: o.excludeDatasets } : {}),
     }),
-    signal: AbortSignal.timeout(o.timeoutMs ?? 30_000),
+    signal,
   });
   if (!res.ok)
     throw new MhError(
@@ -123,7 +138,10 @@ export async function syncWithPeer(
       `sync failed: ${res.status} ${await res.text()}`,
     );
 
-  const data = (await res.json()) as SyncResponse;
+  return (await res.json()) as SyncResponse;
+  }, o.timeoutMs, o.signal);
+  // A disposed session must never write back cursors after transport completion.
+  if (o.signal?.aborted) throw o.signal.reason ?? new Error("sync request aborted");
   const changes = data.changes ?? [];
   // `pulled` = changes new to our oplog (ingest's return), not the response size,
   // so re-pulled-but-known data doesn't read as activity (consistent with the
@@ -131,11 +149,12 @@ export async function syncWithPeer(
   // response page size separately so paginated hydration can break on it.
   const r = ingestDetailed(db, changes);
   const pulled = r.received;
+  const pushCursor = advanceAckedPrefix(db, toPush.cursor, changes);
   setPeer(db, url, {
     pull_cursor: data.cursor,
     // Rows this round just ingested came FROM the peer — advance past them so
     // a successful pull never reads as "this peer is behind".
-    push_cursor: advanceAckedPrefix(db, toPush.cursor, changes),
+    push_cursor: pushCursor,
   });
 
   const warnings = skewWarnings(url, r.skewed);
@@ -147,6 +166,9 @@ export async function syncWithPeer(
     pushed: toPush.changes.length,
     pulled,
     received: changes.length,
+    ...(o.pushLimit != null
+      ? { pendingPush: changesAfterSeq(db, pushCursor, { limit: 1 }).changes.length > 0 }
+      : {}),
     ...(warnings.length ? { warnings } : {}),
   };
 }
