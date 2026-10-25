@@ -43,7 +43,7 @@ export function useRefData(props: PropInfo[]): {
   const fetchAll = useCallback(async () => {
     const out = new Map<string, Candidate[]>();
     const needsDocs = refProps.some((p) => p.type === "doc");
-    const docListP = needsDocs ? client.listDocuments() : null;
+    const docListP = needsDocs ? client.queryDocuments({limit:60}) : null;
     await Promise.all(
       refProps.map(async (p) => {
         if (p.type === "relation") {
@@ -53,18 +53,18 @@ export function useRefData(props: PropInfo[]): {
             return;
           }
           const [records, targetProps] = await Promise.all([
-            client.listRecords(target, {}),
+            client.queryRecords(target, { limit: 60 }),
             client.listProperties(target),
           ]);
           out.set(
             p.id,
-            records.map((r) => ({ id: r.id, title: recordTitle(r, targetProps) })),
+            records.records.map((r) => ({ id: r.id, title: recordTitle(r, targetProps) })),
           );
         } else {
           const docs = await docListP!;
           out.set(
             p.id,
-            docs.map((d) => ({ id: d.id, title: d.title || "未命名" })),
+            docs.documents.map((d) => ({ id: d.id, title: d.title || "未命名" })),
           );
         }
       }),
@@ -120,10 +120,23 @@ export function RefPickerSheet({
   onRetry?: () => void;
 }) {
   const { tokens } = useTheme();
+  const { client } = useSession();
+  const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState(initialSelected);
   const latest = useRef(selected);
   const [query, setQuery] = useState("");
   const target = prop.type === "relation" ? (prop.config?.database as string) : "docs";
+
+  const fetchPage = useCallback(async () => {
+    if (prop.type === "doc") { const result = await client.queryDocuments({search:query,offset,limit:60}); return {...result,candidates:result.documents.map(doc => ({id:doc.id,title:doc.title || "未命名"}))}; }
+    if (!target) return null;
+    const [result, props] = await Promise.all([client.queryRecords(target, {search: query, offset, limit: 60}), client.listProperties(target)]);
+    return {...result, candidates: result.records.map(record => ({id: record.id, title: recordTitle(record, props)}))};
+  }, [client, prop.type, target, query, offset]);
+  const page = useApiData(fetchPage);
+  const choices = page.data?.candidates ?? (!query && !offset ? candidates : []);
+  const pageLoading = page.loading || loading;
+  const pageError = page.error ?? error;
 
   const toggle = (id: string, on: boolean) => {
     const next = on ? [...new Set([...latest.current, id])] : latest.current.filter((s) => s !== id);
@@ -143,11 +156,16 @@ export function RefPickerSheet({
             <Text style={{ color: tokens.accent, fontSize: fs.ui }}>完成</Text>
           </Pressable>
         </View>
-        <TextInput accessibilityLabel="搜索关联项" placeholder="搜索关联项" value={query} onChangeText={setQuery} style={{ padding: 16, color: tokens.fg }} />
-        {loading ? <ActivityIndicator color={tokens.accent} /> : null}
-        {error ? <Pressable onPress={onRetry}><Text style={[styles.empty, { color: tokens.danger }]}>加载失败，点按重试</Text></Pressable> : null}
+        <TextInput accessibilityLabel="搜索关联项" placeholder="搜索关联项" value={query} onChangeText={value => { setQuery(value); setOffset(0); }} style={{ padding: 16, color: tokens.fg }} />
+        {pageLoading ? <ActivityIndicator color={tokens.accent} /> : null}
+        {pageError ? <Pressable onPress={() => { void page.refetch(); onRetry?.(); }}><Text style={[styles.empty, { color: tokens.danger }]}>加载失败，点按重试</Text></Pressable> : null}
+        {<View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16 }}>
+          <Pressable disabled={!offset || pageLoading} style={{padding:12}} onPress={() => setOffset(Math.max(0, offset - 60))}><Text style={{color:tokens.accent}}>上一页</Text></Pressable>
+          <Text style={{color:tokens.muted, padding:12}}>{page.data?.total ?? 0} 项</Text>
+          <Pressable disabled={!page.data?.hasMore || pageLoading} style={{padding:12}} onPress={() => setOffset(offset + 60)}><Text style={{color:tokens.accent}}>下一页</Text></Pressable>
+        </View>}
         <FlatList
-          data={candidates.filter(c => c.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()) || c.id.includes(query))}
+          data={choices}
           keyExtractor={(c) => c.id}
           renderItem={({ item }) => {
             const on = selected.includes(item.id);
@@ -171,7 +189,7 @@ export function RefPickerSheet({
           }}
           ListEmptyComponent={
             <Text style={[styles.empty, { color: tokens.muted }]}>
-              {loading ? "正在加载…" : error ? "暂时无法加载选项" : !target ? "该关联列未配置目标数据库" : query ? "没有匹配项" : "没有可选项"}
+              {pageLoading ? "正在加载…" : pageError ? "暂时无法加载选项" : !target ? "该关联列未配置目标数据库" : query ? "没有匹配项" : "没有可选项"}
             </Text>
           }
           contentContainerStyle={styles.listContent}

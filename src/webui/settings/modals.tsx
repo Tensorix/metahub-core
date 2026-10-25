@@ -7,7 +7,7 @@ import type { ComponentChild } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { S3Config } from "../../core/sync/storage.ts";
-import { encodeEnroll } from "../../core/sync/enroll.ts";
+import { encodeEnroll, mobileEnrollUrl } from "../../core/sync/enroll.ts";
 import { Icon } from "../icons.tsx";
 import { brandImage, useBrand, useBrandTone } from "../brand.tsx";
 import {
@@ -582,6 +582,19 @@ function CopyRow({ text, label, done, primary }: { text: string; label: string; 
   );
 }
 
+function PhoneBucketLink({ config, target, shellOrigin }: { config: S3Config; target: "app" | "web"; shellOrigin: string | null }) {
+  const url = target === "app" ? mobileEnrollUrl(config) : shellOrigin && enrollUrl(shellOrigin, config);
+  if (!url) return <p class="enroll-err">{t("请输入手机可访问的 HTTP/HTTPS 站点根地址。")}</p>;
+  return <>
+    <p class="peer-sub">{target === "app"
+      ? t("请先在手机上安装 Metahub App，再用相机扫描二维码；也可把链接粘贴到 App 的连接页面。")
+      : t("用手机相机扫码，在浏览器中打开；可添加到主屏幕作为 PWA 使用。")}</p>
+    <QrSvg data={url} /><div class="enroll-cmd">{url}</div>
+    <CopyRow text={url} label={t("复制链接")} done={t("已复制链接")} />
+    {config.encrypt !== false && <p class="peer-sub">{t("连接后，请在手机上另行输入此存储桶的加密口令。链接和二维码不包含口令。")}</p>}
+  </>;
+}
+
 /** Computer/CLI tab: a one-line `mh` command (and the raw code) to join the bucket. */
 function CliEnroll({ config }: { config: S3Config }) {
   const token = encodeEnroll(config);
@@ -719,6 +732,7 @@ export function AddDeviceModal({ buckets, getConfig, environment, onClosed }: {
   onClosed: () => void;
 }) {
   const [tab, setTab] = useState<AddTab>("phone");
+  const [target, setTarget] = useState<"app" | "web">("app");
   const [method, setMethod] = useState(environment === "server" ? "server" : "bucket");
   const [base, setBase] = useState(() => enrollmentOrigin(location.origin) || "");
   const [shell, setShell] = useState(() => {
@@ -805,10 +819,23 @@ export function AddDeviceModal({ buckets, getConfig, environment, onClosed }: {
       <select id="enroll-bucket" class="text-input" value={bucketUrl} onChange={e => { setLoaded(null); setError(""); setBucketUrl(e.currentTarget.value); }}>{buckets.map(b => <option value={b.url}>{b.name}</option>)}</select>
       {error ? <><p role="alert" class="enroll-err">{error}</p><button class="btn btn-secondary" onClick={() => setRetry(retry + 1)}>{t("重试")}</button></> : !config ? <SkelLines n={3} /> : <>
         {tab === "cli" ? <CliEnroll config={config} /> : <>
-          <label class="field-label" for="enroll-shell">{t("手机访问的站点地址")}</label>
-          <input id="enroll-shell" class="text-input" value={shell} placeholder="https://metahub.example.com" onInput={e => setShell(e.currentTarget.value)} />
-          {shellOrigin ? <><QrSvg data={enrollUrl(shellOrigin, config)} /><div class="enroll-cmd">{enrollUrl(shellOrigin, config)}</div><CopyRow text={enrollUrl(shellOrigin, config)} label={t("复制链接")} done={t("已复制链接")} /></> : <p class="enroll-err">{t("请输入手机可访问的 HTTP/HTTPS 站点根地址。")}</p>}
-          <p class="peer-sub">{t("手机相机扫码打开,输入加密口令即可同步。")}</p>
+          <label class="field-label" for="phone-enroll-target">{t("打开方式")}</label>
+          <select id="phone-enroll-target" class="text-input" value={target} onChange={e => setTarget(e.currentTarget.value === "web" ? "web" : "app")}>
+            <option value="app">{t("Metahub 手机 App")}</option>
+            <option value="web">{t("浏览器 / PWA")}</option>
+          </select>
+          {target === "web" && <>
+            <label class="field-label" for="enroll-shell">{t("手机访问的站点地址")}</label>
+            <input id="enroll-shell" class="text-input" value={shell} placeholder="https://metahub.example.com" onInput={e => {
+              const value = e.currentTarget.value;
+              setShell(value);
+              try {
+                if (!value) localStorage.removeItem(SHELL_BASE_KEY);
+                else if (enrollmentOrigin(value)) localStorage.setItem(SHELL_BASE_KEY, enrollmentOrigin(value)!);
+              } catch { /* Private mode. */ }
+            }} />
+          </>}
+          <PhoneBucketLink config={config} target={target} shellOrigin={shellOrigin} />
         </>}
         <p class="peer-sub">{t("⚠ 接入码含桶访问密钥,请勿公开分享;不含加密口令——新设备需另输口令。")}</p>
       </>}

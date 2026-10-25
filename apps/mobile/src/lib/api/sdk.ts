@@ -9,7 +9,6 @@ export {
   MetahubError,
   type SdkOptions,
   type DbInfo,
-  type PropInfo,
   type RecordInfo,
   type DocSummaryInfo,
   type DocInfo,
@@ -18,3 +17,5 @@ export {
 
 /** The SDK's client instance type (createClient has no named return type). */
 export type MetahubClient = ReturnType<typeof _createClient>;
+
+export type { PropertyRow as PropInfo } from "../../../../../src/core/properties.ts";

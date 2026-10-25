@@ -1,6 +1,9 @@
+import { flattenDocs, type DocRow } from "@/lib/doc-tree";
 import { useRouter } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  Modal,
+  TextInput,
   Pressable,
   RefreshControl,
   SectionList,
@@ -15,59 +18,23 @@ import { EmojiIcon } from "@/components/EmojiIcon";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
-import type { DbInfo, DocSummaryInfo } from "@/lib/api/sdk";
+import type { DbInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
 import { useTheme } from "@/lib/theme";
 import { fs, radii } from "@/lib/theme/tokens";
 
-interface DocRow {
-  kind: "doc";
-  doc: DocSummaryInfo;
-  depth: number;
-  hasChildren: boolean;
-  expanded: boolean;
-}
 interface DbRow {
   kind: "db";
   db: DbInfo;
 }
 type Row = DocRow | DbRow;
 
-/** Flatten the parent_id doc tree honoring the expand set. Docs attached to a
- *  database don't belong in the sidebar tree (they surface via their db). */
-function flattenDocs(docs: DocSummaryInfo[], expanded: Set<string>): DocRow[] {
-  const children = new Map<string | null, DocSummaryInfo[]>();
-  for (const d of docs) {
-    if (d.database_id) continue;
-    const key = d.parent_id;
-    const list = children.get(key);
-    if (list) list.push(d);
-    else children.set(key, [d]);
-  }
-  const out: DocRow[] = [];
-  const walk = (parent: string | null, depth: number) => {
-    for (const doc of children.get(parent) ?? []) {
-      const kids = children.has(doc.id);
-      const open = expanded.has(doc.id);
-      out.push({ kind: "doc", doc, depth, hasChildren: kids, expanded: open });
-      if (kids && open) walk(doc.id, depth + 1);
-    }
-  };
-  // Orphans (parent synced later than child) fall back to top level.
-  const known = new Set(docs.map((d) => d.id));
-  for (const [parent, list] of children) {
-    if (parent !== null && !known.has(parent)) {
-      const top = children.get(null) ?? [];
-      children.set(null, top.concat(list));
-    }
-  }
-  walk(null, 0);
-  return out;
-}
-
 export default function HomeScreen() {
   const router = useRouter();
-  const { client, creds } = useSession();
+  const session = useSession();
+  const { client, creds } = session;
+  const [newDatabase, setNewDatabase] = useState(false);
+  const [databaseName, setDatabaseName] = useState("");
   const pending = useRef(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -82,7 +49,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = async () => {
     setRefreshing(true);
-    await refetch();
+    try { await session.syncNow(); await refetch(); } catch (e) { setMutationError(String(e)); }
     setRefreshing(false);
   };
   const [docs, dbs] = data ?? [null, null];
@@ -117,6 +84,7 @@ export default function HomeScreen() {
           <View style={styles.header}>
             <Text style={[styles.title, { color: tokens.fg }]}>Metahub</Text>
             <Text style={{ color: tokens.muted }}>{creds.baseUrl}</Text>
+            <Pressable accessibilityRole="button" onPress={() => setNewDatabase(true)} style={{ paddingVertical: 14 }}><Text style={{ color: tokens.accent }}>新建数据库</Text></Pressable>
             {mutationError ? <ErrorBanner message={mutationError} /> : null}
             {error ? (
               <ErrorBanner message="加载失败，请检查与服务器的连接" onRetry={refetch} />
@@ -172,12 +140,24 @@ export default function HomeScreen() {
         }
         contentContainerStyle={styles.listContent}
       />
+      <Modal visible={newDatabase} transparent animationType="fade" onRequestClose={() => setNewDatabase(false)}>
+        <View style={{ flex: 1, justifyContent: "center", padding: 24, backgroundColor: "rgba(0,0,0,0.35)" }}>
+          <View style={{ padding: 24, backgroundColor: tokens.surface, borderRadius: 16 }}>
+            <Text style={{ color: tokens.fg, fontSize: 20 }}>新建数据库</Text>
+            <TextInput accessibilityLabel="数据库名称" placeholder="数据库名称" placeholderTextColor={tokens.muted} value={databaseName} onChangeText={setDatabaseName} style={{ paddingVertical: 20, color: tokens.fg }} />
+            <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 20 }}>
+              <Pressable style={{ padding: 12 }} onPress={() => setNewDatabase(false)}><Text style={{ color: tokens.accent }}>取消</Text></Pressable>
+              <Pressable disabled={creating || !databaseName.trim()} style={{ padding: 12 }} onPress={() => { if (pending.current) return; pending.current = true; setCreating(true); void client.createDatabase({ name: databaseName.trim() }).then(async db => { if (!session.isCurrent()) return; await client.createProperty({db: db.id, name: "名称", type: "text"}); if (session.isCurrent()) { setNewDatabase(false); setDatabaseName(""); router.push(`/db/${db.id}`); } }).catch(e => { setMutationError(String(e)); setNewDatabase(false); }).finally(() => { pending.current = false; setCreating(false); }); }}><Text style={{ color: tokens.accent }}>{creating ? "创建中…" : "创建"}</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
       <AdaptiveFab
         label={creating ? "创建中…" : "新建文档"}
         onPress={async () => {
           if (pending.current) return;
           pending.current = true; setCreating(true); setMutationError(null);
-          try { const doc = await client.createDocument({ title: "" }); router.push(`/doc/${doc.id}`); }
+          try { const doc = await client.createDocument({ title: "" }); if (session.isCurrent()) router.push(`/doc/${doc.id}`); }
           catch { setMutationError("创建文档失败，请重试"); }
           finally { pending.current = false; setCreating(false); }
         }}
