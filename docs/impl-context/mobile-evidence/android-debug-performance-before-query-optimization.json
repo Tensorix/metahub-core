@@ -1,0 +1,61 @@
+{
+  "environment": "Android/iOS debug simulator or emulator, Hermes, development Metro bundle",
+  "fixture": {
+    "records": 10000,
+    "documents": 1000,
+    "batchSize": 10
+  },
+  "ingested": 11000,
+  "ingestMs": 115833.40413900011,
+  "emittedOps": 49007,
+  "searchIndexWarmupMs": 15908.736132000107,
+  "warmSearch": {
+    "samplesMs": [
+      2.550667000003159,
+      2.2932499998714775,
+      2.498041999991983,
+      4.199749999912456,
+      2.3165420000441372,
+      2.587584000080824,
+      4.710291000083089,
+      3.1787919998168945,
+      2.606249999953434,
+      4.074791999999434,
+      4.271791999926791,
+      1.8792920000851154,
+      3.7347919999156147,
+      3.028374999994412,
+      2.0784169998951256,
+      4.640916999895126,
+      2.5754170001018792,
+      2.0767920000944287,
+      2.400041999993846,
+      2.749917000066489
+    ],
+    "p95Ms": 4.640916999895126
+  },
+  "fullSetPagedQuery": {
+    "pages": 50,
+    "rows": 10000,
+    "totalMs": 44241.982938,
+    "firstPageMs": 2943.2288760000374,
+    "lastPageMs": 832.8265009999741,
+    "p95PageMs": 901.6490419998299
+  },
+  "databaseReopenHomeList": {
+    "ms": 15.853333000093699,
+    "databases": 1,
+    "documentSummaries": 60,
+    "totalDocuments": 1000,
+    "scope": "SQLite reopen, schema initialization, database list and first 60 document summaries; excludes app process cold start, React render and navigation"
+  },
+  "status": "PASS",
+  "maxObservedJsTimerGapMs": {
+    "ingest": 761.8008759999648,
+    "searchIndexWarmup": 517.7091250000522,
+    "warmSearch": 19.988208999857306,
+    "pagedQueries": 575.4845839999616,
+    "databaseReopenHomeList": 28.305457999929786
+  },
+  "timerIntervalMs": 10
+}

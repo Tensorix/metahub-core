@@ -1,0 +1,35 @@
+{
+  "at": "2026-10-25T07:56:05.705Z",
+  "results": [
+    "PASS get normalizes a miss to null (never undefined)",
+    "PASS get/all round-trip text, integer, real and NULL values",
+    "PASS run reports SQLite changes()",
+    "PASS INSERT OR IGNORE duplicate reports changes 0 (oplog dedup depends on it)",
+    "PASS binds normalize: undefined→NULL, boolean→1/0, bigint→number",
+    "PASS Uint8Array binds and BLOB reads round-trip as bytes",
+    "PASS transaction commits on return",
+    "PASS transaction rolls back on throw",
+    "PASS nested transactions are savepoints: inner throw caught → outer writes survive",
+    "PASS nested transaction return value commits both layers",
+    "PASS exec runs multi-statement DDL/DML scripts",
+    "PASS repeated execution of one SQL text stays healthy (statement cache)",
+    "PASS PRAGMA table_info works (schema-init column probing)",
+    "PASS native schema, CRUD, durable checkpoint and reopen",
+    "PASS three FTS schema close/reopen cycles",
+    "PASS Bun-generated PBKDF2 envelope and encrypted gzip decoded natively",
+    "PASS native PBKDF2, AES-GCM, gzip roundtrip",
+    "PASS incorrect passphrase rejected"
+  ],
+  "nativeFixture": {
+    "envelope": {
+      "v": 1,
+      "kdf": "PBKDF2-SHA256",
+      "iter": 600000,
+      "salt": "Iw1gC+bukbzrnEukEAU+fQ==",
+      "wrap": "AES-GCM",
+      "wrapped_key": "B5OfPmHlf6u3aG8a8KXeKU1NSt3urKaLdwsB2jrXZrsgIHeU9FmhcSDl4KOwfXJ3m0iHkKOWh/8t1CUy"
+    },
+    "payload": "XvYLzhSgVAM+jk7kmyHyEm4ikAw9KssRzhuGG/I1OKgLShApBWiXPPmmpSqv44h0oka12WwdyvNyR3GhTNQ0FoMqRBp+m0LlFUUqjQ==",
+    "text": "native encrypted gzip 你好"
+  }
+}
