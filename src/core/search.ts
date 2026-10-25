@@ -108,14 +108,15 @@ function fullRebuild(db: DbDriver): void {
   const max = (db.query("SELECT MAX(rowid) AS m FROM crdt_changes").get() as { m: number | null }).m ?? 0;
   writeMeta(db, "search_seq", String(max));
   writeMeta(db, "search_index_version", SEARCH_INDEX_VERSION);
+  db.query("DELETE FROM meta WHERE key = 'search_rebuild'").run();
 }
 
 // Incremental: scan oplog changes since the cursor, derive the set of affected
 // objects, and re-derive only those. Insertion-order (rowid) means no change is
 // ever skipped, even when a remote write carries an older HLC than the local max.
-function incrementalUpdate(db: DbDriver): void {
+function incrementalUpdate(db: DbDriver, limit?: number): void {
   const cursor = Number(readMeta(db, "search_seq") ?? "0");
-  const { changes, cursor: next } = changesAfterSeq(db, cursor);
+  const { changes, cursor: next } = changesAfterSeq(db, cursor, { limit });
   if (changes.length === 0) return;
 
   const docIds = new Set<string>();
@@ -174,6 +175,62 @@ function ensureIndex(db: DbDriver): boolean {
     else incrementalUpdate(db);
   });
   return true;
+}
+
+interface SearchRebuildState { stage: "documents" | "records"; after: string; head: number }
+
+/** Maintain at most `limit` objects or oplog entries per synchronous turn. The
+ * rebuild checkpoint and index rows commit together, so app suspension or close
+ * can resume without indexing the whole hub on the first keystroke. */
+export function updateSearchIndexStep(db: DbDriver, limit = 200): { ready: boolean; available: boolean } {
+  if (!Number.isSafeInteger(limit) || limit <= 0) throw new RangeError("search batch size must be a positive integer");
+  if (!ftsAvailable(db)) return { ready: true, available: false };
+  return writeTx(db, () => {
+    let raw = readMeta(db, "search_rebuild");
+    const cursor = Number(readMeta(db, "search_seq") ?? "0");
+    const batch = changesAfterSeq(db, cursor, { limit });
+    // A property type/scope change affects every record in its database. Start
+    // a bounded rebuild rather than reindexing that database in one JS turn.
+    const broadChange = batch.changes.some(c => c.dataset === "properties" && ["type", "__deleted", "database_id"].includes(c.col));
+    if (!raw && (readMeta(db, "search_index_version") !== SEARCH_INDEX_VERSION || readMeta(db, "search_seq") === null || broadChange)) {
+      db.query("DELETE FROM search_fts").run();
+      const head = (db.query("SELECT coalesce(max(seq),0) AS n FROM crdt_changes").get() as { n: number }).n;
+      raw = JSON.stringify({ stage: "documents", after: "", head } satisfies SearchRebuildState);
+    }
+    if (raw) {
+      const state = JSON.parse(raw) as SearchRebuildState;
+      const table = state.stage;
+      const rows = db.query(`SELECT id FROM ${table} WHERE __deleted = 0 AND id > ? ORDER BY id LIMIT ?`).all(state.after, limit) as { id: string }[];
+      for (const row of rows) {
+        if (state.stage === "documents") reindexDocument(db, row.id);
+        else reindexRecord(db, row.id);
+      }
+      if (rows.length === limit) state.after = rows[rows.length - 1]!.id;
+      else if (state.stage === "documents") { state.stage = "records"; state.after = ""; }
+      else {
+        writeMeta(db, "search_seq", String(state.head));
+        writeMeta(db, "search_index_version", SEARCH_INDEX_VERSION);
+        db.query("DELETE FROM meta WHERE key = 'search_rebuild'").run();
+        return { ready: false, available: true }; // catch writes made during the rebuild
+      }
+      writeMeta(db, "search_rebuild", JSON.stringify(state));
+      return { ready: false, available: true };
+    }
+    incrementalUpdate(db, limit);
+    return { ready: batch.changes.length < limit, available: true };
+  });
+}
+
+/** Async facade for a native JS-thread owner. Every database command completes
+ * before yielding; cancellation prevents access after the owner closes SQLite. */
+export async function searchIncrementally(db: DbDriver, query: string, opts: { limit?: number; batchSize?: number; signal?: AbortSignal } = {}): Promise<SearchHit[]> {
+  while (true) {
+    if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("search cancelled");
+    const step = updateSearchIndexStep(db, opts.batchSize);
+    if (step.ready) break;
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
+  return search(db, query, { limit: opts.limit, maintainIndex: false });
 }
 
 /** Force a full rebuild of the search index (maintenance / repair). */
@@ -268,10 +325,10 @@ function likeSearch(db: DbDriver, query: string, limit: number): SearchHit[] {
 export function search(
   db: DbDriver,
   query: string,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; maintainIndex?: boolean } = {},
 ): SearchHit[] {
   const limit = opts.limit ?? 20;
-  if (ensureIndex(db)) {
+  if (opts.maintainIndex === false ? ftsAvailable(db) : ensureIndex(db)) {
     try {
       const hits = ftsSearch(db, query, limit);
       if (hits.length) return hits;

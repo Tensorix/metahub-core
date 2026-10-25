@@ -499,6 +499,12 @@ export function ingestDetailed(
       try {
         if (applyChange(db, c).inserted) received++;
       } catch (e) {
+        // Advance past only recognized invalid data. Unexpected driver/native
+        // failures must roll back the batch so a caller cannot acknowledge it.
+        const message = e instanceof Error ? e.message : String(e);
+        const invalidJson = e instanceof SyntaxError;
+        const invalidConstraint = /(?:NOT NULL|UNIQUE|CHECK|FOREIGN KEY) constraint failed(?:[: ]|$)|datatype mismatch|malformed JSON|JSON path error near/i.test(message);
+        if (!invalidJson && !invalidConstraint) throw e;
         poisoned++;
         console.error(
           `[ingest] skipped a change that failed to apply (dataset=${c.dataset} col=${c.col} row=${c.row_id}): ${(e as Error).message}`,

@@ -142,3 +142,35 @@ test("rebuildSearchIndex rebuilds the index from scratch", () => {
   }
   expect(ids(db, "rebuilt")).toEqual(new Set([rec.id]));
 });
+
+test("native search rebuild checkpoints bounded pages and catches writes made between them", async () => {
+  const { updateSearchIndexStep, searchIncrementally } = await import("./search.ts");
+  const db = makeNode();
+  try {
+    for (let i = 0; i < 205; i++) createDocument(db, { title: `Page ${i}`, body: "Search across pages" });
+    expect(updateSearchIndexStep(db, 20).ready).toBe(false);
+    expect(db.query("SELECT count(*) AS n FROM search_fts").get()).toEqual({ n: 20 });
+    expect(db.query("SELECT value FROM meta WHERE key = 'search_rebuild'").get()).not.toBeNull();
+    const added = createDocument(db, { title: "Added during build", body: "newbodytoken" });
+    let yielded = false; setTimeout(() => { yielded = true; }, 0);
+    const result = await searchIncrementally(db, "newbodytoken", { batchSize: 20 });
+    expect(yielded).toBe(true);
+    expect(result.map(row => row.id)).toContain(added.id);
+    expect(db.query("SELECT value FROM meta WHERE key = 'search_rebuild'").get()).toBeNull();
+    const { dbId, propId } = withTextDb(db);
+    const record = createRecord(db, dbId, { Body: "propertytoken" });
+    expect((await searchIncrementally(db, "propertytoken", { batchSize: 20 })).map(row => row.id)).toContain(record.id);
+    updateProperty(db, propId, { type: "number" });
+    expect(await searchIncrementally(db, "propertytoken", { batchSize: 20 })).toEqual([]);
+  } finally { db.close(); }
+});
+
+test("cancelled native search never resumes against a closed database", async () => {
+  const { searchIncrementally } = await import("./search.ts");
+  const db = makeNode();
+  const abort = new AbortController();
+  const searching = searchIncrementally(db, "anything", { batchSize: 1, signal: abort.signal });
+  abort.abort(new Error("owner closed"));
+  db.close();
+  await expect(searching).rejects.toThrow("owner closed");
+});
