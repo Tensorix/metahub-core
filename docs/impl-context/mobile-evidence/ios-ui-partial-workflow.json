@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-25",
+  "device": "iPhone 18 Pro simulator",
+  "os": "iOS 27",
+  "build": "signed Debug, Metro development bundle",
+  "evidence": "Manual CUA observations followed by server API and read-only native SQLite checks",
+  "checks": [
+    {
+      "name": "Native onboarding to disposable server",
+      "result": "observed"
+    },
+    {
+      "name": "Packaged document editor edit and save",
+      "result": "observed and server verified"
+    },
+    {
+      "name": "Create native record value 123456",
+      "result": "observed and server verified"
+    },
+    {
+      "name": "Server suspended, restart, open and edit local document",
+      "result": "observed"
+    },
+    {
+      "name": "Second restart retains appended 789 line",
+      "result": "read-only native SQLite verified"
+    },
+    {
+      "name": "Server resumed, offline document edit converges",
+      "result": "server API verified",
+      "httpStatus": 200,
+      "title": "ios-test",
+      "body": "Editedinnativeeditor\n789"
+    }
+  ],
+  "notVerified": [
+    "airplane-mode Release cold launch",
+    "final record close/back interaction",
+    "native bucket enrollment and convergence",
+    "full board and attachment workflow"
+  ]
+}

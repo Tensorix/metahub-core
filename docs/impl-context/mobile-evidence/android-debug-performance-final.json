@@ -1,0 +1,73 @@
+{
+  "environment": {
+    "platform": "android",
+    "platformVersion": 36,
+    "build": "debug",
+    "runtime": "Hermes",
+    "target": "simulator/emulator",
+    "bundle": "development Metro",
+    "performanceTargets": "Measured only; no production-device threshold pass asserted"
+  },
+  "fixture": {
+    "records": 10000,
+    "documents": 1000,
+    "seedDispatchTransactionBatchSize": 10,
+    "searchIndexBatchSize": 25,
+    "scope": "service writes; not network sync ingest"
+  },
+  "phase": "complete",
+  "ingested": 11000,
+  "ingestMs": 108534.8742180001,
+  "emittedOps": 49007,
+  "searchIndexWarmupMs": 20925.46230100002,
+  "warmSearch": {
+    "samplesMs": [
+      3.18466700008139,
+      2.566041000187397,
+      2.221499999985099,
+      2.5075000000651926,
+      2.4154169999528676,
+      1.9812499999534339,
+      2.0345830000005662,
+      2.2816250000614673,
+      2.247957999818027,
+      1.817500000121072,
+      2.236041999887675,
+      2.228457999881357,
+      2.3120420000050217,
+      2.9937500001396984,
+      2.755583999911323,
+      2.582084000110626,
+      2.208917000098154,
+      1.9631669998634607,
+      2.230542000150308,
+      2.1067500000353903
+    ],
+    "p95Ms": 2.9937500001396984
+  },
+  "fullSetPagedQuery": {
+    "pages": 50,
+    "rows": 10000,
+    "totalMs": 993.3595839999616,
+    "firstPageMs": 119.31220900011249,
+    "lastPageMs": 17.218333000084385,
+    "p95PageMs": 30.512124999891967
+  },
+  "databaseReopenHomeList": {
+    "ms": 13.612167000072077,
+    "databases": 1,
+    "documentSummaries": 60,
+    "totalDocuments": 1000,
+    "scope": "SQLite reopen, schema initialization, database list and first 60 document summaries; excludes app process cold start, React render and navigation"
+  },
+  "functionalAssertions": "PASS",
+  "status": "COMPLETE",
+  "maxObservedJsTimerGapMs": {
+    "ingest": 1195.0556670001242,
+    "searchIndexWarmup": 1541.1430850001052,
+    "warmSearch": 28.82345899986103,
+    "pagedQueries": 113.58804099983536,
+    "databaseReopenHomeList": 31.436916999984533
+  },
+  "timerIntervalMs": 10
+}
