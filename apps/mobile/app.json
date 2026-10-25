@@ -11,7 +11,9 @@
       "bundleIdentifier": "com.tensorix.metahub",
       "supportsTablet": true,
       "infoPlist": {
-        "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": true },
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
         "NSLocalNetworkUsageDescription": "连接局域网内的 Metahub 服务器",
         "NSPhotoLibraryUsageDescription": "在文档中插入相册里的图片"
       }
@@ -43,12 +45,24 @@
       "expo-secure-store",
       [
         "expo-camera",
-        { "cameraPermission": "扫描服务器二维码以完成连接" }
+        {
+          "cameraPermission": "扫描服务器二维码以完成连接"
+        }
       ],
       [
         "expo-build-properties",
-        { "android": { "usesCleartextTraffic": true } }
-      ]
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          },
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ],
+      "expo-sqlite",
+      "expo-sharing",
+      "react-native-quick-crypto"
     ],
     "experiments": {
       "typedRoutes": true,

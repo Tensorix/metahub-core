@@ -1,3 +1,4 @@
+import { NativeDiagnostics } from "@/lib/diagnostics/NativeDiagnostics";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef } from "react";
@@ -66,11 +67,16 @@ function RootStack() {
           }}
         />
       </Stack.Protected>
+      <Stack.Screen name="connect" options={{ headerShown: true, title: "连接存储桶" }} />
     </Stack>
   );
 }
 
 export default function RootLayout() {
+  if (__DEV__ && process.env.EXPO_PUBLIC_MH_SELFTEST === "1") {
+    void SplashScreen.hideAsync();
+    return <NativeDiagnostics />;
+  }
   return (
     <ThemeProvider>
       <SessionProvider>

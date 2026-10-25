@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { BucketForm } from "@/components/BucketForm";
 import { ServerForm } from "@/components/ServerForm";
 import { useSessionCtx } from "@/lib/auth/session";
 import { useTheme } from "@/lib/theme";
@@ -17,7 +18,7 @@ import { fs, radii } from "@/lib/theme/tokens";
 
 export default function OnboardingScreen() {
   const router = useRouter();
-  const { connect } = useSessionCtx();
+  const { connect, error } = useSessionCtx();
   const { tokens } = useTheme();
 
   return (
@@ -49,7 +50,9 @@ export default function OnboardingScreen() {
 
           <View style={[styles.divider, { backgroundColor: tokens.line }]} />
 
+          {error ? <Text style={{ color: tokens.danger }}>{error}</Text> : null}
           <ServerForm onVerified={connect} />
+          <BucketForm onVerified={connect} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -60,7 +63,12 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { padding: 24, paddingTop: 64 },
   logo: { fontSize: 34, fontWeight: "700", textAlign: "center" },
-  subtitle: { fontSize: fs.ui, textAlign: "center", marginTop: 6, marginBottom: 28 },
+  subtitle: {
+    fontSize: fs.ui,
+    textAlign: "center",
+    marginTop: 6,
+    marginBottom: 28,
+  },
   scanBtn: {
     height: 48,
     borderRadius: radii.lg,

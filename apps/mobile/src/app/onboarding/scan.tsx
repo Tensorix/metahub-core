@@ -3,11 +3,13 @@ import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 
+import { BucketForm } from "@/components/BucketForm";
 import { verifyServer } from "@/lib/api/mobile-api";
 import { parseQrPayload } from "@/lib/auth/credentials";
 import { useSessionCtx } from "@/lib/auth/session";
@@ -21,18 +23,20 @@ export default function ScanScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const handled = useRef(false);
+  const [enroll, setEnroll] = useState<string | null>(null);
 
   // Scanning is the intent — verify and connect right here; a successful
   // connect flips the session and the Protected stack swaps to the tabs.
   const onScan = async (data: string) => {
     if (handled.current) return;
     const parsed = parseQrPayload(data);
+    if (parsed.kind === "enroll") {
+      handled.current = true;
+      setEnroll(parsed.code);
+      return;
+    }
     if (parsed.kind !== "server") {
-      setMessage(
-        parsed.kind === "enroll"
-          ? "这是存储桶接入码，App 暂不支持。请扫 WebUI 的「在手机上打开」二维码（带 ?token）"
-          : "无法识别的二维码",
-      );
+      setMessage("无法识别的二维码");
       return;
     }
     handled.current = true;
@@ -57,6 +61,25 @@ export default function ScanScreen() {
       handled.current = false;
     }
   };
+
+  if (enroll)
+    return (
+      <ScrollView
+        style={{ backgroundColor: tokens.bg }}
+        contentContainerStyle={{ padding: 24 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <BucketForm initialCode={enroll} onVerified={connect} />
+        <Pressable
+          onPress={() => {
+            setEnroll(null);
+            handled.current = false;
+          }}
+        >
+          <Text style={{ color: tokens.accent }}>重新扫描</Text>
+        </Pressable>
+      </ScrollView>
+    );
 
   if (!permission?.granted) {
     return (

@@ -7,7 +7,7 @@ import type { ComponentChild } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { S3Config } from "../../core/sync/storage.ts";
-import { encodeEnroll } from "../../core/sync/enroll.ts";
+import { encodeEnroll, mobileEnrollUrl } from "../../core/sync/enroll.ts";
 import { Icon } from "../icons.tsx";
 import { brandImage, useBrand, useBrandTone } from "../brand.tsx";
 import {
@@ -581,6 +581,7 @@ function CopyRow({ text, label, done, primary }: { text: string; label: string; 
 
 /** Phone tab: a QR (and copyable link) a phone scans to join the bucket. */
 function PhoneEnroll({ config }: { config: S3Config }) {
+  const [target, setTarget] = useState<"app" | "web">("app");
   const [shellBase, setShellBase] = useState(() => {
     try {
       return localStorage.getItem(SHELL_BASE_KEY) || location.origin;
@@ -588,7 +589,7 @@ function PhoneEnroll({ config }: { config: S3Config }) {
       return location.origin;
     }
   });
-  const url = enrollUrl(shellBase, config);
+  const url = target === "app" ? mobileEnrollUrl(config) : enrollUrl(shellBase, config);
   const onBase = (v: string) => {
     setShellBase(v);
     try {
@@ -599,16 +600,39 @@ function PhoneEnroll({ config }: { config: S3Config }) {
   };
   return (
     <>
-      <QrSvg data={url} />
-      <div class="field-label">{t("壳地址（手机访问的静态站点域名；留空用当前地址）")}</div>
-      <input
+      <label class="field-label" for="phone-enroll-target" style="display:block">{t("打开方式")}</label>
+      <select
+        id="phone-enroll-target"
         class="text-input"
-        placeholder={location.origin}
-        value={shellBase}
-        onInput={(e) => onBase((e.target as HTMLInputElement).value)}
-      />
+        value={target}
+        onChange={(e) => setTarget((e.currentTarget as HTMLSelectElement).value as "app" | "web")}
+      >
+        <option value="app">{t("Metahub 手机 App")}</option>
+        <option value="web">{t("浏览器 / PWA")}</option>
+      </select>
+      <div class="set-hint" style="margin-top:8px">
+        {target === "app"
+          ? t("请先在手机上安装 Metahub App，再用相机扫描二维码；也可把链接粘贴到 App 的连接页面。")
+          : t("用手机相机扫码，在浏览器中打开；可添加到主屏幕作为 PWA 使用。")}
+      </div>
+      <QrSvg data={url} />
+      {target === "web" && (
+        <>
+          <div class="field-label">{t("壳地址（手机访问的静态站点域名；留空用当前地址）")}</div>
+          <input
+            class="text-input"
+            placeholder={location.origin}
+            value={shellBase}
+            onInput={(e) => onBase((e.target as HTMLInputElement).value)}
+          />
+        </>
+      )}
       <CopyRow text={url} label={t("复制链接")} done={t("已复制链接")} />
-      <div class="peer-sub" style="margin-top:8px">{t("手机相机扫码打开,输入加密口令即可同步。")}</div>
+      {config.encrypt !== false && (
+        <div class="set-hint" style="margin-top:8px">
+          {t("连接后，请在手机上另行输入此存储桶的加密口令。链接和二维码不包含口令。")}
+        </div>
+      )}
     </>
   );
 }

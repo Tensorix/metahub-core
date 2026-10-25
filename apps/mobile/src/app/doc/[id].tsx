@@ -1,189 +1,103 @@
-import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
 import { useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Linking,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import { WebView } from "react-native-webview";
-
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { DocumentEditor, type DocumentEditorHandle } from "@/components/DocumentEditor";
+import { useLiveInvalidate } from "@/lib/api/hooks";
 import { useSession } from "@/lib/auth/session";
+import type { EditorHostServices } from "@/lib/editor/host";
 import { useTheme } from "@/lib/theme";
 
-/** Document editor = WebView over the server's mobile-optimized doc page.
- *  Full CM6 block editor + block-level CRDT sync for free; native rewrite of
- *  that surface is out of scope by design (see plan).
- *
- *  Auth: navigating to /?token=<tok> makes the server set a cookie and strip
- *  the token; we also pre-seed localStorage.mh_token (the key the WebUI
- *  reads) so repeat loads and cookie-jar edge cases stay authenticated. */
 export default function DocScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  return <DocumentEditor key={id} id={id} />;
+  const session = useSession();
+  return <LocalDocument key={`${session.id}:${id}`} id={id} />;
 }
-
-function DocumentEditor({ id }: { id: string }) {
+function LocalDocument({ id }: { id: string }) {
+  const session = useSession();
   const router = useRouter();
-  const { creds } = useSession();
-  const { tokens, pref } = useTheme();
-  const [loaded, setLoaded] = useState(false);
+  const navigation = useNavigation();
+  const { tokens, scheme } = useTheme();
+  const editor = useRef<DocumentEditorHandle>(null);
+  const navigating = useRef(false);
+  const [notice, setNotice] = useState("");
+  useLiveInvalidate(["documents", "doc_blocks"], () => editor.current?.refresh());
   const [error, setError] = useState<string | null>(null);
-  const webRef = useRef<WebView>(null);
-
-  const origin = creds.baseUrl;
-  const [url, setUrl] = useState(
-    () =>
-      `${origin}/?token=${encodeURIComponent(creds.token)}#/doc/${encodeURIComponent(id)}`,
-  );
-  const leave = () => {
-    if (router.canGoBack()) router.back();
-    else router.replace("/(tabs)");
-  };
-  // Strict origin compare — a prefix test would also match e.g. :51735 when
-  // the server runs on :5173.
-  const sameOrigin = (u: string): boolean => {
+  // Prevent native swipe/back/replace from removing the renderer before its
+  // latest checkpoint and SQLite mutation are accepted. React Navigation's
+  // hook is exposed through Expo Router's versioned compatibility entry point.
+  usePreventRemove(true, ({ data }) => {
+    if (navigating.current) return;
+    navigating.current = true;
+    void (async () => {
+      const result = await editor.current?.flush();
+      if (!session.isCurrent()) return;
+      if (result?.ok) navigation.dispatch(data.action);
+      else setError(result?.error || "编辑器尚未就绪，请稍后重试");
+    })().finally(() => { navigating.current = false; });
+  });
+  const host = useMemo<EditorHostServices>(() => {
+    const check = () => { if (!session.isCurrent()) throw new Error("工作区会话已结束"); };
+    const drafts = session.replica.service.drafts;
+    return {
+      isCurrent: session.isCurrent,
+      async load() {
+        check();
+        const doc = await session.client.getDocument(id);
+        check(); return { title: doc.title ?? "", body: doc.body ?? "", version: doc.version ?? null };
+      },
+      async readDraft() { check(); return drafts.readDocument(id); },
+      async checkpoint(draft) { check(); drafts.checkpointDocument(id, draft); },
+      async acknowledge(revision, version) { check(); drafts.acknowledgeDocument(id, revision, version ?? undefined); },
+      async save(snapshot) {
+        check();
+        const doc = await session.client.updateDocument(id, {
+          title: snapshot.title, body: snapshot.body,
+          ...(!snapshot.force && snapshot.version !== null ? { if_match: snapshot.version } : {}),
+        });
+        check(); void session.syncNow().catch(() => {});
+        return { version: doc.version ?? null };
+      },
+      async listTargets() {
+        check();
+        const [docs, databases] = await Promise.all([session.client.listDocuments(), session.client.listDatabases()]);
+        check();
+        return [...docs.map(doc => ({ id: doc.id, title: doc.title, kind: "doc" as const })), ...databases.map(db => ({ id: db.id, title: db.name, kind: "db" as const }))];
+      },
+      media: request => session.attachments.media(request),
+      async navigate(target) {
+        check();
+        if (target.startsWith("/blob/")) { await session.attachments.media({ action: "preview", src: target }); return; }
+        const match = /^(?:#)?\/(doc|db|rec)\/([^/?#]+)$/.exec(target);
+        if (match) {
+          const route = match[1] === "rec" ? "record" : match[1];
+          router.push(`/${route}/${encodeURIComponent(decodeURIComponent(match[2]!))}` as Parameters<typeof router.push>[0]);
+          return;
+        }
+        if (/^https?:\/\//i.test(target) || /^mailto:/i.test(target)) { await Linking.openURL(target); return; }
+        throw new Error("此链接无法在移动端打开");
+      },
+    };
+  // Session ID and resources remain stable across token refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, router, session.id, session.client, session.replica, session.isCurrent, session.attachments, session.syncNow]);
+  const downloadAttachments = async () => {
+    setNotice("正在下载附件…");
     try {
-      return new URL(u).origin === origin;
-    } catch {
-      return false;
-    }
+      const doc = await session.client.getDocument(id);
+      if (!session.isCurrent()) return;
+      const body = session.replica.service.drafts.readDocument(id)?.body ?? doc.body ?? "";
+      const sources = [...new Set(body.match(/\/blob\/[a-f0-9]{16,64}(?:\.[a-z0-9]{1,12})?/g) ?? [])];
+      for (const src of sources) { await session.attachments.cache(src); if (!session.isCurrent()) return; }
+      setNotice(`已保留 ${sources.length} 个附件，可离线打开`);
+    } catch (error) { if (session.isCurrent()) setNotice(error instanceof Error ? error.message : String(error)); }
   };
-
-  // Seed the WebUI's token + theme before its first script runs.
-  const bootstrap = useMemo(
-    () =>
-      `try {
-        localStorage.setItem("mh_token", ${JSON.stringify(creds.token)});
-        localStorage.setItem("mh-theme", ${JSON.stringify(pref)});
-      } catch (e) {}
-      true;`,
-    [creds.token, pref],
-  );
-
-  return (
-    <View style={[styles.root, { backgroundColor: tokens.bg }]}>
-      <Stack.Screen
-        options={{
-          headerShown: !loaded || !!error,
-          title: "文档",
-          headerLeft: () => (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="返回"
-              onPress={leave}
-              hitSlop={12}
-            >
-              <Text style={{ color: tokens.accent }}>返回</Text>
-            </Pressable>
-          ),
-        }}
-      />
-      <WebView
-        ref={webRef}
-        source={{ uri: url }}
-        style={[styles.web, { backgroundColor: tokens.bg }]}
-        injectedJavaScriptBeforeContentLoaded={bootstrap}
-        onLoadStart={() => {
-          setLoaded(false);
-          setError(null);
-        }}
-        onLoad={() => setLoaded(true)}
-        onError={() => {
-          setLoaded(false);
-          setError("文档加载失败，请检查网络后重试");
-        }}
-        onHttpError={({ nativeEvent }) => {
-          // Only a main-document failure replaces the page; asset errors
-          // must not cover an otherwise usable editor.
-          if (
-            nativeEvent.url.split("#")[0] !== url.split("#")[0] &&
-            nativeEvent.url.split("#")[0] !== `${origin}/`
-          )
-            return;
-          setLoaded(false);
-          setError(
-            nativeEvent.statusCode === 401 || nativeEvent.statusCode === 403
-              ? "访问凭据已失效，请返回设置更新连接令牌"
-              : `文档加载失败（${nativeEvent.statusCode}）`,
-          );
-        }}
-        // Same-origin stays in the WebView (doclinks, hash nav); the WebUI's
-        // own back arrow from a doc goes home — catch that and pop natively.
-        onShouldStartLoadWithRequest={(req) => {
-          if (sameOrigin(req.url)) return true;
-          void Linking.openURL(req.url).catch(() => {});
-          return false;
-        }}
-        onNavigationStateChange={(nav) => {
-          if (!sameOrigin(nav.url)) return;
-          const hash = nav.url.split("#")[1] ?? "";
-          // Database links escape to the native db screen…
-          const dbMatch = /^\/db\/([^/?]+)/.exec(hash);
-          if (dbMatch) {
-            router.replace(`/db/${dbMatch[1]}`);
-            return;
-          }
-          // …and "back to home" inside the WebUI pops this native screen.
-          if (loaded && !error && (hash === "/" || hash === "")) leave();
-        }}
-        // iOS inline media + keyboard behavior for the editor.
-        allowsInlineMediaPlayback
-        keyboardDisplayRequiresUserAction={false}
-        webviewDebuggingEnabled={__DEV__}
-      />
-      {!loaded || error ? (
-        <View style={[styles.loading, { backgroundColor: tokens.bg }]}>
-          {error ? (
-            <>
-              <Text
-                accessibilityRole="alert"
-                style={{ color: tokens.fg, padding: 24 }}
-              >
-                {error}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setError(null);
-                  setLoaded(false);
-                  const retryUrl = `${origin}/?token=${encodeURIComponent(creds.token)}#/doc/${encodeURIComponent(id)}`;
-                  if (retryUrl === url) webRef.current?.reload();
-                  else setUrl(retryUrl);
-                }}
-                style={{ padding: 16 }}
-              >
-                <Text style={{ color: tokens.accent }}>重试</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={leave}
-                style={{ padding: 16 }}
-              >
-                <Text style={{ color: tokens.accent }}>返回</Text>
-              </Pressable>
-            </>
-          ) : (
-            <ActivityIndicator color={tokens.accent} />
-          )}
-        </View>
-      ) : null}
-    </View>
-  );
+  const leave = () => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)"); };
+  return <View style={[styles.root, { backgroundColor: tokens.bg }]}>
+    <Stack.Screen options={{ title: "文档", headerBackButtonMenuEnabled: false, headerRight: () => <Pressable accessibilityRole="button" onPress={() => void downloadAttachments()}><Text style={{ color: tokens.accent }}>离线附件</Text></Pressable>, headerLeft: () => <Pressable accessibilityRole="button" accessibilityLabel="返回" hitSlop={12} onPress={leave}><Text style={{ color: tokens.accent }}>返回</Text></Pressable> }} />
+    {notice && <Text role="status" style={{ color: tokens.fg, padding: 12 }}>{notice}</Text>}
+    {error && <View style={{ padding: 12, backgroundColor: tokens.bg }}><Text accessibilityRole="alert" style={{ color: tokens.fg }}>{error}</Text><Pressable accessibilityRole="button" onPress={() => { setError(null); editor.current?.retry(); }}><Text style={{ color: tokens.accent, paddingTop: 8 }}>恢复草稿并重试</Text></Pressable></View>}
+    <DocumentEditor ref={editor} documentId={id} sessionId={String(session.id)} host={host} dark={scheme === "dark"} onError={setError} onState={state => { if (state === "saved") setError(null); }} />
+  </View>;
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  web: { flex: 1 },
-  loading: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});
+const styles = StyleSheet.create({ root: { flex: 1 } });

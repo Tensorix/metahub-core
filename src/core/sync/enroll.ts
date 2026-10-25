@@ -98,3 +98,8 @@ export function decodeEnroll(tokenOrUrl: string): EnrollPayload {
       typeof p.virtualHostedStyle === "boolean" ? p.virtualHostedStyle : undefined,
   };
 }
+
+/** Open the native app with the same access-only payload used by the WebUI. */
+export function mobileEnrollUrl(config: EnrollPayload): string {
+  return `metahub://connect?enroll=${encodeEnroll(config)}`;
+}

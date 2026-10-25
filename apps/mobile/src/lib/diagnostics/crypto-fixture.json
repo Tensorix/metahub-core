@@ -1,0 +1,15 @@
+{
+  "source": "Bun 1.3.14",
+  "passphrase": "interop-test-only🔑",
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "text": "Bun → native 互通 fixture",
+  "envelope": {
+    "v": 1,
+    "kdf": "PBKDF2-SHA256",
+    "iter": 600000,
+    "salt": "EkExQBEMYenVTSd59j8bJg==",
+    "wrap": "AES-GCM",
+    "wrapped_key": "uRRkCYxcoJky/8wLJnbr8vxgRFuGHtDH8lhlrhqvlL7yj/k8jf7WM2x4G8gRdKrxPYm+afQZy6QsZ+jP"
+  },
+  "payload": "V9WMCu4bAHPStsfk9hXc+dJASkoqiAYu8pleBpevMo5W6wHfZwfuSNbMyLwhOZitLIwdnoWeaOUK+EWMGXg4v0oyseocytMPvY+hlSxE"
+}
