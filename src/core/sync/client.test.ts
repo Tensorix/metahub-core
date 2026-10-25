@@ -123,3 +123,88 @@ test("rows pulled from B still get pushed to C afterwards (cursor is per-peer)",
 
   expect(pushedToC.filter((c) => c.node_id === "remote")).toHaveLength(3);
 });
+
+test("bounded pushes drain every row before reporting no pending push", async () => {
+  const db = makeDb("local");
+  ingest(db, remoteChanges(8));
+  const batches: Change[][] = [];
+  const transport = (async (_url: unknown, init?: RequestInit) => {
+    const request = JSON.parse(init!.body as string);
+    expect(new Headers(init!.headers).get("authorization")).toBe("Bearer grant");
+    expect(request.limit).toBe(2);
+    batches.push(request.changes);
+    return Response.json({ node_id: "peer", changes: [], cursor: 0 });
+  }) as typeof fetch;
+  const pending: boolean[] = [];
+  for (let round = 0; round < 3; round++) {
+    const result = await syncWithPeer(db, "http://peer", {
+      pushLimit: 3, pullLimit: 2, token: "grant", fetch: transport,
+    });
+    pending.push(result.pendingPush!);
+  }
+  expect(batches.map((b) => b.length)).toEqual([3, 3, 2]);
+  expect(batches.flat().map((c) => c.row_id)).toEqual(remoteChanges(8).map((c) => c.row_id));
+  expect(pending).toEqual([true, true, false]);
+  db.close();
+});
+
+test("bounded push does not acknowledge deferred local rows while pulling", async () => {
+  const db = makeDb("local");
+  ingest(db, remoteChanges(5));
+  const incoming = [{ ...remoteChanges(1)[0]!, row_id: "other", node_id: "another" }];
+  stubFetch(incoming, 1);
+  const result = await syncWithPeer(db, "http://peer", { pushLimit: 2 });
+  const peer = db.query("SELECT push_cursor FROM peers").get() as { push_cursor: number };
+  expect(peer.push_cursor).toBe(2);
+  expect(result.pendingPush).toBe(true);
+  expect(changesAfterSeq(db, peer.push_cursor).changes).toHaveLength(4);
+  db.close();
+});
+
+test("lost response replays a bounded batch safely without advancing cursor early", async () => {
+  const db = makeDb("local");
+  const remote = makeDb("peer");
+  ingest(db, remoteChanges(5));
+  const delivered: number[] = [];
+  let loseResponse = true;
+  const transport = (async (_url: unknown, init?: RequestInit) => {
+    const request = JSON.parse(init!.body as string);
+    delivered.push(ingest(remote, request.changes));
+    if (loseResponse) {
+      loseResponse = false;
+      throw new Error("response lost");
+    }
+    return Response.json({ node_id: "peer", changes: [], cursor: 0 });
+  }) as typeof fetch;
+  await expect(syncWithPeer(db, "http://peer", { pushLimit: 3, fetch: transport })).rejects.toThrow("response lost");
+  expect(db.query("SELECT * FROM peers").all()).toHaveLength(0);
+  expect((await syncWithPeer(db, "http://peer", { pushLimit: 3, fetch: transport })).pendingPush).toBe(true);
+  expect((await syncWithPeer(db, "http://peer", { pushLimit: 3, fetch: transport })).pendingPush).toBe(false);
+  expect(delivered).toEqual([3, 0, 2]);
+  expect(changesAfterSeq(remote, 0).changes).toHaveLength(5);
+  db.close();
+  remote.close();
+});
+
+test("timeout bounds response decoding and leaves cursors unchanged", async () => {
+  const db = makeDb("local");
+  const transport = (async () => ({ ok: true, json: () => new Promise(() => {}) })) as unknown as typeof fetch;
+  await expect(syncWithPeer(db, "http://peer", { fetch: transport, timeoutMs: 10 })).rejects.toThrow("timed out");
+  expect(db.query("SELECT * FROM peers").all()).toHaveLength(0);
+  db.close();
+});
+
+test("session cancellation prevents a late response from mutating replica", async () => {
+  const db = makeDb("local");
+  const controller = new AbortController();
+  let respond!: (response: Response) => void;
+  const transport = (() => new Promise<Response>((resolve) => { respond = resolve; })) as typeof fetch;
+  const round = syncWithPeer(db, "http://peer", { fetch: transport, signal: controller.signal });
+  controller.abort(new Error("session disposed"));
+  await expect(round).rejects.toThrow("session disposed");
+  respond(Response.json({ node_id: "peer", changes: remoteChanges(2), cursor: 2 }));
+  await Promise.resolve();
+  expect(changesAfterSeq(db, 0).changes).toHaveLength(0);
+  expect(db.query("SELECT * FROM peers").all()).toHaveLength(0);
+  db.close();
+});

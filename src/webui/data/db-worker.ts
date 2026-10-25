@@ -14,11 +14,11 @@
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { WasmDriver, type Oo1Db } from "./wasm-driver.ts";
 import type { DbDriver } from "../../core/driver.ts";
+import { createReplicaService, type ReplicaService } from "../../core/replica/service.ts";
+import { replicaRpcOps } from "../../core/replica/rpc.ts";
 import { initSchema } from "../../core/schema-init.ts";
 import {
   getNodeId,
-  setNodeLabel,
-  displayNodes,
   describeSelf,
   type NodePlatform,
 } from "../../core/node.ts";
@@ -57,58 +57,9 @@ import {
   verifyBytes,
 } from "./blob-store.ts";
 import { PAIR_PATH, type PairRequest, type PairResponse } from "../../core/sync/protocol.ts";
-import {
-  listDatabases,
-  createDatabase,
-  updateDatabase,
-  duplicateDatabase,
-  deleteDatabase,
-} from "../../core/databases.ts";
-import {
-  listProperties,
-  addProperty,
-  updateProperty,
-  setPropertyWidth,
-  removeProperty,
-  renameSelectOption,
-  removeSelectOption,
-  type PropType,
-  type PropertyConfig,
-} from "../../core/properties.ts";
-import {
-  listRecords,
-  getRecord,
-  createRecord,
-  updateRecord,
-  moveRecord,
-  deleteRecord,
-} from "../../core/records.ts";
-import {
-  listDocuments,
-  getDocument,
-  createDocument,
-  updateDocument,
-  documentVersion,
-  moveDocument,
-  duplicateDocument,
-  deleteDocument,
-} from "../../core/documents.ts";
-import {
-  listDocumentRevisions,
-  documentAtVersion,
-  revertDocument,
-  listRecordRevisions,
-  recordAtVersion,
-  recordFieldHistory,
-  revertRecord,
-  listPropertyRevisions,
-  revertProperty,
-  listDatabaseActivity,
-} from "../../core/history.ts";
 import { listAuditEntries, auditEntryDetail, revertChangeGroup } from "../../core/audit.ts";
 import { repairClock } from "../../core/integrity.ts";
 import { search } from "../../core/search.ts";
-import { lookupCandidates } from "../../core/resolve.ts";
 import {
   resolveSite,
   resolveSiteFileRow,
@@ -203,6 +154,15 @@ const PULL_LIMIT = 2000;
 
 const origin = self.location.origin;
 let db: DbDriver | null = null;
+let coreReplica: ReplicaService | null = null;
+function requireCoreReplica(): ReplicaService {
+  const driver = requireDb();
+  if (coreReplica?.db !== driver) {
+    coreReplica?.dispose();
+    coreReplica = createReplicaService(driver);
+  }
+  return coreReplica;
+}
 let status: ReplicaStatus = { state: "booting", paired: false, node: null };
 
 function post(msg: RpcResponse | WorkerEvent): void {
@@ -990,16 +950,8 @@ const ops: Record<string, Op> = {
     return renewShareAction(d, slug, undefined, opts);
   },
 
-  // databases
-  listDatabases: () => listDatabases(db!),
-  createDatabase: (b: { name: string; icon?: string }) => createDatabase(db!, b),
-  updateDatabase: (id: string, b: { name?: string; icon?: string | null }) =>
-    updateDatabase(db!, id, b),
-  duplicateDatabase: (id: string, b?: { name?: string; icon?: string }) =>
-    duplicateDatabase(db!, id, b ?? {}),
-  deleteDatabase: (id: string) => ({ ok: deleteDatabase(db!, id) }),
-  listDatabaseActivity: (dbId: string, limit?: number) =>
-    listDatabaseActivity(db!, dbId, { limit }),
+  // Portable CRUD dispatch is shared with the native SQLite owner.
+  ...replicaRpcOps(requireCoreReplica),
 
   // audit
   repairClock: () => repairClock(db!),
@@ -1007,75 +959,6 @@ const ops: Record<string, Op> = {
     listAuditEntries(db!, opts ?? {}),
   auditEntryDetail: (txn: string) => auditEntryDetail(db!, txn),
   revertChangeGroup: (txn: string) => revertChangeGroup(db!, txn),
-
-  // properties
-  listProperties: (dbId: string) => listProperties(db!, dbId),
-  addProperty: (dbId: string, b: { name: string; type: PropType; config?: PropertyConfig }) =>
-    addProperty(db!, dbId, b),
-  updateProperty: (
-    id: string,
-    b: { name?: string; type?: PropType; config?: PropertyConfig; position?: number },
-  ) => updateProperty(db!, id, b),
-  setPropertyWidth: (id: string, width: number) => setPropertyWidth(db!, id, width),
-  removeProperty: (id: string) => ({ ok: removeProperty(db!, id) }),
-  renameSelectOption: (id: string, from: string, to: string) =>
-    renameSelectOption(db!, id, from, to),
-  removeSelectOption: (id: string, name: string) => removeSelectOption(db!, id, name),
-  listPropertyRevisions: (id: string) => listPropertyRevisions(db!, id),
-  revertProperty: (id: string, to: string) => revertProperty(db!, id, to),
-
-  // records
-  listRecords: (dbId: string, opts?: { sort?: string; limit?: number }) =>
-    listRecords(db!, dbId, opts ?? {}),
-  createRecord: (dbId: string, values: Record<string, unknown>) =>
-    createRecord(db!, dbId, values),
-  getRecord: (id: string) => {
-    const rec = getRecord(db!, id);
-    if (!rec) throw new MhError("not_found", `no such record: ${id}`);
-    return rec;
-  },
-  updateRecord: (id: string, values: Record<string, unknown>) => updateRecord(db!, id, values),
-  moveRecord: (id: string, target: string, where: "before" | "after") =>
-    moveRecord(db!, id, target, where),
-  deleteRecord: (id: string) => ({ ok: deleteRecord(db!, id) }),
-  listRecordRevisions: (id: string) => listRecordRevisions(db!, id),
-  recordAtVersion: (id: string, version: string) => recordAtVersion(db!, id, version),
-  recordFieldHistory: (id: string, prop: string) => recordFieldHistory(db!, id, prop),
-  revertRecord: (id: string, to: string) => revertRecord(db!, id, to),
-
-  // documents
-  listDocuments: (filter?: { database_id?: string; parent_id?: string }) =>
-    listDocuments(db!, filter ?? {}),
-  createDocument: (b: {
-    title: string;
-    body?: string;
-    database_id?: string;
-    parent_id?: string;
-  }) => createDocument(db!, b),
-  getDocument: (id: string) => {
-    const doc = getDocument(db!, id);
-    if (!doc) throw new MhError("not_found", `no such document: ${id}`);
-    return { ...doc, version: documentVersion(db!, doc.id) };
-  },
-  updateDocument: (
-    id: string,
-    fields: { title?: string; body?: string; parent_id?: string | null },
-    ifMatch?: string,
-  ) => {
-    const doc = updateDocument(db!, id, fields, { ifMatch });
-    return { ...doc, version: documentVersion(db!, doc.id) };
-  },
-  duplicateDocument: (id: string, b?: { title?: string; parent_id?: string | null }) => {
-    const doc = duplicateDocument(db!, id, { title: b?.title, parentId: b?.parent_id });
-    return { ...doc, version: documentVersion(db!, doc.id) };
-  },
-  moveDocument: (id: string, target: string, where: "before" | "after" | "into") =>
-    moveDocument(db!, id, target, where),
-  listDocumentRevisions: (id: string) => listDocumentRevisions(db!, id),
-  documentAtVersion: (id: string, version: string) => documentAtVersion(db!, id, version),
-  revertDocument: (id: string, to: string, ifMatch?: string) =>
-    revertDocument(db!, id, to, { ifMatch }),
-  deleteDocument: (id: string) => ({ ok: deleteDocument(db!, id) }),
 
   // sites (offline serving: the SW asks for raw rows). blob-encoded rows pass
   // through with content = the blob hash — the SW resolves the bytes itself
@@ -1244,16 +1127,8 @@ const ops: Record<string, Op> = {
     return { ok: true };
   },
 
-  // nodes + search
-  nodes: () => displayNodes(db!),
-  setNodeLabel: (label: string | null, nodeId?: string) => {
-    const d = requireDb();
-    const id = nodeId ?? getNodeId(d);
-    setNodeLabel(d, label, id);
-    return displayNodes(d).find((n) => n.node_id === id)!;
-  },
+  // Full search runs on this dedicated worker; native uses bounded indexing.
   search: (text: string, limit?: number) => search(db!, text, { limit }),
-  resolve: (ref: string, limit?: number) => lookupCandidates(db!, ref, { limit }),
 };
 
 /** Ops that change data: a successful call schedules a push to the server. */

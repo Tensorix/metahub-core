@@ -18,6 +18,7 @@
 // no storage migration.
 
 import type { DbDriver } from "../driver.ts";
+import { withSyncBudget } from "./transport.ts";
 import { getNodeId } from "../node.ts";
 import { changesAfterSeq, ingestDetailed, CHANGE_SELECT, type Change } from "../crdt.ts";
 import { isElectedPublisher } from "./publisher-lease.ts";
@@ -120,12 +121,13 @@ export interface StorageClient {
    *  cheaply — callers must tolerate a backend that ignores it and returns full
    *  keys instead. */
   list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]>;
-  get(key: string): Promise<Uint8Array | null>;
+  get(key: string, options?: { maxBytes?: number }): Promise<Uint8Array | null>;
   put(key: string, body: Uint8Array, opts?: StoragePutOpts): Promise<void>;
   del(key: string): Promise<void>;
 }
 
-type StorageClientFactory = (config: S3Config) => StorageClient;
+export interface StorageClientOptions { signal?: AbortSignal }
+type StorageClientFactory = (config: S3Config, options?: StorageClientOptions) => StorageClient;
 let factory: StorageClientFactory | null = null;
 
 /** Register this runtime's S3 client builder (see the per-runtime impls). */
@@ -133,10 +135,10 @@ export function setStorageClientFactory(f: StorageClientFactory): void {
   factory = f;
 }
 
-export function storageClientFor(config: S3Config): StorageClient {
+export function storageClientFor(config: S3Config, options?: StorageClientOptions): StorageClient {
   if (!factory)
     throw new MhError("network", "no S3 storage client is registered for this runtime");
-  return factory(config);
+  return factory(config, options);
 }
 
 /** Open a bucket's CORS for browser origins (PutBucketCors). Same runtime-adapter
@@ -221,11 +223,26 @@ function ab(u: Uint8Array): ArrayBuffer {
   return out.buffer;
 }
 
+/** Runtime adapter for gzip; the wire format stays JSONL → gzip → AES-GCM. */
+export interface StorageCompressionCodec {
+  gzip(bytes: Uint8Array): Promise<Uint8Array>;
+  gunzip(bytes: Uint8Array): Promise<Uint8Array>;
+}
+
+let compressionCodec: StorageCompressionCodec | null = null;
+
+/** Native runtimes install a codec before syncing; null restores web streams. */
+export function setStorageCompressionCodec(codec: StorageCompressionCodec | null): void {
+  compressionCodec = codec;
+}
+
 async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
+  if (compressionCodec) return compressionCodec.gzip(bytes);
   const stream = new Response(ab(bytes)).body!.pipeThrough(new CompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
+  if (compressionCodec) return compressionCodec.gunzip(bytes);
   const stream = new Response(ab(bytes)).body!.pipeThrough(new DecompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
@@ -240,14 +257,29 @@ async function encodeSegment(changes: Change[], key: Uint8Array | null): Promise
   return key ? encryptBytes(key, gz) : gz;
 }
 
-async function decodeSegment(bytes: Uint8Array, key: Uint8Array | null): Promise<Change[]> {
+async function decodeSegment(bytes: Uint8Array, key: Uint8Array | null, opts: { batchSize?: number; signal?: AbortSignal } = {}): Promise<Change[]> {
+  const checkActive = () => { if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("sync request aborted"); };
   const gz = key ? await decryptBytes(key, bytes) : bytes;
+  checkActive();
   const jsonl = new TextDecoder().decode(await gunzip(gz));
+  checkActive();
   if (!jsonl) return [];
-  return jsonl
-    .split("\n")
-    .filter((l) => l.length > 0)
-    .map((l) => JSON.parse(l) as Change);
+  const changes: Change[] = [];
+  let start = 0;
+  let lines = 0;
+  // Avoid split/map over a whole-hub snapshot on Hermes. Parsing and ingestion
+  // each yield in bounded batches; no command transaction spans an await.
+  while (start < jsonl.length) {
+    const end = jsonl.indexOf("\n", start);
+    const line = jsonl.slice(start, end < 0 ? jsonl.length : end);
+    if (line) changes.push(JSON.parse(line) as Change);
+    start = end < 0 ? jsonl.length : end + 1;
+    if (opts.batchSize && ++lines % opts.batchSize === 0 && start < jsonl.length) {
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      checkActive();
+    }
+  }
+  return changes;
 }
 
 function masterKeyOf(config: S3Config): Uint8Array | null {
@@ -274,22 +306,46 @@ const blobsKey = (base: string, hash: string) => `${base}/blobs/${hash}`;
 
 /** Upload a blob's bytes to the bucket (idempotent via If-None-Match). Returns
  *  true when actually written, false when the object already existed. */
+export interface BucketBlobOptions {
+  signal?: AbortSignal;
+  /** Limit plaintext attachment size; encryption overhead is accounted separately. */
+  maxBytes?: number;
+}
+function blobLimit(options: BucketBlobOptions): number | undefined {
+  if (options.maxBytes != null && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0 || options.maxBytes > Number.MAX_SAFE_INTEGER - 28))
+    throw new RangeError("blob maxBytes must be a nonnegative safe integer");
+  return options.maxBytes;
+}
+function checkBlobActive(signal: AbortSignal): void {
+  if (signal.aborted) throw signal.reason ?? new Error("blob transfer aborted");
+}
+function checkBlobSize(bytes: Uint8Array, maxBytes?: number): void {
+  if (maxBytes != null && bytes.byteLength > maxBytes) throw new MhError("invalid_input", "Attachment exceeds the size limit");
+}
 export async function putBucketBlob(
   config: S3Config,
   hash: string,
   bytes: Uint8Array,
+  options: BucketBlobOptions = {},
 ): Promise<boolean> {
-  const client = storageClientFor(config);
-  const key = blobsKey(basePrefix(config.prefix), hash);
-  const mk = masterKeyOf(config);
-  const body = mk ? await encryptBytes(mk, bytes) : bytes;
-  try {
-    await client.put(key, body, { ifNoneMatch: true, contentType: "application/octet-stream" });
-    return true;
-  } catch (e) {
-    if (errorCode(e) === "conflict") return false; // already present
-    throw e;
-  }
+  const maxBytes = blobLimit(options);
+  checkBlobSize(bytes, maxBytes);
+  return withSyncBudget(async (signal) => {
+    const client = storageClientFor(config, { signal });
+    const key = blobsKey(basePrefix(config.prefix), hash);
+    const mk = masterKeyOf(config);
+    const body = mk ? await encryptBytes(mk, bytes) : bytes;
+    checkBlobActive(signal);
+    try {
+      await client.put(key, body, { ifNoneMatch: true, contentType: "application/octet-stream" });
+      checkBlobActive(signal);
+      return true;
+    } catch (e) {
+      checkBlobActive(signal);
+      if (errorCode(e) === "conflict") return false; // already present
+      throw e;
+    }
+  }, undefined, options.signal);
 }
 
 /** Every blob hash the bucket durably holds — one paginated LIST of the `blobs/`
@@ -310,12 +366,22 @@ export async function listBucketBlobHashes(config: S3Config): Promise<Set<string
 }
 
 /** Fetch a blob's bytes from the bucket, or null if absent. */
-export async function getBucketBlob(config: S3Config, hash: string): Promise<Uint8Array | null> {
-  const client = storageClientFor(config);
-  const obj = await client.get(blobsKey(basePrefix(config.prefix), hash));
-  if (!obj) return null;
-  const mk = masterKeyOf(config);
-  return mk ? decryptBytes(mk, obj) : obj;
+export async function getBucketBlob(config: S3Config, hash: string, options: BucketBlobOptions = {}): Promise<Uint8Array | null> {
+  const maxBytes = blobLimit(options);
+  return withSyncBudget(async (signal) => {
+    const client = storageClientFor(config, { signal });
+    const mk = masterKeyOf(config);
+    // AES-GCM adds a 12-byte IV and 16-byte authentication tag to the wire body.
+    const wireLimit = maxBytes == null ? undefined : maxBytes + (mk ? 28 : 0);
+    const obj = await client.get(blobsKey(basePrefix(config.prefix), hash), { maxBytes: wireLimit });
+    checkBlobActive(signal);
+    if (!obj) return null;
+    checkBlobSize(obj, wireLimit); // Guard custom clients that do not honor the limit.
+    const bytes = mk ? await decryptBytes(mk, obj) : obj;
+    checkBlobActive(signal);
+    checkBlobSize(bytes, maxBytes);
+    return bytes;
+  }, undefined, options.signal);
 }
 
 /** Short content hash (hex) for snapshot keying — runtime-agnostic (WebCrypto). */
@@ -666,6 +732,15 @@ export async function publishSnapshot(
 // ---- one sync round -------------------------------------------------------------
 
 export interface StorageSyncOpts {
+  signal?: AbortSignal;
+  /** Limit own ops uploaded per round. Desktop callers retain the full-push default. */
+  pushLimit?: number;
+  /** Yield between these bounded synchronous ingest transactions. */
+  ingestBatchSize?: number;
+  /** Bound snapshot/segment downloads per round; omitted keeps desktop full pulls. */
+  pullObjectLimit?: number;
+  /** Notify a local owner after each committed ingestion chunk. */
+  onIngest?: () => void;
   /** Publisher-only: publish a snapshot + truncate once this node's own segment
    *  count reaches this. Default 200 — high enough that typical use rarely hits
    *  it, low enough to keep the bucket bounded under heavy publisher use. */
@@ -755,6 +830,32 @@ export async function syncWithStorage(
   config: S3Config,
   opts: StorageSyncOpts = {},
 ): Promise<SyncResult> {
+  const checkActive = () => { if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("sync request aborted"); };
+  checkActive();
+  for (const value of [opts.pushLimit, opts.ingestBatchSize, opts.pullObjectLimit])
+    if (value != null && (!Number.isSafeInteger(value) || value <= 0)) throw new RangeError("storage batch sizes must be positive integers");
+  // Guard after every transport completion, even when a custom client ignores
+  // cancellation. No late completion can write to a disposed replica.
+  const transport = client;
+  client = {
+    list: async (...args) => { checkActive(); const result = await withSyncBudget(() => transport.list(...args), undefined, opts.signal); checkActive(); return result; },
+    get: async (...args) => { checkActive(); const result = await withSyncBudget(() => transport.get(...args), undefined, opts.signal); checkActive(); return result; },
+    put: async (...args) => { checkActive(); await withSyncBudget(() => transport.put(...args), undefined, opts.signal); checkActive(); },
+    del: async (...args) => { checkActive(); await withSyncBudget(() => transport.del(...args), undefined, opts.signal); checkActive(); },
+  };
+  const decode = (bytes: Uint8Array) => withSyncBudget(() => decodeSegment(bytes, masterKeyOf(config), { batchSize: opts.ingestBatchSize, signal: opts.signal }), undefined, opts.signal);
+  const ingest = async (changes: Change[]) => {
+    let received = 0;
+    const size = opts.ingestBatchSize ?? Math.max(1, changes.length);
+    for (let offset = 0; offset < changes.length; offset += size) {
+      checkActive();
+      received += collectSkew(skewed, ingestDetailed(db, changes.slice(offset, offset + size)));
+      opts.onIngest?.();
+      if (offset + size < changes.length) await new Promise<void>(resolve => setTimeout(resolve, 0));
+    }
+    checkActive();
+    return received;
+  };
   pruneExpiredIntentReceipts(db);
   const node = getNodeId(db);
   const key = masterKeyOf(config);
@@ -762,7 +863,7 @@ export async function syncWithStorage(
 
   // PUSH: our own un-uploaded ops → one new segment + HEAD pointer.
   const pushCursor = getPushCursor(db, peerUrl);
-  const batch = changesAfterSeq(db, pushCursor, { onlyNode: node });
+  const batch = changesAfterSeq(db, pushCursor, { onlyNode: node, limit: opts.pushLimit });
   let pushed = 0;
   let pendingPush = false;
   if (batch.changes.length === 0) {
@@ -788,6 +889,7 @@ export async function syncWithStorage(
       });
       setPushCursor(db, peerUrl, batch.cursor);
       pushed = batch.changes.length;
+      pendingPush = changesAfterSeq(db, batch.cursor, { onlyNode: node, limit: 1 }).changes.length > 0;
     } else {
       pendingPush = true;
     }
@@ -800,12 +902,13 @@ export async function syncWithStorage(
   // runs when opts.publish, and a publisher always pulls, so it never sees [].
   let snapKeys: string[] = [];
   let pulled = 0;
+  const pullBudget = { remaining: opts.pullObjectLimit ?? Infinity, pending: false };
   const skewed: Record<string, number> = {};
   if (opts.pull ?? true) {
     snapKeys = (await client.list(snapshotRoot(base)))
       .map((o) => o.key)
       .filter((k) => k.endsWith(".snap"));
-    pulled += await pullSnapshots(db, peerUrl, snapKeys, client, key, skewed);
+    pulled += await pullSnapshots(db, peerUrl, snapKeys, client, key, skewed, ingest, decode, pullBudget);
 
     // …then each other node's new segments.
     for (const remote of await listRemoteNodes(client, base)) {
@@ -823,13 +926,17 @@ export async function syncWithStorage(
         (o) => o.key.endsWith(".seg"),
       );
       for (const seg of segs) {
+        if (pullBudget.remaining <= 0) { pullBudget.pending = true; break; }
+        pullBudget.remaining--;
         const bytes = await client.get(seg.key);
-        if (!bytes) continue;
-        const changes = await decodeSegment(bytes, key);
+        // A disappearing object can be concurrent GC. Retry from this cursor
+        // so a newer snapshot is read before later segments are acknowledged.
+        if (!bytes) throw new MhError("network", "Storage segment disappeared during synchronization");
+        const changes = await decode(bytes);
         // Count only changes NEW to our oplog (ingest's return), not the segment's
         // raw size — a re-read of already-known data is not sync progress and must
         // not keep the auto-sync backoff (server.ts) flagged "busy".
-        pulled += collectSkew(skewed, ingestDetailed(db, changes));
+        pulled += await ingest(changes);
         setStorageCursor(db, peerUrl, remote, seg.key);
       }
     }
@@ -885,7 +992,7 @@ export async function syncWithStorage(
   }
 
   const warnings = skewWarnings(peerUrl, skewed);
-  return { pushed, pulled, pendingPush, ...(warnings.length ? { warnings } : {}) };
+  return { pushed, pulled, pendingPush, pendingPull: pullBudget.pending, ...(warnings.length ? { warnings } : {}) };
 }
 
 /** Ingest only the snapshots we don't already cover, then prune the consumed set
@@ -904,6 +1011,9 @@ async function pullSnapshots(
   client: StorageClient,
   key: Uint8Array | null,
   skewed: Record<string, number> = {},
+  ingest?: (changes: Change[]) => Promise<number>,
+  decode?: (bytes: Uint8Array) => Promise<Change[]>,
+  budget = { remaining: Infinity, pending: false },
 ): Promise<number> {
   if (present.length === 0) return 0;
   const consumed = getSnapshotConsumed(db, peerUrl);
@@ -911,6 +1021,8 @@ async function pullSnapshots(
   let pulled = 0;
   for (const k of [...present].sort().reverse()) {
     if (consumed.has(k)) continue;
+    if (budget.remaining <= 0) { budget.pending = true; break; }
+    budget.remaining--;
     // Read the small frontier sidecar. If our local frontier already dominates
     // this snapshot we hold every winner in it → skip the whole-hub body GET.
     const metaBytes = await client.get(vcKey(k));
@@ -920,14 +1032,14 @@ async function pullSnapshots(
       continue;
     }
     const bytes = await client.get(k);
-    if (!bytes) continue;
-    const changes = await decodeSegment(bytes, key);
+    if (!bytes) throw new MhError("network", "Storage snapshot disappeared during synchronization");
+    const changes = decode ? await decode(bytes) : await decodeSegment(bytes, key);
     // A whole-hub snapshot mostly carries data we already hold; count only the
     // rows new to our oplog (ingest's return), not the snapshot's full size, so a
     // puller that's barely behind doesn't report a huge false "pulled" that pins
     // the auto-sync backoff at full cadence. The frontier advance below still
     // walks all changes (idempotent max).
-    pulled += collectSkew(skewed, ingestDetailed(db, changes));
+    pulled += ingest ? await ingest(changes) : collectSkew(skewed, ingestDetailed(db, changes));
     consumed.add(k);
     for (const c of changes)
       if (!local[c.node_id] || c.hlc > local[c.node_id]!) local[c.node_id] = c.hlc;
