@@ -51,8 +51,10 @@ Existing CRDT and whole-meta.views LWW semantics retained. No field type convers
 
 ## Remaining execution gates
 
-- [ ] Enter the existing bucket passphrase in the native connection page; verify native initial hydration, offline edits and bidirectional bucket convergence. The generated QR/link is private and outside Git.
-- [ ] Verify app link opening and final record close/back flush on iOS; recover DeviceHub UI access.
+- [x] Join the existing real bucket on the iOS simulator through the native invitation and recovery-code UI; verify initial hydration, content equality with desktop and Release restart persistence. The generated QR/link remains private and outside Git.
+- [ ] Verify offline edits and bidirectional business-data/attachment convergence against the real bucket.
+- [x] Verify native invitation opening and usable Home/Search/Settings tabs on iOS 27; DeviceHub UI access recovered.
+- [ ] Verify final record close/back flush in native UI.
 - [ ] Complete native board, relation, attachment, preview and process-kill workflows on both platforms; restore Android UI automation access.
 - [ ] Run release airplane-mode cold launch and real-device performance measurements.
 - [ ] Diagnose remaining >100ms timer gaps and measure network ingest of at least 20,000 queued operations.

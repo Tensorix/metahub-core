@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-25",
+  "platform": "iOS",
+  "device": "iPhone 18 Pro simulator",
+  "os": "iOS 27.0",
+  "build": "signed standalone Release",
+  "transport": "existing encrypted S3-compatible bucket",
+  "unlock": "existing recovery-code protocol; no key envelope changes",
+  "verification": {
+    "nativeInvitationOpened": true,
+    "credentialsPrefilled": true,
+    "nativeRecoveryVerified": true,
+    "initialHydrationComplete": true,
+    "settingsShowsSavedAndSynchronized": true,
+    "releaseProcessRestartRetainedWorkspace": true,
+    "localSearch": true,
+    "packagedDocumentEditorOpenedExistingBody": true,
+    "backNavigationRetainedSearch": true,
+    "homeSearchSettingsTabsAccessible": true
+  },
+  "activeCounts": {
+    "databases": 6,
+    "records": 44,
+    "documents": 184,
+    "properties": 34
+  },
+  "canonicalContentMatchesDesktop": {
+    "databases": true,
+    "properties": true,
+    "records": true,
+    "documents": true,
+    "doc_blocks": true
+  },
+  "checks": {
+    "bunTests": 240,
+    "bunTestFiles": 28,
+    "bunAssertions": 2861,
+    "typecheck": "pass",
+    "lint": "pass",
+    "releaseBuild": "pass"
+  },
+  "limitations": [
+    "Simulator verification, not physical-device performance",
+    "No airplane-mode cold-start claim",
+    "No new business data authored in this real bucket during this check",
+    "Bidirectional user edits, board mutations, attachments and fault injection remain open",
+    "Android real-bucket native UI acceptance remains open"
+  ]
+}
