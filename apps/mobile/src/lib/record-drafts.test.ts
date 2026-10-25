@@ -70,3 +70,91 @@ describe("record drafts", () => {
     drafts.reconcile({ a: "saved" }); expect(drafts.fields.has("a")).toBe(false);
   });
 });
+
+describe("record navigation flush", () => {
+  const prepare = (id: string, value: unknown) => id === "number" ? parseNumberDraft(String(value ?? "")) : value;
+
+  test("submits unblurred text and parses number drafts before allowing departure", async () => {
+    const calls: [string, unknown][] = [];
+    const drafts = new RecordDrafts(async (id, value) => { calls.push([id, value]); }, () => {});
+    drafts.stage("text", "latest typing"); drafts.stage("number", "12.5");
+    expect(await drafts.flush(prepare)).toEqual({ ok: true });
+    expect(calls).toEqual([["text", "latest typing"], ["number", 12.5]]);
+    expect(drafts.dirty).toBe(false);
+  });
+
+  test("waits for an in-flight write and the newer unblurred edit that replaces it", async () => {
+    const first = deferred(), second = deferred(); const calls: unknown[] = [];
+    const drafts = new RecordDrafts(async (_id, value) => { calls.push(value); await (calls.length === 1 ? first.promise : second.promise); }, () => {});
+    drafts.save("text", "first");
+    let done = false; const flushing = drafts.flush().then(result => { done = true; return result; });
+    drafts.stage("text", "newest typing"); first.resolve(); await tick();
+    expect(calls).toEqual(["first", "newest typing"]); expect(done).toBe(false);
+    second.resolve(); expect(await flushing).toEqual({ ok: true });
+    expect(drafts.fields.get("text")).toMatchObject({ value: "newest typing", status: "saved" });
+  });
+
+  test("invalid numeric drafts block departure and never reach the writer", async () => {
+    let writes = 0;
+    const drafts = new RecordDrafts(async () => { writes++; }, () => {});
+    drafts.stage("number", "invalid number");
+    expect(await drafts.flush(prepare)).toEqual({ ok: false, error: "请输入有效数字" });
+    expect(await drafts.flush(prepare)).toEqual({ ok: false, error: "请输入有效数字" });
+    expect(writes).toBe(0);
+    expect(drafts.fields.get("number")).toMatchObject({ value: "invalid number", status: "invalid" });
+    drafts.stage("number", "2.5");
+    expect(await drafts.flush(prepare)).toEqual({ ok: true }); expect(writes).toBe(1);
+  });
+
+  test("a failed flush keeps the screen blocked until another explicit attempt succeeds", async () => {
+    let writes = 0, failing = true;
+    const drafts = new RecordDrafts(async () => { writes++; if (failing) throw new Error("disk unavailable"); }, () => {});
+    drafts.stage("text", "keep this");
+    expect(await drafts.flush()).toEqual({ ok: false, error: "disk unavailable" });
+    expect(writes).toBe(1); expect(drafts.dirty).toBe(true);
+    expect(drafts.fields.get("text")?.value).toBe("keep this");
+    failing = false;
+    expect(await drafts.flush()).toEqual({ ok: true }); expect(writes).toBe(2);
+  });
+
+  test("simultaneous close attempts share a writer and do not duplicate the accepted value", async () => {
+    const write = deferred(); let writes = 0;
+    const drafts = new RecordDrafts(async () => { writes++; await write.promise; }, () => {});
+    drafts.stage("text", "one value");
+    const first = drafts.flush(), second = drafts.flush();
+    expect(writes).toBe(1); write.resolve();
+    expect(await first).toEqual({ ok: true }); expect(await second).toEqual({ ok: true }); expect(writes).toBe(1);
+  });
+
+  test("stopping the editor releases close waiters without approving stale navigation", async () => {
+    const write = deferred(); let writes = 0;
+    const drafts = new RecordDrafts(async () => { writes++; await write.promise; }, () => {});
+    drafts.save("text", "first"); drafts.stage("other", "preserved draft");
+    const flushing = drafts.flush(); drafts.stop();
+    expect((await flushing).ok).toBe(false);
+    expect(drafts.fields.get("other")?.value).toBe("preserved draft");
+    write.resolve(); await tick(); expect(writes).toBe(1);
+  });
+
+  test("checkpoint failure blocks writes and departure until persistence recovers", async () => {
+    let durable = false, writes = 0;
+    const drafts = new RecordDrafts(async () => { writes++; }, () => {}, () => {}, () => { if (!durable) throw new Error("disk full"); });
+    drafts.stage("text", "recoverable value");
+    const failed = await drafts.flush();
+    expect(failed.ok).toBe(false); if (!failed.ok) expect(failed.error).toContain("disk full");
+    expect(writes).toBe(0); expect(drafts.dirty).toBe(true);
+    durable = true;
+    expect(await drafts.flush()).toEqual({ ok: true }); expect(writes).toBe(1);
+  });
+
+  test("a newer invalid edit cannot be cleared by an older successful write", async () => {
+    const write = deferred(); const calls: unknown[] = [];
+    const drafts = new RecordDrafts(async (_id, value) => { calls.push(value); await write.promise; }, () => {});
+    drafts.save("number", 1);
+    const flushing = drafts.flush(prepare);
+    drafts.stage("number", "bad latest value"); write.resolve();
+    expect(await flushing).toEqual({ ok: false, error: "请输入有效数字" });
+    expect(calls).toEqual([1]);
+    expect(drafts.fields.get("number")).toMatchObject({ value: "bad latest value", status: "invalid" });
+  });
+});

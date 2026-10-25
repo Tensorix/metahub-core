@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 
+import { BucketForm } from "@/components/BucketForm";
 import { ServerForm } from "@/components/ServerForm";
 import { useSessionCtx } from "@/lib/auth/session";
 import { useTheme } from "@/lib/theme";
@@ -40,6 +41,7 @@ export default function AddServerScreen() {
               router.back();
             }}
           />
+          <BucketForm onVerified={connect} />
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
