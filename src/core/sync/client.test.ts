@@ -234,3 +234,95 @@ test("acknowledged-prefix scans are bounded by response size despite a large que
     expect(returnedRows).toBe(3);
   } finally { db.close(); }
 });
+
+test("optional synchronous phase measurements exclude transport awaits and preserve the sync result", async () => {
+  const db = makeDb("measured-local");
+  const events: string[] = [];
+  let active: string | null = null;
+  let respond!: (response: Response) => void;
+  const transport = (() => {
+    expect(active).toBeNull();
+    events.push("fetch");
+    return new Promise<Response>(resolve => { respond = resolve; });
+  }) as typeof fetch;
+  const pending = syncWithPeer(db, "http://peer", {
+    pushLimit: 2, pullLimit: 2, fetch: transport,
+    measureSync(phase, run) {
+      expect(active).toBeNull();
+      active = phase;
+      events.push("start:" + phase);
+      try {
+        const result = run();
+        expect(result).not.toBeInstanceOf(Promise);
+        return result;
+      } finally { events.push("end:" + phase); active = null; }
+    },
+  });
+  try {
+    expect(events).toEqual(["start:prepare", "end:prepare", "start:serialize", "end:serialize", "fetch"]);
+    respond(Response.json({ node_id: "peer", changes: remoteChanges(2), cursor: 2 }));
+    const result = await pending;
+    expect(result).toMatchObject({ pushed: 0, pulled: 2, received: 2, pendingPush: false });
+    expect(events.slice(-4)).toEqual(["start:ingest", "end:ingest", "start:acknowledge", "end:acknowledge"]);
+    expect(db.inTransaction).toBe(false);
+  } finally { db.close(); }
+});
+
+test("measured ingest failure keeps rollback, error identity and cursor protection", async () => {
+  const db = makeDb("measured-local");
+  const original = new Error("synthetic native write failure");
+  const phases: string[] = [];
+  let measuredError: unknown;
+  const driver = {
+    exec: db.exec.bind(db), transaction: db.transaction.bind(db),
+    query(sql: string) {
+      const statement = db.query(sql);
+      return {
+        get: (...args: any[]) => statement.get(...args),
+        all: (...args: any[]) => statement.all(...args),
+        run: (...args: any[]) => { if (sql.includes("INSERT OR IGNORE INTO crdt_changes")) throw original; return statement.run(...args); },
+      };
+    },
+  };
+  try {
+    const transport = (async () => Response.json({ node_id: "peer", changes: remoteChanges(2), cursor: 2 })) as typeof fetch;
+    let failure: unknown;
+    try {
+      await syncWithPeer(driver, "http://peer", {
+        fetch: transport,
+        measureSync(phase, run) {
+          phases.push(phase);
+          try { return run(); } catch (error) { measuredError = error; throw error; }
+        },
+      });
+    } catch (error) { failure = error; }
+    expect(failure).toBe(original);
+    expect(measuredError).toBe(original);
+    expect(phases).toEqual(["prepare", "serialize", "ingest"]);
+    expect(db.inTransaction).toBe(false);
+    expect(db.query("SELECT * FROM peers").all()).toEqual([]);
+    expect(changesAfterSeq(db, 0).changes).toEqual([]);
+  } finally { db.close(); }
+});
+
+test("phase measurement hooks cannot re-enter ingestion after session cancellation", async () => {
+  const db = makeDb("measured-cancel");
+  const controller = new AbortController();
+  const phases: string[] = [];
+  let respond!: (response: Response) => void;
+  const transport = (() => new Promise<Response>(resolve => { respond = resolve; })) as typeof fetch;
+  try {
+    const pending = syncWithPeer(db, "http://peer", {
+      fetch: transport, signal: controller.signal,
+      measureSync(phase, run) { phases.push(phase); return run(); },
+    });
+    controller.abort(new Error("measurement fixture disposed"));
+    await expect(pending).rejects.toThrow("measurement fixture disposed");
+    respond(Response.json({ node_id: "peer", changes: remoteChanges(2), cursor: 2 }));
+    await Promise.resolve();
+    expect(phases).toEqual(["prepare", "serialize"]);
+    expect(changesAfterSeq(db, 0).changes).toEqual([]);
+    expect(db.query("SELECT * FROM peers").all()).toEqual([]);
+    expect(db.inTransaction).toBe(false);
+  } finally { db.close(); }
+});
