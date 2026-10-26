@@ -12,7 +12,9 @@ import { createReplicaService } from "../../../../../src/core/replica/service.ts
 import { ExpoDriver, nativeSqliteOpenOptions } from "../replica/expo-driver";
 
 const yieldTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-export async function runNativePerformance() {
+export async function runNativePerformance(
+  onProgress?: (phase: string, detail?: string) => void,
+) {
   const measurements = createDiagnosticMeasurements();
   const measuredYield = () =>
     measurements.measureAsyncElapsed("yield", yieldTurn);
@@ -55,6 +57,7 @@ export async function runNativePerformance() {
     measurements.setPhase(next);
     result.phase = next;
     persist();
+    onProgress?.(next);
   };
   const timer = setInterval(() => {
     measurements.sampleTimer();
@@ -105,6 +108,7 @@ export async function runNativePerformance() {
       if ((base + 10) % 100 === 0) {
         result.ingested = base + 10;
         persist();
+        onProgress?.(phase, `${base + 10}/11000 items`);
       }
       await measuredYield();
     }
@@ -178,7 +182,9 @@ export async function runNativePerformance() {
       lastPageMs: pageMs.at(-1),
       p95PageMs: [...pageMs].sort((a, b) => a - b)[47],
     };
+    onProgress?.("pagedQueries/service-dispose");
     service.dispose();
+    onProgress?.("pagedQueries/close");
     db.close();
     setPhase("databaseReopenHomeList");
     const reopenStart = performance.now();
@@ -220,9 +226,13 @@ export async function runNativePerformance() {
     result.timerIntervalMs = 10;
     result.jsTimerSamplesByPhase = timerSamples;
     result.measurementFinishedAt = new Date().toISOString();
+    onProgress?.("cleanup/service-dispose");
     service.dispose();
+    onProgress?.("cleanup/close");
     db.close();
+    onProgress?.("cleanup/reportWrite");
     persist();
+    onProgress?.(String(result.phase ?? phase), String(result.status));
   }
   return result;
 }
