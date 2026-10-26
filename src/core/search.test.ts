@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runSchema, ftsAvailable } from "./db.ts";
 import { ingest, type Change } from "./crdt.ts";
-import { search, rebuildSearchIndex } from "./search.ts";
+import { search, rebuildSearchIndex, querySearch, querySearchIncrementally } from "./search.ts";
 import { createDatabase, deleteDatabase } from "./databases.ts";
 import { addProperty, updateProperty } from "./properties.ts";
 import { createRecord, updateRecord, deleteRecord } from "./records.ts";
@@ -173,4 +173,116 @@ test("cancelled native search never resumes against a closed database", async ()
   abort.abort(new Error("owner closed"));
   db.close();
   await expect(searching).rejects.toThrow("owner closed");
+});
+
+
+test("querySearch pages beyond fifty tied hits with deterministic ids and an empty terminal page", async () => {
+  const db = makeNode();
+  try {
+    const expected = Array.from({ length: 117 }, () => createDocument(db, { title: "Same", body: "pagedneedle" }).id).sort();
+    const first = await querySearchIncrementally(db, "pagedneedle", { limit: 50, batchSize: 11 });
+    const second = querySearch(db, "pagedneedle", { offset: 50, limit: 50 });
+    const third = querySearch(db, "pagedneedle", { offset: 100, limit: 50 });
+    expect(first).toMatchObject({ offset: 0, limit: 50, hasMore: true });
+    expect(second.hasMore).toBe(true);
+    expect(third.hasMore).toBe(false);
+    expect([...first.hits, ...second.hits, ...third.hits].map(hit => hit.id)).toEqual(expected);
+    expect(querySearch(db, "pagedneedle", { offset: 117 }).hits).toEqual([]);
+    expect(querySearch(db, "pagedneedle", { offset: 50 }).hits.map(hit => hit.id)).toEqual(second.hits.map(hit => hit.id));
+  } finally { db.close(); }
+});
+
+test("querySearch never changes an exhausted FTS page to substring results", () => {
+  const db = makeNode();
+  try {
+    const exact = createDocument(db, { title: "Exact", body: "wholeword" });
+    createDocument(db, { title: "Substring only", body: "wholewordsuffix" });
+    expect(querySearch(db, "wholeword", { limit: 1 }).hits.map(hit => hit.id)).toEqual([exact.id]);
+    expect(querySearch(db, "wholeword", { offset: 1, limit: 1 })).toMatchObject({ hits: [], hasMore: false });
+  } finally { db.close(); }
+});
+
+test("CJK substring pages span documents and records, preserve wildcards, and handle no results", () => {
+  const db = makeNode();
+  try {
+    const docs = Array.from({ length: 53 }, () => createDocument(db, { title: "日记", body: "记录项目进展以及100%_完成" }).id).sort();
+    const { dbId } = withTextDb(db);
+    const rec = createRecord(db, dbId, { Body: "今日项目进展" });
+    const first = querySearch(db, "项目进展", { limit: 50 });
+    const next = querySearch(db, "项目进展", { offset: 50, limit: 50 });
+    expect(first.hasMore).toBe(true);
+    expect(next.hasMore).toBe(false);
+    expect([...first.hits, ...next.hits].map(hit => hit.id)).toEqual([...docs, rec.id]);
+    expect(querySearch(db, "100%_").hits).toHaveLength(50);
+    expect(querySearch(db, "不存在")).toMatchObject({ hits: [], hasMore: false });
+    expect(querySearch(db, "   ")).toMatchObject({ hits: [], hasMore: false });
+  } finally { db.close(); }
+});
+
+test("querySearch fallback pages also work when FTS is unavailable", () => {
+  const db = makeNode();
+  try {
+    db.exec("DROP TABLE search_fts");
+    for (let i = 0; i < 56; i++) createDocument(db, { title: "Fallback", body: "unindexedtoken" });
+    expect(querySearch(db, "unindexedtoken", { limit: 50 }).hasMore).toBe(true);
+    expect(querySearch(db, "unindexedtoken", { offset: 50, limit: 50 }).hits).toHaveLength(6);
+    expect(querySearch(db, "unindexedtoken", { offset: 56 }).hits).toEqual([]);
+  } finally { db.close(); }
+});
+
+
+test("bounded index pages use a constant number of bridge calls and preserve legacy index rows", async () => {
+  const { updateSearchIndexStep } = await import("./search.ts");
+  const db = makeNode();
+  try {
+    const { dbId } = withTextDb(db);
+    for (let i = 0; i < 25; i++) createRecord(db, dbId, { Body: `Indexed ${i}` });
+    let calls = 0;
+    const measured = {
+      exec: db.exec.bind(db), transaction: db.transaction.bind(db),
+      query(sql: string) {
+        const stmt = db.query(sql);
+        return { get: (...args: any[]) => { calls++; return stmt.get(...args); }, run: (...args: any[]) => { calls++; return stmt.run(...args); }, all: (...args: any[]) => { calls++; return stmt.all(...args); } };
+      },
+    };
+    updateSearchIndexStep(measured, 25); // documents phase (empty)
+    calls = 0;
+    expect(updateSearchIndexStep(measured, 25).ready).toBe(false);
+    expect(calls).toBeLessThanOrEqual(8);
+    const indexed = db.query("SELECT kind,id,database_id,title,body FROM search_fts ORDER BY kind,id").all();
+    expect(indexed).toHaveLength(25);
+    rebuildSearchIndex(db);
+    expect(db.query("SELECT kind,id,database_id,title,body FROM search_fts ORDER BY kind,id").all()).toEqual(indexed);
+  } finally { db.close(); }
+});
+
+test("a failing bulk index insert rolls back deleted rows and checkpoint together before retry", async () => {
+  const { updateSearchIndexStep } = await import("./search.ts");
+  const db = makeNode();
+  try {
+    const { dbId } = withTextDb(db);
+    const record = createRecord(db, dbId, { Body: "neutral seed" });
+    updateRecord(db, record.id, { Body: "expiredword indexed body" });
+    search(db, "indexed");
+    const before = db.query("SELECT * FROM search_fts ORDER BY kind,id").all();
+    const cursor = db.query("SELECT value FROM meta WHERE key='search_seq'").get();
+    updateRecord(db, record.id, { Body: "freshword indexed body" });
+    let fail = true;
+    const broken = {
+      exec: db.exec.bind(db), transaction: db.transaction.bind(db),
+      query(sql: string) {
+        const stmt = db.query(sql);
+        return { get: (...args: any[]) => stmt.get(...args), all: (...args: any[]) => stmt.all(...args), run: (...args: any[]) => {
+          if (fail && sql.startsWith("INSERT INTO search_fts")) { fail = false; throw new Error("native index write failed"); }
+          return stmt.run(...args);
+        } };
+      },
+    };
+    expect(() => updateSearchIndexStep(broken, 25)).toThrow("native index write failed");
+    expect(db.query("SELECT * FROM search_fts ORDER BY kind,id").all()).toEqual(before);
+    expect(db.query("SELECT value FROM meta WHERE key='search_seq'").get()).toEqual(cursor);
+    expect(updateSearchIndexStep(db, 25).ready).toBe(true);
+    expect(querySearch(db, "freshword", { maintainIndex: false }).hits.map(hit => hit.id)).toEqual([record.id]);
+    expect(querySearch(db, "expiredword", { maintainIndex: false }).hits).toEqual([]);
+  } finally { db.close(); }
 });

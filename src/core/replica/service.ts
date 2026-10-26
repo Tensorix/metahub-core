@@ -5,7 +5,7 @@ import * as properties from "../properties.ts";
 import * as records from "../records.ts";
 import * as documents from "../documents.ts";
 import * as history from "../history.ts";
-import { search, searchIncrementally } from "../search.ts";
+import { search, searchIncrementally, querySearch, querySearchIncrementally, type SearchQuery } from "../search.ts";
 import { lookupCandidates } from "../resolve.ts";
 import { displayNodes, getNodeId, setNodeLabel } from "../node.ts";
 import { MhError } from "../errors.ts";
@@ -33,6 +33,33 @@ function bind<A extends unknown[], R>(db: DbDriver, fn: (db: DbDriver, ...args: 
   return (...args: A): R => fn(db, ...args);
 }
 
+export interface ReferenceSummaryQuery {
+  kind: "document" | "record";
+  databaseId?: string;
+  ids: string[];
+}
+export interface ReferenceSummary { id: string; title: string | null; missing: boolean }
+
+/** Resolve only requested labels, without loading document bodies or complete
+ * record data. Chunks stay below SQLite's portable parameter bound. */
+export function referenceSummaries(db: DbDriver, query: ReferenceSummaryQuery): ReferenceSummary[] {
+  if (query.kind !== "document" && query.kind !== "record") throw new MhError("invalid_input", "unknown reference kind");
+  if (!Array.isArray(query.ids) || !query.ids.every(id => typeof id === "string")) throw new MhError("invalid_input", "reference ids must be strings");
+  const ids = [...new Set(query.ids)];
+  const summaries = new Map<string, string | null>();
+  for (let start = 0; start < ids.length; start += 200) {
+    const batch = ids.slice(start, start + 200);
+    const args = [...batch, ...(query.databaseId === undefined ? [] : [query.databaseId])];
+    const scope = query.databaseId === undefined ? "" : " AND database_id = ?";
+    const table = query.kind === "document" ? "documents" : "records";
+    const title = query.kind === "document" ? "title" : `data ->> (SELECT p.id FROM properties p WHERE p.database_id = records.database_id AND p.__deleted = 0 AND p.type = 'text' ORDER BY p.position, p.id LIMIT 1)`;
+    const rows = db.query(`SELECT id, ${title} AS title FROM ${table} WHERE __deleted = 0 AND id IN (${batch.map(() => "?").join(",")})${scope}`)
+      .all(...args) as { id: string; title: string | number | null }[];
+    for (const row of rows) summaries.set(row.id, row.title === null ? null : String(row.title));
+  }
+  return query.ids.map(id => ({ id, title: summaries.get(id) ?? null, missing: !summaries.has(id) }));
+}
+
 /** The same synchronous command owner serves native screens and the editor bridge.
  * Promise facades enter the command before yielding; no CRDT context spans await. */
 export function createReplicaService(db: DbDriver, options: { onChange?: (change: ReplicaChange) => void; searchBatchSize?: number } = {}) {
@@ -53,6 +80,8 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
     listProperties: bind(db, properties.listProperties),
     addProperty: bind(db, properties.addProperty),
     updateProperty: bind(db, properties.updateProperty),
+    moveProperty: bind(db, properties.moveProperty),
+    moveSelectOption: bind(db, properties.moveSelectOption),
     setPropertyWidth: bind(db, properties.setPropertyWidth),
     removeProperty: (id: string) => ({ ok: properties.removeProperty(db, id) }),
     renameSelectOption: bind(db, properties.renameSelectOption),
@@ -105,6 +134,8 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
       return displayNodes(db).find(n => n.node_id === (nodeId ?? getNodeId(db)))!;
     },
     search: (text: string, limit?: number) => search(db, text, { limit, maintainIndex: false }),
+    querySearch: (text: string, query?: SearchQuery) => querySearch(db, text, query),
+    referenceSummaries: (query: ReferenceSummaryQuery) => referenceSummaries(db, query),
     resolve: (text: string, limit?: number) => lookupCandidates(db, text, { limit }),
   };
   type Commands = typeof commands;
@@ -139,6 +170,8 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
     },
     addProperty: (...args: Parameters<Commands["addProperty"]>) => call("addProperty", ...args),
     updateProperty: (...args: Parameters<Commands["updateProperty"]>) => call("updateProperty", ...args),
+    moveProperty: (...args: Parameters<Commands["moveProperty"]>) => call("moveProperty", ...args),
+    moveSelectOption: (...args: Parameters<Commands["moveSelectOption"]>) => call("moveSelectOption", ...args),
     deleteProperty: (id: string) => call("removeProperty", id),
     listRecords: (...args: Parameters<Commands["listRecords"]>) => call("listRecords", ...args),
     queryRecords: (id: string, query?: RecordQuery) => queryRecordsAsync(db, id, query, () => !disposed),
@@ -166,6 +199,8 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
     documentAt: (id: string, version: string) => call("documentAtVersion", id, version),
     revertDocument: (id: string, to: string, ifMatch?: string) => call("revertDocument", id, to, ifMatch),
     search: (text: string, limit?: number) => searchIncrementally(db, text, { limit, batchSize: searchBatchSize, signal: searches.signal }),
+    querySearch: (text: string, query?: SearchQuery) => querySearchIncrementally(db, text, { ...query, batchSize: searchBatchSize, signal: searches.signal }),
+    referenceSummaries: (query: ReferenceSummaryQuery) => call("referenceSummaries", query),
     resolve: (text: string, limit?: number) => call("resolve", text, limit),
     onUpdate: (listener: (info: { seq?: number; gone?: true }) => void) => {
       const cb = () => listener({ seq: replicaSequence(db) });

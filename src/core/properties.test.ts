@@ -11,6 +11,8 @@ import {
   removeProperty,
   renameSelectOption,
   removeSelectOption,
+  moveProperty,
+  moveSelectOption,
 } from "./properties.ts";
 import { createRecord, getRecord } from "./records.ts";
 
@@ -189,4 +191,63 @@ test("doc properties need no config and index eagerly", () => {
     .query("SELECT 1 AS ok FROM sqlite_master WHERE type = 'index' AND sql LIKE ?")
     .get(`%'${p.id}'%`);
   expect(idx).not.toBeNull();
+});
+
+
+test("moveProperty handles first/last boundaries and rejects deleted or cross-database anchors atomically", () => {
+  const db = newDb();
+  try {
+    const d = createDatabase(db, { name: "Order" });
+    const [a, b, c] = ["A", "B", "C"].map(name => addProperty(db, d.id, { name, type: "text" }));
+    moveProperty(db, c!.id, a!.id, "before");
+    expect(listProperties(db, d.id).map(p => p.name)).toEqual(["C", "A", "B"]);
+    moveProperty(db, c!.id, b!.id, "after");
+    expect(listProperties(db, d.id).map(p => p.name)).toEqual(["A", "B", "C"]);
+    const other = createDatabase(db, { name: "Other" });
+    const outside = addProperty(db, other.id, { name: "Outside", type: "text" });
+    expect(() => moveProperty(db, a!.id, outside.id, "before")).toThrow("across databases");
+    removeProperty(db, b!.id);
+    const seq = db.query("SELECT max(seq) AS n FROM crdt_changes").get();
+    expect(() => moveProperty(db, a!.id, b!.id, "before")).toThrow("no such property");
+    expect(db.query("SELECT max(seq) AS n FROM crdt_changes").get()).toEqual(seq);
+    expect(moveProperty(db, a!.id, a!.id, "after").id).toBe(a!.id);
+  } finally { db.close(); }
+});
+
+test("moveProperty repairs tied and exhausted numeric positions and emits one atomic group", () => {
+  const db = newDb();
+  try {
+    const d = createDatabase(db, { name: "Order" });
+    const [a, b, c] = ["A", "B", "C"].map(name => addProperty(db, d.id, { name, type: "text" }));
+    updateProperty(db, a!.id, { position: Number.MAX_VALUE });
+    updateProperty(db, b!.id, { position: Number.MAX_VALUE });
+    updateProperty(db, c!.id, { position: -Number.MAX_VALUE });
+    moveProperty(db, c!.id, b!.id, "after");
+    expect(listProperties(db, d.id).at(-1)?.id).toBe(c!.id);
+    expect(listProperties(db, d.id).every(p => Number.isFinite(p.position))).toBe(true);
+    updateProperty(db, a!.id, { position: 1 });
+    updateProperty(db, b!.id, { position: 1 });
+    moveProperty(db, c!.id, b!.id, "before");
+    const ordered = listProperties(db, d.id);
+    expect(ordered.findIndex(p => p.id === c!.id) + 1).toBe(ordered.findIndex(p => p.id === b!.id));
+    expect(new Set(ordered.map(p => p.position)).size).toBe(3);
+  } finally { db.close(); }
+});
+
+test("moveSelectOption rereads renamed options and config, leaves cells unchanged, and rejects stale anchors", () => {
+  const db = newDb();
+  try {
+    const d = createDatabase(db, { name: "Tasks" });
+    const p = addProperty(db, d.id, { name: "Tags", type: "multi_select", config: { options: ["one", "two", "three"], width: 250 } });
+    const record = createRecord(db, d.id, { Tags: ["one", "three"] });
+    renameSelectOption(db, p.id, "two", "renamed");
+    updateProperty(db, p.id, { config: { indexed: true } });
+    const before = getRecord(db, record.id);
+    const moved = moveSelectOption(db, p.id, "three", "one", "before");
+    expect(moved.config).toEqual({ options: ["three", "one", "renamed"], width: 250, indexed: true });
+    expect(getRecord(db, record.id)).toEqual(before);
+    expect(() => moveSelectOption(db, p.id, "one", "two", "after")).toThrow("no such option");
+    expect(moveSelectOption(db, p.id, "three", "renamed", "after").config?.options).toEqual(["one", "renamed", "three"]);
+    expect(moveSelectOption(db, p.id, "one", "one", "before").config?.options).toEqual(["one", "renamed", "three"]);
+  } finally { db.close(); }
 });

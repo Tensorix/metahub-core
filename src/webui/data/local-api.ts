@@ -10,6 +10,8 @@ import { call, replicaActive, isNoOrigin } from "./replica.ts";
 import { ApiError, NAV_INVALIDATE, REC_INVALIDATE } from "../api.ts";
 import { ReplicaError } from "./replica.ts";
 import { t } from "../i18n/t.ts";
+import type { SearchQuery } from "../../core/search.ts";
+import type { ReferenceSummaryQuery } from "../../core/replica/service.ts";
 
 export { replicaActive, isNoOrigin };
 
@@ -127,6 +129,10 @@ export const localApi = {
     rpc("listLocalShares", opts.target),
   nodes: () => rpc("nodes"),
   search: (text: string, limit?: number) => rpc("search", text, limit),
+  querySearch: (text: string, query?: SearchQuery) => rpc("querySearch", text, query),
+  referenceSummaries: (query: ReferenceSummaryQuery) => rpc("referenceSummaries", query),
+  moveProperty: (id: string, anchorId: string, where: "before" | "after") => rpc("moveProperty", id, anchorId, where),
+  moveSelectOption: (id: string, option: string, anchor: string, where: "before" | "after") => rpc("moveSelectOption", id, option, anchor, where),
   resolve: (ref: string, limit?: number) => rpc("resolve", ref, limit),
 
   // Data map: a replica is a full node, so its own local derivation (which

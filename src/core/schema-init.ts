@@ -43,7 +43,7 @@ function tableExists(db: DbDriver, table: string): boolean {
 /**
  * Migrate legacy EAV records (record_values: one row per cell) to the JSON
  * layout (records.data: one row per record). Idempotent — keyed off schema
- * shape, no version flag. A no-op for fresh databases.
+ * shape, no version flag. Also installs the derived record paging index.
  */
 export function migrateRecords(db: DbDriver): void {
   if (!hasColumn(db, "records", "data"))
@@ -51,22 +51,28 @@ export function migrateRecords(db: DbDriver): void {
   if (!hasColumn(db, "records", "order_key"))
     db.exec("ALTER TABLE records ADD COLUMN order_key TEXT");
 
-  if (!tableExists(db, "record_values")) return;
+  if (tableExists(db, "record_values")) {
+    writeTx(db, () => {
+      // Fold each record's cells into a JSON object keyed by property id.
+      db.exec(`
+        UPDATE records SET data = coalesce((
+          SELECT json_group_object(rv.property_id, json(rv.value))
+          FROM record_values rv WHERE rv.record_id = records.id
+        ), '{}')
+        WHERE id IN (SELECT DISTINCT record_id FROM record_values);
+      `);
+      db.exec("DROP TABLE record_values");
+      backfillRecordOrderKeys(db);
+    });
 
-  writeTx(db, () => {
-    // Fold each record's cells into a JSON object keyed by property id.
-    db.exec(`
-      UPDATE records SET data = coalesce((
-        SELECT json_group_object(rv.property_id, json(rv.value))
-        FROM record_values rv WHERE rv.record_id = records.id
-      ), '{}')
-      WHERE id IN (SELECT DISTINCT record_id FROM record_values);
-    `);
-    db.exec("DROP TABLE record_values");
     backfillRecordOrderKeys(db);
-  });
+  }
 
-  backfillRecordOrderKeys(db);
+  // Local derived index: fresh databases build this while empty, then writes
+  // maintain it. Existing databases pay the one-time migration cost at open.
+  // Keep this after adding order_key so pre-JSON schemas can upgrade safely.
+  // A read request must never build a potentially large index on the UI thread.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mobile_record_page ON records(database_id, __deleted, order_key IS NULL, order_key, id)");
 }
 
 /**

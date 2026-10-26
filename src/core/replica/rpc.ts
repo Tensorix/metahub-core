@@ -4,10 +4,10 @@ import type { ReplicaService } from "./service.ts";
  * transports, attachments and hosted sites stay in their own adapters. */
 export const REPLICA_RPC_OPERATIONS = [
   "listDatabases", "createDatabase", "updateDatabase", "duplicateDatabase", "deleteDatabase", "listDatabaseActivity",
-  "listProperties", "addProperty", "updateProperty", "setPropertyWidth", "removeProperty", "renameSelectOption", "removeSelectOption", "listPropertyRevisions", "revertProperty",
+  "listProperties", "addProperty", "updateProperty", "setPropertyWidth", "moveProperty", "moveSelectOption", "removeProperty", "renameSelectOption", "removeSelectOption", "listPropertyRevisions", "revertProperty",
   "listRecords", "getRecord", "createRecord", "updateRecord", "moveRecord", "deleteRecord", "listRecordRevisions", "recordAtVersion", "recordFieldHistory", "revertRecord",
   "listDocuments", "getDocument", "createDocument", "updateDocument", "duplicateDocument", "moveDocument", "deleteDocument", "listDocumentRevisions", "documentAtVersion", "revertDocument",
-  "nodes", "setNodeLabel", "resolve",
+  "nodes", "setNodeLabel", "resolve", "querySearch", "referenceSummaries",
 ] as const satisfies readonly (keyof ReplicaService["commands"])[];
 
 /** Preserve the browser worker's RPC response shapes while sharing command

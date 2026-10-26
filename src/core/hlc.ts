@@ -99,24 +99,36 @@ export function observeHlc(
   remote: string,
   now = Date.now(),
 ): void {
-  const last = readLast(db, node);
-  const r = parseHlc(remote);
-  // A malformed remote HLC (non-numeric prefix → NaN) must NEVER enter the local
-  // clock: Math.max(last, NaN, now) is NaN, which formatHlc then persists as
-  // "…NaN…", permanently wedging this node's clock (every later nextHlc reads
-  // NaN back). Anonymous write-inbox ops make this reachable, so drop the poison
-  // here as the last line of defense (the drop/grants layers reject it earlier).
-  if (!Number.isFinite(r.millis) || !Number.isFinite(r.counter)) return;
-  if (r.millis > now + HLC_MAX_SKEW_MS) return;
-  const millis = Math.max(last.millis, r.millis, now);
-  let counter: number;
-  if (millis === last.millis && millis === r.millis)
-    counter = Math.max(last.counter, r.counter) + 1;
-  else if (millis === last.millis) counter = last.counter + 1;
-  else if (millis === r.millis) counter = r.counter + 1;
-  else counter = 0;
-  // Same overflow carry as nextHlc (a remote counter of 0xffff lands here).
-  writeLast(db, { ...carryCounter(millis, counter), node });
+  observeHlcs(db, node, [remote], now);
+}
+
+/** Fold remote observations in exactly their input order, persisting only the
+ * final clock. A synchronous ingest transaction has no intervening local mint,
+ * so this removes per-op SQLite bridge calls without changing HLC counters. */
+export function observeHlcs(
+  db: DbDriver,
+  node: string,
+  remotes: Iterable<string>,
+  now = Date.now(),
+): void {
+  let last = readLast(db, node);
+  let observed = false;
+  for (const remote of remotes) {
+    const r = parseHlc(remote);
+    // Ignore malformed and future clocks, including during batch observation.
+    if (!Number.isFinite(r.millis) || !Number.isFinite(r.counter)) continue;
+    if (r.millis > now + HLC_MAX_SKEW_MS) continue;
+    const millis = Math.max(last.millis, r.millis, now);
+    let counter: number;
+    if (millis === last.millis && millis === r.millis)
+      counter = Math.max(last.counter, r.counter) + 1;
+    else if (millis === last.millis) counter = last.counter + 1;
+    else if (millis === r.millis) counter = r.counter + 1;
+    else counter = 0;
+    last = { ...carryCounter(millis, counter), node };
+    observed = true;
+  }
+  if (observed) writeLast(db, last);
 }
 
 /** The persisted local clock, or null before the first mint. */

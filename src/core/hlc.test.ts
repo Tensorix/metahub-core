@@ -6,6 +6,8 @@ import {
   parseHlc,
   nextHlc,
   observeHlc,
+  observeHlcs,
+  persistedHlc,
   MAX_HLC_COUNTER,
   HLC_MAX_SKEW_MS,
   isSkewedHlc,
@@ -104,4 +106,27 @@ test("isSkewedHlc / hlcSkewBound bracket the window regardless of counter and no
   const now = 1_000_000_000;
   expect(isSkewedHlc(formatHlc({ millis: now + HLC_MAX_SKEW_MS, counter: MAX_HLC_COUNTER, node: "zzzzzzzz" }), now)).toBe(false);
   expect(isSkewedHlc(formatHlc({ millis: now + HLC_MAX_SKEW_MS + 1, counter: 0, node: "00000000" }), now)).toBe(true);
+});
+
+
+test("batch observations preserve sequential counters, out-of-order clocks, overflow and malformed guards", () => {
+  const single = makeDb(), batch = makeDb();
+  try {
+    const now = 1_700_000_000_000;
+    for (const db of [single, batch]) setClock(db, { millis: now, counter: MAX_HLC_COUNTER - 2, node: "local" });
+    const remotes = [
+      formatHlc({ millis: now, counter: MAX_HLC_COUNTER, node: "r" }),
+      formatHlc({ millis: now - 50, counter: 3, node: "older" }),
+      "malformed-clock", "000000000000NaN-0000-r",
+      formatHlc({ millis: now + HLC_MAX_SKEW_MS + 1, counter: 0, node: "future" }),
+      ...Array.from({ length: 300 }, (_, i) => formatHlc({ millis: now + (i * 37 % 300), counter: i * 71 % 0xffff, node: "r" })),
+    ];
+    for (const remote of remotes) observeHlc(single, "local", remote, now);
+    observeHlcs(batch, "local", remotes, now);
+    expect(persistedHlc(batch)).toEqual(persistedHlc(single));
+    expect(nextHlc(batch, "local", now)).toBe(nextHlc(single, "local", now));
+    const untouched = persistedHlc(batch);
+    observeHlcs(batch, "local", ["bad", formatHlc({ millis: now + HLC_MAX_SKEW_MS + 10, counter: 0, node: "r" })], now);
+    expect(persistedHlc(batch)).toEqual(untouched);
+  } finally { single.close(); batch.close(); }
 });
