@@ -1,4 +1,4 @@
-import { EDITOR_PROTOCOL, type EditorCommand, type EditorResponse } from "../../../apps/mobile/src/lib/editor/protocol";
+import { EDITOR_PROTOCOL, type EditorCommand, type EditorResponse, type EditorMediaRequest } from "../../../apps/mobile/src/lib/editor/protocol";
 
 declare global {
   interface Window {
@@ -42,3 +42,18 @@ window.__metahubEditorReceive = (value: unknown) => {
   if (msg.ok) waiter.resolve(msg.value);
   else waiter.reject(Object.assign(new Error(msg.error || "Native editor request failed"), { code: msg.code }));
 };
+
+// The mounted document owns the save guard; cleanup must not clear a newer
+// registration, and an in-flight guard cannot preview after its owner leaves.
+let beforeMediaPreview: (() => Promise<void>) | null = null;
+export function onBeforeMediaPreview(guard: () => Promise<void>): () => void {
+  beforeMediaPreview = guard;
+  return () => { if (beforeMediaPreview === guard) beforeMediaPreview = null; };
+}
+export async function previewMedia(src: string | undefined, kind: EditorMediaRequest["kind"]) {
+  const guard = beforeMediaPreview;
+  if (!guard || !src) throw new Error("编辑器尚未就绪，请稍后重试");
+  await guard();
+  if (beforeMediaPreview !== guard) throw new Error("文档会话已结束");
+  return rpc("media", { action: "preview", src, kind } satisfies EditorMediaRequest);
+}

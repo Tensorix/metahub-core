@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { CmDocBody, type CmHandle } from "../cm6/CmDocBody";
 import { DocumentSaveQueue, type DocumentSaveResult, type DocumentSaveState } from "../document-save";
 import { isDraft, type EditorDraft, type EditorMediaRequest } from "../../../apps/mobile/src/lib/editor/protocol";
-import { onCommand, post, rpc } from "./bridge";
+import { onBeforeMediaPreview, onCommand, post, previewMedia, rpc } from "./bridge";
+import { safeUrl } from "../../core/md/grammar";
 
 function App() {
   const cm = useRef<CmHandle | null>(null);
@@ -86,6 +87,10 @@ function App() {
   useEffect(() => {
     let alive = true;
     let loading = false;
+    const clearPreviewGuard = onBeforeMediaPreview(async () => {
+      const result = await flush();
+      if (!result.ok) throw new Error(result.error);
+    });
     const load = async () => {
       if (loading || !alive) return;
       loading = true; setError("");
@@ -115,7 +120,7 @@ function App() {
       else if (command.method === "mode") { displayMode(command.mode!); post({ type: "result", id: command.id, ok: true }); }
       else void flush().then(result => post({ type: "result", id: command.id, ...result }));
     });
-    return () => { alive = false; retryLoad.current = () => {}; clearTimeout(timer.current); };
+    return () => { alive = false; clearPreviewGuard(); retryLoad.current = () => {}; clearTimeout(timer.current); };
   }, []);
   const navigate = async (target: string) => {
     const result = await flush();
@@ -123,14 +128,41 @@ function App() {
     await rpc("navigate", target).catch(e => setError(String(e.message)));
   };
   useEffect(() => {
+    // CM6 renders inline links as spans and opens them on mousedown, rather
+    // than emitting an anchor click. Keep reveal-to-edit, but route its open
+    // gesture through the native host: window.open is blocked in this shell.
+    const inlineLink = (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      const link = (event.target as Element)?.closest?.("[data-href], [data-doclink]");
+      if (!link || link.hasAttribute("data-md-revealed") && !event.metaKey && !event.ctrlKey) return;
+      const id = link.getAttribute("data-doclink");
+      if (id !== null) {
+        event.preventDefault(); event.stopPropagation();
+        if (!/^(?:doc|db)_[a-z0-9][a-z0-9-]*$/.test(id)) {
+          setError("无效的文档引用");
+          return;
+        }
+        // Title candidates are bounded; native loading determines existence.
+        void navigate(`/${id.startsWith("db_") ? "db" : "doc"}/${encodeURIComponent(id)}`);
+        return;
+      }
+      const target = safeUrl(link.getAttribute("data-href") ?? "");
+      if (!target || target === "#") return;
+      event.preventDefault(); event.stopPropagation();
+      void navigate(target);
+    };
     const click = (event: MouseEvent) => {
       const anchor = (event.target as Element)?.closest?.("a");
       if (!anchor) return;
       event.preventDefault(); event.stopPropagation();
       void navigate(anchor.getAttribute("href") ?? "");
     };
+    document.addEventListener("mousedown", inlineLink, true);
     document.addEventListener("click", click, true);
-    return () => document.removeEventListener("click", click, true);
+    return () => {
+      document.removeEventListener("mousedown", inlineLink, true);
+      document.removeEventListener("click", click, true);
+    };
   }, []);
   const attach = async (kind: "file" | "image" | "video" = "file") => {
     try {
@@ -146,7 +178,7 @@ function App() {
   return <main class="mobile-editor">
     <div class="mobile-toolbar"><button onClick={() => displayMode(mode === "blocks" ? "source" : "blocks")}>{mode === "blocks" ? "Markdown" : "富文本"}</button><button onClick={() => void attach("image")}>照片</button><button onClick={() => void attach("video")}>视频</button><button onClick={() => void attach()}>附件</button><span role="status">{{ saved: "已保存", dirty: "保存中…", saving: "保存中…", conflict: "保存冲突", error: "保存失败" }[state]}</span></div>
     {error && <div class="mobile-error" role="alert">{error}<button onClick={() => { if (loaded) { void checkpoint().then(() => saver.save()).catch(e => setError(String(e.message))); } else retryLoad.current(); }}>重试</button>{state === "conflict" && <button onClick={() => { if (confirm("用本地草稿覆盖已保存的版本？")) void saver.save(true); }}>覆盖保存</button>}</div>}
-    {loaded ? <div class="doc doc-embed"><input ref={titleInput} aria-label="文档标题" class="doc-title mobile-title" placeholder="无标题" defaultValue={title.current} onInput={e => { title.current = e.currentTarget.value; edit(); }} /><CmDocBody initialDoc={body.current} embedded disableUploads source={mode === "source"} onReady={handle => { cm.current = handle; if (refreshPending.current) void refreshDocument(); }} onChange={edit} onExitTop={() => titleInput.current?.focus()} onError={setError} onPreviewImage={block => void rpc("media", { action: "preview", src: block.src, kind: "image" }).catch(e => setError(String(e.message)))} /></div> : !error && <p role="status">正在载入文档…</p>}
+    {loaded ? <div class="doc doc-embed"><input ref={titleInput} aria-label="文档标题" class="doc-title mobile-title" placeholder="无标题" defaultValue={title.current} onInput={e => { title.current = e.currentTarget.value; edit(); }} /><CmDocBody initialDoc={body.current} embedded disableUploads source={mode === "source"} onReady={handle => { cm.current = handle; if (refreshPending.current) void refreshDocument(); }} onChange={edit} onExitTop={() => titleInput.current?.focus()} onError={setError} onPreviewImage={block => void previewMedia(block.src, "image").catch(e => setError(String(e.message)))} /></div> : !error && <p role="status">正在载入文档…</p>}
   </main>;
 }
 document.documentElement.dataset.resolved = window.__METAHUB_EDITOR__.dark ? "dark" : "light";
