@@ -63,10 +63,11 @@ export function RecordOrderSheet({
       }}
       dismissible={!busy}
     >
-      <RNHostView matchContents>
+      <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
             height: Math.min(height * 0.7, 600),
+            width: "100%",
             gap: 8,
             backgroundColor: tokens.surface,
           }}

@@ -135,10 +135,11 @@ export function HistorySheet({
 
   return (
     <NativeSheet isPresented={visible} onDismiss={close} dismissible={!busy}>
-      <RNHostView matchContents>
+      <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
             height: Math.min(height * 0.7, 640),
+            width: "100%",
             backgroundColor: tokens.surface,
           }}
         >

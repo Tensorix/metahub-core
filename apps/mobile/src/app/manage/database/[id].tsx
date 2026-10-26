@@ -1,3 +1,4 @@
+import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { createMutationGate } from "@/lib/browse/form-guard";
 import { useFormExit } from "@/lib/browse/form-exit";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -74,14 +75,13 @@ export default function ManageDatabase() {
           headerBackVisible: false,
         }}
       />
-      <Stack.Toolbar placement="left" tintColor={tokens.accent}>
-        <Stack.Toolbar.Button
-          disabled={busy || childBusy}
-          onPress={() => exit(() => router.back())}
-        >
-          关闭
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
+      <NativeToolbarAction
+        placement="left"
+        tintColor={tokens.accent}
+        label="关闭"
+        disabled={busy || childBusy}
+        onPress={() => exit(() => router.back())}
+      />
       {id === "new" ? (
         <>
           <ManagementInput

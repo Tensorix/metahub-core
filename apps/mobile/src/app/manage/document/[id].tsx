@@ -1,5 +1,5 @@
 import {
-  Column,
+  Button,
   FieldGroup,
   Picker,
   Text as NativeText,
@@ -16,12 +16,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   Text,
   View,
 } from "react-native";
 import { NativeButton } from "@/components/native/NativeButton";
 import { NativeHost } from "@/components/native/NativeHost";
+import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { RecordTextInput } from "@/components/RecordTextInput";
 import { useApiData } from "@/lib/api/hooks";
 import { useSession } from "@/lib/auth/session";
@@ -215,7 +215,7 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
     )[mode] ?? "文档操作";
   const header = (
     <View
-      style={{ gap: 12, padding: 16, ...(mode === "move" ? {} : { flex: 1 }) }}
+      style={{ gap: 12, padding: 16, flex: 1 }}
     >
       {error && (
         <Text
@@ -233,15 +233,12 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
       )}
       {info.loading && id !== "new" && <ActivityIndicator />}
       {mode === "move" ? (
-        <>
-          <NativeHost
-            matchContents={{ vertical: true }}
-            style={{ width: "100%" }}
-          >
-            <Column spacing={8}>
-              <NativeText>移动位置</NativeText>
+        <NativeHost style={{ flex: 1 }}>
+          <FieldGroup>
+            <FieldGroup.Section title="移动位置">
               <Picker
                 selectedValue={where}
+                enabled={!busy}
                 onValueChange={(v) => {
                   revision.current++;
                   setWhere(String(v));
@@ -251,32 +248,53 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
                 <Picker.Item value="before" label="目标之前" />
                 <Picker.Item value="after" label="目标之后" />
               </Picker>
-            </Column>
-          </NativeHost>
-          <NativeButton disabled={busy} onPress={() => void save(true)}>
-            移到根目录
-          </NativeButton>
-          <NativeHost
-            matchContents={{ vertical: true }}
-            style={{ width: "100%" }}
-          >
-            <RecordTextInput
-              text={query}
-              placeholder="搜索目标文档"
-              editable={!busy}
-              onChangeText={(value) => {
-                setQuery(value);
-                setOffset(0);
-              }}
-            />
-          </NativeHost>
-          {choices.loading && <ActivityIndicator />}
-          {choices.error && (
-            <NativeButton onPress={() => void choices.refetch()}>
-              加载目标失败，重试
-            </NativeButton>
-          )}
-        </>
+              <Button disabled={busy} onPress={() => void save(true)} label="移到根目录" />
+            </FieldGroup.Section>
+            <FieldGroup.Section title="目标文档">
+              <RecordTextInput
+                text={query}
+                placeholder="搜索目标文档"
+                editable={!busy}
+                onChangeText={(value) => {
+                  setQuery(value);
+                  setOffset(0);
+                }}
+              />
+              {choices.loading ? <NativeText>正在加载目标文档…</NativeText> : null}
+              {choices.error ? (
+                <Button onPress={() => void choices.refetch()} label="加载目标失败，重试" />
+              ) : null}
+              {choices.data?.documents.filter((d) => d.id !== id).map((document) => (
+                <Button
+                  key={document.id}
+                  variant={target === document.id ? "filled" : "text"}
+                  disabled={busy}
+                  onPress={() => {
+                    revision.current++;
+                    setTarget(document.id);
+                  }}
+                  label={document.title || "未命名"}
+                />
+              ))}
+              {!choices.loading && !choices.error &&
+                !choices.data?.documents.some((d) => d.id !== id) ? (
+                  <NativeText>没有匹配文档</NativeText>
+                ) : null}
+            </FieldGroup.Section>
+            <FieldGroup.Section>
+              <Button
+                disabled={!offset || choices.loading || busy}
+                onPress={() => setOffset(Math.max(0, offset - 60))}
+                label="上一页"
+              />
+              <Button
+                disabled={!choices.data?.hasMore || choices.loading || busy}
+                onPress={() => setOffset(offset + 60)}
+                label="下一页"
+              />
+            </FieldGroup.Section>
+          </FieldGroup>
+        </NativeHost>
       ) : (
         // FieldGroup is a native scrolling Form/LazyColumn. Give it the
         // remaining sheet height instead of measuring it inside an RN scroller.
@@ -309,76 +327,24 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
   return (
     <View style={{ flex: 1, backgroundColor: tokens.bg }}>
       <Stack.Screen options={{ title: label, gestureEnabled: !busy }} />
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button disabled={busy} onPress={() => router.back()}>
-          取消
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button
-          variant="done"
-          disabled={
-            busy ||
-            (id !== "new" && (info.loading || !!info.error)) ||
-            (mode === "move" && !target)
-          }
-          onPress={() => void save()}
-        >
-          {busy ? "保存中…" : "保存"}
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
-      {mode === "move" ? (
-        <FlatList
-          contentInsetAdjustmentBehavior="automatic"
-          keyboardShouldPersistTaps="handled"
-          data={choices.data?.documents.filter((d) => d.id !== id) ?? []}
-          keyExtractor={(d) => d.id}
-          ListHeaderComponent={header}
-          renderItem={({ item }) => (
-            <NativeButton
-              variant={target === item.id ? "filled" : "text"}
-              disabled={busy}
-              onPress={() => {
-                revision.current++;
-                setTarget(item.id);
-              }}
-            >
-              {item.title || "未命名"}
-            </NativeButton>
-          )}
-          ListEmptyComponent={
-            !choices.loading && !choices.error ? (
-              <Text style={{ padding: 16, color: tokens.muted }}>
-                没有匹配文档
-              </Text>
-            ) : null
-          }
-          ListFooterComponent={
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                padding: 16,
-              }}
-            >
-              <NativeButton
-                disabled={!offset || choices.loading || busy}
-                onPress={() => setOffset(Math.max(0, offset - 60))}
-              >
-                上一页
-              </NativeButton>
-              <NativeButton
-                disabled={!choices.data?.hasMore || choices.loading || busy}
-                onPress={() => setOffset(offset + 60)}
-              >
-                下一页
-              </NativeButton>
-            </View>
-          }
-        />
-      ) : (
-        header
-      )}
+      <NativeToolbarAction
+        placement="left"
+        label="取消"
+        disabled={busy}
+        onPress={() => router.back()}
+      />
+      <NativeToolbarAction
+        placement="right"
+        variant="done"
+        label={busy ? "保存中…" : "保存"}
+        disabled={
+          busy ||
+          (id !== "new" && (info.loading || !!info.error)) ||
+          (mode === "move" && !target)
+        }
+        onPress={() => void save()}
+      />
+      {header}
     </View>
   );
 }

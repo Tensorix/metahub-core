@@ -22,10 +22,11 @@ export function DatabasePickerSheet({
   const data = useApiData(fetch);
   return (
     <NativeSheet isPresented onDismiss={onClose}>
-      <RNHostView matchContents>
+      <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
             height: Math.min(height * 0.7, 600),
+            width: "100%",
             backgroundColor: tokens.surface,
             gap: 8,
           }}

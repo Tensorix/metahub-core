@@ -1,6 +1,7 @@
 import { NativeDiagnostics } from "@/lib/diagnostics/NativeDiagnostics";
 import { diagnosticsEnabled } from "@/lib/diagnostics/build-mode";
 import { Stack, useNavigationContainerRef } from "expo-router";
+import { Platform } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -85,16 +86,17 @@ function RootStack() {
         <Stack.Screen name="doc/[id]" options={{ headerShown: true }} />
         <Stack.Screen
           name="manage/document/[id]"
-          options={{ presentation: "formSheet", headerShown: true,
-            sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true }}
+          // Android form sheets do not support navigation headers or their save/cancel actions.
+          options={{ presentation: Platform.OS === "android" ? "modal" : "formSheet", headerShown: true,
+            ...(Platform.OS === "ios" ? { sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true } : {}) }}
         />
         <Stack.Screen
           name="manage/database/[id]"
-          options={{ presentation: "formSheet", headerShown: true, gestureEnabled: false }}
+          options={{ presentation: Platform.OS === "android" ? "modal" : "formSheet", headerShown: true, gestureEnabled: false }}
         />
         <Stack.Screen
           name="manage/view/[id]"
-          options={{ presentation: "formSheet", headerShown: true, gestureEnabled: false }}
+          options={{ presentation: Platform.OS === "android" ? "modal" : "formSheet", headerShown: true, gestureEnabled: false }}
         />
         <Stack.Screen
           name="add-server"
