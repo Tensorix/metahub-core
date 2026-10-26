@@ -12,6 +12,7 @@
 // storage-s3-bun.ts and is reached through the storage.ts registry.
 
 import { AwsClient } from "aws4fetch";
+import { MhError } from "../errors.ts";
 import { isVirtualHostedStyle, type S3Config } from "./storage.ts";
 
 /** THE aws4fetch signer for this config — one construction shared by the CAS
@@ -24,6 +25,17 @@ export function awsSigner(config: S3Config): AwsClient {
     region: config.region || "auto",
     service: "s3",
   });
+}
+
+/** Conditional-write semantics follow the official endpoint, not its display
+ * label or virtual-host addressing. A declared COS custom domain is unverified. */
+export function conditionalWriteProvider(config: S3Config): "cos" | "s3" {
+  const host = new URL(config.endpoint).hostname;
+  if (/^(?:[a-z0-9-]+\.)?cos(?:-internal)?\.[a-z0-9-]+\.myqcloud\.com$/i.test(host)) return "cos";
+  if (config.provider === "cos") {
+    throw new MhError("invalid_input", "Tencent COS conditional writes require a supported official COS endpoint; custom-domain capabilities cannot be verified");
+  }
+  return "s3";
 }
 
 /** Bucket-level base URL: virtual-hosted has the bucket in the host already

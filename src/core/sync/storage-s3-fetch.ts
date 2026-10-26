@@ -16,7 +16,7 @@ import {
 } from "./storage.ts";
 // Signer + addressing come from the shared runtime-neutral module, so a fix
 // there can't land on one runtime and 403 the other.
-import { awsSigner, bucketBase, objectUrlOf } from "./storage-s3-sign.ts";
+import { awsSigner, bucketBase, objectUrlOf, conditionalWriteProvider } from "./storage-s3-sign.ts";
 
 function decodeXmlEntities(s: string): string {
   return s
@@ -44,6 +44,25 @@ export function createFetchStorageClient(config: S3Config, opts: FetchStorageCli
   // follows the same split.
   const base = bucketBase(config);
   const objectUrl = (key: string) => objectUrlOf(config, key);
+
+  // COS ignores standard PUT preconditions. Its native forbid-overwrite
+  // header is safe only before versioning has ever been enabled. Recheck on
+  // every conditional create: a long-lived client must not cache this state.
+  async function requireCosConditionalCreate(): Promise<void> {
+    await request(`${base}/?versioning`, { method: "GET" }, async (res) => {
+      if (!res.ok) {
+        throw new MhError(res.status === 401 || res.status === 403 ? "auth" : "network",
+          `Tencent COS conditional creation requires cos:GetBucketVersioning permission; versioning check failed: ${res.status}`);
+      }
+      const xml = await res.text();
+      // The documented never-enabled response has an empty root (optionally
+      // with an XML declaration and namespace). Unknown XML must fail closed.
+      const neverEnabled = /^\s*(?:<\?xml[\s\S]*?\?>\s*)?<VersioningConfiguration(?:\s+[^>]*?)?\s*(?:\/>|>\s*<\/VersioningConfiguration>)\s*$/.test(xml);
+      if (!neverEnabled) {
+        throw new MhError("invalid_input", "Tencent COS conditional creation requires a bucket that has never enabled versioning; enabled, suspended or unverified versioning cannot prevent overwrites");
+      }
+    });
+  }
 
   async function fail(res: Response, what: string): Promise<never> {
     throw new MhError(res.status === 401 || res.status === 403 ? "auth" : "network", `S3 ${what} failed: ${res.status}`);
@@ -139,21 +158,38 @@ export function createFetchStorageClient(config: S3Config, opts: FetchStorageCli
     },
 
     async put(key: string, body: Uint8Array, opts?: StoragePutOpts): Promise<void> {
+      const conditional = !!opts?.ifNoneMatch || opts?.ifMatch !== undefined;
+      if (opts?.ifMatch !== undefined && (!opts.ifMatch.trim() || opts.ifNoneMatch))
+        throw new MhError("invalid_input", "Conditional put requires one nonempty If-Match value or If-None-Match");
+      const provider = conditional ? conditionalWriteProvider(config) : "s3";
+      // COS accepts and ignores If-Match on PUT. Never send an overwrite that
+      // claims to be atomic when the backend cannot enforce its precondition.
+      if (provider === "cos" && opts?.ifMatch !== undefined)
+        throw new MhError("invalid_input", "Tencent COS does not support atomic conditional updates (If-Match); use storage with atomic conditional writes for key rotation or passphrase changes");
       const headers: Record<string, string> = {};
       if (opts?.contentType) headers["content-type"] = opts.contentType;
-      // Conditional create: S3/R2 reject with 412 if the object already exists.
-      if (opts?.ifNoneMatch) headers["if-none-match"] = "*";
-      // Conditional overwrite (CAS): 412 if the current ETag differs.
-      if (opts?.ifMatch) headers["if-match"] = opts.ifMatch;
+      if (opts?.ifNoneMatch) {
+        if (provider === "cos") {
+          await requireCosConditionalCreate();
+          headers["x-cos-forbid-overwrite"] = "true";
+        } else headers["if-none-match"] = "*";
+      }
+      if (opts?.ifMatch !== undefined) headers["if-match"] = opts.ifMatch;
       await request(objectUrl(key), {
         method: "PUT",
         body: body as unknown as BodyInit,
         headers: Object.keys(headers).length ? headers : undefined,
       }, async (res) => {
-      if ((opts?.ifNoneMatch || opts?.ifMatch) && res.status === 412) {
-        throw new MhError("conflict", `S3 conditional put failed (${opts?.ifMatch ? "If-Match" : "exists"}): ${key}`);
-      }
-      if (!res.ok) await fail(res, "put");
+        if (conditional && res.status === 412)
+          throw new MhError("conflict", "S3 conditional put precondition failed");
+        if (provider === "cos" && opts?.ifNoneMatch && res.status === 409) {
+          // Other COS 409s include upload/quota/object-lock failures. Only the
+          // documented existing-object code means another creator won.
+          const xml = await res.text();
+          if (/<Code>\s*FileAlreadyExists\s*<\/Code>/.test(xml))
+            throw new MhError("conflict", "Tencent COS object already exists");
+        }
+        if (!res.ok) await fail(res, "put");
       });
     },
 

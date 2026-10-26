@@ -1,0 +1,116 @@
+{
+  "provider": "Tencent COS",
+  "isolatedChildPrefix": true,
+  "originalEnvelopeUntouched": true,
+  "corsUntouched": true,
+  "results": [
+    {
+      "label": "unconditional fixture seed",
+      "status": 200,
+      "errorCode": null,
+      "versionIdPresent": false
+    },
+    {
+      "label": "standard If-None-Match existing object",
+      "status": 200,
+      "errorCode": null,
+      "versionIdPresent": false
+    },
+    {
+      "label": "after standard conditional create",
+      "status": 200,
+      "byte": 2
+    },
+    {
+      "label": "COS forbid-overwrite existing object",
+      "status": 409,
+      "errorCode": "FileAlreadyExists",
+      "versionIdPresent": false
+    },
+    {
+      "label": "after COS forbid-overwrite",
+      "status": 200,
+      "byte": 2
+    },
+    {
+      "label": "COS forbid-overwrite missing object",
+      "status": 200,
+      "errorCode": null,
+      "versionIdPresent": false
+    },
+    {
+      "label": "COS forbid-overwrite repeated object",
+      "status": 409,
+      "errorCode": "FileAlreadyExists",
+      "versionIdPresent": false
+    },
+    {
+      "label": "after repeated COS create",
+      "status": 200,
+      "byte": 4
+    },
+    {
+      "label": "standard If-Match incorrect ETag",
+      "status": 200,
+      "errorCode": null,
+      "versionIdPresent": false
+    },
+    {
+      "label": "after incorrect If-Match",
+      "status": 200,
+      "byte": 6
+    },
+    {
+      "label": "standard If-Match originally read ETag",
+      "status": 200,
+      "errorCode": null,
+      "versionIdPresent": false
+    },
+    {
+      "label": "after original If-Match",
+      "status": 200,
+      "byte": 7
+    }
+  ],
+  "cleanup": true,
+  "cleanupStatuses": [
+    204,
+    204
+  ],
+  "sourceCommitBeforeFix": "ea130b85762ae1a8155e4198922503df380f77f3",
+  "scope": "Raw signed PUTs on two objects inside one unique _mobile-acceptance child prefix; all objects deleted. No original prefix object, key envelope, CORS or bucket versioning setting was changed.",
+  "runtime": "Bun 1.3.14; real Tencent COS endpoint; not Hermes, native UI or device evidence",
+  "versioningPreflight": {
+    "operation": "read-only GET Bucket versioning",
+    "status": 200,
+    "neverEnabledResponse": true,
+    "originalSettingsUnchanged": true
+  },
+  "officialReferences": [
+    "https://cloud.tencent.com/document/product/436/7749",
+    "https://cloud.tencent.com/document/product/436/7730",
+    "https://cloud.tencent.com/document/api/436/19888"
+  ],
+  "remediation": {
+    "conditionalCreate": "Official COS endpoints use x-cos-forbid-overwrite:true after a read-only versioning check on every conditional creation; only 409 FileAlreadyExists maps to conflict.",
+    "conditionalUpdate": "COS PUT ignores standard If-Match. The adapter refuses COS atomic conditional updates before any PUT; key rotation and passphrase changes requiring CAS retain their prior remote object.",
+    "bun": "Both conditional modes delegate to the shared fetch adapter; the HEAD followed by unconditional PUT approximation is removed.",
+    "compatibility": "Normal existing-object reads and unconditional sync writes remain available. Official COS endpoint detection is independent of virtual-host addressing; a declared COS custom domain fails conditional writes because its capabilities cannot be verified.",
+    "latency": "Each COS conditional create incurs one extra signed GET Bucket versioning; there is no long-lived capability cache.",
+    "administrativeBoundary": "The COS API does not combine the versioning-state check and object creation into one request. An administrator enabling or suspending bucket versioning concurrently between GET and PUT remains outside the atomic-create guarantee; keep versioning never-enabled for conditional creation. No bucket settings were changed for validation."
+  },
+  "unitRegression": {
+    "passed": 73,
+    "failed": 0,
+    "files": 6,
+    "claims": [
+      "COS existing-object create preserves winner",
+      "COS Enabled/Suspended/unrecognized versioning and missing permission cause zero PUTs",
+      "COS atomic updates cause zero network requests",
+      "every create rechecks versioning",
+      "Bun concurrent creates have one winner and one conflict without HEAD",
+      "COS drop-key rotation and passphrase change perform zero PUTs and preserve cached and remote keys"
+    ]
+  },
+  "postFixRealBucketProtocol": "Pending separate parent-owned isolated-prefix protocol rerun; this evidence records the raw pre-fix provider behavior."
+}

@@ -12,7 +12,7 @@
 // cross-origin call before its own CORS exists anyway).
 
 import { S3Client } from "bun";
-import type { AwsClient } from "aws4fetch";
+import { createFetchStorageClient } from "./storage-s3-fetch.ts";
 import { MhError } from "../errors.ts";
 import {
   setStorageClientFactory,
@@ -24,14 +24,12 @@ import {
   type S3Config,
 } from "./storage.ts";
 import {
-  awsSigner,
-  objectUrlOf,
   corsEndpoint,
   getBucketCors,
   buildCorsXml,
 } from "./storage-s3-sign.ts";
 
-export function makeBunStorageClient(config: S3Config): StorageClient {
+export function createBunStorageClient(config: S3Config): StorageClient {
   // Virtual-hosted (e.g. Tencent COS, which rejects path-style): the endpoint
   // host already carries the bucket, so Bun ignores the `bucket` option.
   const vhost = isVirtualHostedStyle(config);
@@ -44,12 +42,9 @@ export function makeBunStorageClient(config: S3Config): StorageClient {
     ...(vhost ? { virtualHostedStyle: true } : {}),
   });
 
-  // aws4fetch fallback for conditional overwrites: Bun.S3Client.write has no
-  // If-Match, so an ifMatch put signs a raw PUT the same way presignGet does.
-  // Lazy — only the rare drop-key CAS pays for it, not every list/get/put.
-  let awsLazy: AwsClient | null = null;
-  const aws = () => (awsLazy ??= awsSigner(config));
-  const objectUrl = (key: string) => objectUrlOf(config, key);
+  // Both conditional modes share the fetch adapter's provider checks and
+  // atomic wire requests; a HEAD followed by an unconditional PUT can race.
+  let conditionalClient: StorageClient | undefined;
 
   return {
     async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
@@ -79,31 +74,9 @@ export function makeBunStorageClient(config: S3Config): StorageClient {
     },
 
     async put(key: string, body: Uint8Array, opts?: StoragePutOpts): Promise<void> {
-      // Bun.S3Client.write has no native If-None-Match. Approximate the conditional
-      // create with an existence pre-check: this catches the realistic ordering
-      // (one device's create already visible — S3/R2 are read-after-write
-      // consistent for new objects) and lets provisionMasterKey adopt the winner.
-      // A truly simultaneous Bun-vs-Bun first-init on an empty bucket can still
-      // race (no atomic CAS here); the browser client uses real If-None-Match.
-      if (opts?.ifNoneMatch && (await s3.file(key).exists())) {
-        throw new MhError("conflict", `S3 object already exists: ${key}`);
-      }
-      // Conditional overwrite (CAS): route through aws4fetch since Bun.S3Client
-      // has no If-Match — a real atomic compare-and-set (unlike the ifNoneMatch
-      // pre-check above), so concurrent drop-key rotations converge instead of
-      // clobbering.
-      if (opts?.ifMatch) {
-        const res = await aws().fetch(objectUrl(key), {
-          method: "PUT",
-          body: new Uint8Array(body).buffer,
-          headers: {
-            "if-match": opts.ifMatch,
-            ...(opts.contentType ? { "content-type": opts.contentType } : {}),
-          },
-        });
-        if (res.status === 412) throw new MhError("conflict", `S3 If-Match failed: ${key}`);
-        if (!res.ok) throw new MhError("network", `S3 put failed: ${res.status} ${key}`);
-        return;
+      if (opts?.ifNoneMatch || opts?.ifMatch !== undefined) {
+        conditionalClient ??= createFetchStorageClient(config);
+        return conditionalClient.put(key, body, opts);
       }
       await s3.file(key).write(body, opts?.contentType ? { type: opts.contentType } : undefined);
     },
@@ -114,7 +87,10 @@ export function makeBunStorageClient(config: S3Config): StorageClient {
   };
 }
 
-setStorageClientFactory(makeBunStorageClient);
+// Preserve the factory export used by dev callers and isolated adapter tests.
+export const makeBunStorageClient = createBunStorageClient;
+
+setStorageClientFactory(createBunStorageClient);
 
 /**
  * Allow a browser shell served from `origins` to talk to the bucket directly
