@@ -15,6 +15,12 @@ import {
   normalizeViews,
   type ViewDef,
 } from "../../../../../../src/shared/views/model.ts";
+const screenOptions = {
+  title: "视图设置",
+  gestureEnabled: false,
+  headerBackVisible: false,
+};
+
 export default function ManageView() {
   const [saving, setSaving] = useState(false);
   const { id, viewId } = useLocalSearchParams<{ id: string; viewId: string }>(),
@@ -29,11 +35,12 @@ export default function ManageView() {
     dirty.current = value;
     revision.current++;
   }, []);
-  const exit = useFormExit(() => ({
+  useFormExit(() => ({
     pending: gate.isPending(),
     dirty: dirty.current,
     revision: revision.current,
   }));
+  const close = useCallback(() => router.back(), [router]);
   const fetch = useCallback(async () => {
     const [dbs, props] = await Promise.all([
       client.listDatabases(),
@@ -77,19 +84,13 @@ export default function ManageView() {
   };
   return (
     <View style={{ flex: 1, backgroundColor: tokens.bg }}>
-      <Stack.Screen
-        options={{
-          title: "视图设置",
-          gestureEnabled: false,
-          headerBackVisible: false,
-        }}
-      />
+      <Stack.Screen options={screenOptions} />
       <NativeToolbarAction
         placement="left"
         tintColor={tokens.accent}
         label="取消"
         disabled={saving}
-        onPress={() => exit(() => router.back())}
+        onPress={close}
       />
       {data.data?.view ? (
         <ViewSettingsSheet
@@ -99,9 +100,9 @@ export default function ManageView() {
           onSaved={() => {
             dirty.current = false;
             revision.current++;
-            exit(() => router.back());
+            close();
           }}
-          onClose={() => exit(() => router.back())}
+          onClose={close}
           onSave={save}
         />
       ) : (
