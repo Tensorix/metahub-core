@@ -1,0 +1,103 @@
+{
+  "evidence": {
+    "sourceSHA": "66b4374b31cb734912750fb2bad88a72f0d8051e",
+    "artifactClass": "synthetic-native-diagnostics",
+    "artifactSha256": "e2b44fabd9c370319104cabef92f9c3bcd28be25ae0a499826bfecfdc175f722",
+    "artifactHashScope": "embedded iOS Release bundle",
+    "device": {
+      "model": "iPhone 18 Pro",
+      "os": "iOS 27.0",
+      "type": "simulator",
+      "identifier": "50231799-2BC1-4440-BEA8-D0F4F8EE40C0"
+    },
+    "acceptanceBoundary": "Synthetic diagnostics only; no normal native workflow, app cold launch or physical-device performance acceptance"
+  },
+  "environment": {
+    "platform": "ios",
+    "platformVersion": "27.0",
+    "runtime": "Hermes",
+    "build": "Release",
+    "artifactClass": "synthetic-native-diagnostics",
+    "bundle": "embedded Release bundle; no Metro",
+    "target": "record test device/emulator identity with artifact",
+    "transport": "real localhost HTTP to isolated production /sync fixture",
+    "performanceTargets": "Measured only; no production-device threshold pass asserted"
+  },
+  "measurementStartedAt": "2026-10-26T06:37:28.512Z",
+  "fixture": {
+    "records": 5000,
+    "queuedOpsMinimum": 20000,
+    "networkBatchSize": 25,
+    "seed": "synthetic CRDT queue in 25-op synchronous batches; excludes UI-write cost"
+  },
+  "status": "COMPLETE",
+  "phase": "complete",
+  "seededRecords": 5000,
+  "seedMs": 13308.002875000238,
+  "queuedOps": 20012,
+  "networkProgress": {
+    "phase": "allKnownCursorReplay",
+    "rounds": 800,
+    "pushed": 0,
+    "pulled": 0
+  },
+  "upload": {
+    "rounds": 801,
+    "pushed": 20012,
+    "pulled": 0,
+    "ms": 13385.633540987968
+  },
+  "network": {
+    "fixture": "metahub-isolated-native-network-v1",
+    "waiting": false,
+    "requests": 801,
+    "uploadedOps": 20012,
+    "uniqueUploadedOps": 20012,
+    "maxUploadedPage": 25,
+    "records": 5000
+  },
+  "hydration": {
+    "rounds": 801,
+    "pushed": 0,
+    "pulled": 20012,
+    "ms": 13336.771209001541
+  },
+  "searchIndex": {
+    "batchSize": 25,
+    "totalMs": 3373.680583000183,
+    "steps": 203,
+    "maxStepMs": 6.286292016506195,
+    "p95StepMs": 5.271833002567291
+  },
+  "cursorReplay": {
+    "rounds": 801,
+    "pushed": 0,
+    "pulled": 0,
+    "ms": 13361.441500008106
+  },
+  "functionalAssertions": "PASS >=20k unique network ops, bounded pages, offline writes, lost ack replay, in-flight close/reopen recovery, all-known cursor replay and auth failure",
+  "maxObservedJsTimerGapMs": {
+    "setup": 17.762542009353638,
+    "seedQueue": 29.101083010435104,
+    "offlineBeforeUpload": 16.641083985567093,
+    "networkUpload": 20.156458020210266,
+    "networkHydration": 20.63358300924301,
+    "searchIndexWarmup": 16.916750013828278,
+    "lostAckReplay": 16.561791002750397,
+    "inFlightInterruption": 16.695208996534348,
+    "allKnownCursorReplay": 16.959457993507385
+  },
+  "timerIntervalMs": 10,
+  "jsTimerSamplesByPhase": {
+    "setup": 3,
+    "seedQueue": 800,
+    "offlineBeforeUpload": 1,
+    "networkUpload": 803,
+    "networkHydration": 801,
+    "searchIndexWarmup": 202,
+    "lostAckReplay": 1,
+    "inFlightInterruption": 4,
+    "allKnownCursorReplay": 802
+  },
+  "measurementFinishedAt": "2026-10-26T06:38:25.481Z"
+}

@@ -1,0 +1,103 @@
+{
+  "evidence": {
+    "sourceSHA": "66b4374b31cb734912750fb2bad88a72f0d8051e",
+    "artifactClass": "synthetic-native-diagnostics",
+    "artifactSha256": "e2b44fabd9c370319104cabef92f9c3bcd28be25ae0a499826bfecfdc175f722",
+    "artifactHashScope": "embedded iOS Release bundle",
+    "device": {
+      "model": "iPhone 18 Pro",
+      "os": "iOS 27.0",
+      "type": "simulator",
+      "identifier": "50231799-2BC1-4440-BEA8-D0F4F8EE40C0"
+    },
+    "acceptanceBoundary": "Synthetic diagnostics only; no normal native workflow, app cold launch or physical-device performance acceptance"
+  },
+  "environment": {
+    "platform": "ios",
+    "platformVersion": "27.0",
+    "build": "Release",
+    "artifactClass": "synthetic-native-diagnostics",
+    "runtime": "Hermes",
+    "target": "record test device/emulator identity with artifact",
+    "bundle": "embedded Release bundle; no Metro",
+    "performanceTargets": "Measured only; no production-device threshold pass asserted"
+  },
+  "measurementStartedAt": "2026-10-26T06:38:25.487Z",
+  "fixture": {
+    "records": 10000,
+    "documents": 1000,
+    "seedDispatchTransactionBatchSize": 10,
+    "searchIndexBatchSize": 25,
+    "scope": "service writes; not network sync ingest"
+  },
+  "phase": "complete",
+  "ingested": 11000,
+  "ingestMs": 50042.44800001383,
+  "emittedOps": 49007,
+  "searchIndexWarmupMs": 7364.4358749985695,
+  "searchIndexSteps": {
+    "count": 443,
+    "batchSize": 25,
+    "maxMs": 11.157000005245209,
+    "p95Ms": 6.540540993213654
+  },
+  "warmSearch": {
+    "count": 20,
+    "samplesMs": [
+      1.4327079951763153,
+      1.100583016872406,
+      1.4048329889774323,
+      2.229000002145767,
+      2.4985830187797546,
+      1.5303750038146973,
+      1.4972079992294312,
+      1.5833329856395721,
+      1.3260839879512787,
+      1.3678750097751617,
+      1.222791999578476,
+      1.342250019311905,
+      1.2405419945716858,
+      1.4116659760475159,
+      1.38162499666214,
+      1.3940829932689667,
+      1.2997920215129852,
+      1.3718750178813934,
+      1.326875001192093,
+      1.3715420067310333
+    ],
+    "p95Ms": 2.229000002145767
+  },
+  "fullSetPagedQuery": {
+    "pages": 50,
+    "rows": 10000,
+    "totalMs": 844.546875,
+    "firstPageMs": 22.376332998275757,
+    "lastPageMs": 16.496875017881393,
+    "p95PageMs": 17.949416011571884
+  },
+  "databaseReopenHomeList": {
+    "ms": 3.9262499809265137,
+    "databases": 1,
+    "documentSummaries": 60,
+    "totalDocuments": 1000,
+    "scope": "SQLite reopen, schema initialization, database list and first 60 document summaries; excludes app process cold start, React render and navigation"
+  },
+  "functionalAssertions": "PASS",
+  "status": "COMPLETE",
+  "maxObservedJsTimerGapMs": {
+    "ingest": 133.31729200482368,
+    "searchIndexWarmup": 17.734582990407944,
+    "warmSearch": 17.67425000667572,
+    "pagedQueries": 17.581999987363815,
+    "databaseReopenHomeList": 20.61462500691414
+  },
+  "timerIntervalMs": 10,
+  "jsTimerSamplesByPhase": {
+    "ingest": 1100,
+    "searchIndexWarmup": 442,
+    "warmSearch": 20,
+    "pagedQueries": 50,
+    "databaseReopenHomeList": 1
+  },
+  "measurementFinishedAt": "2026-10-26T06:39:24.088Z"
+}

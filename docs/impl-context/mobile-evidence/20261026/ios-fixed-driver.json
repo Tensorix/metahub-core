@@ -1,0 +1,45 @@
+{
+  "evidence": {
+    "sourceSHA": "66b4374b31cb734912750fb2bad88a72f0d8051e",
+    "artifactClass": "synthetic-native-diagnostics",
+    "artifactSha256": "e2b44fabd9c370319104cabef92f9c3bcd28be25ae0a499826bfecfdc175f722",
+    "artifactHashScope": "embedded iOS Release bundle",
+    "device": {
+      "model": "iPhone 18 Pro",
+      "os": "iOS 27.0",
+      "type": "simulator",
+      "identifier": "50231799-2BC1-4440-BEA8-D0F4F8EE40C0"
+    },
+    "acceptanceBoundary": "Synthetic diagnostics only; no normal native workflow, app cold launch or physical-device performance acceptance"
+  },
+  "environment": {
+    "artifactClass": "synthetic-native-diagnostics",
+    "configuration": "Release",
+    "bundle": "embedded Release bundle; no Metro",
+    "platform": "ios",
+    "platformVersion": "27.0",
+    "measurementScope": "isolated synthetic fixtures; not native UI acceptance or app cold launch"
+  },
+  "results": [
+    "PASS get normalizes a miss to null (never undefined)",
+    "PASS get/all round-trip text, integer, real and NULL values",
+    "PASS run reports SQLite changes()",
+    "PASS INSERT OR IGNORE duplicate reports changes 0 (oplog dedup depends on it)",
+    "PASS binds normalize: undefined→NULL, boolean→1/0, bigint→number",
+    "PASS Uint8Array binds and BLOB reads round-trip as bytes",
+    "PASS transaction commits on return",
+    "PASS transaction rolls back on throw",
+    "PASS nested transactions are savepoints: inner throw caught → outer writes survive",
+    "PASS nested transaction return value commits both layers",
+    "PASS exec runs multi-statement DDL/DML scripts",
+    "PASS repeated execution of one SQL text stays healthy (statement cache)",
+    "PASS PRAGMA table_info works (schema-init column probing)",
+    "PASS native schema, CRUD, durable checkpoint and reopen",
+    "PASS three FTS schema close/reopen cycles",
+    "PASS native disk-full: real SQLITE_FULL (13), max_page_count=71, transaction rolled back, caught direct/nested FULL blocks outer SQL/commit, cursor/draft retained after reopen, later write durable",
+    "PASS native migration interruption: one DDL failure surfaced after partial migration, close/reopen initSchema recovered, cursor/draft retained, repeat init idempotent",
+    "PASS Bun-generated PBKDF2 envelope and encrypted gzip decoded natively",
+    "PASS native PBKDF2, AES-GCM, gzip roundtrip",
+    "PASS incorrect passphrase rejected"
+  ]
+}

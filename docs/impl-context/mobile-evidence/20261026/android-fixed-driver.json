@@ -1,0 +1,46 @@
+{
+  "evidence": {
+    "sourceSHA": "ea130b85762ae1a8155e4198922503df380f77f3",
+    "artifactClass": "synthetic-native-diagnostics",
+    "artifactSha256": "97f114cb893cfee32a366a545b053502fdb87e0e63d45b62fd594342b13dcee0",
+    "artifactHashScope": "Android Release APK",
+    "device": {
+      "model": "Pixel_9_Pro",
+      "os": "Android 16",
+      "api": 36,
+      "type": "emulator",
+      "identifier": "emulator-5554"
+    },
+    "acceptanceBoundary": "Synthetic diagnostics only; performance thresholds remain unmet; no normal native workflow, app cold launch or physical-device performance acceptance"
+  },
+  "environment": {
+    "artifactClass": "synthetic-native-diagnostics",
+    "configuration": "Release",
+    "bundle": "embedded Release bundle; no Metro",
+    "platform": "android",
+    "platformVersion": 36,
+    "measurementScope": "isolated synthetic fixtures; not native UI acceptance or app cold launch"
+  },
+  "results": [
+    "PASS get normalizes a miss to null (never undefined)",
+    "PASS get/all round-trip text, integer, real and NULL values",
+    "PASS run reports SQLite changes()",
+    "PASS INSERT OR IGNORE duplicate reports changes 0 (oplog dedup depends on it)",
+    "PASS binds normalize: undefined→NULL, boolean→1/0, bigint→number",
+    "PASS Uint8Array binds and BLOB reads round-trip as bytes",
+    "PASS transaction commits on return",
+    "PASS transaction rolls back on throw",
+    "PASS nested transactions are savepoints: inner throw caught → outer writes survive",
+    "PASS nested transaction return value commits both layers",
+    "PASS exec runs multi-statement DDL/DML scripts",
+    "PASS repeated execution of one SQL text stays healthy (statement cache)",
+    "PASS PRAGMA table_info works (schema-init column probing)",
+    "PASS native schema, CRUD, durable checkpoint and reopen",
+    "PASS three FTS schema close/reopen cycles",
+    "PASS native disk-full: real SQLITE_FULL (13), max_page_count=71, transaction rolled back, caught direct/nested FULL blocks outer SQL/commit, cursor/draft retained after reopen, later write durable; evidence={\"failures\":[{\"phase\":\"initial\",\"boundary\":\"native\",\"operation\":\"payload\",\"transactionActive\":false,\"error\":{\"nodes\":[{\"via\":\"root\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":118,\"messageCodes\":[],\"messageControlCodes\":[13],\"hasFullText\":true}],\"truncated\":false}},{\"phase\":\"initial\",\"boundary\":\"driver\",\"error\":{\"nodes\":[{\"via\":\"root\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":118,\"messageCodes\":[],\"messageControlCodes\":[13],\"hasFullText\":true},{\"via\":\"cause\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":117,\"messageCodes\":[],\"messageControlCodes\":[],\"hasFullText\":false}],\"truncated\":false}},{\"phase\":\"nested\",\"boundary\":\"native\",\"operation\":\"payload\",\"transactionActive\":false,\"error\":{\"nodes\":[{\"via\":\"root\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":118,\"messageCodes\":[],\"messageControlCodes\":[13],\"hasFullText\":true}],\"truncated\":false}},{\"phase\":\"nested\",\"boundary\":\"driver\",\"error\":{\"nodes\":[{\"via\":\"root\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":118,\"messageCodes\":[],\"messageControlCodes\":[13],\"hasFullText\":true},{\"via\":\"cause\",\"type\":\"object\",\"codeType\":\"undefined\",\"symbolicFull\":false,\"messageLength\":36,\"messageCodes\":[],\"messageControlCodes\":[],\"hasFullText\":false},{\"via\":\"errors\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":105,\"messageCodes\":[],\"messageControlCodes\":[],\"hasFullText\":false},{\"via\":\"errors\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":117,\"messageCodes\":[],\"messageControlCodes\":[],\"hasFullText\":false}],\"truncated\":false}},{\"phase\":\"direct\",\"boundary\":\"native\",\"operation\":\"payload\",\"transactionActive\":false,\"error\":{\"nodes\":[{\"via\":\"root\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":118,\"messageCodes\":[],\"messageControlCodes\":[13],\"hasFullText\":true}],\"truncated\":false}},{\"phase\":\"direct\",\"boundary\":\"driver\",\"error\":{\"nodes\":[{\"via\":\"root\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":118,\"messageCodes\":[],\"messageControlCodes\":[13],\"hasFullText\":true},{\"via\":\"cause\",\"type\":\"object\",\"codeType\":\"string\",\"symbolicFull\":false,\"messageLength\":117,\"messageCodes\":[],\"messageControlCodes\":[],\"hasFullText\":false}],\"truncated\":false}}],\"limits\":{\"pageCount\":69,\"pageSize\":4096,\"requested\":71,\"actual\":71,\"payloadBytes\":323584}}",
+    "PASS native migration interruption: one DDL failure surfaced after partial migration, close/reopen initSchema recovered, cursor/draft retained, repeat init idempotent",
+    "PASS Bun-generated PBKDF2 envelope and encrypted gzip decoded natively",
+    "PASS native PBKDF2, AES-GCM, gzip roundtrip",
+    "PASS incorrect passphrase rejected"
+  ]
+}

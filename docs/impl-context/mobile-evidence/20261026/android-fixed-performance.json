@@ -1,0 +1,104 @@
+{
+  "evidence": {
+    "sourceSHA": "ea130b85762ae1a8155e4198922503df380f77f3",
+    "artifactClass": "synthetic-native-diagnostics",
+    "artifactSha256": "97f114cb893cfee32a366a545b053502fdb87e0e63d45b62fd594342b13dcee0",
+    "artifactHashScope": "Android Release APK",
+    "device": {
+      "model": "Pixel_9_Pro",
+      "os": "Android 16",
+      "api": 36,
+      "type": "emulator",
+      "identifier": "emulator-5554"
+    },
+    "acceptanceBoundary": "Synthetic diagnostics only; performance thresholds remain unmet; no normal native workflow, app cold launch or physical-device performance acceptance"
+  },
+  "environment": {
+    "platform": "android",
+    "platformVersion": 36,
+    "build": "Release",
+    "artifactClass": "synthetic-native-diagnostics",
+    "runtime": "Hermes",
+    "target": "record test device/emulator identity with artifact",
+    "bundle": "embedded Release bundle; no Metro",
+    "performanceTargets": "Measured only; no production-device threshold pass asserted"
+  },
+  "measurementStartedAt": "2026-10-26T06:53:50.473Z",
+  "fixture": {
+    "records": 10000,
+    "documents": 1000,
+    "seedDispatchTransactionBatchSize": 10,
+    "searchIndexBatchSize": 25,
+    "scope": "service writes; not network sync ingest"
+  },
+  "phase": "complete",
+  "ingested": 11000,
+  "ingestMs": 74060.24274300039,
+  "emittedOps": 49007,
+  "searchIndexWarmupMs": 7373.508086999878,
+  "searchIndexSteps": {
+    "count": 443,
+    "batchSize": 25,
+    "maxMs": 7.379916999489069,
+    "p95Ms": 4.69883400015533
+  },
+  "warmSearch": {
+    "count": 20,
+    "samplesMs": [
+      1.4715830013155937,
+      1.6334170009940863,
+      2.025584001094103,
+      2.1043330002576113,
+      2.191499998793006,
+      2.447374999523163,
+      2.5457080006599426,
+      2.543792000040412,
+      2.2765410002321005,
+      2.4859999995678663,
+      2.3630839996039867,
+      2.6018749997019768,
+      1.7295829989016056,
+      2.1109999995678663,
+      2.3055410012602806,
+      2.1777919996529818,
+      1.9988750014454126,
+      2.6079169996082783,
+      2.1831249985843897,
+      2.7177920006215572
+    ],
+    "p95Ms": 2.6079169996082783
+  },
+  "fullSetPagedQuery": {
+    "pages": 50,
+    "rows": 10000,
+    "totalMs": 844.9258340001106,
+    "firstPageMs": 25.602791000157595,
+    "lastPageMs": 16.738709000870585,
+    "p95PageMs": 18.457624999806285
+  },
+  "databaseReopenHomeList": {
+    "ms": 3.640083000063896,
+    "databases": 1,
+    "documentSummaries": 60,
+    "totalDocuments": 1000,
+    "scope": "SQLite reopen, schema initialization, database list and first 60 document summaries; excludes app process cold start, React render and navigation"
+  },
+  "functionalAssertions": "PASS",
+  "status": "COMPLETE",
+  "maxObservedJsTimerGapMs": {
+    "ingest": 3094.9934599995613,
+    "searchIndexWarmup": 21.661250000819564,
+    "warmSearch": 26.51958299987018,
+    "pagedQueries": 27.62208299897611,
+    "databaseReopenHomeList": 20.632458999753
+  },
+  "timerIntervalMs": 10,
+  "jsTimerSamplesByPhase": {
+    "ingest": 4258,
+    "searchIndexWarmup": 441,
+    "warmSearch": 20,
+    "pagedQueries": 51,
+    "databaseReopenHomeList": 1
+  },
+  "measurementFinishedAt": "2026-10-26T06:55:13.138Z"
+}
