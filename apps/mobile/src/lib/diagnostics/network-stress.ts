@@ -28,7 +28,9 @@ const check = (condition: unknown, message: string) => {
   if (!condition) throw new Error(message);
 };
 
-export async function runNativeNetworkStress() {
+export async function runNativeNetworkStress(
+  onProgress?: (phase: string, detail?: string) => void,
+) {
   const measurements = createDiagnosticMeasurements();
   const yieldTurn = () => measurements.measureAsyncElapsed("yield", turn);
   const result: Record<string, unknown> = {
@@ -112,6 +114,7 @@ export async function runNativeNetworkStress() {
     measurements.setPhase(next);
     result.phase = next;
     persist();
+    onProgress?.(next);
   };
   try {
     const marker = await request("/fixture");
@@ -176,6 +179,7 @@ export async function runNativeNetworkStress() {
       if (i % 250 === 249) {
         result.seededRecords = i + 1;
         persist();
+        onProgress?.(phase, `${i + 1}/5000 records`);
       }
     }
     if (pending.length)
@@ -216,6 +220,10 @@ export async function runNativeNetworkStress() {
         if (rounds % 50 === 0) {
           result.networkProgress = { phase, rounds, pushed, pulled };
           persist();
+          onProgress?.(
+            phase,
+            `${rounds} rounds; pushed ${pushed}; pulled ${pulled}`,
+          );
         }
         await yieldTurn();
       } while (rounds < 2000);
@@ -245,9 +253,11 @@ export async function runNativeNetworkStress() {
       "server did not receive the entire bounded queue",
     );
     result.network = uploaded;
+    onProgress?.("networkUpload/close-sender");
     db.close();
     db = undefined;
     activeName = receiverName;
+    onProgress?.("networkUpload/open-receiver");
     db = open();
     node = getNodeId(db);
     setPhase("networkHydration");
@@ -318,16 +328,19 @@ export async function runNativeNetworkStress() {
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
     }
     controller.abort(new Error("native fixture background interruption"));
+    onProgress?.("inFlightInterruption/await-abort");
     check(await pendingSync, "in-flight operation ignored cancellation");
     inFlight = undefined;
     check(
       waiting && cursor() === beforeAbort,
       "interrupted page advanced cursors",
     );
+    onProgress?.("inFlightInterruption/close");
     db.close();
     db = undefined;
     await fault("none");
     await yieldTurn();
+    onProgress?.("inFlightInterruption/reopen");
     db = open();
     check(
       cursor() === beforeAbort &&
@@ -370,17 +383,23 @@ export async function runNativeNetworkStress() {
     result.jsTimerSamplesByPhase = timerSamples;
     result.measurementFinishedAt = new Date().toISOString();
     if (node) {
+      onProgress?.("cleanup/fault-reset");
       try {
         await request("/fixture/fault", { node, mode: "none" });
       } catch {}
     }
+    onProgress?.("cleanup/close");
     db?.close();
+    let deleted = 0;
     for (const fixtureName of [name, receiverName]) {
+      onProgress?.("cleanup/delete", `${++deleted}/2 fixture databases`);
       try {
         deleteDatabaseSync(fixtureName);
       } catch {}
     }
+    onProgress?.("cleanup/reportWrite");
     persist();
+    onProgress?.(String(result.phase ?? phase), String(result.status));
   }
   return result;
 }
