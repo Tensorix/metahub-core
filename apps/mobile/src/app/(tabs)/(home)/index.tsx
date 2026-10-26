@@ -154,7 +154,7 @@ export default function HomeScreen() {
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
       <Stack.Screen options={{ title: "Metahub" }} />
       <Stack.Toolbar placement="right" tintColor={tokens.accent}>
-        <Stack.Toolbar.Menu icon={Platform.OS === "ios" ? "plus" : undefined}>
+        <Stack.Toolbar.Menu icon={Platform.OS === "ios" ? "plus" : require("@/components/native/assets/add.xml")}>
           <Stack.Toolbar.Label>新建</Stack.Toolbar.Label>
           <Stack.Toolbar.MenuAction
             onPress={() =>

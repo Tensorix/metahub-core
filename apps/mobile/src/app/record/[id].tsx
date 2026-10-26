@@ -1,3 +1,4 @@
+import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { Button, FieldGroup, Picker, Switch, Text } from "@expo/ui";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import {
@@ -198,14 +199,12 @@ export default function RecordScreen() {
     else router.replace("/(tabs)");
   };
   const closeToolbar = (
-    <Stack.Toolbar placement="left">
-      <Stack.Toolbar.Button
-        disabled={savingBeforeLeave || deleting}
-        onPress={close}
-      >
-        关闭
-      </Stack.Toolbar.Button>
-    </Stack.Toolbar>
+    <NativeToolbarAction
+      placement="left"
+      label="关闭"
+      disabled={savingBeforeLeave || deleting}
+      onPress={close}
+    />
   );
   const leaveNotice = leaveError ? (
     <RNText
@@ -335,7 +334,7 @@ export default function RecordScreen() {
         <Stack.Toolbar.Menu
           title="记录操作"
           accessibilityLabel="记录操作"
-          icon={process.env.EXPO_OS === "ios" ? "ellipsis.circle" : undefined}
+          icon={process.env.EXPO_OS === "ios" ? "ellipsis.circle" : require("@/components/native/assets/more.xml")}
         >
           <Stack.Toolbar.MenuAction
             disabled={deleting || saving}

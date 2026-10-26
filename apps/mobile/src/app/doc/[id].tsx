@@ -1,3 +1,4 @@
+import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import {
   Stack,
   useLocalSearchParams,
@@ -268,16 +269,17 @@ function LocalDocument({ id }: { id: string }) {
   return (
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
       <Stack.Screen options={{ title, headerBackButtonMenuEnabled: false }} />
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button disabled={busy} onPress={leave}>
-          返回
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
+      <NativeToolbarAction
+        placement="left"
+        label="返回"
+        disabled={busy}
+        onPress={leave}
+      />
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
           title="文档操作"
           accessibilityLabel="文档操作"
-          icon={process.env.EXPO_OS === "ios" ? "ellipsis.circle" : undefined}
+          icon={process.env.EXPO_OS === "ios" ? "ellipsis.circle" : require("@/components/native/assets/more.xml")}
         >
           <Stack.Toolbar.MenuAction
             disabled={busy}

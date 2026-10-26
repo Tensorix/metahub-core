@@ -107,10 +107,11 @@ export function DocumentHistorySheet({
       }}
       dismissible={!busy}
     >
-      <RNHostView matchContents>
+      <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
             height: Math.min(height * 0.72, 680),
+            width: "100%",
             gap: 12,
             backgroundColor: tokens.surface,
           }}

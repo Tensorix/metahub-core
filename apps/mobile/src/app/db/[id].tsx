@@ -462,23 +462,41 @@ export default function DatabaseScreen() {
           onMoved={() => void refetch()}
         />
       ) : null}
-      <Stack.Toolbar placement="right" tintColor={tokens.accent}>
-        <Stack.Toolbar.Button
-          icon={Platform.OS === "ios" ? "plus" : undefined}
-          onPress={() => void addRecord(null)}
-        >
-          新建记录
-        </Stack.Toolbar.Button>
-        <Stack.Toolbar.Button
-          onPress={() =>
-            router.push(
-              `/manage/database/${id}` as Parameters<typeof router.push>[0],
-            )
-          }
-        >
-          管理
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
+      {Platform.OS === "android" ? (
+        <Stack.Toolbar placement="right" asChild>
+          <View style={{ flexDirection: "row" }}>
+            <NativeButton variant="text" onPress={() => void addRecord(null)}>
+              新建记录
+            </NativeButton>
+            <NativeButton
+              variant="text"
+              onPress={() => router.push(
+                `/manage/database/${id}` as Parameters<typeof router.push>[0],
+              )}
+            >
+              管理
+            </NativeButton>
+          </View>
+        </Stack.Toolbar>
+      ) : (
+        <Stack.Toolbar placement="right" tintColor={tokens.accent}>
+          <Stack.Toolbar.Button
+            icon={Platform.OS === "ios" ? "plus" : undefined}
+            onPress={() => void addRecord(null)}
+          >
+            新建记录
+          </Stack.Toolbar.Button>
+          <Stack.Toolbar.Button
+            onPress={() =>
+              router.push(
+                `/manage/database/${id}` as Parameters<typeof router.push>[0],
+              )
+            }
+          >
+            管理
+          </Stack.Toolbar.Button>
+        </Stack.Toolbar>
+      )}
     </View>
   );
 }
