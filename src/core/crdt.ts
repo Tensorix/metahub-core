@@ -1,6 +1,6 @@
 import { writeTx, type DbDriver } from "./driver.ts";
 import { getNodeId } from "./node.ts";
-import { nextHlc, observeHlc, isSkewedHlc } from "./hlc.ts";
+import { nextHlc, observeHlcs, isSkewedHlc } from "./hlc.ts";
 import { serializeDocBlocks } from "./blocks.ts";
 import { randomSuffix } from "./ids.ts";
 import { noteChange } from "./history-cache.ts";
@@ -372,13 +372,18 @@ export interface ApplyResult {
  * of the order changes are applied, because the winner is recomputed as the max
  * HLC over the full oplog for that register.
  */
-export function applyChange(db: DbDriver, c: Change): ApplyResult {
+function applyChangeInternal(db: DbDriver, c: Change, rematerializeKnown: boolean): ApplyResult {
   const inserted =
     db
       .query(
         "INSERT OR IGNORE INTO crdt_changes (hlc, node_id, dataset, row_id, col, value, txn) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
       .run(c.hlc, c.node_id, c.dataset, c.row_id, c.col, c.value, c.txn ?? null).changes > 0;
+
+  // The ingest boundary only needs new rows; replaying known changes should
+  // not repeat materialization and native bridge calls. Explicit applyChange
+  // keeps re-materialization for upgrade/migration repair of retained oplogs.
+  if (!inserted && !rematerializeKnown) return { inserted: false, winner: false };
 
   const cur = db
     .query(
@@ -412,6 +417,12 @@ export function applyChange(db: DbDriver, c: Change): ApplyResult {
     throw e; // ingest counts it poisoned; a local emit() fails loudly and clean
   }
   return { inserted, winner: true };
+}
+
+/** Explicit application also re-materializes an already-known winning change.
+ * Upgrade migrations use this to materialize newly understood datasets. */
+export function applyChange(db: DbDriver, c: Change): ApplyResult {
+  return applyChangeInternal(db, c, true);
 }
 
 /** Apply a local write: assign a fresh HLC, append to oplog, materialize. */
@@ -484,20 +495,21 @@ export function ingestDetailed(
   let poisoned = 0;
   const skewed: Record<string, number> = {};
   const tx = () => {
+    const observed: string[] = [];
     for (const c of changes) {
       if (isExpiredIntentReceipt(c, now)) continue;
       if (isSkewedHlc(c.hlc, now)) {
         skewed[c.node_id] = (skewed[c.node_id] ?? 0) + 1;
         continue;
       }
-      observeHlc(db, node, c.hlc, now);
+      observed.push(c.hlc);
       // Isolate a poison change (e.g. a malformed register that trips a NOT NULL
       // or other SQLite constraint) to that one change instead of aborting the
       // whole batch: SQLite's default ABORT rolls back only the failed statement,
       // so the transaction stays usable and the cursor still advances. Fail
       // loudly (logged + counted) — never silently.
       try {
-        if (applyChange(db, c).inserted) received++;
+        if (applyChangeInternal(db, c, false).inserted) received++;
       } catch (e) {
         // Advance past only recognized invalid data. Unexpected driver/native
         // failures must roll back the batch so a caller cannot acknowledge it.
@@ -511,6 +523,7 @@ export function ingestDetailed(
         );
       }
     }
+    if (observed.length) observeHlcs(db, node, observed, now);
   };
   writeTx(db, tx);
   if (poisoned) console.error(`[ingest] ${poisoned} change(s) skipped this batch (see above)`);

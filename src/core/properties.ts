@@ -120,7 +120,7 @@ export function getProperty(db: DbDriver, id: string): PropertyRow | null {
 export function listProperties(db: DbDriver, databaseId: string): PropertyRow[] {
   const rows = db
     .query(
-      `SELECT ${PROPERTY_SELECT} FROM properties WHERE database_id = ? AND __deleted = 0 ORDER BY position`,
+      `SELECT ${PROPERTY_SELECT} FROM properties WHERE database_id = ? AND __deleted = 0 ORDER BY position, id`,
     )
     .all(databaseId) as (Omit<PropertyRow, "config"> & { config: string | null })[];
   return rows.map((r) => ({
@@ -297,4 +297,56 @@ export const removeProperty = grouped(function removeProperty(db: DbDriver, id: 
     .all(prop.database_id, id) as { id: string }[];
   for (const r of rows) emit(db, "records", r.id, id, undefined);
   return true;
+});
+
+
+/** Re-read live neighbours inside the synchronous change group. Positions are
+ * repaired when ties or floating-point exhaustion leave no insertion space. */
+export const moveProperty = grouped(function moveProperty(
+  db: DbDriver, id: string, anchorId: string, where: "before" | "after",
+): PropertyRow {
+  if (where !== "before" && where !== "after") throw new MhError("invalid_input", "unknown move position");
+  const source = getProperty(db, id);
+  const anchor = getProperty(db, anchorId);
+  if (!source) throw new MhError("not_found", `no such property: ${id}`);
+  if (!anchor) throw new MhError("not_found", `no such property: ${anchorId}`);
+  if (source.database_id !== anchor.database_id) throw new MhError("invalid_input", "cannot move a property across databases");
+  if (id === anchorId) return source;
+  let rows = listProperties(db, source.database_id).filter(row => row.id !== id);
+  const position = () => {
+    const at = rows.findIndex(row => row.id === anchorId);
+    if (at < 0) throw new MhError("not_found", `no such property: ${anchorId}`);
+    const index = where === "before" ? at : at + 1;
+    const left = rows[index - 1]?.position;
+    const right = rows[index]?.position;
+    const value = left === undefined ? right! - 1 : right === undefined ? left + 1 : left / 2 + right / 2;
+    return Number.isFinite(value) && (left === undefined || value > left) && (right === undefined || value < right) ? value : null;
+  };
+  let next = rows.every(row => Number.isFinite(row.position)) ? position() : null;
+  if (next === null) {
+    for (let i = 0; i < rows.length; i++) emit(db, "properties", rows[i]!.id, "position", i + 1);
+    rows = listProperties(db, source.database_id).filter(row => row.id !== id);
+    next = position();
+  }
+  if (next === null) throw new MhError("invalid_input", "could not allocate a finite property position");
+  if (next !== source.position) emit(db, "properties", id, "position", next);
+  return getProperty(db, id)!;
+});
+
+/** Moving option strings never rewrites record cells. Rename remains the
+ * separate command that changes stored cell values. */
+export const moveSelectOption = grouped(function moveSelectOption(
+  db: DbDriver, id: string, option: string, anchor: string, where: "before" | "after",
+): PropertyRow {
+  if (where !== "before" && where !== "after") throw new MhError("invalid_input", "unknown move position");
+  const { prop, options } = getSelectProperty(db, id);
+  if (!options.includes(option)) throw new MhError("not_found", `no such option: ${option}`);
+  if (!options.includes(anchor)) throw new MhError("not_found", `no such option: ${anchor}`);
+  if (option === anchor) return prop;
+  const ordered = [...options];
+  ordered.splice(ordered.indexOf(option), 1);
+  const index = ordered.indexOf(anchor) + (where === "after" ? 1 : 0);
+  ordered.splice(index, 0, option);
+  if (ordered.some((value, i) => value !== options[i])) emit(db, "properties", id, "config", { ...prop.config, options: ordered });
+  return getProperty(db, id)!;
 });

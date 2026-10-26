@@ -13,8 +13,9 @@ export interface RecordQuery {
 /** Scan in bounded chunks, retaining only the requested sorted prefix. Filters
  * and search apply to the entire database before pagination, including ties. */
 function* scanRecords(db: DbDriver, databaseId: string, query: RecordQuery = {}) {
-  // Derived index is local-only; it keeps repeated bounded scans in manual order cheap.
-  db.exec("CREATE INDEX IF NOT EXISTS idx_mobile_record_page ON records(database_id, __deleted, order_key IS NULL, order_key, id)");
+  // The async facade must get a cancellable turn before any SQLite access.
+  // Index creation belongs to schema migration, never a read request.
+  yield;
   const props = listProperties(db, databaseId);
   const limit = Number.isFinite(query.limit) ? Math.max(1, Math.min(200, Math.floor(query.limit!))) : 60;
   const offset = Number.isFinite(query.offset) ? Math.max(0, Math.floor(query.offset!)) : 0;
@@ -35,7 +36,6 @@ function* scanRecords(db: DbDriver, databaseId: string, query: RecordQuery = {})
   // Manual-order lists can page directly through the index. Scanning and
   // parsing every record on every scroll page is unnecessary without predicates.
   if (!sort.length && !query.search?.trim() && !query.filter?.rules.length) {
-    yield; // Preserve cancellation before the async facade reads the page.
     const total = (db.query("SELECT count(*) AS n FROM records WHERE database_id = ? AND __deleted = 0").get(databaseId) as { n: number }).n;
     const rows = db.query("SELECT id, database_id, data FROM records WHERE database_id = ? AND __deleted = 0 ORDER BY order_key IS NULL, order_key, id LIMIT ? OFFSET ?").all(databaseId, limit, offset) as { id: string; database_id: string; data: string }[];
     const records = rows.map(row => {

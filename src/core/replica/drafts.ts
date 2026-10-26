@@ -39,6 +39,10 @@ export function createDraftStore(db: DbDriver) {
     acknowledgeDocument(docId: string, revision: number, _version?: string): void {
       db.query("DELETE FROM replica_document_drafts WHERE doc_id = ? AND revision <= ?").run(docId, revision);
     },
+    /** Explicit discard only; callers use this after successful deletion or a user discard. */
+    discardDocument(docId: string): void {
+      db.query("DELETE FROM replica_document_drafts WHERE doc_id = ?").run(docId);
+    },
     readFields(recordId: string): Record<string, FieldDraft> {
       const rows = db.query("SELECT prop_id, value, status, error FROM replica_field_drafts WHERE record_id = ?").all(recordId) as { prop_id: string; value: string; status: FieldDraft["status"]; error: string | null }[];
       return Object.fromEntries(rows.map(r => [r.prop_id, { value: JSON.parse(r.value), status: r.status, ...(r.error ? { error: r.error } : {}) }]));

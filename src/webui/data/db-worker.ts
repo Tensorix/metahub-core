@@ -59,7 +59,7 @@ import {
 import { PAIR_PATH, type PairRequest, type PairResponse } from "../../core/sync/protocol.ts";
 import { listAuditEntries, auditEntryDetail, revertChangeGroup } from "../../core/audit.ts";
 import { repairClock } from "../../core/integrity.ts";
-import { search } from "../../core/search.ts";
+import { search, querySearchIncrementally, type SearchQuery } from "../../core/search.ts";
 import {
   resolveSite,
   resolveSiteFileRow,
@@ -1131,6 +1131,7 @@ const ops: Record<string, Op> = {
 
   // Full search runs on this dedicated worker; native uses bounded indexing.
   search: (text: string, limit?: number) => search(db!, text, { limit }),
+  querySearch: (text: string, query?: SearchQuery) => querySearchIncrementally(db!, text, query),
 };
 
 /** Ops that change data: a successful call schedules a push to the server. */

@@ -80,11 +80,13 @@ const changeKey = (c: Pick<Change, "hlc" | "node_id" | "dataset" | "row_id" | "c
 export function advanceAckedPrefix(db: DbDriver, fromSeq: number, received: Change[]): number {
   if (received.length === 0) return fromSeq;
   const keys = new Set(received.map(changeKey));
+  // A contiguous acknowledged prefix cannot contain more rows than the
+  // response. Bound bridge work even when a large local upload queue remains.
   const rows = db
     .query(
-      "SELECT rowid AS seq, hlc, node_id, dataset, row_id, col FROM crdt_changes WHERE rowid > ? ORDER BY rowid",
+      "SELECT rowid AS seq, hlc, node_id, dataset, row_id, col FROM crdt_changes WHERE rowid > ? ORDER BY rowid LIMIT ?",
     )
-    .all(fromSeq) as (Pick<Change, "hlc" | "node_id" | "dataset" | "row_id" | "col"> & {
+    .all(fromSeq, received.length) as (Pick<Change, "hlc" | "node_id" | "dataset" | "row_id" | "col"> & {
     seq: number;
   })[];
   let cursor = fromSeq;

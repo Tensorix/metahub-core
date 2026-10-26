@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { runSchema } from "./db.ts";
 import {
   emit,
+  applyChange,
   emitFields,
   ingest,
   withChangeGroup,
@@ -329,4 +330,37 @@ test("a group that throws mid-way leaves no partial rows (change group = transac
   ).toThrow("boom");
   expect(db.query("SELECT COUNT(*) AS n FROM crdt_changes WHERE row_id = 'db_half'").get()).toEqual({ n: 0 });
   expect(db.query("SELECT COUNT(*) AS n FROM databases WHERE id = 'db_half'").get()).toEqual({ n: 0 });
+});
+
+
+test("ingest batches persist the exact sequential HLC once and roll back clock write failures with data", () => {
+  const source = makeNode("source"), target = makeNode("target");
+  try {
+    emit(target, "databases", "existing", "name", "Original");
+    const beforeClock = target.query("SELECT value FROM meta WHERE key='hlc'").get();
+    const beforeChanges = changesAfterSeq(target, 0).changes;
+    const changes = [emit(source, "databases", "one", "name", "One"), emit(source, "databases", "two", "name", "Two")];
+    target.exec("CREATE TRIGGER fail_clock BEFORE UPDATE ON meta WHEN NEW.key = 'hlc' BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END");
+    expect(() => ingestDetailed(target, changes)).toThrow("disk is full");
+    expect(target.query("SELECT value FROM meta WHERE key='hlc'").get()).toEqual(beforeClock);
+    expect(changesAfterSeq(target, 0).changes).toEqual(beforeChanges);
+    expect(target.query("SELECT id FROM databases ORDER BY id").all()).toEqual([{ id: "existing" }]);
+    target.exec("DROP TRIGGER fail_clock");
+    expect(ingestDetailed(target, changes).received).toBe(2);
+    expect(target.query("SELECT id FROM databases ORDER BY id").all()).toEqual([{ id: "existing" }, { id: "one" }, { id: "two" }]);
+  } finally { source.close(); target.close(); }
+});
+
+test("ingest replay avoids materialization while explicit applyChange retains migration repair", () => {
+  const source = makeNode("source"), target = makeNode("target");
+  try {
+    const change = emit(source, "databases", "db_replay", "name", "Retained value");
+    expect(ingestDetailed(target, [change]).received).toBe(1);
+    target.exec("CREATE TRIGGER forbid_replay BEFORE UPDATE ON databases BEGIN SELECT RAISE(ABORT, 'unexpected materialization'); END");
+    expect(ingestDetailed(target, [change, change]).received).toBe(0);
+    target.exec("DROP TRIGGER forbid_replay");
+    target.query("UPDATE databases SET name = 'Old binary residue' WHERE id = ?").run(change.row_id);
+    expect(applyChange(target, change)).toEqual({ inserted: false, winner: true });
+    expect(target.query("SELECT name FROM databases WHERE id = ?").get(change.row_id)).toEqual({ name: "Retained value" });
+  } finally { source.close(); target.close(); }
 });

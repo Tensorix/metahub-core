@@ -208,3 +208,29 @@ test("session cancellation prevents a late response from mutating replica", asyn
   expect(db.query("SELECT * FROM peers").all()).toHaveLength(0);
   db.close();
 });
+
+
+test("acknowledged-prefix scans are bounded by response size despite a large queued suffix", () => {
+  const db = makeDb("local");
+  try {
+    const changes = remoteChanges(1000);
+    ingest(db, changes);
+    let returnedRows = 0;
+    const measured = {
+      exec: db.exec.bind(db), transaction: db.transaction.bind(db),
+      query(sql: string) {
+        const statement = db.query(sql);
+        return { get: (...args: any[]) => statement.get(...args), run: (...args: any[]) => statement.run(...args), all: (...args: any[]) => {
+          const rows = statement.all(...args);
+          if (sql.includes("SELECT rowid AS seq, hlc, node_id")) returnedRows += rows.length;
+          return rows;
+        } };
+      },
+    };
+    expect(advanceAckedPrefix(measured, 0, changes.slice(0, 3))).toBe(3);
+    expect(returnedRows).toBe(3);
+    returnedRows = 0;
+    expect(advanceAckedPrefix(measured, 0, changes.slice(1, 4))).toBe(0);
+    expect(returnedRows).toBe(3);
+  } finally { db.close(); }
+});
