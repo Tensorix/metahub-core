@@ -1,5 +1,4 @@
 import {
-  Button,
   FieldGroup,
   Picker,
   Text as NativeText,
@@ -20,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { NativeButton } from "@/components/native/NativeButton";
+import { NativeFormButton } from "@/components/native/NativeFormButton";
 import { NativeHost } from "@/components/native/NativeHost";
 import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { RecordTextInput } from "@/components/RecordTextInput";
@@ -248,7 +248,7 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
                 <Picker.Item value="before" label="目标之前" />
                 <Picker.Item value="after" label="目标之后" />
               </Picker>
-              <Button disabled={busy} onPress={() => void save(true)} label="移到根目录" />
+              <NativeFormButton disabled={busy} onPress={() => void save(true)} label="移到根目录" />
             </FieldGroup.Section>
             <FieldGroup.Section title="目标文档">
               <RecordTextInput
@@ -262,12 +262,12 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
               />
               {choices.loading ? <NativeText>正在加载目标文档…</NativeText> : null}
               {choices.error ? (
-                <Button onPress={() => void choices.refetch()} label="加载目标失败，重试" />
+                <NativeFormButton onPress={() => void choices.refetch()} label="加载目标失败，重试" />
               ) : null}
               {choices.data?.documents.filter((d) => d.id !== id).map((document) => (
-                <Button
+                <NativeFormButton
                   key={document.id}
-                  variant={target === document.id ? "filled" : "text"}
+                  selected={target === document.id}
                   disabled={busy}
                   onPress={() => {
                     revision.current++;
@@ -282,12 +282,12 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
                 ) : null}
             </FieldGroup.Section>
             <FieldGroup.Section>
-              <Button
+              <NativeFormButton
                 disabled={!offset || choices.loading || busy}
                 onPress={() => setOffset(Math.max(0, offset - 60))}
                 label="上一页"
               />
-              <Button
+              <NativeFormButton
                 disabled={!choices.data?.hasMore || choices.loading || busy}
                 onPress={() => setOffset(offset + 60)}
                 label="下一页"

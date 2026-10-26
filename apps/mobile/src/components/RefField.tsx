@@ -3,12 +3,13 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
 } from "react-native";
 import { NativeSheet } from "@/components/native/NativeSheet";
+import { useSheetContentHeight } from "@/components/native/useSheetContentHeight";
 import { NativeHost } from "@/components/native/NativeHost";
 import { NativeButton } from "@/components/native/NativeButton";
 import { RecordTextInput } from "@/components/RecordTextInput";
@@ -122,7 +123,7 @@ export function RefPickerSheet({
 }) {
   const { tokens } = useTheme();
   const { client } = useSession();
-  const { height } = useWindowDimensions();
+  const sheetHeight = useSheetContentHeight(600, 0.7);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState(initialSelected);
   const latest = useRef(selected);
@@ -169,12 +170,16 @@ export function RefPickerSheet({
     setSelected(next);
     onChange(next);
   };
+  const close = () => {
+    Keyboard.dismiss();
+    onClose();
+  };
   return (
-    <NativeSheet isPresented onDismiss={onClose} testID="reference-picker">
+    <NativeSheet isPresented onDismiss={close} testID="reference-picker">
       <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
-            height: Math.min(height * 0.7, 600),
+            height: sheetHeight,
             width: "100%",
             backgroundColor: tokens.surface,
             gap: 8,
@@ -183,6 +188,7 @@ export function RefPickerSheet({
           <View style={styles.head}>
             <Text
               selectable
+              numberOfLines={1}
               style={{
                 color: tokens.fg,
                 fontSize: 18,
@@ -192,32 +198,8 @@ export function RefPickerSheet({
             >
               {prop.name}
             </Text>
-            <NativeButton onPress={onClose}>完成</NativeButton>
+            <NativeButton onPress={close}>完成</NativeButton>
           </View>
-          <NativeHost matchContents>
-            <RecordTextInput
-              text={query}
-              placeholder="搜索关联项"
-              onChangeText={(value) => {
-                setQuery(value);
-                setOffset(0);
-              }}
-            />
-          </NativeHost>
-          <Text selectable style={{ color: tokens.muted }}>
-            已选 {selected.length} 项 · 点按选项以添加或移除
-          </Text>
-          {page.loading ? <ActivityIndicator /> : null}
-          {page.error ? (
-            <NativeButton
-              onPress={() => {
-                void page.refetch();
-                onRetry?.();
-              }}
-            >
-              加载失败，重试
-            </NativeButton>
-          ) : null}
           <FlatList
             style={{ flex: 1 }}
             data={[
@@ -225,7 +207,8 @@ export function RefPickerSheet({
               ...(page.data?.candidates ?? []),
             ]}
             keyExtractor={(c) => c.id}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="interactive"
             contentInsetAdjustmentBehavior="automatic"
             renderItem={({ item }) => (
               <View style={[styles.row, { borderColor: tokens.line }]}>
@@ -239,11 +222,56 @@ export function RefPickerSheet({
               </View>
             )}
             ListHeaderComponent={
-              candidates.some((c) => c.missing) ? (
+              <View style={{ gap: 8 }}>
+                <NativeHost matchContents>
+                  <RecordTextInput
+                    text={query}
+                    placeholder="搜索关联项"
+                    onChangeText={(value) => {
+                      setQuery(value);
+                      setOffset(0);
+                    }}
+                  />
+                </NativeHost>
                 <Text selectable style={{ color: tokens.muted }}>
-                  部分已选目标已删除；仍保留其引用，可在字段中移除。
+                  已选 {selected.length} 项 · 点按选项以添加或移除
                 </Text>
-              ) : null
+                {page.loading ? <ActivityIndicator /> : null}
+                {page.error ? (
+                  <NativeButton
+                    onPress={() => {
+                      void page.refetch();
+                      onRetry?.();
+                    }}
+                  >
+                    加载失败，重试
+                  </NativeButton>
+                ) : null}
+                {candidates.some((c) => c.missing) ? (
+                  <Text selectable style={{ color: tokens.muted }}>
+                    部分已选目标已删除；仍保留其引用，可在字段中移除。
+                  </Text>
+                ) : null}
+              </View>
+            }
+            ListFooterComponent={
+              <View style={styles.head}>
+                <NativeButton
+                  disabled={!offset || page.loading}
+                  onPress={() => setOffset(Math.max(0, offset - 60))}
+                >
+                  上一页
+                </NativeButton>
+                <Text style={{ color: tokens.muted }}>
+                  第 {Math.floor(offset / 60) + 1} 页
+                </Text>
+                <NativeButton
+                  disabled={!page.data?.hasMore || page.loading}
+                  onPress={() => setOffset(offset + 60)}
+                >
+                  下一页
+                </NativeButton>
+              </View>
             }
             ListEmptyComponent={
               !page.loading && !page.error ? (
@@ -257,23 +285,6 @@ export function RefPickerSheet({
               ) : null
             }
           />
-          <View style={styles.head}>
-            <NativeButton
-              disabled={!offset || page.loading}
-              onPress={() => setOffset(Math.max(0, offset - 60))}
-            >
-              上一页
-            </NativeButton>
-            <Text style={{ color: tokens.muted }}>
-              第 {Math.floor(offset / 60) + 1} 页
-            </Text>
-            <NativeButton
-              disabled={!page.data?.hasMore || page.loading}
-              onPress={() => setOffset(offset + 60)}
-            >
-              下一页
-            </NativeButton>
-          </View>
         </View>
       </RNHostView>
     </NativeSheet>
@@ -281,6 +292,7 @@ export function RefPickerSheet({
 }
 const styles = StyleSheet.create({
   head: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",

@@ -5,6 +5,7 @@ import {
 
 import { NativeHost } from "./NativeHost";
 import type { NativeSheetProps } from "./NativeSheet.types";
+import { IOS_SHEET_PADDING } from "./sheet-content-layout";
 
 export type { NativeSheetProps } from "./NativeSheet.types";
 
@@ -22,7 +23,7 @@ export function NativeSheet({
       >
         <Group modifiers={[
           frame({ maxWidth: Infinity, alignment: "topLeading" }),
-          padding({ top: 16, bottom: 24, leading: 16, trailing: 16 }),
+          padding(IOS_SHEET_PADDING),
           presentationDragIndicator(showDragIndicator ? "visible" : "hidden"),
           interactiveDismissDisabled(!dismissible),
         ]}>

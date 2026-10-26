@@ -1,7 +1,8 @@
 import { RNHostView } from "@expo/ui";
 import { useCallback, useState } from "react";
-import { FlatList, Text, View, useWindowDimensions } from "react-native";
+import { FlatList, Text, View } from "react-native";
 import { NativeSheet } from "@/components/native/NativeSheet";
+import { useSheetContentHeight } from "@/components/native/useSheetContentHeight";
 import { NativeButton } from "@/components/native/NativeButton";
 import { ManagementInput } from "@/components/ManagementControls";
 import { useApiData } from "@/lib/api/hooks";
@@ -16,7 +17,7 @@ export function DatabasePickerSheet({
 }) {
   const { client } = useSession(),
     { tokens } = useTheme(),
-    { height } = useWindowDimensions(),
+    sheetHeight = useSheetContentHeight(600, 0.7),
     [query, setQuery] = useState("");
   const fetch = useCallback(() => client.listDatabases(), [client]);
   const data = useApiData(fetch);
@@ -25,7 +26,7 @@ export function DatabasePickerSheet({
       <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
-            height: Math.min(height * 0.7, 600),
+            height: sheetHeight,
             width: "100%",
             backgroundColor: tokens.surface,
             gap: 8,
@@ -42,7 +43,9 @@ export function DatabasePickerSheet({
             </NativeButton>
           ) : null}
           <FlatList
-            keyboardShouldPersistTaps="handled"
+            style={{ flex: 1 }}
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="interactive"
             data={(data.data ?? []).filter((d) =>
               d.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
             )}

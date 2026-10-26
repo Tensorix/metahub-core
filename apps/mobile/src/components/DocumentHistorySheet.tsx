@@ -6,9 +6,9 @@ import {
   FlatList,
   Text,
   View,
-  useWindowDimensions,
 } from "react-native";
 import { NativeSheet } from "@/components/native/NativeSheet";
+import { useSheetContentHeight } from "@/components/native/useSheetContentHeight";
 import { NativeButton } from "@/components/native/NativeButton";
 import { useApiData } from "@/lib/api/hooks";
 import { useSession } from "@/lib/auth/session";
@@ -28,7 +28,7 @@ export function DocumentHistorySheet({
 }) {
   const { client, isCurrent } = useSession();
   const { tokens } = useTheme();
-  const { height } = useWindowDimensions();
+  const sheetHeight = useSheetContentHeight(680, 0.72);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -110,7 +110,7 @@ export function DocumentHistorySheet({
       <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
-            height: Math.min(height * 0.72, 680),
+            height: sheetHeight,
             width: "100%",
             gap: 12,
             backgroundColor: tokens.surface,
