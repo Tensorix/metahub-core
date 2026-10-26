@@ -1,18 +1,14 @@
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import {
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { NativeHost } from "@/components/native/NativeHost";
+import { NativeButton } from "@/components/native/NativeButton";
+import { RecordTextInput } from "@/components/RecordTextInput";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { scheduleSearch } from "@/lib/api/request-state";
-import { useApiData } from "@/lib/api/hooks";
+import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
 import { EmptyState } from "@/components/EmptyState";
 import type { SearchHitInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
@@ -21,9 +17,12 @@ import { fs, radii } from "@/lib/theme/tokens";
 
 export default function SearchScreen() {
   const router = useRouter();
-  const { client } = useSession();
+  const { client, workspaceId } = useSession();
   const { tokens } = useTheme();
   const [q, setQ] = useState("");
+  const [page, setPage] = useState({ key: "", offset: 0 });
+  const pageKey = `${workspaceId}:${q.trim()}`;
+  const offset = page.key === pageKey ? page.offset : 0;
   const [debounced, setDebounced] = useState(q);
   useEffect(() => {
     return scheduleSearch(() => setDebounced(q));
@@ -31,10 +30,14 @@ export default function SearchScreen() {
   const fetchSearch = useCallback(async () => {
     const text = debounced.trim();
     if (!text) return null;
-    return client.search(text, 50);
-  }, [debounced, client]);
+    return client.querySearch(text, { offset, limit: 60 });
+  }, [debounced, client, offset]);
   const { data: hits, error, loading, refetch } = useApiData(fetchSearch);
-  const onQuery = setQ;
+  useLiveInvalidate(["documents", "records"], () => void refetch());
+  const onQuery = (text: string) => {
+    setQ(text);
+    setPage({ key: `${workspaceId}:${text.trim()}`, offset: 0 });
+  };
 
   const open = (hit: SearchHitInfo) => {
     if (hit.type === "document") router.push(`/doc/${hit.id}`);
@@ -42,39 +45,52 @@ export default function SearchScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: tokens.bg }]} edges={["top"]}>
+    <SafeAreaView
+      style={[styles.root, { backgroundColor: tokens.bg }]}
+      edges={["top"]}
+    >
       <View style={styles.searchWrap}>
-        <TextInput
-          style={[
-            styles.input,
-            { backgroundColor: tokens.surface2, color: tokens.fg },
-          ]}
-          value={q}
-          onChangeText={onQuery}
-          placeholder="搜索文档与记录"
-          placeholderTextColor={tokens.muted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          clearButtonMode="while-editing"
-          returnKeyType="search"
-        />
+        <NativeHost matchContents style={{ minHeight: 44 }}>
+          <RecordTextInput
+            text={q}
+            onChangeText={onQuery}
+            placeholder="搜索文档与记录"
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            style={{ padding: 12 }}
+          />
+        </NativeHost>
       </View>
-      {error && q === debounced ? <ErrorBanner message="搜索失败，请重试" onRetry={refetch} /> : null}
-      {(loading || q !== debounced) && q.trim() ? <Text style={{ color: tokens.muted }}>搜索中…</Text> : null}
+      {error && q === debounced ? (
+        <ErrorBanner message="搜索失败，请重试" onRetry={refetch} />
+      ) : null}
+      {(loading || q !== debounced) && q.trim() ? (
+        <Text style={{ color: tokens.muted }}>搜索中…</Text>
+      ) : null}
       <FlatList
-        data={q === debounced ? hits ?? [] : []}
+        data={q === debounced ? (hits?.hits ?? []) : []}
         keyExtractor={(h) => `${h.type}:${h.id}`}
         keyboardShouldPersistTaps="handled"
         renderItem={({ item }) => (
           <Pressable
             onPress={() => open(item)}
-            style={({ pressed }) => [styles.hit, pressed && { backgroundColor: tokens.hover }]}
+            style={({ pressed }) => [
+              styles.hit,
+              pressed && { backgroundColor: tokens.hover },
+            ]}
           >
-            <Text numberOfLines={1} style={[styles.hitTitle, { color: tokens.fg }]}>
+            <Text
+              numberOfLines={1}
+              style={[styles.hitTitle, { color: tokens.fg }]}
+            >
               {item.title || "未命名"}
             </Text>
             {item.snippet ? (
-              <Text numberOfLines={2} style={[styles.hitSnippet, { color: tokens.muted }]}>
+              <Text
+                numberOfLines={2}
+                style={[styles.hitSnippet, { color: tokens.muted }]}
+              >
                 {item.snippet}
               </Text>
             ) : null}
@@ -85,6 +101,36 @@ export default function SearchScreen() {
             <EmptyState title="没有匹配结果" />
           ) : null
         }
+        ListFooterComponent={
+          q.trim() && q === debounced ? (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                padding: 12,
+              }}
+            >
+              <NativeButton
+                disabled={!offset || loading}
+                onPress={() =>
+                  setPage({ key: pageKey, offset: Math.max(0, offset - 60) })
+                }
+              >
+                上一页
+              </NativeButton>
+              <Text style={{ color: tokens.muted }}>
+                第 {Math.floor(offset / 60) + 1} 页
+              </Text>
+              <NativeButton
+                disabled={!hits?.hasMore || loading}
+                onPress={() => setPage({ key: pageKey, offset: offset + 60 })}
+              >
+                下一页
+              </NativeButton>
+            </View>
+          ) : null
+        }
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.listContent}
       />
     </SafeAreaView>
@@ -109,5 +155,5 @@ const styles = StyleSheet.create({
   },
   hitTitle: { fontSize: fs.ui, fontWeight: "500" },
   hitSnippet: { fontSize: fs.sm, lineHeight: 18 },
-  listContent: { paddingBottom: 80 },
+  listContent: { paddingBottom: 20 },
 });

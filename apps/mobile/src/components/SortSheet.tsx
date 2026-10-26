@@ -1,4 +1,6 @@
-import { BottomSheet, Button, Column, Host, Picker, Text } from "@expo/ui";
+import { Button, Column, Picker, Text } from "@expo/ui";
+
+import { NativeSheet } from "@/components/native/NativeSheet";
 
 import type { PropInfo } from "@/lib/api/sdk";
 
@@ -35,32 +37,30 @@ export function SortSheet({
   };
 
   return (
-    <Host>
-      <BottomSheet isPresented={isPresented} onDismiss={onDismiss}>
-        <Column>
-          <Text>排序方式</Text>
-          <Picker
-            selectedValue={sort?.propId ?? DEFAULT}
-            onValueChange={(v) => pick(String(v), sort?.dir ?? "asc")}
-          >
-            <Picker.Item label="默认（创建顺序）" value={DEFAULT} />
-            {props.map((p) => (
-              <Picker.Item key={p.id} label={p.name} value={p.id} />
-            ))}
-          </Picker>
-          <Picker
-            selectedValue={sort?.dir ?? "asc"}
-            onValueChange={(v) =>
-              sort ? pick(sort.propId, v === "desc" ? "desc" : "asc") : undefined
-            }
-            enabled={sort !== null}
-          >
-            <Picker.Item label="升序" value="asc" />
-            <Picker.Item label="降序" value="desc" />
-          </Picker>
-          <Button variant="text" onPress={onDismiss} label="完成" />
-        </Column>
-      </BottomSheet>
-    </Host>
+    <NativeSheet isPresented={isPresented} onDismiss={onDismiss}>
+      <Column>
+        <Text>排序方式</Text>
+        <Picker
+          selectedValue={sort?.propId ?? DEFAULT}
+          onValueChange={(v) => pick(String(v), sort?.dir ?? "asc")}
+        >
+          <Picker.Item label="默认（创建顺序）" value={DEFAULT} />
+          {props.map((p) => (
+            <Picker.Item key={p.id} label={p.name} value={p.id} />
+          ))}
+        </Picker>
+        <Picker
+          selectedValue={sort?.dir ?? "asc"}
+          onValueChange={(v) =>
+            sort ? pick(sort.propId, v === "desc" ? "desc" : "asc") : undefined
+          }
+          enabled={sort !== null}
+        >
+          <Picker.Item label="升序" value="asc" />
+          <Picker.Item label="降序" value="desc" />
+        </Picker>
+        <Button variant="text" onPress={onDismiss} label="完成" />
+      </Column>
+    </NativeSheet>
   );
 }

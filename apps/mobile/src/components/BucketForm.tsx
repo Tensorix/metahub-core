@@ -1,11 +1,9 @@
+import { useConnectionLeaveGuard } from "@/components/use-connection-leave-guard";
+import { NativeDataText } from "@/components/native/NativeDataText";
 import { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Button, Column, Picker, Text } from "@expo/ui";
+import { NativeHost } from "@/components/native/NativeHost";
+import { RecordTextInput } from "@/components/RecordTextInput";
 import { decodeEnroll } from "../../../../src/core/sync/enroll.ts";
 import {
   storageClientFor,
@@ -37,27 +35,39 @@ export function BucketForm({
   const [secretAccessKey, setSecretAccessKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
-  const [unlockMethod, setUnlockMethod] = useState<"passphrase" | "recovery">("passphrase");
+  const [unlockMethod, setUnlockMethod] = useState<"passphrase" | "recovery">(
+    "passphrase",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const committingRef = useConnectionLeaveGuard(
+    code !== initialCode ||
+      !!endpoint ||
+      !!bucket ||
+      !!accessKeyId ||
+      !!secretAccessKey ||
+      !!passphrase ||
+      !!recoveryCode,
+    busy,
+  );
   const input = (
     label: string,
     value: string,
     change: (s: string) => void,
     secret = false,
   ) => (
-    <View key={label} style={{ gap: 6 }}>
-      <Text style={{ color: tokens.fg }}>{label}</Text>
-      <TextInput
-        accessibilityLabel={label}
-        value={value}
+    <Column key={label} spacing={6}>
+      <Text textStyle={{ color: tokens.fg }}>{label}</Text>
+      <RecordTextInput
+        placeholder={label}
+        text={value}
         onChangeText={change}
         secureTextEntry={secret}
         editable={!busy}
         autoCapitalize="none"
         autoCorrect={false}
         style={{
-          color: tokens.fg,
           backgroundColor: tokens.surface,
           borderColor: tokens.line,
           borderWidth: 1,
@@ -65,7 +75,7 @@ export function BucketForm({
           padding: 12,
         }}
       />
-    </View>
+    </Column>
   );
   async function connect() {
     if (operation.current) return;
@@ -118,12 +128,16 @@ export function BucketForm({
         attempt.signal,
       );
       if (attempt.signal.aborted) return;
+      committingRef.current = true;
+      setSaving(true);
       await onVerified({
         baseUrl: storageUrl(config.endpoint, config.bucket, config.prefix),
         token: "",
         bucket: config,
       });
     } catch (e) {
+      committingRef.current = false;
+      setSaving(false);
       if (!attempt.signal.aborted)
         setError(e instanceof Error ? e.message : "连接失败，请检查配置后重试");
     } finally {
@@ -132,80 +146,77 @@ export function BucketForm({
     }
   }
   return (
-    <View style={{ gap: 12, paddingVertical: 16 }}>
-      <Text style={{ color: tokens.fg, fontSize: 20, fontWeight: "600" }}>
-        连接存储桶
-      </Text>
-      <Text style={{ color: tokens.muted }}>
-        直接同步已有存储桶，下载完成后可离线编辑。
-      </Text>
-      <Pressable disabled={busy} onPress={() => setManual(!manual)}>
-        <Text style={{ color: tokens.accent }}>
-          {manual ? "使用接入码" : "手动填写配置"}
+    <NativeHost matchContents style={{ width: "100%" }}>
+      <Column spacing={12} style={{ paddingVertical: 16 }}>
+        <Text textStyle={{ color: tokens.fg, fontSize: 20, fontWeight: "600" }}>
+          连接存储桶
         </Text>
-      </Pressable>
-      {manual ? (
-        <>
-          {input("Endpoint", endpoint, setEndpoint)}
-          {input("Bucket", bucket, setBucket)}
-          {input("Region", region, setRegion)}
-          {input("Prefix", prefix, setPrefix)}
-          {input("Access Key", accessKeyId, setAccessKeyId)}
-          {input("Secret Key", secretAccessKey, setSecretAccessKey, true)}
-        </>
-      ) : (
-        input("接入码或链接", code, setCode, true)
-      )}
-      <View style={{ flexDirection: "row", gap: 16 }}>
-        {(["passphrase", "recovery"] as const).map((method) => (
-          <Pressable
-            key={method}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: unlockMethod === method, disabled: busy }}
-            disabled={busy}
-            onPress={() => {
-              setUnlockMethod(method);
-              setError(null);
-            }}
-            style={{ paddingVertical: 8 }}
-          >
-            <Text style={{ color: unlockMethod === method ? tokens.accent : tokens.muted }}>
-              {method === "passphrase" ? "使用解密密码" : "使用恢复码"}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-      {unlockMethod === "recovery" ? (
-        <>
-          {input("恢复码", recoveryCode, setRecoveryCode, true)}
-          <Text style={{ color: tokens.muted }}>
-            输入以 MH1 开头的恢复码，仅用于在此设备解密已有数据。
-          </Text>
-        </>
-      ) : (
-        input("解密密码", passphrase, setPassphrase, true)
-      )}
-      {error ? (
-        <Text accessibilityLiveRegion="polite" style={{ color: tokens.danger }}>
-          {error}
+        <Text textStyle={{ color: tokens.muted }}>
+          直接同步已有存储桶，下载完成后可离线编辑。
         </Text>
-      ) : null}
-      <Pressable
-        disabled={busy}
-        onPress={() => void connect()}
-        style={{
-          backgroundColor: tokens.accent,
-          borderRadius: 12,
-          padding: 14,
-          alignItems: "center",
-        }}
-      >
-        {busy ? (
-          <ActivityIndicator color={tokens.accentFg} />
+        <Picker
+          selectedValue={manual ? "manual" : "code"}
+          enabled={!busy}
+          onValueChange={(value) => setManual(value === "manual")}
+        >
+          <Picker.Item value="code" label="使用接入码" />
+          <Picker.Item value="manual" label="手动填写配置" />
+        </Picker>
+        {manual ? (
+          <>
+            {input("Endpoint", endpoint, setEndpoint)}
+            {input("Bucket", bucket, setBucket)}
+            {input("Region", region, setRegion)}
+            {input("Prefix", prefix, setPrefix)}
+            {input("Access Key", accessKeyId, setAccessKeyId)}
+            {input("Secret Key", secretAccessKey, setSecretAccessKey, true)}
+          </>
         ) : (
-          <Text style={{ color: tokens.accentFg }}>连接并同步</Text>
+          input("接入码或链接", code, setCode, true)
         )}
-      </Pressable>
-    </View>
+        <Picker
+          selectedValue={unlockMethod}
+          enabled={!busy}
+          onValueChange={(value) => {
+            setUnlockMethod(value);
+            setError(null);
+          }}
+        >
+          <Picker.Item value="passphrase" label="使用解密密码" />
+          <Picker.Item value="recovery" label="使用恢复码" />
+        </Picker>
+        {unlockMethod === "recovery" ? (
+          <>
+            {input("恢复码", recoveryCode, setRecoveryCode, true)}
+            <Text textStyle={{ color: tokens.muted }}>
+              输入以 MH1 开头的恢复码，仅用于在此设备解密已有数据。
+            </Text>
+          </>
+        ) : (
+          input("解密密码", passphrase, setPassphrase, true)
+        )}
+        {error ? (
+          <NativeDataText textStyle={{ color: tokens.danger }}>
+            {error}
+          </NativeDataText>
+        ) : null}
+        <Button
+          disabled={busy}
+          label={busy ? "正在验证并连接…" : "连接并同步"}
+          onPress={() => void connect()}
+        />
+        {busy && !saving ? (
+          <Button
+            label="取消连接"
+            variant="text"
+            onPress={() => {
+              operation.current?.abort();
+              operation.current = null;
+              setBusy(false);
+            }}
+          />
+        ) : null}
+      </Column>
+    </NativeHost>
   );
 }

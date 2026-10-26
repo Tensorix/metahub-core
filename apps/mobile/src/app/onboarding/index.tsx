@@ -1,8 +1,8 @@
+import { NativeButton } from "@/components/native/NativeButton";
 import { useRouter } from "expo-router";
 import {
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,7 +14,7 @@ import { BucketForm } from "@/components/BucketForm";
 import { ServerForm } from "@/components/ServerForm";
 import { useSessionCtx } from "@/lib/auth/session";
 import { useTheme } from "@/lib/theme";
-import { fs, radii } from "@/lib/theme/tokens";
+import { fs } from "@/lib/theme/tokens";
 
 export default function OnboardingScreen() {
   const router = useRouter();
@@ -36,14 +36,10 @@ export default function OnboardingScreen() {
             连接你的 Metahub 服务器
           </Text>
 
-          <Pressable
+          <NativeButton
+            label="扫码连接"
             onPress={() => router.push("/onboarding/scan")}
-            style={[styles.scanBtn, { backgroundColor: tokens.accent }]}
-          >
-            <Text style={[styles.scanBtnText, { color: tokens.accentFg }]}>
-              扫码连接
-            </Text>
-          </Pressable>
+          />
           <Text style={[styles.scanHint, { color: tokens.muted }]}>
             在电脑端 WebUI 打开「在手机上打开」二维码
           </Text>
@@ -69,13 +65,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 28,
   },
-  scanBtn: {
-    height: 48,
-    borderRadius: radii.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  scanBtnText: { fontSize: fs.body, fontWeight: "600" },
   scanHint: { fontSize: fs.sm, textAlign: "center", marginTop: 8 },
   divider: { height: StyleSheet.hairlineWidth, marginVertical: 24 },
 });

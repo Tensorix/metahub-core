@@ -1,27 +1,56 @@
 import { NativeDiagnostics } from "@/lib/diagnostics/NativeDiagnostics";
-import { Stack, useRouter } from "expo-router";
+import { diagnosticsEnabled } from "@/lib/diagnostics/build-mode";
+import { Stack, useNavigationContainerRef } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { SessionProvider, useSessionCtx } from "@/lib/auth/session";
 import { ThemeProvider, useTheme } from "@/lib/theme";
+import {
+  findWorkspaceStack,
+  shouldResetSessionNavigation,
+  type SessionIdentity,
+} from "@/lib/auth/session-lifecycle";
 
 SplashScreen.preventAutoHideAsync();
+
+/** A route from another workspace must unmount before its history is reset. */
+function WorkspaceScreen({ workspaceId, children }: {
+  workspaceId: string | undefined;
+  children: ReactNode;
+}) {
+  const [owner] = useState(workspaceId);
+  return owner === workspaceId ? children : null;
+}
 
 function RootStack() {
   const { ready, session } = useSessionCtx();
   const { tokens } = useTheme();
-  const router = useRouter();
-  const sessionId = session?.id ?? null;
-  const lastSessionId = useRef<number | null>(null);
+  const navigation = useNavigationContainerRef();
+  const previousSession = useRef<SessionIdentity | null | undefined>(undefined);
+  const sessionId = session?.id;
+  const workspaceId = session?.workspaceId;
   useEffect(() => {
-    if (!ready) return;
-    const previous = lastSessionId.current;
-    lastSessionId.current = sessionId;
-    if (sessionId !== null && previous !== null && previous !== sessionId) {
-      router.replace("/(tabs)");
-    }
-  }, [ready, sessionId, router]);
+    const updateNavigation = () => {
+      if (!ready || !navigation.isReady()) return;
+      const next = sessionId !== undefined && workspaceId !== undefined
+        ? { id: sessionId, workspaceId }
+        : null;
+      const state = findWorkspaceStack(navigation.getRootState());
+      if (!state) return;
+      const previous = previousSession.current;
+      previousSession.current = next;
+      const route = state.routes[state.index ?? 0]?.name;
+      if (shouldResetSessionNavigation(previous, next, route)) {
+        // One owner resets private history; login/logout remain Protected transitions.
+        navigation.resetRoot({ key: state.key, index: 0, routes: [{ name: "(tabs)" }] });
+      }
+    };
+    updateNavigation();
+    const stopReady = navigation.addListener("ready", updateNavigation);
+    const stopState = navigation.addListener("state", updateNavigation);
+    return () => { stopReady(); stopState(); };
+  }, [ready, sessionId, workspaceId, navigation]);
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();
@@ -31,7 +60,10 @@ function RootStack() {
 
   return (
     <Stack
-      key={session?.id ?? "signed-out"}
+      // Retire stale route content without replacing the native navigator.
+      screenLayout={({ children }) => (
+        <WorkspaceScreen workspaceId={workspaceId}>{children}</WorkspaceScreen>
+      )}
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: tokens.bg },
@@ -51,6 +83,19 @@ function RootStack() {
           options={{ presentation: "modal", headerShown: true }}
         />
         <Stack.Screen name="doc/[id]" options={{ headerShown: true }} />
+        <Stack.Screen
+          name="manage/document/[id]"
+          options={{ presentation: "formSheet", headerShown: true,
+            sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true }}
+        />
+        <Stack.Screen
+          name="manage/database/[id]"
+          options={{ presentation: "formSheet", headerShown: true, gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="manage/view/[id]"
+          options={{ presentation: "formSheet", headerShown: true, gestureEnabled: false }}
+        />
         <Stack.Screen
           name="add-server"
           options={{ presentation: "modal", headerShown: true }}
@@ -73,7 +118,12 @@ function RootStack() {
 }
 
 export default function RootLayout() {
-  if (__DEV__ && process.env.EXPO_PUBLIC_MH_SELFTEST === "1") {
+  // A diagnostic Release is a separate synthetic artifact, never the daily-use candidate.
+  if (diagnosticsEnabled(
+    __DEV__,
+    process.env.EXPO_PUBLIC_MH_SELFTEST,
+    process.env.EXPO_PUBLIC_MH_DIAGNOSTICS_RELEASE,
+  )) {
     void SplashScreen.hideAsync();
     return <NativeDiagnostics />;
   }

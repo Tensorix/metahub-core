@@ -1,18 +1,14 @@
+import { useConnectionLeaveGuard } from "@/components/use-connection-leave-guard";
+import { NativeDataText } from "@/components/native/NativeDataText";
 import * as Clipboard from "expo-clipboard";
-import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Button, Column, Text } from "@expo/ui";
+import { useRef, useEffect, useState } from "react";
+import { NativeHost } from "@/components/native/NativeHost";
+import { RecordTextInput } from "@/components/RecordTextInput";
 
 import { verifyServer } from "@/lib/api/mobile-api";
 import { normalizeBaseUrl, type Credentials } from "@/lib/auth/credentials";
 import { useTheme } from "@/lib/theme";
-import { fs, radii } from "@/lib/theme/tokens";
 
 /** Server address + token entry with paste and verification, shared by
  *  onboarding and the add-server screen. Calls onVerified once /health and
@@ -27,12 +23,26 @@ export function ServerForm({
   initialUrl?: string;
 }) {
   const { tokens } = useTheme();
+  const mounted = useRef(true);
+  const submitting = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [url, setUrl] = useState(initialUrl);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const committingRef = useConnectionLeaveGuard(
+    url !== initialUrl || !!token,
+    busy,
+  );
+
   const submit = async () => {
+    if (submitting.current) return;
     setError(null);
     const baseUrl = normalizeBaseUrl(url);
     if (!baseUrl) {
@@ -44,9 +54,11 @@ export function ServerForm({
       setError("请填写访问令牌（桌面端 设置 → 设备 可查看）");
       return;
     }
+    submitting.current = true;
     setBusy(true);
     try {
       const result = await verifyServer(baseUrl, tok);
+      if (!mounted.current) return;
       if (!result.ok) {
         setBusy(false);
         setError(
@@ -56,11 +68,14 @@ export function ServerForm({
         );
         return;
       }
+      committingRef.current = true;
       await onVerified({ baseUrl, token: tok });
     } catch {
-      setError("保存失败，请重试");
+      committingRef.current = false;
+      if (mounted.current) setError("连接或保存失败，请重试，输入内容已保留");
     } finally {
-      setBusy(false);
+      submitting.current = false;
+      if (mounted.current) setBusy(false);
     }
   };
 
@@ -73,99 +88,63 @@ export function ServerForm({
     }
   };
 
-  const inputStyle = [
-    styles.input,
-    {
-      backgroundColor: tokens.surface,
-      borderColor: tokens.line,
-      color: tokens.fg,
-    },
-  ];
-
   return (
-    <View>
-      <Text style={[styles.label, { color: tokens.fgSoft }]}>服务器地址</Text>
-      <TextInput
-        style={inputStyle}
-        value={url}
-        onChangeText={setUrl}
-        placeholder="http://192.168.1.10:5173"
-        placeholderTextColor={tokens.muted}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="url"
-        editable={!busy}
-      />
-
-      <Text style={[styles.label, { color: tokens.fgSoft }]}>访问令牌</Text>
-      <View style={styles.tokenRow}>
-        <TextInput
-          style={[...inputStyle, styles.tokenInput]}
-          value={token}
+    <NativeHost matchContents style={{ width: "100%" }}>
+      <Column spacing={12}>
+        <Text textStyle={{ color: tokens.fg, fontWeight: "600" }}>
+          服务器地址
+        </Text>
+        <RecordTextInput
+          text={url}
+          onChangeText={setUrl}
+          placeholder="http://192.168.1.10:5173"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          editable={!busy}
+          style={{
+            padding: 12,
+            borderWidth: 1,
+            borderColor: tokens.line,
+            borderRadius: 10,
+          }}
+        />
+        <Text textStyle={{ color: tokens.fg, fontWeight: "600" }}>
+          访问令牌
+        </Text>
+        <RecordTextInput
+          text={token}
           onChangeText={setToken}
           placeholder="mh_…"
-          placeholderTextColor={tokens.muted}
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry
+          autoComplete="off"
           editable={!busy}
+          style={{
+            padding: 12,
+            borderWidth: 1,
+            borderColor: tokens.line,
+            borderRadius: 10,
+          }}
         />
-        <Pressable
-          onPress={pasteToken}
-          style={[styles.pasteBtn, { backgroundColor: tokens.surface2 }]}
-        >
-          <Text style={{ color: tokens.fgSoft, fontSize: fs.sm }}>粘贴</Text>
-        </Pressable>
-      </View>
-
-      {error ? (
-        <Text style={[styles.error, { color: tokens.danger }]}>{error}</Text>
-      ) : null}
-
-      <Pressable
-        onPress={() => void submit()}
-        disabled={busy}
-        style={[
-          styles.submitBtn,
-          { backgroundColor: tokens.accent, opacity: busy ? 0.6 : 1 },
-        ]}
-      >
-        {busy ? (
-          <ActivityIndicator color={tokens.accentFg} />
-        ) : (
-          <Text style={[styles.submitText, { color: tokens.accentFg }]}>
-            {submitLabel}
-          </Text>
-        )}
-      </Pressable>
-    </View>
+        <Button
+          label="从剪贴板粘贴令牌"
+          variant="text"
+          onPress={() => void pasteToken()}
+          disabled={busy}
+        />
+        {error ? (
+          <NativeDataText textStyle={{ color: tokens.danger }}>
+            {error}
+          </NativeDataText>
+        ) : null}
+        <Button
+          label={busy ? "正在验证并保存…" : submitLabel}
+          disabled={busy}
+          onPress={() => void submit()}
+        />
+      </Column>
+    </NativeHost>
   );
 }
-
-const styles = StyleSheet.create({
-  label: { fontSize: fs.sm, fontWeight: "600", marginBottom: 6, marginTop: 12 },
-  input: {
-    height: 46,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radii.md,
-    paddingHorizontal: 12,
-    fontSize: fs.body,
-  },
-  tokenRow: { flexDirection: "row", gap: 8 },
-  tokenInput: { flex: 1 },
-  pasteBtn: {
-    paddingHorizontal: 14,
-    borderRadius: radii.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  error: { fontSize: fs.sm, marginTop: 12 },
-  submitBtn: {
-    height: 48,
-    borderRadius: radii.lg,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 20,
-  },
-  submitText: { fontSize: fs.body, fontWeight: "600" },
-});

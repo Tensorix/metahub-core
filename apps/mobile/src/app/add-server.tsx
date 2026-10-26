@@ -1,4 +1,4 @@
-import { Stack, useRouter } from "expo-router";
+import { Stack } from "expo-router";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,7 +16,6 @@ import { fs } from "@/lib/theme/tokens";
 
 /** Add another server while signed in; connecting also switches to it. */
 export default function AddServerScreen() {
-  const router = useRouter();
   const { connect } = useSessionCtx();
   const { tokens } = useTheme();
 
@@ -29,6 +28,7 @@ export default function AddServerScreen() {
       >
         <ScrollView
           contentContainerStyle={styles.content}
+          contentInsetAdjustmentBehavior="automatic"
           keyboardShouldPersistTaps="handled"
         >
           <Text style={[styles.hint, { color: tokens.muted }]}>
@@ -38,10 +38,13 @@ export default function AddServerScreen() {
             submitLabel="添加并切换"
             onVerified={async (creds) => {
               await connect(creds);
-              router.back();
             }}
           />
-          <BucketForm onVerified={connect} />
+          <BucketForm
+            onVerified={async (creds) => {
+              await connect(creds);
+            }}
+          />
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

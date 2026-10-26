@@ -26,7 +26,7 @@ export default function TabsLayout() {
         }}
       >
         <Tabs.Screen
-          name="index"
+          name="(home)"
           options={{
             title: "首页",
             tabBarAccessibilityLabel: "首页",
@@ -71,19 +71,30 @@ export default function TabsLayout() {
   }
 
   return (
-    <NativeTabs>
-      <NativeTabs.Trigger name="index">
+    <NativeTabs
+      tintColor={tokens.accent}
+      iconColor={{ default: tokens.muted, selected: tokens.accent }}
+      labelStyle={{
+        default: { color: tokens.muted },
+        selected: { color: tokens.accent },
+      }}
+      // iOS retains the system glass treatment; Android uses the app's M3 roles.
+      {...(Platform.OS === "android"
+        ? { backgroundColor: tokens.sidebar, indicatorColor: tokens.accentSoft }
+        : {})}
+    >
+      <NativeTabs.Trigger name="(home)" testID="tab-home" accessibilityLabel="首页">
         <NativeTabs.Trigger.Label>首页</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           sf={{ default: "house", selected: "house.fill" }}
           md="home"
         />
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="search">
+      <NativeTabs.Trigger name="search" testID="tab-search" accessibilityLabel="搜索">
         <NativeTabs.Trigger.Label>搜索</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="magnifyingglass" md="search" />
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="settings">
+      <NativeTabs.Trigger name="settings" testID="tab-settings" accessibilityLabel="设置">
         <NativeTabs.Trigger.Label>设置</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           sf={{ default: "gearshape", selected: "gearshape.fill" }}
