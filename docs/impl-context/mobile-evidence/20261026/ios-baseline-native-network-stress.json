@@ -1,0 +1,95 @@
+{
+  "environment": {
+    "platform": "ios",
+    "platformVersion": "27.0",
+    "runtime": "Hermes",
+    "build": "Release",
+    "artifactClass": "synthetic-native-diagnostics",
+    "bundle": "embedded Release bundle; no Metro",
+    "target": "record test device/emulator identity with artifact",
+    "transport": "real localhost HTTP to isolated production /sync fixture",
+    "performanceTargets": "Measured only; no production-device threshold pass asserted"
+  },
+  "measurementStartedAt": "2026-10-26T06:04:04.412Z",
+  "fixture": {
+    "records": 5000,
+    "queuedOpsMinimum": 20000,
+    "networkBatchSize": 25,
+    "seed": "synthetic CRDT queue in 25-op synchronous batches; excludes UI-write cost"
+  },
+  "status": "COMPLETE",
+  "phase": "complete",
+  "seededRecords": 5000,
+  "seedMs": 13310.881207972765,
+  "queuedOps": 20012,
+  "networkProgress": {
+    "phase": "allKnownCursorReplay",
+    "rounds": 800,
+    "pushed": 0,
+    "pulled": 0
+  },
+  "upload": {
+    "rounds": 801,
+    "pushed": 20012,
+    "pulled": 0,
+    "ms": 13506.718708008528
+  },
+  "network": {
+    "fixture": "metahub-isolated-native-network-v1",
+    "waiting": false,
+    "requests": 801,
+    "uploadedOps": 20012,
+    "uniqueUploadedOps": 20012,
+    "maxUploadedPage": 25,
+    "records": 5000
+  },
+  "hydration": {
+    "rounds": 801,
+    "pushed": 0,
+    "pulled": 20012,
+    "ms": 13328.866083025932
+  },
+  "searchIndex": {
+    "batchSize": 25,
+    "totalMs": 3370.180167019367,
+    "steps": 203,
+    "maxStepMs": 10.379124999046326,
+    "p95StepMs": 5.432374984025955
+  },
+  "cursorReplay": {
+    "rounds": 801,
+    "pushed": 0,
+    "pulled": 0,
+    "ms": 13348.450499981642
+  },
+  "functionalAssertions": "PASS >=20k unique network ops, bounded pages, offline writes, lost ack replay, in-flight close/reopen recovery, all-known cursor replay and auth failure",
+  "maxObservedJsTimerGapMs": {
+    "setup": 13.762041002511978,
+    "seedQueue": 26.644834011793137,
+    "networkUpload": 23.59833300113678,
+    "networkHydration": 25.666334003210068,
+    "searchIndexWarmup": 17.292957991361618,
+    "inFlightInterruption": 17.078415989875793,
+    "allKnownCursorReplay": 18.250458002090454
+  },
+  "timerIntervalMs": 10,
+  "jsTimerSamplesByPhase": {
+    "setup": 1,
+    "seedQueue": 800,
+    "networkUpload": 811,
+    "networkHydration": 801,
+    "searchIndexWarmup": 202,
+    "inFlightInterruption": 4,
+    "allKnownCursorReplay": 802
+  },
+  "measurementFinishedAt": "2026-10-26T06:05:01.434Z",
+  "evidence": {
+    "device": "iPhone 18 Pro simulator",
+    "os": "iOS 27.0",
+    "deviceId": "50231799-2BC1-4440-BEA8-D0F4F8EE40C0",
+    "baseCommit": "2786b9b",
+    "dirty": true,
+    "classification": "provisional before first-query index fix; not final acceptance",
+    "bundleSha256": "8b61ef8965faf3c737fe638381c991c368d04be142e30154b85315959f706183"
+  }
+}

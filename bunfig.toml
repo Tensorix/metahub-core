@@ -1,0 +1,7 @@
+[test]
+# CNG projects and native build output are generated, not source test roots.
+pathIgnorePatterns = [
+  "apps/mobile/ios/**",
+  "apps/mobile/android/**",
+  "apps/mobile/dist/**",
+]

@@ -1,0 +1,99 @@
+{
+  "environment": {
+    "platform": "ios",
+    "platformVersion": "27.0",
+    "build": "Release",
+    "artifactClass": "synthetic-native-diagnostics",
+    "runtime": "Hermes",
+    "target": "record test device/emulator identity with artifact",
+    "bundle": "embedded Release bundle; no Metro",
+    "performanceTargets": "Measured only; no production-device threshold pass asserted"
+  },
+  "measurementStartedAt": "2026-10-26T06:05:01.444Z",
+  "fixture": {
+    "records": 10000,
+    "documents": 1000,
+    "seedDispatchTransactionBatchSize": 10,
+    "searchIndexBatchSize": 25,
+    "scope": "service writes; not network sync ingest"
+  },
+  "phase": "complete",
+  "ingested": 11000,
+  "ingestMs": 40530.81366699934,
+  "emittedOps": 49007,
+  "searchIndexWarmupMs": 7358.314166992903,
+  "searchIndexSteps": {
+    "count": 443,
+    "batchSize": 25,
+    "maxMs": 8.963458985090256,
+    "p95Ms": 5.996499985456467
+  },
+  "warmSearch": {
+    "count": 20,
+    "samplesMs": [
+      1.3229170143604279,
+      1.3715829849243164,
+      1.459084004163742,
+      1.3492079973220825,
+      1.3177089989185333,
+      1.3399580121040344,
+      3.5064579844474792,
+      3.9665420055389404,
+      3.897834002971649,
+      3.6096670031547546,
+      3.536500006914139,
+      3.4719579815864563,
+      4.059334009885788,
+      3.5505000054836273,
+      3.755708009004593,
+      3.852541983127594,
+      3.730582982301712,
+      3.869834005832672,
+      3.8479999899864197,
+      3.5705000162124634
+    ],
+    "p95Ms": 3.9665420055389404
+  },
+  "fullSetPagedQuery": {
+    "pages": 50,
+    "rows": 10000,
+    "totalMs": 1041.9215419888496,
+    "firstPageMs": 206.37191599607468,
+    "lastPageMs": 17.01433300971985,
+    "p95PageMs": 17.594374984502792
+  },
+  "databaseReopenHomeList": {
+    "ms": 3.9119579792022705,
+    "databases": 1,
+    "documentSummaries": 60,
+    "totalDocuments": 1000,
+    "scope": "SQLite reopen, schema initialization, database list and first 60 document summaries; excludes app process cold start, React render and navigation"
+  },
+  "functionalAssertions": "PASS",
+  "status": "COMPLETE",
+  "maxObservedJsTimerGapMs": {
+    "ingest": 211.16300001740456,
+    "searchIndexWarmup": 17.286458015441895,
+    "warmSearch": 16.77029100060463,
+    "pagedQueries": 204.01733401417732,
+    "databaseReopenHomeList": 19.29383298754692
+  },
+  "timerIntervalMs": 10,
+  "jsTimerSamplesByPhase": {
+    "ingest": 1100,
+    "searchIndexWarmup": 442,
+    "warmSearch": 20,
+    "pagedQueries": 50,
+    "databaseReopenHomeList": 1
+  },
+  "measurementFinishedAt": "2026-10-26T06:05:50.729Z",
+  "evidence": {
+    "device": "iPhone 18 Pro simulator",
+    "os": "iOS 27.0",
+    "deviceId": "50231799-2BC1-4440-BEA8-D0F4F8EE40C0",
+    "baseCommit": "2786b9b",
+    "dirty": true,
+    "classification": "provisional before first-query index fix; not final acceptance",
+    "bundleSha256": "8b61ef8965faf3c737fe638381c991c368d04be142e30154b85315959f706183"
+  }
+}
