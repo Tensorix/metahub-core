@@ -1,4 +1,4 @@
-import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams } from "expo-router";
 import { KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { BucketForm } from "@/components/BucketForm";
 import { useSessionCtx } from "@/lib/auth/session";
@@ -10,7 +10,6 @@ export default function ConnectScreen() {
   const code = typeof enroll === "string" ? enroll : "";
   const { connect } = useSessionCtx();
   const { tokens } = useTheme();
-  const router = useRouter();
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: tokens.bg }}
@@ -18,13 +17,15 @@ export default function ConnectScreen() {
       keyboardVerticalOffset={96}
     >
       <Stack.Screen options={{ title: "连接存储桶", headerShown: true }} />
-      <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={{ padding: 24 }}
+        keyboardShouldPersistTaps="handled"
+      >
         <BucketForm
           key={code}
           initialCode={code}
           onVerified={async (credentials) => {
             await connect(credentials);
-            router.replace("/(tabs)");
           }}
         />
       </ScrollView>

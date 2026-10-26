@@ -1,8 +1,9 @@
+import { NativeButton } from "@/components/native/NativeButton";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Pressable,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -70,14 +71,14 @@ export default function ScanScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <BucketForm initialCode={enroll} onVerified={connect} />
-        <Pressable
+        <NativeButton
+          label="重新扫描"
+          variant="text"
           onPress={() => {
             setEnroll(null);
             handled.current = false;
           }}
-        >
-          <Text style={{ color: tokens.accent }}>重新扫描</Text>
-        </Pressable>
+        />
       </ScrollView>
     );
 
@@ -87,20 +88,15 @@ export default function ScanScreen() {
         <Text style={[styles.hint, { color: tokens.fgSoft }]}>
           需要相机权限来扫描二维码
         </Text>
-        <Pressable
-          onPress={requestPermission}
-          style={[styles.btn, { backgroundColor: tokens.accent }]}
-        >
-          <Text
-            style={{
-              color: tokens.accentFg,
-              fontSize: fs.body,
-              fontWeight: "600",
-            }}
-          >
-            允许使用相机
-          </Text>
-        </Pressable>
+        <NativeButton
+          label={
+            permission?.canAskAgain === false ? "打开系统设置" : "允许使用相机"
+          }
+          onPress={() => {
+            if (permission?.canAskAgain === false) void Linking.openSettings();
+            else void requestPermission();
+          }}
+        />
       </View>
     );
   }
@@ -136,13 +132,6 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   hint: { fontSize: fs.ui, textAlign: "center" },
-  btn: {
-    paddingHorizontal: 24,
-    height: 46,
-    borderRadius: radii.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   overlay: { flex: 1, alignItems: "center", justifyContent: "center", gap: 24 },
   frame: {
     width: 220,

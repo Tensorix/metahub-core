@@ -1,39 +1,406 @@
-import { useState } from "react";
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import {
+  Button,
+  Checkbox,
+  FieldGroup,
+  Picker,
+  Switch,
+  Text as NativeText,
+} from "@expo/ui";
+import { useRef, useState } from "react";
+import { Text, View } from "react-native";
+import { NativeHost } from "@/components/native/NativeHost";
+import { RecordTextInput } from "@/components/RecordTextInput";
+import { RefPickerSheet } from "@/components/RefField";
 import type { PropertyRow } from "../../../../src/core/properties.ts";
-import { condsFor, type ViewDef, type FilterRule } from "../../../../src/shared/views/model.ts";
+import {
+  condsFor,
+  type ViewDef,
+  type FilterRule,
+} from "../../../../src/shared/views/model.ts";
 import { useTheme } from "@/lib/theme";
 
-export function ViewSettingsSheet({ view, props, onClose, onSave }: { view: ViewDef; props: PropertyRow[]; onClose(): void; onSave(view: ViewDef): Promise<void> }) {
+/** One native Form owns scrolling and grouped rows; only the reference selector is a sibling sheet. */
+export function ViewSettingsSheet({
+  view,
+  props,
+  onClose,
+  onSave,
+  onSaved,
+  onDirtyChange,
+}: {
+  view: ViewDef;
+  props: PropertyRow[];
+  onClose(): void;
+  onSave(view: ViewDef): Promise<void>;
+  onSaved?(): void;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const { tokens } = useTheme();
-  const [draft, setDraft] = useState(view), [busy, setBusy] = useState(false), [error, setError] = useState("");
-  const button = (label: string, onPress: () => void, selected = false) => <Pressable key={label} accessibilityRole="button" accessibilityState={{ selected }} onPress={onPress} style={{ padding: 12, backgroundColor: selected ? tokens.accentSoft : tokens.surface }}><Text style={{ color: tokens.fg }}>{label}</Text></Pressable>;
-  const changeRule = (index: number, patch: Partial<FilterRule>) => setDraft(v => ({ ...v, filter: { ...v.filter, rules: v.filter.rules.map((r, i) => i === index ? { ...r, ...patch } : r) } }));
-  return <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 20, paddingBottom: 80, backgroundColor: tokens.bg }}>
-      <Pressable style={{ padding: 12, alignSelf: "flex-end" }} onPress={onClose}><Text style={{ color: tokens.accent }}>取消</Text></Pressable>
-      <Text style={{ fontSize: 24, color: tokens.fg, fontWeight: "600" }}>视图设置</Text>
-      <TextInput accessibilityLabel="视图名称" value={draft.name} onChangeText={name => setDraft(v => ({ ...v, name }))} style={{ paddingVertical: 20, color: tokens.fg }} />
-      <View style={{ flexDirection: "row", gap: 8 }}>{button("列表", () => setDraft(v => ({ ...v, layout: "table" })), draft.layout === "table")}{button("看板", () => setDraft(v => ({ ...v, layout: "board" })), draft.layout === "board")}</View>
-      <Text style={{ color: tokens.fg, fontSize: 18, marginTop: 24, marginBottom: 8 }}>排序（点按切换升序、降序、默认）</Text>
-      {props.map(prop => { const sort = draft.sort.find(r => r.prop === prop.id); return button(`${prop.name} · ${sort ? sort.desc ? "降序" : "升序" : "默认"}`, () => setDraft(v => ({ ...v, sort: !sort ? [...v.sort, { prop: prop.id, desc: false }] : !sort.desc ? v.sort.map(r => r.prop === prop.id ? { ...r, desc: true } : r) : v.sort.filter(r => r.prop !== prop.id) })), !!sort); })}
-      <Text style={{ color: tokens.fg, fontSize: 18, marginTop: 24, marginBottom: 8 }}>显示字段</Text>
-      {props.map(prop => button(`${draft.hidden.includes(prop.id) ? "隐藏" : "显示"} · ${prop.name}`, () => setDraft(v => ({ ...v, hidden: v.hidden.includes(prop.id) ? v.hidden.filter(id => id !== prop.id) : [...v.hidden, prop.id] })), !draft.hidden.includes(prop.id)))}
-      <Text style={{ color: tokens.fg, fontSize: 18, marginTop: 24, marginBottom: 8 }}>看板分组</Text>
-      {button("默认分组", () => setDraft(v => ({ ...v, group: undefined })), !draft.group)}
-      {props.filter(p => p.type === "select").map(prop => button(prop.name, () => setDraft(v => ({ ...v, group: prop.id })), draft.group === prop.id))}
-      <Text style={{ color: tokens.fg, fontSize: 18, marginTop: 24, marginBottom: 8 }}>筛选</Text>
-      {button(draft.filter.op === "and" ? "满足全部条件" : "满足任一条件", () => setDraft(v => ({ ...v, filter: { ...v.filter, op: v.filter.op === "and" ? "or" : "and" } })))}
-      {draft.filter.rules.map((rule, index) => { const prop = props.find(p => p.id === rule.prop); return <View key={rule.id} style={{ marginVertical: 12, borderBottomWidth: 1, borderColor: tokens.line }}>
-        <Text style={{ color: tokens.fg }}>{prop?.name ?? rule.prop}</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>{(prop ? condsFor(prop.type) : []).map(cond => button(cond.label, () => changeRule(index, { cond: cond.id }), rule.cond === cond.id))}</View>
-        {rule.cond !== "empty" && rule.cond !== "not_empty" ? <TextInput accessibilityLabel={`${prop?.name ?? rule.prop} 筛选值`} placeholder={prop?.type === "checkbox" ? "true / false" : prop?.type === "date" ? "YYYY-MM-DD 或 today / this_week / this_month / past7 / next7" : prop?.type === "multi_select" || prop?.type === "relation" || prop?.type === "doc" ? "多个值用逗号分隔" : "筛选值"} placeholderTextColor={tokens.muted} value={Array.isArray(rule.value) ? rule.value.join(",") : String(rule.value ?? "")} onChangeText={text => changeRule(index, { value: prop?.type === "checkbox" ? text : ["multi_select", "relation", "doc"].includes(prop?.type ?? "") ? text.split(",").map(v => v.trim()).filter(Boolean) : text })} style={{ paddingVertical: 16, color: tokens.fg }} /> : null}
-        {button("移除此条件", () => setDraft(v => ({ ...v, filter: { ...v.filter, rules: v.filter.rules.filter((_, i) => i !== index) } })))}
-      </View>; })}
-      <Text style={{ color: tokens.muted, marginTop: 12 }}>添加筛选条件</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>{props.map(prop => button(prop.name, () => setDraft(v => ({ ...v, filter: { ...v.filter, rules: [...v.filter.rules, { id: `f_${Date.now()}_${Math.random()}`, prop: prop.id, cond: condsFor(prop.type)[0]!.id }] } }))))}</View>
-      {error ? <Text accessibilityRole="alert" style={{ color: tokens.danger }}>{error}</Text> : null}
-      <Pressable disabled={busy || !draft.name.trim()} style={{ paddingVertical: 24 }} onPress={() => { setBusy(true); setError(""); void onSave({ ...draft, name: draft.name.trim() }).then(onClose).catch(e => setError(String(e))).finally(() => setBusy(false)); }}><Text style={{ color: tokens.accent }}>{busy ? "保存中…" : "保存视图"}</Text></Pressable>
-    </ScrollView>
-  </Modal>;
+  const [draft, setDraft] = useState(view),
+    latest = useRef(view),
+    baseline = useRef(view),
+    saving = useRef(false);
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [reference, setReference] = useState<string | null>(null),
+    [addProperty, setAddProperty] = useState(props[0]?.id ?? "");
+  const edit = (update: (value: ViewDef) => ViewDef) => {
+    const next = update(latest.current);
+    latest.current = next;
+    onDirtyChange?.(JSON.stringify(next) !== JSON.stringify(baseline.current));
+    setDraft(next);
+  };
+  const changeRule = (id: string, patch: Partial<FilterRule>) =>
+    edit((v) => ({
+      ...v,
+      filter: {
+        ...v.filter,
+        rules: v.filter.rules.map((r) =>
+          r.id === id ? { ...r, ...patch } : r,
+        ),
+      },
+    }));
+  const save = () => {
+    if (saving.current) return;
+    const snapshot = latest.current;
+    if (!snapshot.name.trim()) return;
+    saving.current = true;
+    setBusy(true);
+    setError("");
+    void onSave({ ...snapshot, name: snapshot.name.trim() })
+      .then(() => {
+        baseline.current = snapshot;
+        if (JSON.stringify(latest.current) === JSON.stringify(snapshot)) {
+          saving.current = false;
+          onDirtyChange?.(false);
+          (onSaved ?? onClose)();
+        } else {
+          onDirtyChange?.(true);
+          setError("新的修改尚未保存，请再次保存。");
+        }
+      })
+      .catch((e) => {
+        onDirtyChange?.(true);
+        setError(String(e));
+      })
+      .finally(() => {
+        saving.current = false;
+        setBusy(false);
+      });
+  };
+  const referenceRule = draft.filter.rules.find((r) => r.id === reference),
+    referenceProp = props.find((p) => p.id === referenceRule?.prop);
+  const selectProps = props.filter((p) => p.type === "select");
+  return (
+    <View style={{ flex: 1 }}>
+      <NativeHost style={{ flex: 1 }}>
+        <FieldGroup disabled={busy}>
+          <FieldGroup.Section title="视图">
+            <RecordTextInput
+              text={draft.name}
+              placeholder="视图名称"
+              editable={!busy}
+              onChangeText={(name) => edit((v) => ({ ...v, name }))}
+            />
+            <Picker
+              selectedValue={draft.layout}
+              enabled={!busy}
+              onValueChange={(layout) =>
+                edit((v) => ({ ...v, layout: layout as ViewDef["layout"] }))
+              }
+            >
+              <Picker.Item label="列表" value="table" />
+              <Picker.Item label="看板" value="board" />
+              {!["table", "board"].includes(draft.layout) ? (
+                <Picker.Item
+                  label={`保留 ${draft.layout} 布局`}
+                  value={draft.layout}
+                />
+              ) : null}
+            </Picker>
+          </FieldGroup.Section>
+          <FieldGroup.Section title="排序">
+            {props.map((prop) => {
+              const sort = draft.sort.find((s) => s.prop === prop.id);
+              return (
+                <Picker
+                  key={prop.id}
+                  enabled={!busy}
+                  selectedValue={sort ? (sort.desc ? "desc" : "asc") : "none"}
+                  onValueChange={(value) =>
+                    edit((v) => ({
+                      ...v,
+                      sort:
+                        value === "none"
+                          ? v.sort.filter((s) => s.prop !== prop.id)
+                          : v.sort.some((s) => s.prop === prop.id)
+                            ? v.sort.map((s) =>
+                                s.prop === prop.id
+                                  ? { ...s, desc: value === "desc" }
+                                  : s,
+                              )
+                            : [
+                                ...v.sort,
+                                { prop: prop.id, desc: value === "desc" },
+                              ],
+                    }))
+                  }
+                >
+                  <Picker.Item label={`${prop.name} · 默认顺序`} value="none" />
+                  <Picker.Item label={`${prop.name} · 升序`} value="asc" />
+                  <Picker.Item label={`${prop.name} · 降序`} value="desc" />
+                </Picker>
+              );
+            })}
+          </FieldGroup.Section>
+          <FieldGroup.Section title="显示字段">
+            {props.map((prop) => (
+              <Checkbox
+                key={prop.id}
+                label={prop.name}
+                disabled={busy}
+                value={!draft.hidden.includes(prop.id)}
+                onValueChange={(visible) =>
+                  edit((v) => ({
+                    ...v,
+                    hidden: visible
+                      ? v.hidden.filter((id) => id !== prop.id)
+                      : [...new Set([...v.hidden, prop.id])],
+                  }))
+                }
+              />
+            ))}
+          </FieldGroup.Section>
+          <FieldGroup.Section title="看板分组">
+            <Picker
+              enabled={!busy}
+              selectedValue={draft.group ?? ""}
+              onValueChange={(group) =>
+                edit((v) => ({ ...v, group: String(group) || undefined }))
+              }
+            >
+              <Picker.Item label="默认分组" value="" />
+              {selectProps.map((prop) => (
+                <Picker.Item key={prop.id} label={prop.name} value={prop.id} />
+              ))}
+              {draft.group && !selectProps.some((p) => p.id === draft.group) ? (
+                <Picker.Item label="保留原分组字段" value={draft.group} />
+              ) : null}
+            </Picker>
+          </FieldGroup.Section>
+          <FieldGroup.Section title="筛选组合">
+            <Picker
+              enabled={!busy}
+              selectedValue={draft.filter.op}
+              onValueChange={(op) =>
+                edit((v) => ({
+                  ...v,
+                  filter: { ...v.filter, op: op as "and" | "or" },
+                }))
+              }
+            >
+              <Picker.Item label="满足全部条件" value="and" />
+              <Picker.Item label="满足任一条件" value="or" />
+            </Picker>
+          </FieldGroup.Section>
+          {draft.filter.rules.map((rule) => {
+            const prop = props.find((p) => p.id === rule.prop),
+              conditions = prop ? condsFor(prop.type) : [],
+              condition = conditions.find((c) => c.id === rule.cond);
+            const selected = Array.isArray(rule.value)
+              ? rule.value.filter((v): v is string => typeof v === "string")
+              : [];
+            return (
+              <FieldGroup.Section
+                key={rule.id}
+                title={prop?.name ?? `不可用字段 · ${rule.prop}`}
+              >
+                <Picker
+                  enabled={!busy}
+                  selectedValue={rule.cond}
+                  onValueChange={(cond) =>
+                    changeRule(rule.id, { cond: String(cond) })
+                  }
+                >
+                  {conditions.map((cond) => (
+                    <Picker.Item
+                      key={cond.id}
+                      label={cond.label}
+                      value={cond.id}
+                    />
+                  ))}
+                  {!condition ? (
+                    <Picker.Item
+                      label={`保留原条件 ${rule.cond}`}
+                      value={rule.cond}
+                    />
+                  ) : null}
+                </Picker>
+                {rule.cond === "empty" ||
+                rule.cond === "not_empty" ? null : prop?.type === "relation" ||
+                  prop?.type === "doc" ? (
+                  <Button
+                    variant="text"
+                    disabled={busy}
+                    onPress={() => setReference(rule.id)}
+                    label={`选择关联项（已选 ${selected.length}）`}
+                  />
+                ) : prop?.type === "checkbox" ? (
+                  <Switch
+                    disabled={busy}
+                    label="筛选值"
+                    value={rule.value === true || rule.value === "true"}
+                    onValueChange={(value) => changeRule(rule.id, { value })}
+                  />
+                ) : prop?.type === "select" ? (
+                  <Picker
+                    enabled={!busy}
+                    selectedValue={String(rule.value ?? "")}
+                    onValueChange={(value) => changeRule(rule.id, { value })}
+                  >
+                    <Picker.Item label="选择选项" value="" />
+                    {[
+                      ...new Set([
+                        ...(prop.config?.options ?? []),
+                        ...(typeof rule.value === "string" && rule.value
+                          ? [rule.value]
+                          : []),
+                      ]),
+                    ].map((value) => (
+                      <Picker.Item key={value} label={value} value={value} />
+                    ))}
+                  </Picker>
+                ) : prop?.type === "multi_select" ? (
+                  <>
+                    {[
+                      ...new Set([
+                        ...(prop.config?.options ?? []),
+                        ...selected,
+                      ]),
+                    ].map((option) => (
+                      <Checkbox
+                        key={option}
+                        label={option}
+                        disabled={busy}
+                        value={selected.includes(option)}
+                        onValueChange={(checked) =>
+                          changeRule(rule.id, {
+                            value: checked
+                              ? [...new Set([...selected, option])]
+                              : selected.filter((value) => value !== option),
+                          })
+                        }
+                      />
+                    ))}
+                  </>
+                ) : (
+                  <RecordTextInput
+                    editable={!busy}
+                    text={String(rule.value ?? "")}
+                    placeholder={
+                      prop?.type === "date"
+                        ? "YYYY-MM-DD 或 today / this_week / past7"
+                        : "筛选值"
+                    }
+                    onChangeText={(value) => changeRule(rule.id, { value })}
+                  />
+                )}
+                <Button
+                  label="移除此条件"
+                  variant="text"
+                  disabled={busy}
+                  onPress={() =>
+                    edit((v) => ({
+                      ...v,
+                      filter: {
+                        ...v.filter,
+                        rules: v.filter.rules.filter((r) => r.id !== rule.id),
+                      },
+                    }))
+                  }
+                />
+              </FieldGroup.Section>
+            );
+          })}
+          <FieldGroup.Section title="添加筛选条件">
+            <Picker
+              enabled={!busy}
+              selectedValue={addProperty}
+              onValueChange={(value) => setAddProperty(String(value))}
+            >
+              {props.map((prop) => (
+                <Picker.Item key={prop.id} label={prop.name} value={prop.id} />
+              ))}
+            </Picker>
+            <Button
+              label="添加条件"
+              variant="text"
+              disabled={busy || !addProperty}
+              onPress={() => {
+                const prop = props.find((p) => p.id === addProperty);
+                if (!prop) return;
+                edit((v) => ({
+                  ...v,
+                  filter: {
+                    ...v.filter,
+                    rules: [
+                      ...v.filter.rules,
+                      {
+                        id: `f_${Date.now()}_${Math.random()}`,
+                        prop: prop.id,
+                        cond: condsFor(prop.type)[0]!.id,
+                      },
+                    ],
+                  },
+                }));
+              }}
+            />
+          </FieldGroup.Section>
+          <FieldGroup.Section>
+            <Button
+              disabled={busy || !draft.name.trim()}
+              onPress={save}
+              label={busy ? "保存中…" : "保存视图"}
+            />
+            <Button
+              label="取消"
+              variant="text"
+              disabled={busy}
+              onPress={() => {
+                if (!saving.current) onClose();
+              }}
+            />
+            {error ? (
+              <NativeText textStyle={{ color: tokens.danger }}>
+                {error}
+              </NativeText>
+            ) : null}
+          </FieldGroup.Section>
+        </FieldGroup>
+      </NativeHost>
+      {error ? (
+        <Text
+          selectable
+          accessibilityRole="alert"
+          style={{ padding: 12, color: tokens.danger }}
+        >
+          {error}
+        </Text>
+      ) : null}
+      {referenceRule && referenceProp ? (
+        <RefPickerSheet
+          prop={referenceProp}
+          initialSelected={
+            Array.isArray(referenceRule.value)
+              ? referenceRule.value.filter(
+                  (v): v is string => typeof v === "string",
+                )
+              : []
+          }
+          onChange={(value) => changeRule(referenceRule.id, { value })}
+          onClose={() => setReference(null)}
+        />
+      ) : null}
+    </View>
+  );
 }

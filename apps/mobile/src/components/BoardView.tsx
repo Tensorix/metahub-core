@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
-  Dimensions,
+  useWindowDimensions,
   FlatList,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,13 +9,14 @@ import {
   View,
 } from "react-native";
 
+import { NativeMenu } from "@/components/native/NativeMenu";
+import type { NativeMenuItem } from "@/components/native/NativeMenu.types";
 import { RecordCard } from "@/components/RecordCard";
 import type { PropInfo, RecordInfo } from "@/lib/api/sdk";
 import { chipColor, selectOptions } from "@/lib/format";
 import { useTheme } from "@/lib/theme";
 import { fs, radii } from "@/lib/theme/tokens";
 
-const COL_W = Math.min(Dimensions.get("window").width * 0.78, 340);
 const UNGROUPED = "__ungrouped__";
 
 interface Column {
@@ -37,6 +37,8 @@ export function BoardView({
   onOpenRecord,
   onAddRecord,
   onMoveRecord,
+  recordActions,
+  onMoveColumn,
 }: {
   records: RecordInfo[];
   props: PropInfo[];
@@ -44,9 +46,16 @@ export function BoardView({
   onOpenRecord: (id: string) => void;
   onAddRecord: (presetOption: string | null) => void;
   onMoveRecord: (recordId: string, option: string | null) => void;
+  recordActions?: (recordId: string) => NativeMenuItem[];
+  onMoveColumn?: (
+    option: string,
+    anchor: string,
+    where: "before" | "after",
+  ) => void;
 }) {
   const { tokens, scheme } = useTheme();
-  const [moving, setMoving] = useState<RecordInfo | null>(null);
+  const { width } = useWindowDimensions();
+  const COL_W = Math.min(width * 0.78, 340);
 
   const columns = useMemo<Column[]>(() => {
     const byOption = new Map<string, RecordInfo[]>();
@@ -76,23 +85,54 @@ export function BoardView({
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.strip}
     >
-      {columns.map((col) => (
+      {columns.map((col, index) => (
         <View
           key={col.key}
           style={[
             styles.col,
-            { width: COL_W, backgroundColor: tokens.sidebar, borderColor: tokens.line },
+            {
+              width: COL_W,
+              backgroundColor: tokens.sidebar,
+              borderColor: tokens.line,
+            },
           ]}
         >
           <View style={styles.colHead}>
             {col.key !== UNGROUPED ? (
               <View
-                style={[styles.dot, { backgroundColor: chipColor(col.label, scheme) }]}
+                style={[
+                  styles.dot,
+                  { backgroundColor: chipColor(col.label, scheme) },
+                ]}
               />
             ) : null}
-            <Text numberOfLines={1} style={[styles.colTitle, { color: tokens.fgSoft }]}>
+            <Text
+              numberOfLines={1}
+              style={[styles.colTitle, { color: tokens.fgSoft }]}
+            >
               {col.label}
             </Text>
+            {onMoveColumn && col.key !== UNGROUPED ? (
+              <NativeMenu
+                label="列顺序"
+                items={[
+                  {
+                    id: "left",
+                    title: "左移此列",
+                    disabled: !index,
+                    onPress: () =>
+                      onMoveColumn(col.key, columns[index - 1]!.key, "before"),
+                  },
+                  {
+                    id: "right",
+                    title: "右移此列",
+                    disabled: index >= columns.length - 2,
+                    onPress: () =>
+                      onMoveColumn(col.key, columns[index + 1]!.key, "after"),
+                  },
+                ]}
+              />
+            ) : null}
             <Text style={[styles.colCount, { color: tokens.muted }]}>
               {col.records.length}
             </Text>
@@ -105,7 +145,20 @@ export function BoardView({
                 record={item}
                 props={props}
                 onPress={() => onOpenRecord(item.id)}
-                onLongPress={() => setMoving(item)}
+                actions={[
+                  ...(recordActions?.(item.id) ?? []),
+                  ...columns.map((target) => ({
+                    id: `column:${target.key}`,
+                    title: `移动到 ${target.label}`,
+                    disabled:
+                      (item.cells[groupProp.id] ?? UNGROUPED) === target.key,
+                    onPress: () =>
+                      onMoveRecord(
+                        item.id,
+                        target.key === UNGROUPED ? null : target.key,
+                      ),
+                  })),
+                ]}
               />
             )}
             contentContainerStyle={styles.colContent}
@@ -118,67 +171,12 @@ export function BoardView({
               pressed && { backgroundColor: tokens.hover },
             ]}
           >
-            <Text style={[styles.addText, { color: tokens.muted }]}>＋ 新建</Text>
+            <Text style={[styles.addText, { color: tokens.muted }]}>
+              ＋ 新建
+            </Text>
           </Pressable>
         </View>
       ))}
-      {moving ? (
-        <Modal
-          visible
-          transparent
-          animationType="fade"
-          onRequestClose={() => setMoving(null)}
-        >
-          <Pressable style={styles.scrim} onPress={() => setMoving(null)} />
-          <View style={[styles.menu, { backgroundColor: tokens.surface }]}>
-            <Text style={[styles.menuTitle, { color: tokens.muted }]} numberOfLines={1}>
-              移动到分组
-            </Text>
-            {columns.map((col) => {
-              const cur =
-                (typeof moving.cells[groupProp.id] === "string"
-                  ? moving.cells[groupProp.id]
-                  : null) ?? UNGROUPED;
-              const isCur = cur === col.key;
-              return (
-                <Pressable
-                  key={col.key}
-                  disabled={isCur}
-                  onPress={() => {
-                    onMoveRecord(moving.id, col.key === UNGROUPED ? null : col.key);
-                    setMoving(null);
-                  }}
-                  style={({ pressed }) => [
-                    styles.menuRow,
-                    { borderColor: tokens.line },
-                    pressed && { backgroundColor: tokens.hover },
-                  ]}
-                >
-                  {col.key !== UNGROUPED ? (
-                    <View
-                      style={[
-                        styles.dot,
-                        { backgroundColor: chipColor(col.label, scheme) },
-                      ]}
-                    />
-                  ) : (
-                    <View style={styles.dot} />
-                  )}
-                  <Text
-                    style={[
-                      styles.menuLabel,
-                      { color: isCur ? tokens.muted : tokens.fg },
-                    ]}
-                  >
-                    {col.label}
-                    {isCur ? "（当前）" : ""}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </Modal>
-      ) : null}
     </ScrollView>
   );
 }

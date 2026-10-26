@@ -1,3 +1,5 @@
+import { NativeMenu } from "@/components/native/NativeMenu";
+import type { NativeMenuItem } from "@/components/native/NativeMenu.types";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { PropInfo, RecordInfo } from "@/lib/api/sdk";
@@ -12,11 +14,13 @@ export function RecordCard({
   props,
   onPress,
   onLongPress,
+  actions,
 }: {
   record: RecordInfo;
   props: PropInfo[];
   onPress: () => void;
   onLongPress?: () => void;
+  actions?: NativeMenuItem[];
 }) {
   const { tokens, scheme } = useTheme();
   const tp = titleProp(props);
@@ -45,6 +49,7 @@ export function RecordCard({
       <Text numberOfLines={1} style={[styles.title, { color: tokens.fg }]}>
         {recordTitle(record, props)}
       </Text>
+      {actions?.length ? <NativeMenu label="记录操作" items={actions} /> : null}
       {detail.length ? (
         <View style={styles.meta}>
           {detail.map(({ prop, text }) =>
@@ -52,9 +57,14 @@ export function RecordCard({
               text.split(" · ").map((chip) => (
                 <View
                   key={`${prop.id}:${chip}`}
-                  style={[styles.chip, { backgroundColor: chipColor(chip, scheme) }]}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: chipColor(chip, scheme) },
+                  ]}
                 >
-                  <Text style={[styles.chipText, { color: tokens.fgSoft }]}>{chip}</Text>
+                  <Text style={[styles.chipText, { color: tokens.fgSoft }]}>
+                    {chip}
+                  </Text>
                 </View>
               ))
             ) : (
@@ -84,7 +94,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   title: { fontSize: fs.ui, fontWeight: "500" },
-  meta: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  meta: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 6,
+  },
   metaText: { fontSize: fs.sm },
   chip: {
     borderRadius: 999,
