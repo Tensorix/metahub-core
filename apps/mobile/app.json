@@ -62,7 +62,10 @@
       ],
       "expo-sqlite",
       "expo-sharing",
-      "react-native-quick-crypto"
+      "react-native-quick-crypto",
+      "expo-font",
+      "expo-image",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
