@@ -4,6 +4,7 @@ import * as Clipboard from "expo-clipboard";
 import { Button, Column, Text } from "@expo/ui";
 import { useRef, useEffect, useState } from "react";
 import { NativeHost } from "@/components/native/NativeHost";
+import { connectionFieldModifiers } from "@/components/native/connection-field-modifiers";
 import { RecordTextInput } from "@/components/RecordTextInput";
 
 import { verifyServer } from "@/lib/api/mobile-api";
@@ -89,12 +90,14 @@ export function ServerForm({
   };
 
   return (
-    <NativeHost matchContents style={{ width: "100%" }}>
+    <NativeHost matchContents={{ vertical: true }} style={{ width: "100%" }}>
       <Column spacing={12}>
         <Text textStyle={{ color: tokens.fg, fontWeight: "600" }}>
           服务器地址
         </Text>
         <RecordTextInput
+          testID="server-url"
+          modifiers={connectionFieldModifiers("服务器地址")}
           text={url}
           onChangeText={setUrl}
           placeholder="http://192.168.1.10:5173"
@@ -113,6 +116,8 @@ export function ServerForm({
           访问令牌
         </Text>
         <RecordTextInput
+          testID="server-token"
+          modifiers={connectionFieldModifiers("访问令牌")}
           text={token}
           onChangeText={setToken}
           placeholder="mh_…"
