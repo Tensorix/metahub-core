@@ -40,6 +40,8 @@ import {
   upsertServer,
   type Credentials,
 } from "./credentials";
+import { replaceSession, type ManagedSession } from "./session-lifecycle";
+
 interface LocalFeed {
   readonly connected: boolean;
   onChange(fn: (change: ReplicaChange) => void): () => void;
@@ -85,16 +87,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false),
     [session, setSession] = useState<Session | null>(null),
     [error, setError] = useState<string | null>(null);
-  const current = useRef<Session | null>(null),
+  const providerActive = useRef(false);
+  const current = useRef<(Session & ManagedSession) | null>(null),
     writes = useRef(Promise.resolve()),
     epoch = useRef(0);
   const persist = useCallback((job: () => Promise<void>) => {
-    const p = writes.current.then(job);
+    const p = writes.current.then(() => {
+      if (!providerActive.current) throw new Error("工作区会话已结束");
+      return job();
+    });
     writes.current = p.catch(() => {});
     return p;
   }, []);
   const makeSession = useCallback(
-    async (creds: Credentials): Promise<Session> => {
+    async (creds: Credentials, resetGrant = false): Promise<Session & ManagedSession> => {
       await initializeNativeSyncRuntime();
       const workspaceId = await workspaceKey(creds.baseUrl),
         id = ++nextId;
@@ -107,7 +113,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const pairingAbort = new AbortController();
       const grantKey = `mh.sync.grant.${workspaceId}`;
       try {
-        if (!creds.bucket) grant = await SecureStore.getItemAsync(grantKey);
+        if (!creds.bucket && !resetGrant) grant = await SecureStore.getItemAsync(grantKey);
       } catch (e) {
         replica.close();
         throw e;
@@ -215,7 +221,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (status.connected && !disposed)
           void attachments.retryPending().catch(() => {});
       });
-      const result: Session = {
+      let activated = false;
+      const result: Session & ManagedSession = {
         id,
         workspaceId,
         creds,
@@ -237,6 +244,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         },
         isCurrent: () => !disposed && current.current?.id === id,
         syncNow,
+        activate,
         async dispose() {
           if (disposed) return;
           disposed = true;
@@ -254,21 +262,27 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           replica.close();
         },
       };
-      // Network initialization does not block offline workspace startup.
-      setTimeout(() => {
-        if (disposed) return;
+      // Preparation opens the local replica only. Network work starts after adoption.
+      function activate() {
+        if (activated || disposed || current.current?.id !== id) return;
+        activated = true;
         const attempt = () => {
           void syncNow().catch((e) => {
             if (current.current?.id === id)
               setError(e instanceof Error ? e.message : "同步失败");
           });
         };
+        // The manager is constructed before session adoption; recover only now.
+        void attachments.resume().catch(() => {});
         sync.start();
         feed?.install();
         attempt();
         lifecycle = AppState.addEventListener("change", (state) => {
           sync.setActive(state === "active");
-          if (state === "active") attempt();
+          if (state === "active") {
+            void attachments.resume().catch(() => {});
+            attempt();
+          }
         });
         network = Network.addNetworkStateListener((state) => {
           if (state.isConnected) attempt();
@@ -277,31 +291,36 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           if (!grant && !creds.bucket && AppState.currentState === "active")
             attempt();
         }, 15000);
-      }, 0);
+      }
       return result;
     },
     [persist],
   );
   const adopt = useCallback(
-    async (creds: Credentials | null) => {
+    async (creds: Credentials | null, resetGrant = false) => {
+      if (!providerActive.current) return false;
       const generation = epoch.current;
-      if (current.current) await current.current.dispose();
-      current.current = null;
-      setSession(null);
-      const next = creds ? await makeSession(creds) : null;
-      if (generation !== epoch.current) {
-        await next?.dispose();
-        return;
-      }
-      current.current = next;
-      setSession(next);
-      setError(null);
+      return replaceSession({
+        current,
+        prepare: () => creds ? makeSession(creds, resetGrant) : Promise.resolve(null),
+        valid: () => providerActive.current && generation === epoch.current,
+        publish: (next) => {
+          setSession(next);
+          setError(null);
+        },
+        onCleanupError: (error) => {
+          if (providerActive.current && generation === epoch.current)
+            setError(error instanceof Error ? error.message : String(error));
+        },
+      });
     },
     [makeSession],
   );
   useEffect(() => {
     let alive = true;
+    providerActive.current = true;
     const lifecycleEpoch = epoch;
+    const sessionRef = current;
     const generation = lifecycleEpoch.current;
     void persist(async () => {
       let saved = await loadCredentials();
@@ -325,8 +344,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       });
     return () => {
       alive = false;
+      providerActive.current = false;
       lifecycleEpoch.current++;
-      void current.current?.dispose();
+      const retiring = sessionRef.current;
+      sessionRef.current = null;
+      void retiring?.dispose();
     };
   }, [adopt, persist]);
   const value = useMemo<SessionCtx>(
@@ -337,22 +359,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       connect: (creds) =>
         persist(async () => {
           epoch.current++;
-          await current.current?.dispose();
           await initializeNativeSyncRuntime();
-          if (!creds.bucket)
-            await SecureStore.deleteItemAsync(
-              `mh.sync.grant.${await workspaceKey(creds.baseUrl)}`,
-            );
-          await adopt(creds);
+          if (!providerActive.current) return;
+          if (!creds.bucket) {
+            const grantKey = `mh.sync.grant.${await workspaceKey(creds.baseUrl)}`;
+            if (!providerActive.current) return;
+            await SecureStore.deleteItemAsync(grantKey);
+          }
+          if (!await adopt(creds, true)) return;
           await upsertServer(creds);
-          await saveCredentials(creds);
+          if (providerActive.current) await saveCredentials(creds);
         }),
       switchServer: (url) =>
         persist(async () => {
           const target = (await listServers()).find((s) => s.baseUrl === url);
           if (!target) throw new Error("工作区不存在");
           epoch.current++;
-          await adopt(target);
+          if (!await adopt(target)) return;
           await saveCredentials(target);
         }),
       disconnect: () =>
@@ -360,7 +383,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           const cur = current.current;
           const rest = cur ? await removeServer(cur.creds.baseUrl) : [];
           epoch.current++;
-          await adopt(rest[0] ?? null);
+          if (!await adopt(rest[0] ?? null)) return;
           if (rest[0]) await saveCredentials(rest[0]);
           else await clearCredentials();
         }),
