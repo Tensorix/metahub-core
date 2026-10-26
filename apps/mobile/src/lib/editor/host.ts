@@ -1,4 +1,5 @@
 import { type EditorDraft, type EditorMediaRequest, type EditorRequest, type EditorResponse } from "./protocol";
+import type { NativePresentation } from "./native-presentation";
 export interface EditorHostServices {
   load(): Promise<{ title: string; body: string; version: string | null }>;
   readDraft(): Promise<EditorDraft | null>;
@@ -6,8 +7,8 @@ export interface EditorHostServices {
   acknowledge(revision: number, version: string | null): Promise<void>;
   save(snapshot: { title: string; body: string; version: string | null; force: boolean }): Promise<{ version: string | null }>;
   listTargets?(): Promise<{ id: string; title: string; kind: "doc" | "db" | "rec" }[]>;
-  media?(request: EditorMediaRequest): Promise<{ src?: string; url?: string; name?: string; mime?: string }>;
-  navigate?(target: string): Promise<void>;
+  media?(request: EditorMediaRequest, present?: NativePresentation): Promise<{ src?: string; url?: string; name?: string; mime?: string }>;
+  navigate?(target: string, present?: NativePresentation): Promise<void>;
   isCurrent(): boolean;
 }
 /** One instance per renderer. Every mutation runs in order; a late old-session
