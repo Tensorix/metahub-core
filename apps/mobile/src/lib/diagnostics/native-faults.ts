@@ -24,19 +24,101 @@ class FaultAssertion extends Error {}
 const assert = (condition: unknown, code: string): void => {
   if (!condition) throw new FaultAssertion(code);
 };
-/** Expo wraps native exceptions in text; its iOS and Android implementations
- * both include SQLite's numeric result code. Text alone without 13 is rejected. */
+interface SqliteErrorNode {
+  via: "root" | "cause" | "errors";
+  type: string;
+  codeType: string;
+  numericCode?: number;
+  numericErrno?: number;
+  symbolicFull: boolean;
+  messageLength: number;
+  messageCodes: number[];
+  messageControlCodes: number[];
+  hasFullText: boolean;
+}
+/** Numeric-only error evidence: never returns messages, stacks, paths, native
+ * exception names, or arbitrary property keys. Cause/AggregateError walks are
+ * bounded and cycle-safe because Expo may wrap native failures more than once. */
+export function sqliteErrorEvidence(error: unknown) {
+  const nodes: SqliteErrorNode[] = [];
+  const queue: { value: unknown; via: SqliteErrorNode["via"] }[] = [
+    { value: error, via: "root" },
+  ];
+  const seen = new Set<object>();
+  const numeric = (value: unknown) =>
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= 65535
+      ? value
+      : undefined;
+  const property = (value: object, key: string): unknown => {
+    try {
+      return (value as Record<string, unknown>)[key];
+    } catch {
+      return undefined;
+    }
+  };
+  while (queue.length && nodes.length < 8) {
+    const { value, via } = queue.shift()!;
+    const object = value !== null && typeof value === "object" ? value : null;
+    if (object && seen.has(object)) continue;
+    if (object) seen.add(object);
+    const code = object ? property(object, "code") : undefined;
+    const errno = object ? property(object, "errno") : undefined;
+    const messageValue =
+      typeof value === "string"
+        ? value
+        : object
+          ? property(object, "message")
+          : undefined;
+    const message = typeof messageValue === "string" ? messageValue : "";
+    nodes.push({
+      via,
+      type: value === null ? "null" : typeof value,
+      codeType: typeof code,
+      numericCode: numeric(code),
+      numericErrno: numeric(errno),
+      symbolicFull: code === "SQLITE_FULL",
+      messageLength: message.length,
+      messageCodes: [...message.matchAll(/\bError code (\d{1,5})\s*:/gi)]
+        .slice(0, 4)
+        .map((match) => Number(match[1])),
+      // expo-sqlite Android's convertSqlLiteErrorToSTLString currently does
+      // std::string += int, selecting the char overload. Code 13 is U+000D;
+      // Kotlin's step/finalize paths use this exact formatter. Require the
+      // fixed native prefix and colon, rather than accepting "disk full" text.
+      messageControlCodes: [
+        ...message.matchAll(/\bError code ([\u0000-\u001f]):/gi),
+      ]
+        .slice(0, 4)
+        .map((match) => match[1]!.charCodeAt(0)),
+      hasFullText: /database or disk is full/i.test(message),
+    });
+    if (object) {
+      const cause = property(object, "cause");
+      if (cause !== undefined) queue.push({ value: cause, via: "cause" });
+      const errors = property(object, "errors");
+      if (Array.isArray(errors))
+        for (const value of errors.slice(0, 4))
+          queue.push({ value, via: "errors" });
+    }
+  }
+  return { nodes, truncated: queue.length > 0 };
+}
+/** Only SQLite result-code evidence authorizes FULL: 13, SQLITE_FULL, or the
+ * source-confirmed Android code-as-control-character encoding. Text alone fails. */
 export function isSqliteFull(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const value = error as { code?: unknown; errno?: unknown; message?: unknown };
-  return (
-    value.code === "SQLITE_FULL" ||
-    value.code === 13 ||
-    value.errno === 13 ||
-    (typeof value.message === "string" &&
-      /\bError code 13\s*:/i.test(value.message))
+  return sqliteErrorEvidence(error).nodes.some(
+    (node) =>
+      node.symbolicFull ||
+      node.numericCode === 13 ||
+      node.numericErrno === 13 ||
+      node.messageCodes.includes(13) ||
+      node.messageControlCodes.includes(13),
   );
 }
+
 const peer = "https://native-fault.invalid";
 const documentId = "native-fault-document";
 const recoveryDraft = {
@@ -112,6 +194,23 @@ export async function runNativeFaults(
     const name = `${prefix}-${kind}.db`;
     let db: ExpoDriver | undefined;
     let created = false;
+    let phase: "setup" | "initial" | "nested" | "direct" | "reopen" = "setup";
+    const evidence: {
+      limits?: {
+        pageCount: number;
+        pageSize: number;
+        requested: number;
+        actual: number;
+        payloadBytes: number;
+      };
+      failures: {
+        phase: string;
+        boundary: "native" | "driver";
+        operation?: "payload" | "other";
+        transactionActive?: boolean | "unavailable";
+        error: ReturnType<typeof sqliteErrorEvidence>;
+      }[];
+    } = { failures: [] };
     try {
       let actualFull = false;
       const open = (observeFull = false) => {
@@ -126,7 +225,27 @@ export async function runNativeFaults(
             try {
               return sqlite.runSync(sql, params);
             } catch (error) {
-              if (isSqliteFull(error)) actualFull = true;
+              const operation =
+                sql.includes("native_fault_payload") && sql.includes("zeroblob")
+                  ? "payload"
+                  : "other";
+              let transactionActive: boolean | "unavailable" = "unavailable";
+              try {
+                transactionActive =
+                  sqlite.isInTransactionSync?.() ?? "unavailable";
+              } catch {
+                /* evidence only; the driver retains probe failures */
+              }
+              if (evidence.failures.length < 8)
+                evidence.failures.push({
+                  phase,
+                  boundary: "native",
+                  operation,
+                  transactionActive,
+                  error: sqliteErrorEvidence(error),
+                });
+              if (operation === "payload" && isSqliteFull(error))
+                actualFull = true;
               throw error;
             }
           },
@@ -157,8 +276,16 @@ export async function runNativeFaults(
         const limit = db.query(`PRAGMA max_page_count=${cap}`).get() as {
           max_page_count: number;
         };
-        assert(limit.max_page_count === cap, "max-page-count-not-enforced");
         const payloadBytes = (cap + 8) * pageSize;
+        evidence.limits = {
+          pageCount: pages,
+          pageSize,
+          requested: cap,
+          actual: limit.max_page_count,
+          payloadBytes,
+        };
+        phase = "initial";
+        assert(limit.max_page_count === cap, "max-page-count-not-enforced");
         assert(
           payloadBytes > 0 && payloadBytes < 16 * 1024 * 1024,
           "fixture-size-out-of-bounds",
@@ -182,6 +309,11 @@ export async function runNativeFaults(
         } catch (error) {
           failed = true;
           surfacedFull = isSqliteFull(error);
+          evidence.failures.push({
+            phase,
+            boundary: "driver",
+            error: sqliteErrorEvidence(error),
+          });
         }
         assert(failed && actualFull, "real-SQLITE_FULL-not-observed");
         assert(surfacedFull, "driver-replaced-SQLITE_FULL");
@@ -197,6 +329,7 @@ export async function runNativeFaults(
         // SQLITE_FULL may abort every savepoint. Catching it inside an outer
         // callback must not permit a later write to run in SQLite autocommit.
         actualFull = false;
+        phase = "nested";
         let nestedFailure: unknown, outerFailure: unknown;
         const blocked: unknown[] = [];
         try {
@@ -230,6 +363,11 @@ export async function runNativeFaults(
           })();
         } catch (error) {
           outerFailure = error;
+          evidence.failures.push({
+            phase,
+            boundary: "driver",
+            error: sqliteErrorEvidence(error),
+          });
         }
         assert(
           actualFull && isSqliteFull(nestedFailure),
@@ -243,6 +381,7 @@ export async function runNativeFaults(
         );
         retained(db);
         actualFull = false;
+        phase = "direct";
         let statementFailure: unknown,
           directOuterFailure: unknown,
           blockedDirect: unknown;
@@ -268,6 +407,11 @@ export async function runNativeFaults(
           })();
         } catch (error) {
           directOuterFailure = error;
+          evidence.failures.push({
+            phase,
+            boundary: "driver",
+            error: sqliteErrorEvidence(error),
+          });
         }
         assert(
           actualFull && isSqliteFull(statementFailure),
@@ -289,6 +433,7 @@ export async function runNativeFaults(
         )();
         db.close();
         db = undefined;
+        phase = "reopen";
         db = open();
         initSchema(db);
         retained(db);
@@ -302,7 +447,7 @@ export async function runNativeFaults(
         );
         healthy(db);
         steps.push(
-          `PASS native disk-full: real SQLITE_FULL (13), max_page_count=${cap}, transaction rolled back, caught direct/nested FULL blocks outer SQL/commit, cursor/draft retained after reopen, later write durable`,
+          `PASS native disk-full: real SQLITE_FULL (13), max_page_count=${cap}, transaction rolled back, caught direct/nested FULL blocks outer SQL/commit, cursor/draft retained after reopen, later write durable; evidence=${JSON.stringify(evidence)}`,
         );
       } else {
         // Deliberately legacy schema: the first peer-column migration commits,
@@ -358,7 +503,9 @@ export async function runNativeFaults(
         );
       }
     } catch (error) {
-      steps.push(`FAIL native ${kind}: ${safeFailure(error)}`);
+      steps.push(
+        `FAIL native ${kind}: ${safeFailure(error)}${kind === "disk-full" ? "; evidence=" + JSON.stringify(evidence) : ""}`,
+      );
     } finally {
       try {
         db?.close();
