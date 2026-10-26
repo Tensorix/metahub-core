@@ -1,119 +1,120 @@
+import { Checkbox, RNHostView } from "@expo/ui";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  TextInput,
   FlatList,
-  Modal,
-  Pressable,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
-
+import { NativeSheet } from "@/components/native/NativeSheet";
+import { NativeHost } from "@/components/native/NativeHost";
+import { NativeButton } from "@/components/native/NativeButton";
+import { RecordTextInput } from "@/components/RecordTextInput";
 import { useApiData } from "@/lib/api/hooks";
 import type { PropInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
 import { recordTitle } from "@/lib/format";
 import { useTheme } from "@/lib/theme";
-import { fs, radii } from "@/lib/theme/tokens";
 
 export interface Candidate {
   id: string;
   title: string;
+  missing?: boolean;
 }
-
-/** id → title candidate sets for every relation/doc property of a record, in
- *  one fetch pass. Kept outside the SwiftUI <Host> (RN views can't nest in
- *  it) — the form renders plain text from these, the picker lives in a Modal. */
-export function useRefData(props: PropInfo[]): {
-  loading: boolean;
-  error: Error | null;
-  refetch: () => Promise<void>;
-  candidates: (prop: PropInfo) => Candidate[];
-  titleOf: (prop: PropInfo, id: string) => string;
-  refDisplay: (prop: PropInfo, value: unknown) => string;
-} {
+export const referenceIds = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === "string")
+    : [];
+/** Selected labels are resolved by ID, independently of candidate paging. */
+export function useRefData(
+  props: PropInfo[],
+  cells: Record<string, unknown> = {},
+) {
   const { client } = useSession();
-  const refProps = useMemo(
-    () => props.filter((p) => p.type === "relation" || p.type === "doc"),
-    [props],
+  const key = JSON.stringify(
+    props
+      .filter((p) => p.type === "relation" || p.type === "doc")
+      .map((p) => ({
+        id: p.id,
+        kind: p.type === "doc" ? ("document" as const) : ("record" as const),
+        databaseId:
+          p.type === "relation"
+            ? (p.config?.database as string | undefined)
+            : undefined,
+        ids: referenceIds(cells[p.id]),
+      })),
   );
-  const key = refProps.map((p) => `${p.id}:${p.config?.database ?? ""}`).join(",");
-
-  const fetchAll = useCallback(async () => {
-    const out = new Map<string, Candidate[]>();
-    const needsDocs = refProps.some((p) => p.type === "doc");
-    const docListP = needsDocs ? client.queryDocuments({limit:60}) : null;
-    await Promise.all(
-      refProps.map(async (p) => {
-        if (p.type === "relation") {
-          const target = p.config?.database as string | undefined;
-          if (!target) {
-            out.set(p.id, []);
-            return;
-          }
-          const [records, targetProps] = await Promise.all([
-            client.queryRecords(target, { limit: 60 }),
-            client.listProperties(target),
-          ]);
-          out.set(
-            p.id,
-            records.records.map((r) => ({ id: r.id, title: recordTitle(r, targetProps) })),
-          );
-        } else {
-          const docs = await docListP!;
-          out.set(
-            p.id,
-            docs.documents.map((d) => ({ id: d.id, title: d.title || "未命名" })),
-          );
-        }
-      }),
-    );
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, key]);
-  const { data, loading, error, refetch } = useApiData(fetchAll);
-
+  const requests = useMemo(
+    () =>
+      JSON.parse(key) as {
+        id: string;
+        kind: "document" | "record";
+        databaseId?: string;
+        ids: string[];
+      }[],
+    [key],
+  );
+  const fetchAll = useCallback(
+    async () =>
+      new Map(
+        await Promise.all(
+          requests.map(
+            async (p) =>
+              [
+                p.id,
+                (await client.referenceSummaries(p)).map((c) => ({
+                  id: c.id,
+                  title: c.missing
+                    ? "目标已删除或不可用 · " + c.id.slice(0, 12)
+                    : c.title || "未命名",
+                  missing: c.missing,
+                })),
+              ] as const,
+          ),
+        ),
+      ),
+    [client, requests],
+  );
+  const { data, ...state } = useApiData(fetchAll);
   const candidates = useCallback(
-    (prop: PropInfo) => data?.get(prop.id) ?? [],
+    (p: PropInfo): Candidate[] => data?.get(p.id) ?? [],
     [data],
   );
   const titleOf = useCallback(
-    (prop: PropInfo, id: string) =>
-      data?.get(prop.id)?.find((c) => c.id === id)?.title ?? `${id.slice(0, 12)}…`,
-    [data],
+    (p: PropInfo, id: string) =>
+      candidates(p).find((c) => c.id === id)?.title ?? id.slice(0, 12) + "…",
+    [candidates],
+  );
+  const missing = useCallback(
+    (p: PropInfo, id: string) =>
+      candidates(p).find((c) => c.id === id)?.missing ?? false,
+    [candidates],
   );
   const refDisplay = useCallback(
-    (prop: PropInfo, value: unknown) => {
-      const ids = Array.isArray(value)
-        ? value.filter((v): v is string => typeof v === "string")
-        : [];
-      if (!ids.length) return "（点按选择）";
-      return ids.map((id) => titleOf(prop, id)).join("、");
-    },
+    (p: PropInfo, value: unknown) =>
+      referenceIds(value)
+        .map((id) => titleOf(p, id))
+        .join("、") || "尚未关联",
     [titleOf],
   );
-
-  return { candidates, titleOf, refDisplay, loading, error, refetch };
+  return { ...state, candidates, titleOf, missing, refDisplay };
 }
 
-/** Multi-select picker over a relation/doc target set (RN modal sheet).
- *  Selection is optimistic local state (seeded on mount) so rapid toggles
- *  never rebuild from a stale server snapshot. */
+/** Selection never opens a target. The record's separate Open buttons own navigation. */
 export function RefPickerSheet({
   prop,
-  candidates,
+  candidates = [],
   initialSelected,
   onChange,
   onClose,
-  loading = false,
-  error,
   onRetry,
 }: {
   prop: PropInfo;
-  candidates: Candidate[];
+  candidates?: Candidate[];
   initialSelected: string[];
-  onChange: (next: string[]) => void;
+  onChange: (ids: string[]) => void;
   onClose: () => void;
   loading?: boolean;
   error?: Error | null;
@@ -121,117 +122,174 @@ export function RefPickerSheet({
 }) {
   const { tokens } = useTheme();
   const { client } = useSession();
+  const { height } = useWindowDimensions();
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState(initialSelected);
   const latest = useRef(selected);
   const [query, setQuery] = useState("");
-  const target = prop.type === "relation" ? (prop.config?.database as string) : "docs";
-
+  const target =
+    prop.type === "relation"
+      ? (prop.config?.database as string | undefined)
+      : "docs";
   const fetchPage = useCallback(async () => {
-    if (prop.type === "doc") { const result = await client.queryDocuments({search:query,offset,limit:60}); return {...result,candidates:result.documents.map(doc => ({id:doc.id,title:doc.title || "未命名"}))}; }
-    if (!target) return null;
-    const [result, props] = await Promise.all([client.queryRecords(target, {search: query, offset, limit: 60}), client.listProperties(target)]);
-    return {...result, candidates: result.records.map(record => ({id: record.id, title: recordTitle(record, props)}))};
+    if (prop.type === "doc") {
+      const result = await client.queryDocuments({
+        search: query,
+        offset,
+        limit: 60,
+      });
+      return {
+        ...result,
+        candidates: result.documents.map((d) => ({
+          id: d.id,
+          title: d.title || "未命名",
+        })),
+      };
+    }
+    if (!target)
+      return { candidates: [] as Candidate[], hasMore: false, total: 0 };
+    const [result, props] = await Promise.all([
+      client.queryRecords(target, { search: query, offset, limit: 60 }),
+      client.listProperties(target),
+    ]);
+    return {
+      ...result,
+      candidates: result.records.map((r) => ({
+        id: r.id,
+        title: recordTitle(r, props),
+      })),
+    };
   }, [client, prop.type, target, query, offset]);
   const page = useApiData(fetchPage);
-  const choices = page.data?.candidates ?? (!query && !offset ? candidates : []);
-  const pageLoading = page.loading || loading;
-  const pageError = page.error ?? error;
-
-  const toggle = (id: string, on: boolean) => {
-    const next = on ? [...new Set([...latest.current, id])] : latest.current.filter((s) => s !== id);
+  const toggle = (id: string) => {
+    const next = latest.current.includes(id)
+      ? latest.current.filter((s) => s !== id)
+      : [...latest.current, id];
     latest.current = next;
     setSelected(next);
     onChange(next);
   };
-
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.scrim} onPress={onClose} />
-      <View style={[styles.sheet, { backgroundColor: tokens.surface }]}>
-        <View style={[styles.grabber, { backgroundColor: tokens.lineStrong }]} />
-        <View style={styles.head}>
-          <Text style={[styles.title, { color: tokens.fg }]}>{prop.name}</Text>
-          <Pressable hitSlop={10} onPress={onClose}>
-            <Text style={{ color: tokens.accent, fontSize: fs.ui }}>完成</Text>
-          </Pressable>
-        </View>
-        <TextInput accessibilityLabel="搜索关联项" placeholder="搜索关联项" value={query} onChangeText={value => { setQuery(value); setOffset(0); }} style={{ padding: 16, color: tokens.fg }} />
-        {pageLoading ? <ActivityIndicator color={tokens.accent} /> : null}
-        {pageError ? <Pressable onPress={() => { void page.refetch(); onRetry?.(); }}><Text style={[styles.empty, { color: tokens.danger }]}>加载失败，点按重试</Text></Pressable> : null}
-        {<View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16 }}>
-          <Pressable disabled={!offset || pageLoading} style={{padding:12}} onPress={() => setOffset(Math.max(0, offset - 60))}><Text style={{color:tokens.accent}}>上一页</Text></Pressable>
-          <Text style={{color:tokens.muted, padding:12}}>{page.data?.total ?? 0} 项</Text>
-          <Pressable disabled={!page.data?.hasMore || pageLoading} style={{padding:12}} onPress={() => setOffset(offset + 60)}><Text style={{color:tokens.accent}}>下一页</Text></Pressable>
-        </View>}
-        <FlatList
-          data={choices}
-          keyExtractor={(c) => c.id}
-          renderItem={({ item }) => {
-            const on = selected.includes(item.id);
-            return (
-              <Pressable
-                onPress={() => toggle(item.id, !on)}
-                style={({ pressed }) => [
-                  styles.candRow,
-                  { borderColor: tokens.line },
-                  pressed && { backgroundColor: tokens.hover },
-                ]}
-              >
-                <Text numberOfLines={1} style={[styles.candTitle, { color: tokens.fg }]}>
-                  {item.title}
-                </Text>
-                {on ? (
-                  <Text style={{ color: tokens.accent, fontSize: fs.body }}>✓</Text>
-                ) : null}
-              </Pressable>
-            );
+    <NativeSheet isPresented onDismiss={onClose} testID="reference-picker">
+      <RNHostView matchContents>
+        <View
+          style={{
+            height: Math.min(height * 0.7, 600),
+            backgroundColor: tokens.surface,
+            gap: 8,
           }}
-          ListEmptyComponent={
-            <Text style={[styles.empty, { color: tokens.muted }]}>
-              {pageLoading ? "正在加载…" : pageError ? "暂时无法加载选项" : !target ? "该关联列未配置目标数据库" : query ? "没有匹配项" : "没有可选项"}
+        >
+          <View style={styles.head}>
+            <Text
+              selectable
+              style={{
+                color: tokens.fg,
+                fontSize: 18,
+                fontWeight: "600",
+                flex: 1,
+              }}
+            >
+              {prop.name}
             </Text>
-          }
-          contentContainerStyle={styles.listContent}
-        />
-      </View>
-    </Modal>
+            <NativeButton onPress={onClose}>完成</NativeButton>
+          </View>
+          <NativeHost matchContents>
+            <RecordTextInput
+              text={query}
+              placeholder="搜索关联项"
+              onChangeText={(value) => {
+                setQuery(value);
+                setOffset(0);
+              }}
+            />
+          </NativeHost>
+          <Text selectable style={{ color: tokens.muted }}>
+            已选 {selected.length} 项 · 点按选项以添加或移除
+          </Text>
+          {page.loading ? <ActivityIndicator /> : null}
+          {page.error ? (
+            <NativeButton
+              onPress={() => {
+                void page.refetch();
+                onRetry?.();
+              }}
+            >
+              加载失败，重试
+            </NativeButton>
+          ) : null}
+          <FlatList
+            style={{ flex: 1 }}
+            data={[
+              ...candidates.filter((c) => c.missing && selected.includes(c.id)),
+              ...(page.data?.candidates ?? []),
+            ]}
+            keyExtractor={(c) => c.id}
+            keyboardShouldPersistTaps="handled"
+            contentInsetAdjustmentBehavior="automatic"
+            renderItem={({ item }) => (
+              <View style={[styles.row, { borderColor: tokens.line }]}>
+                <NativeHost matchContents style={{ flex: 1 }}>
+                  <Checkbox
+                    label={item.title}
+                    value={selected.includes(item.id)}
+                    onValueChange={() => toggle(item.id)}
+                  />
+                </NativeHost>
+              </View>
+            )}
+            ListHeaderComponent={
+              candidates.some((c) => c.missing) ? (
+                <Text selectable style={{ color: tokens.muted }}>
+                  部分已选目标已删除；仍保留其引用，可在字段中移除。
+                </Text>
+              ) : null
+            }
+            ListEmptyComponent={
+              !page.loading && !page.error ? (
+                <Text style={{ padding: 20, color: tokens.muted }}>
+                  {!target
+                    ? "该关联列未配置目标数据库"
+                    : query
+                      ? "没有匹配项"
+                      : "没有可选项"}
+                </Text>
+              ) : null
+            }
+          />
+          <View style={styles.head}>
+            <NativeButton
+              disabled={!offset || page.loading}
+              onPress={() => setOffset(Math.max(0, offset - 60))}
+            >
+              上一页
+            </NativeButton>
+            <Text style={{ color: tokens.muted }}>
+              第 {Math.floor(offset / 60) + 1} 页
+            </Text>
+            <NativeButton
+              disabled={!page.data?.hasMore || page.loading}
+              onPress={() => setOffset(offset + 60)}
+            >
+              下一页
+            </NativeButton>
+          </View>
+        </View>
+      </RNHostView>
+    </NativeSheet>
   );
 }
-
 const styles = StyleSheet.create({
-  scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
-  sheet: {
-    height: "60%",
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    paddingTop: 8,
-  },
-  grabber: {
-    alignSelf: "center",
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    marginBottom: 8,
-  },
   head: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+    gap: 8,
   },
-  title: { fontSize: fs.body, fontWeight: "600" },
-  candRow: {
+  row: {
     flexDirection: "row",
+    gap: 12,
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  candTitle: { fontSize: fs.ui, flexShrink: 1 },
-  empty: { textAlign: "center", paddingVertical: 24, fontSize: fs.sm },
-  listContent: { paddingBottom: 32 },
 });

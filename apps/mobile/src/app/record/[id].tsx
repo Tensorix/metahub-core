@@ -1,4 +1,4 @@
-import { FieldGroup, Host, Picker, Switch, Text } from "@expo/ui";
+import { Button, FieldGroup, Picker, Switch, Text } from "@expo/ui";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import {
   Stack,
@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Keyboard,
   Pressable,
   StyleSheet,
   Text as RNText,
@@ -17,11 +18,17 @@ import {
 
 import { usePreventRemove } from "expo-router/react-navigation";
 
+import { createRecentStore } from "@/lib/navigation/recent";
+import { NativeHost } from "@/components/native/NativeHost";
 import { RecordTextInput } from "@/components/RecordTextInput";
 import { RecordDrafts, parseNumberDraft } from "@/lib/record-drafts";
 import { HistorySheet } from "@/components/HistorySheet";
 import { MultiSelectSheet } from "@/components/MultiSelectSheet";
-import { RefPickerSheet, useRefData } from "@/components/RefField";
+import {
+  RefPickerSheet,
+  referenceIds,
+  useRefData,
+} from "@/components/RefField";
 import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
 import { MetahubError, type PropInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
@@ -35,7 +42,12 @@ const EMPTY_PROPS: PropInfo[] = [];
 export default function RecordScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { client, replica, isCurrent } = useSession();
+  const { client, replica, isCurrent, workspaceId } = useSession();
+  const mutationEnabled = useRef(true);
+  const recent = useMemo(
+    () => createRecentStore(replica.db, workspaceId),
+    [replica, workspaceId],
+  );
   const { tokens } = useTheme();
   const [multiOpen, setMultiOpen] = useState<PropInfo | null>(null);
   const [refOpen, setRefOpen] = useState<PropInfo | null>(null);
@@ -53,7 +65,10 @@ export default function RecordScreen() {
     const store = replica.service.drafts;
     const draftState = new RecordDrafts(
       (pid, value) => client.updateRecord(id, { [pid]: value }),
-      () => { setLeaveError(null); redraw((n) => n + 1); },
+      () => {
+        setLeaveError(null);
+        redraw((n) => n + 1);
+      },
       () => setRefreshVersion((n) => n + 1),
       (fields) => {
         for (const [pid, draft] of fields) {
@@ -80,7 +95,10 @@ export default function RecordScreen() {
     return () => drafts.stop();
   }, [drafts]);
   useEffect(() => {
-    if (deleted) router.back();
+    if (deleted) {
+      if (router.canGoBack()) router.back();
+      else router.replace("/(tabs)");
+    }
   }, [deleted, router]);
   const fetchRecord = useCallback(async () => {
     const readVersion = drafts.acknowledgedVersion;
@@ -112,9 +130,12 @@ export default function RecordScreen() {
       void refetch();
   });
 
-  const commit = (prop: PropInfo, value: unknown) =>
-    drafts.save(prop.id, value);
+  const commit = (prop: PropInfo, value: unknown) => {
+    if (mutationEnabled.current && !deleting && !deleted)
+      drafts.save(prop.id, value);
+  };
   const saveText = (prop: PropInfo) => {
+    if (!mutationEnabled.current || deleting || deleted) return;
     const draft = drafts.fields.get(prop.id);
     if (!draft || (draft.status !== "draft" && draft.status !== "invalid"))
       return;
@@ -130,50 +151,67 @@ export default function RecordScreen() {
     }
   };
   const prepareDraft = (pid: string, value: unknown) => {
-    const prop = data?.props.find(prop => prop.id === pid);
+    const prop = data?.props.find((prop) => prop.id === pid);
     if (!prop) throw new Error("字段信息尚未就绪，请刷新后重试");
-    return prop.type === "number" ? parseNumberDraft(String(value ?? "")) : value;
+    return prop.type === "number"
+      ? parseNumberDraft(String(value ?? ""))
+      : value;
   };
   const saveAll = () => {
     setLeaveError(null);
-    void drafts.flush(prepareDraft).then(result => {
+    void drafts.flush(prepareDraft).then((result) => {
       if (isCurrent() && !result.ok) setLeaveError(result.error);
     });
   };
   usePreventRemove(!deleted, ({ data: action }) => {
-    if (leaving.current) return;
+    if (leaving.current || !mutationEnabled.current) return;
     leaving.current = true;
-    setSavingBeforeLeave(true); setLeaveError(null);
+    setSavingBeforeLeave(true);
+    setLeaveError(null);
+    Keyboard.dismiss();
     void (async () => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
       if (!data && drafts.dirty) {
         setLeaveError("记录仍在加载，请稍后重试");
         return;
       }
+      mutationEnabled.current = false;
       const result = await drafts.flush(prepareDraft);
       if (!isCurrent()) return;
       if (result.ok) navigation.dispatch(action.action);
       else setLeaveError(result.error);
-    })().catch(error => {
-      if (isCurrent()) setLeaveError(error instanceof Error ? error.message : String(error));
-    }).finally(() => { leaving.current = false; setSavingBeforeLeave(false); });
+    })()
+      .catch((error) => {
+        if (isCurrent())
+          setLeaveError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        leaving.current = false;
+        mutationEnabled.current = true;
+        if (isCurrent()) setSavingBeforeLeave(false);
+      });
   });
   const close = () => {
     if (router.canGoBack()) router.back();
     else router.replace("/(tabs)");
   };
-  const closeButton = () => (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="关闭记录"
-      hitSlop={12}
-      disabled={savingBeforeLeave}
-      onPress={close}
-    >
-      <RNText style={{ color: tokens.accent, fontSize: fs.ui }}>关闭</RNText>
-    </Pressable>
+  const closeToolbar = (
+    <Stack.Toolbar placement="left">
+      <Stack.Toolbar.Button
+        disabled={savingBeforeLeave || deleting}
+        onPress={close}
+      >
+        关闭
+      </Stack.Toolbar.Button>
+    </Stack.Toolbar>
   );
   const leaveNotice = leaveError ? (
-    <RNText accessibilityRole="alert" style={{ color: tokens.danger, padding: 12 }}>
+    <RNText
+      accessibilityRole="alert"
+      style={{ color: tokens.danger, padding: 12 }}
+    >
       {leaveError}（修改已保留）
     </RNText>
   ) : null;
@@ -188,20 +226,83 @@ export default function RecordScreen() {
     () => (data ? recordTitle(data.rec, data.props) : "记录"),
     [data],
   );
+  useEffect(() => {
+    if (data && isCurrent()) {
+      try {
+        recent.remember({ id, kind: "record", title });
+      } catch {}
+    }
+  }, [data, id, title, isCurrent, recent]);
   // Resolve relation/doc target titles outside the SwiftUI Host (hook must
   // run unconditionally, before the early returns below).
   const {
     candidates,
-    refDisplay,
+    titleOf,
+    missing: missingRef,
     loading: refsLoading,
     error: refsError,
     refetch: refetchRefs,
-  } = useRefData(data?.props ?? EMPTY_PROPS);
+  } = useRefData(data?.props ?? EMPTY_PROPS, {
+    ...data?.rec.cells,
+    ...Object.fromEntries(
+      [...drafts.fields].map(([pid, draft]) => [pid, draft.value]),
+    ),
+  });
+  useLiveInvalidate(["documents", "records", "properties"], () => {
+    void refetchRefs();
+  });
+  const openReference = async (prop: PropInfo, targetId: string) => {
+    if (leaving.current || deleting || deleted) return;
+    leaving.current = true;
+    setSavingBeforeLeave(true);
+    setLeaveError(null);
+    Keyboard.dismiss();
+    try {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      mutationEnabled.current = false;
+      const result = await drafts.flush(prepareDraft);
+      if (!isCurrent()) return;
+      if (!result.ok) {
+        setLeaveError(result.error);
+        return;
+      }
+      const [target] = await client.referenceSummaries({
+        kind: prop.type === "doc" ? "document" : "record",
+        ...(prop.type === "relation"
+          ? { databaseId: prop.config?.database as string | undefined }
+          : {}),
+        ids: [targetId],
+      });
+      if (!isCurrent()) return;
+      if (!target || target.missing) {
+        setLeaveError(
+          "关联目标已删除或不可用，引用仍保留，可通过更改关联移除。",
+        );
+        void refetchRefs();
+        return;
+      }
+      router.push(
+        `/${prop.type === "doc" ? "doc" : "record"}/${encodeURIComponent(targetId)}` as Parameters<
+          typeof router.push
+        >[0],
+      );
+    } catch (error) {
+      if (isCurrent())
+        setLeaveError(error instanceof Error ? error.message : String(error));
+    } finally {
+      leaving.current = false;
+      mutationEnabled.current = true;
+      if (isCurrent()) setSavingBeforeLeave(false);
+    }
+  };
 
   if (error && !data) {
     return (
       <View style={[styles.center, { backgroundColor: tokens.bg }]}>
-        <Stack.Screen options={{ title: "记录", headerLeft: closeButton }} />
+        <Stack.Screen options={{ title: "记录" }} />
+        {closeToolbar}
         {leaveNotice}
         <RNText style={{ color: tokens.danger, fontSize: fs.ui }}>
           {error instanceof MetahubError && error.code === "not_found"
@@ -217,7 +318,8 @@ export default function RecordScreen() {
   if (!data) {
     return (
       <View style={[styles.center, { backgroundColor: tokens.bg }]}>
-        <Stack.Screen options={{ title: "记录", headerLeft: closeButton }} />
+        <Stack.Screen options={{ title: "记录" }} />
+        {closeToolbar}
         {leaveNotice}
       </View>
     );
@@ -227,64 +329,90 @@ export default function RecordScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
-      <Stack.Screen
-        options={{
-          title,
-          headerLeft: closeButton,
-          headerRight: () => (
-            <View style={styles.headerRight}>
-              <Pressable
-                hitSlop={10}
-                onPress={() =>
-                  drafts.dirty
-                    ? Alert.alert(
-                        "请先保存修改",
-                        "完成保存或重试后再恢复历史版本。",
-                      )
-                    : setHistoryOpen(true)
-                }
-              >
-                <RNText style={{ color: tokens.accent, fontSize: fs.ui }}>
-                  历史
-                </RNText>
-              </Pressable>
-              <Pressable
-                hitSlop={10}
-                disabled={deleting || saving}
-                onPress={() =>
-                  Alert.alert("删除记录", "确定删除这条记录吗？", [
-                    { text: "取消", style: "cancel" },
-                    {
-                      text: "删除",
-                      style: "destructive",
-                      onPress: async () => {
-                        setDeleting(true);
-                        try {
-                          await client.deleteRecord(rec.id);
-                          replica.service.drafts.discardRecord(rec.id);
-                          drafts.stop();
-                          setDeleted(true);
-                        } catch (e) {
-                          Alert.alert(
-                            "删除失败",
-                            e instanceof Error ? e.message : String(e),
-                          );
-                        } finally {
-                          setDeleting(false);
-                        }
-                      },
-                    },
-                  ])
-                }
-              >
-                <RNText style={{ color: tokens.danger, fontSize: fs.ui }}>
-                  删除
-                </RNText>
-              </Pressable>
-            </View>
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title }} />
+      {closeToolbar}
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Menu
+          title="记录操作"
+          accessibilityLabel="记录操作"
+          icon={process.env.EXPO_OS === "ios" ? "ellipsis.circle" : undefined}
+        >
+          <Stack.Toolbar.MenuAction
+            disabled={deleting || saving}
+            destructive={false}
+            onPress={() =>
+              drafts.dirty
+                ? Alert.alert(
+                    "请先保存修改",
+                    "完成保存或重试后再恢复历史版本。",
+                  )
+                : setHistoryOpen(true)
+            }
+          >
+            {"版本历史"}
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction
+            disabled={deleting || saving}
+            destructive={true}
+            onPress={() =>
+              Alert.alert("删除记录", "确定删除这条记录吗？", [
+                { text: "取消", style: "cancel" },
+                {
+                  text: "删除",
+                  style: "destructive",
+                  onPress: async () => {
+                    if (
+                      leaving.current ||
+                      !mutationEnabled.current ||
+                      !isCurrent()
+                    )
+                      return;
+                    leaving.current = true;
+                    Keyboard.dismiss();
+                    setSavingBeforeLeave(true);
+                    try {
+                      await new Promise<void>((resolve) =>
+                        requestAnimationFrame(() => resolve()),
+                      );
+                      mutationEnabled.current = false;
+                      setDeleting(true);
+                      const flushed = await drafts.flush(prepareDraft);
+                      if (!isCurrent()) return;
+                      if (!flushed.ok) throw new Error(flushed.error);
+                      drafts.stop();
+                      const result = await client.deleteRecord(rec.id);
+                      if (!isCurrent()) return;
+                      if (!result.ok)
+                        throw new Error("记录未能删除，请刷新后重试");
+                      replica.service.drafts.discardRecord(rec.id);
+                      try {
+                        recent.forget("record", rec.id);
+                      } catch {}
+                      setDeleted(true);
+                    } catch (e) {
+                      drafts.resume();
+                      mutationEnabled.current = true;
+                      if (isCurrent())
+                        Alert.alert(
+                          "删除失败",
+                          e instanceof Error ? e.message : String(e),
+                        );
+                    } finally {
+                      leaving.current = false;
+                      if (isCurrent()) {
+                        setDeleting(false);
+                        setSavingBeforeLeave(false);
+                      }
+                    }
+                  },
+                },
+              ])
+            }
+          >
+            {"删除记录"}
+          </Stack.Toolbar.MenuAction>
+        </Stack.Toolbar.Menu>
+      </Stack.Toolbar>
       {leaveNotice}
       <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
         <RNText
@@ -311,7 +439,10 @@ export default function RecordScreen() {
           </Pressable>
         ) : null}
       </View>
-      <Host style={styles.host}>
+      <NativeHost
+        style={styles.host}
+        pointerEvents={deleting || savingBeforeLeave ? "none" : "auto"}
+      >
         <FieldGroup>
           {props.map((prop) => {
             const value = drafts.fields.has(prop.id)
@@ -328,7 +459,11 @@ export default function RecordScreen() {
                       multiline={prop.type === "text"}
                       autoCorrect={false}
                       keyboardType={prop.type === "url" ? "url" : "default"}
-                      onChangeText={(t) => drafts.stage(prop.id, t)}
+                      editable={!deleting && !deleted && !savingBeforeLeave}
+                      onChangeText={(t) => {
+                        if (mutationEnabled.current && !deleting && !deleted)
+                          drafts.stage(prop.id, t);
+                      }}
                       onBlur={() => saveText(prop)}
                       onSubmitEditing={() => saveText(prop)}
                     />
@@ -341,7 +476,11 @@ export default function RecordScreen() {
                       text={value != null ? String(value) : ""}
                       placeholder="未填写"
                       keyboardType="decimal-pad"
-                      onChangeText={(t) => drafts.stage(prop.id, t)}
+                      editable={!deleting && !deleted && !savingBeforeLeave}
+                      onChangeText={(t) => {
+                        if (mutationEnabled.current && !deleting && !deleted)
+                          drafts.stage(prop.id, t);
+                      }}
                       onBlur={() => saveText(prop)}
                       onSubmitEditing={() => saveText(prop)}
                     />
@@ -418,9 +557,23 @@ export default function RecordScreen() {
               case "doc":
                 return (
                   <FieldGroup.Section key={prop.id} title={prop.name}>
-                    <Text onPress={() => setRefOpen(prop)}>
-                      {refDisplay(prop, value)}
-                    </Text>
+                    {referenceIds(value).map((targetId) => (
+                      <Button
+                        key={targetId}
+                        disabled={
+                          deleting ||
+                          savingBeforeLeave ||
+                          missingRef(prop, targetId)
+                        }
+                        onPress={() => void openReference(prop, targetId)}
+                        label={`打开 ${titleOf(prop, targetId)}`}
+                      />
+                    ))}
+                    <Button
+                      disabled={deleting || savingBeforeLeave}
+                      onPress={() => setRefOpen(prop)}
+                      label="更改关联"
+                    />
                   </FieldGroup.Section>
                 );
               default:
@@ -432,7 +585,7 @@ export default function RecordScreen() {
             }
           })}
         </FieldGroup>
-      </Host>
+      </NativeHost>
       {refOpen ? (
         <RefPickerSheet
           key={refOpen.id}
