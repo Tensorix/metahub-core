@@ -59,3 +59,7 @@ Existing CRDT and whole-meta.views LWW semantics retained. No field type convers
 - [ ] Run release airplane-mode cold launch and real-device performance measurements.
 - [ ] Diagnose remaining >100ms timer gaps and measure network ingest of at least 20,000 queued operations.
 - [ ] Complete native fault injection (revocation, migration/disk-full, corrupt blobs and interrupted hydration).
+
+## Superseding remaining-work ledger (2026-10-26)
+
+See [native completion plan](mobile-native-completion-plan.md) for approved R00–R12 implementation and separate native acceptance states. Earlier checked T-items mean code exists, not complete functionality or native acceptance. Audit reopened T10/T11/T13/T16 gaps (reference navigation, global paging, option ordering, attachment integrity/recovery), and T17/T18 remain subject to native gates. The new ledger is authoritative for remaining work.

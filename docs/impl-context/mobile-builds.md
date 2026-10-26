@@ -26,6 +26,8 @@ bun apps/mobile/scripts/native-build.ts android
 bun apps/mobile/scripts/native-build.ts ios
 ```
 
+Root `bun test` uses `bunfig.toml` to exclude only the generated `apps/mobile/ios/`, `apps/mobile/android/` and `apps/mobile/dist/` trees from discovery; every source test remains included. With populated CNG projects, Bun 1.3.14 opened over 13,000 descriptors during discovery and child commands returned empty stdout/stderr with exit 0. Pruning those generated trees restored subprocess output without changing test order, mocks or assertions. Bun documents this directory-pruning behavior under [`test.pathIgnorePatterns`](https://bun.com/docs/test/configuration#path-ignore-patterns).
+
 The helper calls the installed Expo CLI with `bun --no-env-file x --no-install`, regenerates native projects through CNG, and builds Release. Android uses Gradle `:app:assembleRelease` with Java 21. The generated Expo release APK uses the template development signing key: it is installable for testing and unsuitable as a store/distribution signing identity. iOS runs `pod install` and `xcodebuild` for the generic iOS Simulator destination with `CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES`. Ad-hoc signing preserves SecureStore simulator entitlements. No provisioning profile, Apple account, physical-device or App Store credentials are used.
 
 ## Artifacts and provenance

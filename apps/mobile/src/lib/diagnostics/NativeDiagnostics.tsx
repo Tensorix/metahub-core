@@ -1,6 +1,7 @@
-/** Opt-in development build diagnostics. Never executed in production. */
+/** Synthetic-only diagnostics. Debug needs SELFTEST=1; Release additionally requires
+ * DIAGNOSTICS_RELEASE=1. This branch never mounts SessionProvider or opens user workspaces. */
 import { useEffect, useState } from "react";
-import { ScrollView, Text } from "react-native";
+import { Platform, ScrollView, Text } from "react-native";
 import { openDatabaseSync } from "expo-sqlite";
 import { File, Paths } from "expo-file-system";
 import { driverContractCases } from "../../../../../src/room/driver-contract.ts";
@@ -22,13 +23,25 @@ import { nativeStorageCodec } from "../sync/codec";
 import fixture from "./crypto-fixture.json";
 import { runNativePerformance } from "./performance";
 import { runTransportDiagnostics } from "./transport";
+import { runNativeNetworkStress } from "./network-stress";
+import { exportDiagnosticReports } from "./report-export";
+import { runNativeFaults, NativeFaultFailure } from "./native-faults";
 let resultPromise: Promise<string[]> | undefined;
 async function run() {
+  const startedAt = Date.now();
   const results: string[] = [];
+  const environment = {
+    artifactClass: "synthetic-native-diagnostics",
+    configuration: __DEV__ ? "Debug" : "Release",
+    bundle: __DEV__ ? "development Metro" : "embedded Release bundle; no Metro",
+    platform: Platform.OS,
+    platformVersion: Platform.Version,
+    measurementScope: "isolated synthetic fixtures; not native UI acceptance or app cold launch",
+  };
   let nativeFixture: unknown;
   const report = () =>
     new File(Paths.document, "native-diagnostics.json").write(
-      JSON.stringify({ at: new Date().toISOString(), results, nativeFixture }, null, 2),
+      JSON.stringify({ at: new Date().toISOString(), environment, results, nativeFixture }, null, 2),
     );
   try {
     await initializeNativeSyncRuntime();
@@ -94,6 +107,9 @@ async function run() {
     }
     results.push("PASS three FTS schema close/reopen cycles");
     report();
+    try { results.push(...await runNativeFaults()); }
+    catch (error) { if (error instanceof NativeFaultFailure) results.push(...error.steps); throw error; }
+    report();
     const bunKey = await unwrapMasterKey(fixture.envelope as KeyEnvelope, fixture.passphrase);
     if (toB64(bunKey) !== fixture.key) throw new Error("Bun key envelope incompatible");
     const bunPlain = await nativeStorageCodec.gunzip(await decryptBytes(bunKey, fromB64(fixture.payload)));
@@ -127,6 +143,11 @@ async function run() {
     if (process.env.EXPO_PUBLIC_MH_TRANSPORT === "1") {
       await runTransportDiagnostics(message => { results.push(message); report(); });
     }
+    if (process.env.EXPO_PUBLIC_MH_NETWORK_STRESS === "1") {
+      const network = await runNativeNetworkStress();
+      results.push(`${network.status} opt-in native network stress: ${JSON.stringify(network)}`);
+      report();
+    }
     if (process.env.EXPO_PUBLIC_MH_PERF === "1") {
       const performanceResult = await runNativePerformance();
       results.push(`${performanceResult.status} opt-in native performance: ${JSON.stringify(performanceResult)}`);
@@ -135,10 +156,14 @@ async function run() {
     results.push(`FAIL ${e instanceof Error ? e.stack : String(e)}`);
   }
   report();
+  if (process.env.EXPO_PUBLIC_MH_NETWORK_STRESS === "1") {
+    try { await exportDiagnosticReports(startedAt, { environment, results: results.filter(row => !row.includes("opt-in native")) }); }
+    catch (error) { results.push("REPORT EXPORT FAILED: " + (error instanceof Error ? error.message : String(error))); report(); }
+  }
   return results;
 }
 export function NativeDiagnostics() {
-  const [rows, setRows] = useState<string[]>(["Running native diagnostics…"]);
+  const [rows, setRows] = useState<string[]>([`${__DEV__ ? "Debug" : "Release"} synthetic native diagnostics…`]);
   useEffect(() => {
     resultPromise ??= run();
     void resultPromise.then(setRows);
