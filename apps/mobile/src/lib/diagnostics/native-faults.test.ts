@@ -7,6 +7,7 @@ import { driverContractCases } from "../../../../../src/room/driver-contract.ts"
 import { ExpoDriver, type ExpoDatabase } from "../replica/expo-driver";
 import {
   isSqliteFull,
+  sqliteErrorEvidence,
   NativeFaultFailure,
   runNativeFaults,
   type NativeFaultRuntime,
@@ -115,7 +116,10 @@ test("an unenforced page limit fails explicitly and cleans fixtures while still 
   }
   expect(failure).toBeInstanceOf(NativeFaultFailure);
   const steps = (failure as NativeFaultFailure).steps;
-  expect(steps[0]).toBe("FAIL native disk-full: max-page-count-not-enforced");
+  expect(steps[0]).toStartWith(
+    "FAIL native disk-full: max-page-count-not-enforced; evidence=",
+  );
+  expect(steps[0]).toContain('"actual":2147483646');
   expect(steps[1]).toStartWith("PASS native migration interruption");
   expect(readdirSync(f.path)).toEqual([]);
 });
@@ -526,4 +530,122 @@ test("RETURNING FULL follows the actual transaction state instead of automatical
   } finally {
     db.close();
   }
+});
+
+test("Android SDK 57 native char-encoded result 13 is recognized through bounded cause/aggregate chains", () => {
+  const native = new Error(
+    "Call to NativeStatement.finalizeSync rejected: Error code \r: database or disk is full",
+  );
+  const wrapped = new Error("Native invocation rejected", {
+    cause: new AggregateError([native], "wrapped"),
+  });
+  expect(isSqliteFull(wrapped)).toBe(true);
+  const evidence = sqliteErrorEvidence(wrapped);
+  expect(
+    evidence.nodes.some((node) => node.messageControlCodes.includes(13)),
+  ).toBe(true);
+  expect(evidence.nodes.every((node) => !node.messageCodes.includes(13))).toBe(
+    true,
+  );
+  expect(
+    isSqliteFull(new Error("Error code \n: database or disk is full")),
+  ).toBe(false);
+  expect(
+    isSqliteFull(new Error("Error code \u0001: database or disk is full")),
+  ).toBe(false);
+  expect(isSqliteFull(new Error("database or disk is full"))).toBe(false);
+  expect(
+    isSqliteFull(new Error("Error code 130: database or disk is full")),
+  ).toBe(false);
+});
+
+test("SQLite fault evidence never exports native exception messages, paths, arbitrary codes, or cyclic causes", () => {
+  const native = Object.assign(
+    new Error(
+      "/private/user.sqlite authorization=private-secret Error code \r: database or disk is full",
+    ),
+    { code: "private-token", errno: 13 },
+  );
+  Object.defineProperty(native, "cause", { value: native });
+  const evidence = sqliteErrorEvidence(native);
+  expect(evidence.nodes).toHaveLength(1);
+  expect(evidence.nodes[0]?.numericErrno).toBe(13);
+  expect(evidence.nodes[0]?.messageControlCodes).toEqual([13]);
+  expect(JSON.stringify(evidence)).not.toContain("private");
+  expect(JSON.stringify(evidence)).not.toContain("authorization");
+  let chain: Error = new Error("root");
+  for (let index = 0; index < 20; index++)
+    chain = new Error("wrapper", { cause: chain });
+  expect(sqliteErrorEvidence(chain).nodes).toHaveLength(8);
+  expect(sqliteErrorEvidence(chain).truncated).toBe(true);
+});
+
+test("real SQLite FULL succeeds with Android's source-confirmed error encoding and exports numeric evidence", async () => {
+  const f = fixture();
+  const open = f.runtime.open;
+  let actualFull = 0;
+  f.runtime.open = (name) => {
+    const sqlite = open(name);
+    return {
+      ...sqlite,
+      runSync(sql, params) {
+        try {
+          return sqlite.runSync(sql, params);
+        } catch (error) {
+          if (!isSqliteFull(error)) throw error;
+          actualFull++;
+          throw new Error(
+            "NativeStatement.executeSync rejected: Error code \r: database or disk is full",
+          );
+        }
+      },
+    };
+  };
+  const steps = await runNativeFaults(f.runtime);
+  expect(actualFull).toBe(3);
+  expect(steps).toHaveLength(2);
+  expect(steps[0]).toContain("PASS native disk-full");
+  expect(steps[0]).toContain('"messageControlCodes":[13]');
+  expect(steps[0]).toContain('"transactionActive":false');
+  expect(steps[0]).toContain('"boundary":"native","operation":"payload"');
+  expect(steps[0]).not.toContain("NativeStatement.executeSync");
+  expect(readdirSync(f.path)).toEqual([]);
+});
+
+test("unclassified native failures remain hard failures with redacted shape evidence", async () => {
+  const f = fixture();
+  const open = f.runtime.open;
+  f.runtime.open = (name) => {
+    const sqlite = open(name);
+    return {
+      ...sqlite,
+      runSync(sql, params) {
+        if (sql.includes("zeroblob"))
+          throw new Error(
+            "/private/user.sqlite database or disk is full authorization=private-secret",
+          );
+        return sqlite.runSync(sql, params);
+      },
+    };
+  };
+  let failure: unknown;
+  try {
+    await runNativeFaults(f.runtime);
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toBeInstanceOf(NativeFaultFailure);
+  const step = (failure as NativeFaultFailure).steps[0]!;
+  expect(step).toStartWith(
+    "FAIL native disk-full: real-SQLITE_FULL-not-observed; evidence=",
+  );
+  expect(step).toContain('"hasFullText":true');
+  expect(step).toContain('"messageControlCodes":[]');
+  expect(step).not.toContain("user.sqlite");
+  expect(step).not.toContain("private-secret");
+  expect(step).not.toContain("authorization");
+  expect((failure as NativeFaultFailure).steps[1]).toStartWith(
+    "PASS native migration interruption",
+  );
+  expect(readdirSync(f.path)).toEqual([]);
 });
