@@ -49,6 +49,8 @@ export function skewWarnings(source: string, skewed: Record<string, number>): st
   );
 }
 
+export type SyncSynchronousPhase = "prepare" | "serialize" | "ingest" | "acknowledge";
+
 export interface SyncOpts {
   /** Bearer credential; defaults to the one stored for this peer (pairing). */
   token?: string;
@@ -65,6 +67,9 @@ export interface SyncOpts {
   fetch?: typeof fetch;
   /** Cancel an in-flight round when its session is disposed. */
   signal?: AbortSignal;
+  /** Optional diagnostic wrapper. Invoke run exactly once synchronously and
+   * preserve its result/error; no transport await occurs inside these phases. */
+  measureSync?<T>(phase: SyncSynchronousPhase, run: () => T): T;
 }
 
 const changeKey = (c: Pick<Change, "hlc" | "node_id" | "dataset" | "row_id" | "col">): string =>
@@ -110,14 +115,18 @@ export async function syncWithPeer(
 ): Promise<SyncResult> {
   // Back-compat: the third parameter used to be the bare token string.
   const o: SyncOpts = typeof opts === "string" ? { token: opts } : opts;
-  const node = getNodeId(db);
-  const peer = getPeer(db, url);
-  const bearer = o.token ?? peer.token ?? undefined;
-  if (o.pushLimit != null && (!Number.isSafeInteger(o.pushLimit) || o.pushLimit <= 0))
-    throw new RangeError("sync pushLimit must be a positive integer");
-  if (o.pullLimit != null && (!Number.isSafeInteger(o.pullLimit) || o.pullLimit <= 0))
-    throw new RangeError("sync pullLimit must be a positive integer");
-  const toPush = changesAfterSeq(db, peer.push_cursor, { limit: o.pushLimit });
+  const measure = o.measureSync ?? (<T>(_phase: SyncSynchronousPhase, run: () => T): T => run());
+  const { node, peer, bearer, toPush } = measure("prepare", () => {
+    const node = getNodeId(db);
+    const peer = getPeer(db, url);
+    const bearer = o.token ?? peer.token ?? undefined;
+    if (o.pushLimit != null && (!Number.isSafeInteger(o.pushLimit) || o.pushLimit <= 0))
+      throw new RangeError("sync pushLimit must be a positive integer");
+    if (o.pullLimit != null && (!Number.isSafeInteger(o.pullLimit) || o.pullLimit <= 0))
+      throw new RangeError("sync pullLimit must be a positive integer");
+    const toPush = changesAfterSeq(db, peer.push_cursor, { limit: o.pushLimit });
+    return { node, peer, bearer, toPush };
+  });
 
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (bearer) headers.authorization = `Bearer ${bearer}`;
@@ -125,13 +134,13 @@ export async function syncWithPeer(
   const res = await (o.fetch ?? fetch)(new URL(SYNC_PATH, url), {
     method: "POST",
     headers,
-    body: JSON.stringify({
+    body: measure("serialize", () => JSON.stringify({
       node_id: node,
       since: peer.pull_cursor,
       changes: toPush.changes,
       ...(o.pullLimit != null ? { limit: o.pullLimit } : {}),
       ...(o.excludeDatasets?.length ? { exclude_datasets: o.excludeDatasets } : {}),
-    }),
+    })),
     signal,
   });
   if (!res.ok)
@@ -149,28 +158,30 @@ export async function syncWithPeer(
   // so re-pulled-but-known data doesn't read as activity (consistent with the
   // storage path; keeps the auto-sync backoff honest). `received` carries the
   // response page size separately so paginated hydration can break on it.
-  const r = ingestDetailed(db, changes);
-  const pulled = r.received;
-  const pushCursor = advanceAckedPrefix(db, toPush.cursor, changes);
-  setPeer(db, url, {
-    pull_cursor: data.cursor,
-    // Rows this round just ingested came FROM the peer — advance past them so
-    // a successful pull never reads as "this peer is behind".
-    push_cursor: pushCursor,
-  });
+  const r = measure("ingest", () => ingestDetailed(db, changes));
+  return measure("acknowledge", () => {
+    const pulled = r.received;
+    const pushCursor = advanceAckedPrefix(db, toPush.cursor, changes);
+    setPeer(db, url, {
+      pull_cursor: data.cursor,
+      // Rows this round just ingested came FROM the peer — advance past them so
+      // a successful pull never reads as "this peer is behind".
+      push_cursor: pushCursor,
+    });
 
-  const warnings = skewWarnings(url, r.skewed);
-  if (data.skewed_rejected)
-    warnings.push(
-      `${url} refused ${data.skewed_rejected} of this device's change(s) as stamped more than 5 min in the future — run \`mh repair --clock\` here`,
-    );
-  return {
-    pushed: toPush.changes.length,
-    pulled,
-    received: changes.length,
-    ...(o.pushLimit != null
-      ? { pendingPush: changesAfterSeq(db, pushCursor, { limit: 1 }).changes.length > 0 }
-      : {}),
-    ...(warnings.length ? { warnings } : {}),
-  };
+    const warnings = skewWarnings(url, r.skewed);
+    if (data.skewed_rejected)
+      warnings.push(
+        `${url} refused ${data.skewed_rejected} of this device's change(s) as stamped more than 5 min in the future — run \`mh repair --clock\` here`,
+      );
+    return {
+      pushed: toPush.changes.length,
+      pulled,
+      received: changes.length,
+      ...(o.pushLimit != null
+        ? { pendingPush: changesAfterSeq(db, pushCursor, { limit: 1 }).changes.length > 0 }
+        : {}),
+      ...(warnings.length ? { warnings } : {}),
+    };
+  });
 }
