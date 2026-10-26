@@ -1,0 +1,104 @@
+{
+  "evidence": {
+    "sourceSHA": "ea130b85762ae1a8155e4198922503df380f77f3",
+    "artifactClass": "synthetic-native-diagnostics",
+    "artifactSha256": "97f114cb893cfee32a366a545b053502fdb87e0e63d45b62fd594342b13dcee0",
+    "artifactHashScope": "Android Release APK",
+    "device": {
+      "model": "Pixel_9_Pro",
+      "os": "Android 16",
+      "api": 36,
+      "type": "emulator",
+      "identifier": "emulator-5554"
+    },
+    "acceptanceBoundary": "Synthetic diagnostics only; performance thresholds remain unmet; no normal native workflow, app cold launch or physical-device performance acceptance"
+  },
+  "environment": {
+    "platform": "android",
+    "platformVersion": 36,
+    "runtime": "Hermes",
+    "build": "Release",
+    "artifactClass": "synthetic-native-diagnostics",
+    "bundle": "embedded Release bundle; no Metro",
+    "target": "record test device/emulator identity with artifact",
+    "transport": "real localhost HTTP to isolated production /sync fixture",
+    "performanceTargets": "Measured only; no production-device threshold pass asserted"
+  },
+  "measurementStartedAt": "2026-10-26T06:50:52.729Z",
+  "fixture": {
+    "records": 5000,
+    "queuedOpsMinimum": 20000,
+    "networkBatchSize": 25,
+    "seed": "synthetic CRDT queue in 25-op synchronous batches; excludes UI-write cost"
+  },
+  "status": "COMPLETE",
+  "phase": "complete",
+  "seededRecords": 5000,
+  "seedMs": 73421.67211900093,
+  "queuedOps": 20012,
+  "networkProgress": {
+    "phase": "allKnownCursorReplay",
+    "rounds": 800,
+    "pushed": 0,
+    "pulled": 0
+  },
+  "upload": {
+    "rounds": 801,
+    "pushed": 20012,
+    "pulled": 0,
+    "ms": 61822.01936300099
+  },
+  "network": {
+    "fixture": "metahub-isolated-native-network-v1",
+    "waiting": false,
+    "requests": 801,
+    "uploadedOps": 20012,
+    "uniqueUploadedOps": 20012,
+    "maxUploadedPage": 25,
+    "records": 5000
+  },
+  "hydration": {
+    "rounds": 801,
+    "pushed": 0,
+    "pulled": 20012,
+    "ms": 24977.072886999696
+  },
+  "searchIndex": {
+    "batchSize": 25,
+    "totalMs": 3370.425751000643,
+    "steps": 203,
+    "maxStepMs": 6.255666999146342,
+    "p95StepMs": 3.8033750001341105
+  },
+  "cursorReplay": {
+    "rounds": 801,
+    "pushed": 0,
+    "pulled": 0,
+    "ms": 13393.261590000242
+  },
+  "functionalAssertions": "PASS >=20k unique network ops, bounded pages, offline writes, lost ack replay, in-flight close/reopen recovery, all-known cursor replay and auth failure",
+  "maxObservedJsTimerGapMs": {
+    "setup": 31.520084001123905,
+    "seedQueue": 322.94229100085795,
+    "offlineBeforeUpload": 71.09029100090265,
+    "networkUpload": 2260.8531680013984,
+    "networkHydration": 895.5229590013623,
+    "searchIndexWarmup": 21.45350000075996,
+    "lostAckReplay": 28.621624998748302,
+    "inFlightInterruption": 16.786792000755668,
+    "allKnownCursorReplay": 28.204917000606656
+  },
+  "timerIntervalMs": 10,
+  "jsTimerSamplesByPhase": {
+    "setup": 8,
+    "seedQueue": 2148,
+    "offlineBeforeUpload": 6,
+    "networkUpload": 2059,
+    "networkHydration": 1130,
+    "searchIndexWarmup": 201,
+    "lostAckReplay": 2,
+    "inFlightInterruption": 2,
+    "allKnownCursorReplay": 804
+  },
+  "measurementFinishedAt": "2026-10-26T06:53:50.467Z"
+}
