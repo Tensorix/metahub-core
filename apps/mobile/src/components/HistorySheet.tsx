@@ -1,11 +1,11 @@
 import { RNHostView } from "@expo/ui";
 import { NativeSheet } from "@/components/native/NativeSheet";
+import { useSheetContentHeight } from "@/components/native/useSheetContentHeight";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
-  useWindowDimensions,
   Pressable,
   StyleSheet,
   Text,
@@ -55,7 +55,7 @@ export function HistorySheet({
   onReverted: () => void;
 }) {
   const { client: api } = useSession();
-  const { height } = useWindowDimensions();
+  const sheetHeight = useSheetContentHeight(640, 0.7);
   const { tokens } = useTheme();
   const [preview, setPreview] = useState<RecordVersionState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -138,7 +138,7 @@ export function HistorySheet({
       <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
-            height: Math.min(height * 0.7, 640),
+            height: sheetHeight,
             width: "100%",
             backgroundColor: tokens.surface,
           }}

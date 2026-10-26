@@ -1,7 +1,8 @@
 import { RNHostView } from "@expo/ui";
 import { useCallback, useState, useRef } from "react";
-import { FlatList, Text, View, useWindowDimensions } from "react-native";
+import { FlatList, Text, View } from "react-native";
 import { NativeSheet } from "@/components/native/NativeSheet";
+import { useSheetContentHeight } from "@/components/native/useSheetContentHeight";
 import { NativeButton } from "@/components/native/NativeButton";
 import { ManagementInput } from "@/components/ManagementControls";
 import { useApiData } from "@/lib/api/hooks";
@@ -25,7 +26,7 @@ export function RecordOrderSheet({
   const session = useSession(),
     { client } = session,
     { tokens } = useTheme(),
-    { height } = useWindowDimensions();
+    sheetHeight = useSheetContentHeight(600, 0.7);
   const [query, setQuery] = useState(""),
     [offset, setOffset] = useState(0),
     [busy, setBusy] = useState(false),
@@ -66,7 +67,7 @@ export function RecordOrderSheet({
       <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
-            height: Math.min(height * 0.7, 600),
+            height: sheetHeight,
             width: "100%",
             gap: 8,
             backgroundColor: tokens.surface,
@@ -96,9 +97,11 @@ export function RecordOrderSheet({
             </NativeButton>
           ) : null}
           <FlatList
+            style={{ flex: 1 }}
             data={data.data?.records.filter((r) => r.id !== recordId) ?? []}
             keyExtractor={(r) => r.id}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="interactive"
             renderItem={({ item }) => (
               <View style={{ padding: 12, gap: 4 }}>
                 <Text style={{ color: tokens.fg }}>
