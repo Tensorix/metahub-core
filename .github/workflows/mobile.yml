@@ -1,0 +1,97 @@
+name: Mobile
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "1"
+  EXPO_NO_TELEMETRY: "1"
+  BUN_VERSION: "1.3.14"
+
+jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    outputs:
+      checks: ${{ steps.scope.outputs.checks }}
+      native: ${{ steps.scope.outputs.native }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - id: scope
+        run: bun scripts/mobile-ci-scope.ts
+
+  checks:
+    needs: scope
+    if: needs.scope.outputs.checks == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: apps/mobile
+      - run: bun run build:editor
+        working-directory: apps/mobile
+      - run: bun run typecheck
+        working-directory: apps/mobile
+      - run: bun run lint
+        working-directory: apps/mobile
+      - name: Mobile unit and CI scope tests
+        run: bun test ./apps/mobile/src ./scripts/mobile-ci-scope.test.ts
+
+  native:
+    needs: [scope, checks]
+    if: needs.scope.outputs.native == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-24.04
+          - platform: ios
+            runner: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Select Xcode 26.6
+        if: matrix.platform == 'ios'
+        run: sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: apps/mobile
+      - name: Generate and build Release
+        run: bun apps/mobile/scripts/native-build.ts ${{ matrix.platform }}
+      - name: Upload package, manifest, and build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-${{ matrix.platform }}-${{ github.sha }}
+          path: apps/mobile/dist/native/${{ matrix.platform }}/
+          if-no-files-found: error
+          retention-days: 14
