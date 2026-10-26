@@ -1,9 +1,11 @@
+import { RNHostView } from "@expo/ui";
+import { NativeSheet } from "@/components/native/NativeSheet";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Modal,
+  useWindowDimensions,
   Pressable,
   StyleSheet,
   Text,
@@ -15,7 +17,7 @@ import type { RecordRevision, RecordVersionState } from "@/lib/api/mobile-api";
 import type { PropInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
 import { useTheme } from "@/lib/theme";
-import { fs, radii } from "@/lib/theme/tokens";
+import { fs } from "@/lib/theme/tokens";
 
 function formatAt(iso: string): string {
   const d = new Date(iso);
@@ -26,7 +28,9 @@ function formatAt(iso: string): string {
   if (sameDay) return `今天 ${hm}`;
   const sameYear = d.getFullYear() === now.getFullYear();
   const md = `${d.getMonth() + 1}月${d.getDate()}日`;
-  return sameYear ? `${md} ${hm}` : `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  return sameYear
+    ? `${md} ${hm}`
+    : `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
 function revisionLabel(rev: RecordRevision): string {
@@ -50,7 +54,8 @@ export function HistorySheet({
   props: PropInfo[];
   onReverted: () => void;
 }) {
-  const { api } = useSession();
+  const { client: api } = useSession();
+  const { height } = useWindowDimensions();
   const { tokens } = useTheme();
   const [preview, setPreview] = useState<RecordVersionState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,9 +69,10 @@ export function HistorySheet({
     setPreview(null);
     setBusy(false);
     setActionError(null);
-    // This is a request generation token, not a native node ref.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    return () => { generation.current++; };
+    const current = generation;
+    return () => {
+      current.current++;
+    };
   }, [recordId, visible]);
 
   const fetchHistory = useCallback(
@@ -84,139 +90,203 @@ export function HistorySheet({
       const state = await api.recordAt(recordId, rev.version);
       if (current === generation.current) setPreview(state);
     } catch (e) {
-      if (current === generation.current) setActionError(e instanceof Error ? e.message : String(e));
-    } finally { if (current === generation.current) setBusy(false); }
+      if (current === generation.current)
+        setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (current === generation.current) setBusy(false);
+    }
   };
 
   const restore = (state: RecordVersionState) => {
-    Alert.alert("恢复此版本", "当前值会被该版本覆盖（以新版本记录，可再次恢复）。", [
-      { text: "取消", style: "cancel" },
-      {
-        text: "恢复",
-        style: "destructive",
-        onPress: async () => {
-          const current = generation.current;
-          setBusy(true);
-          const r = await api.revertRecord(recordId, state.version).catch(() => null);
-          if (current !== generation.current) return;
-          setBusy(false);
-          if (r) {
-            setPreview(null);
-            onReverted();
-            onClose();
-          } else {
-            Alert.alert("恢复失败", "请稍后重试");
-          }
+    Alert.alert(
+      "恢复此版本",
+      "当前值会被该版本覆盖（以新版本记录，可再次恢复）。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "恢复",
+          style: "destructive",
+          onPress: async () => {
+            const current = generation.current;
+            setBusy(true);
+            const r = await api
+              .revertRecord(recordId, state.version)
+              .catch(() => null);
+            if (current !== generation.current) return;
+            setBusy(false);
+            if (r) {
+              setPreview(null);
+              onReverted();
+              onClose();
+            } else {
+              Alert.alert("恢复失败", "请稍后重试");
+            }
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
-  const close = () => { if (!busy) onClose(); };
-  const propName = (pid: string) => props.find((p) => p.id === pid)?.name ?? pid;
+  const close = () => {
+    if (!busy) onClose();
+  };
+  const propName = (pid: string) =>
+    props.find((p) => p.id === pid)?.name ?? pid;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={styles.scrim} onPress={close} />
-      <View style={[styles.sheet, { backgroundColor: tokens.surface }]}>
-        <View style={[styles.grabber, { backgroundColor: tokens.lineStrong }]} />
-        {preview ? (
-          <>
-            <View style={styles.head}>
-              <Pressable hitSlop={10} disabled={busy} onPress={() => setPreview(null)}>
-                <Text style={{ color: tokens.accent, fontSize: fs.ui }}>‹ 返回</Text>
-              </Pressable>
-              <Text style={[styles.title, { color: tokens.fg }]}>版本预览</Text>
-              <Pressable hitSlop={10} onPress={() => restore(preview)} disabled={busy}>
-                <Text style={{ color: tokens.danger, fontSize: fs.ui }}>{busy ? "恢复中…" : "恢复"}</Text>
-              </Pressable>
-            </View>
-            <FlatList
-              data={Object.entries(preview.data)}
-              keyExtractor={([pid]) => pid}
-              renderItem={({ item: [pid, value] }) => (
-                <View style={[styles.cellRow, { borderColor: tokens.line }]}>
-                  <Text style={[styles.cellName, { color: tokens.muted }]}>
-                    {propName(pid)}
-                  </Text>
-                  <Text style={[styles.cellValue, { color: tokens.fg }]} numberOfLines={3}>
-                    {value == null || value === ""
-                      ? "（空）"
-                      : Array.isArray(value)
-                        ? value.join("、")
-                        : String(value)}
-                  </Text>
-                </View>
-              )}
-              ListEmptyComponent={
-                <Text style={[styles.empty, { color: tokens.muted }]}>
-                  该版本没有任何字段值
-                </Text>
-              }
-              contentContainerStyle={styles.listContent}
-            />
-          </>
-        ) : (
-          <>
-            <View style={styles.head}>
-              <View style={styles.headSide} />
-              <Text style={[styles.title, { color: tokens.fg }]}>版本历史</Text>
-              <Pressable hitSlop={10} disabled={busy} onPress={close} style={styles.headSide}>
-                <Text style={{ color: tokens.accent, fontSize: fs.ui, textAlign: "right" }}>
-                  完成
-                </Text>
-              </Pressable>
-            </View>
-            {loading || busy ? <ActivityIndicator color={tokens.accent} /> : null}
-            {error || actionError ? <Pressable onPress={() => { setActionError(null); void refetch(); }}><Text style={[styles.empty, { color: tokens.danger }]}>{actionError ?? error?.message} · 点按重试</Text></Pressable> : null}
-            <FlatList
-              data={revisions ?? []}
-              keyExtractor={(rev) => rev.version}
-              renderItem={({ item: rev }) => (
+    <NativeSheet isPresented={visible} onDismiss={close} dismissible={!busy}>
+      <RNHostView matchContents>
+        <View
+          style={{
+            height: Math.min(height * 0.7, 640),
+            backgroundColor: tokens.surface,
+          }}
+        >
+          {preview ? (
+            <>
+              <View style={styles.head}>
                 <Pressable
+                  hitSlop={10}
                   disabled={busy}
-                  onPress={() => void openPreview(rev)}
-                  style={({ pressed }) => [
-                    styles.revRow,
-                    { borderColor: tokens.line },
-                    pressed && { backgroundColor: tokens.hover },
-                  ]}
+                  onPress={() => setPreview(null)}
                 >
-                  <View style={styles.revMain}>
-                    <Text style={[styles.revLabel, { color: tokens.fg }]}>
-                      {revisionLabel(rev)}
-                      {rev.fields.length
-                        ? `：${rev.fields.map(propName).slice(0, 3).join("、")}${rev.fields.length > 3 ? "…" : ""}`
-                        : ""}
+                  <Text style={{ color: tokens.accent, fontSize: fs.ui }}>
+                    ‹ 返回
+                  </Text>
+                </Pressable>
+                <Text style={[styles.title, { color: tokens.fg }]}>
+                  版本预览
+                </Text>
+                <Pressable
+                  hitSlop={10}
+                  onPress={() => restore(preview)}
+                  disabled={busy}
+                >
+                  <Text style={{ color: tokens.danger, fontSize: fs.ui }}>
+                    {busy ? "恢复中…" : "恢复"}
+                  </Text>
+                </Pressable>
+              </View>
+              <FlatList
+                style={{ flex: 1 }}
+                contentInsetAdjustmentBehavior="automatic"
+                keyboardShouldPersistTaps="handled"
+                data={Object.entries(preview.data)}
+                keyExtractor={([pid]) => pid}
+                renderItem={({ item: [pid, value] }) => (
+                  <View style={[styles.cellRow, { borderColor: tokens.line }]}>
+                    <Text style={[styles.cellName, { color: tokens.muted }]}>
+                      {propName(pid)}
                     </Text>
-                    <Text style={[styles.revMeta, { color: tokens.muted }]}>
-                      {formatAt(rev.at)}
-                      {rev.actor ? ` · ${rev.actor}` : ""}
+                    <Text
+                      style={[styles.cellValue, { color: tokens.fg }]}
+                      numberOfLines={3}
+                    >
+                      {value == null || value === ""
+                        ? "（空）"
+                        : Array.isArray(value)
+                          ? value.join("、")
+                          : String(value)}
                     </Text>
                   </View>
-                  <Text style={{ color: tokens.muted, fontSize: fs.ui }}>›</Text>
+                )}
+                ListEmptyComponent={
+                  <Text style={[styles.empty, { color: tokens.muted }]}>
+                    该版本没有任何字段值
+                  </Text>
+                }
+                contentContainerStyle={styles.listContent}
+              />
+            </>
+          ) : (
+            <>
+              <View style={styles.head}>
+                <View style={styles.headSide} />
+                <Text style={[styles.title, { color: tokens.fg }]}>
+                  版本历史
+                </Text>
+                <Pressable
+                  hitSlop={10}
+                  disabled={busy}
+                  onPress={close}
+                  style={styles.headSide}
+                >
+                  <Text
+                    style={{
+                      color: tokens.accent,
+                      fontSize: fs.ui,
+                      textAlign: "right",
+                    }}
+                  >
+                    完成
+                  </Text>
                 </Pressable>
-              )}
-              ListEmptyComponent={
-                loading || error || actionError ? null : (
-                  <Text style={[styles.empty, { color: tokens.muted }]}>暂无历史</Text>
-                )
-              }
-              contentContainerStyle={styles.listContent}
-            />
-          </>
-        )}
-      </View>
-    </Modal>
+              </View>
+              {loading || busy ? (
+                <ActivityIndicator color={tokens.accent} />
+              ) : null}
+              {error || actionError ? (
+                <Pressable
+                  onPress={() => {
+                    setActionError(null);
+                    void refetch();
+                  }}
+                >
+                  <Text style={[styles.empty, { color: tokens.danger }]}>
+                    {actionError ?? error?.message} · 点按重试
+                  </Text>
+                </Pressable>
+              ) : null}
+              <FlatList
+                data={revisions ?? []}
+                keyExtractor={(rev) => rev.version}
+                renderItem={({ item: rev }) => (
+                  <Pressable
+                    disabled={busy}
+                    onPress={() => void openPreview(rev)}
+                    style={({ pressed }) => [
+                      styles.revRow,
+                      { borderColor: tokens.line },
+                      pressed && { backgroundColor: tokens.hover },
+                    ]}
+                  >
+                    <View style={styles.revMain}>
+                      <Text style={[styles.revLabel, { color: tokens.fg }]}>
+                        {revisionLabel(rev)}
+                        {rev.fields.length
+                          ? `：${rev.fields.map(propName).slice(0, 3).join("、")}${rev.fields.length > 3 ? "…" : ""}`
+                          : ""}
+                      </Text>
+                      <Text style={[styles.revMeta, { color: tokens.muted }]}>
+                        {formatAt(rev.at)}
+                        {rev.actor ? ` · ${rev.actor}` : ""}
+                      </Text>
+                    </View>
+                    <Text style={{ color: tokens.muted, fontSize: fs.ui }}>
+                      ›
+                    </Text>
+                  </Pressable>
+                )}
+                ListEmptyComponent={
+                  loading || error || actionError ? null : (
+                    <Text style={[styles.empty, { color: tokens.muted }]}>
+                      暂无历史
+                    </Text>
+                  )
+                }
+                contentContainerStyle={styles.listContent}
+              />
+            </>
+          )}
+        </View>
+      </RNHostView>
+    </NativeSheet>
   );
 }
 
 const styles = StyleSheet.create({
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
   sheet: {
-    height: "72%",
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
     paddingTop: 8,
   },
   grabber: {
