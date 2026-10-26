@@ -2,7 +2,7 @@ import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { createMutationGate } from "@/lib/browse/form-guard";
 import { useFormExit } from "@/lib/browse/form-exit";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ScrollView, Text } from "react-native";
 import { DatabaseManageSheet } from "@/components/DatabaseManageSheet";
 import {
@@ -36,7 +36,7 @@ export default function ManageDatabase() {
     childDirty.current = value;
     revision.current++;
   }, []);
-  const exit = useFormExit(() => ({
+  useFormExit(() => ({
     pending: gate.isPending() || childPending.current,
     dirty:
       id === "new"
@@ -44,6 +44,15 @@ export default function ManageDatabase() {
         : childDirty.current,
     revision: revision.current,
   }));
+  const close = useCallback(() => router.back(), [router]);
+  const screenOptions = useMemo(
+    () => ({
+      title: id === "new" ? "新建数据库" : "管理数据库",
+      gestureEnabled: false,
+      headerBackVisible: false,
+    }),
+    [id],
+  );
   const fetch = useCallback(async () => {
     if (id === "new") return null;
     const [dbs, props] = await Promise.all([
@@ -68,19 +77,13 @@ export default function ManageDatabase() {
         backgroundColor: tokens.bg,
       }}
     >
-      <Stack.Screen
-        options={{
-          title: id === "new" ? "新建数据库" : "管理数据库",
-          gestureEnabled: false,
-          headerBackVisible: false,
-        }}
-      />
+      <Stack.Screen options={screenOptions} />
       <NativeToolbarAction
         placement="left"
         tintColor={tokens.accent}
         label="关闭"
         disabled={busy || childBusy}
-        onPress={() => exit(() => router.back())}
+        onPress={close}
       />
       {id === "new" ? (
         <>
@@ -142,7 +145,7 @@ export default function ManageDatabase() {
                 })
                 .then((dbId) => {
                   if (dbId && session.isCurrent())
-                    exit(() => router.replace(`/db/${dbId}`));
+                    router.replace(`/db/${dbId}`);
                 });
             }}
           />
@@ -153,7 +156,7 @@ export default function ManageDatabase() {
           onDirtyChange={onChildDirty}
           database={data.data.database}
           props={data.data.props}
-          onClose={() => exit(() => router.back())}
+          onClose={close}
         />
       ) : (
         <Text style={{ color: tokens.muted }}>
