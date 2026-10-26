@@ -3,6 +3,7 @@ import { NativeDataText } from "@/components/native/NativeDataText";
 import { useEffect, useRef, useState } from "react";
 import { Button, Column, Picker, Text } from "@expo/ui";
 import { NativeHost } from "@/components/native/NativeHost";
+import { connectionFieldModifiers } from "@/components/native/connection-field-modifiers";
 import { RecordTextInput } from "@/components/RecordTextInput";
 import { decodeEnroll } from "../../../../src/core/sync/enroll.ts";
 import {
@@ -52,6 +53,7 @@ export function BucketForm({
     busy,
   );
   const input = (
+    id: string,
     label: string,
     value: string,
     change: (s: string) => void,
@@ -60,6 +62,8 @@ export function BucketForm({
     <Column key={label} spacing={6}>
       <Text textStyle={{ color: tokens.fg }}>{label}</Text>
       <RecordTextInput
+        testID={`bucket-${id}`}
+        modifiers={connectionFieldModifiers(label)}
         placeholder={label}
         text={value}
         onChangeText={change}
@@ -146,7 +150,7 @@ export function BucketForm({
     }
   }
   return (
-    <NativeHost matchContents style={{ width: "100%" }}>
+    <NativeHost matchContents={{ vertical: true }} style={{ width: "100%" }}>
       <Column spacing={12} style={{ paddingVertical: 16 }}>
         <Text textStyle={{ color: tokens.fg, fontSize: 20, fontWeight: "600" }}>
           连接存储桶
@@ -164,15 +168,15 @@ export function BucketForm({
         </Picker>
         {manual ? (
           <>
-            {input("Endpoint", endpoint, setEndpoint)}
-            {input("Bucket", bucket, setBucket)}
-            {input("Region", region, setRegion)}
-            {input("Prefix", prefix, setPrefix)}
-            {input("Access Key", accessKeyId, setAccessKeyId)}
-            {input("Secret Key", secretAccessKey, setSecretAccessKey, true)}
+            {input("endpoint", "Endpoint", endpoint, setEndpoint)}
+            {input("bucket", "Bucket", bucket, setBucket)}
+            {input("region", "Region", region, setRegion)}
+            {input("prefix", "Prefix", prefix, setPrefix)}
+            {input("access-key", "Access Key", accessKeyId, setAccessKeyId)}
+            {input("secret-key", "Secret Key", secretAccessKey, setSecretAccessKey, true)}
           </>
         ) : (
-          input("接入码或链接", code, setCode, true)
+          input("enrollment-code", "接入码或链接", code, setCode, true)
         )}
         <Picker
           selectedValue={unlockMethod}
@@ -187,13 +191,13 @@ export function BucketForm({
         </Picker>
         {unlockMethod === "recovery" ? (
           <>
-            {input("恢复码", recoveryCode, setRecoveryCode, true)}
+            {input("recovery-code", "恢复码", recoveryCode, setRecoveryCode, true)}
             <Text textStyle={{ color: tokens.muted }}>
               输入以 MH1 开头的恢复码，仅用于在此设备解密已有数据。
             </Text>
           </>
         ) : (
-          input("解密密码", passphrase, setPassphrase, true)
+          input("passphrase", "解密密码", passphrase, setPassphrase, true)
         )}
         {error ? (
           <NativeDataText textStyle={{ color: tokens.danger }}>
