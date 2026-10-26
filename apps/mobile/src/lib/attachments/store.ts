@@ -4,6 +4,9 @@ export interface AttachmentEntry {
   src: string; hash: string; name: string; mime: string; uri: string;
   size: number; pending: number; pinned: number; error: string | null;
 }
+export interface AttachmentTransfer {
+  id: string; tempUri: string; entry: AttachmentEntry | null;
+}
 /** Native-only metadata. Pending bytes remain pinned until transport succeeds;
  * downloaded bytes are retained for offline use and never enter the CRDT log. */
 export function createAttachmentStore(db: DbDriver) {
@@ -12,7 +15,19 @@ export function createAttachmentStore(db: DbDriver) {
     uri TEXT NOT NULL, size INTEGER NOT NULL, pending INTEGER NOT NULL DEFAULT 0,
     pinned INTEGER NOT NULL DEFAULT 1, error TEXT, updated_at INTEGER NOT NULL
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS mobile_attachment_transfers (
+    id TEXT PRIMARY KEY, temp_uri TEXT NOT NULL, entry TEXT
+  )`);
   return {
+    transfers(): AttachmentTransfer[] {
+      return (db.query("SELECT id, temp_uri, entry FROM mobile_attachment_transfers").all() as { id: string; temp_uri: string; entry: string | null }[])
+        .map(row => ({ id: row.id, tempUri: row.temp_uri, entry: row.entry ? JSON.parse(row.entry) as AttachmentEntry : null }));
+    },
+    journal(transfer: AttachmentTransfer) {
+      db.query(`INSERT INTO mobile_attachment_transfers (id, temp_uri, entry) VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET entry=excluded.entry`).run(transfer.id, transfer.tempUri, transfer.entry ? JSON.stringify(transfer.entry) : null);
+    },
+    forgetTransfer(id: string) { db.query("DELETE FROM mobile_attachment_transfers WHERE id = ?").run(id); },
     get(src: string): AttachmentEntry | null {
       return db.query("SELECT * FROM mobile_attachments WHERE src = ?").get(src) as AttachmentEntry | null;
     },
@@ -25,7 +40,8 @@ export function createAttachmentStore(db: DbDriver) {
         .run(entry.src, entry.hash, entry.name, entry.mime, entry.uri, entry.size, entry.pending, entry.pinned, entry.error, Date.now());
     },
     list(): AttachmentEntry[] { return db.query("SELECT * FROM mobile_attachments").all() as AttachmentEntry[]; },
-    removeDownloaded(src: string) { db.query("DELETE FROM mobile_attachments WHERE src = ? AND pending = 0").run(src); },
+    unpinDownloaded(src: string) { db.query("UPDATE mobile_attachments SET pinned = 0 WHERE src = ? AND pending = 0").run(src); },
+    removeDownloaded(src: string) { db.query("DELETE FROM mobile_attachments WHERE src = ? AND pending = 0 AND pinned = 0").run(src); },
     pending(): AttachmentEntry[] {
       return db.query("SELECT * FROM mobile_attachments WHERE pending = 1 ORDER BY updated_at").all() as AttachmentEntry[];
     },

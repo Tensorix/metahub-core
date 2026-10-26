@@ -13,9 +13,11 @@ test("pending attachments and pinned downloads survive database reopen and failu
   const src = `/blob/${"a".repeat(32)}.png`;
   const entry = { src, hash: "a".repeat(32), name: "image.png", mime: "image/png", uri: "file:///private/image.png", size: 20, pending: 1, pinned: 1, error: null };
   store.put(entry); store.failed(src, "offline");
+  store.journal({ id: "transfer-durable", tempUri: "file:///private/transfer-durable.tmp", entry });
   db.close(); db = new Database(file);
   store = createAttachmentStore(db);
   expect(store.pending()).toHaveLength(1);
+  expect(store.transfers()).toEqual([{ id: "transfer-durable", tempUri: "file:///private/transfer-durable.tmp", entry }]);
   expect(store.get(src)?.error).toBe("offline");
   // A download/cache metadata update must never erase a pending upload.
   store.put({ ...entry, pending: 0, pinned: 0 });
