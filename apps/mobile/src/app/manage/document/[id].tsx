@@ -1,4 +1,5 @@
 import {
+  Column,
   FieldGroup,
   Picker,
   Text as NativeText,
@@ -16,7 +17,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  ScrollView,
   Text,
   View,
 } from "react-native";
@@ -214,7 +214,9 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
       } as Record<string, string>
     )[mode] ?? "文档操作";
   const header = (
-    <View style={{ gap: 12, padding: 16 }}>
+    <View
+      style={{ gap: 12, padding: 16, ...(mode === "move" ? {} : { flex: 1 }) }}
+    >
       {error && (
         <Text
           selectable
@@ -232,27 +234,32 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
       {info.loading && id !== "new" && <ActivityIndicator />}
       {mode === "move" ? (
         <>
-          <NativeHost matchContents>
-            <FieldGroup>
-              <FieldGroup.Section title="移动位置">
-                <Picker
-                  selectedValue={where}
-                  onValueChange={(v) => {
-                    revision.current++;
-                    setWhere(String(v));
-                  }}
-                >
-                  <Picker.Item value="into" label="作为子文档" />
-                  <Picker.Item value="before" label="目标之前" />
-                  <Picker.Item value="after" label="目标之后" />
-                </Picker>
-              </FieldGroup.Section>
-            </FieldGroup>
+          <NativeHost
+            matchContents={{ vertical: true }}
+            style={{ width: "100%" }}
+          >
+            <Column spacing={8}>
+              <NativeText>移动位置</NativeText>
+              <Picker
+                selectedValue={where}
+                onValueChange={(v) => {
+                  revision.current++;
+                  setWhere(String(v));
+                }}
+              >
+                <Picker.Item value="into" label="作为子文档" />
+                <Picker.Item value="before" label="目标之前" />
+                <Picker.Item value="after" label="目标之后" />
+              </Picker>
+            </Column>
           </NativeHost>
           <NativeButton disabled={busy} onPress={() => void save(true)}>
             移到根目录
           </NativeButton>
-          <NativeHost matchContents>
+          <NativeHost
+            matchContents={{ vertical: true }}
+            style={{ width: "100%" }}
+          >
             <RecordTextInput
               text={query}
               placeholder="搜索目标文档"
@@ -271,7 +278,9 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
           )}
         </>
       ) : (
-        <NativeHost matchContents>
+        // FieldGroup is a native scrolling Form/LazyColumn. Give it the
+        // remaining sheet height instead of measuring it inside an RN scroller.
+        <NativeHost style={{ flex: 1 }}>
           <FieldGroup>
             <FieldGroup.Section title="标题">
               <RecordTextInput
@@ -368,12 +377,7 @@ function DocumentManagementForm({ id, mode }: { id: string; mode: string }) {
           }
         />
       ) : (
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          keyboardShouldPersistTaps="handled"
-        >
-          {header}
-        </ScrollView>
+        header
       )}
     </View>
   );
