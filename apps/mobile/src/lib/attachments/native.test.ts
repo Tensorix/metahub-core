@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createAttachmentStore } from "./store";
 import type { AttachmentManagerOptions } from "./native";
+import { createNativePresentationGuard } from "../editor/native-presentation";
 
 // Exercise the real manager and SQLite metadata with a deterministic native
 // file/picker boundary. Device acceptance still covers Expo's actual modules.
@@ -10,6 +11,8 @@ const sizes = new Map<string, number>();
 const hash = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
 const uploads: string[] = [];
 let picker: () => Promise<unknown>;
+let share: (uri: string) => Promise<void>;
+let copyOnce: ((source: FakeFile, target: FakeFile) => Promise<void>) | undefined;
 let afterMove: (() => void) | undefined;
 let trailingDirectory = false;
 let upload: (file: FakeFile) => Promise<{ body: string; status: number; headers: Record<string, string> }>;
@@ -25,7 +28,7 @@ class FakeFile extends FakeDirectory {
   get size() { return sizes.get(this.uri) ?? files.get(this.uri)?.length ?? 0; }
   delete() { files.delete(this.uri); sizes.delete(this.uri); }
   write(bytes: Uint8Array) { files.set(this.uri, bytes.slice()); }
-  copy(target: FakeFile) { target.write(files.get(this.uri)!); }
+  copy(target: FakeFile) { if (copyOnce) { const run = copyOnce; copyOnce = undefined; return run(this, target); } target.write(files.get(this.uri)!); }
   move(target: FakeFile) { this.copy(target); this.delete(); this.uri = target.uri; afterMove?.(); }
   async bytes() { return files.get(this.uri)!.slice(); }
   async base64() { return Buffer.from(files.get(this.uri)!).toString("base64"); }
@@ -39,13 +42,14 @@ class FakeFile extends FakeDirectory {
 mock.module("expo-file-system", () => ({ Directory: FakeDirectory, File: FakeFile, FileMode: { ReadOnly: "r" }, Paths: { document: "file:///documents" } }));
 mock.module("expo-document-picker", () => ({ getDocumentAsync: () => picker() }));
 mock.module("expo-image-picker", () => ({ launchImageLibraryAsync: () => picker() }));
-mock.module("expo-sharing", () => ({ isAvailableAsync: async () => true, shareAsync: async () => {} }));
+mock.module("expo-sharing", () => ({ isAvailableAsync: async () => true, shareAsync: (uri: string) => share(uri) }));
 mock.module("react-native-quick-crypto", () => ({ default: { createHash: () => new Bun.CryptoHasher("sha256") } }));
 const { createAttachmentManager } = await import("./native");
 const resources: { db: Database; dispose(): void }[] = [];
 beforeEach(() => {
   files.clear(); sizes.clear(); uploads.length = 0; afterMove = undefined; trailingDirectory = false;
   picker = async () => ({ canceled: true });
+  share = async () => {}; copyOnce = undefined;
   upload = async file => ({ status: 200, headers: {}, body: JSON.stringify({ hash: hash(await file.bytes()).slice(0, 32) }) });
   download = async () => { throw new Error("offline"); };
 });
@@ -332,4 +336,105 @@ test("replacement sessions preserve active temporary files with trailing directo
   // The shared DB belongs to the original fixture; dispose the replacement
   // without closing the same SQLite connection twice in resource cleanup.
   resources.pop(); replacement.dispose();
+});
+
+function delayed<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+test("download and native hash allow ordinary background saves; share preflight saves newer edits", async () => {
+  const f = fixture(), bytes = new TextEncoder().encode("delayed preview download");
+  const src = `/blob/${hash(bytes).slice(0, 32)}.txt`;
+  const transfer = delayed<void>(), sharing = delayed<void>();
+  let downloading = false, opened = false, draft = "before download";
+  const saved: string[] = [];
+  const flush = async () => { saved.push(draft); return { ok: true }; };
+  const guard = createNativePresentationGuard(flush, () => true);
+  download = async file => { downloading = true; await transfer.promise; file.write(bytes); };
+  share = async () => { opened = true; expect(guard.isPresenting()).toBe(true); await sharing.promise; };
+  const pending = f.manager.media({ action: "preview", src }, open => guard.run(open));
+  await waitFor(() => downloading);
+  expect(guard.isPresenting()).toBe(false);
+  expect(saved).toEqual([]); // no premature preflight around download
+  draft = "edited while downloading";
+  if (!guard.isPresenting()) await flush(); // ordinary AppState background path
+  expect(saved).toEqual(["edited while downloading"]);
+  draft = "newer edit after foreground return";
+  transfer.resolve();
+  await waitFor(() => opened);
+  expect(saved).toEqual(["edited while downloading", "newer edit after foreground return"]);
+  if (!guard.isPresenting()) await flush(); // actual share's AppState transition
+  expect(saved).toHaveLength(2);
+  sharing.resolve(); await pending;
+  expect(guard.isPresenting()).toBe(false);
+});
+
+test("save failure at the actual share boundary retains downloaded cache and never opens system UI", async () => {
+  const f = fixture(), bytes = new TextEncoder().encode("save refusal after download");
+  const src = `/blob/${hash(bytes).slice(0, 32)}.txt`;
+  let opened = false, downloaded = false;
+  download = async file => { file.write(bytes); downloaded = true; };
+  share = async () => { opened = true; };
+  const guard = createNativePresentationGuard(async () => {
+    expect(downloaded).toBe(true);
+    expect(f.store.get(src)?.size).toBe(bytes.length);
+    return { ok: false, error: "draft disk full" };
+  }, () => true);
+  await expect(f.manager.media({ action: "preview", src }, open => guard.run(open))).rejects.toThrow("draft disk full");
+  expect(opened).toBe(false); expect(guard.isPresenting()).toBe(false);
+  expect(f.store.get(src)?.size).toBe(bytes.length);
+});
+
+for (const boundary of ["renderer-disposed", "workspace-changed"] as const) {
+  test(`${boundary} during download prevents a late actual share`, async () => {
+    const f = fixture(), bytes = new TextEncoder().encode("owner change during preview");
+    const src = `/blob/${hash(bytes).slice(0, 32)}.txt`;
+    const transfer = delayed<void>();
+    let downloading = false, opened = false, current = true, flushes = 0;
+    download = async file => { downloading = true; await transfer.promise; file.write(bytes); };
+    share = async () => { opened = true; };
+    const guard = createNativePresentationGuard(async () => { flushes++; return { ok: true }; }, () => current);
+    const pending = f.manager.media({ action: "preview", src }, open => guard.run(open));
+    const rejected = pending.catch(error => error);
+    await waitFor(() => downloading);
+    if (boundary === "renderer-disposed") guard.dispose(); else current = false;
+    transfer.resolve(); expect((await rejected as Error).message).toContain("会话已结束");
+    expect(opened).toBe(false); expect(flushes).toBe(0); expect(guard.isPresenting()).toBe(false);
+  });
+}
+
+test("picker presentation ends before file copy, hashing and durable publication", async () => {
+  const f = fixture(); select("picked.txt", "persist after picker dismissal");
+  const selection = delayed<unknown>(), copying = delayed<void>();
+  const saved: string[] = [];
+  let pickerOpen = false, copyingStarted = false, draft = "before picker";
+  picker = async () => { pickerOpen = true; await selection.promise; return { canceled: false, assets: [{ uri: "file:///picker/picked.txt", name: "picked.txt", mimeType: "text/plain" }] }; };
+  copyOnce = async (source, target) => { copyingStarted = true; await copying.promise; target.write(files.get(source.uri)!); };
+  const flush = async () => { saved.push(draft); return { ok: true }; };
+  const guard = createNativePresentationGuard(flush, () => true);
+  const pending = f.manager.media({ action: "pick" }, open => guard.run(open));
+  await waitFor(() => pickerOpen);
+  expect(saved).toEqual(["before picker"]); expect(guard.isPresenting()).toBe(true);
+  selection.resolve(null);
+  await waitFor(() => copyingStarted);
+  expect(guard.isPresenting()).toBe(false);
+  draft = "new text during attachment persistence";
+  if (!guard.isPresenting()) await flush();
+  expect(saved).toEqual(["before picker", "new text during attachment persistence"]);
+  copying.resolve();
+  const result = await pending;
+  expect(f.store.get(result.src!)?.size).toBeGreaterThan(0);
+  expect(guard.isPresenting()).toBe(false);
+});
+
+test("image/video picker APIs use the same precise native-only presentation boundary", async () => {
+  const f = fixture();
+  for (const kind of ["image", "video"] as const) {
+    let opened = false;
+    const guard = createNativePresentationGuard(async () => ({ ok: false, error: "save before picker failed" }), () => true);
+    picker = async () => { opened = true; return { canceled: true }; };
+    await expect(f.manager.media({ action: "pick", kind }, open => guard.run(open))).rejects.toThrow("save before picker failed");
+    expect(opened).toBe(false); expect(guard.isPresenting()).toBe(false);
+  }
 });

@@ -8,11 +8,13 @@ import type { DbDriver } from "../../../../../src/core/driver";
 import type { Credentials } from "../auth/credentials";
 import type { MobileApi } from "../api/mobile-api";
 import type { EditorMediaRequest } from "../editor/protocol";
+import type { NativePresentation } from "../editor/native-presentation";
 import { attachmentType, createAttachmentStore, parseBlobSource, type AttachmentEntry, type AttachmentTransfer } from "./store";
 
 const INLINE_BYTES = 6 * 1024 * 1024;
 const MAX_BYTES = 200 * 1024 * 1024;
 const TRANSFER_TIMEOUT_MS = 9 * 60_000;
+const presentDirectly: NativePresentation = open => open();
 // Shared across managers: a replacement session must not reconcile a previous
 // session's native request until that request has actually settled.
 const activeTemps = new Set<string>();
@@ -207,21 +209,21 @@ export function createAttachmentManager(options: AttachmentManagerOptions) {
     })().finally(() => { retrying = null; scheduleReconciliation(); });
     return retrying;
   }
-  async function select(kind: EditorMediaRequest["kind"] = "file") {
+  async function select(kind: EditorMediaRequest["kind"] = "file", present: NativePresentation = presentDirectly) {
     if (kind === "image" || kind === "video") {
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: kind === "image" ? ["images"] : ["videos"], quality: 1 });
+      const result = await present(() => { current(); return ImagePicker.launchImageLibraryAsync({ mediaTypes: kind === "image" ? ["images"] : ["videos"], quality: 1 }); });
       current(); if (result.canceled) return;
       const asset = result.assets[0]!;
       return { uri: asset.uri, name: asset.fileName ?? "附件", mime: asset.mimeType ?? "application/octet-stream" };
     }
-    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false, type: kind === "audio" ? "audio/*" : "*/*" });
+    const result = await present(() => { current(); return DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false, type: kind === "audio" ? "audio/*" : "*/*" }); });
     current(); if (result.canceled) return;
     const asset = result.assets[0]!;
     return { uri: asset.uri, name: asset.name, mime: asset.mimeType ?? "application/octet-stream" };
   }
-  async function pick(kind?: EditorMediaRequest["kind"], repair?: AttachmentEntry) {
+  async function pick(kind?: EditorMediaRequest["kind"], repair?: AttachmentEntry, present?: NativePresentation) {
     await ready();
-    const selected = await select(kind); if (!selected) return {};
+    const selected = await select(kind, present); if (!selected) return {};
     const source = new File(selected.uri);
     if (!source.size || source.size > MAX_BYTES) throw new Error("附件需要在 200 MB 以内且不能为空");
     const transfer = temporary(), temp = new File(transfer.tempUri);
@@ -347,18 +349,18 @@ export function createAttachmentManager(options: AttachmentManagerOptions) {
     },
     dispose() { disposed = true; cancellation.abort(); if (idle) clearTimeout(idle); listeners.clear(); },
     pendingCount() { current(); return store.pending().length; },
-    async media(request: EditorMediaRequest): Promise<{ src?: string; url?: string; name?: string; mime?: string }> {
+    async media(request: EditorMediaRequest, present: NativePresentation = presentDirectly): Promise<{ src?: string; url?: string; name?: string; mime?: string }> {
       current();
       if (request.action === "pick") {
         if (picking) throw new Error("请先完成当前附件选择");
         picking = true;
-        try { return await pick(request.kind); }
+        try { return await pick(request.kind, undefined, present); }
         finally { picking = false; scheduleReconciliation(); }
       }
       const entry = await ensure(request.src!); current();
       if (request.action === "preview") {
         if (!await Sharing.isAvailableAsync()) throw new Error("此设备无法打开附件预览");
-        current(); await Sharing.shareAsync(entry.uri, { mimeType: entry.mime, dialogTitle: entry.name }); current();
+        await present(() => { current(); return Sharing.shareAsync(entry.uri, { mimeType: entry.mime, dialogTitle: entry.name }); }); current();
         return { src: entry.src, name: entry.name, mime: entry.mime };
       }
       if (entry.size > INLINE_BYTES) return { src: entry.src, name: entry.name, mime: entry.mime };

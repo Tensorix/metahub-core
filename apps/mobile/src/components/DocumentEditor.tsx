@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { EditorHost, type EditorHostServices } from "../lib/editor/host";
+import { createNativePresentationGuard } from "../lib/editor/native-presentation";
 import { editorHTML } from "../lib/editor/editor-bundle";
 import {
   parseEditorMessage,
@@ -73,6 +74,11 @@ export const DocumentEditor = forwardRef<
       `${sessionId}:${documentId}:${generation}:${Date.now()}:${Math.random()}`,
     [sessionId, documentId, generation],
   );
+  const rendererNonce = useRef(nonce);
+  rendererNonce.current = nonce;
+  const presentationRef = useRef<ReturnType<
+    typeof createNativePresentationGuard
+  > | null>(null);
   const servicesRef = useRef(services);
   servicesRef.current = services;
   const host = useMemo(
@@ -87,14 +93,22 @@ export const DocumentEditor = forwardRef<
         listTargets: () =>
           servicesRef.current.listTargets?.() ?? Promise.resolve([]),
         media: (request) => {
-          if (!servicesRef.current.media)
+          const currentServices = servicesRef.current;
+          if (!currentServices.media)
             return Promise.reject(new Error("附件暂不可用"));
-          return servicesRef.current.media(request);
+          const guard = presentationRef.current;
+          if (!guard) return Promise.reject(new Error("编辑器尚未就绪"));
+          // The manager calls this only at its actual picker/share API. The
+          // renderer remains background-saveable while bytes are transferred.
+          return currentServices.media(request, (open) => guard.run(open));
         },
         navigate: (target) => {
-          if (!servicesRef.current.navigate)
+          const currentServices = servicesRef.current;
+          if (!currentServices.navigate)
             return Promise.reject(new Error("暂时无法打开链接"));
-          return servicesRef.current.navigate(target);
+          const guard = presentationRef.current;
+          if (!guard) return Promise.reject(new Error("编辑器尚未就绪"));
+          return currentServices.navigate(target, (open) => guard.run(open));
         },
         isCurrent: () => servicesRef.current.isCurrent(),
       }),
@@ -146,7 +160,20 @@ export const DocumentEditor = forwardRef<
     },
     [nonce],
   );
+  const presentation = useMemo(
+    () =>
+      createNativePresentationGuard(
+        () => send("flush"),
+        () =>
+          rendererNonce.current === nonce && servicesRef.current.isCurrent(),
+        () => AppState.currentState === "active",
+      ),
+    [nonce, send],
+  );
+  presentationRef.current = presentation;
+  useEffect(() => () => presentation.dispose(), [presentation]);
   const retry = useCallback(() => {
+    presentationRef.current?.dispose();
     host.dispose();
     failPending("正在恢复编辑器，草稿将保留");
     setLoading(true);
@@ -175,15 +202,16 @@ export const DocumentEditor = forwardRef<
   );
   useEffect(() => {
     const listener = AppState.addEventListener("change", (state) => {
-      if (state !== "active")
+      if (state !== "active" && !presentation.isPresenting())
         void send("flush").then((result) => {
           if (!result.ok)
             callbacks.current.onError?.(result.error || "保存失败，草稿将保留");
         });
     });
     return () => listener.remove();
-  }, [send]);
+  }, [send, presentation]);
   const rendererFailed = (message: string) => {
+    presentationRef.current?.dispose();
     host.dispose();
     failPending(message);
     setLoading(false);

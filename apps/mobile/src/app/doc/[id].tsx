@@ -160,15 +160,15 @@ function LocalDocument({ id }: { id: string }) {
           })),
         ];
       },
-      media: (request) => {
+      media: (request, present) => {
         check();
-        return session.attachments.media(request);
+        return session.attachments.media(request, present);
       },
-      async navigate(target) {
+      async navigate(target, present) {
         await runAction(async () => {
           check();
           if (target.startsWith("/blob/")) {
-            await session.attachments.media({ action: "preview", src: target });
+            await session.attachments.media({ action: "preview", src: target }, present);
             return;
           }
           const match = /^(?:#)?\/(doc|db|rec)\/([^/?#]+)$/.exec(target);
