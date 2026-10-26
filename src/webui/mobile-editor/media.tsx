@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 import { useEffect, useState } from "preact/hooks";
 import type { Block } from "../blocks";
-import { rpc } from "./bridge";
+import { previewMedia, rpc } from "./bridge";
 
 /** Mount actual media only after native persistence resolves its bytes. This
  * avoids an initial /blob request, credentials, and CSP/onError races. */
@@ -22,7 +22,7 @@ function NativeMedia({ block, kind, onPreview }: { block: Block; kind: "image" |
   }, [block.src, kind, attempt]);
   const preview = () => {
     if (onPreview) { onPreview(); return; }
-    void rpc("media", { action: "preview", src: block.src, kind }).catch(error => setError(String(error.message)));
+    void previewMedia(block.src, kind).catch(error => setError(String(error.message)));
   };
   return <div class={`void-block void-${kind}`} style={{ maxWidth: "100%" }}>
     {url && kind === "image" && <img src={url} alt={block.name ?? "图片"} style={{ maxWidth: "100%", width: block.width ? `${block.width}px` : undefined }} onClick={preview} onError={() => setError("图片无法显示，请打开附件预览")} />}
