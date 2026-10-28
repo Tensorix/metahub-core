@@ -1,6 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Appearance, useColorScheme } from "react-native";
 import * as SecureStore from "expo-secure-store";
+import {
+  DarkTheme,
+  DefaultTheme,
+  ThemeProvider as NavigationThemeProvider,
+  type Theme as NavigationTheme,
+} from "expo-router";
 
 import { dynamicColorAvailable, useMaterialTokens } from "./material";
 import { dark, light, type Tokens } from "./tokens";
@@ -32,9 +38,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   );
   const system = useColorScheme();
 
-  // Appearance.setColorScheme drives *native* appearance (SwiftUI/Compose
-  // islands, native headers/tab bar, WebView prefers-color-scheme), which is
-  // how the RN and native worlds stay on one theme. "unspecified" resets.
+  // Appearance drives native views and WebView prefers-color-scheme.
+  // Navigation also needs the resolved theme through its own provider below.
+  // "unspecified" restores system appearance.
   useEffect(() => {
     Appearance.setColorScheme(pref === "system" ? "unspecified" : pref);
   }, [pref]);
@@ -65,7 +71,30 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     [materialTokens, scheme, pref, materialYou],
   );
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  const navigationTheme = useMemo<NavigationTheme>(() => {
+    const base = scheme === "dark" ? DarkTheme : DefaultTheme;
+    const tokens = value.tokens;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        primary: tokens.accent,
+        background: tokens.bg,
+        card: tokens.bg,
+        text: tokens.fg,
+        border: tokens.line,
+        notification: tokens.danger,
+      },
+    };
+  }, [scheme, value.tokens]);
+
+  return (
+    <Ctx.Provider value={value}>
+      <NavigationThemeProvider value={navigationTheme}>
+        {children}
+      </NavigationThemeProvider>
+    </Ctx.Provider>
+  );
 }
 
 export function useTheme(): ThemeCtx {
