@@ -5,6 +5,7 @@ import { Icon } from "./icons.tsx";
 import { t } from "./i18n/t.ts";
 import { consumeKey, imeGhost, isEditableTarget } from "./keys.ts";
 import { shortcutAvailable } from "./shortcuts.ts";
+import { ToastTimer, toastSwipeDismiss } from "./toast-interaction.ts";
 import { Kbd } from "./kbd.tsx";
 
 // Imperative UI primitives (Toast / Menu / Modal) backed by tiny external
@@ -45,31 +46,20 @@ export interface ToastOpts {
 type Toast = { id: number; msg: string; tone: ToastTone; action?: ToastOpts["action"]; leaving?: boolean };
 const toastStore = makeStore<Toast[]>([]);
 let toastSeq = 0;
-const toastTimers = new Map<number, { t: number; due: number; left: number }>();
-function armToast(id: number, left: number): void {
-  toastTimers.set(id, { t: window.setTimeout(() => dismissToast(id), left), due: Date.now() + left, left });
-}
-function pauseToast(id: number): void {
-  const r = toastTimers.get(id);
-  if (!r) return;
-  clearTimeout(r.t);
-  r.left = Math.max(600, r.due - Date.now());
-}
-function resumeToast(id: number): void {
-  const r = toastTimers.get(id);
-  if (r) armToast(id, r.left);
-}
-function dismissToast(id: number): void {
-  const r = toastTimers.get(id);
-  if (r) clearTimeout(r.t);
+const toastTimers = new Map<number, ToastTimer>();
+function dismissToast(id: number): boolean {
+  const item = toastStore.get().find((x) => x.id === id);
+  if (!item || item.leaving) return false;
+  toastTimers.get(id)?.stop();
   toastTimers.delete(id);
   toastStore.set(toastStore.get().map((x) => (x.id === id ? { ...x, leaving: true } : x)));
   setTimeout(() => toastStore.set(toastStore.get().filter((x) => x.id !== id)), 160);
+  return true;
 }
 export function toast(msg: string, opts: ToastOpts = {}): { dismiss: () => void } {
   const id = ++toastSeq;
   toastStore.set([...toastStore.get(), { id, msg, tone: opts.tone ?? "ok", action: opts.action }]);
-  armToast(id, opts.ms ?? (opts.action ? 7000 : 2600));
+  toastTimers.set(id, new ToastTimer(opts.ms ?? (opts.action ? 7000 : 2600), () => dismissToast(id)));
   return { dismiss: () => dismissToast(id) };
 }
 
@@ -757,6 +747,72 @@ export function SnippetText({ text }: { text: string }) {
   return <>{parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : p))}</>;
 }
 
+function ToastItem({ item }: { item: Toast }) {
+  const [offset, setOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const [swipeOut, setSwipeOut] = useState(false);
+  const gesture = useRef<{ id: number; x: number; y: number; lastX: number; time: number; velocity: number; active: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const pause = (reason: string) => toastTimers.get(item.id)?.pause(reason);
+  const resume = (reason: string) => toastTimers.get(item.id)?.resume(reason);
+  const finish = (e: PointerEvent, el: HTMLDivElement, cancelled: boolean) => {
+    const g = gesture.current;
+    if (!g || g.id !== e.pointerId) return;
+    const dx = e.clientX - g.x;
+    const velocity = e.timeStamp - g.time > 100 ? 0 : g.velocity;
+    gesture.current = null;
+    setDragging(false);
+    if (g.active) {
+      suppressClick.current = true;
+      if (!cancelled && toastSwipeDismiss(dx, el.getBoundingClientRect().width, velocity)) {
+        setSwipeOut(true);
+        setOffset(Math.sign(dx) * (window.innerWidth + el.getBoundingClientRect().width));
+        dismissToast(item.id);
+      } else setOffset(0);
+    }
+    if (el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    resume("drag");
+    if (e.pointerType !== "mouse" || !el.matches(":hover")) resume("hover");
+  };
+  return (
+    <div class={"toast " + item.tone + (item.leaving ? " leaving" : "") + (dragging ? " dragging" : "") + (swipeOut ? " swipe-out" : "")}
+      style={{ "--toast-offset": `${offset}px`, opacity: swipeOut ? 0 : dragging ? Math.max(0.25, 1 - Math.abs(offset) / 400) : undefined }}
+      onPointerEnter={(e) => { if (e.pointerType === "mouse") pause("hover"); }} onPointerLeave={(e) => { if (e.pointerType === "mouse") resume("hover"); }}
+      onFocusIn={() => pause("focus")}
+      onFocusOut={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) resume("focus"); }}
+      onClickCapture={(e) => { if (suppressClick.current && e.detail !== 0) { e.preventDefault(); e.stopPropagation(); suppressClick.current = false; } }}
+      onPointerDown={(e) => {
+        suppressClick.current = false;
+        if (item.leaving || gesture.current || !e.isPrimary || e.button !== 0 || (e.target as Element).closest("button")) return;
+        gesture.current = { id: e.pointerId, x: e.clientX, y: e.clientY, lastX: e.clientX, time: e.timeStamp, velocity: 0, active: false };
+        pause("drag");
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        const g = gesture.current;
+        if (!g || g.id !== e.pointerId) return;
+        const dx = e.clientX - g.x, dy = e.clientY - g.y;
+        if (!g.active && Math.abs(dy) > 8 && Math.abs(dy) >= Math.abs(dx)) { finish(e, e.currentTarget, true); return; }
+        if (!g.active && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.5) { g.active = true; setDragging(true); }
+        if (g.active) {
+          e.preventDefault();
+          const dt = e.timeStamp - g.time;
+          if (dt > 0) g.velocity = (e.clientX - g.lastX) / dt;
+          g.lastX = e.clientX; g.time = e.timeStamp;
+          setOffset(dx);
+        }
+      }}
+      onPointerUp={(e) => finish(e, e.currentTarget, false)}
+      onPointerCancel={(e) => finish(e, e.currentTarget, true)}
+      onLostPointerCapture={(e) => finish(e, e.currentTarget, true)}
+    >
+      <Icon name={item.tone === "error" ? "alert" : "check"} cls="ico sm" />
+      <span class="toast-msg">{item.msg}</span>
+      {item.action && <button class="toast-act" onClick={() => { if (dismissToast(item.id)) void item.action!.run(); }}>{item.action.label}</button>}
+    </div>
+  );
+}
+
 /** The single mount point for all imperative UI. Place once at app root. */
 export function UiHost() {
   const toasts = toastStore.use();
@@ -766,22 +822,7 @@ export function UiHost() {
       <ModalHost />
       <TooltipHost />
       <div class="toasts">
-        {toasts.map((item) => (
-          <div
-            key={item.id}
-            class={"toast " + item.tone + (item.leaving ? " leaving" : "")}
-            onMouseEnter={() => pauseToast(item.id)}
-            onMouseLeave={() => resumeToast(item.id)}
-          >
-            <Icon name={item.tone === "error" ? "alert" : "check"} cls="ico sm" />
-            <span class="toast-msg">{item.msg}</span>
-            {item.action && (
-              <button class="toast-act" onClick={() => { void item.action!.run(); dismissToast(item.id); }}>
-                {item.action.label}
-              </button>
-            )}
-          </div>
-        ))}
+        {toasts.map((item) => <ToastItem key={item.id} item={item} />)}
       </div>
       <UploadTray />
     </>

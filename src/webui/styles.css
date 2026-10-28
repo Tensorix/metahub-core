@@ -2075,14 +2075,22 @@
   .tmpl .tt { font-weight:600; font-size:var(--fs-ui); } .tmpl .td { font-size:var(--fs-xs); color:var(--muted); margin-top:2px; }
 
   /* toast */
-  .toasts { position:fixed; bottom:20px; left:20px; z-index:110; display:flex; flex-direction:column; gap:8px; }
-  .toast { background:var(--fg); color:var(--bg); padding:10px 14px; border-radius:9px; font-size:13px; box-shadow:var(--shadow-lg);
+  .toasts { position:fixed; bottom:20px; left:20px; max-width:calc(100vw - 40px); z-index:110; display:flex; flex-direction:column; gap:8px; }
+  .toast { position:relative; box-sizing:border-box; touch-action:pan-y; user-select:none; transform:translateX(var(--toast-offset, 0px)); transition:transform .18s ease-out, opacity .16s ease; background:var(--fg); color:var(--bg); padding:10px 14px; border-radius:9px; font-size:13px; box-shadow:var(--shadow-lg);
     display:flex; align-items:center; gap:8px; animation:slidein .2s ease; }
   @keyframes slidein { from { opacity:0; transform:translateX(-12px); } }
   .toast.error { background:var(--danger); color:var(--danger-fg); }
   .toast.leaving { animation:toast-out .16s ease-in forwards; pointer-events:none; }
   @keyframes toast-out { to { opacity:0; transform:translateX(-8px); } }
-  .toast-msg { min-width:0; }
+  .toast-msg { min-width:0; overflow-wrap:anywhere; }
+  .toast > .ico, .toast-act { flex-shrink:0; }
+  .toast.dragging { animation:none; transition:none; cursor:grabbing; }
+  .toast.leaving.swipe-out { animation:none; transition:transform .16s ease-in, opacity .16s ease-in; }
+  .toast-act:focus-visible { outline:2px solid currentColor; outline-offset:2px; }
+  @media (prefers-reduced-motion:reduce) {
+    .toast, .toast.dragging, .toast.leaving, .toast.leaving.swipe-out { animation:none; transition:none; transform:none; }
+    .toast.leaving { opacity:0; }
+  }
   .toast-act { margin-left:4px; padding:3px 9px; border-radius:6px; font-weight:600; color:inherit; background:color-mix(in srgb, var(--bg) 16%, transparent); white-space:nowrap; }
   .toast-act:hover { background:color-mix(in srgb, var(--bg) 28%, transparent); }
 
