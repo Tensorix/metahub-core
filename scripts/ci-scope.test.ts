@@ -40,6 +40,8 @@ test('real Git events: push ranges, PR merge base, new branch and missing base',
     await git('init', '-b', 'main');
     await git('config', 'user.name', 'CI test');
     await git('config', 'user.email', 'ci@example.invalid');
+    // Synthetic commits must not depend on the developer's signing key.
+    await git('config', 'commit.gpgsign', 'false');
     await Bun.write(join(dir, 'core.ts'), 'initial');
     await git('add', 'core.ts');
     await git('commit', '-m', 'base');
