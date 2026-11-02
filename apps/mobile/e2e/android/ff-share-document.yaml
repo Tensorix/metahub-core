@@ -1,0 +1,13 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in newly saved AndroidSavedFF9374a document. Opens attachment doc and checks clean starting state only.
+# Evidence status: PASS; actual command counts {"COMPLETED":7}.
+# Tested source: ff9374a3885cfbfd1341fcfcd1674e7a0ff6c444; evidence: /Users/noah/.maestro/tests/2026-10-26_164909/ff-share-document/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn: 返回
+- tapOn:
+    text: Android Native Bucket Document20261026
+    index: 0
+- assertVisible: "下载 / 打开 metahub-native-acceptance-attachment.txt"
+- assertNotVisible: 编辑器没有响应.*
+- takeScreenshot: ff-file-before-share

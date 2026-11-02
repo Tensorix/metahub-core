@@ -1,0 +1,32 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in database management after discard regression. Save and unsaved-discard assertions passed; restoration input produced missing character and system ANR. Final Close failed; view steps did not run.
+# Evidence status: FAILED; see report for passed substeps and unresolved ANR.
+# Tested source: 6d5c199da28e9b69f64cd2146a27b03fcb501c71; evidence: /Users/noah/.maestro/tests/2026-10-26_172648/6d-db-save-restore/commands.json
+appId: com.tensorix.metahub
+---
+- longPressOn: Android Native Bucket20261026
+- tapOn: Select all
+- inputText: AndroidDbSaved6d5c199
+- tapOn:
+    text: 保存
+    index: 0
+- tapOn: 关闭
+- assertVisible: AndroidDbSaved6d5c199
+- tapOn: 管理
+- assertVisible: AndroidDbSaved6d5c199
+- longPressOn: AndroidDbSaved6d5c199
+- inputText: AndroidDbUnsaved6d5c199
+- tapOn: 关闭
+- tapOn: 放弃修改
+- assertVisible: AndroidDbSaved6d5c199
+- tapOn: 管理
+- longPressOn: AndroidDbSaved6d5c199
+- inputText: Android Native Bucket20261026
+- tapOn:
+    text: 保存
+    index: 0
+- tapOn: 关闭
+- assertVisible: Android Native Bucket20261026
+- takeScreenshot: database-save-discard-restored
+- tapOn: 筛选与视图
+- takeScreenshot: view-settings-entry

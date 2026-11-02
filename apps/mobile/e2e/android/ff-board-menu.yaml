@@ -1,0 +1,15 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts on bucket board with target record in partially visible Done column. Tests sibling menu Move to Todo and management entry only.
+# Evidence status: PASS; actual command counts {"COMPLETED":9}.
+# Tested source: ff9374a3885cfbfd1341fcfcd1674e7a0ff6c444; evidence: /Users/noah/.maestro/tests/2026-10-26_165429/ff-board-menu/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn:
+    text: 记录操作
+    index: 0
+- assertVisible: 移动到 Todo
+- tapOn: 移动到 Todo
+- assertVisible: Android Bucket Todo20261026
+- takeScreenshot: ff-board-sibling-menu-moved-todo
+- tapOn: 管理
+- takeScreenshot: ff-database-management

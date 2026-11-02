@@ -1,0 +1,19 @@
+# Stateful draft; NOT RUN. Requires a newly approved Release after the ff9374a native-discard crash.
+# Prerequisite: parent grants device ownership; synthetic Android database management open; original name confirmed; Select all label confirmed.
+# Evidence status: NOT RUN. Expected to cover Continue editing then Close/Discard without crash; no current candidate PASS.
+# Tested source: none; record new source/APK identity before execution.
+appId: com.tensorix.metahub
+---
+- longPressOn: Android Native Bucket20261026
+- tapOn: Select all
+- inputText: AndroidDbDiscardRetest20261026
+- tapOn: 关闭
+- tapOn: 继续编辑
+- assertVisible: AndroidDbDiscardRetest20261026
+- tapOn: 关闭
+- tapOn: 放弃修改
+- assertVisible: Android Native Bucket20261026
+- tapOn: 管理
+- assertVisible: Android Native Bucket20261026
+- assertNotVisible: AndroidDbDiscardRetest20261026
+- takeScreenshot: database-discard-after-continue-reopened

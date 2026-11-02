@@ -1,0 +1,13 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in newly created unnamed record, native Title empty.
+# Evidence status: PASS. Names an already-created empty record and verifies database list; does not exercise Home creation.
+# Tested source: ea130b8; run: /Users/noah/.maestro/tests/2026-10-26_153805/create-record/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn:
+    point: "50%,24%"
+- inputText: AndroidCreated20261026
+- back
+- back
+- assertVisible: AndroidCreated20261026
+- takeScreenshot: android-created-record-list

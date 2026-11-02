@@ -1,0 +1,13 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in bucket document; synthetic file must be in Downloads. a11y tap can only focus file block; native share requires separately observed actual touch.
+# Evidence status: PARTIAL. Import/file-block presence passed. YAML accessibility tap did not establish share. Separate native touch shared with draft warning; full lifecycle not accepted.
+# Tested source: 6db2a4a; run: /Users/noah/.maestro/tests/2026-10-26_161428/bucket-attachment-import/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn: 附件
+- tapOn: Show roots
+- tapOn: Downloads
+- tapOn: metahub-native-acceptance-attachment.txt
+- assertVisible: "下载 / 打开 metahub-native-acceptance-attachment.txt"
+- tapOn: "下载 / 打开 metahub-native-acceptance-attachment.txt"
+- takeScreenshot: android-bucket-attachment-action

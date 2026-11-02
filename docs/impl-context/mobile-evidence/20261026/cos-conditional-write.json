@@ -112,5 +112,5 @@
       "COS drop-key rotation and passphrase change perform zero PUTs and preserve cached and remote keys"
     ]
   },
-  "postFixRealBucketProtocol": "Pending separate parent-owned isolated-prefix protocol rerun; this evidence records the raw pre-fix provider behavior."
+  "postFixRealBucketProtocol": "Historical pending checkpoint. The subsequent isolated-prefix protocol rerun is retained in real-bucket-protocol.json with status PASS; this file continues to describe raw pre-fix provider behavior."
 }

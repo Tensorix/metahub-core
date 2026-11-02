@@ -1,0 +1,21 @@
+# Stateful parameterized draft; NOT RUN. Confirm document/view form controls before use; database row Save/header Close needs its dedicated checklist.
+# Prerequisite: owner opens existing synthetic entity form, confirms field point and button labels, then binds all parameters explicitly.
+# Evidence status: NOT RUN. Cancel must preserve original name; Save must publish the edited name and exit. Parent owns independent desktop checks.
+# Tested source: none; confirm new Release and selectors before running.
+appId: com.tensorix.metahub
+---
+- tapOn:
+    point: ${FORM_FIELD_POINT}
+- longPressOn: ${ORIGINAL_NAME}
+- tapOn: Select all
+- inputText: ${CANCEL_MARKER}
+- tapOn: 取消
+- assertVisible: ${ORIGINAL_NAME}
+- assertNotVisible: ${CANCEL_MARKER}
+- tapOn: ${REOPEN_FORM_ACTION}
+- longPressOn: ${ORIGINAL_NAME}
+- tapOn: Select all
+- inputText: ${SAVE_MARKER}
+- tapOn: 保存
+- assertVisible: ${SAVE_MARKER}
+- takeScreenshot: retest-form-saved

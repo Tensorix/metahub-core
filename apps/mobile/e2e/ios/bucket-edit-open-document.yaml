@@ -1,0 +1,14 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: ff9374a; status: PASS.
+# Prerequisite/boundary: Start in synthetic iOS record with original Notes; edits Notes then opens relation without explicit blur.
+appId: com.tensorix.metahub
+---
+- tapOn:
+    text: "iOS initial notes"
+    point: "99%,50%"
+- eraseText: 100
+- inputText: "iOSBucketSaved20261026"
+- tapOn: "打开 iOS Native Bucket Document20261026"
+- assertVisible: "文档操作"
+- assertNotVisible: ".*编辑器没有响应.*"
+- takeScreenshot: bucket-document-start

@@ -1,0 +1,15 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts at bucket Home after full old Notes selection, rapid native exact input and immediate header Close. Verifies exact reopen/restart only.
+# Evidence status: PASS; actual command counts {"COMPLETED":10}.
+# Tested source: ff9374a3885cfbfd1341fcfcd1674e7a0ff6c444; evidence: /Users/noah/.maestro/tests/2026-10-26_164512/ff-input-verify/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn: Android Bucket Todo20261026
+- assertVisible: AndroidBucketOffline20261026
+- tapOn: 关闭
+- stopApp
+- launchApp:
+    clearState: false
+- tapOn: Android Bucket Todo20261026
+- assertVisible: AndroidBucketOffline20261026
+- takeScreenshot: ff-exact-input-restarted

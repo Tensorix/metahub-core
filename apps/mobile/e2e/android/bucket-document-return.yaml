@@ -1,0 +1,12 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in related bucket document after bucket-record-document.
+# Evidence status: PASS. Unique document marker and header return/close, independently verified on desktop; insertion is at cursor.
+# Tested source: 6db2a4a; run: /Users/noah/.maestro/tests/2026-10-26_160137/bucket-document-return/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn: "Android Native Bucket\nAndroid bucket baseline.*"
+- inputText: AndroidBucketDocumentVerified20261026
+- tapOn: 返回
+- assertVisible: AndroidBucketNotes20261026
+- tapOn: 关闭
+- assertVisible: Android Bucket Todo20261026

@@ -1,0 +1,107 @@
+{
+  "beforeAnrEvents": [
+    {
+      "localTime": "10-26 17:29:05.018",
+      "inputDispatchTimedOut": true
+    },
+    {
+      "localTime": "10-26 17:29:59.815",
+      "inputDispatchTimedOut": true
+    }
+  ],
+  "afterAnrEvents": [
+    {
+      "localTime": "10-26 17:29:05.018",
+      "inputDispatchTimedOut": true
+    },
+    {
+      "localTime": "10-26 17:29:59.815",
+      "inputDispatchTimedOut": true
+    }
+  ],
+  "newAnrAfterRelaunch": [],
+  "relaunchFinishedAt": "2026-10-26T09:45:17.092Z",
+  "commands": [
+    {
+      "label": "baseline-events",
+      "startedAt": "2026-10-26T09:43:56.812Z",
+      "finishedAt": "2026-10-26T09:43:56.978Z",
+      "durationMs": 166,
+      "exitCode": 0
+    },
+    {
+      "label": "wait-dialog",
+      "startedAt": "2026-10-26T09:43:57.003Z",
+      "finishedAt": "2026-10-26T09:43:57.098Z",
+      "durationMs": 95,
+      "exitCode": 0
+    },
+    {
+      "label": "force-stop-only-app",
+      "startedAt": "2026-10-26T09:45:16.679Z",
+      "finishedAt": "2026-10-26T09:45:16.907Z",
+      "durationMs": 228,
+      "exitCode": 0
+    },
+    {
+      "label": "relaunch-only-app",
+      "startedAt": "2026-10-26T09:45:16.925Z",
+      "finishedAt": "2026-10-26T09:45:17.092Z",
+      "durationMs": 167,
+      "exitCode": 0
+    },
+    {
+      "label": "fast-complete-name-input",
+      "startedAt": "2026-10-26T09:46:27.807Z",
+      "finishedAt": "2026-10-26T09:46:28.013Z",
+      "durationMs": 206,
+      "exitCode": 0
+    },
+    {
+      "label": "row-save-after-exact-input",
+      "startedAt": "2026-10-26T09:47:18.466Z",
+      "finishedAt": "2026-10-26T09:47:18.536Z",
+      "durationMs": 70,
+      "exitCode": 0
+    },
+    {
+      "label": "close-after-save",
+      "startedAt": "2026-10-26T09:48:52.297Z",
+      "finishedAt": "2026-10-26T09:48:52.371Z",
+      "durationMs": 74,
+      "exitCode": 0
+    },
+    {
+      "label": "after-retest-events",
+      "startedAt": "2026-10-26T09:49:41.127Z",
+      "finishedAt": "2026-10-26T09:49:41.242Z",
+      "durationMs": 115,
+      "exitCode": 0
+    },
+    {
+      "label": "after-retest-pid",
+      "startedAt": "2026-10-26T09:49:41.262Z",
+      "finishedAt": "2026-10-26T09:49:41.310Z",
+      "durationMs": 48,
+      "exitCode": 0
+    }
+  ],
+  "artifactClass": "normal-release-native-input-control-retest",
+  "sourceSHA": "6d5c199da28e9b69f64cd2146a27b03fcb501c71",
+  "artifactSha256": "76980d79e095e09489f4e5e0413133dd9a42f27c8efaa06255688feb67cd68dc",
+  "device": "Pixel_9_Pro emulator-5554 Android 16 API 36",
+  "newPid": 3540,
+  "expectedName": "Android Native Bucket20261026",
+  "nativeHierarchyExactBeforeSave": true,
+  "nativeHierarchyExactAfterSave": true,
+  "exactCloseReopenAssertion": "PASS",
+  "waitRecovery": "Wait did not restore dialog-free operation; app-only force-stop/relaunch retained data",
+  "originalAnrStatus": "UNRESOLVED; successful rapid control run does not explain or erase earlier slow-input ANR",
+  "privateLoadEvidenceDirectory": "/tmp/metahub-mobile-bucket-ui/anr-6d5c199-review",
+  "scope": "One observed native rapid-input/save/Close/reopen control run; no load causation or universal input claim",
+  "historicalRawEvidenceAvailability": {
+    "checkedAt": "2026-10-28",
+    "available": false,
+    "note": "Historical 20261026 temporary raw logs, hierarchies and screenshots are no longer available. Private paths and command paths are historical locators, not current accessible evidence. Only sanitized repository summaries and reviewed synthetic screenshots remain; failures and acceptance limits are preserved."
+  }
+}

@@ -1,0 +1,17 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts at bucket Home; opens Android database explicitly.
+# Evidence status: PASS. Native Move to Done action plus independent desktop Status verification; requires Home starting state.
+# Tested source: 6db2a4a; run: /Users/noah/.maestro/tests/2026-10-26_160537/bucket-board/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn:
+    text: Android Native Bucket20261026
+    index: 0
+- tapOn:
+    text: 看板
+    index: 0
+- tapOn:
+    text: 记录操作
+    index: 0
+- tapOn: 移动到 Done
+- takeScreenshot: android-bucket-board-move

@@ -1,0 +1,13 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Home FAB directly opens document form. Assertion label also exists on FAB; inspect form screenshot.
+# Evidence status: PARTIAL. Runner completed but label also matches underlying FAB; form had no header/Save/Cancel. Not document creation acceptance.
+# Tested source: 7d07c80; run: /Users/noah/.maestro/tests/2026-10-26_154140/home-create-menu/commands.json
+appId: com.tensorix.metahub
+---
+- launchApp:
+    clearState: false
+- assertVisible: Metahub
+- tapOn:
+    point: "90%,86%"
+- assertVisible: 新建文档
+- takeScreenshot: android-home-create-menu

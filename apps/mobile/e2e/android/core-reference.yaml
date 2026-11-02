@@ -1,0 +1,23 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in sample document, keyboard dismissed, source ea130b8; fixture title Android UI verified 20261026.
+# Evidence status: PASS. Unblurred reference navigation and return only; assumes exact sample title and prior document state.
+# Tested source: ea130b8; run: /Users/noah/.maestro/tests/2026-10-26_152841/core-reference/commands.json
+appId: com.tensorix.metahub
+---
+- back
+- assertVisible: Android UI verified 20261026
+- tapOn:
+    text: Android UI verified 20261026
+    index: 1
+- eraseText: 80
+- inputText: Android UI verified 20261026
+- scrollUntilVisible:
+    element: "打开 Native sample document 样板"
+    direction: DOWN
+- tapOn: "打开 Native sample document 样板"
+- assertVisible: 附件
+- back
+- assertVisible: Android UI verified 20261026
+- back
+- assertVisible: Android UI verified 20261026
+- takeScreenshot: android-core-return-home

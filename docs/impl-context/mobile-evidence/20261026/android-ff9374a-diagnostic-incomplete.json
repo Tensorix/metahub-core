@@ -1,0 +1,131 @@
+{
+  "outcome": "INCOMPLETE",
+  "functionalStatus": "UNVERIFIED; no final driver/network/performance reports exported",
+  "performanceStatus": "NO VALID COMPLETED MEASUREMENT; no threshold pass claimed",
+  "identity": {
+    "runId": "metahub-ff9374a-android-phase-run-2026-10-26T09-07-21-154Z",
+    "measurementLaunchStartedAt": "2026-10-26T09:08:02.952Z",
+    "buildManifest": "/Users/noah/Work/Tensorix/metahub-core.feat-mobile/apps/mobile/dist/native-diagnostics/ff9374a-android-phase-2026-10-26T08-56-28-564Z/manifest.json",
+    "sourceCommit": "ff9374a3885cfbfd1341fcfcd1674e7a0ff6c444",
+    "apk": {
+      "path": "/Users/noah/Work/Tensorix/metahub-core.feat-mobile/apps/mobile/dist/native-diagnostics/ff9374a-android-phase-2026-10-26T08-56-28-564Z/metahub-android-synthetic-phase-release.apk",
+      "sha256": "a032a39a8428f371a48a06c08e9aab82ddfbaa018e203ad7bb3988bb594ee231"
+    },
+    "bundle": {
+      "bytes": 6278164,
+      "sha256": "be725cba3eb5e6f9b1175c8a85f933eaa78d1a8ee7c4f73f311a85431167b0df"
+    },
+    "flags": {
+      "NODE_ENV": "production",
+      "EXPO_NO_DOTENV": "1",
+      "EXPO_PUBLIC_MH_SELFTEST": "1",
+      "EXPO_PUBLIC_MH_DIAGNOSTICS_RELEASE": "1",
+      "EXPO_PUBLIC_MH_NETWORK_STRESS": "1",
+      "EXPO_PUBLIC_MH_PERF": "1",
+      "EXPO_PUBLIC_MH_TRANSPORT": "0"
+    },
+    "device": {
+      "serial": "emulator-5554",
+      "androidRelease": "16",
+      "fingerprint": "google/sdk_gphone64_arm64/emu64a:16/BE2A.250530.026.D1/13818094:user/release-keys",
+      "model": "sdk_gphone64_arm64"
+    },
+    "relay": {
+      "pid": 59124,
+      "port": 8992,
+      "freshProcess": true,
+      "initialReportsEmpty": true
+    },
+    "workload": {
+      "operatorConfirmed": "Parent stopped iOS UI/Android Maestro, builds and tests for this run. Parent permits read-only review/docs and one guard source editor without tests/builds.",
+      "hostUptimeBeforeLaunch": "17:08  3 users, load averages: 16.70 23.05 27.53",
+      "limitation": "Not a guarantee of an idle host or absence of background OS work. No OS-only timing attribution."
+    },
+    "measurementOperations": "One force-stopped/fresh diagnostic process, full unchanged datasets and thresholds. During timing only relay report checks; no adb polling or screenshots."
+  },
+  "quietWindow": {
+    "endedAt": "2026-10-26T09:18:26.433Z",
+    "reason": "10-minute watchdog; no complete relay export; device fault inspection now permitted",
+    "reports": [],
+    "noDevicePollingDuringWindow": true
+  },
+  "observations": {
+    "screen": "Release synthetic native diagnostics…; static initial summary, no phase/progress UI",
+    "foreground": true,
+    "processAliveAtWatchdog": true,
+    "processPid": 31592,
+    "logcatFatalOrJSExceptionFound": false,
+    "frequentArtGCObserved": true,
+    "gcLimitation": "Observation only; not root-cause attribution or pure CPU evidence.",
+    "relayCounts": {
+      "capturedAt": "2026-10-26T09:21:30.332Z",
+      "records": {
+        "n": 5000
+      },
+      "changes": {
+        "n": 20014
+      },
+      "nodes": [
+        {
+          "node_id": "mom2inst",
+          "n": 20012
+        },
+        {
+          "node_id": "p04waxtb",
+          "n": 2
+        }
+      ],
+      "tables": [
+        {
+          "id": "db_native-network-fixture-mom2inst-4ncbcs",
+          "name": "Native network fixture mom2inst"
+        }
+      ],
+      "stats": [
+        {
+          "node": "mom2inst",
+          "database": "db_native-network-fixture-mom2inst-4ncbcs",
+          "fixture": "metahub-isolated-native-network-v1",
+          "waiting": false,
+          "requests": 801,
+          "uploadedOps": 20012,
+          "uniqueUploadedOps": 20012,
+          "maxUploadedPage": 25,
+          "records": 5000
+        },
+        {
+          "node": "p04waxtb",
+          "database": "db_native-network-fixture-mom2inst-4ncbcs",
+          "fixture": "metahub-isolated-native-network-v1",
+          "waiting": false,
+          "requests": 1606,
+          "uploadedOps": 4,
+          "uniqueUploadedOps": 2,
+          "maxUploadedPage": 1,
+          "records": 5000
+        }
+      ]
+    },
+    "relayLogs": "Only startup marker; server has no per-request logging. Request counters obtained after force-stop from isolated relay stats.",
+    "localReportAccess": "Production emulator ro.debuggable=0; release package run-as denied, private directory denied, su absent. Intermediate JSON unavailable without a separately prepared export or app change."
+  },
+  "analyzer": {
+    "exitCode": 1,
+    "error": "Missing android-driver; no complete relay export"
+  },
+  "cleanup": {
+    "normalApkRestored": true,
+    "normalInstalledApkSha256": "d06a92ce5729355c5739a7fd91bf290d76e51e36f85d08a693cf8f87d3220375",
+    "restoreInstallUsedR": true,
+    "userDataNotCleared": true,
+    "normalAppNotLaunched": true,
+    "reverse8992Removed": true,
+    "ownedRelay59124Stopped": true,
+    "deviceReturnedAt": "2026-10-26T09:23:26.007Z"
+  },
+  "limitations": [
+    "Host UI/tests/builds stopped during quiet window, but system not guaranteed idle. Launch-before uptime load averages recorded in identity.",
+    "After watchdog ended, device inspection and parent builds/tests may resume; subsequent timing is not part of quiet run.",
+    "Full upload counters and receiver requests do not establish every functional assertion or performance fixture completion."
+  ]
+}

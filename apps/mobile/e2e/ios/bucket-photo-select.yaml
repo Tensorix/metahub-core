@@ -1,0 +1,20 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PASS.
+# Prerequisite/boundary: Start at actual picker containing prepared synthetic 67-byte PNG in first blank thumbnail. Parent independently verified decrypted remote bytes/hash.
+appId: com.tensorix.metahub
+---
+- tapOn:
+    point: "16%,24%"
+- extendedWaitUntil:
+    visible: "文档操作"
+    timeout: 20000
+- extendedWaitUntil:
+    visible: "已保存"
+    timeout: 20000
+- tapOn: "返回"
+- stopApp
+- launchApp
+- openLink: "metahub:///doc/doc_ios-native-bucket-document202610-om42ym"
+- assertVisible: ".*iOSBucketDocumentSaved20261026.*"
+- assertNotVisible: ".*编辑器没有响应.*"
+- takeScreenshot: ios-bucket-attachment-restarted

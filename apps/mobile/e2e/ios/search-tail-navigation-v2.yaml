@@ -1,0 +1,22 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PASS.
+# Prerequisite/boundary: Start page2; all five tails, open/Back preserve page2, new query resets page1.
+appId: com.tensorix.metahub
+---
+- assertVisible: "NativePage20261026 中英搜索 061.*"
+- assertVisible: "NativePage20261026 中英搜索 062.*"
+- assertVisible: "NativePage20261026 中英搜索 063.*"
+- assertVisible: "NativePage20261026 中英搜索 064.*"
+- assertVisible: "NativePage20261026 中英搜索 065.*"
+- tapOn: "NativePage20261026 中英搜索 065.*"
+- assertVisible: "文档操作"
+- tapOn: "返回"
+- assertVisible: "第 2 页"
+- tapOn:
+    text: "NativePage20261026"
+    point: "99%,50%"
+- eraseText: 100
+- inputText: "NativePage20261026 065"
+- assertVisible: "第 1 页"
+- assertVisible: "NativePage20261026 中英搜索 065.*"
+- takeScreenshot: search-query-reset

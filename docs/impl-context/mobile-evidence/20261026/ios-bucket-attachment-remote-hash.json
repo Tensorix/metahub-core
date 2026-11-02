@@ -1,0 +1,20 @@
+{
+  "artifactClass": "synthetic-native-bucket-attachment-verification",
+  "nativeSourceSHA": "6d5c199da28e9b69f64cd2146a27b03fcb501c71",
+  "verifiedAt": "2026-10-26T09:31:15.677Z",
+  "platform": "ios",
+  "documentId": "doc_ios-native-bucket-document202610-om42ym",
+  "referenceCount": 1,
+  "results": [
+    {
+      "referenceHash": "12e212c5a097e3d6281e144097a4b76c",
+      "remotePresent": true,
+      "encryptedBytes": 95,
+      "plaintextBytes": 67,
+      "plaintextSha256": "12e212c5a097e3d6281e144097a4b76c358a360cd453dee335e2b01a12d923e2",
+      "referenceMatchesHash": true,
+      "matchesPreparedFixture": true
+    }
+  ],
+  "scope": "Read-only independent desktop reference and encrypted remote blob verification; does not verify native downloaded cache bytes or clean share lifecycle"
+}

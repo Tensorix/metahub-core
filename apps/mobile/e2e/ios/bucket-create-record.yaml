@@ -1,0 +1,11 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PARTIAL.
+# Prerequisite/boundary: UI creates empty record and enters form; title editing/save verification not yet completed.
+appId: com.tensorix.metahub
+---
+- tapOn:
+    id: "tab-home"
+- openLink: "metahub:///db/db_ios-native-bucket20261026-2sf4kg"
+- assertVisible: "新建记录"
+- tapOn: "新建记录"
+- takeScreenshot: ios-bucket-new-record

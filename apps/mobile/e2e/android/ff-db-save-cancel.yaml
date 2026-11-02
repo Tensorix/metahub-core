@@ -1,0 +1,30 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in database management. Reaches dirty Close confirmation; old draft omitted confirmation handling, so its following original-name assertion failed. Save sections did not run.
+# Evidence status: PARTIAL; actual command counts {"COMPLETED":6,"FAILED":1}.
+# Tested source: ff9374a3885cfbfd1341fcfcd1674e7a0ff6c444; evidence: /Users/noah/.maestro/tests/2026-10-26_165620/ff-db-save-cancel/commands.json
+appId: com.tensorix.metahub
+---
+- longPressOn: Android Native Bucket20261026
+- tapOn: Select all
+- inputText: AndroidDbCancelFF9374a
+- tapOn: 关闭
+- assertVisible: Android Native Bucket20261026
+- tapOn: 管理
+- assertVisible: Android Native Bucket20261026
+- longPressOn: Android Native Bucket20261026
+- tapOn: Select all
+- inputText: AndroidDbSavedFF9374a
+- tapOn:
+    text: 保存
+    index: 0
+- tapOn: 关闭
+- assertVisible: AndroidDbSavedFF9374a
+- tapOn: 管理
+- longPressOn: AndroidDbSavedFF9374a
+- inputText: Android Native Bucket20261026
+- tapOn:
+    text: 保存
+    index: 0
+- tapOn: 关闭
+- assertVisible: Android Native Bucket20261026
+- takeScreenshot: ff-database-save-close-discard

@@ -1,0 +1,44 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PASS.
+# Prerequisite/boundary: Start in original-name iOS database management; discard, save/reopen and restore exact original name.
+appId: com.tensorix.metahub
+---
+- tapOn:
+    text: "iOS Native Bucket20261026"
+    point: "99%,50%"
+- eraseText: 100
+- inputText: "iOSDbDiscard6d5c199"
+- tapOn: "关闭"
+- assertVisible: "放弃未保存的修改？"
+- tapOn: "继续编辑"
+- assertVisible: "iOSDbDiscard6d5c199"
+- tapOn: "关闭"
+- tapOn: "放弃修改"
+- assertVisible: "新建记录"
+- tapOn: "管理"
+- assertVisible: "iOS Native Bucket20261026"
+- tapOn:
+    text: "iOS Native Bucket20261026"
+    point: "99%,50%"
+- eraseText: 100
+- inputText: "iOSDbSaved6d5c199"
+- tapOn:
+    text: "保存"
+    index: 0
+- tapOn: "关闭"
+- assertNotVisible: "放弃未保存的修改？"
+- assertVisible: "新建记录"
+- tapOn: "管理"
+- assertVisible: "iOSDbSaved6d5c199"
+- takeScreenshot: db-saved-reopened
+- tapOn:
+    text: "iOSDbSaved6d5c199"
+    point: "99%,50%"
+- eraseText: 100
+- inputText: "iOS Native Bucket20261026"
+- tapOn:
+    text: "保存"
+    index: 0
+- tapOn: "关闭"
+- assertNotVisible: "放弃未保存的修改？"
+- assertVisible: "新建记录"

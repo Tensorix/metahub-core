@@ -1,0 +1,11 @@
+# Stateful draft; NOT RUN. Requires new share lifecycle Release; confirm file-block coordinate from fresh screenshot.
+# Prerequisite: Android bucket document open, rich-text synthetic file block at passed FILE_BUTTON_POINT; no prior editor warning.
+# Evidence status: NOT RUN. Opening share alone is not full lifecycle acceptance. Keep all output private.
+# Tested source: none; record new source and artifact hash before run.
+appId: com.tensorix.metahub
+---
+- assertNotVisible: 编辑器没有响应.*
+- tapOn:
+    point: ${FILE_BUTTON_POINT}
+- assertVisible: Sharing 1 file
+- takeScreenshot: retest-share-open

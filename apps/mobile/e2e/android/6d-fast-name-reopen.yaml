@@ -1,0 +1,11 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: after authorized Wait attempt failed, app-only restart, full selection, timed rapid ADB input, exact hierarchy checks before/after Save and native Close.
+# Evidence status: PASS for exact saved name after Close/reopen; original slow-injection ANR remains unresolved.
+# Tested source: 6d5c199da28e9b69f64cd2146a27b03fcb501c71; evidence: /Users/noah/.maestro/tests/2026-10-26_174854/6d-fast-reopen/commands.json
+appId: com.tensorix.metahub
+---
+- assertVisible: Android Native Bucket20261026
+- tapOn: 管理
+- assertVisible: Android Native Bucket20261026
+- assertNotVisible: Android Native Bucket2026026
+- takeScreenshot: exact-restored-name-after-reopen

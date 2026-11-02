@@ -1,0 +1,16 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in create-document sheet; disposable server must already be paused by operator, then resumed separately.
+# Evidence status: PASS. Cached server record/document cold-open while server paused; no offline write or process startup timing.
+# Tested source: 7d07c80; run: /Users/noah/.maestro/tests/2026-10-26_154445/offline-restart/commands.json
+appId: com.tensorix.metahub
+---
+- back
+- stopApp
+- launchApp:
+    clearState: false
+- assertVisible: Metahub
+- tapOn: Android UI verified 20261026
+- assertVisible: Done
+- tapOn: "打开 Native sample document 样板"
+- assertVisible: "Native acceptance.*"
+- takeScreenshot: android-offline-cold-open-document

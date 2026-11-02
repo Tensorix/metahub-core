@@ -1,0 +1,28 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PASS.
+# Prerequisite/boundary: Start in iOS document after desktop Notes publish and 65-document seed; manual sync, exact Notes and search.
+appId: com.tensorix.metahub
+---
+- tapOn: "返回"
+- tapOn:
+    id: "tab-settings"
+- scrollUntilVisible:
+    element: "立即同步数据"
+    direction: DOWN
+- tapOn: "立即同步数据"
+- tapOn:
+    id: "tab-home"
+- openLink: "metahub:///record/rec_ios-bucket-todo20261026-1qzv88"
+- extendedWaitUntil:
+    visible: "iOSDesktopReturn6d5c199"
+    timeout: 30000
+- takeScreenshot: ios-bucket-desktop-return
+- tapOn: "关闭"
+- tapOn:
+    id: "tab-search"
+- tapOn: "搜索文档与记录"
+- inputText: "NativePage20261026"
+- extendedWaitUntil:
+    visible: ".*NativePage20261026.*001.*"
+    timeout: 30000
+- takeScreenshot: ios-global-search-first-page
