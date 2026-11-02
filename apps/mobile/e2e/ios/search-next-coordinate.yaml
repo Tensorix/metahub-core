@@ -1,0 +1,11 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PASS.
+# Prerequisite/boundary: Start at page1 footer using freshly observed native bounds; coordinate tap reaches page2. Selector/interaction failure cause remains unestablished.
+appId: com.tensorix.metahub
+---
+- tapOn:
+    point: "87%,85%"
+- extendedWaitUntil:
+    visible: "第 2 页"
+    timeout: 10000
+- takeScreenshot: search-second-page

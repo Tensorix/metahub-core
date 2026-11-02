@@ -1,0 +1,9 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PARTIAL.
+# Prerequisite/boundary: Opens native photo picker asynchronously; immediate screenshot preceded presentation. Later actual picker screenshot required.
+appId: com.tensorix.metahub
+---
+- openLink: "metahub:///doc/doc_ios-native-bucket-document202610-om42ym"
+- assertVisible: ".*iOSBucketDocumentSaved20261026.*"
+- tapOn: "照片"
+- takeScreenshot: bucket-system-photo-picker

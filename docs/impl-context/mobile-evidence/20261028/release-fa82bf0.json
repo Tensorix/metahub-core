@@ -1,0 +1,42 @@
+{
+  "sourceCommit": "fa82bf05f34f0f0a9351d934190fdee3084072b9",
+  "configuration": "Release",
+  "buildMode": "application",
+  "diagnosticFlags": {
+    "EXPO_PUBLIC_MH_SELFTEST": "0",
+    "EXPO_PUBLIC_MH_DIAGNOSTICS_RELEASE": "0",
+    "EXPO_PUBLIC_MH_TRANSPORT": "0",
+    "EXPO_PUBLIC_MH_NETWORK_STRESS": "0",
+    "EXPO_PUBLIC_MH_PERF": "0"
+  },
+  "sourceInputCount": 758,
+  "sourceSha256": "10e194cc1bc24afc4e7716ed2ba050bd6b9eac4d933fce8ee5fe781b5a5fa1a4",
+  "beforeAfterMatch": true,
+  "tools": {
+    "bun": "1.3.14",
+    "xcode": "Xcode 27.0\nBuild version 27A266a",
+    "iosSimulatorSdk": "27.0",
+    "java": "openjdk 23.0.2 2025-01-21\nOpenJDK Runtime Environment (build 23.0.2+7-58)\nOpenJDK 64-Bit Server VM (build 23.0.2+7-58, mixed mode, sharing)",
+    "gradle": "------------------------------------------------------------\nGradle 9.3.1\n------------------------------------------------------------\n\nBuild time:    2026-01-29 14:15:01 UTC\nRevision:      44f4e8d3122ee6e7cbf5a248d7e20b4ca666bda3\n\nKotlin:        2.2.21\nGroovy:        4.0.29\nAnt:           Apache Ant(TM) version 1.10.15 compiled on August 25 2024\nLauncher JVM:  23.0.2 (Oracle Corporation 23.0.2+7-58)\nDaemon JVM:    /Users/noah/Library/Java/JavaVirtualMachines/openjdk-23.0.2/Contents/Home (no Daemon JVM specified, using current Java home)\nOS:            Mac OS X 27.0.1 aarch64",
+    "generatedNode": "26.9.0 (existing generated ios/.xcode.env.local; version already observed)"
+  },
+  "artifacts": {
+    "metahub-simulator-release.zip": {
+      "bytes": 20014026,
+      "sha256": "5a78e04f30110cc9e5538c6bb884531e1cb875d4d8cd51fc36a2afaa3d0e2fe0"
+    },
+    "Metahub.app/main.jsbundle": {
+      "bytes": 7260035,
+      "sha256": "4e1fd154e0f696f137a178491808c0c1336f00ab4082e4c73b70c633706a7c6d"
+    },
+    "metahub-android-release.apk": {
+      "bytes": 178592366,
+      "sha256": "03bf14f444cf18078eb83e5cd67f4d9dc249c59a7fa6a62bf2bc8b4162dafb60"
+    },
+    "android-index.android.bundle": {
+      "bytes": 6337316,
+      "sha256": "9ab9083887de25611616e57dbfef39704af155ce90ab93e80a9c12858e797f83"
+    }
+  },
+  "scope": "ordinary simulator/emulator Release; no Metro; no physical-device or full-workflow acceptance implied"
+}

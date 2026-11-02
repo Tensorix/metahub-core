@@ -1,0 +1,22 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Operator must record and disable emulator radios first, then restore afterward. Known cursor/erase suffix issue; do not interpret exact-input assertion as a native save failure.
+# Evidence status: FAILED. Final exact-marker assertion failed due residual suffix. Cached cold-open/navigation completed; later observed-byte convergence is separate partial evidence.
+# Tested source: 6db2a4a; run: /Users/noah/.maestro/tests/2026-10-26_160653/bucket-offline/commands.json
+appId: com.tensorix.metahub
+---
+- stopApp
+- launchApp:
+    clearState: false
+- tapOn: Android Bucket Todo20261026
+- assertVisible: DesktopAndroidReturn20261026
+- tapOn: DesktopAndroidReturn20261026
+- eraseText: 80
+- inputText: AndroidBucketOffline20261026
+- scrollUntilVisible:
+    element: 打开 Android Native Bucket Document20261026
+    direction: DOWN
+- tapOn: 打开 Android Native Bucket Document20261026
+- assertVisible: "Android Native Bucket.*"
+- tapOn: 返回
+- assertVisible: AndroidBucketOffline20261026
+- takeScreenshot: android-bucket-offline-edit

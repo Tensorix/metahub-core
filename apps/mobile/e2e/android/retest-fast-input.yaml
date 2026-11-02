@@ -1,0 +1,19 @@
+# Stateful fragment; NOT RUN. Requires new parent-approved Release with native echo fix.
+# Prerequisite: bucket Todo record open; synthetic Notes currently AndiducetOfflin20026; confirm native Select all menu label first.
+# Evidence status: NOT RUN. Intended exact fast-input/unblurred close/reopen assertion; no pass inferred from older damaged value.
+# Tested source: none; planned source must be recorded after parent build/install notification.
+appId: com.tensorix.metahub
+---
+- longPressOn: AndiducetOfflin20026
+- tapOn: Select all
+- inputText: AndroidBucketOffline20261026
+- tapOn: 关闭
+- tapOn: Android Bucket Todo20261026
+- assertVisible: AndroidBucketOffline20261026
+- tapOn: 关闭
+- stopApp
+- launchApp:
+    clearState: false
+- tapOn: Android Bucket Todo20261026
+- assertVisible: AndroidBucketOffline20261026
+- takeScreenshot: retest-exact-input-after-restart

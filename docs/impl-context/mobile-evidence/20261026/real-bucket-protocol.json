@@ -1,0 +1,34 @@
+{
+  "sourceCommit": "de84369",
+  "runtime": "Bun with shared fetch/SigV4 adapter; not Hermes or native UI",
+  "startedAt": "2026-10-26T07:01:52.893Z",
+  "isolatedChildPrefix": true,
+  "originalEnvelopeUnchanged": true,
+  "corsUnchanged": true,
+  "steps": [
+    "cross-adapter wrapped key provisioning",
+    "wrong password rejected",
+    "Bun upload -> fetch encrypted gzip download",
+    "fetch upload -> Bun download",
+    "offline fork and replay converge",
+    "encrypted attachment cross-adapter SHA256"
+  ],
+  "cleanup": true,
+  "conditionalCreate": {
+    "conflict": true,
+    "retainedOriginal": true
+  },
+  "attachment": {
+    "bytes": 36,
+    "sha256": "849da4c7e23925cb7ad145385c7f277d9a3324d07b08cb245eaba6d0a87192a4"
+  },
+  "result": "PASS",
+  "deletedObjectCount": 9,
+  "completedAt": "2026-10-26T07:02:20.433Z",
+  "sourceNote": "Protocol run used the exact storage adapter changes subsequently committed as de84369; unrelated diagnostic timing changes were not exercised.",
+  "limitations": [
+    "Bun/shared fetch runtime verification, not native UI acceptance",
+    "Tencent COS atomic overwrite (If-Match) is unsupported and explicitly rejected",
+    "COS conditional creation requires never-enabled versioning and GetBucketVersioning permission"
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "artifactClass": "normal-release-native-ui-regression",
+  "sourceSHA": "6d5c199da28e9b69f64cd2146a27b03fcb501c71",
+  "artifactSha256": "76980d79e095e09489f4e5e0413133dd9a42f27c8efaa06255688feb67cd68dc",
+  "platform": "android",
+  "device": "Pixel_9_Pro emulator-5554 Android 16 API 36",
+  "discardRegression": "PASS",
+  "databaseSaveAndUnsavedDiscard": "PASS substeps",
+  "databaseRestoreAndExit": "FAILED",
+  "viewSaveCancel": "NOT RUN",
+  "expectedRestoredName": "Android Native Bucket20261026",
+  "observedDesktopNameReportedByParent": "Android Native Bucket2026026",
+  "anr": {
+    "reason": "Input dispatching timed out",
+    "pidAtObservation": 32407,
+    "localEventTimes": [
+      "2026-10-26 17:29:05.018",
+      "2026-10-26 17:29:59.815"
+    ],
+    "systemDialog": "Metahub isn't responding; Close app / Wait",
+    "timing": [
+      {
+        "step": 16,
+        "command": "tapOnElement",
+        "status": "COMPLETED",
+        "startedAt": "2026-10-26T09:27:57.437Z",
+        "durationMs": 13568
+      },
+      {
+        "step": 17,
+        "command": "inputTextCommand",
+        "status": "COMPLETED",
+        "startedAt": "2026-10-26T09:28:11.006Z",
+        "durationMs": 121064
+      },
+      {
+        "step": 18,
+        "command": "tapOnElement",
+        "status": "COMPLETED",
+        "startedAt": "2026-10-26T09:30:12.073Z",
+        "durationMs": 9955
+      },
+      {
+        "step": 19,
+        "command": "tapOnElement",
+        "status": "FAILED",
+        "startedAt": "2026-10-26T09:30:22.030Z",
+        "durationMs": 17181
+      }
+    ],
+    "classification": "Native ANR observed during restoration input; root cause under implementation review, no attribution asserted"
+  },
+  "privateEvidencePaths": [
+    "/tmp/metahub-mobile-bucket-ui/6d-database-lastanr-private.txt",
+    "/tmp/metahub-mobile-bucket-ui/6d-events-private.log",
+    "/tmp/metahub-mobile-bucket-ui/6d-database-anr.png"
+  ],
+  "deviceOwnership": "Returned to review owner for read-only ANR collection; no Wait/Close selected by acceptance agent",
+  "historicalRawEvidenceAvailability": {
+    "checkedAt": "2026-10-28",
+    "available": false,
+    "note": "Historical 20261026 temporary raw logs, hierarchies and screenshots are no longer available. Private paths and command paths are historical locators, not current accessible evidence. Only sanitized repository summaries and reviewed synthetic screenshots remain; failures and acceptance limits are preserved."
+  }
+}

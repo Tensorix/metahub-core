@@ -1,0 +1,14 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts after attachment import; selected bucket workspace retained.
+# Evidence status: PASS. File-block persistence after restart only; remote byte hash/download and clean share lifecycle remain unverified.
+# Tested source: 6db2a4a; run: /Users/noah/.maestro/tests/2026-10-26_161814/bucket-attachment-restart/commands.json
+appId: com.tensorix.metahub
+---
+- stopApp
+- launchApp:
+    clearState: false
+- tapOn:
+    text: Android Native Bucket Document20261026
+    index: 0
+- assertVisible: "下载 / 打开 metahub-native-acceptance-attachment.txt"
+- takeScreenshot: android-bucket-attachment-after-restart

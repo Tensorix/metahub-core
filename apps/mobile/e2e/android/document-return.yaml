@@ -1,0 +1,11 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in sample server document; appends unique marker at tapped cursor, not necessarily at document end.
+# Evidence status: PARTIAL. Runner completed; unique body marker saved, but newline/end-of-document append was not established.
+# Tested source: ea130b8; run: /Users/noah/.maestro/tests/2026-10-26_152748/document-return/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn:
+    text: "Native acceptance.*"
+- inputText: "\nAndroidNativeVerified20261026"
+- back
+- takeScreenshot: android-document-back

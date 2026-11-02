@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "sourceCommit": "6d5c199",
+  "platform": "Android emulator, API36, arm64",
+  "originalFailure": {
+    "status": "UNRESOLVED",
+    "pid": 32407,
+    "inputStartedAt": "2026-10-26T09:28:11.006Z",
+    "inputFinishedAt": "2026-10-26T09:30:12.071Z",
+    "inputDurationMs": 121064,
+    "firstInputDeadlineLocal": "2026-10-26T17:28:51.747+08:00",
+    "amAnrEventsLocal": [
+      "2026-10-26T17:29:05.018+08:00",
+      "2026-10-26T17:29:59.815+08:00"
+    ],
+    "closeLookupFailedAfterAnr": true,
+    "expectedName": "Android Native Bucket20261026",
+    "reportedPersistedName": "Android Native Bucket2026026",
+    "missingCharacterEvidence": {
+      "character": "1",
+      "keycode": 8,
+      "injectionStartedLocal": "17:28:30.114",
+      "staleEventDroppedLocal": "17:28:40.372",
+      "injectionFailureLocal": "17:28:41.043",
+      "nextCharacterStartedLocal": "17:28:41.128",
+      "interpretation": "Native injection failure directly coincides with the missing character; this is not evidence of JS echo overwrite."
+    }
+  },
+  "eventTimeEvidence": {
+    "firstStackCapture": "timed out",
+    "successfulStackCaptureLocal": "2026-10-26T17:29:59.081966+08:00",
+    "main": "Blocked in MessageQueue.nextLegacy on MessageQueue monitor; no stable lock-owner cycle demonstrated",
+    "js": "Native recursive_mutex wait inside libhermesvm under expo::MapFrontendConverter::convert and synchronous argument conversion; exact Expo method unknown",
+    "cpuPressureSomeAvg10Percent": [
+      91.14,
+      77.76
+    ],
+    "systemServerMaxObservedMainDispatchMs": 28278,
+    "systemWatchdogPreWatchdog": true,
+    "surfaceFlingerDriverStallLocal": "17:28:48.521",
+    "interpretation": "Widespread guest input/render/scheduling stalls are observed. Their underlying external versus application-triggered cause is not established."
+  },
+  "controlledRetest": {
+    "status": "PASS",
+    "requiresColdRelaunch": true,
+    "oldWaitDidNotDismissDialog": true,
+    "preservedApplicationData": true,
+    "pid": 3540,
+    "nativeInputStartedAt": "2026-10-26T09:46:27.807Z",
+    "nativeInputDurationMs": 206,
+    "exactHierarchyTextBeforeSave": true,
+    "exactHierarchyTextAfterSave": true,
+    "closeAndReopenExactName": true,
+    "anrEventCountBefore": 2,
+    "anrEventCountAfter": 2,
+    "newAnrAfterRelaunch": 0,
+    "retainedJank": {
+      "localTime": "17:49:18.642",
+      "skippedFrames": 234,
+      "subsequentDaveyDurationMs": 4262
+    },
+    "interpretation": "Confirms native fast text replacement and save/close/reopen on a new process; does not resolve the prior ANR or establish absence of jank."
+  },
+  "loadSnapshots": {
+    "beforeRetestLocal": "17:40:36",
+    "beforeGuestIdlePercentApprox": 97,
+    "beforeHostLoadAverage": [
+      5.86,
+      10.8,
+      17.3
+    ],
+    "afterRetestLocal": "17:51:17",
+    "afterGuestIdlePercentApprox": 97.5,
+    "afterHostIdlePercent": 75.34,
+    "afterHostLoadAverage": [
+      4.7,
+      7.37,
+      12.03
+    ],
+    "limitation": "Snapshots are before/after the retest, not incident-time host measurements and not simultaneous with the retained 4.262s frame stall."
+  },
+  "sourceReview": {
+    "trackedChanges": [],
+    "echoLedgerFloodOrOverwriteProven": false,
+    "globalHostLoopProven": false,
+    "sameCauseAsPriorDiagnosticsProven": false,
+    "testsRunForThisReadOnlyInvestigation": false
+  },
+  "deviceStatus": {
+    "readOnlyCaptureComplete": true,
+    "adbReturnedTo": "release_evidence",
+    "diagnosticBuildMayStart": true
+  },
+  "privateEvidenceFiles": [
+    "dropbox-anr.txt",
+    "input-and-system-evidence.json",
+    "host-cpu-after-retest.txt",
+    "guest-top-after-retest.txt",
+    "new-pid-logcat-after-retest.txt",
+    "anr-events-after-retest.txt"
+  ],
+  "relatedSafeRetestArtifact": "android-6d5c199-fast-input-control.json",
+  "historicalRawEvidenceAvailability": {
+    "checkedAt": "2026-10-28",
+    "available": false,
+    "note": "Historical 20261026 temporary raw logs, hierarchies and screenshots are no longer available. Private paths and command paths are historical locators, not current accessible evidence. Only sanitized repository summaries and reviewed synthetic screenshots remain; failures and acceptance limits are preserved."
+  }
+}

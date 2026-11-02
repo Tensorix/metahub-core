@@ -1,0 +1,12 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts with sample server record action menu open. The swipe can open a card; verify destination through server API.
+# Evidence status: PARTIAL. Move action and server Done verification passed; swipe opened card and did not independently prove destination column UI.
+# Tested source: ea130b8; run: /Users/noah/.maestro/tests/2026-10-26_153437/board-move/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn: 移动到 Done
+- swipe:
+    start: "90%,50%"
+    end: "15%,50%"
+- assertVisible: Android UI verified 20261026
+- takeScreenshot: android-board-done

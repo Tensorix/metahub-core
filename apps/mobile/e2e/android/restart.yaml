@@ -1,0 +1,11 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Runs against selected persisted workspace; no data reset.
+# Evidence status: PASS. Home restoration only; no cold-launch timing or offline guarantee.
+# Tested source: ea130b8; run: /Users/noah/.maestro/tests/2026-10-26_153832/restart/commands.json
+appId: com.tensorix.metahub
+---
+- stopApp
+- launchApp:
+    clearState: false
+- assertVisible: Metahub
+- takeScreenshot: android-restart-home

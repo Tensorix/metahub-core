@@ -1,0 +1,88 @@
+{
+  "artifactClass": "normal-release-native-ui-retest",
+  "sourceSHA": "ff9374a3885cfbfd1341fcfcd1674e7a0ff6c444",
+  "artifactSha256": "d06a92ce5729355c5739a7fd91bf290d76e51e36f85d08a693cf8f87d3220375",
+  "device": {
+    "model": "Pixel_9_Pro",
+    "identifier": "emulator-5554",
+    "os": "Android 16",
+    "api": 36
+  },
+  "input": {
+    "inputMethod": "adb shell input text, full prior value selected",
+    "marker": "AndroidBucketOffline20261026",
+    "startedAt": "2026-10-26T08:45:10.802Z",
+    "durationMs": 220,
+    "exitMethod": "native header touch immediately after input command; no explicit blur"
+  },
+  "shareHold": {
+    "openedObservedAt": "2026-10-26T08:50:20.015Z",
+    "source": "ff9374a",
+    "minimumHoldMs": 36000,
+    "sheetConfirmedAt": "2026-10-26T08:50:47.318Z",
+    "sheetHeldUntil": "2026-10-26T08:51:50.544Z",
+    "confirmedHoldMs": 63226
+  },
+  "cases": [
+    {
+      "name": "ff-input-verify",
+      "status": "PASS",
+      "scope": "Starts at bucket Home after full old Notes selection, rapid native exact input and immediate header Close. Verifies exact reopen/restart only.",
+      "commandsPath": "/Users/noah/.maestro/tests/2026-10-26_164512/ff-input-verify/commands.json"
+    },
+    {
+      "name": "ff-doc-form-confirm",
+      "status": "PASS",
+      "scope": "Starts in new-document discard confirmation after canceled synthetic title. Covers Continue editing, discard and subsequent Save.",
+      "commandsPath": "/Users/noah/.maestro/tests/2026-10-26_164806/ff-doc-form-confirm/commands.json"
+    },
+    {
+      "name": "ff-share-document",
+      "status": "PASS",
+      "scope": "Starts in newly saved AndroidSavedFF9374a document. Opens attachment doc and checks clean starting state only.",
+      "commandsPath": "/Users/noah/.maestro/tests/2026-10-26_164909/ff-share-document/commands.json"
+    },
+    {
+      "name": "ff-share-edit",
+      "status": "PASS",
+      "scope": "Starts in attachment document after actual native share held 63226ms and dismissed by one Back; verifies edit/save/reopen without editor warning.",
+      "commandsPath": "/Users/noah/.maestro/tests/2026-10-26_165229/ff-share-edit/commands.json"
+    },
+    {
+      "name": "ff-board-menu",
+      "status": "PASS",
+      "scope": "Starts on bucket board with target record in partially visible Done column. Tests sibling menu Move to Todo and management entry only.",
+      "commandsPath": "/Users/noah/.maestro/tests/2026-10-26_165429/ff-board-menu/commands.json"
+    },
+    {
+      "name": "ff-db-save-cancel",
+      "status": "PARTIAL",
+      "scope": "Starts in database management. Reaches dirty Close confirmation; old draft omitted confirmation handling, so its following original-name assertion failed. Save sections did not run.",
+      "commandsPath": "/Users/noah/.maestro/tests/2026-10-26_165620/ff-db-save-cancel/commands.json"
+    },
+    {
+      "name": "ff-db-save-cancel-confirm",
+      "status": "FAILED",
+      "scope": "Starts in dirty database Close confirmation after ff-db-save-cancel. Continue editing preserves draft; second Close and Discard causes real native ScreenStackFragment crash. Save and view steps did not run.",
+      "commandsPath": "/Users/noah/.maestro/tests/2026-10-26_165752/ff-db-save-cancel-confirm/commands.json"
+    }
+  ],
+  "nativeCrash": {
+    "atLocal": "2026-10-26 16:58:24.701",
+    "exception": "java.lang.IllegalStateException: ScreenStackFragment added into a non-stack container",
+    "topFrames": [
+      "ScreenStackFragment.canNavigateBack(ScreenStackFragment.kt:503)",
+      "ScreenStackHeaderConfig.onUpdate(ScreenStackHeaderConfig.kt:282)",
+      "ScreenStackHeaderConfigViewManager.onAfterUpdateTransaction",
+      "SurfaceMountingManager.updateProps"
+    ],
+    "trigger": "database dirty Close → Continue editing → dirty Close → Discard changes",
+    "processGone": true
+  },
+  "boundaries": "Database Save and view Save/Cancel not reached. Native input/doc/share/board results do not establish full four-cell acceptance; new desktop verification delegated to parent.",
+  "historicalRawEvidenceAvailability": {
+    "checkedAt": "2026-10-28",
+    "available": false,
+    "note": "Historical 20261026 temporary raw logs, hierarchies and screenshots are no longer available. Private paths and command paths are historical locators, not current accessible evidence. Only sanitized repository summaries and reviewed synthetic screenshots remain; failures and acceptance limits are preserved."
+  }
+}

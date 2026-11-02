@@ -1,0 +1,20 @@
+{
+  "artifactClass": "synthetic-native-bucket-attachment-verification",
+  "nativeSourceSHA": "6db2a4a2f84c76a5bcb3f6709a3d8239d72d5c56",
+  "verifiedAt": "2026-10-26T08:36:22.087Z",
+  "platform": "android",
+  "documentId": "doc_android-native-bucket-document20-9gnej3",
+  "referenceCount": 1,
+  "results": [
+    {
+      "referenceHash": "f4ee41d8b4537bdc4f011d889dfde2d9",
+      "remotePresent": true,
+      "encryptedBytes": 91,
+      "plaintextBytes": 63,
+      "plaintextSha256": "f4ee41d8b4537bdc4f011d889dfde2d949fde90d5ab1eb0723ab3a4cac3685a3",
+      "referenceMatchesHash": true,
+      "matchesPreparedFixture": true
+    }
+  ],
+  "scope": "Read-only independent desktop reference and encrypted remote blob verification; does not verify native downloaded cache bytes or clean share lifecycle"
+}

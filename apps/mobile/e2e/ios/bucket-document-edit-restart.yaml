@@ -1,0 +1,18 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: ff9374a; status: PASS.
+# Prerequisite/boundary: Start in linked synthetic document; inserts marker, returns to exact Notes, restarts and reopens.
+appId: com.tensorix.metahub
+---
+- tapOn:
+    text: "iOS bucket baseline 20261026"
+    point: "99%,50%"
+- inputText: "iOSBucketDocumentSaved20261026"
+- tapOn: "返回"
+- assertVisible: "iOSBucketSaved20261026"
+- tapOn: "关闭"
+- stopApp
+- launchApp
+- openLink: "metahub:///doc/doc_ios-native-bucket-document202610-om42ym"
+- assertVisible: ".*iOSBucketDocumentSaved20261026.*"
+- assertNotVisible: ".*编辑器没有响应.*"
+- takeScreenshot: bucket-document-restarted

@@ -1,0 +1,19 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in new-document discard confirmation after canceled synthetic title. Covers Continue editing, discard and subsequent Save.
+# Evidence status: PASS; actual command counts {"COMPLETED":15}.
+# Tested source: ff9374a3885cfbfd1341fcfcd1674e7a0ff6c444; evidence: /Users/noah/.maestro/tests/2026-10-26_164806/ff-doc-form-confirm/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn: 继续编辑
+- assertVisible: AndroidCancelFF9374a
+- tapOn: 取消
+- tapOn: 放弃
+- assertVisible: Metahub
+- assertNotVisible: AndroidCancelFF9374a
+- tapOn: 新建文档
+- tapOn: 未命名
+- inputText: AndroidSavedFF9374a
+- tapOn: 保存
+- assertVisible: AndroidSavedFF9374a
+- assertVisible: 附件
+- takeScreenshot: ff-document-save-cancel

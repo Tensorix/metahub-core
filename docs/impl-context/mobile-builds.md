@@ -1,6 +1,6 @@
 # Mobile checks and Release build reproduction
 
-The dedicated `Mobile` workflow leaves the existing core CI intact. It installs the root and mobile projects separately with their committed Bun locks, then builds the packaged editor, typechecks, lints and runs mobile unit tests plus scope tests. Root `bun test` remains the existing core CI gate; its known unused-i18n-string failure is not suppressed by this workflow.
+The dedicated `Mobile` workflow leaves the existing core CI intact. It installs the root and mobile projects separately with their committed Bun locks, then builds the packaged editor, typechecks, lints and runs mobile unit tests plus scope tests. Root `bun test` remains the existing core CI gate. The 2026-10-28 rerun passed 1,978 tests with 3 skips and no failures (10,489 assertions across 206 files; logs: apps/mobile/dist/acceptance/20261028/final-*); the earlier unused-i18n-string failure is no longer an outstanding failure in that baseline.
 
 ## Scheduling
 

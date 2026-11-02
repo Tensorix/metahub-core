@@ -1,0 +1,17 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in attachment document after actual native share held 63226ms and dismissed by one Back; verifies edit/save/reopen without editor warning.
+# Evidence status: PASS; actual command counts {"COMPLETED":11}.
+# Tested source: ff9374a3885cfbfd1341fcfcd1674e7a0ff6c444; evidence: /Users/noah/.maestro/tests/2026-10-26_165229/ff-share-edit/commands.json
+appId: com.tensorix.metahub
+---
+- assertVisible: 附件
+- assertNotVisible: 编辑器没有响应.*
+- tapOn: This isolated fixture is.*
+- inputText: AndroidShareAfterHoldFF9374a
+- tapOn: 返回
+- tapOn:
+    text: Android Native Bucket Document20261026
+    index: 0
+- assertVisible: .*AndroidShareAfterHoldFF9374a.*
+- assertNotVisible: 编辑器没有响应.*
+- takeScreenshot: ff-share-dismiss-edited-reopened

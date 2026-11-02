@@ -1,0 +1,10 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PASS.
+# Prerequisite/boundary: Start at isolated bucket Home; opens database management.
+appId: com.tensorix.metahub
+---
+- assertVisible: ".*iOS Native Bucket20261026.*"
+- tapOn: ".*iOS Native Bucket20261026.*"
+- tapOn: "管理"
+- assertVisible: "管理数据库"
+- takeScreenshot: guard-db-form

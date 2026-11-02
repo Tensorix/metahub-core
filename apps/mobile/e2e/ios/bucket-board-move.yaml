@@ -1,0 +1,15 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: PASS.
+# Prerequisite/boundary: Start at Todo column containing synthetic iOS record. Desktop independently confirms Done.
+appId: com.tensorix.metahub
+---
+- tapOn:
+    text: "记录操作"
+    index: 0
+- tapOn: "移动到 Done"
+- swipe:
+    start: "85%,45%"
+    end: "20%,45%"
+    duration: 2000
+- assertVisible: ".*iOS Bucket Todo20261026.*"
+- takeScreenshot: ios-bucket-board-moved

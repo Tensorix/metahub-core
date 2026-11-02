@@ -1,0 +1,13 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in bucket database; desktop has published DesktopAndroidReturn20261026.
+# Evidence status: PASS. Desktop-published exact Notes marker appears in native UI after sync.
+# Tested source: 6db2a4a; run: /Users/noah/.maestro/tests/2026-10-26_160246/bucket-desktop-return/commands.json
+appId: com.tensorix.metahub
+---
+- back
+- tapOn: 设置
+- tapOn: 立即同步数据
+- tapOn: 首页
+- tapOn: Android Bucket Todo20261026
+- assertVisible: DesktopAndroidReturn20261026
+- takeScreenshot: android-bucket-desktop-return

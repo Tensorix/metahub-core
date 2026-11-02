@@ -1,0 +1,10 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: ff9374a; status: PASS.
+# Prerequisite/boundary: Start at isolated bucket Home; opens existing synthetic record.
+appId: com.tensorix.metahub
+---
+- tapOn: ".*iOS Native Bucket20261026.*"
+- assertVisible: ".*iOS Bucket Todo20261026.*"
+- tapOn: ".*iOS Bucket Todo20261026.*"
+- assertVisible: "Notes"
+- takeScreenshot: bucket-record-open

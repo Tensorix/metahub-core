@@ -1,0 +1,10 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: FAILED.
+# Prerequisite/boundary: Retry text-selector Next tap remained page1.
+appId: com.tensorix.metahub
+---
+- tapOn: "下一页"
+- extendedWaitUntil:
+    visible: "第 2 页"
+    timeout: 10000
+- takeScreenshot: search-second-page

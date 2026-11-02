@@ -1,0 +1,15 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts in bucket Todo record with original Notes Android initial notes.
+# Evidence status: PASS. Exact native Notes marker, unblurred linked-document open, independently verified on desktop.
+# Tested source: 6db2a4a; run: /Users/noah/.maestro/tests/2026-10-26_160031/bucket-record-document/commands.json
+appId: com.tensorix.metahub
+---
+- tapOn: Android initial notes
+- eraseText: 80
+- inputText: AndroidBucketNotes20261026
+- scrollUntilVisible:
+    element: 打开 Android Native Bucket Document20261026
+    direction: DOWN
+- tapOn: 打开 Android Native Bucket Document20261026
+- assertVisible: 附件
+- takeScreenshot: android-bucket-linked-document

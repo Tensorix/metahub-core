@@ -1,0 +1,16 @@
+# Stateful native acceptance fragment. Not an independent suite.
+# Source: 6d5c199; status: FAILED.
+# Prerequisite/boundary: First page scroll passed; text-selector Next tap did not flip page. Do not mark assertion failure as pass.
+appId: com.tensorix.metahub
+---
+- repeat:
+    times: 14
+    commands:
+      - swipe:
+          start: "50%,72%"
+          end: "50%,42%"
+          duration: 800
+- assertVisible: "第 1 页"
+- tapOn: "下一页"
+- assertVisible: "第 2 页"
+- takeScreenshot: search-second-page

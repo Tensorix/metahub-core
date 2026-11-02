@@ -1,0 +1,18 @@
+# Stateful draft; NOT RUN. Run only after share-open and a separately measured hold greater than 35 seconds.
+# Prerequisite: native share sheet still open; HOLD start/end timestamps recorded outside flow; BODY_TEXT_SELECTOR confirmed in current clean document.
+# Evidence status: NOT RUN. Verify no editor warning after hold/dismiss, then new edit saves and persists after reopen; parent verifies desktop separately.
+# Tested source: none; same new artifact as share-open.
+appId: com.tensorix.metahub
+---
+- assertVisible: Sharing 1 file
+- takeScreenshot: retest-share-after-hold
+- back
+- assertNotVisible: 编辑器没有响应.*
+- assertVisible: 附件
+- tapOn: ${BODY_TEXT_SELECTOR}
+- inputText: AndroidShareAfterHold20261026
+- tapOn: 返回
+- tapOn: 打开 Android Native Bucket Document20261026
+- assertVisible: .*AndroidShareAfterHold20261026.*
+- assertNotVisible: 编辑器没有响应.*
+- takeScreenshot: retest-share-dismiss-edit-saved

@@ -1,0 +1,25 @@
+# Stateful fragment; not an independent end-to-end acceptance suite.
+# Prerequisite: Starts at persisted bucket Home; exact former crash sequence through Continue editing, Close, Discard and management reopen.
+# Evidence status: PASS; see report for passed substeps and unresolved ANR.
+# Tested source: 6d5c199da28e9b69f64cd2146a27b03fcb501c71; evidence: /Users/noah/.maestro/tests/2026-10-26_172434/6d-db-discard/commands.json
+appId: com.tensorix.metahub
+---
+- launchApp:
+    clearState: false
+- tapOn:
+    text: Android Native Bucket20261026
+    index: 0
+- tapOn: 管理
+- longPressOn: Android Native Bucket20261026
+- tapOn: Select all
+- inputText: AndroidDbDiscard6d5c199
+- tapOn: 关闭
+- tapOn: 继续编辑
+- assertVisible: AndroidDbDiscard6d5c199
+- tapOn: 关闭
+- tapOn: 放弃修改
+- assertVisible: Android Native Bucket20261026
+- tapOn: 管理
+- assertVisible: Android Native Bucket20261026
+- assertNotVisible: AndroidDbDiscard6d5c199
+- takeScreenshot: database-discard-reopened-no-crash
