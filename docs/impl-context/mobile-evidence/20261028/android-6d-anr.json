@@ -1,0 +1,231 @@
+{
+  "schema": 1,
+  "reviewedAt": "2026-11-02",
+  "artifactClass": "sanitized-read-only-android-anr-investigation",
+  "sourceCommit": "6d5c199da28e9b69f64cd2146a27b03fcb501c71",
+  "reviewCheckoutCommit": "fa82bf05f34f0f0a9351d934190fdee3084072b9",
+  "status": "CONFIRMED_ANR_CAUSE_UNRESOLVED",
+  "conclusion": "The 2026-10-28 ANR has a confirmed app-main-thread synchronous Binder wait in Android input touch-mode processing, alongside an InputManagerService watchdog stall. The trace does not identify the remote Binder transaction owner or establish why the system input path stalled. Host contention, app-triggered platform behavior, and an Expo/native interaction remain hypotheses; no application code fix is justified by this evidence alone.",
+  "scope": {
+    "deviceOperations": false,
+    "installationsOrSettingsChanges": false,
+    "applicationCodeChanges": false,
+    "commitsCreated": false,
+    "authoredFileOnly": "docs/impl-context/mobile-evidence/20261028/android-6d-anr.json",
+    "graphify": "No graphify-out/graph.json exists in this checkout; no index was generated because this investigation is read-only except for this report.",
+    "privacy": "Contains summaries, source locations and evidence basenames only; excludes raw DropBox text, actual bucket identifiers or locations, credentials and private host paths."
+  },
+  "incident20261028": {
+    "platform": "Android 16 API 36 arm64 emulator",
+    "build": "ordinary application Release, 6d5c199",
+    "pid": 7119,
+    "operation": "Large-font view-name input retry; a content-scroll script was started before the input command finished. No Save tap was issued. Exact resulting text and persistence were not verified.",
+    "runnerErrorPreserved": true,
+    "timesLocal": {
+      "timezone": "+08:00",
+      "lastCompleteFormHierarchy": "2026-10-28T14:36:24+08:00",
+      "dropboxIncidentTimestamp": "2026-10-28T14:37:05.902+08:00",
+      "amAnr": "2026-10-28T14:37:08.718+08:00",
+      "appMainTrace": "2026-10-28T14:37:09.221752760+08:00",
+      "systemServerWaitingChannels": "2026-10-28T14:37:12.136030261+08:00",
+      "systemServerNativeTrace": "2026-10-28T14:37:12.846158595+08:00",
+      "dropboxEntryHeader": "2026-10-28T14:38:35+08:00",
+      "hostLoadSample": "2026-10-28T14:40:37.130+08:00"
+    },
+    "confirmed": {
+      "event": "Input dispatching timed out; waited 18475ms for KeyEvent",
+      "keyEventWaitMs": 18475,
+      "mainThreadState": "Native, Linux state S",
+      "mainThreadStackSummary": [
+        "BinderProxy.transactNative -> BinderProxy.transact",
+        "IWindowManager.Stub.Proxy.setInTouchMode",
+        "ViewRootImpl.ensureTouchMode",
+        "EarlyPostImeInputStage.processPointerEvent -> processMotionEvent",
+        "ViewRootImpl input delivery -> Looper"
+      ],
+      "mainStackInterpretation": "At capture, the main thread was inside a synchronous system-service transaction reached by pointer input. The pending ANR describes a KeyEvent; the stack describes the event being processed at capture. These are compatible queued input observations, not proof of a JS key handler causing the wait.",
+      "systemWatchdog": "CriticalEventLog records InputManagerService monitor blocked on watchdog.monitor for 18s, at 14:37:05.212 local.",
+      "jsThread": "mqt_v_js is Runnable / Linux state R; captured through ART checkpoint/JNI, expo::JNIFunctionBody::invoke and expo::MethodMetadata::callSync into Hermes/runtime scheduler frames. It is not captured waiting on the recursive mutex recorded in the older incident summary.",
+      "guestPressureAtIncident": {
+        "cpuSomeAvg10Percent": 45.15,
+        "ioSomeAvg10Percent": 16,
+        "memorySomeAvg10Percent": 0.72
+      },
+      "guestCpuWindow": {
+        "fromLocal": "14:37:08.683",
+        "toLocal": "14:38:19.431",
+        "totalPercent": 94,
+        "irqPercent": 56,
+        "softirqPercent": 8.5,
+        "interpretation": "This is a 70.7s aggregate after detection, not an instantaneous measurement proving which workload caused the original wait."
+      },
+      "waitRecovery": "Parent evidence records that choosing Wait did not restore dialog-free operation. A repeated visible dialog alone does not establish a second am_anr event.",
+      "freshAmAnrCountInRecoveredEvents": 1
+    },
+    "attributionLimits": [
+      "No matching remote Binder transaction/lock-owner chain is present. The recovered events contain SELinux denials reading Binder transaction diagnostics.",
+      "The system_server evidence contains waiting channels and a native backtrace, not a complete managed lock-owner trace. watchdog.monitor was already polling in the later sample; this neither disproves the earlier 18s stall nor proves persistent deadlock.",
+      "The main trace is one sample after the input deadline. It establishes the captured blocking site, not the duration of this exact Binder call or the first cause of all preceding input delay.",
+      "Runnable JS through callSync does not identify a module/method, demonstrate an infinite loop, measure its duration, or connect it causally to the Binder wait.",
+      "Concurrent runner input/scroll is a confirmed test ordering failure and a reproduction confounder. It does not erase the native ANR or prove that automation caused it.",
+      "The prior WebView package-update process exit is a separately recorded event, not a demonstrated cause of this ANR."
+    ],
+    "hostFollowup": {
+      "sampledAboutSecondsAfterAmAnr": 208.412,
+      "loadAverage": [
+        181.03,
+        122.92,
+        63.38
+      ],
+      "logicalCpuCount": 14,
+      "clangProcessCount": 33,
+      "summedClangRecordedCpuPercent": 657.2,
+      "linkerRecordedCpuPercent": 306.5,
+      "guestQueries": "Independent guest date/pid, top, events, exit-info and system/crash queries timed out around 30s; host adb metadata commands returned in about 19ms.",
+      "interpretation": "Confirms substantial host build contention and guest unresponsiveness during follow-up. It is not a simultaneous incident-time host sample or a controlled comparison, so host load is not the established root cause."
+    }
+  },
+  "comparison20261026": {
+    "status": "UNRESOLVED_HISTORICAL_ANR",
+    "pid": 32407,
+    "inputCommandDurationMs": 121064,
+    "durationMeaning": "End-to-end native input command duration; not a measured duration for one Binder transaction or one ANR timeout.",
+    "amAnrTimesLocal": [
+      "2026-10-26T17:29:05.018+08:00",
+      "2026-10-26T17:29:59.815+08:00"
+    ],
+    "originalRawEvidenceCurrentlyAvailable": false,
+    "availableEvidence": "Sanitized repository review and fast-input control JSON only; those files explicitly record historical raw evidence unavailable as of 2026-10-28.",
+    "summarizedMainStack": "Blocked in MessageQueue.nextLegacy on MessageQueue monitor; no stable lock-owner cycle demonstrated.",
+    "summarizedJsStack": "Native recursive_mutex wait inside Hermes beneath expo::MapFrontendConverter::convert and synchronous argument conversion; exact Expo method unknown.",
+    "sameSystemWaitStackAs20261028": "NOT_ESTABLISHED: the retained main-thread summaries differ, and the original 20261026 trace cannot now be re-read. Generic system-wide scheduling/input stalls and Expo frames are insufficient to equate the causes.",
+    "otherRecordedSystemStalls": "CPU pressure avg10 91.14/77.76, system_server main dispatch up to 28278ms, system pre-watchdog and SurfaceFlinger driver stall.",
+    "missingCharacter": "The older review ties a missing character to a stale native event and injection failure. It does not demonstrate JS echo overwrite.",
+    "fastInputControl": "A new-process rapid text input completed in 206ms, with exact text before/after save and close/reopen and no new am_anr in the bounded run. This proves that control run only; it does not resolve the original ANR.",
+    "sourceArtifact": "docs/impl-context/mobile-evidence/20261026/android-6d5c199-anr-review.json",
+    "controlArtifact": "docs/impl-context/mobile-evidence/20261026/android-6d5c199-fast-input-control.json"
+  },
+  "sourceReview": {
+    "versions": {
+      "expo": "~57.0.31",
+      "expoUi": "~57.0.26",
+      "reactNative": "0.86.3"
+    },
+    "trackedDiffAgainst6dForReviewedInputPath": "No diff in RecordTextInput.tsx, native-text-bridge.ts, ViewSettingsSheet.tsx, apps/mobile/package.json or apps/mobile/bun.lock at review checkout fa82bf0.",
+    "findings": [
+      {
+        "location": "apps/mobile/src/components/ViewSettingsSheet.tsx:47",
+        "fact": "Editing updates the local latest draft, dirty comparison and React draft. The name field at line 99 delegates to RecordTextInput; persistence begins in explicit save(), not in this name-change handler."
+      },
+      {
+        "location": "apps/mobile/src/components/RecordTextInput.tsx:25",
+        "fact": "Creates native observable state; effect calls get/set only when bridge.reconcile reports an external replacement. Native edits are registered before invoking the parent callback."
+      },
+      {
+        "location": "apps/mobile/src/lib/native-text-bridge.ts:6",
+        "fact": "Tracks native values in a pending echo list; a matching parent echo retires history and avoids state.set. A changed reset key or external replacement resets history. This source does not demonstrate an incident-time echo flood."
+      },
+      {
+        "location": "apps/mobile/node_modules/@expo/ui/src/State/useNativeState.ts:83",
+        "fact": "get/set delegate to native getValue/setValue; set wraps the value in a map. The generic map-conversion path is therefore compatible with this API but not unique to it."
+      },
+      {
+        "location": "apps/mobile/node_modules/@expo/ui/android/src/main/java/expo/modules/ui/ExpoUIModule.kt:119",
+        "fact": "getValue/setValue are Function definitions. From JS, setValue schedules the state write on appContext.mainQueue rather than synchronously waiting for that UI update. No JS-to-UI-to-JS lock cycle is established here."
+      },
+      {
+        "location": "apps/mobile/node_modules/@expo/ui/android/src/main/java/expo/modules/ui/textfield/TextFieldShared.kt:286",
+        "fact": "The native text field updates observable state before dispatching its value-changed payload."
+      },
+      {
+        "location": "apps/mobile/node_modules/expo-modules-core/android/src/main/cpp/types/FrontendConverter.cpp:565",
+        "fact": "MapFrontendConverter enumerates JS object keys and converts values into a Java map. Its presence in the old summary identifies conversion work, not the caller or a proven pathological loop."
+      },
+      {
+        "location": "apps/mobile/node_modules/expo-modules-core/android/src/main/cpp/MethodMetadata.cpp:184",
+        "fact": "callSync invokes callJNISync and converts a result; it is shared machinery, not a unique method identity."
+      }
+    ],
+    "directSetInTouchModeCallInReviewedApplicationSources": false,
+    "noProvenCause": [
+      "native text echo ledger flood",
+      "JS infinite loop",
+      "application lock cycle",
+      "system lock cycle",
+      "host load alone",
+      "the same root cause for both dates"
+    ]
+  },
+  "boundedNextExperiment": {
+    "status": "PROPOSED_NOT_EXECUTED_BY_THIS_REVIEW",
+    "purpose": "First recover an interpretable ordinary-Release result under measured quiet-host conditions; then isolate large-font and input-method factors without overlapping device commands.",
+    "owner": "Parent device operator",
+    "prerequisites": [
+      "Use the already installed fa82bf0 ordinary Release and record APK hash/build mode, PID, Android image, font scale and input method. This is a new-artifact check, not a retrospective 6d root-cause proof.",
+      "Parent inspects and preserves the possible unsaved draft before navigation. Use only a synthetic local test entity; record its original value for restoration.",
+      "No overlapping builds, installs, updater changes or device controllers. Record 60s host CPU/load and guest CPU/PSI baseline; defer if host idle remains below 70%, guest cpu.some avg10 above 10%, or visible guest progress is absent. These are experiment gates, not universal acceptance thresholds.",
+      "Keep monotonic and wall-clock timestamps for every command; maintain one serialized device-input command queue. Never start scrolling, hierarchy or screenshots while a prior input command is outstanding."
+    ],
+    "casesInOrder": [
+      "One smoke run at font scale 1.0: cold app launch with data retained, open the synthetic view-name form, replace text once, assert exact hierarchy text before save, save, close/reopen and assert exact persisted text. Stop immediately on a stall.",
+      "If smoke passes, at most three runs at 1.0 and three at 1.5 with identical synthetic ASCII input and serialized actions. The parent must explicitly own and restore the pre-run font scale. Verify Save reachability with the keyboard present only after input completion.",
+      "If a quiet-host case reproduces, stop that matrix. On an isolated disposable emulator and already authorized comparable ordinary artifact, compare one rapid replacement with one paced key sequence using the same field, text and font. Do not stress the active acceptance device.",
+      "Use a plain Android native text field on the same guest as a bounded input-path control only after a reproduction, with no app install or setting change bundled into the experiment. If unavailable, record the control as not run."
+    ],
+    "perRunBounds": {
+      "inputCommandSeconds": 10,
+      "stateObservationSeconds": 10,
+      "maximumRunSeconds": 120,
+      "maximumQuietMatrixRuns": 7,
+      "stopOn": "First new am_anr, input command timeout, loss of guest progress, incorrect exact text or unresolved state; no automatic retry, Save or Wait sequence after failure."
+    },
+    "captureOnFailure": [
+      "Stop UI mutations. Retain the PID and timestamps. Capture host CPU/load independently of guest collection; obtain guest events, exit-info, complete DropBox entry and app/system_server stacks with bounded 30s read-only calls.",
+      "Prefer one pre-armed 60s Perfetto/system trace with scheduling, Binder and input events where the guest supports it. Do not depend on post-hang shell responsiveness; keep private trace output out of the repository.",
+      "Match the app main Binder transaction to the remote service thread and any lock owner. Capture more than one timed stack if permitted; a single callSync frame is insufficient for attribution.",
+      "If guest read-only calls time out, retain that observation and stop. Restart/force-stop/install/draft loss remain separate parent decisions."
+    ],
+    "interpretationRules": [
+      "A quiet-host reproduction with synchronized Binder/scheduling evidence can distinguish app-local or guest-system stalls from host starvation; an idle-host pass alone cannot rule out an intermittent app defect.",
+      "A plain-native-field stall supports a shared guest input-path problem but does not prove a host cause. A Metahub-only failure still needs the transaction/lock chain or repeated timing evidence before selecting a code fix.",
+      "Passing fa82bf0 validates only that measured case. Do not mark either historical 6d ANR resolved or the 1.5-font Save case passed by inference.",
+      "No deliberate high-host-load reproduction is required on the active acceptance machine. A later controlled load comparison belongs on an isolated disposable test environment."
+    ]
+  },
+  "evidence": [
+    {
+      "basename": "anr-7119-dropbox-entry.txt",
+      "sha256": "25ef273f9f782dbd79debfdc2acd1acd113ba1a5923e8e02e381febe00e3b704",
+      "coverage": "Complete 20261028 DropBox entry; app main/JS stack, guest PSI and InputManagerService half-watchdog"
+    },
+    {
+      "basename": "anr-7119-lastanr.txt",
+      "sha256": "5f1901e371fd707bc319f9d80ff14c7624a8e6f7656da236d5d84a6531cc73dd",
+      "coverage": "Corroborates ANR reason and large-font activity configuration"
+    },
+    {
+      "basename": "recovered-1793169884690-events.txt",
+      "sha256": "b19d74894c2021fe147950662fc1a7edb75d75788831b106acdba52d0f5d6c55",
+      "coverage": "am_anr detection and denied Binder transaction diagnostics"
+    },
+    {
+      "basename": "input-hang-independent-summary.json",
+      "sha256": "abbe233881b4544c0c79f0a495e10cdac34824cb2f2925102f98214c1286f1bf",
+      "coverage": "Bounded guest timeouts, later host contention, runner ordering failure"
+    },
+    {
+      "basename": "anr-after-wait-ui.xml",
+      "sha256": "ed4c0a4e7f2569d3641c6847972db2ce8ecaddfdcbe554a9fdcb8d89a8659e4b",
+      "coverage": "Post-Wait dialog evidence; raw hierarchy remains private"
+    }
+  ],
+  "validation": {
+    "jsonParse": "Validated with Bun after writing",
+    "rawEvidenceReviewed": true,
+    "sourceReadOnly": true,
+    "testsRun": false,
+    "lintAndTypecheckRun": false,
+    "reason": "Evidence-only report outside mobile source; no implementation was changed. Device tests and source tooling that may write caches were not executed within this read-only assignment.",
+    "limitation": "No new reproduction, performance result, physical-device result or root-cause fix is claimed. Parent reports fa82bf0 install succeeded after the incident; that install is not an acceptance result and was not performed by this reviewer."
+  }
+}
