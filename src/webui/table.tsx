@@ -66,6 +66,7 @@ import {
 } from "./view-model.ts";
 import { ViewTabs, ViewToolbar, ChipRow, openRuleEditor, type ViewPatch, type PickRefs } from "./view-bar.tsx";
 import { parseGrid, pastePatches, type CellPatch } from "./table-paste.ts";
+import { GridCellEditor } from "./grid-cell-editor.tsx";
 
 
 /** 「浮窗看板」— summon the desktop quick-board window on this database. Sits
@@ -1345,15 +1346,14 @@ function CellView({
     <div class={cls}>{body}</div>
   );
 
-  // The editor overlays the td (.celledit is absolute over the relative cell-td)
-  // while the display content stays in flow — the row height never changes.
+  // The editor escapes the table scrollport; the display stays in flow.
   return (
     <>
       {display}
       {editing && (
-        <div class="celledit">
+        <GridCellEditor>
           <InlineEditInput prop={prop} val={val} seed={seed} captureTab onDone={onDone} />
-        </div>
+        </GridCellEditor>
       )}
     </>
   );

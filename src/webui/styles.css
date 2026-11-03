@@ -1250,9 +1250,9 @@
   table.grid td.filler { border-right:0; border-bottom:0; background:transparent; }
   body.col-resizing { user-select:none; cursor:col-resize; }
   table.grid .selcell { width:38px; min-width:38px; max-width:38px; text-align:center; }
-  /* relative: anchors the .celledit overlay editor to the cell */
+  /* relative: anchors preview actions and the selection fill handle */
   td.cell-td { position:relative; vertical-align:top; user-select:none; }
-  td.cell-td .celledit, td.cell-td .celledit * { user-select:text; }
+  .celledit, .celledit * { user-select:text; }
   .cell { padding:8px 11px; min-height:37px; cursor:text; word-break:break-word; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
   /* hover/active tint goes on the <td> (always full row height) not the inner
      .cell (only as tall as its content), so a taller sibling row never leaves a
@@ -1336,16 +1336,16 @@
   .inlineedit { width:100%; border:0; outline:2px solid var(--accent); border-radius:0; padding:7px 9px; background:var(--bg); color:var(--fg); font:inherit; }
   textarea.inlineedit { resize:none; overflow:hidden; line-height:1.45; display:block; }
   .inlineedit.num { text-align:right; font-variant-numeric:tabular-nums; }
-  /* Overlay cell editor: floats over the td; the display content underneath
-     stays in flow so the row height never changes while editing. Padding on the
+  /* Overlay cell editor: portaled to body to escape the table scrollport.
+     The display stays in flow so the row height never changes. Padding on the
      input matches .cell (8px 11px) so the text doesn't shift on entering edit;
      a multi-line text editor grows downward over the rows below. */
-  .celledit { position:absolute; top:0; left:0; width:100%; min-height:100%; z-index:10;
+  .celledit { position:fixed; z-index:60;
     display:flex; align-items:stretch; background:var(--bg); border-radius:0;
     box-shadow:inset 0 0 0 2px var(--accent), var(--shadow-md); }
   .celledit .inlineedit { width:100%; min-width:0; border:0; outline:0; border-radius:inherit;
     padding:8px 11px; background:transparent; }
-  .celledit textarea.inlineedit { min-height:37px; }
+  .celledit textarea.inlineedit { min-height:0; max-height:min(320px, 40vh, var(--cell-editor-max-height)); }
   .cell.num { justify-content:flex-end; font-variant-numeric:tabular-nums; }
   .cell .txt { white-space:pre-wrap; }
   /* Grid text is a preview; full text belongs in the record drawer. Never

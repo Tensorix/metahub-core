@@ -1,0 +1,59 @@
+/** @jsxImportSource preact */
+import type { ComponentChildren } from "preact";
+import { createPortal } from "preact/compat";
+import { useLayoutEffect, useRef } from "preact/hooks";
+
+/** Escape the table's overflow-x scrollport, which also clips vertical overflow.
+ *  Keep the display cell in flow so editing never changes the row height. */
+export function GridCellEditor({ children }: { children: ComponentChildren }) {
+  const anchor = useRef<HTMLSpanElement>(null);
+  const editor = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const cell = anchor.current!.closest("td")!;
+    const el = editor.current!;
+    const position = () => {
+      const rect = cell.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const x = viewport?.offsetLeft ?? 0;
+      const y = viewport?.offsetTop ?? 0;
+      const width = viewport?.width ?? window.innerWidth;
+      const height = viewport?.height ?? window.innerHeight;
+      const gap = 4;
+      const availableHeight = Math.max(0, height - gap * 2);
+      const editorWidth = Math.min(rect.width, Math.max(0, width - gap * 2));
+      el.style.width = `${editorWidth}px`;
+      el.style.minHeight = `${Math.min(rect.height, availableHeight)}px`;
+      el.style.maxHeight = `${availableHeight}px`;
+      el.style.setProperty("--cell-editor-max-height", `${availableHeight}px`);
+      el.style.left = `${Math.max(x + gap, Math.min(rect.left, x + width - editorWidth - gap))}px`;
+      el.style.top = `${Math.max(y + gap, Math.min(rect.top, y + height - el.getBoundingClientRect().height - gap))}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(cell);
+    observer.observe(el);
+    // Capture nested scroll containers too; textarea scrolling needs no reanchor.
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && el.contains(event.target)) return;
+      position();
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("scroll", position);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", position);
+      window.visualViewport?.removeEventListener("resize", position);
+      window.visualViewport?.removeEventListener("scroll", position);
+    };
+  }, []);
+  return <>
+    <span ref={anchor} hidden />
+    {createPortal(<div ref={editor} class="celledit"
+      onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      {children}
+    </div>, document.body)}
+  </>;
+}
