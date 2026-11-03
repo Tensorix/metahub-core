@@ -15,6 +15,7 @@ import { decodeLinkKey } from "../../core/sync/share-link.ts";
 import { loadShareLink } from "./share-link-loader.ts";
 import { localeFromTags } from "../../core/sync/locale.ts";
 import { pm, type PageMsgKey } from "../../core/sync/page-messages.ts";
+import { shareCellHtml, shareTableHtml, mountShareTable } from "../../core/sync/share-table.ts";
 
 const LOCALE = localeFromTags(navigator.languages?.length ? navigator.languages : [navigator.language]);
 const m = (key: PageMsgKey) => pm(LOCALE, key);
@@ -51,11 +52,10 @@ function cellPlain(type: string, value: unknown): string {
 
 function renderTable(m: Manifest): string {
   const props = m.properties ?? [];
-  const head = props.map((p) => `<th>${escapeHtml(p.name)}</th>`).join("");
   const rows = (m.records ?? [])
-    .map((r) => `<tr>${props.map((p) => `<td>${cellHtml(p.type, r.cells[p.id])}</td>`).join("")}</tr>`)
+    .map((r) => `<tr>${props.map((p) => shareCellHtml(cellHtml(p.type, r.cells[p.id]), p.name, LOCALE)).join("")}</tr>`)
     .join("");
-  return `<div class="table-wrap"><table class="db"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  return shareTableHtml(props, rows, LOCALE);
 }
 
 const BLOB_RE = /\/blob\/([0-9a-f]{16,64})/;
@@ -141,6 +141,7 @@ async function main() {
     const wanted = detachBlobRefs(tpl.content);
     set("");
     root.append(tpl.content);
+    if (manifest.kind === "database") mountShareTable({ copied: m("已复制"), failed: m("复制失败"), record: m("记录") });
     const js = document.createElement("script");
     js.textContent = copyScript(LOCALE);
     root.append(js);

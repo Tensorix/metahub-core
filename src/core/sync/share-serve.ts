@@ -38,6 +38,7 @@ import { SHARE_FILE_CSS } from "./share-file-styles.ts";
 import { COPY_CSS, copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "./share-copy.ts";
 import { pickLocale, type Locale } from "./locale.ts";
 import { pm } from "./page-messages.ts";
+import { SHARE_TABLE_CSS, shareCellHtml, shareTableHtml, shareTableScript } from "./share-table.ts";
 
 const HTML = { "content-type": "text/html; charset=utf-8" } as const;
 const HASH_RE = /^[0-9a-f]{16,64}$/;
@@ -270,25 +271,23 @@ async function serveTable(
     p.type === "relation" ? relTitles.get(p.config?.database ?? "") : undefined;
 
   const editable = share.permission === "edit";
-  const head = props.map((p) => `<th>${escapeHtml(p.name)}</th>`).join("");
   const rows = records
     .map((r) => {
       const tds = props
         .map((p) => {
           const v = r.cells[p.id];
           if (editable && editableType(p.type)) {
-            return `<td contenteditable data-rec="${escapeHtml(r.id)}" data-prop="${escapeHtml(
-              p.id,
-            )}" data-type="${p.type}">${escapeHtml(cellText(p, v))}</td>`;
+            return shareCellHtml(escapeHtml(cellText(p, v)), p.name, locale,
+              `contenteditable aria-label="${escapeHtml(p.name)}" data-rec="${escapeHtml(r.id)}" data-prop="${escapeHtml(p.id)}" data-type="${p.type}"`);
           }
-          return `<td>${cellHtml(p, v, titlesFor(p))}</td>`;
+          return shareCellHtml(cellHtml(p, v, titlesFor(p)), p.name, locale);
         })
         .join("");
       return `<tr>${tds}</tr>`;
     })
     .join("");
-  const inner = `<div class="table-wrap"><table class="db"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
-  const script = editable ? tableEditScript(locale, share.slug) : "";
+  const inner = shareTableHtml(props.map((p) => ({ name: p.name, width: p.config?.width })), rows, locale);
+  const script = shareTableScript(locale) + (editable ? tableEditScript(locale, share.slug) : "");
   const copySource = markdownTable(
     props.map((p) => p.name),
     records.map((r) => props.map((p) => cellText(p, r.cells[p.id], titlesFor(p)))),
@@ -307,7 +306,7 @@ async function serveTable(
 function tableEditScript(locale: Locale, slug: string): string {
   return `
   const L=${JSON.stringify({ failed: pm(locale, "保存失败") })};
-  document.querySelectorAll('td[contenteditable]').forEach(td=>{
+  document.querySelectorAll('.share-cell-value[contenteditable]').forEach(td=>{
     let orig=td.textContent;
     td.addEventListener('blur', async ()=>{
       const val=td.textContent;
@@ -635,6 +634,7 @@ function pageShell(
   header.mh h1.title{font-size:22px;margin:0}
   .edit-btn{background:var(--accent);color:var(--accent-fg);border:0;border-radius:7px;height:32px;padding:0 14px;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit}
   ${COPY_CSS}
+  ${SHARE_TABLE_CSS}
   .hint{color:var(--muted);font-size:13px;margin:0 0 14px}
   article.doc h1,article.doc h2,article.doc h3{line-height:1.3;margin:1.4em 0 .5em}
   article.doc h1{font-size:1.7em} article.doc h2{font-size:1.4em} article.doc h3{font-size:1.2em}
