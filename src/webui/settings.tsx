@@ -334,29 +334,39 @@ function AppearanceSettings() {
           ))}
         </div>
       </SetSection>
-      <SetSection label={t("Logo 配色")}>
-        <div class="theme-grid brand-grid">
-          {(["color", "blue"] as const).map((variant) => (
-            <button type="button" class={"theme-card" + (brand === variant ? " sel" : "")}
-              aria-pressed={brand === variant} onClick={() => setBrand(variant)}>
-              <span class="tc-check"><Icon name="check" /></span>
-              <span class="brand-preview"><BrandMark variant={variant} /></span>
-              <span class="tc-name">{variant === "color" ? t("彩色（默认）") : t("蓝色单色")}</span>
-            </button>
-          ))}
-        </div>
-        <p class="brand-caption">{t("应用内标识与浏览器图标即时切换，选择保存在当前设备。安装图标使用默认彩色版。")}</p>
-      </SetSection>
-      <SetSection label={t("Logo 底色")}>
-        <div class="theme-grid brand-grid">
-          {(["light", "dark"] as const).map((tone) => (
-            <button type="button" class={"theme-card" + (brandTone === tone ? " sel" : "")}
-              aria-pressed={brandTone === tone} onClick={() => setBrandTone(tone)}>
-              <span class="tc-check"><Icon name="check" /></span>
-              <span class="brand-preview"><BrandMark tone={tone} /></span>
-              <span class="tc-name">{tone === "light" ? t("浅底 Logo") : t("深底 Logo")}</span>
-            </button>
-          ))}
+      <SetSection label={t("Logo 外观")}>
+        <div class="brand-appearance">
+          <div class="brand-controls">
+            <span class="brand-preview" role="img" aria-label={t("当前 Logo")}>
+              <BrandMark variant={brand} tone={brandTone} />
+            </span>
+            <div class="brand-options">
+              <div class="brand-option-row">
+                <span class="brand-option-label" id="brand-color-label">{t("配色")}</span>
+                <div class="brand-segments" role="radiogroup" aria-labelledby="brand-color-label">
+                  {(["color", "blue"] as const).map((variant) => (
+                    <label key={variant} class="brand-segment">
+                      <input type="radio" name="brand-color" value={variant} checked={brand === variant}
+                        onChange={() => setBrand(variant)} />
+                      <span>{variant === "color" ? t("彩色") : t("蓝色")}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div class="brand-option-row">
+                <span class="brand-option-label" id="brand-tone-label">{t("底色")}</span>
+                <div class="brand-segments" role="radiogroup" aria-labelledby="brand-tone-label">
+                  {(["light", "dark"] as const).map((tone) => (
+                    <label key={tone} class="brand-segment">
+                      <input type="radio" name="brand-tone" value={tone} checked={brandTone === tone}
+                        onChange={() => setBrandTone(tone)} />
+                      <span>{tone === "light" ? t("浅底") : t("深底")}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </SetSection>
       <SetSection label={t("语言")}>

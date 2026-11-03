@@ -56,6 +56,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "duplicateBlock", label: t("复制当前块"), group: "editor", keys: { mod: true, key: "d" } },
   { id: "indent", label: t("列表缩进"), group: "editor", keys: { key: "Tab" } },
   { id: "outdent", label: t("列表反缩进"), group: "editor", keys: { shift: true, key: "Tab" } },
+  { id: "tableFind", label: t("在表中搜索"), group: "table", keys: { mod: true, key: "f" } },
   { id: "tableEdit", label: t("编辑单元格"), group: "table", keys: { key: "Enter" } },
   { id: "tableOpen", label: t("打开记录"), group: "table", keys: { mod: true, key: "Enter" } },
   { id: "tableSelectRow", label: t("选中整行"), group: "table", keys: { shift: true, key: " " } },

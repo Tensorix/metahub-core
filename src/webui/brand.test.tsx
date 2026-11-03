@@ -65,7 +65,7 @@ test("logo background is independent, persistent and updates mounted images and 
   act(() => render(<BrandMark />, host));
   expect(host.querySelector("img")!.src).toBe(brandImage("blue", 192, "dark"));
   localStorage.setItem(BRAND_TONE_KEY, "light");
-  act(() => window.dispatchEvent(new StorageEvent("storage", { key: BRAND_TONE_KEY })));
+  act(() => { window.dispatchEvent(new StorageEvent("storage", { key: BRAND_TONE_KEY })); });
   expect(host.querySelector("img")!.src).toBe(brandImage("blue", 192, "light"));
   act(() => render(null, host));
   unsubscribe();

@@ -693,6 +693,65 @@ function unpair(): { ok: boolean } {
 
 type Op = (...args: any[]) => unknown;
 
+async function edgeStatus() {
+  const d = requireDb();
+  const cfg = getEdgeConfig(d);
+  const rooms = listPeers(d)
+    .filter((p) => p.kind === "room" && p.config)
+    .map((p) => {
+      const c = JSON.parse(p.config!);
+      return {
+        slug: c.slug,
+        url: roomUrlOf(c),
+        status: p.last_status,
+        lastSuccessAt: p.last_success_at,
+        error: p.last_error,
+      };
+    });
+  if (!cfg)
+    return {
+      configured: false,
+      expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
+      aligned: false,
+      reachable: false,
+      managed: false,
+      rooms,
+      defaults: null,
+      pending: null,
+    };
+  try {
+    const health = await httpDropHost(cfg.endpoint, cfg.token).ownerHealth();
+    return {
+      configured: true,
+      endpoint: cfg.endpoint,
+      capabilities: edgeCapabilities(cfg),
+      version: health.version ?? null,
+      expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
+      aligned: health.version === EXPECTED_EDGE_WORKER_VERSION,
+      reachable: health.ok,
+      managed: false,
+      rooms,
+      defaults: null,
+      pending: null,
+    };
+  } catch (e) {
+    return {
+      configured: true,
+      endpoint: cfg.endpoint,
+      capabilities: edgeCapabilities(cfg),
+      version: null,
+      expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
+      aligned: false,
+      reachable: false,
+      error: (e as Error).message,
+      managed: false,
+      rooms,
+      defaults: null,
+      pending: null,
+    };
+  }
+}
+
 /** Mirrors the /api/* route semantics in src/webui/server/routes.ts (including
  *  not_found errors and document version tokens) so the local-api facade is a
  *  drop-in for the HTTP client. */
@@ -778,64 +837,7 @@ const ops: Record<string, Op> = {
 
   // Edge configuration and room-hosted site shares in no-origin mode. These
   // rows live only in this browser's OPFS database and never enter the CRDT.
-  edgeStatus: async () => {
-    const d = requireDb();
-    const cfg = getEdgeConfig(d);
-    const rooms = listPeers(d)
-      .filter((p) => p.kind === "room" && p.config)
-      .map((p) => {
-        const c = JSON.parse(p.config!);
-        return {
-          slug: c.slug,
-          url: roomUrlOf(c),
-          status: p.last_status,
-          lastSuccessAt: p.last_success_at,
-          error: p.last_error,
-        };
-      });
-    if (!cfg)
-      return {
-        configured: false,
-        expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
-        aligned: false,
-        reachable: false,
-        managed: false,
-        rooms,
-        defaults: null,
-        pending: null,
-    };
-    try {
-      const health = await httpDropHost(cfg.endpoint, cfg.token).ownerHealth();
-      return {
-        configured: true,
-        endpoint: cfg.endpoint,
-        capabilities: edgeCapabilities(cfg),
-        version: health.version ?? null,
-        expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
-        aligned: health.version === EXPECTED_EDGE_WORKER_VERSION,
-        reachable: health.ok,
-        managed: false,
-        rooms,
-        defaults: null,
-        pending: null,
-      };
-    } catch (e) {
-      return {
-        configured: true,
-        endpoint: cfg.endpoint,
-        capabilities: edgeCapabilities(cfg),
-        version: null,
-        expectedVersion: EXPECTED_EDGE_WORKER_VERSION,
-        aligned: false,
-        reachable: false,
-        error: (e as Error).message,
-        managed: false,
-        rooms,
-        defaults: null,
-        pending: null,
-      };
-    }
-  },
+  edgeStatus,
   connectEdge: async (endpointInput: string, token: string) => {
     const verified = await verifyEdgeConnection(endpointInput, token, "edge");
     setEdgeConfig(requireDb(), {
@@ -845,7 +847,7 @@ const ops: Record<string, Op> = {
       deployedVersion: verified.version,
     });
     return {
-      ...(await ops.edgeStatus()),
+      ...(await edgeStatus()),
       status: "connected",
       wired: [],
       warnings: [],

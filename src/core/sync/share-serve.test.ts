@@ -4,7 +4,7 @@ import { runSchema } from "../db.ts";
 import { createDocument, getDocument } from "../documents.ts";
 import { createDatabase } from "../databases.ts";
 import { addProperty } from "../properties.ts";
-import { createRecord } from "../records.ts";
+import { createRecord, getRecord } from "../records.ts";
 import { createSite, putFile } from "../sites.ts";
 import { createShare, deleteShare, getShare, hashSharePassword } from "../shares.ts";
 import { serveShare } from "./share-serve.ts";
@@ -337,6 +337,29 @@ test("database share SSR never resolves doc-cell titles (grants cannot scope doc
   const html = await (await serveShare(htmlReq(`/share/${share.slug}`), ctx))!.text();
   expect(html).toContain(`<span class="tag">${doc.id}</span>`);
   expect(html).not.toContain("内部设计文档");
+});
+
+test("long-text previews preserve full content and editable shares still save values", async () => {
+  const ctx = makeCtx();
+  const database = createDatabase(ctx.db, { name: "Long text" });
+  const prop = addProperty(ctx.db, database.id, { name: "Notes", type: "text" });
+  const text = "第一段\n\n" + "VeryLongToken".repeat(300);
+  const rec = createRecord(ctx.db, database.id, { Notes: text });
+  for (const permission of ["view", "edit"] as const) {
+    const share = createShare(ctx.db, { kind: "database", target_id: database.id, permission });
+    const html = await (await serveShare(htmlReq(`/share/${share.slug}`), ctx))!.text();
+    expect(html).toContain(text);
+    expect(html).toContain('class="db share-table"');
+    expect(html).toContain('class="share-cell-expand" hidden');
+    expect(html).toContain('class="share-text-peek"');
+    expect(html.includes('contenteditable aria-label="Notes"')).toBe(permission === "edit");
+    const response = (await serveShare(new Request(`http://x/share/${share.slug}/record`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: rec.id, propId: prop.id, value: "Updated\n\nnotes" }),
+    }), ctx))!;
+    expect(response.status).toBe(permission === "edit" ? 200 : 401);
+  }
+  expect(getRecord(ctx.db, rec.id)!.cells[prop.id]).toBe("Updated\n\nnotes");
 });
 
 test("share pages follow Accept-Language: English visitors get lang=en and English chrome", async () => {

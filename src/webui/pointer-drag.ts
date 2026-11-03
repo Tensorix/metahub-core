@@ -165,6 +165,14 @@ export function startColumnResize(
   // Stretch the handle's guide line (CSS --rz-guide-h) from the header down to
   // the table's bottom edge so the new column boundary is visible across rows.
   const table = handle.closest("table");
+  // Database grids declare their column sum as a pixel width. Resize that sum
+  // alongside the col, otherwise fixed layout redistributes the width change.
+  const gridWidth = table?.classList.contains("grid") && table.style.width.endsWith("px")
+    ? parseFloat(table.style.width) : null;
+  const applyWidth = () => {
+    if (opts.col) opts.col.style.width = last + "px";
+    if (table && gridWidth != null) table.style.width = (gridWidth + last - opts.startWidth) + "px";
+  };
   if (table) handle.style.setProperty("--rz-guide-h", (table as HTMLElement).offsetHeight + "px");
   startPointerDrag(down, {
     threshold: 0,
@@ -173,12 +181,12 @@ export function startColumnResize(
       if (!raf)
         raf = requestAnimationFrame(() => {
           raf = 0;
-          if (opts.col) opts.col.style.width = last + "px";
+          applyWidth();
         });
     },
     onEnd: () => {
       if (raf) cancelAnimationFrame(raf);
-      if (opts.col) opts.col.style.width = last + "px";
+      applyWidth();
       handle.classList.remove("dragging");
       handle.style.removeProperty("--rz-guide-h");
       document.body.classList.remove("col-resizing");
