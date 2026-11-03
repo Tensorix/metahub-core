@@ -32,10 +32,12 @@ async function main() {
     throw new Error("build-share-viewer: bundling failed");
   }
   const js = await result.outputs[0]!.text();
+  // A new HTML shell must not reuse a previously cached viewer bundle.
+  const revision = new Bun.CryptoHasher("sha256").update(js).digest("hex").slice(0, 12);
   await Bun.write(join(OUT, "share-viewer.js"), js);
-  await Bun.write(join(OUT, "index.html"), shellHtml());
+  await Bun.write(join(OUT, "index.html"), shellHtml(`./share-viewer.js?v=${revision}`));
   // Absolute assets on deep links, relative assets for existing subpath hosts.
-  await Bun.write(join(OUT, "short.html"), shellHtml("/share-viewer.js").replace('href="./favicon.png"', 'href="/favicon.png"'));
+  await Bun.write(join(OUT, "short.html"), shellHtml(`/share-viewer.js?v=${revision}`).replace('href="./favicon.png"', 'href="/favicon.png"'));
   const worker = await Bun.build({ entrypoints: ["src/workers/share-viewer.ts"], target: "browser", format: "esm", minify: true });
   if (!worker.success) throw new Error(`share-viewer worker build failed: ${worker.logs.join("\n")}`);
   await Bun.write(join(OUT, "_worker.js"), worker.outputs[0]!);
