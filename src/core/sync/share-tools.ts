@@ -18,7 +18,7 @@ export function shareToolsHtml(kind: ShareContentKind, title: string, locale: Lo
   return `<div class="mh-tools share-tools">
 <button id="mh-width" class="copy-btn share-width" type="button" aria-pressed="false" aria-label="${wide}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m9 10-2 2 2 2m6-4 2 2-2 2"/></svg><span>${wide}</span></button>
 <span class="share-tool-divider" aria-hidden="true"></span>${copyButtonHtml(locale)}
-<button id="mh-download" class="copy-btn share-download" type="button" data-filename="${escapeHtml(name + "." + ext)}" aria-label="${download} .${ext}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg><span>${download} .${ext}</span></button>${extra}
+<button id="mh-download" class="copy-btn share-download" type="button" data-filename="${escapeHtml(name + "." + ext)}" aria-label="${download}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg><span>${download}</span></button>${extra}
 </div><span class="share-tool-feedback" role="status"></span>`;
 }
 
@@ -53,6 +53,8 @@ export const SHARE_TOOLS_CSS = `
 .share-brand{display:flex;align-items:center;gap:10px;font-size:19px;font-weight:650;letter-spacing:-.03em;flex:none}
 .share-tools{flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .share-tools .copy-btn{height:40px;white-space:nowrap;font-size:13px;line-height:1}
+.share-tools .share-download{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.share-tools .share-download:hover{background:var(--accent);border-color:var(--accent);filter:brightness(1.08)}
 .share-tools .share-width{background:transparent;border-color:transparent;color:var(--muted)}
 .share-tools .share-width:hover{background:var(--card);color:var(--fg)}
 .share-tools .share-width[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-soft)}
