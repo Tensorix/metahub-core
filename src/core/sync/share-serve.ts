@@ -39,6 +39,7 @@ import { COPY_CSS, copyButtonHtml, copySourceHtml, copyScript, markdownTable } f
 import { pickLocale, type Locale } from "./locale.ts";
 import { pm } from "./page-messages.ts";
 import { SHARE_TABLE_CSS, shareCellHtml, shareTableHtml, shareTableScript } from "./share-table.ts";
+import { SHARE_TOOLS_CSS, shareToolsHtml, shareToolsScript, type ShareContentKind } from "./share-tools.ts";
 
 const HTML = { "content-type": "text/html; charset=utf-8" } as const;
 const HASH_RE = /^[0-9a-f]{16,64}$/;
@@ -155,7 +156,7 @@ async function serveDoc(
   const inner = `<article class="doc">${rendered || `<p class="muted">${escapeHtml(pm(locale, "（空文档）"))}</p>`}</article>`;
   const script = editable ? docEditScript(locale, share.slug, version, doc.body ?? "") : "";
   return new Response(
-    pageShell(doc.title || pm(locale, "文档"), inner, { lang: locale, editable, editLabel: pm(locale, "编辑文档"), script, copySource: doc.body ?? "" }),
+    pageShell(doc.title || pm(locale, "文档"), inner, { lang: locale, kind: "doc", editable, editLabel: pm(locale, "编辑文档"), script, copySource: doc.body ?? "" }),
     { headers: HTML },
   );
 }
@@ -295,6 +296,7 @@ async function serveTable(
   return new Response(
     pageShell(dbRow.name || pm(locale, "表格"), inner, {
       lang: locale,
+      kind: "database",
       script,
       copySource,
       hint: editable ? pm(locale, "可编辑文本/数字/URL/日期单元格，失焦自动保存") : "",
@@ -612,15 +614,16 @@ function passwordPage(locale: Locale, share: ShareRow, error: boolean): string {
 function pageShell(
   title: string,
   inner: string,
-  opts: { lang: Locale; editable?: boolean; editLabel?: string; script?: string; hint?: string; bare?: boolean; copySource?: string },
+  opts: { lang: Locale; kind?: ShareContentKind; editable?: boolean; editLabel?: string; script?: string; hint?: string; bare?: boolean; copySource?: string },
 ): string {
   const editBtn = opts.editable ? `<button id="mh-edit" class="edit-btn">${escapeHtml(opts.editLabel ?? pm(opts.lang, "编辑"))}</button>` : "";
   const copyBtn = opts.copySource !== undefined ? copyButtonHtml(opts.lang) : "";
-  const tools = copyBtn || editBtn ? `<div class="mh-tools">${copyBtn}${editBtn}</div>` : "";
+  const tools = opts.kind ? shareToolsHtml(opts.kind, title, opts.lang, editBtn) : copyBtn || editBtn ? `<div class="mh-tools">${copyBtn}${editBtn}</div>` : "";
   const hint = opts.hint ? `<p class="hint">${escapeHtml(opts.hint)}</p>` : "";
   const script =
     (opts.script ? `<script>(function(){${opts.script}})();</script>` : "") +
-    (opts.copySource !== undefined ? `${copySourceHtml(opts.copySource)}<script>${copyScript(opts.lang)}</script>` : "");
+    (opts.copySource !== undefined ? `${copySourceHtml(opts.copySource)}<script>${copyScript(opts.lang)}</script>` : "") +
+    (opts.kind ? `<script>${shareToolsScript(opts.lang)}</script>` : "");
   return `<!doctype html><html lang="${opts.lang}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
@@ -635,6 +638,7 @@ function pageShell(
   .edit-btn{background:var(--accent);color:var(--accent-fg);border:0;border-radius:7px;height:32px;padding:0 14px;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit}
   ${COPY_CSS}
   ${SHARE_TABLE_CSS}
+  ${SHARE_TOOLS_CSS}
   .hint{color:var(--muted);font-size:13px;margin:0 0 14px}
   article.doc h1,article.doc h2,article.doc h3{line-height:1.3;margin:1.4em 0 .5em}
   article.doc h1{font-size:1.7em} article.doc h2{font-size:1.4em} article.doc h3{font-size:1.2em}
@@ -664,8 +668,9 @@ function pageShell(
   form.pw .err{color:var(--danger);font-size:13px;margin:0}
   footer.mh{margin-top:48px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:12px;text-align:center}
 </style></head><body>
-${opts.bare ? `<div class="wrap">${inner}</div>` : `<div class="wrap">
-<header class="mh"><h1 class="title">${escapeHtml(title)}</h1>${tools}</header>
+${opts.bare ? `<div class="wrap">${inner}</div>` : `<div class="wrap"${opts.kind ? ` data-share-kind="${opts.kind}"` : ""}>
+${opts.kind ? `<div class="share-topbar"><div class="share-brand">metahub</div><div>${tools}</div></div>` : ""}
+<header class="mh"><h1 class="title">${escapeHtml(title)}</h1>${opts.kind ? "" : tools}</header>
 ${hint}
 ${inner}
 <footer class="mh">${escapeHtml(pm(opts.lang, "通过 metahub 分享"))}</footer>

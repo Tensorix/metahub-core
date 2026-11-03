@@ -13,7 +13,7 @@ const ICON_CHECK = '<svg class="ic-check" viewBox="0 0 24 24" aria-hidden="true"
 
 export function copyButtonHtml(locale: Locale = "zh-CN"): string {
   const label = escapeHtml(pm(locale, "复制全文"));
-  return `<button id="mh-copy" class="copy-btn" type="button" aria-label="${label}">${ICON_COPY}${ICON_CHECK}<span>${label}</span></button>`;
+  return `<button id="mh-copy" class="copy-btn" type="button" aria-label="${label}">${ICON_COPY}${ICON_CHECK}<span data-compact="${escapeHtml(pm(locale, "复制"))}">${label}</span></button>`;
 }
 
 export function copySourceHtml(text: string): string {

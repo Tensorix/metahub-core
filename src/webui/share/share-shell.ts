@@ -3,6 +3,7 @@ import { COPY_CSS } from "../../core/sync/share-copy.ts";
 import { SHARE_FILE_CSS } from "../../core/sync/share-file-styles.ts";
 import { pm } from "../../core/sync/page-messages.ts";
 import { SHARE_TABLE_CSS } from "../../core/sync/share-table.ts";
+import { SHARE_TOOLS_CSS } from "../../core/sync/share-tools.ts";
 
 export const SHELL_CSS = `${THEME_CSS}
 :root{--bg:var(--surface)}
@@ -53,6 +54,7 @@ body:has(.share-error){--card:var(--paper)}
 .mh-view>footer.mh{border:0;margin-top:28px;padding-top:0}
 @media(max-width:600px){#app{padding:24px 16px 48px}.share-topbar{margin-bottom:20px}.share-content{padding:24px 20px 32px}.share-content header.mh{margin-bottom:24px;padding-bottom:20px}.share-topbar .copy-btn{min-width:44px;height:44px;justify-content:center}}
 ${SHARE_TABLE_CSS}
+${SHARE_TOOLS_CSS}
 .skel{animation:skel-in .25s ease .12s both}
 .skel-b{display:block;position:relative;overflow:hidden;background:var(--card);border-radius:6px;width:var(--w,100%)}
 .skel-b::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent 20%,color-mix(in srgb,var(--fg) 5%,transparent) 50%,transparent 80%);background-size:200% 100%;animation:skel-sweep 1.6s ease-in-out infinite;animation-delay:calc(var(--i,0) * 120ms)}

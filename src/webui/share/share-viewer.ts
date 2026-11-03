@@ -9,7 +9,8 @@
 // on a top-level navigation — we never navigate to the object, we read it.
 
 import { renderMarkdown, escapeHtml } from "../../core/sync/share-render.ts";
-import { copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "../../core/sync/share-copy.ts";
+import { copySourceHtml, copyScript, markdownTable } from "../../core/sync/share-copy.ts";
+import { shareToolsHtml, shareToolsScript } from "../../core/sync/share-tools.ts";
 import { decryptBytes, deriveShareKey } from "../../core/sync/e2ee.ts";
 import { decodeLinkKey } from "../../core/sync/share-link.ts";
 import { loadShareLink } from "./share-link-loader.ts";
@@ -137,13 +138,14 @@ async function main() {
         ? `<article class="doc">${renderMarkdown(manifest.body ?? "") || `<p class="muted">${escapeHtml(pm(LOCALE, "（空文档）"))}</p>`}</article>`
         : renderTable(manifest);
     const tpl = document.createElement("template");
-    tpl.innerHTML = `<div class="mh-view"><div class="share-topbar"><div class="share-brand">${brandMark}<span>metahub</span></div><div class="mh-tools">${copyButtonHtml(LOCALE)}</div></div><main class="share-content" aria-labelledby="share-title">${title}${inner}</main><footer class="mh">${escapeHtml(pm(LOCALE, "通过 metahub 分享"))}</footer>${copySourceHtml(copySource)}</div>`;
+    tpl.innerHTML = `<div class="mh-view"><div class="share-topbar"><div class="share-brand">${brandMark}<span>metahub</span></div><div>${shareToolsHtml(manifest.kind, manifest.title, LOCALE)}</div></div><main class="share-content" aria-labelledby="share-title">${title}${inner}</main><footer class="mh">${escapeHtml(pm(LOCALE, "通过 metahub 分享"))}</footer>${copySourceHtml(copySource)}</div>`;
     const wanted = detachBlobRefs(tpl.content);
     set("");
     root.append(tpl.content);
+    root.dataset.shareKind = manifest.kind;
     if (manifest.kind === "database") mountShareTable({ copied: m("已复制"), failed: m("复制失败"), record: m("记录") });
     const js = document.createElement("script");
-    js.textContent = copyScript(LOCALE);
+    js.textContent = copyScript(LOCALE) + shareToolsScript(LOCALE);
     root.append(js);
 
     await Promise.allSettled(
