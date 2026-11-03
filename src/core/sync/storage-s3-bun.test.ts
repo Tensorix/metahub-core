@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { storageClientFor } from "./storage.ts";
-import "./storage-s3-bun.ts";
+import { makeBunStorageClient } from "./storage-s3-bun.ts";
 
 test("conditional S3 writes preserve typed-array slices and request headers", async () => {
   const requests: { bytes: number[]; match: string | null; contentType: string | null }[] = [];
@@ -17,7 +16,7 @@ test("conditional S3 writes preserve typed-array slices and request headers", as
     },
   });
   try {
-    const client = storageClientFor({
+    const client = makeBunStorageClient({
       endpoint: server.url.origin, region: "us-east-1", bucket: "test", prefix: "",
       accessKeyId: "test", secretAccessKey: "test", encrypt: false,
     });

@@ -31,7 +31,7 @@ import {
   buildCorsXml,
 } from "./storage-s3-sign.ts";
 
-function makeClient(config: S3Config): StorageClient {
+export function makeBunStorageClient(config: S3Config): StorageClient {
   // Virtual-hosted (e.g. Tencent COS, which rejects path-style): the endpoint
   // host already carries the bucket, so Bun ignores the `bucket` option.
   const vhost = isVirtualHostedStyle(config);
@@ -114,7 +114,7 @@ function makeClient(config: S3Config): StorageClient {
   };
 }
 
-setStorageClientFactory(makeClient);
+setStorageClientFactory(makeBunStorageClient);
 
 /**
  * Allow a browser shell served from `origins` to talk to the bucket directly
