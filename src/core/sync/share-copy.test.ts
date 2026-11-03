@@ -23,8 +23,8 @@ test("copy source is an inert template with escaped content", () => {
 
 test("copy chrome is localized per locale", () => {
   expect(copyButtonHtml("en")).toContain('aria-label="Copy all"');
-  expect(copyButtonHtml("en")).toContain("<span>Copy all</span>");
-  expect(copyButtonHtml()).toContain("<span>复制全文</span>");
+  expect(copyButtonHtml("en")).toContain('<span data-compact="Copy">Copy all</span>');
+  expect(copyButtonHtml()).toContain('<span data-compact="复制">复制全文</span>');
   expect(copyScript("en")).toContain('"done":"Copied"');
   expect(copyScript()).toContain('"fail":"复制失败"');
 });

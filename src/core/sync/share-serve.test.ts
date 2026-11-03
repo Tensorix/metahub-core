@@ -30,7 +30,10 @@ test("view share renders the live doc and carries no master-token runtime", asyn
   expect(html).toContain("<h1>Hello</h1>");
   expect(html).toContain("<strong>bold</strong>");
   expect(html).not.toContain("/mh-runtime.js");
-  expect(html).toContain('<div class="mh-tools"><button id="mh-copy"');
+  expect(html).toContain('id="mh-copy"');
+  expect(html).toContain('data-share-kind="doc"');
+  expect(html).toContain('id="mh-width"');
+  expect(html).toContain('data-filename="Spec.md"');
   expect(html).toContain('<template id="mh-src"># Hello\n\nworld **bold**</template>');
 });
 
