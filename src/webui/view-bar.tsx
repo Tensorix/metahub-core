@@ -6,8 +6,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Prop } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
-import { imeGhost } from "./keys.ts";
-import { tip } from "./shortcuts.ts";
+import { consumeKey, imeGhost } from "./keys.ts";
+import { pressed, tip } from "./shortcuts.ts";
 import { rankMatches } from "./title-match.ts";
 import { Chip, relationLabel, docLabel } from "./cells.tsx";
 import { DatePicker } from "./date-picker.tsx";
@@ -109,7 +109,25 @@ export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query,
 }) {
   const [searchOpen, setSearchOpen] = useState(query.length > 0);
   const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (searchOpen) inputRef.current?.focus(); }, [searchOpen]);
+  useEffect(() => {
+    if (searchOpen) { inputRef.current?.focus(); inputRef.current?.select(); }
+  }, [searchOpen]);
+  // Like document find, table search must work with focus anywhere on the page.
+  // Inner editors can consume the key first; modals own it while open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!pressed(e, "tableFind")) return;
+      if (document.querySelector(".lightbox, .modal-scrim.open")) return;
+      consumeKey(e);
+      setSearchOpen(true);
+      // The open-state effect focuses a newly mounted input; this also handles
+      // repeated shortcuts while the search is already open.
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const nFilter = view.filter.rules.length;
   const nSort = view.sort.length;
   const nHidden = view.hidden.filter((h) => props.some((p) => p.id === h)).length;
@@ -145,7 +163,7 @@ export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query,
           </button>
         </div>
       ) : (
-        <button class="tbtn icon" {...tip(t("在表中搜索"))} onClick={() => setSearchOpen(true)}><Icon name="search" cls="ico sm" /></button>
+        <button class="tbtn icon" {...tip(t("在表中搜索"), "tableFind")} onClick={() => setSearchOpen(true)}><Icon name="search" cls="ico sm" /></button>
       )}
       <div class="spacer" />
       {children}
