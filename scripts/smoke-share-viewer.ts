@@ -23,7 +23,7 @@ const descriptor = {
 };
 const home = await fetch(origin);
 assert(
-  home.ok && (await home.text()).includes('src="./share-viewer.js"'),
+  home.ok && /src="\.\/share-viewer\.js(?:\?v=[a-f0-9]{12})?"/.test(await home.text()),
   "legacy root shell",
 );
 for (const path of [`/s/${id}`, `/s/${id}/`]) {
@@ -32,7 +32,7 @@ for (const path of [`/s/${id}`, `/s/${id}/`]) {
   const html = await page.text();
   assert(
     page.ok &&
-      html.includes('src="/share-viewer.js"') &&
+      /src="\/share-viewer\.js(?:\?v=[a-f0-9]{12})?"/.test(html) &&
       html.includes('href="/favicon.png"'),
     "deep-link shell must load absolute assets",
   );
