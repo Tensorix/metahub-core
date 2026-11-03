@@ -446,9 +446,30 @@
   .theme-card.sel .tc-ico { background:var(--selected-icon-bg); color:var(--selected-icon-fg); }
   .theme-card.sel .tc-check { opacity:1; transform:scale(1); }
   @media (max-width:560px) { .theme-grid { grid-template-columns:1fr; } }
-  .brand-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,120px),1fr)); }
-  .brand-preview { display:block; width:56px; height:56px; }
-  .brand-caption { margin:12px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }
+  .brand-appearance { container:brand-appearance / inline-size; border:1px solid var(--line); border-radius:var(--radius-lg); background:var(--bg); }
+  .brand-controls { display:grid; grid-template-columns:64px minmax(0,1fr); align-items:center; gap:24px; padding:18px 24px; }
+  .brand-preview { display:block; width:64px; height:64px; }
+  .brand-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; min-width:0; padding-left:24px; border-left:1px solid var(--line); }
+  .brand-option-row { display:grid; align-content:center; gap:6px; min-width:0; }
+  .brand-option-label { color:var(--fg-soft); font-size:var(--fs-ui); }
+  .brand-segments { display:flex; gap:2px; padding:3px; border-radius:var(--radius); background:var(--surface-2); }
+  .brand-segment { position:relative; flex:1; min-width:0; text-align:center; }
+  .brand-segment input { position:absolute; inset:0; width:100%; height:100%; opacity:0; margin:0; cursor:pointer; }
+  .brand-segment > span { display:flex; align-items:center; justify-content:center; min-height:32px; padding:4px 12px;
+    border-radius:var(--radius-sm); color:var(--muted); font-size:var(--fs-ui); pointer-events:none;
+    transition:background .14s,color .14s; }
+  .brand-segment:hover > span { color:var(--fg); }
+  .brand-segment input:checked + span { background:var(--bg); color:var(--accent); font-weight:600; }
+  .brand-segment input:focus-visible + span { outline:2px solid var(--accent); outline-offset:2px; }
+  @container brand-appearance (max-width:480px) {
+    .brand-controls { grid-template-columns:48px minmax(0,1fr); gap:16px; padding:16px; }
+    .brand-preview { width:48px; height:48px; }
+    .brand-options { grid-template-columns:minmax(0,1fr); gap:10px; padding-left:16px; }
+    .brand-option-row { gap:4px; }
+    .brand-option-label { font-size:var(--fs-sm); }
+    .brand-segment > span { padding:4px 8px; }
+  }
+  @media (pointer:coarse) { .brand-segment > span { min-height:44px; } }
   .theme-card:disabled { opacity:.55; cursor:not-allowed; }
   .theme-card:disabled:hover { transform:none; border-color:var(--line-strong); }
 
