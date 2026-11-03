@@ -497,15 +497,20 @@ export function DatabaseView({
     });
   };
 
-  // Press-and-release inside one cell edits it; crossing the 4px drag threshold
-  // rubber-bands a range instead. Shift+click only extends the selection. The
+  // First click selects a cell; clicking the already-selected single cell
+  // edits it. Crossing the 4px drag threshold rubber-bands a range instead.
+  // Shift+click only extends the selection. The
   // editor mounts on the trailing click (after the browser has settled its own
   // mouseup), never on pointerup — mounting a focused input under a still-open
   // native text selection drags that selection into the input.
   const clickArm = useRef<{ r: number; c: number } | null>(null);
   const startCellSelect = (e: any, ri: number, ci: number) => {
+    clickArm.current = null;
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("input,textarea,button,a,.celledit,.cell-fill-handle")) return;
+    // Snapshot before pointerdown changes the selection, otherwise even the
+    // first click would see its target as selected by the time click fires.
+    const selected = cellSel?.a.r === ri && cellSel.a.c === ci && cellSel.b.r === ri && cellSel.b.c === ci;
     const extend = e.shiftKey && cellSel;
     const anchor = extend ? cellSel.a : { r: ri, c: ci };
     setCellSel({ a: anchor, b: { r: ri, c: ci } });
@@ -519,7 +524,7 @@ export function DatabaseView({
       },
       onEnd: (ev, active) => {
         document.body.classList.remove("cell-selecting");
-        clickArm.current = active || extend || ev.type === "pointercancel" ? null : { r: ri, c: ci };
+        clickArm.current = !selected || active || extend || ev.type === "pointercancel" ? null : { r: ri, c: ci };
       },
     });
   };
