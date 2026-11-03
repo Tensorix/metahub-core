@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   api,
   TYPE_META,
@@ -176,6 +176,7 @@ export function DatabaseView({
   const editingRef = useRef(editing);
   editingRef.current = editing;
   const [peek, setPeek] = useState<string | null>(null);
+  const [peekProp, setPeekProp] = useState<string | null>(null);
   const [cellSel, setCellSel] = useState<CellSel | null>(null);
   // Column width lives in prop.config.width (persisted + replicated); 180 is the default.
   const colWidth = (p: Prop) => p.config?.width ?? 180;
@@ -228,6 +229,7 @@ export function DatabaseView({
   useEffect(() => {
     setSel(new Set());
     setPeek(null);
+    setPeekProp(null);
     setCellSel(null);
     setEditing(null);
     setQuery("");
@@ -250,8 +252,8 @@ export function DatabaseView({
   // always mirrors the drawer; the effect below covers the other direction
   // (chip clicks, back/forward). Declared after the db.id reset effect so a
   // deep-linked mount ends with the peek open, not reset.
-  const openPeek = (id: string) => { setPeek(id); onRecNav(id); };
-  const closePeek = () => { setPeek(null); onRecNav(null); };
+  const openPeek = (id: string, propId?: string) => { setPeekProp(propId ?? null); setPeek(id); onRecNav(id); };
+  const closePeek = () => { setPeek(null); setPeekProp(null); onRecNav(null); };
   useEffect(() => { setPeek(rec); }, [rec]);
   // Tab request → tab, consumed once then stripped from the hash (replace).
   // Declared after the db.id reset effect so a deep-linked mount ends on the
@@ -988,7 +990,8 @@ export function DatabaseView({
                 </tbody>
               </table>
             ) : (
-            <table class={"grid" + (view.wrap === false ? " nowrap" : "")} ref={tableRef}>
+            <table class={"grid" + (view.wrap === false ? " nowrap" : "")} ref={tableRef}
+              style={{ width: 38 + cols.reduce((sum, p) => sum + colWidth(p), 0) + 46 }}>
               <colgroup>
                 <col style={{ width: 38 }} />
                 {cols.map((p) => (
@@ -1082,6 +1085,7 @@ export function DatabaseView({
                             rec={rec}
                             prop={p}
                             first={ci === 0}
+                            wrap={view.wrap !== false}
                             editing={editing?.rec === rec.id && editing?.prop === p.id}
                             seed={editing?.rec === rec.id && editing?.prop === p.id ? editing.seed : undefined}
                             onCommit={(v) => commit(rec, p, v)}
@@ -1095,7 +1099,7 @@ export function DatabaseView({
                               else if (end.reason === "shifttab") moveEditNeighbor(ri, ci, -1);
                               else if (end.reason === "enter") selectCell(clampN(ri + 1, 0, sorted.length - 1), ci);
                             }}
-                            onOpen={() => openPeek(rec.id)}
+                            onOpen={(propId) => openPeek(rec.id, propId)}
                             onRowMenu={(e) => openRowMenu(e, rec, () => openPeek(rec.id), () => duplicateRecord(rec), () => deleteRecords([rec.id]))}
                           />
                         </td>
@@ -1200,6 +1204,7 @@ export function DatabaseView({
           db={db}
           props={props}
           rec={peekRec}
+          focusProp={peekProp}
           onClose={closePeek}
           onCommit={(p, v) => commit(peekRec, p, v)}
           onDelete={() => deleteRecords([peekRec.id])}
@@ -1282,6 +1287,7 @@ function InlineEditInput({
       <textarea
         ref={ref as any}
         class="inlineedit"
+        aria-label={prop.name}
         rows={1}
         onInput={grow}
         onBlur={() => finish("blur")}
@@ -1292,6 +1298,7 @@ function InlineEditInput({
   return (
     <input
       ref={ref as any}
+      aria-label={prop.name}
       class={"inlineedit" + (prop.type === "number" ? " num" : "")}
       type="text"
       inputMode={prop.type === "number" ? "decimal" : prop.type === "url" ? "url" : "text"}
@@ -1302,11 +1309,11 @@ function InlineEditInput({
 }
 
 function CellView({
-  rec, prop, first, editing, seed, onCommit, onDone, onOpen, onRowMenu,
+  rec, prop, first, wrap, editing, seed, onCommit, onDone, onOpen, onRowMenu,
 }: {
-  rec: Rec; prop: Prop; first: boolean; editing: boolean; seed?: string;
+  rec: Rec; prop: Prop; first: boolean; wrap: boolean; editing: boolean; seed?: string;
   onCommit: (v: unknown) => void; onDone: (end: EditEnd) => void;
-  onOpen: () => void; onRowMenu: (e: MouseEvent) => void;
+  onOpen: (propId?: string) => void; onRowMenu: (e: MouseEvent) => void;
 }) {
   const val = rec.cells[prop.id];
 
@@ -1319,7 +1326,9 @@ function CellView({
   }
 
   // Click/keyboard activation is owned by the <td> (DatabaseView.activateCell).
-  const body = <CellDisplay prop={prop} val={val} />;
+  const body = prop.type === "text" && val != null && val !== ""
+    ? <GridTextPreview text={String(val)} label={prop.name} wrap={wrap} onOpen={() => onOpen(prop.id)} />
+    : <CellDisplay prop={prop} val={val} />;
   const cls = "cell" + (prop.type === "number" ? " num" : "");
   const display = first ? (
     <div class={cls} onContextMenu={(e) => { e.preventDefault(); onRowMenu(e); }}>
@@ -1347,6 +1356,35 @@ function CellView({
         </div>
       )}
     </>
+  );
+}
+
+/** Measure the rendered preview, so CJK, newlines and resized columns all use
+ *  the same overflow affordance. The complete value stays in the data model. */
+function GridTextPreview({ text, label, wrap, onOpen }: {
+  text: string; label: string; wrap: boolean; onOpen: () => void;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current!;
+    const measure = () => setClipped(el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [text, wrap]);
+  return (
+    <div class="cell-preview">
+      <span ref={ref} class="txt cell-preview-text">{text}</span>
+      {clipped && (
+        <button class="cell-read-more" {...tip(t("查看全文"))} aria-label={t("查看「{name}」全文", { name: label })}
+          onKeyDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+          <Icon name="openPeek" cls="ico sm" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -2171,9 +2209,10 @@ function openRowMenu(e: MouseEvent, rec: Rec, onOpen: () => void, onDup: () => v
 
 // ---- record peek panel ----
 export function RecordPeek({
-  db, props, rec, onClose, onCommit, onDelete, onDuplicate, onReverted, onRelCreated, hidden = [], prevId, nextId, onNavigate,
+  db, props, rec, focusProp, onClose, onCommit, onDelete, onDuplicate, onReverted, onRelCreated, hidden = [], prevId, nextId, onNavigate,
 }: {
   db: Db; props: Prop[]; rec: Rec;
+  focusProp?: string | null;
   onClose: () => void; onCommit: (p: Prop, v: unknown) => void; onDelete: () => void; onDuplicate: () => void;
   onReverted: () => void; onRelCreated: (p: Prop) => void;
   /** Property ids the current view hides: folded under a toggle row here. */
@@ -2184,11 +2223,23 @@ export function RecordPeek({
   const [editing, setEditing] = useState<string | null>(null);
   const [hist, setHist] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focusProp) return;
+    const row = Array.from(bodyRef.current?.querySelectorAll<HTMLElement>("[data-peek-prop]") ?? [])
+      .find((el) => el.dataset.peekProp === focusProp);
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "start" });
+  }, [rec.id, focusProp]);
   const hiddenSet = new Set(hidden);
   const shownProps = props.filter((p) => !hiddenSet.has(p.id));
   const hiddenProps = props.filter((p) => hiddenSet.has(p.id));
+  const isLongText = (p: Prop) => p.type === "text" && (
+    String(rec.cells[p.id] ?? "").length > 240 || String(rec.cells[p.id] ?? "").includes("\n") || focusProp === p.id
+  );
   const propRow = (p: Prop) => (
-    <div key={p.id} class="proprow">
+    <div key={p.id} class={"proprow" + (isLongText(p) ? " proprow-long" : "")}
+      data-peek-prop={p.id} tabIndex={-1} role="group" aria-label={p.name}>
       <div
         class="k"
         onClick={(e) =>
@@ -2196,7 +2247,15 @@ export function RecordPeek({
             <MenuItem icon="history" label={t("字段修改历史")} onClick={() => { close(); openFieldHistory(rec.id, p.id, p.name); }} />
           ))
         }
-      ><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span></div>
+      ><Icon name={TYPE_ICON[p.type] ?? "text"} cls="ico sm" /><span>{p.name}</span>
+        {isLongText(p) && String(rec.cells[p.id] ?? "").length > 0 && (
+          <button class="peek-copy" {...tip(t("复制全文"))} aria-label={t("复制「{name}」全文", { name: p.name })}
+            onClick={(e) => {
+              e.stopPropagation();
+              navigator.clipboard.writeText(String(rec.cells[p.id])).then(() => toast(t("已复制")), () => toast(t("复制失败")));
+            }}><Icon name="copy" cls="ico sm" /></button>
+        )}
+      </div>
       <PeekValue
         prop={p}
         rec={rec}
@@ -2249,7 +2308,7 @@ export function RecordPeek({
             ))
           }><Icon name="dots" /></button>
         </div>
-        <div class="peek-body">
+        <div class="peek-body" ref={bodyRef}>
           {hist ? (
             <RecordHistoryView rec={rec} props={props} onReverted={onReverted} />
           ) : (
