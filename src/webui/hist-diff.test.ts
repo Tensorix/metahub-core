@@ -217,6 +217,7 @@ function rev(atIso: string, over: Partial<DocRevision> = {}): DocRevision {
     at: atIso,
     node_id: "nodeA",
     kind: "user",
+    actor: null,
     changes: 1,
     created: false,
     deleted: false,

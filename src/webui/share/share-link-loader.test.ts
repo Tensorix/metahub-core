@@ -10,9 +10,9 @@ test("legacy base64 keys and password salts preserve '+' and never call the API"
     const url = new URL(
       `https://viewer.example/#m=${encodeURIComponent("https://bucket.example/file?x=1&y=2")}&${mode}=${toB64(raw)}`,
     );
-    const out = await loadShareLink(url, (() => {
+    const out = await loadShareLink(url, () => {
       throw new Error("must stay offline");
-    }) as typeof fetch);
+    });
     expect(out.m).toBe("https://bucket.example/file?x=1&y=2");
     expect(decodeLinkKey(mode === "k" ? out.k! : out.s!)).toEqual(raw);
   }
@@ -23,14 +23,14 @@ test("short link resolves only the ID; content key never enters the request", as
   const data = descriptor();
   const result = await loadShareLink(
     new URL(`https://viewer.example/s/AAAAAAAAAAAAAAAAAAAAAA#k=${key}`),
-    (async (input, init) => {
+    async (input, init) => {
       expect(String(input)).toBe(
         "https://viewer.example/api/links/AAAAAAAAAAAAAAAAAAAAAA",
       );
       expect(JSON.stringify(init)).not.toContain(key);
       expect(init?.credentials).toBe("omit");
       return Response.json(data);
-    }) as typeof fetch,
+    },
   );
   expect(result).toEqual({ m: data.manifestUrl, k: key, s: undefined });
 });
@@ -40,8 +40,7 @@ test("password short links use the returned salt and reject expired or malformed
   const data = { ...descriptor(), salt: toB64url(new Uint8Array(16).fill(1)) };
   expect(
     (
-      await loadShareLink(url, (async () =>
-        Response.json(data)) as typeof fetch)
+      await loadShareLink(url, async () => Response.json(data))
     ).s,
   ).toBe(data.salt);
   for (const response of [
@@ -50,7 +49,7 @@ test("password short links use the returned salt and reject expired or malformed
     Response.json({ ...data, key: "unexpected" }),
   ]) {
     await expect(
-      loadShareLink(url, (async () => response) as typeof fetch),
+      loadShareLink(url, async () => response),
     ).rejects.toThrow("share_unavailable");
   }
 });

@@ -95,7 +95,7 @@ function makeClient(config: S3Config): StorageClient {
       if (opts?.ifMatch) {
         const res = await aws().fetch(objectUrl(key), {
           method: "PUT",
-          body,
+          body: new Uint8Array(body).buffer,
           headers: {
             "if-match": opts.ifMatch,
             ...(opts.contentType ? { "content-type": opts.contentType } : {}),

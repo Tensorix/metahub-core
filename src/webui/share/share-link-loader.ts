@@ -5,7 +5,7 @@ import {
 
 export async function loadShareLink(
   url: URL,
-  fetcher: typeof fetch = fetch,
+  fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch,
 ): Promise<{ m?: string; k?: string; s?: string }> {
   const fragment = parseShareFragment(url.hash);
   if (fragment.m) return fragment; // Old links never need the API.

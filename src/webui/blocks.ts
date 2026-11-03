@@ -145,6 +145,7 @@ import {
   looksLikeTableAt,
   splitTableRow,
   matchMediaEmbed,
+  type MediaKind,
 } from "../core/md/grammar.ts";
 
 export interface Parsed {

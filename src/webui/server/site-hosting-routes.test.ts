@@ -13,6 +13,8 @@ import {
 import { pollSite, siteHostingRoutes } from "./site-hosting-routes.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
+const mockFetch = (handler: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>): typeof fetch =>
+  Object.assign(handler, { preconnect: ORIGINAL_FETCH.preconnect });
 
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
@@ -47,7 +49,7 @@ async function call(
 
 describe("site hosting routes", () => {
   test("site readiness is bounded and accepts only 2xx", async () => {
-    globalThis.fetch = (async (
+    globalThis.fetch = mockFetch(async (
       _input: string | URL | Request,
       init?: RequestInit,
     ) => {
@@ -59,22 +61,22 @@ describe("site hosting routes", () => {
         });
       }
       return new Response(null, { status: 302 });
-    }) as typeof fetch;
+    });
     expect(await pollSite("https://slow.example/sites/demo/", { budgetMs: 20, attemptMs: 5 })).toBe(
       false,
     );
 
-    globalThis.fetch = (async () => new Response(null, { status: 302 })) as typeof fetch;
+    globalThis.fetch = mockFetch(async () => new Response(null, { status: 302 }));
     expect(await pollSite("https://redirect.example/sites/demo/", { budgetMs: 5 })).toBe(false);
 
-    globalThis.fetch = (async () => new Response("ok", { status: 204 })) as typeof fetch;
+    globalThis.fetch = mockFetch(async () => new Response("ok", { status: 204 }));
     expect(await pollSite("https://ready.example/sites/demo/", { budgetMs: 20 })).toBe(true);
   });
 
   test("health verification rejects redirects and metadata endpoints", async () => {
     const d = db();
-    globalThis.fetch = (async () =>
-      new Response(null, { status: 302, headers: { location: "http://127.0.0.1/" } })) as typeof fetch;
+    globalThis.fetch = mockFetch(async () =>
+      new Response(null, { status: 302, headers: { location: "http://127.0.0.1/" } }));
     const redirected = await call(
       "POST",
       "/api/site-hosting/verify",
@@ -91,10 +93,10 @@ describe("site hosting routes", () => {
     );
     expect(metadata.status).toBe(400);
 
-    globalThis.fetch = (async () =>
+    globalThis.fetch = mockFetch(async () =>
       new Response("x".repeat(16 * 1024 + 1), {
         headers: { "content-type": "application/json" },
-      })) as typeof fetch;
+      }));
     const oversized = await call(
       "POST",
       "/api/site-hosting/verify",
@@ -103,8 +105,8 @@ describe("site hosting routes", () => {
     );
     expect(oversized.status).toBe(502);
 
-    globalThis.fetch = (async () =>
-      Response.json({ ok: true, node: "node-host" })) as typeof fetch;
+    globalThis.fetch = mockFetch(async () =>
+      Response.json({ ok: true, node: "node-host" }));
     const oldTarget = await call(
       "POST",
       "/api/site-hosting/verify",
@@ -120,7 +122,7 @@ describe("site hosting routes", () => {
   test("publishes only after node verification and returns a complete reachable URL", async () => {
     const d = db();
     const site = createSite(d, { name: "demo" });
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = mockFetch(async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/health")
         return Response.json({
@@ -130,7 +132,7 @@ describe("site hosting routes", () => {
         });
       if (url.pathname === "/sites/demo/") return new Response("<h1>ok</h1>");
       throw new Error(`unexpected request ${url}`);
-    }) as typeof fetch;
+    });
 
     const res = await call(
       "POST",
@@ -191,7 +193,7 @@ describe("site hosting routes", () => {
       token: "peer-token",
       node_id: "peer-node",
     });
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = mockFetch(async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/health")
         return Response.json({
@@ -202,7 +204,7 @@ describe("site hosting routes", () => {
       if (url.pathname === "/sync")
         return Response.json({ error: "sync interrupted" }, { status: 500 });
       throw new Error(`unexpected request ${url}`);
-    }) as typeof fetch;
+    });
 
     const res = await call(
       "POST",
@@ -242,12 +244,12 @@ describe("site hosting routes", () => {
       1,
     );
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = mockFetch(async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/sync")
         return Response.json({ node_id: "peer-node", changes: [], cursor: 0 });
       throw new Error(`unexpected request ${url}`);
-    }) as typeof fetch;
+    });
     const recovered = await call(
       "POST",
       "/api/site/publish/recover",
@@ -305,8 +307,8 @@ describe("site hosting routes", () => {
       token: "peer-token",
       node_id: "peer-node",
     });
-    globalThis.fetch = (async () =>
-      Response.json({ error: "offline" }, { status: 503 })) as typeof fetch;
+    globalThis.fetch = mockFetch(async () =>
+      Response.json({ error: "offline" }, { status: 503 }));
 
     const res = await call(
       "POST",
@@ -334,14 +336,14 @@ describe("site hosting routes", () => {
     const site = createSite(d, { name: "missing-node" });
     addPeer(d, { url: "https://peer.example", token: "peer-token" });
     let fetched = false;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = mockFetch(async () => {
       fetched = true;
       return Response.json({
         ok: true,
         node: "peer-node",
         capabilities: ["site_channels"],
       });
-    }) as typeof fetch;
+    });
     const res = await call(
       "POST",
       "/api/site/publish",
@@ -362,14 +364,14 @@ describe("site hosting routes", () => {
   test("Desktop sidecar refuses LAN/public bases before making a request", async () => {
     const d = db();
     let fetched = false;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = mockFetch(async () => {
       fetched = true;
       return Response.json({
         ok: true,
         node: "node-host",
         capabilities: ["site_channels"],
       });
-    }) as typeof fetch;
+    });
     const res = await call(
       "POST",
       "/api/site-hosting/verify",
