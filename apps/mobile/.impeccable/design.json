@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-04T08:45:55.173396+00:00",
+  "title": "Design System: Metahub Mobile",
+  "extensions": {
+    "colorMeta": {
+      "light-accent": {
+        "role": "primary",
+        "displayName": "Light accent"
+      },
+      "light-accentSoft": {
+        "role": "primary",
+        "displayName": "Light accentSoft"
+      },
+      "light-bg": {
+        "role": "neutral",
+        "displayName": "Light bg"
+      },
+      "light-surface": {
+        "role": "neutral",
+        "displayName": "Light surface"
+      },
+      "light-surface2": {
+        "role": "neutral",
+        "displayName": "Light surface2"
+      },
+      "light-fg": {
+        "role": "neutral",
+        "displayName": "Light fg"
+      },
+      "light-line": {
+        "role": "neutral",
+        "displayName": "Light line"
+      },
+      "light-danger": {
+        "role": "semantic",
+        "displayName": "Light danger"
+      },
+      "light-success": {
+        "role": "semantic",
+        "displayName": "Light success"
+      },
+      "dark-accent": {
+        "role": "primary",
+        "displayName": "Dark accent"
+      },
+      "dark-accentSoft": {
+        "role": "primary",
+        "displayName": "Dark accentSoft"
+      },
+      "dark-bg": {
+        "role": "neutral",
+        "displayName": "Dark bg"
+      },
+      "dark-surface": {
+        "role": "neutral",
+        "displayName": "Dark surface"
+      },
+      "dark-surface2": {
+        "role": "neutral",
+        "displayName": "Dark surface2"
+      },
+      "dark-fg": {
+        "role": "neutral",
+        "displayName": "Dark fg"
+      },
+      "dark-line": {
+        "role": "neutral",
+        "displayName": "Dark line"
+      },
+      "dark-danger": {
+        "role": "semantic",
+        "displayName": "Dark danger"
+      },
+      "dark-success": {
+        "role": "semantic",
+        "displayName": "Dark success"
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Body",
+        "purpose": "Shared body size; system family."
+      },
+      "browse-title": {
+        "displayName": "Browse title",
+        "purpose": "Shared content rows; native navigation titles use OS typography."
+      }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Browse row",
+      "kind": "custom",
+      "description": "React Native content pattern; icon omitted. Browser focus outline is preview-only.",
+      "html": "<button class=\"ds-row\"><span>项目记录</span><small>最近打开</small></button>",
+      "css": ".ds-row{display:flex;flex-direction:column;text-align:left;gap:5px;min-height:64px;width:100%;padding:14px 0;border:0;border-bottom:0.5px solid #ebebe8;background:#ffffff;color:#2c2c30;font:17px system-ui;cursor:pointer}.ds-row small{font-size:13px;color:#5b5b62}.ds-row:hover,.ds-row:active{background:rgba(45,45,55,0.045)}.ds-row:focus-visible{outline:2px solid #4a55d6;outline-offset:3px}",
+      "refersTo": "browse-title"
+    },
+    {
+      "name": "Site shortcut",
+      "kind": "custom",
+      "description": "Source shortcut layout and pressed opacity, using the initial fallback.",
+      "html": "<button class=\"ds-site\"><span class=\"ds-site-icon\">M</span><span class=\"ds-site-label\">Metahub</span></button>",
+      "css": ".ds-site{width:80px;min-height:100px;display:flex;flex-direction:column;align-items:center;gap:10px;padding:0;border:0;background:transparent;cursor:pointer}.ds-site-icon{width:60px;height:60px;border-radius:30px;display:grid;place-items:center;background:#eef0ff;color:#4a55d6;font:600 23px system-ui}.ds-site-label{font:13px system-ui;color:#2c2c30}.ds-site:hover,.ds-site:active{opacity:.55}.ds-site:focus-visible{outline:2px solid #4a55d6;outline-offset:3px}",
+      "refersTo": "site-label"
+    },
+    {
+      "name": "Record card",
+      "kind": "card",
+      "description": "Source content pattern; 1px preview border approximates the device hairline.",
+      "html": "<button class=\"ds-card\"><strong>移动端浏览体验</strong><span>11月4日</span></button>",
+      "css": ".ds-card{display:flex;flex-direction:column;gap:6px;min-height:44px;padding:11px 14px;text-align:left;border:1px solid #ebebe8;border-radius:14px;background:#fbfbfa;color:#2c2c30;cursor:pointer}.ds-card strong{font:500 15px system-ui}.ds-card span{font:13px system-ui;color:#75757f}.ds-card:hover,.ds-card:active{background:#f1f1ef}.ds-card:focus-visible{outline:2px solid #4a55d6;outline-offset:3px}",
+      "refersTo": "record-card"
+    },
+    {
+      "name": "Select-value chip",
+      "kind": "chip",
+      "description": "Static property-value pill; first source palette entry shown. This is not an interactive filter.",
+      "html": "<span class=\"ds-chip\">标签</span>",
+      "css": ".ds-chip{display:inline-block;border-radius:999px;padding:2px 8px;background:#e8f0fe;color:#5b5b62;font:12px system-ui}"
+    },
+    {
+      "name": "Native button: filled",
+      "kind": "button",
+      "description": "Illustrative HTML adapter for @expo/ui Button; browser geometry/states are not native tokens.",
+      "html": "<button class=\"ds-button-filled\">新建文档</button>",
+      "css": ".ds-button-filled{font:inherit;accent-color:#4a55d6;color:#ffffff;background:#4a55d6;cursor:pointer}.ds-button-filled:hover{filter:brightness(.96)}.ds-button-filled:active{filter:brightness(.9)}.ds-button-filled:focus-visible{outline:2px solid #4a55d6;outline-offset:3px}"
+    },
+    {
+      "name": "Native button: text",
+      "kind": "button",
+      "description": "Illustrative HTML adapter for @expo/ui Button; browser geometry/states are not native tokens.",
+      "html": "<button class=\"ds-button-text\">新建文档</button>",
+      "css": ".ds-button-text{font:inherit;accent-color:#4a55d6;color:#4a55d6;background:transparent;cursor:pointer}.ds-button-text:hover{filter:brightness(.96)}.ds-button-text:active{filter:brightness(.9)}.ds-button-text:focus-visible{outline:2px solid #4a55d6;outline-offset:3px}"
+    },
+    {
+      "name": "Native record input",
+      "kind": "input",
+      "description": "Illustrative semantic adapter; only text, cursor, and placeholder color assignments come from RecordTextInput.",
+      "html": "<label class=\"ds-field\">标题 <input placeholder=\"输入标题\" /></label>",
+      "css": ".ds-field{font:16px system-ui;color:#2c2c30}.ds-field input{font:inherit;color:#2c2c30;caret-color:#4a55d6}.ds-field input::placeholder{color:#75757f}.ds-field input:hover{border-color:#dededb}.ds-field input:focus-visible{outline:2px solid #4a55d6;outline-offset:3px}"
+    },
+    {
+      "name": "Native navigation roles",
+      "kind": "nav",
+      "description": "Illustrative labels and color assignments only; this HTML cannot implement an iOS system Search Tab, native materials, or native tab layout.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"应用导航\"><button aria-current=\"page\">首页</button><button>资料库</button><button>设置</button><button>搜索</button></nav>",
+      "css": ".ds-nav{display:flex;gap:16px;flex-wrap:wrap;font:13px system-ui}.ds-nav button{font:inherit;color:#75757f;background:transparent;border:0;cursor:pointer}.ds-nav button[aria-current]{color:#4a55d6}.ds-nav button:hover,.ds-nav button:active{color:#4a55d6}.ds-nav button:focus-visible{outline:2px solid #4a55d6;outline-offset:3px}"
+    },
+    {
+      "name": "Native library switch",
+      "kind": "custom",
+      "description": "Illustrative semantic selection adapter for SwiftUI Picker / Compose segmented row. Native shape and state treatment are not specified here.",
+      "html": "<fieldset class=\"ds-switch\"><legend>资料类型</legend><label><input type=\"radio\" name=\"ds-library\" checked /> 文档</label><label><input type=\"radio\" name=\"ds-library\" /> 数据表</label></fieldset>",
+      "css": ".ds-switch{display:flex;gap:16px;font:15px system-ui;color:#2c2c30}.ds-switch input{accent-color:#4a55d6}.ds-switch label:hover{color:#4a55d6}.ds-switch input:focus-visible{outline:2px solid #4a55d6;outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Follow the platform",
+    "overview": "Metahub Mobile follows the native interaction language of each operating system. SwiftUI and the iOS navigation system own iOS controls; Jetpack Compose and Material 3 own Android controls. Shared content keeps the same semantic color roles and information hierarchy, without requiring identical platform chrome.\n\nThis is a source extraction of the mobile app, not a new brand identity. Native system typography, native materials, and native state feedback remain authoritative. The website design system is outside this document’s scope.",
+    "keyCharacteristics": [
+      "Shared semantic colors with light and dark appearances.",
+      "Platform-owned navigation, search, menus, pickers, and sheets.",
+      "Readable content rows, restrained separators, and compact record metadata."
+    ],
+    "rules": [
+      {
+        "name": "The Semantic Role Rule",
+        "body": "Resolve color through the active platform theme; fallback hex values do not override native adaptive roles.",
+        "section": "colors"
+      },
+      {
+        "name": "The Native Material Rule",
+        "body": "Native controls own their material, geometry, and interaction feedback; the application supplies semantic intent and theme.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do resolve application colors through useTheme and native controls through NativeHost.",
+      "Do retain system typography, platform symbols, native materials, and built-in control states.",
+      "Do keep iOS scrolling content compatible with automatic navigation insets and large-title collapse.",
+      "Do preserve meaningful labels, native focus behavior, and copyable recovery details."
+    ],
+    "donts": [
+      "Don’t replace the iOS system Search Tab with a visually similar ordinary tab.",
+      "Don’t impose iOS control geometry on Android or hard-code the fallback palette over Material You.",
+      "Don’t turn illustrative HTML previews into specifications for native control geometry or animation.",
+      "Don’t claim that recorded values prove accessibility, tablet, or device validation."
+    ]
+  }
+}

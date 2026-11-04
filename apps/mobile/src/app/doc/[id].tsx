@@ -1,10 +1,5 @@
 import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
-import {
-  Stack,
-  useLocalSearchParams,
-  useNavigation,
-  useRouter,
-} from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Linking, StyleSheet, Text, View } from "react-native";
@@ -32,13 +27,19 @@ export default function DocScreen() {
 function LocalDocument({ id }: { id: string }) {
   const session = useSession();
   const router = useRouter();
-  const navigation = useNavigation();
   const { tokens, scheme } = useTheme();
   const editor = useRef<DocumentEditorHandle>(null);
   const phase = useRef<"active" | "deleting" | "deleted">("active");
   const navigating = useRef(false);
   const [busy, setBusy] = useState(false);
   const [deleted, setDeleted] = useState(false);
+  const [exitAllowed, setExitAllowed] = useState(false);
+  // Re-arm if a parent prevents the replay and this screen stays mounted.
+  useEffect(() => {
+    if (!exitAllowed) return;
+    const frame = requestAnimationFrame(() => setExitAllowed(false));
+    return () => cancelAnimationFrame(frame);
+  }, [exitAllowed]);
   const [history, setHistory] = useState(false);
   const [title, setTitle] = useState("文档");
   const [notice, setNotice] = useState("");
@@ -54,7 +55,7 @@ function LocalDocument({ id }: { id: string }) {
   useEffect(() => {
     if (deleted) {
       if (router.canGoBack()) router.back();
-      else router.replace("/(tabs)");
+      else router.replace("/");
     }
   }, [deleted, router]);
   const runAction = useCallback(
@@ -74,9 +75,12 @@ function LocalDocument({ id }: { id: string }) {
     },
     [session.isCurrent],
   );
-  usePreventRemove(!deleted, ({ data }) => {
+  usePreventRemove(!deleted && !exitAllowed, ({ repeat }) => {
     if (navigating.current || phase.current !== "active") return;
-    void runAction(() => navigation.dispatch(data.action)).catch((e) => {
+    void runAction(() => {
+      setExitAllowed(true);
+      repeat();
+    }).catch((e) => {
       if (session.isCurrent())
         setError(e instanceof Error ? e.message : String(e));
     });
@@ -168,7 +172,10 @@ function LocalDocument({ id }: { id: string }) {
         await runAction(async () => {
           check();
           if (target.startsWith("/blob/")) {
-            await session.attachments.media({ action: "preview", src: target }, present);
+            await session.attachments.media(
+              { action: "preview", src: target },
+              present,
+            );
             return;
           }
           const match = /^(?:#)?\/(doc|db|rec)\/([^/?#]+)$/.exec(target);
@@ -263,7 +270,7 @@ function LocalDocument({ id }: { id: string }) {
     });
   const leave = () => {
     if (router.canGoBack()) router.back();
-    else router.replace("/(tabs)");
+    else router.replace("/");
   };
 
   return (
@@ -279,7 +286,11 @@ function LocalDocument({ id }: { id: string }) {
         <Stack.Toolbar.Menu
           title="文档操作"
           accessibilityLabel="文档操作"
-          icon={process.env.EXPO_OS === "ios" ? "ellipsis.circle" : require("@/components/native/assets/more.xml")}
+          icon={
+            process.env.EXPO_OS === "ios"
+              ? "ellipsis.circle"
+              : require("@/components/native/assets/more.xml")
+          }
         >
           <Stack.Toolbar.MenuAction
             disabled={busy}

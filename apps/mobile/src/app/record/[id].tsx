@@ -1,12 +1,7 @@
 import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { Button, FieldGroup, Picker, Switch, Text } from "@expo/ui";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
-import {
-  Stack,
-  useLocalSearchParams,
-  useNavigation,
-  useRouter,
-} from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -53,10 +48,16 @@ export default function RecordScreen() {
   const [multiOpen, setMultiOpen] = useState<PropInfo | null>(null);
   const [refOpen, setRefOpen] = useState<PropInfo | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const navigation = useNavigation();
   const [, redraw] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const [deleted, setDeleted] = useState(false);
+  const [exitAllowed, setExitAllowed] = useState(false);
+  // Re-arm if a parent prevents the replay and this screen stays mounted.
+  useEffect(() => {
+    if (!exitAllowed) return;
+    const frame = requestAnimationFrame(() => setExitAllowed(false));
+    return () => cancelAnimationFrame(frame);
+  }, [exitAllowed]);
   const leaving = useRef(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const [savingBeforeLeave, setSavingBeforeLeave] = useState(false);
@@ -98,7 +99,7 @@ export default function RecordScreen() {
   useEffect(() => {
     if (deleted) {
       if (router.canGoBack()) router.back();
-      else router.replace("/(tabs)");
+      else router.replace("/");
     }
   }, [deleted, router]);
   const fetchRecord = useCallback(async () => {
@@ -164,7 +165,7 @@ export default function RecordScreen() {
       if (isCurrent() && !result.ok) setLeaveError(result.error);
     });
   };
-  usePreventRemove(!deleted, ({ data: action }) => {
+  usePreventRemove(!deleted && !exitAllowed, ({ repeat }) => {
     if (leaving.current || !mutationEnabled.current) return;
     leaving.current = true;
     setSavingBeforeLeave(true);
@@ -181,8 +182,10 @@ export default function RecordScreen() {
       mutationEnabled.current = false;
       const result = await drafts.flush(prepareDraft);
       if (!isCurrent()) return;
-      if (result.ok) navigation.dispatch(action.action);
-      else setLeaveError(result.error);
+      if (result.ok) {
+        setExitAllowed(true);
+        repeat();
+      } else setLeaveError(result.error);
     })()
       .catch((error) => {
         if (isCurrent())
@@ -196,7 +199,7 @@ export default function RecordScreen() {
   });
   const close = () => {
     if (router.canGoBack()) router.back();
-    else router.replace("/(tabs)");
+    else router.replace("/");
   };
   const closeToolbar = (
     <NativeToolbarAction
@@ -334,7 +337,11 @@ export default function RecordScreen() {
         <Stack.Toolbar.Menu
           title="记录操作"
           accessibilityLabel="记录操作"
-          icon={process.env.EXPO_OS === "ios" ? "ellipsis.circle" : require("@/components/native/assets/more.xml")}
+          icon={
+            process.env.EXPO_OS === "ios"
+              ? "ellipsis.circle"
+              : require("@/components/native/assets/more.xml")
+          }
         >
           <Stack.Toolbar.MenuAction
             disabled={deleting || saving}

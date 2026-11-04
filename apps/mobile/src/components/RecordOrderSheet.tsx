@@ -124,7 +124,7 @@ export function RecordOrderSheet({
               </View>
             )}
             ListEmptyComponent={
-              data.error ? null : (
+              data.error ? undefined : (
                 <Text style={{ color: tokens.muted, padding: 16 }}>
                   {data.loading ? "加载中…" : "没有可用锚点"}
                 </Text>

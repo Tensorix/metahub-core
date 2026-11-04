@@ -50,7 +50,7 @@ export const DocumentEditor = forwardRef<
   { documentId, sessionId, host: services, dark = false, onState, onError },
   ref,
 ) {
-  const web = useRef<WebView>(null);
+  const web = useRef<WebView<unknown>>(null);
   const [generation, setGeneration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -220,7 +220,7 @@ export const DocumentEditor = forwardRef<
   };
   return (
     <View style={[styles.root, { backgroundColor: dark ? "#171717" : "#fff" }]}>
-      <WebView
+      <WebView<unknown>
         key={nonce}
         ref={web}
         source={source}

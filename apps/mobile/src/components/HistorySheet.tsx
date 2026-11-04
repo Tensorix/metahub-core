@@ -269,7 +269,7 @@ export function HistorySheet({
                   </Pressable>
                 )}
                 ListEmptyComponent={
-                  loading || error || actionError ? null : (
+                  loading || error || actionError ? undefined : (
                     <Text style={[styles.empty, { color: tokens.muted }]}>
                       暂无历史
                     </Text>

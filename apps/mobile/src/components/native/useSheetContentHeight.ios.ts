@@ -33,6 +33,6 @@ export function useSheetContentHeight(maxHeight = 600, fraction = 0.7) {
     preferredHeight: Math.min(height * fraction, maxHeight),
     safeTop: insets.top,
     safeBottom: insets.bottom,
-    keyboard,
+    keyboard: keyboard ?? undefined,
   });
 }

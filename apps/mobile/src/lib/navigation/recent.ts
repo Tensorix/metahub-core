@@ -1,7 +1,7 @@
 import type { DbDriver } from "../../../../../src/core/driver.ts";
 export interface RecentItem {
   id: string;
-  kind: "document" | "record" | "database";
+  kind: "document" | "record" | "database" | "site";
   title: string;
   openedAt: number;
 }
@@ -24,7 +24,7 @@ export function createRecentStore(db: DbDriver, workspaceId: string) {
     read(): RecentItem[] {
       return db
         .query(
-          "SELECT id,kind,title,opened_at AS openedAt FROM mobile_recent WHERE workspace=? ORDER BY opened_at DESC,kind,id LIMIT 50",
+          "SELECT id,kind,title,opened_at AS openedAt FROM mobile_recent WHERE workspace=? ORDER BY opened_at DESC,kind,id",
         )
         .all(workspaceId) as RecentItem[];
     },
@@ -46,8 +46,8 @@ export function createRecentStore(db: DbDriver, workspaceId: string) {
           openedAt,
         );
         db.query(
-          "DELETE FROM mobile_recent WHERE workspace=? AND rowid NOT IN (SELECT rowid FROM mobile_recent WHERE workspace=? ORDER BY opened_at DESC,kind,id LIMIT 50)",
-        ).run(workspaceId, workspaceId);
+          "DELETE FROM mobile_recent WHERE workspace=? AND kind=? AND rowid NOT IN (SELECT rowid FROM mobile_recent WHERE workspace=? AND kind=? ORDER BY opened_at DESC,kind,id LIMIT 50)",
+        ).run(workspaceId, item.kind, workspaceId, item.kind);
       })();
       emit();
     },

@@ -1,6 +1,15 @@
+import {
+  ThemeProvider as NavigationThemeProvider,
+  DarkTheme,
+  DefaultTheme,
+} from "expo-router/react-navigation";
 import { NativeDiagnostics } from "@/lib/diagnostics/NativeDiagnostics";
 import { diagnosticsEnabled } from "@/lib/diagnostics/build-mode";
-import { Stack, useNavigationContainerRef } from "expo-router";
+import {
+  Stack,
+  useRootNavigationState,
+  useNavigationContainerRef,
+} from "expo-router";
 import { Platform } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -16,7 +25,10 @@ import {
 SplashScreen.preventAutoHideAsync();
 
 /** A route from another workspace must unmount before its history is reset. */
-function WorkspaceScreen({ workspaceId, children }: {
+function WorkspaceScreen({
+  workspaceId,
+  children,
+}: {
   workspaceId: string | undefined;
   children: ReactNode;
 }) {
@@ -28,15 +40,17 @@ function RootStack() {
   const { ready, session } = useSessionCtx();
   const { tokens } = useTheme();
   const navigation = useNavigationContainerRef();
+  const navigationState = useRootNavigationState();
   const previousSession = useRef<SessionIdentity | null | undefined>(undefined);
   const sessionId = session?.id;
   const workspaceId = session?.workspaceId;
   useEffect(() => {
     const updateNavigation = () => {
       if (!ready || !navigation.isReady()) return;
-      const next = sessionId !== undefined && workspaceId !== undefined
-        ? { id: sessionId, workspaceId }
-        : null;
+      const next =
+        sessionId !== undefined && workspaceId !== undefined
+          ? { id: sessionId, workspaceId }
+          : null;
       const state = findWorkspaceStack(navigation.getRootState());
       if (!state) return;
       const previous = previousSession.current;
@@ -44,14 +58,19 @@ function RootStack() {
       const route = state.routes[state.index ?? 0]?.name;
       if (shouldResetSessionNavigation(previous, next, route)) {
         // One owner resets private history; login/logout remain Protected transitions.
-        navigation.resetRoot({ key: state.key, index: 0, routes: [{ name: "(tabs)" }] });
+        navigation.reset({
+          key: state.key,
+          index: 0,
+          routes: [{ name: "(tabs)" }],
+        });
       }
     };
     updateNavigation();
-    const stopReady = navigation.addListener("ready", updateNavigation);
     const stopState = navigation.addListener("state", updateNavigation);
-    return () => { stopReady(); stopState(); };
-  }, [ready, sessionId, workspaceId, navigation]);
+    return () => {
+      stopState();
+    };
+  }, [ready, sessionId, workspaceId, navigation, navigationState?.key]);
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();
@@ -73,6 +92,18 @@ function RootStack() {
       <Stack.Protected guard={session !== null}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
+          name="find"
+          options={{ headerShown: true, title: "搜索" }}
+        />
+        <Stack.Screen
+          name="sites"
+          options={{
+            headerShown: true,
+            title: "Sites",
+            headerLargeTitleEnabled: Platform.OS === "ios",
+          }}
+        />
+        <Stack.Screen
           name="db/[id]"
           options={{
             headerShown: true,
@@ -87,16 +118,29 @@ function RootStack() {
         <Stack.Screen
           name="manage/document/[id]"
           // Android form sheets do not support navigation headers or their save/cancel actions.
-          options={{ presentation: Platform.OS === "android" ? "modal" : "formSheet", headerShown: true,
-            ...(Platform.OS === "ios" ? { sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true } : {}) }}
+          options={{
+            presentation: Platform.OS === "android" ? "modal" : "formSheet",
+            headerShown: true,
+            ...(Platform.OS === "ios"
+              ? { sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true }
+              : {}),
+          }}
         />
         <Stack.Screen
           name="manage/database/[id]"
-          options={{ presentation: Platform.OS === "android" ? "modal" : "formSheet", headerShown: true, gestureEnabled: false }}
+          options={{
+            presentation: Platform.OS === "android" ? "modal" : "formSheet",
+            headerShown: true,
+            gestureEnabled: false,
+          }}
         />
         <Stack.Screen
           name="manage/view/[id]"
-          options={{ presentation: Platform.OS === "android" ? "modal" : "formSheet", headerShown: true, gestureEnabled: false }}
+          options={{
+            presentation: Platform.OS === "android" ? "modal" : "formSheet",
+            headerShown: true,
+            gestureEnabled: false,
+          }}
         />
         <Stack.Screen
           name="add-server"
@@ -114,25 +158,52 @@ function RootStack() {
           }}
         />
       </Stack.Protected>
-      <Stack.Screen name="connect" options={{ headerShown: true, title: "连接存储桶" }} />
+      <Stack.Screen
+        name="connect"
+        options={{ headerShown: true, title: "连接存储桶" }}
+      />
     </Stack>
+  );
+}
+
+function ThemedNavigation() {
+  const { scheme, tokens } = useTheme();
+  const theme = scheme === "dark" ? DarkTheme : DefaultTheme;
+  return (
+    <NavigationThemeProvider
+      value={{
+        ...theme,
+        colors: {
+          ...theme.colors,
+          primary: tokens.accent,
+          background: tokens.bg,
+          card: tokens.bg,
+          text: tokens.fg,
+          border: tokens.line,
+        },
+      }}
+    >
+      <RootStack />
+    </NavigationThemeProvider>
   );
 }
 
 export default function RootLayout() {
   // A diagnostic Release is a separate synthetic artifact, never the daily-use candidate.
-  if (diagnosticsEnabled(
-    __DEV__,
-    process.env.EXPO_PUBLIC_MH_SELFTEST,
-    process.env.EXPO_PUBLIC_MH_DIAGNOSTICS_RELEASE,
-  )) {
+  if (
+    diagnosticsEnabled(
+      __DEV__,
+      process.env.EXPO_PUBLIC_MH_SELFTEST,
+      process.env.EXPO_PUBLIC_MH_DIAGNOSTICS_RELEASE,
+    )
+  ) {
     void SplashScreen.hideAsync();
     return <NativeDiagnostics />;
   }
   return (
     <ThemeProvider>
       <SessionProvider>
-        <RootStack />
+        <ThemedNavigation />
       </SessionProvider>
     </ThemeProvider>
   );

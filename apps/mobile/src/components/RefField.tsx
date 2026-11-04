@@ -282,7 +282,7 @@ export function RefPickerSheet({
                       ? "没有匹配项"
                       : "没有可选项"}
                 </Text>
-              ) : null
+              ) : undefined
             }
           />
         </View>

@@ -1,12 +1,6 @@
 import { RNHostView } from "@expo/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, FlatList, Text, View } from "react-native";
 import { NativeSheet } from "@/components/native/NativeSheet";
 import { useSheetContentHeight } from "@/components/native/useSheetContentHeight";
 import { NativeButton } from "@/components/native/NativeButton";
@@ -202,7 +196,7 @@ export function DocumentHistorySheet({
               ListEmptyComponent={
                 !history.loading && !history.error ? (
                   <Text style={{ color: tokens.muted }}>暂无历史</Text>
-                ) : null
+                ) : undefined
               }
             />
           )}
