@@ -13,6 +13,8 @@
  * Run standalone: `bun run scripts/smoke-skill.ts <path-to-binary>`
  * Or import and call smokeSkill(binaryPath) from the build script.
  */
+import EXPECTED_SKILL from "../SKILL.md" with { type: "text" };
+import { CODEX_OPENAI_YAML } from "../src/cli/agent-skill.ts";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,23 +26,23 @@ function assertSkillBody(path: string): number {
   if (!body.startsWith("---\n") || !body.includes("name: mh")) {
     throw new Error("installed SKILL.md is missing the expected frontmatter");
   }
-  if (!body.includes("durable, syncable working memory")) {
-    throw new Error("installed SKILL.md is missing the embedded guide body");
+  if (body !== EXPECTED_SKILL) {
+    throw new Error("installed SKILL.md differs from the current source guide");
   }
   return body.length;
 }
 
 /** Throws if the binary can't install non-empty, well-formed mh agent skills. */
-export async function smokeSkill(binaryPath: string): Promise<void> {
+export async function smokeSkill(binaryPath: string, prefixArgs: string[] = []): Promise<void> {
   // Isolated config dir AND cwd: no source tree, no sibling SKILL.md — so a pass
   // can only mean the doc is embedded in the binary itself. Resolve the binary to
   // an absolute path first, since we run it from that throwaway cwd.
   const bin = resolve(binaryPath);
   const cfg = mkdtempSync(join(tmpdir(), "mh-skill-smoke-"));
   try {
-    const claude = spawnSync(bin, ["init", "--claude", "--json"], {
+    const claude = spawnSync(bin, [...prefixArgs, "init", "--claude", "--json"], {
       cwd: cfg,
-      env: { ...process.env, CLAUDE_CONFIG_DIR: cfg },
+      env: { ...process.env, METAHUB_HOME: join(cfg, "workspace"), CLAUDE_CONFIG_DIR: cfg },
       encoding: "utf8",
     });
     if (claude.error) throw claude.error;
@@ -53,9 +55,9 @@ export async function smokeSkill(binaryPath: string): Promise<void> {
     }
     const claudeLen = assertSkillBody(claudeOut.skill);
 
-    const codex = spawnSync(bin, ["init", "--codex", "--json"], {
+    const codex = spawnSync(bin, [...prefixArgs, "init", "--codex", "--json"], {
       cwd: cfg,
-      env: { ...process.env, CODEX_HOME: cfg },
+      env: { ...process.env, METAHUB_HOME: join(cfg, "workspace"), CODEX_HOME: cfg },
       encoding: "utf8",
     });
     if (codex.error) throw codex.error;
@@ -75,8 +77,8 @@ export async function smokeSkill(binaryPath: string): Promise<void> {
     }
     const codexLen = assertSkillBody(codexOut.skill);
     const metadata = readFileSync(codexOut.metadata, "utf8");
-    if (!metadata.includes("Use $mh to store, recall, search, and edit durable working memory")) {
-      throw new Error("installed Codex metadata is missing the expected default_prompt");
+    if (metadata !== CODEX_OPENAI_YAML) {
+      throw new Error("installed Codex metadata differs from the current source");
     }
 
     console.log(

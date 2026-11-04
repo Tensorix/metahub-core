@@ -1,6 +1,7 @@
 import { plural, type Msg } from "./util.ts";
 
 export const sites = {
+  手机: "Phone",
   "复制失败，请手动选择并复制": "Copy failed. Select and copy the text manually.",
   "选择设备和接入方式，加入同一个工作区。": "Choose a device and connection method to join this workspace.",
   "连接当前服务器": "Connect to this server",

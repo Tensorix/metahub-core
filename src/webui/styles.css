@@ -3198,3 +3198,12 @@
     .dw-content .doc { padding:36px 32px 24vh; }
     .dw-content .doc-title { font-size:32px; }
   }
+
+/* Onboarding instructions must remain readable, unlike compact peer rows. */
+.device-enroll .peer-sub {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+.device-enroll .enroll-cmd { user-select: text; margin-top: 10px; }

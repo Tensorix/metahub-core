@@ -767,6 +767,7 @@ export function AddDeviceModal({ buckets, getConfig, environment, onClosed }: {
   const backupLink = (direct = false) => { closeModal(); location.hash = "#/settings?sec=backup"; if (direct) openModal(<AddDirectPeerModal onDone={closeModal} />); };
   return <Modal title={t("添加设备")} sub={t("选择设备和接入方式，加入同一个工作区。")}
     footer={<button class="btn btn-primary" onClick={closeModal}>{t("关闭")}</button>} width={420}>
+    <div class="device-enroll">
     <div class="add-tabs">
       {(["phone", "cli"] as const).map(id => <button class={"add-tab" + (tab === id ? " on" : "")} aria-pressed={tab === id} onClick={() => setTab(id)}>{id === "phone" ? t("手机") : t("电脑 / 命令行")}</button>)}
     </div>
@@ -812,6 +813,7 @@ export function AddDeviceModal({ buckets, getConfig, environment, onClosed }: {
         <p class="peer-sub">{t("⚠ 接入码含桶访问密钥,请勿公开分享;不含加密口令——新设备需另输口令。")}</p>
       </>}
     </>}
+    </div>
   </Modal>;
 }
 
