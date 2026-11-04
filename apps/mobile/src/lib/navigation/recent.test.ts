@@ -43,3 +43,22 @@ test("recent subscriptions stay scoped and observer errors do not break saves", 
     db.close();
   }
 });
+
+test("frequent document visits cannot evict the recent Sites lane", () => {
+  const db = new Database(":memory:");
+  try {
+    const store = createRecentStore(db, "a");
+    store.remember({ id: "site", kind: "site", title: "A Site" });
+    for (let i = 0; i < 70; i++)
+      store.remember({ id: String(i), kind: "document", title: "Doc" });
+    expect(
+      store
+        .read()
+        .filter((r) => r.kind === "site")
+        .map((r) => r.id),
+    ).toEqual(["site"]);
+    expect(store.read().filter((r) => r.kind === "document")).toHaveLength(50);
+  } finally {
+    db.close();
+  }
+});

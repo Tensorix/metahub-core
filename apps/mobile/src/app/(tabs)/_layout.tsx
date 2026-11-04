@@ -1,4 +1,4 @@
-import { NativeTabs } from "expo-router/unstable-native-tabs";
+import { NativeTabs } from "expo-router/native-tabs";
 import { Platform } from "react-native";
 
 import { useTheme } from "@/lib/theme";
@@ -19,23 +19,47 @@ export default function TabsLayout() {
         ? { backgroundColor: tokens.sidebar, indicatorColor: tokens.accentSoft }
         : {})}
     >
-      <NativeTabs.Trigger name="(home)" testID="tab-home" accessibilityLabel="首页">
+      <NativeTabs.Trigger
+        name="(home)"
+        testID="tab-home"
+        accessibilityLabel="首页"
+      >
         <NativeTabs.Trigger.Label>首页</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           sf={{ default: "house", selected: "house.fill" }}
           md="home"
         />
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="search" testID="tab-search" accessibilityLabel="搜索">
-        <NativeTabs.Trigger.Label>搜索</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="magnifyingglass" md="search" />
+      <NativeTabs.Trigger
+        name="(library)"
+        testID="tab-library"
+        accessibilityLabel="资料库"
+      >
+        <NativeTabs.Trigger.Label>资料库</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon
+          sf={{ default: "books.vertical", selected: "books.vertical.fill" }}
+          md="folder"
+        />
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="settings" testID="tab-settings" accessibilityLabel="设置">
+      <NativeTabs.Trigger
+        name="settings"
+        testID="tab-settings"
+        accessibilityLabel="设置"
+      >
         <NativeTabs.Trigger.Label>设置</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           sf={{ default: "gearshape", selected: "gearshape.fill" }}
           md="settings"
         />
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger
+        name="(search)"
+        role="search"
+        hidden={Platform.OS === "android"}
+        testID="tab-search"
+        accessibilityLabel="搜索"
+      >
+        <NativeTabs.Trigger.Label>搜索</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>
   );

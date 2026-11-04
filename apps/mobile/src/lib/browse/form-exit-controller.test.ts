@@ -1,15 +1,15 @@
 import { expect, test } from "bun:test";
-// Exercise the installed SDK's visited-route action replay, rather than a copy.
-import { shouldPreventRemove } from "expo-router/build/react-navigation/core/useOnPreventRemove";
+import type { usePreventRemove } from "expo-router/react-navigation";
 import { createFormExitController } from "./form-exit-controller";
 import type { FormExitState } from "./form-guard";
 
-type Action = Parameters<typeof shouldPreventRemove>[4];
-type Emitter = Parameters<typeof shouldPreventRemove>[0];
+type BlockedNavigation = Parameters<
+  NonNullable<Parameters<typeof usePreventRemove>[1]>
+>[0];
+type Action = BlockedNavigation["data"]["action"];
 
 function navigationFixture(initial: FormExitState) {
   let state = initial;
-  let routes = [{ key: "browse" }, { key: "manage" }];
   let removals = 0;
   let interceptions = 0;
   let blocked = 0;
@@ -20,23 +20,20 @@ function navigationFixture(initial: FormExitState) {
     blocked: () => blocked++,
     confirm: (discard, cancel) => confirmations.push({ discard, cancel }),
   });
-  // This SDK helper only consumes emitter.emit; other event types are not used.
-  const emitter = {
-    emit(event: { data: { action: Action } }) {
-      interceptions++;
-      interceptedActions.push(event.data.action);
-      controller.beforeRemove(() => dispatch(event.data.action));
-      return { ...event, defaultPrevented: true };
-    },
-  } as unknown as Emitter;
-  const childListeners: Parameters<typeof shouldPreventRemove>[1] = {};
+  // The public SDK 58 contract supplies a repeat callback. The controller must
+  // retain that callback through revision checks, cancellations and stale alerts.
   function dispatch(action: Action) {
     actions.push(action);
-    const next = [{ key: "browse" }];
-    if (!shouldPreventRemove(emitter, childListeners, routes, next, action)) {
-      routes = next;
-      removals++;
-    }
+    interceptions++;
+    interceptedActions.push(action);
+    const event: BlockedNavigation = {
+      data: { action },
+      repeat: () => {
+        actions.push(action);
+        removals++;
+      },
+    };
+    controller.beforeRemove(event.repeat);
   }
   return {
     controller,
@@ -44,7 +41,6 @@ function navigationFixture(initial: FormExitState) {
     confirmations,
     actions,
     interceptedActions,
-    childListeners,
     update: (next: Partial<FormExitState>) => {
       state = { ...state, ...next };
     },
@@ -54,20 +50,25 @@ function navigationFixture(initial: FormExitState) {
 
 const dirty = { pending: false, dirty: true, revision: 1 };
 
-test("close, continue editing, close, discard replays the SDK action exactly once with interception still enabled", () => {
+test("close, continue editing, close, discard invokes the SDK repeat exactly once", () => {
   const fixture = navigationFixture(dirty);
   fixture.dispatch({ type: "POP" });
   fixture.confirmations[0]!.cancel();
-  expect(fixture.counts()).toEqual({ removals: 0, interceptions: 1, blocked: 0 });
+  expect(fixture.counts()).toEqual({
+    removals: 0,
+    interceptions: 1,
+    blocked: 0,
+  });
   fixture.dispatch({ type: "POP" });
   const confirmation = fixture.confirmations[1]!;
   confirmation.discard();
-  expect(fixture.counts()).toEqual({ removals: 1, interceptions: 2, blocked: 0 });
+  expect(fixture.counts()).toEqual({
+    removals: 1,
+    interceptions: 2,
+    blocked: 0,
+  });
   expect(fixture.actions).toHaveLength(3);
   expect(fixture.actions[2]).toBe(fixture.interceptedActions[1]);
-  // The SDK added a private symbol to this replay; spreading only known action
-  // fields would lose it and re-enter the guard, prompting a second time.
-  expect(Object.getOwnPropertySymbols(fixture.actions[2]!)).toHaveLength(1);
   expect(fixture.confirmations).toHaveLength(2);
   confirmation.discard();
   expect(fixture.counts().removals).toBe(1);
@@ -77,7 +78,11 @@ test("clean save/replace uses the same intercepted replay without confirmation",
   const fixture = navigationFixture({ ...dirty, dirty: false });
   const action = { type: "REPLACE", payload: { name: "db/new-id" } };
   fixture.dispatch(action);
-  expect(fixture.counts()).toEqual({ removals: 1, interceptions: 1, blocked: 0 });
+  expect(fixture.counts()).toEqual({
+    removals: 1,
+    interceptions: 1,
+    blocked: 0,
+  });
   expect(fixture.actions[1]).toMatchObject(action);
   expect(fixture.confirmations).toHaveLength(0);
 });
@@ -91,7 +96,11 @@ test("toolbar and system back cannot leave while saving, including a save begun 
   fixture.dispatch({ type: "POP" });
   fixture.update({ pending: true });
   fixture.confirmations[0]!.discard();
-  expect(fixture.counts()).toEqual({ removals: 0, interceptions: 3, blocked: 3 });
+  expect(fixture.counts()).toEqual({
+    removals: 0,
+    interceptions: 3,
+    blocked: 3,
+  });
 });
 
 test("newer input requires another confirmation and superseded/cancelled dialogs cannot navigate", () => {
@@ -126,20 +135,6 @@ test("unmount invalidates an open dialog, including an effect cleanup/setup repl
   replacement.dispatch({ type: "POP" });
   replacement.confirmations[0]!.discard();
   expect(replacement.counts().removals).toBe(1);
-});
-
-test("replay preserves SDK child-beforeRemove semantics for an already visited route", () => {
-  const fixture = navigationFixture(dirty);
-  let childChecks = 0;
-  fixture.childListeners.manage = () => {
-    childChecks++;
-    return childChecks > 1;
-  };
-  fixture.dispatch({ type: "POP" });
-  fixture.confirmations[0]!.discard();
-  // The SDK visited marker skips both this route and its already-checked child.
-  expect(childChecks).toBe(1);
-  expect(fixture.counts().removals).toBe(1);
 });
 
 test("stale dismissal of an old alert cannot cancel a new draft revision prompt", () => {

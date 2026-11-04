@@ -1,11 +1,11 @@
-import { useNavigation, usePreventRemove } from "expo-router/react-navigation";
-import { useEffect, useRef } from "react";
+import { usePreventRemove } from "expo-router/react-navigation";
+import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { createFormExitController } from "./form-exit-controller";
 import type { FormExitState } from "./form-guard";
 
 export function useFormExit(read: () => FormExitState) {
-  const navigation = useNavigation();
+  const [releasedRevision, setReleasedRevision] = useState<number | null>(null);
   const readRef = useRef(read);
   useEffect(() => {
     readRef.current = read;
@@ -33,10 +33,15 @@ export function useFormExit(read: () => FormExitState) {
       controllerRef.current = null;
     };
   }, []);
-  // Replay data.action unchanged: Router marks this route visited, so the replay
-  // bypasses its listener while other routes remain protected. Toggling this flag
-  // before pop also changes native header props during the removal transition.
-  usePreventRemove(true, ({ data }) =>
-    controllerRef.current?.beforeRemove(() => navigation.dispatch(data.action)),
+  // SDK 58 owns the action replay. A new edit or pending save re-arms this form
+  // if another route prevented the larger navigation action from completing.
+  const state = read();
+  usePreventRemove(
+    state.pending || releasedRevision !== state.revision,
+    ({ repeat }) =>
+      controllerRef.current?.beforeRemove(() => {
+        setReleasedRevision(readRef.current().revision);
+        repeat();
+      }),
   );
 }

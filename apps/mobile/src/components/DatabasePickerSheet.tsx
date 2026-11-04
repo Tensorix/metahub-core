@@ -66,7 +66,7 @@ export function DatabasePickerSheet({
                 <Text style={{ color: tokens.muted, padding: 16 }}>
                   {data.loading ? "加载中…" : "没有匹配的数据库"}
                 </Text>
-              ) : null
+              ) : undefined
             }
           />
           <NativeButton onPress={onClose}>取消</NativeButton>
