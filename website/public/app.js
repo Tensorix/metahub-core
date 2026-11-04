@@ -1,45 +1,87 @@
+import { translate } from './copy.js';
+import { createDemo } from './demo.js';
+
 let language = 'en';
 try { language = localStorage.getItem('metahub-site-language') === 'zh' ? 'zh' : 'en'; } catch {}
-let view = 'documents';
-let install = 'cli';
-const $ = (selector) => document.querySelector(selector);
-const captions = {
- documents: {en:'Markdown that feels natural. Edit in blocks or go straight to the source.',zh:'自然顺手的 Markdown 编辑体验，自由切换块视图与源码。'},
- tables: {en:'Typed tables for real work. Connect records, documents, and the details that matter.',zh:'为实际工作而建的数据表，将记录、文档与重要细节关联起来。'}
-};
-function updateView(){
- document.querySelectorAll('[data-view]').forEach(button=>{const selected=button.dataset.view===view;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;});
- $('#product-image').src=`/assets/${view}-v0.5.4-en.png`;
- $('#product-image').alt=view==='documents'?'metahub document editor showing an architecture overview, document sidebar, and Markdown content':'metahub typed table with select, multi-select, checkbox, and date columns';
- $('#product-panel').setAttribute('aria-labelledby',`${view}-tab`);
- $('#view-name').textContent=view;
- $('#view-caption').textContent=captions[view][language];
+const $ = (id) => document.getElementById(id);
+let install = 'desktop';
+let proof = 'documents';
+let copyResult = '';
+let copyRequest = 0;
+const t = (key) => translate(language, key);
+const demo = createDemo({ language });
+
+function applyLanguage() {
+  document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
+  document.querySelectorAll('[data-i18n]').forEach((node) => { node.textContent = t(node.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-aria]').forEach((node) => node.setAttribute('aria-label', t(node.dataset.i18nAria)));
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((node) => node.setAttribute('placeholder', t(node.dataset.i18nPlaceholder)));
+  // Keep the locked slogan intact, with a deliberate phrase boundary in both languages.
+  const heading = document.querySelector('.hero h1');
+  if (language === 'en') {
+    const emphasis = document.createElement('span');
+    emphasis.className = 'hero-emphasis';
+    emphasis.textContent = 'keep working';
+    heading.replaceChildren(document.createTextNode('Where you and your AI'), document.createElement('br'), document.createTextNode(' '), emphasis, document.createTextNode('.'));
+  } else {
+    const emphasis = document.createElement('span');
+    emphasis.className = 'hero-emphasis';
+    emphasis.textContent = '接着往下做';
+    const continuation = document.createElement('span');
+    continuation.className = 'hero-continuation';
+    continuation.append(emphasis, document.createTextNode('的地方。'));
+    heading.replaceChildren(document.createTextNode('你和 AI '), continuation);
+  }
+  $('language').textContent = t('language');
+  document.title = t('title');
+  document.querySelector('meta[name="description"]').content = t('description');
+  document.querySelector('meta[property="og:title"]').content = t('title');
+  document.querySelector('meta[property="og:description"]').content = t('description');
+  updateInstall(); updateProof(); demo.setLanguage(language);
 }
-function updateInstall(){
- document.querySelectorAll('[data-install]').forEach(button=>{const selected=button.dataset.install===install;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;});
- $('#install-panel').setAttribute('aria-labelledby',`${install}-tab`);
- $('#install-command').textContent=install==='cli'?'bunx @tensorix/metahub init':'brew install --cask tensorix/tap/metahub-app';
- $('#install-description').textContent=install==='cli'?(language==='en'?'Run with Bun. Your knowledge base starts here.':'通过 Bun 运行，从这里创建你的知识库。'):(language==='en'?'Install the desktop app with Homebrew on macOS.':'在 macOS 上通过 Homebrew 安装桌面应用。');
- $('#install-note').innerHTML=install==='cli'?(language==='en'?'Requires <a href="https://bun.sh">Bun</a>. Prefer a standalone binary?':'需要安装 <a href="https://bun.sh">Bun</a>。也可以直接下载独立可执行文件。'):(language==='en'?'Requires <a href="https://brew.sh">Homebrew</a>. Other platforms and builds below.':'需要安装 <a href="https://brew.sh">Homebrew</a>。其他平台与构建版本见下方。');
- $('#copy-status').textContent='';
+function updateInstall() {
+  document.querySelectorAll('[data-install]').forEach((node) => {
+    const selected = node.dataset.install === install;
+    node.setAttribute('aria-selected', String(selected)); node.tabIndex = selected ? 0 : -1;
+  });
+  $('install-panel').setAttribute('aria-labelledby', `install-${install}-tab`);
+  $('install-description').textContent = t(install === 'desktop' ? 'installDesktop' : 'installCli');
+  $('install-command').textContent = install === 'desktop' ? 'brew install --cask tensorix/tap/metahub-app' : 'bunx @tensorix/metahub init';
+  $('install-dependency').textContent = install === 'desktop' ? 'Homebrew' : 'Bun';
+  $('install-dependency').href = install === 'desktop' ? 'https://brew.sh' : 'https://bun.sh';
+  $('copy-status').textContent = copyResult ? t(copyResult) : '';
 }
-function updateLanguage(){
- document.documentElement.lang=language==='en'?'en':'zh-CN';
- document.querySelectorAll('[data-en][data-zh]').forEach(el=>el.innerHTML=el.dataset[language]);
- $('#language').textContent=language==='en'?'中文':'EN';
- $('#language').setAttribute('aria-label',language==='en'?'Switch to Chinese':'Switch to English');
- $('#copy').setAttribute('aria-label',language==='en'?'Copy installation command':'复制安装命令');
- document.title=language==='en'?'metahub — A home for your AI’s memory':'metahub — 让 AI 的记忆，有处安放';
- updateView();updateInstall();
+function updateProof() {
+  document.querySelectorAll('[data-proof]').forEach((node) => {
+    const selected = node.dataset.proof === proof;
+    node.setAttribute('aria-selected', String(selected)); node.tabIndex = selected ? 0 : -1;
+  });
+  $('proof-panel').setAttribute('aria-labelledby', `proof-${proof}-tab`);
+  $('product-image').src = `/assets/${proof}-v0.5.4-en.png`;
+  $('product-image').alt = t(proof === 'documents' ? 'screenshotNote' : 'screenshotTable');
 }
-$('#language').addEventListener('click',()=>{language=language==='en'?'zh':'en';try{localStorage.setItem('metahub-site-language',language)}catch{}updateLanguage()});
-document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{view=button.dataset.view;updateView()}));
-document.querySelectorAll('[data-install]').forEach(button=>button.addEventListener('click',()=>{install=button.dataset.install;updateInstall()}));
-document.querySelectorAll('[role="tablist"]').forEach(list=>list.addEventListener('keydown',event=>{
- const buttons=[...list.querySelectorAll('[role="tab"]')];let index=buttons.indexOf(document.activeElement);
- if(index<0)return;
- if(event.key==='ArrowRight')index=(index+1)%buttons.length;else if(event.key==='ArrowLeft')index=(index-1+buttons.length)%buttons.length;else if(event.key==='Home')index=0;else if(event.key==='End')index=buttons.length-1;else return;
- event.preventDefault();buttons[index].click();buttons[index].focus();
-}));
-$('#copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('#install-command').textContent);$('#copy-status').textContent=language==='en'?'Copied. Paste it into your terminal.':'已复制，可以粘贴到终端运行。'}catch{$('#copy-status').textContent=language==='en'?'Copy unavailable. Select the command and copy it manually.':'无法自动复制，请选中上方命令手动复制。'}});
-updateLanguage();
+$('language').addEventListener('click', () => {
+  language = language === 'en' ? 'zh' : 'en';
+  try { localStorage.setItem('metahub-site-language', language); } catch {}
+  applyLanguage();
+});
+for (const node of document.querySelectorAll('[data-install]')) node.addEventListener('click', () => { install = node.dataset.install; copyRequest++; copyResult = ''; updateInstall(); });
+for (const node of document.querySelectorAll('[data-proof]')) node.addEventListener('click', () => { proof = node.dataset.proof; updateProof(); });
+// All tab groups share the same keyboard contract, including nested demo views.
+for (const list of document.querySelectorAll('[role="tablist"]')) list.addEventListener('keydown', (event) => {
+  const buttons = [...list.querySelectorAll('[role="tab"]')];
+  let index = buttons.indexOf(document.activeElement); if (index < 0) return;
+  if (event.key === 'ArrowRight') index = (index + 1) % buttons.length;
+  else if (event.key === 'ArrowLeft') index = (index - 1 + buttons.length) % buttons.length;
+  else if (event.key === 'Home') index = 0;
+  else if (event.key === 'End') index = buttons.length - 1;
+  else return;
+  event.preventDefault(); buttons[index].click(); buttons[index].focus();
+});
+$('copy').addEventListener('click', async () => {
+  const request = ++copyRequest;
+  try { await navigator.clipboard.writeText($('install-command').textContent); if (request === copyRequest) copyResult = 'copied'; }
+  catch { if (request === copyRequest) copyResult = 'copyError'; }
+  updateInstall();
+});
+applyLanguage();
