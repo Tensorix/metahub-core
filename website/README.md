@@ -36,6 +36,7 @@ For that release, GitHub Actions passed validation but the repository token coul
 - Brand images come from `assets/brand/color/`.
 - Manrope is self-hosted; its Open Font License is included in `public/assets/Manrope-LICENSE.txt`.
 - English is the default; the language control switches marketing copy to Simplified Chinese and persists the choice locally.
+- Agent setup is organized by harness: Codex and Claude Code have their own initialization commands and conversation examples; other agents get a localized prompt and a ‘Copy for your AI’ button. The prompt asks the agent to download the raw SKILL.md, install it for its environment, install the CLI if needed, and read the shared workspace. This tab hides the manual CLI prerequisite and uses conversation-specific clipboard feedback. The CLI installation link selects the Bun global-install command, so `mh` is available before running init. Init installs the guide; it does not execute the example conversation.
 - No analytics, cookies, external fonts, or visitor data collection.
 
 Update `public/index.html` for semantic structure and initial English content, `copy.js` for both languages, `style.css` for presentation, `demo.js` for interaction/motion, and `app.js` for page language/tabs/clipboard behavior. Keep initial HTML text and the English dictionary in sync. Every tab group supports arrow keys, Home, and End. Reduced-motion preferences disable autoplay and spatial animation.
@@ -65,3 +66,5 @@ bun website/check.ts
 bun test website/demo.test.ts
 bun test scripts/ci-scope.test.ts
 ```
+
+The Other agents prompt is collapsed by default. “Copy for your AI” always copies the complete prompt; “Show details” reveals the prerequisites and prompt inline. Clipboard failure opens the details for manual copying. Both labels and feedback are localized.
