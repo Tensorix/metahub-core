@@ -298,11 +298,8 @@ export function BackupPage() {
       <AddDeviceModal
         buckets={bucketList}
         getConfig={getConfig}
-        server={!noOrigin}
-        onPaired={() => {
-          closeModal();
-          reload();
-        }}
+        environment={noOrigin ? "shell" : desktop ? "desktop" : "server"}
+        onClosed={reload}
       />,
     );
 

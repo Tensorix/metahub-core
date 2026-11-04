@@ -1,6 +1,28 @@
 import { plural, type Msg } from "./util.ts";
 
 export const sites = {
+  "复制失败，请手动选择并复制": "Copy failed. Select and copy the text manually.",
+  "选择设备和接入方式，加入同一个工作区。": "Choose a device and connection method to join this workspace.",
+  "连接当前服务器": "Connect to this server",
+  "通过存储桶同步": "Sync through a bucket",
+  "连接时需要服务器在线且可访问。": "The server must be online and reachable when connecting.",
+  "设备通过桶交换数据，不必同时在线。": "Devices exchange data through the bucket without being online at the same time.",
+  "桌面应用的本机服务仅允许本机访问，不能邀请其他设备直连。": "The desktop service only accepts connections from this computer. Other devices cannot connect directly.",
+  "当前工作区通过存储桶同步，没有可供连接的服务器。": "This workspace syncs through a bucket and has no server to connect to.",
+  "连接已有服务器": "Connect to an existing server",
+  "当前服务器的可访问地址": "Reachable address of this server",
+  "请输入另一台设备可访问的 HTTP/HTTPS 根地址，不能使用 localhost、回环地址或带凭据的链接。": "Enter an HTTP/HTTPS root address reachable from the other device, without localhost, loopback addresses or embedded credentials.",
+  "请填写同一服务器的地址；这里不会验证另一台设备能否访问。": "Use an address for this same server. Reachability from the other device is not checked here.",
+  "打开服务器工作区；离线副本可在「离线与缓存」中设置。": "Open the server workspace. Configure an offline copy under Offline & cache.",
+  "生成接入命令": "Generate connection command",
+  "配对码仅供一次接入，请勿公开分享。": "The pairing code allows one connection. Do not share it publicly.",
+  "在另一台已安装 mh 的电脑运行，建立本地同步关系并尝试首次同步。后续运行 mh sync；命令退出后不会持续自动同步。": "Run on another computer with mh installed to pair a local copy and attempt the first sync. Run mh sync afterwards; syncing does not continue after the command exits.",
+  "尚未连接存储桶": "No bucket connected",
+  "前往数据与备份": "Go to Data & backup",
+  "手机访问的站点地址": "Site address to open on the phone",
+  "请输入手机可访问的 HTTP/HTTPS 站点根地址。": "Enter an HTTP/HTTPS site root reachable from the phone.",
+  "电脑或服务器均可主动连接。请填入对方服务器的地址和配对码。": "A computer or server can initiate the connection. Enter the remote server address and pairing code.",
+
   回滚待确认: "Rollback pending confirmation",
   撤销待确认: "Revoke pending confirmation",
   发布失败: "Publish failed",

@@ -156,11 +156,8 @@ export function DevicesPage() {
       <AddDeviceModal
         buckets={buckets.map((b) => ({ url: b.url, name: b.label || b.bucket || b.url }))}
         getConfig={(url) => api.serverS3Config(url)}
-        server
-        onPaired={() => {
-          closeModal();
-          reload();
-        }}
+        environment={isDesktop() ? "desktop" : "server"}
+        onClosed={reload}
       />,
     );
 
