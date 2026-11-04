@@ -259,14 +259,16 @@ async function encodeSegment(changes: Change[], key: Uint8Array | null): Promise
 
 async function decodeSegment(bytes: Uint8Array, key: Uint8Array | null, opts: { batchSize?: number; signal?: AbortSignal } = {}): Promise<Change[]> {
   const checkActive = () => { if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("sync request aborted"); };
-  const gz = key ? await decryptBytes(key, bytes) : bytes;
   checkActive();
-  const jsonl = new TextDecoder().decode(await gunzip(gz));
+  const gz = key ? await withSyncBudget(() => decryptBytes(key, bytes), undefined, opts.signal) : bytes;
+  checkActive();
+  const jsonl = new TextDecoder().decode(await withSyncBudget(() => gunzip(gz), undefined, opts.signal));
   checkActive();
   if (!jsonl) return [];
   const changes: Change[] = [];
   let start = 0;
   let lines = 0;
+  let sliceStarted = performance.now();
   // Avoid split/map over a whole-hub snapshot on Hermes. Parsing and ingestion
   // each yield in bounded batches; no command transaction spans an await.
   while (start < jsonl.length) {
@@ -275,8 +277,14 @@ async function decodeSegment(bytes: Uint8Array, key: Uint8Array | null, opts: { 
     if (line) changes.push(JSON.parse(line) as Change);
     start = end < 0 ? jsonl.length : end + 1;
     if (opts.batchSize && ++lines % opts.batchSize === 0 && start < jsonl.length) {
-      await new Promise<void>(resolve => setTimeout(resolve, 0));
       checkActive();
+      // Native timers can wait for a frame. Yield by elapsed work, not every
+      // tiny batch, or a large snapshot spends seconds waiting rather than parsing.
+      if (performance.now() - sliceStarted >= 8) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        checkActive();
+        sliceStarted = performance.now();
+      }
     }
   }
   return changes;
@@ -843,7 +851,10 @@ export async function syncWithStorage(
     put: async (...args) => { checkActive(); await withSyncBudget(() => transport.put(...args), undefined, opts.signal); checkActive(); },
     del: async (...args) => { checkActive(); await withSyncBudget(() => transport.del(...args), undefined, opts.signal); checkActive(); },
   };
-  const decode = (bytes: Uint8Array) => withSyncBudget(() => decodeSegment(bytes, masterKeyOf(config), { batchSize: opts.ingestBatchSize, signal: opts.signal }), undefined, opts.signal);
+  // Parsing is finite cooperative CPU work, not a stalled network operation.
+  // Bound decrypt/decompress individually; an overall deadline would restart
+  // healthy large snapshots after time spent yielding to the native UI.
+  const decode = (bytes: Uint8Array) => decodeSegment(bytes, masterKeyOf(config), { batchSize: opts.ingestBatchSize, signal: opts.signal });
   const ingest = async (changes: Change[]) => {
     let received = 0;
     const size = opts.ingestBatchSize ?? Math.max(1, changes.length);

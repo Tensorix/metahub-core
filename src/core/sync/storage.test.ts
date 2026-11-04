@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runSchema } from "../db.ts";
 import { compactOplog } from "../compact.ts";
@@ -735,4 +735,31 @@ test("pulled reflects newly-received changes, not re-read snapshot size", async 
   const idle = await syncWithStorage(b, PEER, bucket, cfg(K));
   expect(idle.pulled).toBe(0);
   expect(bucket.gets.length + bucket.lists.length).toBeLessThanOrEqual(4); // ~2 LIST + 1 GET head
+});
+
+
+test("large snapshot parsing may outlast a request budget while remaining cancellable", async () => {
+  const a = makeNode("parse-source"), b = makeNode("parse-target"), c = makeNode("parse-cancel");
+  const bucket = new FakeBucket();
+  const config = cfg(null);
+  for (let i = 0; i < 200; i++) createDocument(a, { title: `Synthetic ${i}`, body: "body" });
+  await publishSnapshot(a, bucket, config, 0);
+  const realTimeout = globalThis.setTimeout;
+  let clock = 0;
+  // Force cooperative slices and model slow native timer delivery. Compress the
+  // 30s request deadline so the regression completes quickly and deterministically.
+  const now = spyOn(performance, "now").mockImplementation(() => clock += 9);
+  const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((fn: (...args: any[]) => void, ms?: number, ...args: any[]) =>
+    realTimeout(fn, ms === 30_000 ? 50 : ms === 0 ? 3 : ms, ...args)) as typeof setTimeout);
+  try {
+    await syncWithStorage(b, PEER, bucket, config, { ingestBatchSize: 25 });
+    expect(headState(b)).toEqual(headState(a));
+    const controller = new AbortController();
+    timeout.mockImplementation(((fn: (...args: any[]) => void, ms?: number, ...args: any[]) =>
+      realTimeout(() => { if (ms === 0) controller.abort(new Error("workspace changed")); fn(...args); }, ms === 30_000 ? 50 : ms === 0 ? 3 : ms)) as typeof setTimeout);
+    await expect(syncWithStorage(c, PEER, bucket, config, { ingestBatchSize: 25, signal: controller.signal })).rejects.toThrow("workspace changed");
+    expect(c.query("SELECT count(*) AS n FROM documents").get()).toEqual({ n: 0 });
+  } finally {
+    timeout.mockRestore(); now.mockRestore(); a.close(); b.close(); c.close();
+  }
 });
