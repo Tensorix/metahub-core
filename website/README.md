@@ -27,14 +27,16 @@ Published at https://metahub.tensorix.org/ on 2026-10-22. Current deployment (v0
 
 ## Content and assets
 
-- Product claims and commands come from the repository README and agent skill.
-- Product screenshots were captured from the current v0.5.4 source WebUI on 2026-10-22 at 1440 × 900. The interface and demo content are both English. They use a separate, synthetic demo knowledge base, never the user's personal data. The hero is explicitly labeled as an illustrative workspace.
+- Product claims and commands come from the repository README and agent skill. The product narrative is a local-first shared workspace for humans and agents, with the locked “Where you and your AI keep working.” hero.
+- Notes, Tables, and Sites share one fixed-height interactive demonstration area. Each has a pausable walkthrough, manual interactions, explicit AI re-read feedback, and reset. Switching scenes or language retains visitor edits while cancelling unfinished demonstrations. Data stays in page memory; no model calls or submissions are sent.
+- Demo surfaces track the actual WebUI palette, typography stack, sidebar, document editor, board, and data grid. On mobile, sign-up and write-back views switch in place rather than stacking.
+- Product screenshots were captured from v0.5.4 WebUI on 2026-10-22 at 1440 × 900, using a synthetic knowledge base. They are retained as versioned English evidence in an expandable section; live demo copy is fully English/Chinese.
 - Brand images come from `assets/brand/color/`.
 - Manrope is self-hosted; its Open Font License is included in `public/assets/Manrope-LICENSE.txt`.
 - English is the default; the language control switches marketing copy to Simplified Chinese and persists the choice locally.
 - No analytics, cookies, external fonts, or visitor data collection.
 
-Update `public/index.html` for content, `style.css` for presentation, and `app.js` for language/tabs/clipboard behavior. Both tab groups support arrow keys, Home, and End. Reduced-motion preferences are respected.
+Update `public/index.html` for semantic structure and initial English content, `copy.js` for both languages, `style.css` for presentation, `demo.js` for interaction/motion, and `app.js` for page language/tabs/clipboard behavior. Keep initial HTML text and the English dictionary in sync. Every tab group supports arrow keys, Home, and End. Reduced-motion preferences disable autoplay and spatial animation.
 
 ## GitHub Actions
 
@@ -58,5 +60,6 @@ Local validation:
 
 ```sh
 bun website/check.ts
+bun test website/demo.test.ts
 bun test scripts/ci-scope.test.ts
 ```
