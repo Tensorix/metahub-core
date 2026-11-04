@@ -1,5 +1,6 @@
 import { rm, chmod } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { smokeSkill } from "./smoke-skill.ts";
+import { join, dirname, resolve } from "node:path";
 import { $ } from "bun";
 
 const outdir = "dist";
@@ -221,12 +222,8 @@ if (!cliResult.success) {
 const cliPath = `${outdir}/cli.js`;
 const cliContent = await Bun.file(cliPath).text();
 
-// `mh init --claude` / `mh init --codex` ship the repo-root SKILL.md embedded as
-// a text import (src/cli/agent-skill.ts). If the bundler ever stops inlining it,
-// the installers would silently write an empty skill — so fail the build loudly.
-if (!cliContent.includes("durable, syncable working memory")) {
-  throw new Error("cli.js is missing the embedded SKILL.md body (mh init agent skills)");
-}
+// Exercise the built CLI outside the source tree and compare installed bytes.
+await smokeSkill(process.execPath, [resolve(cliPath)]);
 
 // If the build machine supplied a bake-in constant, prove it actually landed as
 // a literal — a silent inlining regression would ship a build where "用

@@ -15,7 +15,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const CODEX_OPENAI_YAML = `interface:
+export const CODEX_OPENAI_YAML = `interface:
   display_name: "MetaHub"
   short_description: "Shared workspace notes, tables, and sites"
   default_prompt: "Use $mh to read, search, and edit the shared MetaHub workspace, and re-read the user's changes before continuing."
