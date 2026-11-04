@@ -206,7 +206,10 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       // Cookie ambient authority is read-only: state-changing /api requests
       // must present the token explicitly (same-origin site pages otherwise
       // mutate the workspace on the owner's cookie without holding the token).
-      const mutationRejection = cookieMutationRejection(req, url, auth);
+      // Pairing authenticates with its single-use code, not cookie authority.
+      const mutationRejection = url.pathname === PAIR_PATH && req.method === "POST"
+        ? null
+        : cookieMutationRejection(req, url, auth);
       if (mutationRejection) return mutationRejection;
       // A ?token= navigation persists the cookie then redirects with the token
       // stripped, so the credential never lingers in the address bar.
