@@ -715,9 +715,8 @@ function App() {
   };
 
   // Visit mode is immersive: the served site owns the whole content column, no
-  // topbar. A floating overlay (.fnav) restores the two abilities the topbar
-  // carried: leaving (mobile back / expand a collapsed sidebar) and switching
-  // to the config page. Config mode keeps the normal topbar (crumb + 发布与分享/⋯).
+  // topbar. The floating overlay reveals history/sidebar controls at the top
+  // left and config at the top right. Config mode keeps the normal topbar.
   const siteImmersive = view.kind === "site" && view.tab !== "config";
   // Resolved Site for the current #/site/<name> view (reported by SiteView) —
   // the config-mode topbar carries its global actions, mirroring doc/db.
@@ -742,25 +741,37 @@ function App() {
       <div class="main">
         {siteImmersive && view.kind === "site" && (
           <div class="fnav">
-            {isMobile || sbCollapsed ? (
-              <button
-                class="fnav-btn icon"
-                {...(isMobile ? tip(t("返回")) : tip(t("展开侧栏"), "sidebar"))}
-                onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
-              >
-                <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
-              </button>
-            ) : (
-              <span />
-            )}
-            <button
-              class="fnav-btn"
-              {...tip(t("站点配置"))}
-              onClick={() => navigate({ kind: "site", name: view.name, tab: "config" })}
-            >
-              <Icon name="settings" cls="ico sm" />
-              {t("配置")}
-            </button>
+            <div class="fnav-zone">
+              <div class="fnav-controls">
+                {(isMobile || sbCollapsed) && (
+                  <button
+                    class="fnav-btn icon"
+                    {...(isMobile ? tip(t("返回")) : tip(t("展开侧栏"), "sidebar"))}
+                    onClick={() => (isMobile ? navigate({ kind: "empty" }) : setSbCollapsed(false))}
+                  >
+                    <Icon name={isMobile ? "arrowLeft" : "panelLeft"} />
+                  </button>
+                )}
+                <button class="fnav-btn icon" {...tip(t("后退"), "back")} disabled={!canGoBack} onClick={goBack}>
+                  <Icon name="arrowLeft" />
+                </button>
+                <button class="fnav-btn icon" {...tip(t("前进"), "forward")} disabled={!canGoForward} onClick={goForward}>
+                  <Icon name="arrowRight" />
+                </button>
+              </div>
+            </div>
+            <div class="fnav-zone">
+              <div class="fnav-controls">
+                <button
+                  class="fnav-btn"
+                  {...tip(t("站点配置"))}
+                  onClick={() => navigate({ kind: "site", name: view.name, tab: "config" })}
+                >
+                  <Icon name="settings" cls="ico sm" />
+                  {t("配置")}
+                </button>
+              </div>
+            </div>
           </div>
         )}
         {!siteImmersive && (
