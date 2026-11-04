@@ -1,4 +1,72 @@
-# Metahub brand variants
+# MetaHub brand and product narrative
+
+This is the shared brand reference for the website, repository READMEs, and product introductions. [Website design](../../website/DESIGN.md) describes the current marketing-site implementation; [core UI theme](../../src/core/ui-theme.ts) and [WebUI styles](../../src/webui/styles.css) remain the authority for product UI.
+
+## Product thesis
+
+MetaHub is a **local-first shared workspace**: notes, typed tables, and agent-built sites. Humans and agents read and write the same materials. People use the desktop app or WebUI; external agents use the CLI or API.
+
+Lead with the work people can keep doing together. Persistent context is useful, but do not position MetaHub as an AI memory product, an agent runtime, or a chat app. MetaHub stores and exposes the workspace; the user's external agent runs the model. Do not imply that saving an edit automatically makes an agent understand or act on it.
+
+Use **MetaHub** in product prose. Keep `metahub`, `mh`, package names, paths, and command names unchanged in code.
+
+## Locked slogan and supporting copy
+
+| Role | English | 简体中文 |
+| --- | --- | --- |
+| Hero / README slogan | Where you and your AI keep working. | 你和 AI 接着往下做的地方。 |
+| Supporting sentence | Notes, tables, and simple sites. A local-first workspace you and your AI can read and write. | 笔记、数据表和简单小站。一个你和 AI 都能读写的本地优先工作区。 |
+| Primary CTA | Download desktop | 下载桌面版 |
+| Secondary CTA | Connect an agent | 连接 Agent |
+| Badges, in both languages | Write · See · Continue | Write · See · Continue |
+
+Preserve the slogan's wording and punctuation. On the website, emphasize only **keep working** / **接着往下做** in logo blue `#335CFF`; the rest uses the ordinary warm foreground `#37352F`. Do not introduce another hero-only dark color or multicolor/gradient text. GitHub READMEs use plain bold text rather than inline color styling.
+
+For Chinese, keep “接着往下做” together. The current hero breaks after “你和 AI”, then renders “接着往下做的地方。” as one line, scaling to fit phones. Use normal Chinese character spacing and appropriate leading rather than applying tight English tracking. `AI`, `Agent`, and product names retain readable spacing in Chinese sentences.
+
+## The collaboration loop
+
+**You write → AI writes back → you revise → AI explicitly re-reads.**
+
+**你写 → AI 写回 → 你修改 → AI 重新读取。**
+
+Show concrete material changing, with a visible result the person can inspect and revise. Live UI refresh and agent re-reading are different actions: after the person changes the source, the next agent step reads that latest source before writing an update.
+
+| Scenario | Shared material | Proof of continuation |
+| --- | --- | --- |
+| Notes / 笔记 | Event plan and invitation | The person changes the date; the invitation changes after the agent re-reads the plan. |
+| Tables / 数据表 | Task records shown as a board or table | The person updates a task; the agent reads the latest statuses and writes a new summary. |
+| Sites / 小站 | Agent-built sign-up page and attendee table | A registration writes back to the workspace; the agent reads the updated list. |
+
+The three website demos share one stage with tabs. Keep manual interaction and replay; do not stack three separate full demos vertically. Website examples use sample data and simulated AI, which must be disclosed. A real site's guest writes require explicit table/operation grants.
+
+## Two palettes, with distinct roles
+
+The logo and the App theme are related but separate palettes. Do not replace the App's colors with the saturated logo palette, or desaturate all marketing accents to look like the App.
+
+| Layer | Colors | Use |
+| --- | --- | --- |
+| Logo artwork | Blue `#335CFF`, violet `#8B6CEF`, teal `#16B8AD`, coral `#F48265`; pale tile `#F5F7FC` | The approved modular mark. Original color targets, not guaranteed uniform raster fills. |
+| Marketing accents | The same four logo colors | Hero blue, small scene icons, active workflow-node outlines, and the hosted-site mark. Add energy in purposeful, limited places. |
+| Interface foundations | White `#FFFFFF`, warm surfaces `#FAFAF9` / `#F7F7F5` / `#F1F1EF`, foreground `#37352F`, secondary `#595750`, muted `#6F6D66`, borders `#EAE9E6` / `#D8D7D3` | Main site surfaces and product demonstrations, following `LIGHT_THEME`. |
+| Interface actions | Blue `#3867B2`, soft blue `#EDF2F9` | Primary buttons, focus, selection, and product controls. Hero emphasis remains logo blue. |
+| Readable supporting accents | Purple `#79619D`, teal `#397D76`, orange `#A06436` | Small labels on suitable pale surfaces; darken further where needed for contrast. |
+
+Keep success, warning, and error meanings intact. Bright logo colors may decorate a labeled icon or outline; they are not automatically suitable for small text. Check text contrast on its actual background. Retain the App's dark neutral palette for terminal examples.
+
+## Product UI fidelity
+
+Marketing demonstrations should feel like the real MetaHub App / WebUI. Prefer annotated screenshots or compact CSS reproductions of actual components; do not invent a parallel card or control system.
+
+- Follow the actual sidebar, window chrome, document editor, table cells, and main-app board. Use versioned product screenshots in [`website/public/assets`](../../website/public/assets/) as supporting evidence and current source as the authority for controls.
+- Board cards omit the grouping property; changing a group is shown by dragging. Table status cells use the App's option chips and searchable picker, with a bottom sheet on phones. See [`board.tsx`](../../src/webui/board.tsx), [`cells.tsx`](../../src/webui/cells.tsx), and [`table.tsx`](../../src/webui/table.tsx).
+- Documents show ordinary text and paragraphs. Demo-only date controls, agent narration, summaries, and write-back explanations sit outside the App frame so they do not imply nonexistent product UI.
+- A hosted site can have its own visual identity; its write-back table still looks like MetaHub. Do not present the site's visitor form as a built-in App form builder.
+- Keep the marketing site static HTML, CSS, and vanilla JavaScript. Preserve keyboard access, mobile interaction, reduced-motion behavior, and bilingual labels.
+
+When updating copy, check this guide, both repository READMEs, [`website/public/copy.js`](../../website/public/copy.js), initial English HTML, and [`website/DESIGN.md`](../../website/DESIGN.md) together. Do not describe a simulated walkthrough as a live agent connection or label an old screenshot as the current release.
+
+## Logo variants
 
 - `color/`: default, blue/teal/violet/coral modules on a pale rounded tile.
 - `blue/`: preserved cobalt monochrome alternative.

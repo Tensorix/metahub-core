@@ -40,8 +40,9 @@ test("installs the Claude Code /mh skill with intact embedded content", async ()
   expect(body.startsWith("---\n")).toBe(true);
   // Frontmatter: the dir name yields /mh, but the embed must carry the tuned name.
   expect(body).toContain("name: mh");
-  // A stable body phrase proves it's the real guide, not a stub.
-  expect(body).toContain("durable, syncable working memory");
+  // Agent instructions must survive embedding independently of the product slogan.
+  expect(body).toContain("mh doc read");
+  expect(body).toContain("mh doc edit --old/--new");
 });
 
 test("re-running the Claude Code install is an idempotent no-op", async () => {
@@ -59,12 +60,13 @@ test("installs the Codex $mh skill and UI metadata", async () => {
   expect(body.length).toBeGreaterThan(0);
   expect(body.startsWith("---\n")).toBe(true);
   expect(body).toContain("name: mh");
-  expect(body).toContain("durable, syncable working memory");
+  expect(body).toContain("mh doc read");
+  expect(body).toContain("mh doc edit --old/--new");
 
   const metadata = await Bun.file(r.metadataPath).text();
-  expect(metadata).toContain('display_name: "Metahub"');
-  expect(metadata).toContain('short_description: "Use mh for durable agent memory"');
-  expect(metadata).toContain("Use $mh to store, recall, search, and edit durable working memory");
+  expect(metadata).toContain('display_name: "MetaHub"');
+  expect(metadata).toContain('short_description: "Shared workspace notes, tables, and sites"');
+  expect(metadata).toContain("Use $mh to read, search, and edit the shared MetaHub workspace");
 });
 
 test("re-running the Codex install is an idempotent no-op", async () => {

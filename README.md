@@ -1,35 +1,38 @@
 # metahub
 
-**Give your AI a local knowledge base.**
+**A local-first workspace you and your agents share.**
 
 English · [简体中文](./README.zh-CN.md)
 
-metahub is a local-first knowledge base CLI built on Bun + SQLite. It gives an AI agent a durable, syncable working memory: Notion-style **typed tables** for structured data, **Markdown documents** for long-form knowledge, and a `Read / Edit / Write`-style editing interface. Everything lives on your own machine under `~/.metahub/` — offline on one machine, and consistent across many.
+metahub brings **Markdown notes**, **typed tables**, and **simple agent-built sites** into one shared workspace. You work in the desktop app or browser; your agent reads and writes the same notes and tables through the CLI. Ask your agent to build a small site to collect feedback or show hub data, then bring that input into the work. Built on Bun + SQLite, everything starts on your own machine under `~/.metahub/`, with offline use and sync across your devices.
 
 <p align="center">
-  <img src="./docs/assets/webui.png" alt="metahub WebUI — block-level document editing" width="100%">
+  <img src="./website/public/assets/documents-v0.5.4-en.png" alt="metahub shared workspace — document editor" width="100%">
 </p>
 
-> Requires [Bun](https://bun.sh). Use `bunx`, a global `mh` install, or a standalone binary.
+[Download desktop](#install) · [Connect an agent](#connect-an-agent)
+
+> The CLI and library use [Bun](https://bun.sh). Desktop downloads and standalone binaries are also available.
 
 ## Why metahub
 
-- **Built for AI read/write** — `doc read` returns the body plus a version token; `doc edit --old/--new` does an anchored find-and-replace that sends only the delta. Refer to anything by id prefix or name — no pasting full ids.
-- **Structured and unstructured in one place** — typed tables (rows, columns, 9 property types, including `relation` and `doc` columns that link rows to other rows and to documents) for tasks, ledgers, contacts; Markdown documents for notes and specs.
-- **Local-first and syncable** — your data sits on your own disk and works offline; multiple machines merge cleanly, and edits to different paragraphs don't clobber each other.
-- **GUI and API included** — `mh --server` starts a browser WebUI (browse, inline-edit, full-text search), a `/api/*` REST interface, and auto-generated OpenAPI docs. Open views refresh **live** when the CLI writes, so you and your agent can work on the same hub at once.
-- **Auditable agent work** — every write an agent makes is tagged `ai`; `mh audit` is the whole-hub change feed, and `mh audit revert <txn>` undoes one logical change group without clobbering edits made since.
+- **Write a starting point** — a note, requirement, or task board gives you and your agent something concrete to work on. Markdown notes sit beside typed tables with 9 property types, including links between records and documents.
+- **See what AI changes** — agent writes land in the workspace you open in the app. Open views refresh when the CLI writes, so you can review the result and make the next decision.
+- **Revise, then continue** — change a priority or rewrite a requirement in the UI. Your agent explicitly re-reads the note or table to pick up your revision; `doc read` returns a version token and `doc edit --old/--new` sends an anchored, incremental edit.
+- **Keep the work yours** — notes and tables live on your own disk and work offline. Pair devices to sync both ways; concurrent edits to different paragraphs merge cleanly.
+- **Trace and undo agent work** — agent writes carry an `ai` tag. `mh audit` shows the whole-hub change feed; `mh audit revert <txn>` undoes a logical change group while preserving later edits.
 
 <p align="center">
-  <img src="./docs/assets/webui-table.png" alt="metahub WebUI — typed tables with select, multi-select, and checkbox columns" width="100%">
+  <img src="./website/public/assets/tables-v0.5.4-en.png" alt="metahub shared workspace — typed tables" width="100%">
 </p>
 
-> Want to see the UI? Install the [desktop app](#install) or run `mh --server` and open `http://localhost:7777/`.
+> Download the [desktop app](#install), or run `mh --server` and open `http://localhost:7777/`. [Connect an agent](#connect-an-agent) to read and write the same workspace.
 
 ## Quick start
 
 ```bash
-bunx @tensorix/metahub init                          # create ~/.metahub
+bun install -g @tensorix/metahub                    # install the mh command (requires Bun)
+mh init                                            # create ~/.metahub
 mh db create "Tasks"                                 # create a table → returns an id like db_tasks-k3f9c1
 mh use tasks                                         # set the "current db"; record/prop commands target it
 mh prop add Title  --type text
@@ -55,10 +58,12 @@ Output adapts to the audience: a terminal (human) gets tables / Markdown, a pipe
 
 | Form | Install | For |
 | --- | --- | --- |
-| **Desktop app** (GUI) | `brew install --cask tensorix/tap/metahub-app` | A graphical, Notion-like experience |
-| **CLI** | `brew install tensorix/tap/metahub-cli`, or `npm i -g @tensorix/metahub`, or `bunx @tensorix/metahub <cmd>` | AI agents and the command line |
+| **Desktop app** (GUI) | `brew install --cask tensorix/tap/metahub-app` | Write and manage your workspace on macOS |
+| **CLI** | `brew install tensorix/tap/metahub-cli`, or `bun install -g @tensorix/metahub`, or `bunx @tensorix/metahub <cmd>` | AI agents and the command line |
 | **Library** (Bun) | `bun add @tensorix/metahub` | Calling metahub from your own Bun program |
 | **Standalone binary** | download for your platform, `chmod +x`, run | No runtime to install |
+
+The package-based CLI and library require [Bun](https://bun.sh). The desktop app and standalone binaries bundle their runtime.
 
 ```ts
 // As a library: every core capability is exported from the package root
@@ -66,6 +71,20 @@ import { openMetahub, createDatabase, createRecord, search } from "@tensorix/met
 ```
 
 Platforms: `darwin-arm64` / `darwin-x64` / `linux-x64` / `linux-arm64` / `windows-x64` / `windows-arm64`. Library API: see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## Connect an agent
+
+After installing the CLI, add the usage guide to the agent you work with:
+
+```bash
+mh init --codex   # install the $mh skill for Codex
+# or
+mh init --claude  # install the /mh skill for Claude Code
+```
+
+For other agents, provide [SKILL.md](./SKILL.md) and access to the CLI or API. MetaHub supplies the workspace; your external agent runs the model and decides when to read or write.
+
+Try: “Read my event plan, draft an invitation in the workspace, and tell me what you changed.” After revising the plan yourself, ask: “Re-read the latest plan and update the invitation.” Review the changes in the app or with `mh audit`.
 
 ## Sync across machines
 
@@ -155,6 +174,8 @@ The WebUI is an installable PWA. Open **Settings → 离线副本** and this bro
 
 ## Documentation
 
+- [Brand and slogan](./assets/brand/README.md) — product narrative, bilingual copy, palette roles, and logo assets.
+- [Website design](./website/DESIGN.md) — interactive scenarios, App fidelity, localization, and motion rules.
 - [System design](./docs/system-design/) — architecture, data model, capabilities, usage flows.
 - [Contributing](./CONTRIBUTING.md) — local development, build, release, project layout, library API.
 - [Desktop app](./apps/desktop/README.md) — Electron shell + Bun sidecar.

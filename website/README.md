@@ -23,14 +23,16 @@ bunx wrangler deploy --config website/wrangler.jsonc
 
 The `metahub-website` Worker serves only `website/public/`. The custom domain configuration binds `metahub.tensorix.org`; the authenticated account must own the `tensorix.org` Cloudflare zone. Do not replace an existing unrelated domain binding.
 
-Published at https://metahub.tensorix.org/ on 2026-10-22. Current deployment (v0.5.4 screenshots): `8bbf48c4-6dff-466f-9dda-59e805890510`.
+Latest recorded production release: 2026-11-04, from main commit `ecbd4116405c6d564df4ea69e43654ac076a5487`. Cloudflare version: `10702e0a-2844-4af8-98f8-a569379f3af7`. The homepage and its four CSS/JavaScript files were verified byte-for-byte against that commit. Product screenshots remain the explicitly labeled v0.5.4 captures.
+
+For that release, GitHub Actions passed validation but the repository token could not access the `metahub-website` service. Deployment completed with the maintainer's existing Cloudflare OAuth login. Before relying on automatic deployments again, correct the repository token's account/service permissions; the required permission scope is described below.
 
 ## Content and assets
 
-- Product claims and commands come from the repository README and agent skill. The product narrative is a local-first shared workspace for humans and agents, with the locked “Where you and your AI keep working.” hero.
+- Product narrative and bilingual slogan follow the [brand guide](../assets/brand/README.md); implementation follows [DESIGN.md](./DESIGN.md). Product capabilities and commands come from the repository README, agent guide, and source. The locked hero is “Where you and your AI keep working.” / “你和 AI 接着往下做的地方。”
 - Notes, Tables, and Sites share one fixed-height interactive demonstration area. Each has a pausable walkthrough, manual interactions, explicit AI re-read feedback, and reset. Switching scenes or language retains visitor edits while cancelling unfinished demonstrations. Data stays in page memory; no model calls or submissions are sent.
 - Demo surfaces track the actual WebUI palette, typography stack, sidebar, document editor, board, and data grid. Board cards omit the grouping property; status cells use the app's option chips and searchable picker, with a bottom sheet on phones. The date selector sits outside the app frame as a demo control. On mobile, sign-up and write-back views switch in place rather than stacking.
-- Product screenshots were captured from v0.5.4 WebUI on 2026-10-22 at 1440 × 900, using a synthetic knowledge base. They are retained as versioned English evidence in an expandable section; live demo copy is fully English/Chinese.
+- Product screenshots were captured from v0.5.4 WebUI on 2026-10-22 at 1440 × 900, using a synthetic sample workspace. They are retained as versioned English evidence in an expandable section; live demo copy is fully English/Chinese.
 - Brand images come from `assets/brand/color/`.
 - Manrope is self-hosted; its Open Font License is included in `public/assets/Manrope-LICENSE.txt`.
 - English is the default; the language control switches marketing copy to Simplified Chinese and persists the choice locally.

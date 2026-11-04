@@ -1,5 +1,7 @@
 # Website design
 
+Brand wording, slogan, and palette roles: [MetaHub brand and product narrative](../assets/brand/README.md). This document records their implementation on the website.
+
 A product introduction for a local-first shared workspace: notes, typed tables, and agent-built sites. Humans and external agents read and write the same materials. Mode: Persuade. Preserve the multicolor MetaHub mark; distinguish brand artwork from interface colors.
 
 - Interface palette follows `LIGHT_THEME`: warm canvas #fafaf9, white paper, foreground #37352f, secondary text #6f6d66, borders #eae9e6, quiet surfaces #f1f1ef. Primary actions, focus and selection use #3867b2 and #edf2f9.
