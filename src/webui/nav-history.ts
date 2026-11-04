@@ -1,4 +1,4 @@
-// Page back/forward state for the desktop topbar buttons. The actions are
+// Page back/forward state for the topbar and immersive site buttons. The actions are
 // plain history.back()/forward() — the router's hashchange listener in app.tsx
 // already handles traversals, so navigate() stays the single push-side writer.
 //
@@ -7,9 +7,8 @@
 // pushState in navigate(), replaceState (peek deep links), and the direct
 // `location.hash = …` writers (settings/share-modal/cm6 doclinks), whose new
 // entries *clone* the previous entry's classic state and would fool any
-// state-stamping scheme. The buttons only render when window.metahubDesktop
-// exists, i.e. under Electron's Chromium (≥ 102), so the API is always there;
-// plain browsers fall back to {false, false} and render nothing anyway.
+// state-stamping scheme. Electron always provides this API; browsers without
+// it fall back to {false, false}, leaving the immersive site's buttons disabled.
 import { useEffect, useState } from "preact/hooks";
 
 // window.navigation isn't in lib.dom yet — keep a minimal local shape instead

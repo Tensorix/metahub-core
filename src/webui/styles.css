@@ -646,7 +646,7 @@
   body.desktop-mac .peek-head .hist-modes { -webkit-app-region:no-drag; }
   /* sidebar collapsed → traffic lights sit over the main header; clear the hamburger */
   body.desktop-mac .sidebar.collapsed ~ .main .topbar { padding-left:80px; }
-  body.desktop-mac .sidebar.collapsed ~ .main .fnav { left:80px; }
+  body.desktop-mac .sidebar.collapsed ~ .main .fnav { left:68px; }
 
   /* document editor */
   .doc { max-width:740px; margin:0 auto; padding:60px 60px 36vh; }
@@ -1770,15 +1770,30 @@
   .site-publish { flex:none; color:var(--fg-soft); }
   .site-publish:not(:disabled):hover { background:var(--hover-2); color:var(--fg); }
 
-  /* floating overlay nav for the immersive visit mode (no topbar): left slot =
-     mobile back / expand collapsed sidebar, right slot = jump to config. */
-  .fnav { position:absolute; top:calc(10px + env(safe-area-inset-top, 0px)); left:12px; right:12px; z-index:5;
+  /* Each corner has its own 10px top-edge trigger. Hidden controls pass clicks
+     through to the site; revealing one corner never reveals the other. */
+  .fnav { position:absolute; top:env(safe-area-inset-top, 0px); left:0; right:0; z-index:5;
     display:flex; justify-content:space-between; align-items:flex-start; pointer-events:none; }
-  .fnav-btn { pointer-events:auto; display:inline-flex; align-items:center; gap:6px; padding:6px 13px; border-radius:999px;
-    background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow-md); color:var(--fg-soft);
+  .fnav-zone { position:relative; padding:10px 12px 12px; }
+  .fnav-zone::before { content:""; position:absolute; top:0; left:0; right:0; height:10px; pointer-events:auto; }
+  .fnav-controls { display:flex; align-items:center; gap:6px; opacity:0; transform:translateY(-4px);
+    transition:opacity .15s ease-out, transform .15s ease-out; }
+  .fnav-zone:hover, .fnav-zone:has(:focus-visible) { pointer-events:auto; }
+  .fnav-zone:hover .fnav-controls, .fnav-zone:has(:focus-visible) .fnav-controls { opacity:1; transform:none; }
+  .fnav-btn { display:inline-flex; align-items:center; gap:6px; padding:6px 13px; border-radius:999px;
+    background:color-mix(in srgb, var(--surface) 65%, transparent);
+    border:1px solid color-mix(in srgb, var(--line) 60%, transparent); box-shadow:var(--shadow-md); color:var(--fg-soft);
     font-size:var(--fs-sm); font-weight:500; }
-  .fnav-btn:hover { color:var(--fg); }
+  .fnav-btn:not(:disabled):hover { color:var(--fg); }
+  .fnav-btn:disabled { opacity:.4; cursor:default; }
   .fnav-btn.icon { width:32px; height:32px; padding:0; justify-content:center; }
+  @media (hover:none) {
+    .fnav-controls { opacity:1; transform:none; pointer-events:auto; }
+    .fnav-zone::before { display:none; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .fnav-controls { transition:none; transform:none; }
+  }
 
   .selbar { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:65; display:flex; align-items:center; gap:4px;
     background:var(--surface); color:var(--fg); border:1px solid var(--line); padding:7px 8px 7px 14px; border-radius:11px; box-shadow:var(--shadow-lg); }
