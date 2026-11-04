@@ -7,9 +7,9 @@ import { renderUsage, type CommandDef } from "citty";
  * print that on `mh --help` (root) and append per-command EXAMPLES elsewhere.
  */
 
-const ROOT_GUIDE = `metahub — local knowledge base for AI agents
-Notion-like typed databases (tables + rows) and markdown documents, stored in
-~/.metahub via SQLite, CRDT-mergeable across machines.
+const ROOT_GUIDE = `metahub — local-first shared workspace for people and agents
+Notion-like typed databases (tables + rows), markdown notes, and agent-built
+sites, stored in ~/.metahub via SQLite, CRDT-mergeable across machines.
 
 USAGE
   mh <command> [subcommand] [args] [--flags]

@@ -16,9 +16,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const CODEX_OPENAI_YAML = `interface:
-  display_name: "Metahub"
-  short_description: "Use mh for durable agent memory"
-  default_prompt: "Use $mh to store, recall, search, and edit durable working memory with metahub."
+  display_name: "MetaHub"
+  short_description: "Shared workspace notes, tables, and sites"
+  default_prompt: "Use $mh to read, search, and edit the shared MetaHub workspace, and re-read the user's changes before continuing."
 `;
 
 /** Personal Claude config dir: ~/.claude, relocatable via CLAUDE_CONFIG_DIR. */

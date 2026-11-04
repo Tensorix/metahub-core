@@ -1,34 +1,37 @@
 ---
 name: mh
 description: >-
-  Store, recall, search, and edit the agent's durable working memory via the metahub
-  CLI (`mh`) — Notion-style typed tables for structured data and Markdown documents
-  for long-form knowledge, with a Read/Edit/Write editing flow. Also runs the metahub
-  sync server, WebUI, and hosted sites.
+  Read, search, and edit the user's shared MetaHub workspace via the CLI (`mh`) —
+  typed tables, Markdown notes, and agent-built sites, with a Read/Edit/Write
+  editing flow. Work on the same materials as the user and re-read their changes
+  before continuing. Also runs the sync server, WebUI, and hosted sites.
 argument-hint: "[task — e.g. log today's progress to the Notes doc]"
 allowed-tools: Bash(mh:*), Bash(metahub:*)
 ---
 
 # metahub CLI
 
-metahub gives an AI agent a durable, syncable working memory stored locally under
-`~/.metahub/` (Bun + SQLite). Two kinds of data live side by side:
+MetaHub is a local-first workspace where people and external agents read and write
+the same materials. Data lives locally under `~/.metahub/` (Bun + SQLite), with
+optional device sync. The user edits in the desktop app or WebUI; you use the CLI
+to read the latest material, write back, and re-read the user's revisions before
+continuing. Two kinds of data live side by side:
 
 - **Databases (tables)** — typed rows/columns, like Notion. For tasks, ledgers,
   contacts, anything structured.
-- **Documents** — Markdown, for notes, specs, long-form knowledge. Edited
-  incrementally via a `Read / Edit / Write`-style interface.
+- **Documents** — Markdown notes and specs. Edited incrementally via a
+  `Read / Edit / Write`-style interface.
 
 The binary is installed as both `mh` and `metahub`. This skill uses `mh`.
 
 ## When to use this skill
 
-- The agent needs to **remember** something across turns/sessions → write a
-  document or a record.
-- The agent needs to **recall** prior knowledge → `mh search` / `mh get`.
-- The agent needs to **revise** stored knowledge surgically → `mh doc read` then
-  `mh doc edit --old/--new` (never blind-overwrite).
-- You need a **GUI / REST API / OpenAPI docs / agent-hosted site** over the data →
+- Work on the **same materials as the user** (notes, tables, sites) → read or
+  write the shared workspace.
+- Find existing material → `mh search` / `mh get`.
+- Revise a note or record carefully → `mh doc read` then
+  `mh doc edit --old/--new` (never blind-overwrite); re-read after the user edits.
+- Need a **GUI / REST API / OpenAPI docs / agent-hosted site** over the data →
   `mh --server`.
 
 ## The two rules that matter most for an agent
@@ -128,7 +131,7 @@ mh record update <ref> --data '{"Status":"doing"}'
 mh record delete <ref>
 ```
 
-## Documents (long-form knowledge) — the agent editing workflow
+## Documents — the agent editing workflow
 
 This mirrors `Read / Edit / Write`. **Read before you edit.**
 
@@ -270,7 +273,7 @@ mh get <ref>                         # type-agnostic: resolves db/prop/record/do
 ```
 
 `mh get` is the quickest way to dereference an unknown id/name when you don't know
-its kind. `mh search` is how you recall knowledge you don't have the id for.
+its kind. `mh search` is how you find material when you don't have the id.
 
 ## Input conventions (`@`) — applies to --body, --data, --old, --new, --config, --filter
 

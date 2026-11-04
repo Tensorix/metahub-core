@@ -1,28 +1,38 @@
 # metahub
 
-**给你的 AI 一个本地知识库。**
+**你和 Agent 共享的本地优先工作空间。**
 
 [English](./README.md) · 简体中文
 
-metahub 是基于 Bun + SQLite 的本地优先知识库 CLI，给 AI agent 一份持久、可同步的工作记忆：用 notion 风格的**类型化数据表**装结构化数据，用 **markdown 文档**装长文本知识，再配一套像 `Read / Edit / Write` 的编辑接口。数据全部存在你本机的 `~/.metahub/`，单机离线可用，多机之间保持一致。
+metahub 把 **Markdown 笔记**、**类型化数据表**与 **Agent 构建的简单站点**放进同一个共享工作空间。你用桌面 App 或浏览器界面，Agent 通过 CLI 读写同一份笔记与数据表。还可以让 Agent 搭建小站点，收集反馈或展示工作空间的数据，再把这些输入带回日常工作。基于 Bun + SQLite，数据从本机的 `~/.metahub/` 开始，离线可用，也能在你的设备之间同步。
 
-> 运行时依赖 [Bun](https://bun.sh)。用 `bunx`、全局安装后的 `mh`，或下载独立二进制都行。
+<p align="center">
+  <img src="./website/public/assets/documents-v0.5.4-en.png" alt="metahub 共享工作空间 — 文档编辑" width="100%">
+</p>
+
+[下载桌面版](#获取--安装) · [连接 Agent](#连接-agent)
+
+> CLI 与库依赖 [Bun](https://bun.sh)，也可下载桌面版或独立可执行文件。
 
 ## 为什么用它
 
-- **为 AI 读写而设计** —— `doc read` 先返回正文 + 版本号，`doc edit --old/--new` 做锚定查找替换、只传增量；引用一律支持 id 前缀 / 名字，不必粘完整 id。
-- **结构化 + 非结构化一处管** —— 类型化数据表（行 / 列，9 种属性类型，含把行关联到别的行的 `relation` 列和关联到文档的 `doc` 列）放任务、流水、联系人；markdown 文档放设计稿、笔记。
-- **本地优先、可同步** —— 数据在你自己的磁盘上，离线可用；多台机器干净合并，改不同段落互不覆盖。
-- **自带 GUI 与 API** —— `mh --server` 一条命令起浏览器 WebUI（浏览 / 行内编辑 / 全文搜索）+ `/api/*` REST 接口 + 自动生成的 OpenAPI 文档。CLI 一写，**打开着的界面自己就更新**，人和 agent 可以同时开着同一个库干活。
-- **Agent 的改动可追可撤** —— agent 驱动的每一次写入都带 `ai` 标记；`mh audit` 是全库变更流，`mh audit revert <txn>` 按逻辑变更组撤销，且不会顺手抹掉你之后做的修改。
+- **写下一个起点** —— 笔记、需求或任务看板，让你和 Agent 有具体的事情可做。Markdown 笔记与类型化数据表放在一起，支持 9 种属性类型，包括记录之间、记录与文档之间的关联。
+- **看见 AI 的改动** —— Agent 写入的进展落在你打开的同一个工作空间中。CLI 写入后，已打开的界面会刷新，方便你查看结果、做下一步判断。
+- **你来调整，接着往下做** —— 在界面里改优先级、重写需求。Agent 明确重新读取笔记或数据表，才能接上你的修改；`doc read` 返回版本号，`doc edit --old/--new` 做锚定增量编辑。
+- **工作始终属于你** —— 笔记和数据表在自己的磁盘上，离线照常用。配对设备后双向同步，不同段落的并发修改可以合并。
+- **Agent 的改动可追可撤** —— Agent 写入带有 `ai` 标记；`mh audit` 展示全库变更流，`mh audit revert <txn>` 按逻辑变更组撤销，并保留之后的编辑。
 
-<!-- TODO 截图：docs/assets/webui.png（WebUI）、docs/assets/desktop.png（桌面端） -->
-> 想看界面？装上[桌面 App](#获取--安装)，或运行 `mh --server` 后打开 `http://localhost:7777/`。
+<p align="center">
+  <img src="./website/public/assets/tables-v0.5.4-en.png" alt="metahub 共享工作空间 — 类型化数据表" width="100%">
+</p>
+
+> [下载桌面版](#获取--安装)，或运行 `mh --server` 后打开 `http://localhost:7777/`。[连接 Agent](#连接-agent)，一起读写同一个工作空间。
 
 ## 快速开始
 
 ```bash
-bunx @tensorix/metahub init                       # 创建 ~/.metahub
+bun install -g @tensorix/metahub                 # 安装 mh 命令（需要 Bun）
+mh init                                         # 创建 ~/.metahub
 mh db create "Tasks"                              # 建一张表 → 返回 id，如 db_tasks-k3f9c1
 mh use tasks                                      # 设为「当前库」，之后 record/prop 免带库参数
 mh prop add Title  --type text
@@ -48,10 +58,12 @@ mh doc append <ref> --body "追加段落"             # 也有 prepend
 
 | 形态 | 安装 | 适合 |
 | --- | --- | --- |
-| **桌面 App**（GUI） | `brew install --cask tensorix/tap/metahub-app` | 想要图形界面、像 notion 那样用 |
-| **CLI** | `brew install tensorix/tap/metahub-cli`，或 `npm i -g @tensorix/metahub`，或免安装 `bunx @tensorix/metahub <cmd>` | AI agent / 命令行 |
+| **桌面 App**（GUI） | `brew install --cask tensorix/tap/metahub-app` | 在 macOS 上编辑和管理工作区 |
+| **CLI** | `brew install tensorix/tap/metahub-cli`，或 `bun install -g @tensorix/metahub`，或免安装 `bunx @tensorix/metahub <cmd>` | AI agent / 命令行 |
 | **库**（Bun） | `bun add @tensorix/metahub` | 在自己的 Bun 程序里直接调用 |
 | **独立二进制** | 下载对应平台文件，`chmod +x` 后直接运行 | 无运行时环境 |
+
+通过包安装的 CLI 和库需要 [Bun](https://bun.sh)；桌面 App 和独立二进制已自带运行时。
 
 ```ts
 // 作为库使用：所有 core 能力从包根导出
@@ -59,6 +71,20 @@ import { openMetahub, createDatabase, createRecord, search } from "@tensorix/met
 ```
 
 支持平台：`darwin-arm64` / `darwin-x64` / `linux-x64` / `linux-arm64` / `windows-x64` / `windows-arm64`。库 API 详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## 连接 Agent
+
+安装 CLI 后，把使用指南装到你正在用的 Agent 中：
+
+```bash
+mh init --codex   # 安装 Codex 的 $mh skill
+# 或者
+mh init --claude  # 安装 Claude Code 的 /mh skill
+```
+
+其他 Agent 可以读取 [SKILL.md](./SKILL.md)，通过 CLI 或 API 接入。MetaHub 提供工作区；模型运行和何时读写由外部 Agent 负责。
+
+可以先试：「读取我的活动计划，在工作区里起草邀请文案，并告诉我改了什么。」亲手修改计划后，再说：「重新读取最新计划，更新邀请。」在 App 或 `mh audit` 中检查改动。
 
 ## 多机同步
 
@@ -140,6 +166,8 @@ mh sync http://a-host:7777
 
 ## 文档
 
+- [品牌与 slogan](./assets/brand/README.md) —— 产品叙事、中英文文案、配色分工与 Logo 资源。
+- [官网设计](./website/DESIGN.md) —— 交互场景、App 对齐、双语排版与动效规则。
 - [系统设计](./docs/system-design/) —— 架构、数据模型、能力清单、使用流程。
 - [贡献指南](./CONTRIBUTING.md) —— 本地开发、构建、发布、目录结构、库 API。
 - [桌面 App](./apps/desktop/README.md) —— Electron 壳 + Bun sidecar。
