@@ -119,3 +119,33 @@ html[lang=zh-CN] .ownership-list h3{font-size:16px;line-height:1.6}
 .board-col{max-height:260px;min-height:260px}
 .board-col-body{max-height:218px}
 @media(max-width:700px){.board-col{max-height:300px;min-height:300px}.board-col-body{max-height:258px}}
+
+/* Connect the user's harness: initialize once, then invoke the skill in conversation. */
+.harness-tabs{display:flex;gap:22px;padding:0 24px;border-bottom:1px solid #42423f}
+.harness-tabs button{font-size:12px;color:#aaa8a2;padding:18px 0 15px;border-bottom:2px solid transparent;white-space:nowrap}
+.harness-tabs button:hover{color:#e8e7e4}
+.harness-tabs button[aria-selected=true]{color:#e8e7e4;border-bottom-color:#8aaddb;font-weight:700}
+.harness-setup :is(button,a):focus-visible{outline-color:#8aaddb}
+.harness-panel{padding:24px 24px 12px;min-height:272px}
+.connect-grid .harness-panel p{font-size:12px;line-height:1.75;color:#c0beb8;margin:0 0 16px}
+.harness-command{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#2c2c2b;border-radius:6px;padding:10px 12px;margin-bottom:18px}
+.harness-command code{font:13px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;color:#e8e7e4;overflow-wrap:anywhere}
+.harness-command .icon-button{color:#c0beb8;flex:none}
+.harness-command .icon-button:hover{background:#42423f;color:#fff}
+.connect-grid .harness-prompt{color:#e8e7e4;font-size:14px;text-wrap:pretty}
+.connect-grid .harness-panel .harness-install-prompt{color:#e8e7e4;font-size:13px;line-height:1.85;overflow-wrap:anywhere;text-wrap:wrap;user-select:text}
+.harness-prompt-copy{display:inline-flex;align-items:center;gap:8px;background:#3867b2;color:#fff;border-radius:6px;padding:10px 14px;font-size:12px;font-weight:600;margin-bottom:12px;transition:background .15s ease}
+.harness-prompt-copy:hover{background:#305b9e}
+.harness-prompt-copy svg{width:16px;height:16px}
+.harness-prompt-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px 18px;margin-bottom:16px}
+.harness-panel:has(.harness-prompt-actions:not([hidden])){min-height:0}
+.harness-prompt-actions .harness-prompt-copy{margin-bottom:0;margin-inline-start:auto}
+.harness-details-toggle{display:inline-flex;align-items:center;gap:6px;padding:10px 0;font-size:12px;color:#c0beb8}
+.harness-details-toggle:hover{color:#fff}
+.harness-details-toggle svg{width:14px;height:14px;transition:transform .15s ease}
+.harness-details-toggle[aria-expanded=true] svg{transform:rotate(180deg)}
+@media(prefers-reduced-motion:reduce){.harness-details-toggle svg{transition:none}}
+.connect-grid #harness-copy-status{font-size:11px;color:#afc5e2;min-height:20px;margin:0}
+.connect-grid .harness-prerequisite{font-size:12px;color:var(--muted)}
+.harness-prerequisite a{color:var(--accent);text-decoration:underline;white-space:nowrap}
+@media(max-width:440px){.harness-tabs{gap:20px;padding-inline:20px}.harness-tabs button{font-size:11px}.harness-panel{padding:20px 20px 12px;min-height:280px}.harness-command code{font-size:12px}}

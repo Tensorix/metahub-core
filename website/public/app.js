@@ -8,6 +8,10 @@ let install = 'desktop';
 let proof = 'documents';
 let copyResult = '';
 let copyRequest = 0;
+let harness = 'codex';
+let harnessCopyResult = '';
+let harnessCopyRequest = 0;
+let harnessDetailsOpen = false;
 const t = (key) => translate(language, key);
 const demo = createDemo({ language });
 
@@ -37,7 +41,7 @@ function applyLanguage() {
   document.querySelector('meta[name="description"]').content = t('description');
   document.querySelector('meta[property="og:title"]').content = t('title');
   document.querySelector('meta[property="og:description"]').content = t('description');
-  updateInstall(); updateProof(); demo.setLanguage(language);
+  updateInstall(); updateProof(); updateHarness(); demo.setLanguage(language);
 }
 function updateInstall() {
   document.querySelectorAll('[data-install]').forEach((node) => {
@@ -46,7 +50,7 @@ function updateInstall() {
   });
   $('install-panel').setAttribute('aria-labelledby', `install-${install}-tab`);
   $('install-description').textContent = t(install === 'desktop' ? 'installDesktop' : 'installCli');
-  $('install-command').textContent = install === 'desktop' ? 'brew install --cask tensorix/tap/metahub-app' : 'bunx @tensorix/metahub init';
+  $('install-command').textContent = install === 'desktop' ? 'brew install --cask tensorix/tap/metahub-app' : 'bun install -g @tensorix/metahub';
   $('install-dependency').textContent = install === 'desktop' ? 'Homebrew' : 'Bun';
   $('install-dependency').href = install === 'desktop' ? 'https://brew.sh' : 'https://bun.sh';
   $('copy-status').textContent = copyResult ? t(copyResult) : '';
@@ -60,13 +64,49 @@ function updateProof() {
   $('product-image').src = `/assets/${proof}-v0.5.4-en.png`;
   $('product-image').alt = t(proof === 'documents' ? 'screenshotNote' : 'screenshotTable');
 }
+function updateHarness() {
+  document.querySelectorAll('[data-harness]').forEach((node) => {
+    const selected = node.dataset.harness === harness;
+    node.setAttribute('aria-selected', String(selected)); node.tabIndex = selected ? 0 : -1;
+  });
+  $('harness-panel').setAttribute('aria-labelledby', `harness-${harness}-tab`);
+  const prefix = `harness${{ codex: 'Codex', claude: 'Claude', other: 'Other' }[harness]}`;
+  $('harness-description').textContent = t(`${prefix}Description`);
+  $('harness-next').textContent = t(`${prefix}Next`);
+  $('harness-prompt').textContent = t(`${prefix}Prompt`);
+  $('harness-command-row').hidden = harness === 'other';
+  $('harness-prerequisite').hidden = harness === 'other';
+  $('harness-prompt-actions').hidden = harness !== 'other';
+  $('harness-next').hidden = harness === 'other' && !harnessDetailsOpen;
+  $('harness-prompt').hidden = harness === 'other' && !harnessDetailsOpen;
+  $('harness-details-toggle').setAttribute('aria-expanded', String(harnessDetailsOpen));
+  $('harness-details-label').textContent = t(harnessDetailsOpen ? 'harnessHideDetails' : 'harnessShowDetails');
+  $('harness-prompt').classList.toggle('harness-install-prompt', harness === 'other');
+  $('harness-command').textContent = harness === 'other' ? '' : `mh init --${harness}`;
+  $('harness-copy-status').textContent = harnessCopyResult ? t(harnessCopyResult) : '';
+}
 $('language').addEventListener('click', () => {
+  harnessCopyRequest++; harnessCopyResult = '';
   language = language === 'en' ? 'zh' : 'en';
   try { localStorage.setItem('metahub-site-language', language); } catch {}
   applyLanguage();
 });
 for (const node of document.querySelectorAll('[data-install]')) node.addEventListener('click', () => { install = node.dataset.install; copyRequest++; copyResult = ''; updateInstall(); });
 for (const node of document.querySelectorAll('[data-proof]')) node.addEventListener('click', () => { proof = node.dataset.proof; updateProof(); });
+for (const node of document.querySelectorAll('[data-harness]')) node.addEventListener('click', () => {
+  harness = node.dataset.harness; harnessDetailsOpen = false; harnessCopyRequest++; harnessCopyResult = ''; updateHarness();
+});
+$('harness-details-toggle').addEventListener('click', () => { harnessDetailsOpen = !harnessDetailsOpen; updateHarness(); });
+$('harness-install').addEventListener('click', () => $('install-cli-tab').click());
+async function copyHarness() {
+  const isPrompt = harness === 'other';
+  const request = ++harnessCopyRequest;
+  try { await navigator.clipboard.writeText($(isPrompt ? 'harness-prompt' : 'harness-command').textContent); if (request === harnessCopyRequest) harnessCopyResult = isPrompt ? 'harnessPromptCopied' : 'copied'; }
+  catch { if (request === harnessCopyRequest) { harnessCopyResult = isPrompt ? 'harnessPromptCopyError' : 'copyError'; if (isPrompt) harnessDetailsOpen = true; } }
+  updateHarness();
+}
+$('harness-copy').addEventListener('click', copyHarness);
+$('harness-prompt-copy').addEventListener('click', copyHarness);
 // All tab groups share the same keyboard contract, including nested demo views.
 for (const list of document.querySelectorAll('[role="tablist"]')) list.addEventListener('keydown', (event) => {
   const buttons = [...list.querySelectorAll('[role="tab"]')];
