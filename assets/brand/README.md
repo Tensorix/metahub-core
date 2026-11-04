@@ -1,6 +1,6 @@
 # MetaHub brand and product narrative
 
-This is the shared brand reference for the website, repository READMEs, and product introductions. [Website design](../../website/DESIGN.md) describes the current marketing-site implementation; [core UI theme](../../src/core/ui-theme.ts) and [WebUI styles](../../src/webui/styles.css) remain the authority for product UI.
+This is the shared brand reference for the website, repository READMEs, and product introductions. Website hero and README title lines differ on purpose; both still describe the same shared workspace. [Website design](../../website/DESIGN.md) describes the current marketing-site implementation; [core UI theme](../../src/core/ui-theme.ts) and [WebUI styles](../../src/webui/styles.css) remain the authority for product UI.
 
 ## Product thesis
 
@@ -14,13 +14,17 @@ Use **MetaHub** in product prose. Keep `metahub`, `mh`, package names, paths, an
 
 | Role | English | 简体中文 |
 | --- | --- | --- |
-| Hero / README slogan | Where you and your AI keep working. | 你和 AI 接着往下做的地方。 |
-| Supporting sentence | Notes, tables, and simple sites. A local-first workspace you and your AI can read and write. | 笔记、数据表和简单小站。一个你和 AI 都能读写的本地优先工作区。 |
+| Website hero | Where you and your AI keep working. | 你和 AI 接着往下做的地方。 |
+| Website supporting sentence | Notes, tables, and simple sites. A local-first workspace you and your AI can read and write. | 笔记、数据表和简单小站。一个你和 AI 都能读写的本地优先工作区。 |
+| README title line | A local-first workspace you and your agents share. | 你和 Agent 共享的本地优先工作空间。 |
+| README lead | Markdown notes, typed tables, and simple agent-built sites in one shared workspace; people use the app/browser, agents use the CLI. | Markdown 笔记、类型化数据表与 Agent 简单站点；人用 App/浏览器，Agent 用 CLI。 |
 | Primary CTA | Download desktop | 下载桌面版 |
 | Secondary CTA | Connect an agent | 连接 Agent |
 | Badges, in both languages | Write · See · Continue | Write · See · Continue |
 
-Preserve the slogan's wording and punctuation. On the website, emphasize only **keep working** / **接着往下做** in logo blue `#335CFF`; the rest uses the ordinary warm foreground `#37352F`. Do not introduce another hero-only dark color or multicolor/gradient text. GitHub READMEs use plain bold text rather than inline color styling.
+Website and GitHub README intentionally use **different** lead lines: the site keeps the locked emotional hero; READMEs lead with the concrete workspace framing and a Write / See / Revise / Keep yours / Trace-and-undo Why section. Do not force the website hero into README, or the README title into the website hero.
+
+Preserve the website slogan's wording and punctuation. On the website, emphasize only **keep working** / **接着往下做** in logo blue `#335CFF`; the rest uses the ordinary warm foreground `#37352F`. Do not introduce another hero-only dark color or multicolor/gradient text. GitHub READMEs use plain bold text rather than inline color styling.
 
 For Chinese, keep “接着往下做” together. The current hero breaks after “你和 AI”, then renders “接着往下做的地方。” as one line, scaling to fit phones. Use normal Chinese character spacing and appropriate leading rather than applying tight English tracking. `AI`, `Agent`, and product names retain readable spacing in Chinese sentences.
 
