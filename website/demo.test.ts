@@ -75,10 +75,13 @@ describe('production website demo', () => {
 
   test('board/table views share status and summaries use the latest snapshot', async () => {
     click('tables-tab');
-    const select = window.document.querySelector('#board-grid [data-task-select="demo"]')! as any;
-    select.value = 'done'; select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    expect(node('board-grid').querySelector('select, [data-task-select]')).toBeNull();
     click('table-tab');
-    expect((window.document.querySelector('#task-rows [data-task-select="demo"]') as any).value).toBe('done');
+    (window.document.querySelector('[data-task-select="demo"]') as any).click();
+    (window.document.querySelector('[data-status="done"]') as any).click();
+    expect(window.document.querySelector('[data-task-select="demo"]')!.textContent).toBe('Done');
+    expect(node('board-grid').querySelector('[data-column="done"] [data-task="demo"]')).not.toBeNull();
+    expect(window.document.querySelector('.status-pop')).toBeNull();
     expect(node('board-count').textContent).toBe('2 of 3 done');
     click('demo-action'); await settle();
     expect(node('board-summary').textContent).toContain('Next: Send the invitation');
@@ -86,6 +89,53 @@ describe('production website demo', () => {
     expect(node('board-summary').textContent).toContain('发出活动邀请');
     expect(node('board-count').textContent).toBe('2 / 3 已完成');
     click('reset-demo'); expect(node('board-count').textContent).toBe('1 / 3 已完成');
+  });
+
+  test('status picker supports filtering, keyboard selection and focus return', () => {
+    click('tables-tab'); click('table-tab');
+    (window.document.querySelector('[data-task-select="invite"]') as any).click();
+    let input = window.document.querySelector('.status-search input')! as any;
+    input.value = 'no such status'; input.dispatchEvent(new window.Event('input'));
+    input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(window.document.querySelector('[role=option]')).toBeNull();
+    expect(window.document.querySelector('.status-empty')?.textContent).toBe('No matching options');
+    input.value = 'Done'; input.dispatchEvent(new window.Event('input'));
+    input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(node('board-count').textContent).toBe('2 of 3 done');
+    expect((window.document.activeElement as any).dataset.taskSelect).toBe('invite');
+    (window.document.activeElement as any).click();
+    input = window.document.querySelector('.status-search input')!;
+    input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(window.document.querySelector('.status-pop')).toBeNull();
+    expect(window.document.activeElement?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  test('dragging a card still updates its group and the table status', () => {
+    click('tables-tab');
+    const card = node('board-grid').querySelector('[data-task="invite"]')!;
+    const start = new window.Event('dragstart', { bubbles: true }) as any;
+    start.dataTransfer = { setData() {}, effectAllowed: '' };
+    card.dispatchEvent(start);
+    node('board-grid').querySelector('[data-column="done"]')!.dispatchEvent(new window.Event('drop', { bubbles: true, cancelable: true }));
+    expect(node('board-grid').querySelector('[data-column="done"] [data-task="invite"]')).not.toBeNull();
+    click('table-tab');
+    expect(window.document.querySelector('[data-task-select="invite"]')!.textContent).toBe('Done');
+    expect(node('board-count').textContent).toBe('2 of 3 done');
+  });
+
+  test('open status pickers dismiss on outside input, scene and language changes', () => {
+    click('tables-tab'); click('table-tab');
+    const open = () => (window.document.querySelector('[data-task-select="demo"]') as any).click();
+    open(); node('activity-message').dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+    expect(window.document.querySelector('.status-pop')).toBeNull();
+    open(); demo.setLanguage('zh');
+    expect(window.document.querySelector('.status-pop')).toBeNull();
+    open();
+    expect(window.document.querySelector('.status-search input')?.getAttribute('placeholder')).toBe('搜索选项');
+    click('notes-tab');
+    expect(window.document.querySelector('.status-pop')).toBeNull();
+    expect(node('note-controls').hidden).toBe(false);
+    expect(node('notes-scene').querySelector('select')).toBeNull();
   });
 
   test('registration uses text, prevents duplicates and survives language changes', async () => {

@@ -25,6 +25,7 @@ export function createDemo({ language = 'en' } = {}) {
   let visible = false;
   let serial = 0;
   let dragId = null;
+  let statusPicker = null;
   const timings = { read: 850, write: 250, beat: 1300 };
 
   function animate(node, frames, options = {}) {
@@ -38,6 +39,7 @@ export function createDemo({ language = 'en' } = {}) {
     animate(node, [{ backgroundColor: '#e0eaf7' }, { backgroundColor: 'transparent' }], { duration: 1100 });
   }
   function stop(announce = false) {
+    closeStatusPicker();
     const wasRunning = !!job;
     if (job) job.abort(); job = null; autoplay = false;
     for (const animation of animations) animation.cancel(); animations.clear();
@@ -72,6 +74,9 @@ export function createDemo({ language = 'en' } = {}) {
     return values;
   }
   function renderControls() {
+    $('note-controls').hidden = state.scene !== 'notes';
+    $('table-controls').hidden = state.scene !== 'tables';
+    $('site-controls').hidden = state.scene !== 'sites';
     const current = state.scenes[state.scene];
     document.querySelectorAll('[data-step]').forEach((node, index) => {
       node.toggleAttribute('data-complete', index < current.step);
@@ -94,6 +99,7 @@ export function createDemo({ language = 'en' } = {}) {
   }
   function renderNotes() {
     $('event-day').value = state.day;
+    $('event-day-text').textContent = t(state.day);
     $('draft-copy').textContent = t('noteDraftCopy', { day: t(`noteDraftDay_${state.draftDay}`) });
     $('draft-credit').textContent = t(state.scenes.notes.phase === 'written' ? 'noteUpdatedCredit' : 'noteCredit');
     $('note-tip').textContent = t(state.day !== state.draftDay ? 'noteStale' : 'noteTip');
@@ -102,21 +108,78 @@ export function createDemo({ language = 'en' } = {}) {
     $('notes-save').textContent = t(state.day !== state.draftDay ? 'modified' : state.scenes.notes.phase === 'written' ? 'agentSaved' : 'saved');
     $('site-time').textContent = t('siteTime', { day: t(state.day) });
   }
+  function statusChip(status) {
+    // Same stable option-color mapping and Chip treatment as src/webui/cells.tsx.
+    const label = t(status), hues = [4, 28, 45, 130, 165, 200, 220, 255, 290, 330];
+    let hash = 0;
+    for (let index = 0; index < label.length; index++) hash = (hash * 31 + label.charCodeAt(index)) >>> 0;
+    return `<span class="chip" style="--c:hsl(${hues[hash % hues.length]} 65% 45%)">${escape(label)}</span>`;
+  }
   function taskSelect(task) {
-    return `<select data-task-select="${task.id}" aria-label="${escape(t('taskStatus', { task: t(`task_${task.id}`) }))}">${STATUS.map((status) => `<option value="${status}" ${status === task.status ? 'selected' : ''}>${t(status)}</option>`).join('')}</select>`;
+    return `<button type="button" class="status-cell" data-task-select="${task.id}" aria-haspopup="dialog" aria-expanded="false" aria-label="${escape(t('taskStatus', { task: t(`task_${task.id}`) }))}">${statusChip(task.status)}</button>`;
+  }
+  function closeStatusPicker(restoreFocus = false) {
+    if (!statusPicker) return;
+    const { element, trigger } = statusPicker;
+    statusPicker = null; element.remove(); trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && trigger.isConnected) trigger.focus({ preventScroll: true });
+  }
+  function openStatusPicker(trigger) {
+    stop(true); played.add('tables'); renderControls();
+    const task = state.tasks.find((item) => item.id === trigger.dataset.taskSelect);
+    if (!task) return;
+    const element = document.createElement('div');
+    element.className = 'product-app status-pop'; element.setAttribute('role', 'dialog');
+    element.setAttribute('aria-label', t('taskStatus', { task: t(`task_${task.id}`) }));
+    element.innerHTML = `<div class="status-search">${icon('search')}<input type="text" role="combobox" aria-expanded="true" aria-controls="status-options" aria-autocomplete="list" aria-label="${t('statusSearch')}" placeholder="${t('statusSearch')}"></div><div id="status-options" role="listbox" aria-label="${t('statusSearch')}"></div>`;
+    document.body.append(element); statusPicker = { element, trigger };
+    trigger.setAttribute('aria-expanded', 'true');
+    const input = element.querySelector('input'), list = element.querySelector('[role=listbox]');
+    let selected = 0, filtered = STATUS;
+    const pick = (status) => {
+      if (!status) return;
+      closeStatusPicker(); updateTask(task.id, status);
+      $('task-rows').querySelector(`[data-task-select="${task.id}"]`)?.focus({ preventScroll: true });
+    };
+    const renderOptions = () => {
+      filtered = STATUS.filter((status) => t(status).toLocaleLowerCase().includes(input.value.trim().toLocaleLowerCase()));
+      selected = Math.min(selected, Math.max(0, filtered.length - 1));
+      list.innerHTML = filtered.map((status, index) => `<button type="button" role="option" tabindex="-1" id="status-option-${status}" class="status-option${index === selected ? ' active' : ''}" data-status="${status}" aria-selected="${status === task.status}">${statusChip(status)}${status === task.status ? icon('check') : ''}</button>`).join('') || `<p class="status-empty">${t('statusEmpty')}</p>`;
+      if (filtered.length) input.setAttribute('aria-activedescendant', `status-option-${filtered[selected]}`);
+      else input.removeAttribute('aria-activedescendant');
+    };
+    input.addEventListener('input', () => { selected = 0; renderOptions(); });
+    input.addEventListener('keydown', (event) => {
+      if (event.isComposing) return;
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault(); selected = Math.max(0, Math.min(filtered.length - 1, selected + (event.key === 'ArrowDown' ? 1 : -1))); renderOptions();
+      } else if (event.key === 'Enter') { event.preventDefault(); pick(filtered[selected]); }
+    });
+    element.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeStatusPicker(true); }
+      if (event.key === 'Tab') closeStatusPicker(true);
+    });
+    list.addEventListener('click', (event) => pick(event.target.closest('[data-status]')?.dataset.status));
+    renderOptions();
+    const rect = trigger.getBoundingClientRect(), viewport = document.documentElement;
+    const width = viewport.clientWidth || 1024, height = viewport.clientHeight || 768;
+    if (width > 700) {
+      element.style.left = `${Math.max(8, Math.min(rect.left, width - element.offsetWidth - 8))}px`;
+      element.style.top = `${Math.max(8, rect.bottom + element.offsetHeight + 6 <= height ? rect.bottom + 6 : rect.top - element.offsetHeight - 6)}px`;
+    }
+    input.focus({ preventScroll: true });
   }
   function renderBoard(movedId) {
+    closeStatusPicker();
     const oldRects = new Map([...$('board-grid').querySelectorAll('[data-task]')].map((node) => [node.dataset.task, node.getBoundingClientRect()]));
     const active = document.activeElement;
     const focusedTask = active?.dataset.taskSelect;
     const focusRoot = active?.closest('#table-panel') ? 'table-panel' : 'board-panel';
     $('board-grid').innerHTML = STATUS.map((status) => {
       const tasks = state.boardFilled ? state.tasks.filter((task) => task.status === status) : [];
-      return `<div class="board-col" data-column="${status}" aria-label="${t(status)}"><div class="board-col-head"><span class="chip ${status}">${t(status)}</span><span class="board-count">${tasks.length}</span></div><div class="board-col-body">${tasks.map((task) => `<article class="kcard" draggable="true" data-task="${task.id}"><h3>${t(`task_${task.id}`)}</h3><p>${t(`detail_${task.id}`)}</p><div class="kcard-fields"><span>${icon('user')}${t(task.id === 'demo' ? 'youAI' : 'you')}</span>${taskSelect(task)}</div></article>`).join('')}${!tasks.length ? `<span class="column-empty">${t('emptyColumn')}</span>` : ''}</div></div>`;
+      return `<div class="board-col" data-column="${status}" aria-label="${t(status)}"><div class="board-col-head">${statusChip(status)}<span class="board-count">${tasks.length}</span></div><div class="board-col-body">${tasks.map((task) => `<article class="kcard" draggable="true" data-task="${task.id}"><h3>${t(`task_${task.id}`)}</h3><div class="kcard-field">${icon('text')}<span>${t(`detail_${task.id}`)}</span></div><div class="kcard-field">${icon('text')}<span>${t(task.id === 'demo' ? 'youAI' : 'you')}</span></div></article>`).join('')}${!tasks.length ? `<span class="column-empty">${t('emptyColumn')}</span>` : ''}</div></div>`;
     }).join('');
     $('task-rows').innerHTML = state.tasks.map((task) => `<tr><td>${t(`task_${task.id}`)}</td><td>${taskSelect(task)}</td><td>${t(task.id === 'demo' ? 'youAI' : 'you')}</td></tr>`).join('');
-    // Control the live value as well as the default selected attribute (including restored controls).
-    document.querySelectorAll('[data-task-select]').forEach((node) => { node.value = state.tasks.find((task) => task.id === node.dataset.taskSelect).status; });
     $('tables-save').textContent = t(state.scenes.tables.phase === 'written' ? 'agentSaved' : state.scenes.tables.phase === 'idle' ? 'saved' : 'modified');
     $('board-count').textContent = t('boardCount', { done: state.tasks.filter((task) => task.status === 'done').length });
     if (state.summary) {
@@ -132,7 +195,7 @@ export function createDemo({ language = 'en' } = {}) {
           // A temporary inert overlay crosses independently scrollable columns without clipping.
           const ghost = node.cloneNode(true);
           ghost.className = 'product-app kcard flying-card'; ghost.inert = true; ghost.setAttribute('aria-hidden', 'true');
-          ghost.removeAttribute('data-task'); ghost.querySelectorAll('select').forEach((select) => select.removeAttribute('data-task-select'));
+          ghost.removeAttribute('data-task');
           Object.assign(ghost.style, { left: `${previous.left}px`, top: `${previous.top}px`, width: `${next.width}px` });
           $('demo-stage').append(ghost); node.classList.add('flight-target');
           const flight = animate(ghost, [
@@ -155,7 +218,7 @@ export function createDemo({ language = 'en' } = {}) {
       for (const value of [guestName(guest), t('signupSourceValue'), t('registered')]) {
         const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
       }
-      row.lastElementChild.className = 'registration-status'; $('guest-rows').append(row);
+      row.lastElementChild.innerHTML = statusChip('registered'); $('guest-rows').append(row);
       if (guest.id === newId) animate(row, [
         { opacity: .15, transform: 'translateY(-10px)', backgroundColor: '#dfeee6' },
         { opacity: 1, transform: 'translateY(0)', backgroundColor: 'transparent' },
@@ -244,7 +307,7 @@ export function createDemo({ language = 'en' } = {}) {
       $('demo-stage').classList.remove('is-building');
       await delay(timings.beat, signal);
       phase(scene, 2, 'revised');
-      if (scene === 'notes') { state.day = 'friday'; renderNotes(); highlight($('event-day')); }
+      if (scene === 'notes') { state.day = 'friday'; renderNotes(); highlight($('event-day-text')); }
       if (scene === 'tables') { state.tasks.find((task) => task.id === 'demo').status = 'done'; renderBoard('demo'); }
       if (scene === 'sites') addGuest(t('sampleName'), true);
       await delay(timings.beat + 300, signal); await read(signal);
@@ -268,7 +331,17 @@ export function createDemo({ language = 'en' } = {}) {
   });
   for (const button of document.querySelectorAll('[data-view]')) button.addEventListener('click', () => { stop(true); played.add('tables'); setView(button.dataset.view); render(); });
   $('event-day').addEventListener('change', () => { stop(); played.add('notes'); state.day = $('event-day').value; phase('notes', 2, 'changed', { day: state.day }); renderNotes(); });
-  $('tables-scene').addEventListener('change', (event) => { if (event.target.matches('[data-task-select]')) updateTask(event.target.dataset.taskSelect, event.target.value); });
+  $('task-rows').addEventListener('click', (event) => {
+    const trigger = event.target.closest('[data-task-select]');
+    if (trigger) openStatusPicker(trigger);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (statusPicker && !statusPicker.element.contains(event.target) && !statusPicker.trigger.contains(event.target)) closeStatusPicker();
+  });
+  document.addEventListener('scroll', (event) => {
+    if (statusPicker && !statusPicker.element.contains(event.target)) closeStatusPicker();
+  }, true);
+  document.defaultView.addEventListener('resize', () => closeStatusPicker());
   $('guest-name').addEventListener('input', () => { if (job) { stop(true); renderControls(); } played.add('sites'); });
   $('signup-form').addEventListener('submit', (event) => {
     event.preventDefault(); stop(true); played.add('sites');

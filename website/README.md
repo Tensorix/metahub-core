@@ -29,7 +29,7 @@ Published at https://metahub.tensorix.org/ on 2026-10-22. Current deployment (v0
 
 - Product claims and commands come from the repository README and agent skill. The product narrative is a local-first shared workspace for humans and agents, with the locked “Where you and your AI keep working.” hero.
 - Notes, Tables, and Sites share one fixed-height interactive demonstration area. Each has a pausable walkthrough, manual interactions, explicit AI re-read feedback, and reset. Switching scenes or language retains visitor edits while cancelling unfinished demonstrations. Data stays in page memory; no model calls or submissions are sent.
-- Demo surfaces track the actual WebUI palette, typography stack, sidebar, document editor, board, and data grid. On mobile, sign-up and write-back views switch in place rather than stacking.
+- Demo surfaces track the actual WebUI palette, typography stack, sidebar, document editor, board, and data grid. Board cards omit the grouping property; status cells use the app's option chips and searchable picker, with a bottom sheet on phones. The date selector sits outside the app frame as a demo control. On mobile, sign-up and write-back views switch in place rather than stacking.
 - Product screenshots were captured from v0.5.4 WebUI on 2026-10-22 at 1440 × 900, using a synthetic knowledge base. They are retained as versioned English evidence in an expandable section; live demo copy is fully English/Chinese.
 - Brand images come from `assets/brand/color/`.
 - Manrope is self-hosted; its Open Font License is included in `public/assets/Manrope-LICENSE.txt`.
