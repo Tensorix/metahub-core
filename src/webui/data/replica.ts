@@ -164,7 +164,7 @@ export async function detectOriginMode(): Promise<OriginMode> {
 function handleEvent(d: WorkerEvent): void {
   if (d.event === "status") {
     status = d.status;
-    if (status.lastSync?.ok && !flag(HYDRATED_KEY)) {
+    if ((status.checkpointInstalled || status.lastSync?.ok) && !flag(HYDRATED_KEY)) {
       setFlag(HYDRATED_KEY, true);
       // Ask the browser not to evict the freshly hydrated replica under
       // storage pressure (Chrome/Firefox honor this; Safari ties persistence

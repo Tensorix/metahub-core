@@ -1,6 +1,23 @@
 import { plural, type Msg } from "./util.ts";
 
 export const backup = {
+  "本地副本与恢复": "Local replica and recovery",
+  "重建本地副本": "Rebuild local replica",
+  "先保存编辑并备份数据库和附件，再从所选存储桶下载当前副本。": "Save edits and back up the database and attachments before downloading the current replica from the selected bucket.",
+  "开始重建": "Start rebuild",
+  "正在保存编辑并更新本地副本…": "Saving edits and rebuilding the local replica…",
+  "本地副本已更新，有 {n} 项编辑待恢复。": "Local replica updated. Edits awaiting recovery: {n}.",
+  "本地副本已更新。": "Local replica updated.",
+  "丢弃此项编辑？": "Discard this edit?",
+  "此项将从待恢复列表移除。": "This will remove the edit from the recovery list.",
+  "重建使用的存储桶": "Bucket to rebuild from",
+  "升级桌面应用后即可重建本地副本。": "Update the desktop app to rebuild this replica.",
+  "保全编辑并重建本地副本": "Save edits and rebuild local replica",
+  "待恢复内容": "Edit to recover",
+  "另一份内容": "Other version",
+  "创建恢复副本": "Create recovered copy",
+  "丢弃此项": "Discard this edit",
+  "丢弃": "Discard",
   "加载失败：{msg}": "Failed to load: {msg}",
   连接存储桶: "Connect a bucket",
   所有设备通过它同步: "Every device syncs through it",

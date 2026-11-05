@@ -87,6 +87,12 @@ export function installDocumentWindows(options: {
       if (approved.has(win) || options.quitting()) event.preventDefault();
     });
     const id = win.webContents.id;
+    // A hard navigation replaces the renderer and all of its IPC listeners.
+    win.webContents.on("did-navigate", () => {
+      registered.delete(id);
+      dirty.delete(id);
+      waiters.get(id)?.done({ ok:false, error:tm("窗口已关闭") });
+    });
     win.on("closed", () => {
       dirty.delete(id);
       registered.delete(id);
@@ -127,6 +133,14 @@ export function installDocumentWindows(options: {
 
   return {
     open,
+    async freezeForRecovery() {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || !registered.has(win.webContents.id)) continue;
+        if (closing.has(win) || waiters.has(win.webContents.id)) throw new Error("窗口正在保存，请稍后重试");
+        const saved = await requestSave(win);
+        if (!saved.ok || dirty.has(win.webContents.id)) throw new Error(saved.error || "文档尚未保存");
+      }
+    },
     async ready() { origin = await options.origin(); },
     registerIpc() {
       ipcMain.handle("documents:open", async (event, id: unknown) => {

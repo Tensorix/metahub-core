@@ -46,6 +46,42 @@ export class ReplicaBus {
   private started = false;
   leader = false;
 
+  private admission: Promise<void> = Promise.resolve();
+  private held: Promise<void> = Promise.resolve();
+  private releaseView: (() => void) | undefined;
+  private recoveryActive = false;
+
+  private shareView(locks: LockManager) {
+    let admitted!: () => void;
+    let failed!: (reason: unknown) => void;
+    this.admission = new Promise((resolve,reject) => { admitted = resolve; failed = reject; });
+    this.held = locks.request("mh-replica-open-views",{ mode:"shared" },async () => {
+      const lifetime = new Promise<void>(resolve => { this.releaseView = resolve; });
+      admitted();
+      await lifetime;
+    }).then(() => undefined);
+    void this.held.catch(failed);
+  }
+
+  async rebuild(url: string): Promise<{ packageId: string; pending: number }> {
+    if (!this.started) this.start();
+    if (!navigator.locks) throw new BusError("此浏览器无法安全独占本地副本","busy");
+    await this.admission;
+    if (this.recoveryActive) throw new BusError("本地副本正在重建","busy");
+    this.recoveryActive = true;
+    try {
+      this.releaseView?.();
+      await this.held;
+      return await navigator.locks.request("mh-replica-open-views",{ ifAvailable:true },async lock => {
+        if (!lock || !this.leader) throw new BusError("请先保存并关闭此工作区的其他标签页，再重建本地副本","busy");
+        return this.workerCall<{ packageId: string; pending: number }>("rebuildReplica",[url]);
+      });
+    } finally {
+      this.shareView(navigator.locks);
+      try { await this.admission; } finally { this.recoveryActive = false; }
+    }
+  }
+
   private nextLocal = 0;
   private localPending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private remotePending = new Map<
@@ -72,12 +108,13 @@ export class ReplicaBus {
     this.ch.onmessage = (e: MessageEvent) => this.onChannel(e.data as BusMsg);
     const locks = (navigator as { locks?: LockManager }).locks;
     if (locks) {
-      void locks
-        .request(LOCK, () => {
+      this.shareView(locks);
+      void this.admission.then(() =>
+        locks.request(LOCK, () => {
           this.becomeLeader();
           return new Promise<void>(() => {}); // held until the tab dies
         })
-        .catch(() => {});
+      ).catch(() => {});
     } else {
       // No Web Locks (ancient browser): act alone and hope for one tab.
       this.becomeLeader();
@@ -89,8 +126,10 @@ export class ReplicaBus {
     return () => this.listeners.delete(fn);
   }
 
-  call<T>(op: string, ...args: unknown[]): Promise<T> {
+  async call<T>(op: string, ...args: unknown[]): Promise<T> {
     if (!this.started) this.start();
+    await this.admission;
+    if (op === "rebuildReplica" || this.recoveryActive) throw new BusError("正在更新本地副本","busy");
     if (this.leader) return this.workerCall<T>(op, args);
     return this.remoteCall<T>(op, args);
   }
@@ -170,6 +209,7 @@ export class ReplicaBus {
 
   private onChannel(msg: BusMsg): void {
     if (msg.kind === "req") {
+      if (msg.op === "rebuildReplica") return;
       if (!this.leader) return; // someone else's request; only the leader answers
       this.workerCall(msg.op, msg.args).then(
         (result) => this.ch?.postMessage({ kind: "res", id: msg.id, ok: true, result } satisfies BusMsg),

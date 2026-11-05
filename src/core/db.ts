@@ -1,7 +1,9 @@
 import { Database } from "bun:sqlite";
+import { join } from "node:path";
+import { openActiveReplica } from "./sync/recovery-local.ts";
 import { mkdirSync } from "node:fs";
 import { hostname } from "node:os";
-import { dbPath, cacheDir, metahubHome } from "./paths.ts";
+import { cacheDir, metahubHome } from "./paths.ts";
 import { initSchema } from "./schema-init.ts";
 import { describeSelf, defaultForm, platformFromProcess, type NodeApp } from "./node.ts";
 
@@ -36,8 +38,11 @@ function appKind(): NodeApp {
 /** Open (and migrate) the on-disk metahub database for the resolved home. */
 export function openMetahub(): Database {
   ensureDirs();
-  const db = new Database(dbPath(), { create: true });
-  db.exec("PRAGMA busy_timeout = 5000;");
+  const { db } = openActiveReplica((name, initial) => {
+    const db = new Database(join(metahubHome(), name), initial ? { create: true } : { readwrite: true });
+    db.exec("PRAGMA busy_timeout = 5000");
+    return { db, close: () => db.close() };
+  });
   db.exec("PRAGMA journal_mode = WAL;");
   initSchema(db);
   // Self-description is a no-op unless something changed (node.ts), so every

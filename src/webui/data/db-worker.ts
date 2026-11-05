@@ -11,6 +11,9 @@
 // the tab is alive and online. Status transitions and post-pull invalidation
 // hints are broadcast as events.
 
+import { hydrateLocalHistory, openActiveReplica } from "../../core/sync/recovery-local.ts";
+import { recoveryItems, resolveRecoveryItem } from "../../core/sync/recovery-v2.ts";
+import { rebuildBrowserReplica } from "./rebuild.ts";
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { WasmDriver, type Oo1Db } from "./wasm-driver.ts";
 import type { DbDriver } from "../../core/driver.ts";
@@ -136,6 +139,8 @@ export interface ReplicaStatus {
   bucketSyncing?: boolean;
   /** Last direct bucket sync error, if the dirty changes could not be saved. */
   bucketError?: string;
+  recoveryRequired?: string[];
+  checkpointInstalled?: boolean;
   /** A sync round (any trigger: load, focus, online, debounced push, poll) is
    *  in flight. Unlike bucketSyncing this flips for every round; the UI hides
    *  rounds shorter than a few hundred ms so typing never flickers a spinner. */
@@ -187,9 +192,20 @@ function requireDb(): DbDriver {
 type SahPool = {
   OpfsSAHPoolDb: new (path: string) => unknown;
   wipeFiles(): Promise<unknown>;
+  getFileNames(): string[];
+  getFileCount(): number;
+  reserveMinimumCapacity(count: number): Promise<number>;
+  exportFile(name: string): Uint8Array;
 };
 let pool: SahPool | null = null;
 let oo1Db: { close(): void } | null = null;
+let rebuilding = false;
+const activeCalls = new Set<Promise<unknown>>();
+
+function browserDatabase(name: string) {
+  const oo1 = new pool!.OpfsSAHPoolDb("/"+name) as Oo1Db & { close(): void };
+  return { db: new WasmDriver(oo1), close: () => oo1.close() };
+}
 
 /** (Re)open the OPFS database and (re)install the schema, pointing `db` at a
  *  fresh driver. `pool` must already be installed. Used at boot and again after
@@ -197,9 +213,12 @@ let oo1Db: { close(): void } | null = null;
  *  (a paired op landing on a still-alive, just-reset worker would otherwise
  *  deref null — "Cannot read properties of null (reading 'query')"). */
 function openDb(): void {
-  const oo1 = new pool!.OpfsSAHPoolDb("/metahub.db") as unknown as Oo1Db & { close(): void };
-  oo1Db = oo1;
-  const driver = new WasmDriver(oo1);
+  const handle = openActiveReplica((name,initial) => {
+    if (!initial && !pool!.getFileNames().includes("/"+name)) throw new Error("已选择的本地数据库缺失");
+    return browserDatabase(name);
+  });
+  oo1Db = handle;
+  const driver = handle.db;
   initSchema(driver);
   db = driver;
   // Synced device roster: this browser replica is a full node, so it describes
@@ -257,7 +276,8 @@ const ready: Promise<void> = (async () => {
   const paired = getPeer(driver, origin)?.token != null;
   const bucketDirty = hasPendingBucketPush(driver);
   if (bucketDirty) scheduleBucketFlush();
-  setStatus({ state: "ready", node, paired, bucketDirty });
+  const checkpointInstalled = !!driver.query("SELECT 1 FROM meta WHERE key='sync_v2_checkpoint'").get();
+  setStatus({ state: "ready", node, paired, bucketDirty, checkpointInstalled });
 })().catch((e) => {
   setStatus({ state: "error", error: e instanceof Error ? e.message : String(e) });
   throw e;
@@ -420,7 +440,7 @@ async function drainSpoolToBuckets(d: DbDriver): Promise<void> {
 }
 
 async function runSync(force = false): Promise<SyncOutcome> {
-  if (!db) return { pushed: 0, pulled: 0, ok: true };
+  if (!db || rebuilding) return { pushed: 0, pulled: 0, ok: true };
   const d = db;
   if (!hasSyncTarget(d)) return { pushed: 0, pulled: 0, ok: true };
   if (syncing) return syncing;
@@ -480,6 +500,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
     // is push-only when the origin is reachable AND this isn't a forced sync AND
     // the peer already did one full round this session; otherwise full (initial
     // hydration / first snapshot / cred+CORS check all need PULL).
+    const recoveryRequired: string[] = [];
     for (const peer of enabledStoragePeers(d)) {
       const pushOnly = originOk && !force && bucketInitialSynced.has(peer.url);
       const out = await syncPeer(d, peer.url, {
@@ -495,6 +516,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
         pulled += out.pulled ?? 0;
         if (!pushOnly) bucketInitialSynced.add(peer.url); // a full round happened
       } else {
+        if (out.code === "upgrade_required" || out.code === "rebootstrap_required") recoveryRequired.push(peer.url);
         const msg = `${peer.label ?? peer.url}: ${out.error}`;
         errors.push(msg);
         bucketErrors.push(msg);
@@ -519,7 +541,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
     // them. (A reachable origin drains spool to its server from the page instead,
     // so gating on `originOk` rather than "origin unconfigured" also covers the
     // configured-but-offline case where doc changes still reached the bucket.)
-    if (!originOk && hasBuckets) await drainSpoolToBuckets(d);
+    if (!originOk && hasBuckets && !bucketErrors.length) await drainSpoolToBuckets(d);
     await reconcileSiteChannelsQuietly(d);
 
     const bucketDirty = hasBuckets ? hasPendingBucketPush(d) : false;
@@ -541,6 +563,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
       bucketDirty,
       bucketSyncing: false,
       syncing: false,
+      recoveryRequired,
       bucketError: bucketErrors.join("; ") || undefined,
     });
     if (touched.length || pushed) {
@@ -728,6 +751,41 @@ const ops: Record<string, Op> = {
   // push so pending edits flush immediately. The edit-debounce + 15s poll use
   // the unforced path so a burst of edits batches into one segment.
   sync: () => runSync(true).then(() => status.lastSync),
+  recoveryItems: () => recoveryItems(requireDb()),
+  resolveRecoveryItem: (id: string, action: "copy" | "discard") => {
+    if (action !== "copy" && action !== "discard") throw new MhError("invalid_input","Invalid recovery action");
+    const result = resolveRecoveryItem(requireDb(),id,action);
+    if (action === "copy") { markBucketDirty(); schedulePush(); }
+    return result;
+  },
+  rebuildReplica: async (url: string) => {
+    rebuilding = true;
+    try {
+      await Promise.allSettled([...activeCalls]);
+      if (syncing) await syncing;
+      const result = await rebuildBrowserReplica(requireDb(),url,{
+        reserve: async () => { await pool!.reserveMinimumCapacity(pool!.getFileCount()+8); },
+        open: browserDatabase,
+        bytes: async name => pool!.exportFile("/"+name),
+        activate: handle => {
+          const old = oo1Db, service = coreReplica;
+          coreReplica = null;
+          db = handle.db;
+          oo1Db = handle;
+          // The pointer already committed. A retired handle's failure to close
+          // must not close the newly active database in recovery's finally.
+          try { service?.dispose(); } catch (error) { console.warn("Retired replica service cleanup failed",error); }
+          try { old?.close(); } catch (error) { console.warn("Retired database cleanup failed",error); }
+        },
+      },() => setStatus({ syncing: true }));
+      bucketInitialSynced.clear();
+      setStatus({ state:"ready", node:getNodeId(requireDb()), paired:!!getPeer(requireDb(),origin)?.token,
+        lastSync:undefined, bucketDirty:true, bucketError:undefined, recoveryRequired:[], checkpointInstalled:true });
+      post({ event:"synced", datasets:["documents","doc_blocks","databases","records"], rowIds:[], pushed:0, pulled:0 });
+      schedulePush();
+      return result;
+    } finally { rebuilding = false; setStatus({ syncing:false }); }
+  },
 
   // storage-sync (S3/R2): add a bucket peer for store-and-forward sync. The
   // settings page passes the bucket config + passphrase; we provision (fetch or
@@ -751,7 +809,7 @@ const ops: Record<string, Op> = {
     const previous = getPeer(d, url);
     addStoragePeer(d, { url, config: cfg, label: cfg.bucket });
     await runSync(true);
-    if (status.bucketError) {
+    if (status.bucketError && !status.recoveryRequired?.includes(url)) {
       if (previous) restorePeerRow(d, previous);
       else removePeer(d, url);
       throw new MhError("network", `storage peer first sync failed: ${status.bucketError}`);
@@ -954,6 +1012,12 @@ const ops: Record<string, Op> = {
 
   // Portable CRUD dispatch is shared with the native SQLite owner.
   ...replicaRpcOps(requireCoreReplica),
+  ...Object.fromEntries(["listDocumentRevisions","documentAtVersion","revertDocument"].map(op => [
+    op, async (id: string,...args: unknown[]) => {
+      await hydrateLocalHistory(requireDb(),id);
+      return requireCoreReplica().dispatchRpc(op,[id,...args]);
+    },
+  ])),
 
   // audit
   repairClock: () => repairClock(db!),
@@ -1123,6 +1187,8 @@ const ops: Record<string, Op> = {
       state: "ready",
       paired: false,
       node: getNodeId(requireDb()),
+      checkpointInstalled:false,
+      recoveryRequired:[],
       hydrated: undefined,
       lastSync: undefined,
     });
@@ -1154,7 +1220,13 @@ self.onmessage = async (e: MessageEvent) => {
     await ready;
     const fn = ops[op];
     if (!fn) throw new MhError("invalid_input", `unknown op: ${op}`);
-    const result = await fn(...(args ?? []));
+    if (rebuilding) throw new MhError("busy","正在重建本地副本");
+    // Admission is synchronous. A rebuild waits for all previously admitted
+    // asynchronous handlers before backing up the source.
+    const running = Promise.resolve(fn(...(args ?? [])));
+    if (op !== "rebuildReplica") activeCalls.add(running);
+    let result: unknown;
+    try { result = await running; } finally { activeCalls.delete(running); }
     post({ id, ok: true, result });
     if (MUTATING.test(op)) {
       markBucketDirty();

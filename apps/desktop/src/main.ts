@@ -149,6 +149,8 @@ function appFile(...segments: string[]): string {
   return join(app.getAppPath(), ...segments);
 }
 
+import { desktopOrigin } from "./loopback";
+
 let sidecar: ChildProcess | null = null;
 
 // Sidecar readiness as an explicit state machine, not a port truthiness probe:
@@ -210,7 +212,7 @@ const documentLinks = installDocumentLinks(app, (id) => {
 // Consume launch argv before later OS events, so newer requests always win.
 if (ownsInstanceLock) documentLinks.handleArguments(process.argv);
 function serverOrigin(): string {
-  return `http://127.0.0.1:${serverGate.port}`;
+  return desktopOrigin(serverGate.port);
 }
 // close-flow "保存" waits for the renderer's file:save-done, keyed by WebContents id.
 interface SaveResult {
@@ -280,14 +282,14 @@ function resolveSidecarCommand(): { cmd: string; args: string[] } {
 }
 
 /** Spawn the Bun sidecar and resolve with the port it prints on stdout. */
-function startSidecar(): Promise<number> {
+function startSidecar(port = 0): Promise<number> {
   const { cmd, args } = resolveSidecarCommand();
 
   return new Promise<number>((resolve, reject) => {
     const child = spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
       // METAHUB_APP tags this device as the desktop app in the synced roster.
-      env: { ...process.env, METAHUB_APP: "desktop" },
+      env: { ...process.env, METAHUB_APP: "desktop", METAHUB_RESTART_PORT: String(port) },
     });
     sidecar = child;
     perf("sidecar spawned");
@@ -319,7 +321,7 @@ function startSidecar(): Promise<number> {
 
 /** Poll /health until the server answers ok, or time out. */
 async function waitForHealth(port: number): Promise<void> {
-  const url = `http://127.0.0.1:${port}${HEALTH_PATH}`;
+  const url = `${desktopOrigin(port)}${HEALTH_PATH}`;
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
@@ -421,7 +423,7 @@ function createWindow(port: number, hash?: string): void {
     onFirstWindowShown();
     prewarmMiniWindows();
   });
-  void win.loadURL(`http://127.0.0.1:${port}/${hash ?? ""}`);
+  void win.loadURL(`${desktopOrigin(port)}/${hash ?? ""}`);
 }
 
 // A file-only launch (opened via the .txt/.md file association) skips the main
@@ -950,7 +952,7 @@ class MiniWindow {
     // surfaces the failure instead.
     void serverGate.whenReady().then(
       (port) => {
-        if (!win.isDestroyed()) void win.loadURL(`http://127.0.0.1:${port}/${this.spec.hash}`);
+        if (!win.isDestroyed()) void win.loadURL(`${desktopOrigin(port)}/${this.spec.hash}`);
       },
       () => {},
     );
@@ -1208,6 +1210,54 @@ function registerIpc(): void {
 
   // Open the frameless image-preview window for a doc image (see openPreview).
   documentWindows.registerIpc();
+  let rebuilding = false;
+  ipcMain.handle("replica:rebuild", async (event, url: unknown) => {
+    const origin = desktopOrigin(serverGate.port);
+    if (event.sender !== mainWin?.webContents || event.senderFrame !== event.sender.mainFrame ||
+        new URL(event.senderFrame.url).origin !== origin || new URL(event.senderFrame.url).pathname !== "/")
+      throw new Error("Untrusted recovery request");
+    if (typeof url !== "string" || rebuilding || !sidecar) throw new Error("桌面副本正忙");
+    rebuilding = true;
+    let stopped = false;
+    let rebuilt = false;
+    const inputPaused: BrowserWindow[] = [];
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isEnabled() && win.webContents.getURL().startsWith(origin + "/")) {
+          win.setEnabled(false);
+          inputPaused.push(win);
+        }
+      }
+      await documentWindows.freezeForRecovery();
+      const existing = sidecar;
+      if (existing && existing.exitCode === null) await new Promise<void>((resolve,reject) => {
+        existing.once("exit",() => resolve());
+        if (!existing.kill()) reject(new Error("无法暂停桌面同步"));
+      });
+      stopped = true;
+      const { runRecoveryChild } = await import("./recovery-process");
+      const result = await runRecoveryChild(resolveSidecarCommand(),url);
+      rebuilt = true;
+      return result;
+    } finally {
+      try {
+        if (stopped) {
+          const port = await startSidecar(serverGate.port);
+          if (port !== serverGate.port) throw new Error("桌面服务地址已变化，请重新启动应用");
+          await waitForHealth(port);
+          if (rebuilt) {
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (win.webContents !== event.sender && win.webContents.getURL().startsWith(origin + '/')) win.webContents.reload();
+            }
+          }
+        }
+      } finally {
+        documentWindows.resumeAll();
+        for (const win of inputPaused) if (!win.isDestroyed()) win.setEnabled(true);
+        rebuilding = false;
+      }
+    }
+  });
   void documentWindows.ready().catch(() => {});
   ipcMain.handle("preview:open", (_e, p: { src: string; name?: string; blockId: string }) => openPreview(p));
 

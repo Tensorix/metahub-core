@@ -36,6 +36,23 @@ export async function claimDocumentDraft(id: string): Promise<(DocumentDraft & {
   }
   return null;
 }
+export async function withSavedWorkspace<T>(run: () => Promise<T>): Promise<T> {
+  if (closing) throw new Error("窗口正在保存");
+  const app = document.getElementById("app");
+  const alreadyInert = app?.hasAttribute("inert");
+  app?.setAttribute("inert","");
+  try {
+    for (const editor of editors) {
+      const saved = await editor.flush();
+      if (!saved.ok) throw new Error(saved.error || "编辑尚未保存");
+      if (editor.dirty()) throw new Error("编辑尚未保存");
+    }
+    return await run();
+  } finally {
+    if (!alreadyInert) app?.removeAttribute("inert");
+  }
+}
+
 export async function flushDocument(id: string): Promise<DocumentSaveResult> {
   for (const editor of editors) {
     if (editor.id !== id) continue;
