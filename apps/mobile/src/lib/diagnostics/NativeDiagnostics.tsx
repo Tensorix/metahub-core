@@ -1,3 +1,6 @@
+import { runNativeRecoveryAdapter } from "./recovery-adapter";
+import { decodeUtf8 } from "../../../../../src/core/sync/portable-json";
+import { runNativeRetention } from "./retention";
 /** Synthetic-only diagnostics. Debug needs SELFTEST=1; Release additionally requires
  * DIAGNOSTICS_RELEASE=1. This branch never mounts SessionProvider or opens user workspaces. */
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -52,6 +55,15 @@ function publishProgress(
   for (const listener of progressListeners) listener();
 }
 async function run() {
+  if (process.env.EXPO_PUBLIC_MH_RECOVERY_ADAPTER_ONLY === "1") {
+    await initializeNativeSyncRuntime();
+    let results: string[];
+    try { results = await runNativeRecoveryAdapter(); }
+    catch (error) { results = [`FAIL native recovery adapter: ${error instanceof Error ? error.stack ?? error.message : String(error)}`]; }
+    new File(Paths.document,"native-diagnostics.json").write(JSON.stringify({ scope: "native recovery adapter only",results }));
+    publishProgress(results.some(row => row.startsWith("FAIL")) ? "finished/functional-failure" : "finished");
+    return results;
+  }
   const startedAt = Date.now();
   const results: string[] = [];
   const exportCheckpoints: (DiagnosticExportOutcome & { stage: string })[] = [];
@@ -216,6 +228,9 @@ async function run() {
       throw error;
     }
     report();
+    publishProgress("driver/retention-v2");
+    results.push(...await runNativeRetention());
+    report();
     publishProgress("driver/crypto");
     const bunKey = await unwrapMasterKey(
       fixture.envelope as KeyEnvelope,
@@ -226,7 +241,7 @@ async function run() {
     const bunPlain = await nativeStorageCodec.gunzip(
       await decryptBytes(bunKey, fromB64(fixture.payload)),
     );
-    if (new TextDecoder().decode(bunPlain) !== fixture.text)
+    if (decodeUtf8(bunPlain) !== fixture.text)
       throw new Error("Bun payload incompatible");
     results.push(
       "PASS Bun-generated PBKDF2 envelope and encrypted gzip decoded natively",
@@ -248,7 +263,7 @@ async function run() {
     nativeFixture = {
       envelope,
       payload: toB64(payload),
-      text: new TextDecoder().decode(plain),
+      text: decodeUtf8(plain),
     };
     report();
     let refused = false;

@@ -1,3 +1,4 @@
+import { registerRecoveryEditor } from "@/lib/editor/recovery-barrier";
 import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
@@ -29,6 +30,7 @@ function LocalDocument({ id }: { id: string }) {
   const router = useRouter();
   const { tokens, scheme } = useTheme();
   const editor = useRef<DocumentEditorHandle>(null);
+  useEffect(() => registerRecoveryEditor(session, () => editor.current), [session]);
   const phase = useRef<"active" | "deleting" | "deleted">("active");
   const navigating = useRef(false);
   const [busy, setBusy] = useState(false);

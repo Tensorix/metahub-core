@@ -1,3 +1,6 @@
+import { loadV2DocumentHistory } from "../../../../../src/core/sync/recovery-v2";
+import { readReplicaGeneration } from "../../../../../src/core/sync/retention-protocol";
+import { storageClientFor } from "../../../../../src/core/sync/storage";
 import {
   createContext,
   useCallback,
@@ -138,6 +141,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           setSession({ ...cur });
         },
       );
+      if (creds.bucket) {
+        const history = replica.service.client.documentHistory;
+        const at = replica.service.client.documentAt;
+        const load = async (documentId: string) => {
+          if (readReplicaGeneration(replica.db)) await loadV2DocumentHistory(replica.db, storageClientFor(creds.bucket!), creds.bucket!, documentId);
+        };
+        replica.service.client.documentHistory = async documentId => { await load(documentId); return history(documentId); };
+        replica.service.client.documentAt = async (documentId, version) => { await load(documentId); return at(documentId, version); };
+      }
       api.recordHistory = replica.service.client.recordHistory;
       api.recordAt = async (rid, v) => {
         const value = await replica.service.client.recordAt(rid, v);

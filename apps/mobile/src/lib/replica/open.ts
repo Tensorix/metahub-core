@@ -14,7 +14,13 @@ export function workspaceDatabaseName(workspaceId: string): string {
   return `metahub-${encoded}.db`;
 }
 export function openMobileReplica(workspaceId: string, options: { platform: "ios" | "android"; label?: string }) {
-  const sqlite = openDatabaseSync(workspaceDatabaseName(workspaceId), nativeSqliteOpenOptions);
+  const index = openDatabaseSync("metahub-workspace-index.db", nativeSqliteOpenOptions);
+  let name: string;
+  try {
+    index.execSync("CREATE TABLE IF NOT EXISTS active_replicas(workspace TEXT PRIMARY KEY, name TEXT NOT NULL)");
+    name = index.getFirstSync<{ name: string }>("SELECT name FROM active_replicas WHERE workspace=?", [workspaceId])?.name ?? workspaceDatabaseName(workspaceId);
+  } finally { index.closeSync(); }
+  const sqlite = openDatabaseSync(name, nativeSqliteOpenOptions);
   const db = new ExpoDriver(sqlite);
   try {
     db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
@@ -23,7 +29,7 @@ export function openMobileReplica(workspaceId: string, options: { platform: "ios
     const service = createReplicaService(db, { searchBatchSize: 25 });
     let closed = false;
     return {
-      db, service,
+      db, service, sqlite, name,
       close() {
         if (closed) return;
         closed = true;
@@ -34,3 +40,12 @@ export function openMobileReplica(workspaceId: string, options: { platform: "ios
   } catch (error) { db.close(); throw error; }
 }
 export type MobileReplica = ReturnType<typeof openMobileReplica>;
+
+export function selectMobileReplica(workspaceId: string, name: string): void {
+  if (!/^metahub-[a-zA-Z0-9-]+\.db$/.test(name)) throw new Error("invalid database filename");
+  const index = openDatabaseSync("metahub-workspace-index.db", nativeSqliteOpenOptions);
+  try {
+    index.execSync("CREATE TABLE IF NOT EXISTS active_replicas(workspace TEXT PRIMARY KEY, name TEXT NOT NULL)");
+    index.runSync("INSERT INTO active_replicas(workspace,name) VALUES(?,?) ON CONFLICT(workspace) DO UPDATE SET name=excluded.name", [workspaceId, name]);
+  } finally { index.closeSync(); }
+}
