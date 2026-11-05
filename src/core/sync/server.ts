@@ -104,13 +104,14 @@ export interface UiHandler {
   onStart?(db: DbDriver): void;
 }
 
-export function loopbackUiRejection(req: Request, port: number): Response | null {
+export function loopbackUiRejection(req: Request, port: number, boundHost?: string): Response | null {
   const url = new URL(req.url);
   const actualPort = String(port);
-  if (url.hostname !== "127.0.0.1" || url.port !== actualPort)
+  const host = boundHost === "::1" ? "[::1]" : "127.0.0.1";
+  if (url.hostname !== host || url.port !== actualPort)
     return new Response("forbidden host", { status: 403 });
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return null;
-  const expectedOrigin = `http://127.0.0.1:${actualPort}`;
+  const expectedOrigin = `http://${host}:${actualPort}`;
   const origin = req.headers.get("origin");
   const fetchSite = req.headers.get("sec-fetch-site");
   if (
@@ -191,7 +192,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     async fetch(req, srv) {
       const url = new URL(req.url);
       if (opts.loopbackUiOnly) {
-        const rejection = loopbackUiRejection(req, srv.port!);
+        const rejection = loopbackUiRejection(req, srv.port!, opts.host);
         if (rejection) return rejection;
       }
 

@@ -10,6 +10,7 @@
 // doc 19: origin buckets live on the server and are mirrored read-only here;
 // a trusted replica may re-enter the secret to sync one directly; no-origin
 // owns its own list.
+import { LocalRecovery } from "./local-recovery.tsx";
 import { useEffect, useState } from "preact/hooks";
 import {
   api,
@@ -639,6 +640,7 @@ export function BackupPage() {
         }
       />
 
+      {(isDesktop() || replicaOn) && <LocalRecovery desktop={isDesktop()} buckets={(isDesktop() ? serverPeers : localPeers) ?? []} />}
       <SetSection
         label={t("同步目标")}
         caption={

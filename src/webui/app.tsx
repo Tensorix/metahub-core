@@ -1,4 +1,5 @@
 /** @jsxImportSource preact */
+import { LocalRecovery } from "./settings/local-recovery.tsx";
 import { render } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type Hit, NAV_INVALIDATE } from "./api.ts";
@@ -1068,6 +1069,16 @@ function Splash({ text }: { text: string }) {
   );
 }
 
+function HydratingReplica() {
+  const [status,setStatus] = useState(replicaStatus);
+  useEffect(() => {
+    setStatus(replicaStatus());
+    return onReplicaStatus(setStatus);
+  },[]);
+  if (!status.recoveryRequired?.length) return <Splash text={t("正在从同步存储桶恢复本地副本…")} />;
+  return <main><LocalRecovery desktop={false} buckets={status.recoveryRequired.map(url => ({ url,enabled:true }))} /><UiHost /></main>;
+}
+
 function Root() {
   const [mode, setMode] = useState<"detecting" | "app" | "enroll" | "hydrating">("detecting");
 
@@ -1112,7 +1123,7 @@ function Root() {
   if (mode === "detecting") return <Splash text={t("加载中…")} />;
   if (mode === "enroll")
     return <Enroll onDone={() => setMode(replicaActive() ? "app" : "hydrating")} />;
-  if (mode === "hydrating") return <Splash text={t("正在从同步存储桶恢复本地副本…")} />;
+  if (mode === "hydrating") return <HydratingReplica />;
   return <App />;
 }
 

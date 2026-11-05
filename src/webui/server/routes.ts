@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { repairClock } from "../../core/integrity.ts";
 import { MhError } from "../../core/errors.ts";
+import { hydrateLocalHistory } from "../../core/sync/recovery-local.ts";
 import { errorResponse, type Route, type RouteCtx } from "../../core/sync/routes.ts";
 import {
   listDatabases,
@@ -884,14 +885,22 @@ export const webuiRoutes: Route[] = [
     path: "/api/document/history",
     summary: "List a document's revisions, newest first. Query: ?id=<id>",
     response: z.array(DocRevisionSchema),
-    handler: handle((req, { db }) => listDocumentRevisions(db, need(req, "id"))),
+    handler: handle(async (req, { db }) => {
+      const id = need(req,"id");
+      await hydrateLocalHistory(db,id);
+      return listDocumentRevisions(db,id);
+    }),
   },
   {
     method: "GET",
     path: "/api/document/at",
     summary: "A document's title/body as of a past version. Query: ?id=<id>&version=<token>",
     response: DocumentVersionStateSchema,
-    handler: handle((req, { db }) => documentAtVersion(db, need(req, "id"), need(req, "version"))),
+    handler: handle(async (req, { db }) => {
+      const id = need(req,"id");
+      await hydrateLocalHistory(db,id);
+      return documentAtVersion(db,id,need(req,"version"));
+    }),
   },
   {
     method: "POST",
@@ -902,7 +911,9 @@ export const webuiRoutes: Route[] = [
     response: RevertDocResultSchema,
     handler: handle(async (req, { db }) => {
       const body = (await req.json()) as { to: string; if_match?: string };
-      return revertDocument(db, need(req, "id"), body.to, { ifMatch: body.if_match });
+      const id = need(req,"id");
+      await hydrateLocalHistory(db,id);
+      return revertDocument(db,id,body.to,{ ifMatch:body.if_match });
     }),
   },
   {
