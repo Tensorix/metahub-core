@@ -229,7 +229,7 @@ export function createFetchStorageClient(config: S3Config, opts: FetchStorageCli
       if (opts?.ifMatch !== undefined) headers["if-match"] = opts.ifMatch;
       await request(objectUrl(key), {
         method: "PUT",
-        body: body as unknown as BodyInit,
+        body: body as unknown as RequestInit["body"],
         headers: Object.keys(headers).length ? headers : undefined,
       }, async (res) => {
         if (conditional && res.status === 412)

@@ -84,6 +84,8 @@ jobs:
           bun-version: latest
 
       - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: apps/mobile
       - name: Generate desktop version for lifecycle tests
         run: bun apps/desktop/scripts/gen-core-version.ts
       - run: bun test
