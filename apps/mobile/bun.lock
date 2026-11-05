@@ -55,6 +55,8 @@
         "@types/react": "~19.3.0",
         "eslint": "^9",
         "eslint-config-expo": "~58.0.4",
+        "jimp-compact": "0.16.1",
+        "pngjs": "3.4.0",
         "typescript": "~6.0.3",
       },
     },
