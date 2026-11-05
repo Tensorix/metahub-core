@@ -30,7 +30,10 @@ export type MhErrorCode =
    *  until `mh repair --clock` (HTTP 409, exit 10). */
   | "clock_skew"
   /** The requested listen port is taken (exit 98, historical). */
-  | "port_in_use";
+  | "port_in_use"
+  | "upgrade_required"
+  | "rebootstrap_required"
+  | "history_unavailable";
 
 export type MsgParams = Record<string, string | number>;
 

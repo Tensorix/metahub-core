@@ -1,3 +1,4 @@
+import { readReplicaGeneration } from "../sync/retention-protocol.ts";
 import type { DbDriver } from "../driver.ts";
 import { errorCode } from "../errors.ts";
 import { getNodeId } from "../node.ts";
@@ -56,7 +57,12 @@ export function createReplicaSync(db: DbDriver, options: ReplicaSyncOptions) {
     const predicates: string[] = [];
     const params: (string | number)[] = [];
     for (const target of options.targets()) {
-      const cursor = (db.query("SELECT push_cursor FROM peers WHERE url = ?").get(targetUrl(target)) as { push_cursor: number } | null)?.push_cursor ?? 0;
+      let cursor = (db.query("SELECT push_cursor FROM peers WHERE url = ?").get(targetUrl(target)) as { push_cursor: number } | null)?.push_cursor ?? 0;
+      const generation = target.kind === "s3" ? readReplicaGeneration(db) : null;
+      if (generation) {
+        const row = db.query("SELECT value FROM meta WHERE key=?").get(`sync_v2_transport:${generation.incarnationId}`) as { value: string } | null;
+        cursor = row ? JSON.parse(row.value).cursor : 0;
+      }
       predicates.push(target.kind === "http" ? "seq > ?" : "(seq > ? AND node_id = ?)");
       params.push(cursor);
       if (target.kind === "s3") params.push(getNodeId(db));

@@ -232,3 +232,36 @@ test("compaction collects expired intent receipts even though they are not super
       .get(INTENT_RECEIPT_DATASET),
   ).toEqual({ n: 0 });
 });
+
+test("legacy local compaction cannot bypass v2 history protection", () => {
+  const db = new Database(":memory:"); runSchema(db);
+  try {
+    const doc = createDocument(db, { title: "protected", body: "before" });
+    updateDocument(db,doc.id,{ body: "after" });
+    const before = db.query("SELECT COUNT(*) AS n FROM crdt_changes").get();
+    db.query("INSERT INTO meta(key,value) VALUES('sync_v2_generation','{}')").run();
+    expect(() => compactOplog(db,{ keepDays: 0 })).toThrow("verified archive");
+    expect(db.query("SELECT COUNT(*) AS n FROM crdt_changes").get()).toEqual(before);
+  } finally { db.close(); }
+});
+
+
+test("attachment GC retains independent history, recovery items, drafts and pending peer delivery", async () => {
+  const home = mkdtempSync(join(tmpdir(),"mh-retention-blobs-")), previous = process.env.METAHUB_HOME;
+  process.env.METAHUB_HOME = home;
+  const db = new Database(":memory:"); runSchema(db);
+  try {
+    const hashes = ["a","b","c","d","e"].map(c => c.repeat(64));
+    for (const hash of hashes) await Bun.write(join(home,"cache",hash),"synthetic attachment");
+    db.exec("CREATE TABLE document_history_changes(dataset TEXT,col TEXT,value TEXT); CREATE TABLE sync_recovery_items(local TEXT,remote TEXT,status TEXT); CREATE TABLE replica_document_drafts(body TEXT); CREATE TABLE sync_v2_peer_pending(id TEXT,change_json TEXT)");
+    db.query("INSERT INTO document_history_changes VALUES('doc_blocks','text',?)").run(`![history](/blob/${hashes[0]})`);
+    db.query("INSERT INTO sync_recovery_items VALUES(?,NULL,'pending')").run(JSON.stringify({ body: `![recovery](/blob/${hashes[1]})` }));
+    db.query("INSERT INTO replica_document_drafts VALUES(?)").run(`![draft](/blob/${hashes[2]})`);
+    db.query("INSERT INTO sync_v2_peer_pending VALUES('pending',?)").run(JSON.stringify({ value: `![peer](/blob/${hashes[3]})` }));
+    expect(gcBlobs(db).deleted).toBe(1);
+    expect(readdirSync(join(home,"cache")).sort()).toEqual(hashes.slice(0,4));
+  } finally {
+    db.close(); if (previous === undefined) delete process.env.METAHUB_HOME; else process.env.METAHUB_HOME = previous;
+    rmSync(home,{ recursive: true, force: true });
+  }
+});

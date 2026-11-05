@@ -29,6 +29,9 @@ export function warn(message: string): void {
  * never on message text. 1 = uncategorized failure.
  */
 const EXIT_CODES: Record<MhErrorCode, number> = {
+  upgrade_required: 11,
+  rebootstrap_required: 12,
+  history_unavailable: 13,
   invalid_input: 2,
   not_found: 3,
   ambiguous: 4,
@@ -47,7 +50,7 @@ const EXIT_CODES: Record<MhErrorCode, number> = {
  * result array while scripts still receive a non-zero status. */
 export function markExitCode(code: MhErrorCode | number): void {
   const exit = typeof code === "string" ? EXIT_CODES[code] : code;
-  process.exitCode = Math.max(process.exitCode ?? 0, exit);
+  process.exitCode = Math.max(Number(process.exitCode ?? 0), exit);
 }
 
 /** Print an error and exit non-zero. `codeOrExit`: an MhErrorCode (mapped via

@@ -1,3 +1,6 @@
+import { decodeUtf8 } from "./portable-json.ts";
+import { syncWithStorageV2 } from "./storage-v2.ts";
+import { readReplicaGeneration } from "./retention-protocol.ts";
 // Storage-sync: use an S3-compatible bucket as dumb store-and-forward, so two
 // devices sync without either running a publicly reachable server and without
 // being online at the same time. The bucket only needs list/get/put/del — no
@@ -114,7 +117,18 @@ export interface StoragePutOpts {
 /** The minimal object-store surface storage-sync needs. Implemented per runtime:
  *  Bun.S3Client on the CLI/desktop (storage-s3-bun.ts), aws4fetch SigV4 + fetch
  *  in the browser worker (webui/data/storage-s3-browser.ts). */
+export interface StorageReadResult {
+  bytes: Uint8Array;
+  serverDate: number | null;
+  lastModified: number | null;
+  etag: string | null;
+}
+
 export interface StorageClient {
+  /** Verified provider preconditions; absence means destructive GC unsupported. */
+  conditionalCreateCapability?(): Promise<boolean>;
+  /** Metadata is from the same response as bytes, never a separate HEAD. */
+  getWithMetadata?(key: string, options: { maxBytes: number }): Promise<StorageReadResult | null>;
   /** Keys under `prefix`, ascending, optionally only those strictly after
    *  `startAfter`. With `delimiter` ("/"), collapse one level into common
    *  prefixes (their keys end in the delimiter) to discover child "folders"
@@ -226,7 +240,7 @@ function ab(u: Uint8Array): ArrayBuffer {
 /** Runtime adapter for gzip; the wire format stays JSONL → gzip → AES-GCM. */
 export interface StorageCompressionCodec {
   gzip(bytes: Uint8Array): Promise<Uint8Array>;
-  gunzip(bytes: Uint8Array): Promise<Uint8Array>;
+  gunzip(bytes: Uint8Array, maxBytes?: number): Promise<Uint8Array>;
 }
 
 let compressionCodec: StorageCompressionCodec | null = null;
@@ -241,11 +255,23 @@ async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
   const stream = new Response(ab(bytes)).body!.pipeThrough(new CompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
-async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
-  if (compressionCodec) return compressionCodec.gunzip(bytes);
-  const stream = new Response(ab(bytes)).body!.pipeThrough(new DecompressionStream("gzip"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+async function gunzip(bytes: Uint8Array, maxBytes = Infinity): Promise<Uint8Array> {
+  if (compressionCodec) return compressionCodec.gunzip(bytes, maxBytes);
+  const reader = new Response(ab(bytes)).body!.pipeThrough(new DecompressionStream("gzip")).getReader();
+  const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read(); if (chunk.done) break;
+      size += chunk.value.length;
+      if (size > maxBytes) { await reader.cancel(); throw new MhError("invalid_input", "decompressed object exceeds limit"); }
+      chunks.push(chunk.value);
+    }
+  } finally { reader.releaseLock(); }
+  const output = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length; }
+  return output;
 }
+export { gzip as gzipStorageBytes, gunzip as gunzipStorageBytes };
 
 /** Serialize changes to the canonical JSONL the segment/snapshot codec stores. */
 function toJsonl(changes: Change[]): string {
@@ -262,7 +288,7 @@ async function decodeSegment(bytes: Uint8Array, key: Uint8Array | null, opts: { 
   checkActive();
   const gz = key ? await withSyncBudget(() => decryptBytes(key, bytes), undefined, opts.signal) : bytes;
   checkActive();
-  const jsonl = new TextDecoder().decode(await withSyncBudget(() => gunzip(gz), undefined, opts.signal));
+  const jsonl = decodeUtf8(await withSyncBudget(() => gunzip(gz), undefined, opts.signal));
   checkActive();
   if (!jsonl) return [];
   const changes: Change[] = [];
@@ -504,7 +530,7 @@ async function encodeVc(meta: SnapMeta, key: Uint8Array | null): Promise<Uint8Ar
 async function decodeVc(bytes: Uint8Array, key: Uint8Array | null): Promise<SnapMeta | null> {
   try {
     const gz = key ? await decryptBytes(key, bytes) : bytes;
-    return JSON.parse(new TextDecoder().decode(await gunzip(gz))) as SnapMeta;
+    return JSON.parse(decodeUtf8(await gunzip(gz))) as SnapMeta;
   } catch {
     return null; // unreadable/legacy snapshot with no .vc → caller falls back to GET
   }
@@ -550,7 +576,7 @@ export async function provisionMasterKey(
   const base = basePrefix(config.prefix);
   const path = mainKeyPath(base);
   const unwrap = async (bytes: Uint8Array) =>
-    toB64(await unwrapMasterKey(JSON.parse(new TextDecoder().decode(bytes)) as KeyEnvelope, passphrase));
+    toB64(await unwrapMasterKey(JSON.parse(decodeUtf8(bytes)) as KeyEnvelope, passphrase));
 
   const existing = await client.get(path);
   if (existing) return unwrap(existing);
@@ -591,7 +617,7 @@ export async function readMasterKeyEnvelope(
   const bytes = await client.get(mainKeyPath(basePrefix(config.prefix)));
   if (!bytes) return null;
   try {
-    return JSON.parse(new TextDecoder().decode(bytes)) as KeyEnvelope;
+    return JSON.parse(decodeUtf8(bytes)) as KeyEnvelope;
   } catch {
     throw new MhError("invalid_input", "bucket keys/main.json is malformed");
   }
@@ -838,6 +864,13 @@ export async function syncWithStorage(
   config: S3Config,
   opts: StorageSyncOpts = {},
 ): Promise<SyncResult> {
+  if (readReplicaGeneration(db))
+    return syncWithStorageV2(db, client, config, opts);
+  if (client.getWithMetadata) {
+    const { createV2Bucket } = await import("./bucket-v2.ts");
+    if (await createV2Bucket(client, config).root())
+      throw new MhError("upgrade_required", "此工作区已升级同步格式；请先保全本地编辑并升级本地副本");
+  }
   const checkActive = () => { if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("sync request aborted"); };
   checkActive();
   for (const value of [opts.pushLimit, opts.ingestBatchSize, opts.pullObjectLimit])
@@ -930,7 +963,7 @@ export async function syncWithStorage(
       // behind the real latest — this can't skip a present-but-newer segment.
       const head = await client.get(headKey(base, remote));
       if (head) {
-        const latest = new TextDecoder().decode(head);
+        const latest = decodeUtf8(head);
         if (cursor && latest <= cursor) continue;
       }
       const segs = (await client.list(nodePrefix(base, remote), cursor ?? undefined)).filter(

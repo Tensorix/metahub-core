@@ -1,3 +1,4 @@
+import { historySource } from "./history-archive.ts";
 import type { DbDriver } from "./driver.ts";
 import { emit, grouped, CHANGE_SELECT } from "./crdt.ts";
 import { serializeDocBlocks } from "./blocks.ts";
@@ -138,7 +139,7 @@ function everBlockIds(db: DbDriver, docId: string): string[] {
   return (
     db
       .query(
-        "SELECT DISTINCT row_id FROM crdt_changes WHERE dataset = 'doc_blocks' AND col = 'doc_id' AND value = ?",
+        `SELECT DISTINCT row_id FROM ${historySource(db)} WHERE dataset = 'doc_blocks' AND col = 'doc_id' AND value = ?`,
       )
       .all(JSON.stringify(docId)) as { row_id: string }[]
   ).map((r) => r.row_id);
@@ -155,7 +156,7 @@ function docHistory(db: DbDriver, docId: string): DocHistoryEntry {
     : "";
   const changes = db
     .query(
-      `SELECT ${CHANGE_SELECT} FROM crdt_changes
+      `SELECT ${CHANGE_SELECT} FROM ${historySource(db)}
        WHERE (dataset = 'documents' AND row_id = ?)${blockClause}
        ORDER BY hlc`,
     )

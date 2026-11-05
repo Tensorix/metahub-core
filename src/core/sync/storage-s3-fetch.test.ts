@@ -115,3 +115,28 @@ test("encrypted blob limits account for wire overhead and cancelled transfers ne
   release([...objects.values()][0]!);
   await Promise.resolve();
 });
+
+
+test("metadata reads return bounded bytes and timestamps from the same response", async () => {
+  let requests = 0;
+  const client = createFetchStorageClient(config, { fetch: (async () => {
+    requests++;
+    return new Response("data", { headers: { date: "Wed, 04 Nov 2026 08:00:00 GMT", "last-modified": "Tue, 03 Nov 2026 08:00:00 GMT", etag: "version" } });
+  }) as typeof fetch });
+  const result = await client.getWithMetadata!("commit", { maxBytes: 4 });
+  expect(new TextDecoder().decode(result!.bytes)).toBe("data");
+  expect(result!.serverDate).toBe(Date.parse("2026-11-04T08:00:00Z"));
+  expect(result!.lastModified).toBe(Date.parse("2026-11-03T08:00:00Z"));
+  expect(result!.etag).toBe("version");
+  expect(requests).toBe(1);
+  await expect(client.getWithMetadata!("commit", { maxBytes: 3 })).rejects.toThrow("size limit");
+  await expect(client.getWithMetadata!("commit", { maxBytes: -1 })).rejects.toThrow("maxBytes");
+  expect(await client.conditionalCreateCapability!()).toBe(false);
+});
+
+test("metadata reads never substitute local time for absent server time", async () => {
+  const client = createFetchStorageClient(config, { fetch: (async () => new Response("x")) as typeof fetch });
+  const result = await client.getWithMetadata!("commit", { maxBytes: 1 });
+  expect(result!.serverDate).toBeNull();
+  expect(result!.lastModified).toBeNull();
+});

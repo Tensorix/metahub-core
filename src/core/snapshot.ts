@@ -1,3 +1,4 @@
+import { assertReplicaGeneration } from "./sync/retention-protocol.ts";
 import type { Database } from "bun:sqlite";
 import { writeTx } from "./driver.ts";
 import { readdirSync, existsSync } from "node:fs";
@@ -165,6 +166,7 @@ export async function restoreSnapshot(
   pkg: SnapshotPackage,
   opts: { reset?: boolean; force?: boolean } = {},
 ): Promise<RestoreResult> {
+  assertReplicaGeneration(db, undefined);
   if (!opts.reset) {
     const applied = ingest(db, pkg.changes);
     rebuildDeclaredIndexes(db);

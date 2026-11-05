@@ -1,6 +1,8 @@
+import { editBases, ingestPeerChanges } from "./peer-v2.ts";
+import { assertReplicaGeneration, readReplicaGeneration } from "./retention-protocol.ts";
 import type { ZodType } from "zod";
 import type { Database } from "bun:sqlite";
-import { ingestDetailed, changesAfterSeq } from "../crdt.ts";
+import { changesAfterSeq } from "../crdt.ts";
 import {
   SyncRequestSchema,
   SyncResponseSchema,
@@ -29,6 +31,9 @@ export interface RouteCtx {
 /** HTTP status per error code (see core/errors.ts). Uncategorized errors stay
  *  400, matching the historical catch-all behavior. */
 const HTTP_STATUS: Record<MhErrorCode, number> = {
+  upgrade_required: 426,
+  rebootstrap_required: 409,
+  history_unavailable: 410,
   invalid_input: 400,
   not_found: 404,
   ambiguous: 400,
@@ -77,13 +82,15 @@ const syncRoutes: Route[] = [
     response: SyncResponseSchema,
     async handler(req, { db, node }) {
       const body = (await req.json()) as SyncRequest;
-      const r = ingestDetailed(db, body.changes ?? []);
+      assertReplicaGeneration(db, (body as unknown as { generation?: unknown }).generation);
+      const r = ingestPeerChanges(db, body.changes ?? [], body.bases);
       const skewed = Object.values(r.skewed).reduce((a, b) => a + b, 0);
       const batch = changesAfterSeq(db, body.since ?? 0, {
         limit: body.limit,
         excludeDatasets: body.exclude_datasets,
       });
       return Response.json({
+        ...(readReplicaGeneration(db) ? { generation: readReplicaGeneration(db), bases: editBases(db, batch.changes) } : {}),
         node_id: node,
         changes: batch.changes,
         cursor: batch.cursor,
@@ -96,9 +103,10 @@ const syncRoutes: Route[] = [
     path: HEALTH_PATH,
     summary: "Health check",
     response: HealthResponseSchema,
-    handler(_req, { node }) {
+    handler(_req, { node, db }) {
       return Response.json({
         ok: true,
+        ...(readReplicaGeneration(db) ? { generation: readReplicaGeneration(db) } : {}),
         node,
         capabilities: ["site_channels"],
         version: pkg.version,

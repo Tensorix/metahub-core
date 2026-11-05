@@ -4,6 +4,7 @@ import { runSchema } from "./db.ts";
 import { emit, ingest, changesSince } from "./crdt.ts";
 import {
   createDocument,
+  editDocumentBlocks,
   getDocument,
   updateDocument,
   moveDocument,
@@ -16,7 +17,7 @@ import {
   listDocuments,
   backfillDocumentOrderKeys,
 } from "./documents.ts";
-import { listDocumentRevisions } from "./history.ts";
+import { listDocumentRevisions, documentAtVersion } from "./history.ts";
 
 function makeNode(id: string): Database {
   const db = new Database(":memory:");
@@ -452,4 +453,59 @@ test("PAYOFF: concurrent edits to different blocks of one doc both survive", () 
   const merged = "PARA ONE\n\npara two\n\nPARA THREE";
   expect(getDocument(a, doc.id)!.body).toBe(merged); // both edits present
   expect(getDocument(b, doc.id)!.body).toBe(getDocument(a, doc.id)!.body);
+});
+
+
+test("version-checked stable edits keep one block across 100 saves and preserve history", () => {
+  const db = makeNode("stable");
+  try {
+    const doc = createDocument(db, { title: "T", body: "version 0" });
+    const ids = blockIds(db, doc.id);
+    const originalVersion = documentVersion(db, doc.id);
+    for (let i = 1; i <= 100; i++) {
+      updateDocument(db, doc.id, { body: `version ${i}` }, {
+        ifMatch: documentVersion(db, doc.id), preserveBlockIdentity: true,
+      });
+    }
+    expect(blockIds(db, doc.id)).toEqual(ids);
+    expect(db.query("SELECT COUNT(*) AS n FROM doc_blocks WHERE doc_id = ?").get(doc.id)).toEqual({ n: 1 });
+    expect(getDocument(db, doc.id)!.body).toBe("version 100");
+    expect(listDocumentRevisions(db, doc.id).length).toBeGreaterThan(1);
+    expect(documentAtVersion(db, doc.id, originalVersion).body).toBe("version 0");
+  } finally { db.close(); }
+});
+
+test("stable edits reject missing and stale versions before writing", () => {
+  const db = makeNode("stable-guard");
+  try {
+    const doc = createDocument(db, { title: "T", body: "original" });
+    const version = documentVersion(db, doc.id);
+    expect(() => updateDocument(db, doc.id, { body: "bad" }, { preserveBlockIdentity: true })).toThrow("require ifMatch");
+    updateDocument(db, doc.id, { body: "accepted" }, { ifMatch: version, preserveBlockIdentity: true });
+    expect(() => updateDocument(db, doc.id, { body: "bad" }, { ifMatch: version, preserveBlockIdentity: true })).toThrow("stale");
+    expect(getDocument(db, doc.id)!.body).toBe("accepted");
+  } finally { db.close(); }
+});
+
+
+test("explicit block operations preserve identity and roll back invalid batches", () => {
+  const db = makeNode("block-api");
+  try {
+    const doc = createDocument(db, { title: "T", body: "alpha\n\nbeta" });
+    const [a, b] = blockIds(db, doc.id) as [string, string];
+    const edit = (ops: Parameters<typeof editDocumentBlocks>[2]) => editDocumentBlocks(db, doc.id, ops, { ifMatch: documentVersion(db, doc.id) });
+    edit([{ type: "update", id: a, text: "A" }, { type: "move", id: b, after: null }]);
+    expect(blockIds(db, doc.id)).toEqual([b, a]);
+    const split = edit([{ type: "split", id: a, parts: [{ text: "A1" }, { text: "A2" }] }]);
+    const second = split.inserted[0]!;
+    expect(blockIds(db, doc.id)).toEqual([b, a, second]);
+    edit([{ type: "merge", ids: [a, second], text: "joined" }]);
+    expect(blockIds(db, doc.id)).toEqual([b, a]);
+    expect(() => edit([{ type: "update", id: a, text: "lost" }, { type: "delete", id: "missing" }])).toThrow();
+    expect(getDocument(db, doc.id)!.body).toBe("beta\n\njoined");
+    expect(() => edit([{ type: "update", id: second, text: "revive" }])).toThrow();
+    const newBlock = edit([{ type: "insert", after: a, text: "tail" }]).inserted[0]!;
+    edit([{ type: "delete", id: newBlock }]);
+    expect(blockIds(db, doc.id)).toEqual([b, a]);
+  } finally { db.close(); }
 });

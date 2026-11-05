@@ -84,7 +84,8 @@ export default defineCommand({
       );
       // Warnings (channel maintenance) never affect the exit code — only a
       // failed data sync is a network error.
-      if (results.some((r) => !r.ok)) markExitCode("network");
+      const failure = results.find((r) => !r.ok);
+      if (failure) markExitCode(failure.code ?? "network");
       return;
     }
     if (args.dst == null) {

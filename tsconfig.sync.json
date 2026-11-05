@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "src/core/**/*.ts",
+    "src/cli/commands/sync.ts",
+    "src/cli/commands/recovery.ts",
+    "scripts/retention-cli-acceptance.ts",
+    "scripts/retention-core-benchmark.ts",
+    "src/types/**/*.d.ts",
+    "src/webui/server/css-text.d.ts"
+  ],
+  "exclude": ["node_modules", "**/*.test.ts"]
+}

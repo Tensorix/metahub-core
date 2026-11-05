@@ -262,7 +262,8 @@ function ensureRow(db: DbDriver, table: string, id: string): void {
 }
 
 /** A doc is "block-managed" once it has any block row; blocks then own its body. */
-function isBlockManaged(db: DbDriver, docId: string): boolean {
+export function isBlockManaged(db: DbDriver, docId: string): boolean {
+  if (db.query("SELECT 1 FROM meta WHERE key=?").get(`sync_v2_managed:${docId}`)) return true;
   return (
     db.query("SELECT 1 AS x FROM doc_blocks WHERE doc_id = ? LIMIT 1").get(docId) !=
     null
@@ -444,6 +445,10 @@ export function emit(
       value: value === undefined ? null : JSON.stringify(value),
       txn: currentTxn,
     };
+    if (db.query("SELECT 1 FROM meta WHERE key='sync_v2_generation'").get()) {
+      const baseline = db.query("SELECT MAX(hlc) AS h FROM crdt_changes WHERE dataset=? AND row_id=? AND col=?").get(dataset,rowId,dataset === "doc_blocks" && col === "__deleted" && value === 1 ? "text" : col) as { h: string | null };
+      db.query("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)").run(`sync_v2_base:${change.hlc}:${dataset}:${rowId}:${col}`, JSON.stringify(baseline.h));
+    }
     applyChange(db, change);
     return change;
   };
@@ -473,6 +478,7 @@ export interface IngestResult {
   received: number;
   /** Changes refused for claiming a time > HLC_MAX_SKEW_MS in the future, by author node. */
   skewed: Record<string, number>;
+  poisoned?: number;
 }
 
 export function ingest(
@@ -529,7 +535,7 @@ export function ingestDetailed(
   if (poisoned) console.error(`[ingest] ${poisoned} change(s) skipped this batch (see above)`);
   for (const [n, k] of Object.entries(skewed))
     console.error(`[ingest] refused ${k} change(s) from node ${n}: stamped more than 5 min in the future (that device should run mh repair --clock)`);
-  return { received, skewed };
+  return { received, skewed, ...(poisoned ? { poisoned } : {}) };
 }
 
 /** All oplog changes with HLC strictly greater than `since` (test/debug helper). */

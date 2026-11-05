@@ -252,7 +252,9 @@ export async function addAndSyncStoragePeer(
   const previous = getPeer(db, url);
   addStoragePeer(db, { url, config, label: spec.label ?? config.bucket });
   const sync = await syncPeer(db, url);
-  if (!sync.ok) {
+  // A verified connection can require a local rebuild before the first round.
+  // Keep it selectable in recovery settings.
+  if (!sync.ok && sync.code !== "upgrade_required" && sync.code !== "rebootstrap_required") {
     if (previous) restorePeerRow(db, previous);
     else removePeer(db, url);
     throw new MhError("network", `storage peer first sync failed: ${sync.error ?? "unknown error"}`);
@@ -464,6 +466,7 @@ export interface PeerSyncOutcome {
   pulled?: number;
   pendingPush?: boolean;
   error?: string;
+  code?: import("../errors.ts").MhErrorCode;
   /** Non-fatal follow-up problems (e.g. channel maintenance) after a
    * SUCCESSFUL data sync. Never flips `ok` and never sets a network error. */
   warnings?: string[];
@@ -575,7 +578,7 @@ async function syncPeerOnce(
   } catch (e) {
     const error = (e as Error).message;
     updatePeerStatus(db, url, "error", error);
-    return { url, ok: false, error };
+    return { url, ok: false, error, code: errorCode(e) };
   }
 }
 
