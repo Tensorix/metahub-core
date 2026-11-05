@@ -1,3 +1,4 @@
+import { openReadOnlyWorkspace } from "./sync/data-version.ts";
 // Runtime-agnostic schema bootstrap: everything needed to bring a metahub
 // database to the current schema, typed against the portable driver surface so
 // it runs both on Bun (bun:sqlite) and in a browser worker (sqlite-wasm).
@@ -426,6 +427,7 @@ export function migrateNodes(db: DbDriver): void {
 
 /** Bring a freshly opened (or legacy) database to the current schema. */
 export function initSchema(db: DbDriver): void {
+  if (tableExists(db, "meta") && openReadOnlyWorkspace(db)) return;
   runSchema(db);
   migrateOplog(db);
   migrateDatabases(db);

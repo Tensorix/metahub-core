@@ -29,6 +29,7 @@ export function warn(message: string): void {
  * never on message text. 1 = uncategorized failure.
  */
 const EXIT_CODES: Record<MhErrorCode, number> = {
+  client_update_required: 14,
   upgrade_required: 11,
   rebootstrap_required: 12,
   history_unavailable: 13,
@@ -55,10 +56,10 @@ export function markExitCode(code: MhErrorCode | number): void {
 
 /** Print an error and exit non-zero. `codeOrExit`: an MhErrorCode (mapped via
  *  EXIT_CODES, emitted as the JSON `code` field) or a raw exit number. */
-export function fail(message: string, codeOrExit: MhErrorCode | number = 1): never {
+export function fail(message: string, codeOrExit: MhErrorCode | number = 1, details?: Record<string, string | number>): never {
   const code = typeof codeOrExit === "string" ? codeOrExit : undefined;
   const exit = typeof codeOrExit === "string" ? EXIT_CODES[codeOrExit] : codeOrExit;
-  if (wantJson()) console.log(JSON.stringify(code ? { error: message, code } : { error: message }));
+  if (wantJson()) console.log(JSON.stringify(code ? { error: message, code, ...details } : { error: message }));
   else console.error(`error: ${message}`);
   process.exit(exit);
 }
@@ -73,7 +74,7 @@ export function guard(
       await fn(ctx.args);
     } catch (e) {
       const mh = asMhError(e);
-      fail(mh ? mh.message : e instanceof Error ? e.message : String(e), mh?.code ?? 1);
+      fail(mh ? mh.message : e instanceof Error ? e.message : String(e), mh?.code ?? 1, mh?.code === "client_update_required" ? mh.i18n?.params : undefined);
     }
   };
 }

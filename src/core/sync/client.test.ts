@@ -112,6 +112,7 @@ test("rows pulled from B still get pushed to C afterwards (cursor is per-peer)",
 
   let pushedToC: Change[] = [];
   globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    if (init?.method === "GET") return Response.json({ ok: true });
     pushedToC = (JSON.parse(init!.body as string) as { changes: Change[] }).changes;
     const body: SyncResponse = { node_id: "nodeC", changes: [], cursor: 0 };
     return new Response(JSON.stringify(body), {
@@ -129,6 +130,7 @@ test("bounded pushes drain every row before reporting no pending push", async ()
   ingest(db, remoteChanges(8));
   const batches: Change[][] = [];
   const transport = (async (_url: unknown, init?: RequestInit) => {
+    if (init?.method === "GET") return Response.json({ ok: true, dataVersion: 1 });
     const request = JSON.parse(init!.body as string);
     expect(new Headers(init!.headers).get("authorization")).toBe("Bearer grant");
     expect(request.limit).toBe(2);
@@ -168,6 +170,7 @@ test("lost response replays a bounded batch safely without advancing cursor earl
   const delivered: number[] = [];
   let loseResponse = true;
   const transport = (async (_url: unknown, init?: RequestInit) => {
+    if (init?.method === "GET") return Response.json({ ok: true, dataVersion: 1 });
     const request = JSON.parse(init!.body as string);
     delivered.push(ingest(remote, request.changes));
     if (loseResponse) {
@@ -240,7 +243,8 @@ test("optional synchronous phase measurements exclude transport awaits and prese
   const events: string[] = [];
   let active: string | null = null;
   let respond!: (response: Response) => void;
-  const transport = (() => {
+  const transport = ((_url: unknown, init?: RequestInit) => {
+    if (init?.method === "GET") return Promise.resolve(Response.json({ ok: true, dataVersion: 1 }));
     expect(active).toBeNull();
     events.push("fetch");
     return new Promise<Response>(resolve => { respond = resolve; });
@@ -259,6 +263,7 @@ test("optional synchronous phase measurements exclude transport awaits and prese
     },
   });
   try {
+    await Bun.sleep(0); // Let the version preflight finish before inspecting the pending POST.
     expect(events).toEqual(["start:prepare", "end:prepare", "start:serialize", "end:serialize", "fetch"]);
     respond(Response.json({ node_id: "peer", changes: remoteChanges(2), cursor: 2 }));
     const result = await pending;
@@ -310,12 +315,13 @@ test("phase measurement hooks cannot re-enter ingestion after session cancellati
   const controller = new AbortController();
   const phases: string[] = [];
   let respond!: (response: Response) => void;
-  const transport = (() => new Promise<Response>(resolve => { respond = resolve; })) as typeof fetch;
+  const transport = ((_url: unknown, init?: RequestInit) => init?.method === "GET" ? Promise.resolve(Response.json({ ok: true })) : new Promise<Response>(resolve => { respond = resolve; })) as typeof fetch;
   try {
     const pending = syncWithPeer(db, "http://peer", {
       fetch: transport, signal: controller.signal,
       measureSync(phase, run) { phases.push(phase); return run(); },
     });
+    await Bun.sleep(0);
     controller.abort(new Error("measurement fixture disposed"));
     await expect(pending).rejects.toThrow("measurement fixture disposed");
     respond(Response.json({ node_id: "peer", changes: remoteChanges(2), cursor: 2 }));

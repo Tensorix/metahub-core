@@ -204,5 +204,14 @@ if (scopedConfigHelp) {
   } catch {
     fail(`invalid MH_ACTOR value: ${actor}`, "invalid_input");
   }
+  if (argv.length && !argv.some(a => ["--offline", "--help", "-h", "--version"].includes(a)) && argv[0] !== "__complete") {
+    const { dbPath } = await import("../core/paths.ts");
+    if (await Bun.file(dbPath()).exists()) {
+      const { openMetahub } = await import("../core/db.ts");
+      const { inspectWorkspaceVersion } = await import("../core/sync/recovery-local.ts");
+      const db = openMetahub();
+      try { await inspectWorkspaceVersion(db); } finally { db.close(); }
+    }
+  }
   runMain(main, { showUsage });
 }

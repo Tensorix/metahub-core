@@ -35,6 +35,9 @@ export function createCommitLog<S, T>(options: {
   workspaceId: string;
   codec: CommitCodec;
   initialState(): S;
+  validateProposal?(payload: T): void;
+  checkHead?(state: S): void;
+  checkAccepted?(state: S, payload: T): void;
   reduce(state: S, payload: T, committedAt: number): S;
   parsePayload(value: unknown): T;
 }) {
@@ -83,6 +86,7 @@ export function createCommitLog<S, T>(options: {
       rejected = error;
       state = cloneProtocolState(head.state);
     }
+    if (!rejected) options.checkAccepted?.(state, r.payload);
     const next: CommitHead<S> = {
       sequence: r.sequence, hash: entry.hash, state, serverTime: at,
     };
@@ -94,7 +98,10 @@ export function createCommitLog<S, T>(options: {
       let head = from;
       while (head.sequence < through) {
         const next = await readNext(head);
-        if (!next) return head;
+        if (!next) {
+          if (through === Infinity) options.checkHead?.(head.state);
+          return head;
+        }
         if (visit) await visit(next.record, next.head, next.rejected);
         head = next.head;
       }
@@ -113,8 +120,10 @@ export function createCommitLog<S, T>(options: {
           if (next.record.requestId === requestId) { if (next.rejected) throw next.rejected; return head; }
           continue;
         }
+        options.checkHead?.(head.state);
         attempts++;
         const payload = options.parsePayload(propose(cloneProtocolState(head.state)));
+        options.validateProposal?.(payload);
         // Reject invalid transitions before occupying an immutable slot. Use
         // the last committed time conservatively; callers can append a clock
         // observation before proposing a transition that depends on elapsed time.

@@ -1,3 +1,4 @@
+import { assertWorkspaceWritable } from "./data-version.ts";
 // The owner-side pull loop of the write-inbox: fetch sealed envelopes from the
 // edge host, decrypt, run the isolation check (drop-protocol.checkDropPayload),
 // ingest the pre-signed guest ops, and acknowledge (delete) what is safely
@@ -209,6 +210,7 @@ export async function pullDropsOnce(
   db: DbDriver,
   opts: { host?: DropHostApi; ignoreLease?: boolean; now?: () => number } = {},
 ): Promise<DropPullSummary> {
+  assertWorkspaceWritable(db);
   const cfg = getEdgeConfig(db);
   if (!cfg) return emptySummary("no_edge");
   const sites = dropWiredSites(db);

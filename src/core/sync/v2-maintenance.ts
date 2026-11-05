@@ -10,7 +10,7 @@ import { DAY_MS } from "./retention-state.ts";
 /** Durable daily scheduling; bucket time authorizes age, local time never does.
  * Enabling requires a separately recorded review; default remains dry-run. */
 export async function maintainV2Workspace(db: DbDriver, client: StorageClient, config: S3Config) {
-  const bucket = createV2Bucket(client, config), root = await bucket.root();
+  const bucket = createV2Bucket(client, config, db), root = await bucket.root();
   if (!root) return;
   const at = bucket.serverTime();
   if (at === null) return;
@@ -29,7 +29,7 @@ export async function maintainV2Workspace(db: DbDriver, client: StorageClient, c
   db.query("INSERT INTO meta(key,value) VALUES('sync_v2_retention_report',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
     .run(JSON.stringify({ checkedAt: at, result }));
   // Same explicit review gate also applies to delayed physical cleanup.
-  if (enabled) await cleanRetiredV2Objects(client, config, { enabled: true });
+  if (enabled) await cleanRetiredV2Objects(client, config, { enabled: true }, db);
 }
 
 /** Call only after the displayed report has been explicitly reviewed. Approval

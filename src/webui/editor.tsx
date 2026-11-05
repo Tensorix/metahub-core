@@ -12,7 +12,7 @@ import { openShareModal, useSharedTargets } from "./share-modal.tsx";
 import { toast, confirmDialog } from "./ui.tsx";
 import { DocumentSaveQueue, type DocumentSaveResult, type DocumentSaveState } from "./document-save.ts";
 import { createDocumentRefresh } from "./document-refresh.ts";
-import { claimDocumentDraft, documentCloseInProgress, registerDocumentEditor, reportDocumentDirty } from "./document-lifecycle.ts";
+import { protectVersionDrafts, claimDocumentDraft, documentCloseInProgress, registerDocumentEditor, reportDocumentDirty } from "./document-lifecycle.ts";
 import { CmDocBody, type CmHandle } from "./cm6/CmDocBody.tsx";
 import { handleClickBelow } from "./cm6/click-below.ts";
 import { docModel } from "./cm6/doc-model.ts";
@@ -117,9 +117,14 @@ export function DocView({
       }
       return { title: titleRef.current, body };
     },
-    write: (snapshot, version, force) => api.updateDocument(docId, {
-      ...snapshot, ...(!force && version && !replicaActive() ? { if_match: version } : {}),
-    }),
+    write: async (snapshot, version, force) => {
+      try {
+        return await api.updateDocument(docId, { ...snapshot, ...(!force && version && !replicaActive() ? { if_match: version } : {}) });
+      } catch (error) {
+        if ((error as { code?: string })?.code === "client_update_required") await protectVersionDrafts();
+        throw error;
+      }
+    },
     isConflict: (error) => error instanceof ApiError && error.code === "stale",
     changed: (state) => {
       setConflict(state === "conflict");
@@ -140,7 +145,7 @@ export function DocView({
     mounted.current = true;
     const unregister = registerDocumentEditor({
       id: docId, dirty: () => saver.dirty, flush: () => saver.flush(),
-      snapshot: () => ({ title: titleRef.current, body: sourceRef.current, version: saver.version, error: saver.error }),
+      snapshot: () => ({ title: titleRef.current, body: cmRef.current?.getDoc() ?? sourceRef.current, version: saver.version, error: saver.error }),
     });
     return () => { mounted.current = false; unregister(); };
   }, [saver]);

@@ -246,6 +246,7 @@ describe("site hosting routes", () => {
 
     globalThis.fetch = mockFetch(async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname === "/health") return Response.json({ ok: true, dataVersion: 1 });
       if (url.pathname === "/sync")
         return Response.json({ node_id: "peer-node", changes: [], cursor: 0 });
       throw new Error(`unexpected request ${url}`);
@@ -319,7 +320,7 @@ describe("site hosting routes", () => {
     expect(await res.json()).toMatchObject({
       access: "private",
       status: "cleanup_pending",
-      error: expect.stringContaining("sync failed"),
+      error: expect.stringContaining("sync preflight failed"),
     });
     expect(resolveSite(d, site.id).visibility).toBe("private");
     expect(listSiteChannelViews(d, site.id)).toEqual([

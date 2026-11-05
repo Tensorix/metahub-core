@@ -1,3 +1,4 @@
+import { knownDataVersion } from "./sync/data-version.ts";
 import type { DbDriver } from "./driver.ts";
 import { randomSuffix } from "./ids.ts";
 import { emit, withChangeGroup } from "./crdt.ts";
@@ -139,6 +140,8 @@ export interface SelfDescription {
 export function describeSelf(db: DbDriver, info: SelfDescription = {}): NodeMeta {
   const id = getNodeId(db);
   const cur = readNodeMeta(db, id);
+  if (knownDataVersion(db)?.awaitingCompatibleClient || db.query("SELECT 1 FROM meta WHERE key='sync_version_pending_join'").get())
+    return cur ?? { node_id: id, label: null, platform: null, form: null, app: null, first_seen: null };
   const fields: Record<string, unknown> = {};
   if (info.platform !== undefined && (cur?.platform ?? null) !== info.platform)
     fields.platform = info.platform;

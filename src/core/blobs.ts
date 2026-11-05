@@ -1,3 +1,4 @@
+import { assertWorkspaceWritable } from "./sync/data-version.ts";
 // Node-only half of the blob ledger: the pieces that touch the on-disk cache
 // (delete bytes, reconcile legacy files) or the network (resolve missing bytes —
 // added with the transport layer). Re-exports blobs-core.ts so server-side
@@ -229,6 +230,7 @@ export interface BlobMaintenanceResult {
  *  3. Evicts to stay under the cache quota.
  */
 export async function blobMaintenance(db: DbDriver): Promise<BlobMaintenanceResult> {
+  assertWorkspaceWritable(db);
   let acquired = 0;
   let flushed = 0;
   const s3peers = listPeers(db).filter((p) => p.enabled && p.kind === "s3" && p.config);
@@ -251,7 +253,7 @@ export async function blobMaintenance(db: DbDriver): Promise<BlobMaintenanceResu
       let ok = true;
       for (const p of s3peers) {
         try {
-          await putBucketBlob(JSON.parse(p.config!) as S3Config, hash, bytes); // true | already-there
+          await putBucketBlob(JSON.parse(p.config!) as S3Config, hash, bytes, { db }); // true | already-there
         } catch {
           ok = false; // bucket unreachable / credentials — retry next round
         }
@@ -285,6 +287,7 @@ const EVICT_LOW_WATER = 0.8;
  * re-fetchable, so this is loss-free.
  */
 export async function evictToQuota(db: DbDriver, quotaBytes: number): Promise<EvictResult> {
+  assertWorkspaceWritable(db);
   let evicted = 0;
   let freedBytes = 0;
   if (quotaBytes <= 0) return { evicted, freedBytes };
@@ -355,6 +358,7 @@ export function reconcileCache(db: DbDriver): void {
 /** Drop the bytes of every locally-cached blob that is safe to clear (durable on
  *  the designated full set). Reference + hash stay in the oplog, re-fetchable. */
 export async function clearCache(db: DbDriver): Promise<ClearResult> {
+  assertWorkspaceWritable(db);
   reconcileCache(db);
   let cleared = 0;
   let freedBytes = 0;
@@ -375,6 +379,7 @@ export async function clearCache(db: DbDriver): Promise<ClearResult> {
 /** Drop bytes for blobs no live site_files / doc image still references (true
  *  garbage, distinct from clearable cache). */
 export async function gcOrphans(db: DbDriver): Promise<GcResult> {
+  assertWorkspaceWritable(db);
   reconcileCache(db);
   const referenced = referencedHashes(db);
   let removed = 0;
@@ -393,6 +398,7 @@ export async function gcOrphans(db: DbDriver): Promise<GcResult> {
  *  is unpinned AND isClearable (durable on the designated full set) has its bytes
  *  dropped; everything else is left in place and counted as skipped. */
 export async function clearBlobs(db: DbDriver, hashes: string[]): Promise<ClearResult> {
+  assertWorkspaceWritable(db);
   reconcileCache(db);
   const known = new Map(cachedBlobs(db).map((b) => [b.hash, b]));
   let cleared = 0;
@@ -416,6 +422,7 @@ export async function clearBlobs(db: DbDriver, hashes: string[]): Promise<ClearR
  *  any still-referenced (or unknown) hash is skipped, so a blob a document points
  *  at can never be deleted out from under it. */
 export async function deleteOrphanBlobs(db: DbDriver, hashes: string[]): Promise<GcResult> {
+  assertWorkspaceWritable(db);
   reconcileCache(db);
   const known = new Set(cachedBlobs(db).map((b) => b.hash));
   const referenced = referencedHashes(db);

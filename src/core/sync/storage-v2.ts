@@ -1,3 +1,4 @@
+import { requireSupportedVersion, localDataVersion } from "./data-version.ts";
 import { confirmPeerChanges, pendingPeerChanges } from "./peer-v2.ts";
 import { observeHistory } from "./history-observation.ts";
 import { withSyncBudget } from "./transport.ts";
@@ -77,9 +78,10 @@ export async function syncWithStorageV2(db: DbDriver, client: StorageClient, con
     ...(transport.getWithMetadata ? { getWithMetadata: (...args: Parameters<NonNullable<StorageClient["getWithMetadata"]>>) => guarded(() => transport.getWithMetadata!(...args)) } : {}),
     ...(transport.conditionalCreateCapability ? { conditionalCreateCapability: () => guarded(() => transport.conditionalCreateCapability!()) } : {}),
   };
+  requireSupportedVersion(localDataVersion(db));
   const generation = readReplicaGeneration(db);
   if (!generation) throw new MhError("upgrade_required", "workspace migration is required");
-  const bucket = createV2Bucket(client, config), root = await bucket.root();
+  const bucket = createV2Bucket(client, config, db), root = await bucket.root();
   check();
   if (!root) throw new MhError("busy", "workspace root is temporarily unavailable");
   if (root.workspaceId !== generation.workspaceId) throw new MhError("rebootstrap_required", "workspace identity mismatch");

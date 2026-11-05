@@ -58,3 +58,19 @@ test("a current replica has no upgrade action and settings only show outstanding
   expect(host.textContent).toContain("离线编辑");
   expect(Array.from(host.querySelectorAll("button")).map(button => button.textContent?.trim())).toEqual(["创建恢复副本", "丢弃此项"]);
 });
+
+test("a newer data format offers the app updater and keeps a read-only warning after dismissal", async () => {
+  const calls: string[] = [];
+  window.metahubDesktop = { platform: "darwin", versions: { electron: "", chrome: "", node: "" },
+    rebuildReplica: async url => { calls.push(url); throw new Error("unexpected rebuild"); } };
+  globalThis.fetch = (async () => Response.json({ urls: ["s3://one"], dataVersion: 3 })) as unknown as typeof fetch;
+  act(() => render(<UpgradePrompt><UpgradeWarning /></UpgradePrompt>, host));
+  await act(async () => { await Bun.sleep(5); });
+  expect(host.querySelector("dialog")!.textContent).toContain("客户端最高支持 2");
+  const button = [...host.querySelectorAll("dialog button")].find(b => b.textContent === "更新应用") as HTMLButtonElement;
+  await act(async () => { button.click(); await Bun.sleep(5); });
+  expect(location.hash).toBe("#/settings?sec=about");
+  expect(host.querySelector("dialog")).toBeNull();
+  expect(host.querySelector(".sync-upgrade")?.textContent).toContain("需要更新客户端");
+  expect(calls).toEqual([]);
+});

@@ -27,6 +27,10 @@ const fake: StorageClient = {
       .sort()
       .map((key) => ({ key }));
   },
+  async getWithMetadata(key) {
+    const bytes = store.get(key);
+    return bytes ? { bytes, lastModified: 1, serverDate: 1, etag: null } : null;
+  },
   async get(key: string): Promise<Uint8Array | null> {
     return store.get(key) ?? null;
   },

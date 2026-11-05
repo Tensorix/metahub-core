@@ -2,6 +2,8 @@ import { writeTx, type DbDriver } from "../driver.ts";
 import { MhError } from "../errors.ts";
 import { addPeer, addStoragePeer, getPeer, listPeers } from "./peers.ts";
 import { loadV2DocumentHistory } from "./recovery-v2.ts";
+import { createV2Bucket } from "./bucket-v2.ts";
+import { knownDataVersion } from "./data-version.ts";
 import { storageClientFor } from "./storage.ts";
 import { needsBucketUpgrade, readReplicaGeneration } from "./retention-protocol.ts";
 
@@ -60,6 +62,25 @@ export function publishSuccessor(source: DbDriver, name: string) {
       "CREATE TRIGGER retired_replica BEFORE INSERT ON crdt_changes BEGIN SELECT RAISE(ABORT,'local replica was rebuilt; reopen it'); END",
     );
   });
+}
+
+/** Foreground check also works when the sync scheduler is paused/offline. */
+export async function inspectWorkspaceVersion(db: DbDriver) {
+  const bound = db.query("SELECT value FROM meta WHERE key='local_v2_history_peer'").get() as { value: string } | null;
+  const peers = listPeers(db).filter(p => p.enabled && p.kind === "s3" && p.config);
+  const peer = bound ? peers.find(p => p.url === bound.value) : peers.length === 1 ? peers[0] : undefined;
+  if (peer?.config) {
+    try {
+      const config = JSON.parse(peer.config);
+      const bucket = createV2Bucket(storageClientFor(config, { signal: AbortSignal.timeout(8000) }), config, db);
+      const root = await bucket.root();
+      if (root) await bucket.log(root).read();
+    } catch {
+      // Keep the last verified observation. Normal sync reports network or
+      // identity errors; a failed probe cannot authorize a version change.
+    }
+  }
+  return knownDataVersion(db)?.dataVersion ?? 2;
 }
 
 export function upgradeBuckets(db: DbDriver): string[] {

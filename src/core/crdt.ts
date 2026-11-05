@@ -1,3 +1,4 @@
+import { assertWorkspaceWritable, assertUserEditAllowed } from "./sync/data-version.ts";
 import { writeTx, type DbDriver } from "./driver.ts";
 import { getNodeId } from "./node.ts";
 import { nextHlc, observeHlcs, isSkewedHlc } from "./hlc.ts";
@@ -434,6 +435,7 @@ export function emit(
   col: string,
   value: unknown,
 ): Change {
+  assertUserEditAllowed(db);
   const mint = (): Change => {
     const node = currentNodeOverride ?? getNodeId(db);
     const change: Change = {
@@ -494,6 +496,7 @@ export function ingestDetailed(
   changes: Change[],
   opts: { now?: number } = {},
 ): IngestResult {
+  assertWorkspaceWritable(db);
   const now = opts.now ?? Date.now();
   pruneExpiredIntentReceipts(db, now);
   const node = getNodeId(db);

@@ -1,3 +1,5 @@
+import { authFetch } from "./api.ts";
+import { call, replicaActive } from "./data/replica.ts";
 import type { DocumentSaveResult } from "./document-save.ts";
 import { toast } from "./ui.tsx";
 import { t } from "./i18n/t.ts";
@@ -7,6 +9,7 @@ import { t } from "./i18n/t.ts";
 export const DOCUMENT_RECOVER = "mh-document-recover";
 export interface DocumentDraft { title: string; body: string; version: string | null; error: string }
 interface Editor {
+  protectionId?: string;
   id: string;
   dirty: () => boolean;
   flush: () => Promise<DocumentSaveResult>;
@@ -36,6 +39,20 @@ export async function claimDocumentDraft(id: string): Promise<(DocumentDraft & {
   }
   return null;
 }
+export async function protectVersionDrafts() {
+  for (const entry of editors) {
+    if (!entry.dirty()) continue;
+    const { title, body, version } = entry.snapshot();
+    entry.protectionId ??= Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, "0")).join("");
+    const draft = { editor: entry.protectionId, doc_id: entry.id, title, body, version };
+    if (replicaActive()) await call("saveVersionDraft", draft);
+    else {
+      const res = await authFetch("/api/local-recovery/version-draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(draft) });
+      if (!res.ok) throw new Error("本地草稿尚未保全，请保持窗口打开");
+    }
+  }
+}
+
 export async function withSavedWorkspace<T>(run: () => Promise<T>): Promise<T> {
   if (closing) throw new Error("窗口正在保存");
   const app = document.getElementById("app");

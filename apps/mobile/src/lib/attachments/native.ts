@@ -301,6 +301,7 @@ export function createAttachmentManager(options: AttachmentManagerOptions) {
         if (bytes.length > MAX_BYTES)
           throw new Error("附件超过本机 200 MB 限制");
         await putBucketBlob(options.creds.bucket, entry.hash, bytes, {
+          db: options.db,
           signal: transfer.signal,
           maxBytes: MAX_BYTES,
         });

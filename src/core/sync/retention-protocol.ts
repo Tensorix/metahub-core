@@ -1,3 +1,4 @@
+import { assertWorkspaceWritable, localDataVersion, dataVersionRange } from "./data-version.ts";
 import { z } from "zod";
 import { MhError } from "../errors.ts";
 import type { DbDriver } from "../driver.ts";
@@ -9,11 +10,12 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const member = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).refine(v => !["__proto__", "constructor", "prototype"].includes(v));
 const checkpoint = hash.nullable();
 export const RetentionEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("upgrade"), workspaceId: z.string().min(1), epoch, id: member, from: integer, to: integer, checkpoint: hash }).strict(),
   z.object({ type: z.literal("clock") }).strict(),
   z.object({ type: z.literal("join"), epoch, member, checkpoint, replaces: z.object({ member, sequence: integer }).strict().optional() }).strict(),
   z.object({ type: z.literal("batch"), epoch, member, first: integer.positive(), last: integer.positive(), objectHash: hash }).strict(),
   z.object({ type: z.literal("renew"), epoch, member, sequence: integer, checkpoint }).strict(),
-  z.object({ type: z.literal("prepare"), epoch, id: member }).strict(),
+  z.object({ type: z.literal("prepare"), epoch, id: member, targetDataVersion: integer.positive().optional() }).strict(),
   z.object({ type: z.literal("seal"), epoch, id: member, member, sequence: integer }).strict(),
   z.object({ type: z.literal("cancel"), epoch, id: member }).strict(),
   z.object({ type: z.literal("commit"), epoch, id: member, checkpoint: hash }).strict(),
@@ -49,6 +51,7 @@ export function bucketPushCursor(db: DbDriver, url: string, peerCursor: number):
 }
 
 export function needsBucketUpgrade(db: DbDriver, url: string): boolean {
+  if (localDataVersion(db) > dataVersionRange.maxSupportedDataVersion) return false;
   return !readReplicaGeneration(db) || !!db.query("SELECT 1 FROM meta WHERE key=?").get(`sync_v2_rebuild_required:${url}`);
 }
 
@@ -62,6 +65,7 @@ export function writeReplicaGeneration(db: DbDriver, value: ReplicaGeneration): 
 }
 /** Gate before any ingestion, upload, cursor acknowledgement, or backup merge. */
 export function assertReplicaGeneration(db: DbDriver, remote: unknown): void {
+  assertWorkspaceWritable(db);
   const local = readReplicaGeneration(db);
   if (!local) {
     if (remote != null) throw new MhError("upgrade_required", "workspace migration is required");

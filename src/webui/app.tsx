@@ -1,4 +1,5 @@
 /** @jsxImportSource preact */
+import { dataVersionRange } from "../core/sync/data-version.ts";
 import { UpgradePrompt, UpgradeWarning } from "./settings/upgrade-prompt.tsx";
 import { render } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
@@ -1076,7 +1077,7 @@ function HydratingReplica() {
     setStatus(replicaStatus());
     return onReplicaStatus(setStatus);
   },[]);
-  if (!status.recoveryRequired?.length) return <Splash text={t("正在从同步存储桶恢复本地副本…")} />;
+  if (!status.recoveryRequired?.length && (status.dataVersion ?? 2) <= dataVersionRange.maxSupportedDataVersion) return <Splash text={t("正在从同步存储桶恢复本地副本…")} />;
   return <main>
     <UpgradeWarning />
     <UiHost />

@@ -1,6 +1,7 @@
 import { pendingPeerChanges } from "./peer-v2.ts";
 import { restoreUncontestedText } from "./recovery-intent.ts";
 import { observeHistory } from "./history-observation.ts";
+import { observeDataVersion, assertWorkspaceWritable } from "./data-version.ts";
 import { ChangeSchema } from "./protocol.ts";
 import { changesAfterSeq, type Change } from "../crdt.ts";
 import { getNodeId } from "../node.ts";
@@ -75,6 +76,7 @@ export function recoveryItems(db: DbDriver): RecoveryItem[] {
 }
 /** Explicit user decisions are idempotent. No TTL deletes unresolved items. */
 export function resolveRecoveryItem(db: DbDriver, id: string, action: "copy" | "discard"): string | null {
+  assertWorkspaceWritable(db);
   schema(db);
   return writeTx(db, () => {
     const item = db.query("SELECT * FROM sync_recovery_items WHERE id=?").get(id) as RecoveryItem | null;
@@ -111,6 +113,9 @@ export interface RecoveryAdapter {
 /** Transaction boundary across runtimes. No old database is reset in place.
  * Adapter failures before swap leave the original database available. */
 export async function recoverV2Workspace(source: DbDriver, client: StorageClient, config: S3Config, workspaceId: string, adapter: RecoveryAdapter) {
+  const preflight = createV2Bucket(client, config, source);
+  const existing = await preflight.root();
+  if (existing) await preflight.log(existing).read();
   const id = crypto.randomUUID();
   let shadow: DbDriver | null = null, committed = false;
   const phase = (value: RecoveryPhase) => adapter.phase?.(value);
@@ -120,7 +125,7 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
     phase("protecting");
     const protection = await adapter.protect(id);
     if (!protection.proof) throw new MhError("invalid_input", "recovery protection was not verified");
-    const bucket = createV2Bucket(client, config);
+    const bucket = createV2Bucket(client, config, source);
     let root = await bucket.root();
     const oldGeneration = readReplicaGeneration(source);
     if (!root && oldGeneration) throw new MhError("busy", "workspace root is unavailable");
@@ -151,6 +156,7 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
     const checkpoint = await bucket.checkpointFor(root, head.state.checkpoint!, head.state.epoch);
     shadow = await adapter.createShadow(id);
     installCurrentCheckpoint(shadow, checkpoint, root.workspaceId);
+    observeDataVersion(shadow, root.workspaceId, head.state.dataVersion);
     // Replay only records beyond checkpoint coverage. Old data objects may have
     // been collected; compact control metadata remains readable indefinitely.
 
@@ -225,7 +231,7 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
       shadow.query("INSERT OR IGNORE INTO sync_recovery_items(id,kind,target,local,remote) VALUES(?,?,?,?,?)")
         .run(itemId, "document", docId, JSON.stringify(local), remote ? JSON.stringify(remote) : null);
     }
-    for (const table of ["replica_document_drafts", "replica_field_drafts"] as const) {
+    for (const table of ["replica_document_drafts", "replica_field_drafts", "sync_version_drafts"] as const) {
       if (!source.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
       for (const draft of source.query(`SELECT * FROM ${table}`).all() as Record<string, unknown>[]) {
         const itemId = await commitHash(new TextEncoder().encode(JSON.stringify([root.workspaceId, table, draft])));
@@ -260,7 +266,7 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
 export async function loadV2DocumentHistory(db: DbDriver, client: StorageClient, config: S3Config, documentId: string) {
   const generation = readReplicaGeneration(db);
   if (!generation) throw new MhError("upgrade_required", "v2 history requires migration");
-  const bucket = createV2Bucket(client, config);
+  const bucket = createV2Bucket(client, config, db);
   const metadata = db.query("SELECT value FROM meta WHERE key='sync_v2_checkpoint'").get() as { value: string } | null;
   const references = (metadata ? JSON.parse(metadata.value).history ?? [] : []) as { documentId: string; hash: string }[];
   const selected = references.filter(ref => ref.documentId === documentId);

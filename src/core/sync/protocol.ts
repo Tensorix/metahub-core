@@ -19,6 +19,9 @@ export const ChangeSchema = z.object({
 });
 
 export const SyncRequestSchema = z.object({
+  dataVersion: z.number().int().positive().safe().optional(),
+  minSupportedDataVersion: z.number().int().positive().safe().optional(),
+  maxSupportedDataVersion: z.number().int().positive().safe().optional(),
   generation: ReplicaGenerationSchema.optional(),
   bases: z.array(z.string().nullable()).optional(),
   node_id: z.string().describe("Calling client's node id"),
@@ -36,6 +39,9 @@ export const SyncRequestSchema = z.object({
 });
 
 export const SyncResponseSchema = z.object({
+  dataVersion: z.number().int().positive().safe().optional(),
+  minSupportedDataVersion: z.number().int().positive().safe().optional(),
+  maxSupportedDataVersion: z.number().int().positive().safe().optional(),
   generation: ReplicaGenerationSchema.optional(),
   bases: z.array(z.string().nullable()).optional(),
   node_id: z.string().describe("Server's node id"),
@@ -48,6 +54,9 @@ export const SyncResponseSchema = z.object({
 });
 
 export const HealthResponseSchema = z.object({
+  dataVersion: z.number().int().positive().safe().optional(),
+  minSupportedDataVersion: z.number().int().positive().safe().optional(),
+  maxSupportedDataVersion: z.number().int().positive().safe().optional(),
   generation: ReplicaGenerationSchema.optional(),
   ok: z.boolean(),
   node: z.string().describe("Server's node id"),

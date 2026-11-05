@@ -1,3 +1,4 @@
+import { finishVersionCheck, requireSupportedVersion, localDataVersion, knownDataVersion } from "./data-version.ts";
 import { decodeUtf8 } from "./portable-json.ts";
 import { syncWithStorageV2 } from "./storage-v2.ts";
 import { readReplicaGeneration } from "./retention-protocol.ts";
@@ -341,6 +342,7 @@ const blobsKey = (base: string, hash: string) => `${base}/blobs/${hash}`;
 /** Upload a blob's bytes to the bucket (idempotent via If-None-Match). Returns
  *  true when actually written, false when the object already existed. */
 export interface BucketBlobOptions {
+  db?: DbDriver;
   signal?: AbortSignal;
   /** Limit plaintext attachment size; encryption overhead is accounted separately. */
   maxBytes?: number;
@@ -366,6 +368,12 @@ export async function putBucketBlob(
   checkBlobSize(bytes, maxBytes);
   return withSyncBudget(async (signal) => {
     const client = storageClientFor(config, { signal });
+    if (options.db) {
+      const { createV2Bucket } = await import("./bucket-v2.ts");
+      const bucket = createV2Bucket(client, config, options.db);
+      const root = await bucket.root();
+      if (root) await bucket.log(root).read();
+    }
     const key = blobsKey(basePrefix(config.prefix), hash);
     const mk = masterKeyOf(config);
     const body = mk ? await encryptBytes(mk, bytes) : bytes;
@@ -864,10 +872,13 @@ export async function syncWithStorage(
   config: S3Config,
   opts: StorageSyncOpts = {},
 ): Promise<SyncResult> {
+  requireSupportedVersion(localDataVersion(db));
+  if (!client.getWithMetadata && knownDataVersion(db)) throw new MhError("busy", "Cannot verify known workspace version");
   if (readReplicaGeneration(db)) {
     const key = `sync_v2_rebuild_required:${peerUrl}`;
     try {
       const result = await syncWithStorageV2(db, client, config, opts);
+      finishVersionCheck(db, peerUrl);
       if (!opts.signal?.aborted) db.query("DELETE FROM meta WHERE key=?").run(key);
       return result;
     } catch (error) {
@@ -878,7 +889,10 @@ export async function syncWithStorage(
   }
   if (client.getWithMetadata) {
     const { createV2Bucket } = await import("./bucket-v2.ts");
-    if (await createV2Bucket(client, config).root())
+    const bucket = createV2Bucket(client, config, db);
+    const root = await bucket.root();
+    if (root) await bucket.log(root).read();
+    if (root)
       throw new MhError("upgrade_required", "此工作区已升级同步格式；请先保全本地编辑并升级本地副本");
   }
   const checkActive = () => { if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("sync request aborted"); };
@@ -1045,6 +1059,7 @@ export async function syncWithStorage(
     if (ownCount >= threshold) await publishSnapshot(db, client, config, opts.snapshotRetainSegments);
   }
 
+  finishVersionCheck(db, peerUrl);
   const warnings = skewWarnings(peerUrl, skewed);
   return { pushed, pulled, pendingPush, pendingPull: pullBudget.pending, ...(warnings.length ? { warnings } : {}) };
 }

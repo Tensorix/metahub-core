@@ -1,3 +1,4 @@
+import { requireSupportedVersion } from "./data-version.ts";
 import { pullV2Log } from "./storage-v2.ts";
 import { writeTx } from "../driver.ts";
 import { pendingPeerChanges } from "./peer-v2.ts";
@@ -40,7 +41,7 @@ export function retainHistoryWindow(archive: DocumentArchive, cutoff: number): D
 export async function inspectRetention(db: DbDriver, client: StorageClient, config: S3Config): Promise<RetentionReport> {
   const generation = readReplicaGeneration(db);
   if (!generation) throw new MhError("upgrade_required", "retention requires v2");
-  const bucket = createV2Bucket(client, config), root = await bucket.root();
+  const bucket = createV2Bucket(client, config, db), root = await bucket.root();
   if (!root) throw new MhError("busy", "v2 root unavailable");
   const log = bucket.log(root), head = await log.read();
   const at = bucket.serverTime();
@@ -77,14 +78,26 @@ export async function inspectRetention(db: DbDriver, client: StorageClient, conf
 /** Prepare/commit can be resumed by any complete node. Production must explicitly
  * enable this after its dry-run report is reviewed; no election grants authority. */
 export async function executeRetention(db: DbDriver, client: StorageClient, config: S3Config, options: { enabled: boolean }) {
+  return checkpointBarrier(db, client, config, options.enabled);
+}
+
+// Explicit entry point for a future release that understands the target format.
+// No ordinary sync, installation or scheduled maintenance requests an upgrade.
+export function upgradeWorkspaceData(db: DbDriver, client: StorageClient, config: S3Config, targetDataVersion: number) {
+  requireSupportedVersion(targetDataVersion);
+  return checkpointBarrier(db, client, config, true, targetDataVersion);
+}
+
+async function checkpointBarrier(db: DbDriver, client: StorageClient, config: S3Config, enabled: boolean, targetDataVersion?: number) {
   const report = await inspectRetention(db, client, config);
-  if (!options.enabled || !report.eligible) return { status: "dry_run" as const, report };
-  const bucket = createV2Bucket(client, config), root = (await bucket.root())!, log = bucket.log(root);
+  if (!enabled || (targetDataVersion === undefined && !report.eligible)) return { status: "dry_run" as const, report };
+  const bucket = createV2Bucket(client, config, db), root = (await bucket.root())!, log = bucket.log(root);
   await log.append(crypto.randomUUID(), () => ({ type: "clock" }));
   const head = await log.read();
+  if (targetDataVersion !== undefined && targetDataVersion !== head.state.dataVersion + 1) throw new MhError("invalid_input", "Invalid target data version");
   if (!head.state.preparing) {
     const id = crypto.randomUUID();
-    await log.append(`prepare-${id}`, state => ({ type: "prepare", epoch: state.epoch, id }));
+    await log.append(`prepare-${id}`, state => ({ type: "prepare", epoch: state.epoch, id, targetDataVersion }));
     return { status: "waiting_for_seals" as const, report };
   }
   const preparing = head.state.preparing;
@@ -93,6 +106,7 @@ export async function executeRetention(db: DbDriver, client: StorageClient, conf
     return { status: "cancelled" as const, report };
   }
   if (!preparing.members.every(id => head.state.members[id]!.sealed)) return { status: "waiting_for_seals" as const, report };
+  if (preparing.targetDataVersion !== targetDataVersion) return { status: "waiting_for_seals" as const, report };
   const generation = readReplicaGeneration(db)!;
   if (generation.epoch !== head.state.epoch || generation.checkpoint !== head.state.checkpoint)
     throw new MhError("rebootstrap_required", "retention epoch changed");
@@ -123,26 +137,28 @@ export async function executeRetention(db: DbDriver, client: StorageClient, conf
     for (const row of db.query("SELECT id FROM documents ORDER BY id").all() as { id: string }[]) {
       const collected = captureDocumentArchive(db, generation.workspaceId, row.id);
       collected.observedAt = collected.changes.map((_, i) => collected.observedAt?.[i] ?? head.serverTime!);
-      const archive = retainHistoryWindow(collected, head.serverTime! - RETENTION_POLICY.historyDays * DAY_MS);
+      const archive = targetDataVersion ? collected : retainHistoryWindow(collected, head.serverTime! - RETENTION_POLICY.historyDays * DAY_MS);
       for (const part of splitDocumentArchive(archive)) parts.push(part);
     }
     return { checkpoint, parts };
   });
   for (const part of parts) checkpoint.history.push({ documentId: part.documentId, hash: await bucket.publish(part) });
-  const candidates = new Set(report.candidates);
+  const candidates = new Set(targetDataVersion ? [] : report.candidates);
   checkpoint.changes = checkpoint.changes.filter(c => c.dataset !== "doc_blocks" || !candidates.has(c.row_id));
   checkpoint.deletedBlocks = checkpoint.deletedBlocks.filter(c => !candidates.has(c.id)).map(c => ({ ...c, confirmedAt: report.deletionTimes[c.id] ?? head.serverTime! }));
   const digest = await bucket.publish(checkpoint);
   // Conditional slot arbitration revalidates the barrier and deadline. A slow
   // archive upload cannot commit after a concurrent cancellation.
-  const committed = await log.append(`commit-${preparing.id}`, () => ({ type: "commit", epoch: generation.epoch, id: preparing.id, checkpoint: digest }));
+  const committed = await log.append(`commit-${preparing.id}`, () => targetDataVersion === undefined
+    ? { type: "commit", epoch: generation.epoch, id: preparing.id, checkpoint: digest }
+    : { type: "upgrade", workspaceId: root.workspaceId, epoch: generation.epoch, id: preparing.id, checkpoint: digest, from: head.state.dataVersion, to: targetDataVersion });
   return { status: "committed" as const, report, checkpoint: committed.state.checkpoint!, protectedUntil: committed.state.protectedUntil };
 }
 
 /** Delete only objects covered by an accepted checkpoint after its protection
  * window. Control slots and unreferenced uploads are deliberately never swept. */
-export async function cleanRetiredV2Objects(client: StorageClient, config: S3Config, options: { enabled: boolean }) {
-  const bucket = createV2Bucket(client, config), root = await bucket.root();
+export async function cleanRetiredV2Objects(client: StorageClient, config: S3Config, options: { enabled: boolean }, db?: DbDriver) {
+  const bucket = createV2Bucket(client, config, db), root = await bucket.root();
   if (!root) return { deleted: 0, candidates: 0 };
   const log = bucket.log(root), head = await log.read(), now = bucket.serverTime();
   if (!head.state.protectedUntil || now === null || now < head.state.protectedUntil)
@@ -186,6 +202,11 @@ export async function cleanRetiredV2Objects(client: StorageClient, config: S3Con
   const checked = await log.read();
   if (checked.state.epoch !== head.state.epoch) throw new MhError("busy", "retention generation changed during cleanup");
   let deleted = 0;
-  for (const digest of candidates) { await client.del(bucket.objectKey(digest)); deleted++; }
+  let latest = checked;
+  for (const digest of candidates) {
+    latest = await log.read(latest);
+    if (latest.state.epoch !== head.state.epoch) throw new MhError("busy", "retention generation changed during cleanup");
+    await client.del(bucket.objectKey(digest)); deleted++;
+  }
   return { deleted, candidates: candidates.length };
 }

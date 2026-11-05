@@ -1,4 +1,5 @@
 import { editBases, ingestPeerChanges } from "./peer-v2.ts";
+import { assertWorkspaceWritable, dataVersionRange, localDataVersion, knownDataVersion, finishVersionCheck, observeDataVersion, requireSupportedVersion } from "./data-version.ts";
 import { assertReplicaGeneration, readReplicaGeneration } from "./retention-protocol.ts";
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
@@ -132,18 +133,34 @@ export async function syncWithPeer(
 
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (bearer) headers.authorization = `Bearer ${bearer}`;
+  requireSupportedVersion(localDataVersion(db));
   const generation = readReplicaGeneration(db);
+  const joining = !!db.query("SELECT 1 FROM meta WHERE key='sync_version_pending_join' AND value=?").get(url);
+  const checkVersion = (remote: { dataVersion?: number; generation?: unknown }) => {
+    if (remote.dataVersion === undefined) return;
+    const remoteId = (remote.generation as { workspaceId?: string })?.workspaceId;
+    if (generation && remoteId && generation.workspaceId !== remoteId) throw new MhError("rebootstrap_required", "Peer workspace differs");
+    if (typeof remoteId === "string" && remote.dataVersion >= 2 && (generation?.workspaceId === remoteId || (!generation && joining))) {
+      if ((knownDataVersion(db)?.dataVersion ?? 1) > remote.dataVersion) throw new MhError("busy", "Peer data version moved backwards");
+      observeDataVersion(db, remoteId, remote.dataVersion);
+    }
+    requireSupportedVersion(remote.dataVersion);
+  };
   const data = await withSyncBudget(async (signal) => {
-  if (generation) {
-    const health = await (o.fetch ?? fetch)(new URL("/health", url), { headers, signal });
-    if (!health.ok) throw new MhError("network", `sync preflight failed: ${health.status}`);
-    const remote = await health.json() as { generation?: unknown };
+  {
+    const health = await (o.fetch ?? fetch)(new URL("/health", url), { method: "GET", headers, signal });
+    if (!health.ok) throw new MhError(health.status === 401 || health.status === 403 ? "auth" : "network", `sync preflight failed: ${health.status}`);
+    const remote = await health.json() as { generation?: unknown; dataVersion?: number };
+    if (signal.aborted) throw signal.reason;
+    checkVersion(remote);
     assertReplicaGeneration(db, remote.generation);
   }
+  assertWorkspaceWritable(db);
   const res = await (o.fetch ?? fetch)(new URL(SYNC_PATH, url), {
     method: "POST",
     headers,
     body: measure("serialize", () => JSON.stringify({
+      ...dataVersionRange, dataVersion: localDataVersion(db),
       ...(generation ? { generation, bases: editBases(db, toPush.changes) } : {}),
       node_id: node,
       since: peer.pull_cursor,
@@ -155,11 +172,21 @@ export async function syncWithPeer(
   });
   if (!res.ok) {
     const detail = await res.text();
-    let protocolCode: "upgrade_required" | "rebootstrap_required" | "history_unavailable" | undefined;
+    let reportedVersion: number | undefined;
+    let reportedWorkspace: unknown;
+    let protocolCode: "client_update_required" | "upgrade_required" | "rebootstrap_required" | "history_unavailable" | undefined;
     try {
       const body = JSON.parse(detail);
-      if (body.code === "upgrade_required" || body.code === "rebootstrap_required" || body.code === "history_unavailable") protocolCode = body.code;
+      if (body.code === "client_update_required" && Number.isSafeInteger(body.workspaceDataVersion)) {
+        reportedVersion = body.workspaceDataVersion;
+        reportedWorkspace = body.workspaceId;
+      }
+      if (body.code === "client_update_required" || body.code === "upgrade_required" || body.code === "rebootstrap_required" || body.code === "history_unavailable") protocolCode = body.code;
     } catch { /* Legacy endpoints may return plain text. */ }
+    if (reportedVersion !== undefined) {
+      if (signal.aborted) throw signal.reason;
+      checkVersion({ dataVersion: reportedVersion, generation: { workspaceId: reportedWorkspace } });
+    }
     throw new MhError(protocolCode ?? (res.status === 401 || res.status === 403 ? "auth" : "network"), `sync failed: ${res.status} ${detail}`);
   }
 
@@ -167,7 +194,9 @@ export async function syncWithPeer(
   }, o.timeoutMs, o.signal);
   // A disposed session must never write back cursors after transport completion.
   if (o.signal?.aborted) throw o.signal.reason ?? new Error("sync request aborted");
+  checkVersion(data);
   assertReplicaGeneration(db, data.generation);
+  finishVersionCheck(db, url);
   const changes = data.changes ?? [];
   // `pulled` = changes new to our oplog (ingest's return), not the response size,
   // so re-pulled-but-known data doesn't read as activity (consistent with the

@@ -1,3 +1,4 @@
+import { assertWorkspaceWritable } from "./sync/data-version.ts";
 import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -77,6 +78,7 @@ const COMPACTABLE = `
   )`;
 
 export function compactOplog(db: Database, opts: CompactOptions): CompactResult {
+  if (!opts.dryRun) assertWorkspaceWritable(db);
   if (!opts.dryRun && db.query("SELECT 1 FROM meta WHERE key='sync_v2_generation'").get())
     throw new MhError("invalid_input", "v2 history requires verified archive retention; legacy local compaction is disabled");
   if (!Number.isFinite(opts.keepDays) || opts.keepDays < 0)
@@ -145,6 +147,7 @@ export function gcBlobs(
   db: Database,
   opts: { dryRun?: boolean } = {},
 ): { deleted: number; bytes: number } {
+  if (!opts.dryRun) assertWorkspaceWritable(db);
   const dir = cacheDir();
   if (!existsSync(dir)) return { deleted: 0, bytes: 0 };
 

@@ -35,6 +35,7 @@ function native(path = ":memory:", id = crypto.randomUUID()) {
 const target = { kind: "http" as const, url: "https://peer.example", token: "private-bearer" };
 function peerFetch(remote: Database, bodies: any[] = []): typeof fetch {
   return (async (_url: unknown, init?: RequestInit) => {
+    if (init?.method === "GET") return Response.json({ ok: true, dataVersion: 1 });
     const request = JSON.parse(init!.body as string);
     bodies.push(request);
     ingestDetailed(remote, request.changes);

@@ -3,6 +3,11 @@ import { plural, type Msg } from "./util.ts";
 export const backup = {
   "查看": "Review",
   "稍后": "Later",
+  "需要更新客户端": "App update required",
+  "只读查看": "View read-only",
+  "更新安装完成后，请重新打开应用。": "Reopen the app after the update has been installed.",
+  "工作区数据版本为 {remote}，当前客户端最高支持 {max}。本地内容可查看和导出。": "This workspace uses data version {remote}. Your app supports up to {max}. You can view and export local content.",
+  "更新应用": "Update app",
   "立即升级": "Upgrade now",
   "升级工作区同步": "Upgrade workspace sync",
   "应用会备份本机编辑并更新同步格式。升级期间请保持应用打开，编辑会短暂停用。": "Your edits will be backed up before sync is upgraded. Keep the app open. Editing will pause briefly.",

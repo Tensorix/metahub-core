@@ -1,3 +1,4 @@
+import { assertWorkspaceWritable, knownDataVersion, dataVersionRange } from "./data-version.ts";
 import "./storage-s3-bun.ts"; // side effect: register the Bun S3 storage-sync client (auto-sync timer)
 import { openMetahub } from "../db.ts";
 import type { DbDriver } from "../driver.ts";
@@ -5,7 +6,8 @@ import { MhError } from "../errors.ts";
 import { getNodeId } from "../node.ts";
 import { getServerConfig } from "../config.ts";
 import pkg from "../../../package.json" with { type: "json" };
-import { routes, type Route, type RouteCtx } from "./routes.ts";
+import { inspectWorkspaceVersion } from "./recovery-local.ts";
+import { errorResponse, routes, type Route, type RouteCtx } from "./routes.ts";
 import { SYNC_PATH, HEALTH_PATH, RENEW_PATH, PAIR_PATH } from "./protocol.ts";
 import { DEFAULT_TTL_MS, DEFAULT_GRACE_MS } from "./token.ts";
 import { syncPeer, listPeers } from "./peers.ts";
@@ -140,6 +142,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   process.env.METAHUB_APP ??= "server";
   const tDb = Date.now();
   const db = openMetahub();
+  const startupVersionCheck = inspectWorkspaceVersion(db);
   const dbMs = Date.now() - tDb;
   const node = getNodeId(db);
   const ctx: RouteCtx = {
@@ -150,13 +153,21 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   const allRoutes = opts.ui ? [...routes, ...opts.ui.routes] : routes;
   opts.ui?.onStart?.(db);
 
+  async function dispatchRoute(route: Route, req: Request) {
+    try {
+      return await route.handler(req, ctx);
+    } catch (error) {
+      return errorResponse(error, req, route.path === SYNC_PATH ? knownDataVersion(db)?.workspaceId : undefined);
+    }
+  }
+
   // In-process forward into the route table for /sites/<name>/api/* requests
   // that carry a valid token: the site mount rewrites the URL to /api/* and the
   // request is dispatched exactly like a top-level API call (see sites-serve.ts).
   const forwardApi = async (req: Request): Promise<Response> => {
     const path = new URL(req.url).pathname;
     const route = allRoutes.find((r) => r.method === req.method && r.path === path);
-    return route ? route.handler(req, ctx) : new Response("not found", { status: 404 });
+    return route ? dispatchRoute(route, req) : new Response("not found", { status: 404 });
   };
 
   // Resolve runtime settings: explicit opts (CLI flags) override stored config.
@@ -190,6 +201,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       ? { cert: Bun.file(opts.tls.certPath), key: Bun.file(opts.tls.keyPath) }
       : undefined,
     async fetch(req, srv) {
+      await startupVersionCheck;
       const url = new URL(req.url);
       if (opts.loopbackUiOnly) {
         const rejection = loopbackUiRejection(req, srv.port!, opts.host);
@@ -277,6 +289,10 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
         }
       }
 
+      if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && ![SYNC_PATH, RENEW_PATH, "/api/blobs/has", "/api/local-recovery/version-draft"].includes(url.pathname)) {
+        try { assertWorkspaceWritable(db); } catch (error) { return errorResponse(error, req); }
+      }
+
       // Seamless renewal: swap the current (or in-grace previous) token for the
       // current token + expiry. 401 if the presented token isn't recognized.
       if (url.pathname === RENEW_PATH) {
@@ -336,7 +352,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
 
       // Registered API routes.
       const route = allRoutes.find((r) => r.method === req.method && r.path === url.pathname);
-      if (route) return route.handler(req, ctx);
+      if (route) return dispatchRoute(route, req);
 
       return new Response("not found", { status: 404 });
     },
@@ -401,6 +417,8 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     const DROP_POLL_BASE_MS = 60_000;
     const DROP_KEY = " drop"; // never collides with a peers.url
     const tick = async (): Promise<void> => {
+      await startupVersionCheck;
+      if ((knownDataVersion(db)?.dataVersion ?? 2) > dataVersionRange.maxSupportedDataVersion) return;
       const maxSeq =
         (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number | null }).s ?? 0;
       const advanced = lastMaxSeq >= 0 && maxSeq > lastMaxSeq;

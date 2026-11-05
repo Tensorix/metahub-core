@@ -29,6 +29,7 @@ import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
 import { t } from "../i18n/t.ts";
 import { setLocaleOverride, type Locale } from "../i18n/locale.ts";
+import { knownDataVersion, dataVersionRange, assertWorkspaceWritable, beginVersionCheck, saveVersionDraft, type VersionDraft } from "../../core/sync/data-version.ts";
 import { bucketPushCursor } from "../../core/sync/retention-protocol.ts";
 import { changesAfterSeq } from "../../core/crdt.ts";
 import { referencedHashes, setBlobBytesResolver } from "../../core/blobs-core.ts";
@@ -140,6 +141,7 @@ export interface ReplicaStatus {
   bucketSyncing?: boolean;
   /** Last direct bucket sync error, if the dirty changes could not be saved. */
   bucketError?: string;
+  dataVersion?: number;
   upgradeBuckets?: string[];
   recoveryRequired?: string[];
   checkpointInstalled?: boolean;
@@ -177,7 +179,7 @@ function post(msg: RpcResponse | WorkerEvent): void {
 }
 
 function setStatus(patch: Partial<ReplicaStatus>): void {
-  status = { ...status, ...patch };
+  status = { ...status, ...patch, dataVersion: db ? knownDataVersion(db)?.dataVersion ?? 2 : undefined };
   post({ event: "status", status });
 }
 
@@ -427,7 +429,7 @@ async function drainSpoolToBuckets(d: DbDriver): Promise<void> {
     for (const peer of buckets) {
       if (!peer.config) continue;
       try {
-        await putBucketBlob(JSON.parse(peer.config) as S3Config, e.hash, new Uint8Array(e.bytes));
+        await putBucketBlob(JSON.parse(peer.config) as S3Config, e.hash, new Uint8Array(e.bytes), { db: d });
         durable = true;
         break;
       } catch {
@@ -754,6 +756,7 @@ const ops: Record<string, Op> = {
   // push so pending edits flush immediately. The edit-debounce + 15s poll use
   // the unforced path so a burst of edits batches into one segment.
   sync: () => runSync(true).then(() => status.lastSync),
+  saveVersionDraft: (draft: VersionDraft) => saveVersionDraft(requireDb(), draft),
   recoveryItems: () => recoveryItems(requireDb()),
   resolveRecoveryItem: (id: string, action: "copy" | "discard") => {
     if (action !== "copy" && action !== "discard") throw new MhError("invalid_input","Invalid recovery action");
@@ -811,8 +814,10 @@ const ops: Record<string, Op> = {
     if (syncing) await syncing;
     const previous = getPeer(d, url);
     addStoragePeer(d, { url, config: cfg, label: cfg.bucket });
+    beginVersionCheck(d, url);
     await runSync(true);
-    if (status.bucketError && !status.recoveryRequired?.includes(url)) {
+    if (status.bucketError && (status.dataVersion ?? 2) <= dataVersionRange.maxSupportedDataVersion && !status.recoveryRequired?.includes(url)) {
+      d.query("DELETE FROM meta WHERE key='sync_version_pending_join' AND value=?").run(url);
       if (previous) restorePeerRow(d, previous);
       else removePeer(d, url);
       throw new MhError("network", `storage peer first sync failed: ${status.bucketError}`);
@@ -1178,6 +1183,7 @@ const ops: Record<string, Op> = {
   // leave `db` null — re-enabling ("信任此设备" → pair) would land on this same
   // worker and deref null. Re-opening leaves it immediately usable + empty.
   reset: async () => {
+    if (db) assertWorkspaceWritable(db);
     try {
       oo1Db?.close();
     } catch {

@@ -5,24 +5,26 @@ export const DAY_MS = 86_400_000;
 export const RETENTION_POLICY = Object.freeze({ syncDays: 30, historyDays: 90, protectionDays: 7, prepareMs: 60_000, gcIntervalMs: 7 * DAY_MS });
 export interface RetentionMember { sequence: number; expiresAt: number; renewedAt: number; sealed: boolean }
 export interface RetentionState {
+  dataVersion: number;
   epoch: number;
   members: Record<string, RetentionMember>;
-  preparing: null | { id: string; startedAt: number; members: string[] };
+  preparing: null | { id: string; startedAt: number; members: string[]; targetDataVersion?: number };
   lastGcAt: number | null;
   checkpoint: string | null;
   protectedUntil: number | null;
 }
 export type RetentionEvent =
+  | { type: "upgrade"; workspaceId: string; epoch: number; id: string; from: number; to: number; checkpoint: string }
   | { type: "clock" }
   | { type: "join"; epoch: number; member: string; checkpoint: string | null; replaces?: { member: string; sequence: number } }
   | { type: "batch"; epoch: number; member: string; first: number; last: number; objectHash: string }
   | { type: "renew"; epoch: number; member: string; sequence: number; checkpoint: string | null }
-  | { type: "prepare"; epoch: number; id: string }
+  | { type: "prepare"; epoch: number; id: string; targetDataVersion?: number }
   | { type: "seal"; epoch: number; id: string; member: string; sequence: number }
   | { type: "cancel"; epoch: number; id: string }
   | { type: "commit"; epoch: number; id: string; checkpoint: string };
 export function initialRetentionState(): RetentionState {
-  return { epoch: 0, members: {}, preparing: null, lastGcAt: null, checkpoint: null, protectedUntil: null };
+  return { dataVersion: 2, epoch: 0, members: {}, preparing: null, lastGcAt: null, checkpoint: null, protectedUntil: null };
 }
 const fail = (message: string): never => { throw new MhError("conflict", message); };
 const hash = (value: string) => /^[a-f0-9]{64}$/.test(value);
@@ -74,8 +76,9 @@ export function reduceRetention(state: RetentionState, event: RetentionEvent, at
     }
     case "prepare":
       if (next.preparing) fail("another prepare is active");
-      if (!event.id || (next.lastGcAt !== null && at - next.lastGcAt < RETENTION_POLICY.gcIntervalMs)) fail("collection is not due");
-      next.preparing = { id: event.id, startedAt: at, members: Object.keys(next.members).filter(id => next.members[id]!.expiresAt > at).sort() };
+      if (event.targetDataVersion !== undefined && event.targetDataVersion !== next.dataVersion + 1) fail("invalid target data version");
+      if (!event.id || (event.targetDataVersion === undefined && next.lastGcAt !== null && at - next.lastGcAt < RETENTION_POLICY.gcIntervalMs)) fail("collection is not due");
+      next.preparing = { id: event.id, startedAt: at, ...(event.targetDataVersion === undefined ? {} : { targetDataVersion: event.targetDataVersion }), members: Object.keys(next.members).filter(id => next.members[id]!.expiresAt > at).sort() };
       break;
     case "seal": {
       const p = prepare(event.id), m = next.members[event.member];
@@ -90,8 +93,14 @@ export function reduceRetention(state: RetentionState, event: RetentionEvent, at
       next.preparing = null;
       for (const m of Object.values(next.members)) m.sealed = false;
       break;
+    case "upgrade":
     case "commit": {
+      if (event.type === "upgrade") {
+        if (event.from !== state.dataVersion || event.to !== event.from + 1) fail("invalid data version transition");
+        next.dataVersion = event.to;
+      }
       const p = prepare(event.id);
+      if (p.targetDataVersion !== (event.type === "upgrade" ? event.to : undefined)) fail("different barrier purpose");
       if (at - p.startedAt >= RETENTION_POLICY.prepareMs) fail("prepare timed out");
       if (!p.members.every(id => next.members[id]!.sealed)) fail("unsealed member blocks collection");
       if (!hash(event.checkpoint)) fail("invalid checkpoint hash");
@@ -100,7 +109,7 @@ export function reduceRetention(state: RetentionState, event: RetentionEvent, at
       next.members = retained;
       next.epoch++;
       next.checkpoint = event.checkpoint;
-      next.lastGcAt = at;
+      if (event.type === "commit") next.lastGcAt = at;
       next.protectedUntil = at + RETENTION_POLICY.protectionDays * DAY_MS;
       next.preparing = null;
       break;

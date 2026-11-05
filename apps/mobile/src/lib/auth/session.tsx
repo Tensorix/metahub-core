@@ -1,3 +1,5 @@
+import { beginVersionCheck } from "../../../../../src/core/sync/data-version";
+import { storageUrl } from "../../../../../src/core/sync/storage-url";
 import { loadV2DocumentHistory } from "../../../../../src/core/sync/recovery-v2";
 import { readReplicaGeneration } from "../../../../../src/core/sync/retention-protocol";
 import { storageClientFor } from "../../../../../src/core/sync/storage";
@@ -110,6 +112,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const replica = openMobileReplica(workspaceId, {
         platform: Platform.OS === "android" ? "android" : "ios",
       });
+      beginVersionCheck(replica.db, creds.bucket ? storageUrl(creds.bucket.endpoint, creds.bucket.bucket, creds.bucket.prefix) : creds.baseUrl);
       let disposed = false,
         grant: string | null = null,
         pairing: Promise<void> | null = null;

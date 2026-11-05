@@ -6,6 +6,7 @@
 import { errorCode, type MhErrorCode } from "../errors.ts";
 
 const STATUS: Partial<Record<MhErrorCode, number>> = {
+  client_update_required: 426,
   upgrade_required: 426,
   rebootstrap_required: 409,
   history_unavailable: 410,

@@ -47,3 +47,45 @@ test("HTTP checkpoint race returns rebootstrap_required without advancing cursor
     expect(d.query("SELECT push_cursor,pull_cursor FROM peers").all().every((row: any) => row.push_cursor === 0 && row.pull_cursor === 0)).toBe(true);
   } finally { d.close(); }
 });
+
+test("a newer version in the authenticated preflight locks writes before POST, keeping drafts local", async () => {
+  const d = db();
+  try {
+    writeReplicaGeneration(d, generation);
+    const methods: string[] = [];
+    const { createDraftStore } = await import("../replica/drafts.ts");
+    const drafts = createDraftStore(d);
+    await expect(syncWithPeer(d, "https://peer.invalid", { fetch: (async (_, init) => {
+      methods.push(init?.method ?? "GET");
+      return Response.json({ generation, dataVersion: 3 });
+    }) as typeof fetch })).rejects.toMatchObject({ code: "client_update_required" });
+    expect(methods).toEqual(["GET"]);
+    drafts.checkpointDocument("draft", { title: "local", body: "offline edit", revision: 1, version: null });
+    expect(d.query("SELECT body FROM replica_document_drafts").get()).toEqual({ body: "offline edit" });
+    const { routes, errorResponse } = await import("./routes.ts");
+    const route = routes.find(r => r.method === "POST" && r.path === "/sync")!;
+    try {
+      await route.handler(new Request("http://test/sync", { method: "POST", body: JSON.stringify({ generation, changes: [] }) }), { db: d, node: "test" } as never);
+      throw Error("unreachable");
+    } catch (e) {
+      const res = errorResponse(e);
+      expect(res.status).toBe(426);
+      expect(await res.json()).toMatchObject({ code: "client_update_required", workspaceDataVersion: 3, clientMaxDataVersion: 2 });
+    }
+  } finally { d.close(); }
+});
+
+test("a new empty replica waits for its own first verification; verified offline edits remain available", async () => {
+  const { beginVersionCheck, finishVersionCheck } = await import("./data-version.ts");
+  const { createDocument } = await import("../documents.ts");
+  const d = db();
+  try {
+    beginVersionCheck(d, "s3://first");
+    expect(() => createDocument(d, { title: "too early" })).toThrow("联网");
+    finishVersionCheck(d, "s3://other");
+    expect(() => createDocument(d, { title: "wrong workspace" })).toThrow("联网");
+    finishVersionCheck(d, "s3://first");
+    beginVersionCheck(d, "s3://first");
+    expect(createDocument(d, { title: "offline" }).title).toBe("offline");
+  } finally { d.close(); }
+});

@@ -1,3 +1,4 @@
+import { assertWorkspaceWritable } from "./data-version.ts";
 // Write-inbox recipient keyring: the P-256 keypair(s) visitors seal envelopes
 // to. Generated independently (WebCrypto cannot derive a P-256 keypair from a
 // seed, so "derive from the master key" is technically impossible); the private
@@ -235,6 +236,7 @@ export async function ensureDropKeys(
   db: DbDriver,
   opts: { bucket?: DropBucket | null } = {},
 ): Promise<DropKeyring> {
+  assertWorkspaceWritable(db);
   const bucket = opts.bucket !== undefined ? opts.bucket : dropBucketFor(db);
   if (!bucket) {
     let kr = getLocalDropKeyring(db);
@@ -307,6 +309,7 @@ export async function rotateDropKeys(
   db: DbDriver,
   opts: { purgeRetired?: boolean; bucket?: DropBucket | null } = {},
 ): Promise<{ keyring: DropKeyring; active: DropKeyRecord; purged: string[] }> {
+  assertWorkspaceWritable(db);
   const bucket = opts.bucket !== undefined ? opts.bucket : dropBucketFor(db);
   const current = await ensureDropKeys(db, { bucket });
   const purged = opts.purgeRetired ? current.keys.filter((k) => k.retired).map((k) => k.key_id) : [];

@@ -1,3 +1,4 @@
+import { assertWorkspaceWritable } from "./data-version.ts";
 // Object-storage share export (server-side only — needs the bucket credentials
 // and the blob bytes). Builds a self-contained, end-to-end-encrypted bundle for
 // one doc / database under <prefix>/shares/<slug>/ and presigns every object so
@@ -214,6 +215,7 @@ export async function createBucketShare(
     viewerOrigin?: string;
   },
 ): Promise<BucketShareLink & { meta: BucketShareMeta }> {
+  assertWorkspaceWritable(db);
   const expiresSec = clampExpiry(opts.expiresSec);
   let shareKey: Uint8Array;
   let saltB64: string | undefined;

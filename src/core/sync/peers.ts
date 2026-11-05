@@ -1,3 +1,4 @@
+import { beginVersionCheck, assertWorkspaceWritable } from "./data-version.ts";
 // Outbound peer management: the devices this node syncs *to*. Each row carries
 // the durable credential the remote issued to us during pairing (see pairing.ts)
 // plus replication cursors and last-sync status. `syncAllPeers` is what the
@@ -214,6 +215,7 @@ export async function addAndSyncStoragePeer(
   db: DbDriver,
   spec: StoragePeerSpec,
 ): Promise<{ url: string; config: S3Config; sync: PeerSyncOutcome }> {
+  assertWorkspaceWritable(db);
   const prefix = spec.prefix?.trim() || "metahub";
   const encrypt = spec.encrypt !== false;
   const config: S3Config = {
@@ -251,10 +253,12 @@ export async function addAndSyncStoragePeer(
   await waitForPeerIdle(db, url);
   const previous = getPeer(db, url);
   addStoragePeer(db, { url, config, label: spec.label ?? config.bucket });
+  beginVersionCheck(db, url);
   const sync = await syncPeer(db, url);
   // A verified connection can require a local rebuild before the first round.
   // Keep it selectable in recovery settings.
-  if (!sync.ok && sync.code !== "upgrade_required" && sync.code !== "rebootstrap_required") {
+  if (!sync.ok && sync.code !== "client_update_required" && sync.code !== "upgrade_required" && sync.code !== "rebootstrap_required") {
+    db.query("DELETE FROM meta WHERE key='sync_version_pending_join' AND value=?").run(url);
     if (previous) restorePeerRow(db, previous);
     else removePeer(db, url);
     throw new MhError("network", `storage peer first sync failed: ${sync.error ?? "unknown error"}`);
@@ -331,6 +335,7 @@ export async function rotateStoragePeer(
   await waitForPeerIdle(db, url);
 
   // VALIDATE_CREDS — probe with the candidate credentials before touching anything.
+  assertWorkspaceWritable(db);
   const candidate: S3Config = {
     ...current,
     ...(wantCreds
@@ -545,6 +550,7 @@ async function syncPeerOnce(
       // Room peers sync through room-client's syncWithRoom over the HTTP
       // transport in room-peer.ts (lazy import: rooms stay off the startup
       // path until one actually exists).
+      assertWorkspaceWritable(db);
       const { syncRoomPeer } = await import("./room-peer.ts");
       result = await syncRoomPeer(db, peer);
     } else {

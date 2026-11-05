@@ -1,4 +1,6 @@
+import { z } from "zod";
 import { editBases, ingestPeerChanges } from "./peer-v2.ts";
+import { assertWorkspaceWritable, dataVersionRange, localDataVersion, requireSupportedVersion, saveVersionDraft } from "./data-version.ts";
 import { assertReplicaGeneration, readReplicaGeneration } from "./retention-protocol.ts";
 import type { ZodType } from "zod";
 import type { Database } from "bun:sqlite";
@@ -14,7 +16,7 @@ import {
 import { sitesRoutes } from "./sites-routes.ts";
 import { peersRoutes } from "./peers-routes.ts";
 import { blobRoutes } from "./blob-routes.ts";
-import { errorCode, type MhErrorCode } from "../errors.ts";
+import { asMhError, MhError, errorCode, type MhErrorCode } from "../errors.ts";
 import { pickLocale } from "./locale.ts";
 import { localizeError } from "./page-messages.ts";
 import pkg from "../../../package.json" with { type: "json" };
@@ -31,6 +33,7 @@ export interface RouteCtx {
 /** HTTP status per error code (see core/errors.ts). Uncategorized errors stay
  *  400, matching the historical catch-all behavior. */
 const HTTP_STATUS: Record<MhErrorCode, number> = {
+  client_update_required: 426,
   upgrade_required: 426,
   rebootstrap_required: 409,
   history_unavailable: 410,
@@ -50,10 +53,10 @@ const HTTP_STATUS: Record<MhErrorCode, number> = {
 /** Turn a thrown handler error into a JSON response: `{error, code?}` with a
  *  semantic status, so HTTP clients can dispatch on `code` like CLI users
  *  dispatch on exit codes. */
-export function errorResponse(e: unknown, req?: Request): Response {
+export function errorResponse(e: unknown, req?: Request, workspaceId?: string): Response {
   const message = req ? localizeError(pickLocale(req), e) : e instanceof Error ? e.message : String(e);
   const code = errorCode(e);
-  return Response.json(code ? { error: message, code } : { error: message }, {
+  return Response.json(code ? { error: message, code, ...(code === "client_update_required" ? { ...asMhError(e)?.i18n?.params, workspaceId } : {}) } : { error: message }, {
     status: code ? HTTP_STATUS[code] : 400,
     ...(code === "busy" ? { headers: { "retry-after": "1" } } : {}),
   });
@@ -73,7 +76,15 @@ export interface Route {
   handler: (req: Request, ctx: RouteCtx) => Promise<Response> | Response;
 }
 
+const VersionDraftSchema = z.object({ editor: z.string().min(1).max(64), doc_id: z.string().min(1), title: z.string(), body: z.string(), version: z.string().nullable() });
+
 const syncRoutes: Route[] = [
+  { method: "POST", path: "/api/local-recovery/version-draft", summary: "Protect editor text locally while a client update is required",
+    request: VersionDraftSchema, response: z.object({ saved: z.boolean() }),
+    async handler(req, { db }) {
+      saveVersionDraft(db, VersionDraftSchema.parse(await req.json()));
+      return Response.json({ saved: true });
+    } },
   {
     method: "POST",
     path: SYNC_PATH,
@@ -82,7 +93,13 @@ const syncRoutes: Route[] = [
     response: SyncResponseSchema,
     async handler(req, { db, node }) {
       const body = (await req.json()) as SyncRequest;
-      assertReplicaGeneration(db, (body as unknown as { generation?: unknown }).generation);
+      const version = localDataVersion(db);
+      requireSupportedVersion(version, body.maxSupportedDataVersion ?? 2, body.minSupportedDataVersion ?? 1);
+      assertWorkspaceWritable(db);
+      assertReplicaGeneration(db, body.generation);
+      requireSupportedVersion(body.dataVersion ?? 2);
+      if ((body.dataVersion ?? version) !== version)
+        throw new MhError("rebootstrap_required", "workspace data version differs");
       const r = ingestPeerChanges(db, body.changes ?? [], body.bases);
       const skewed = Object.values(r.skewed).reduce((a, b) => a + b, 0);
       const batch = changesAfterSeq(db, body.since ?? 0, {
@@ -90,6 +107,7 @@ const syncRoutes: Route[] = [
         excludeDatasets: body.exclude_datasets,
       });
       return Response.json({
+        ...dataVersionRange, dataVersion: localDataVersion(db),
         ...(readReplicaGeneration(db) ? { generation: readReplicaGeneration(db), bases: editBases(db, batch.changes) } : {}),
         node_id: node,
         changes: batch.changes,
@@ -106,6 +124,7 @@ const syncRoutes: Route[] = [
     handler(_req, { node, db }) {
       return Response.json({
         ok: true,
+        ...dataVersionRange, dataVersion: localDataVersion(db),
         ...(readReplicaGeneration(db) ? { generation: readReplicaGeneration(db) } : {}),
         node,
         capabilities: ["site_channels"],

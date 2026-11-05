@@ -31,6 +31,7 @@ export type MhErrorCode =
   | "clock_skew"
   /** The requested listen port is taken (exit 98, historical). */
   | "port_in_use"
+  | "client_update_required"
   | "upgrade_required"
   | "rebootstrap_required"
   | "history_unavailable";
@@ -45,6 +46,13 @@ export class MhError extends Error {
   ) {
     super(message);
     this.name = "MhError";
+  }
+}
+
+export class ClientUpdateRequired extends MhError {
+  constructor(readonly workspaceDataVersion: number, readonly clientMaxDataVersion: number) {
+    super("client_update_required", `需要更新客户端：工作区数据版本为 ${workspaceDataVersion}，本客户端最高支持 ${clientMaxDataVersion}。`,
+      { key: "需要更新客户端：工作区数据版本为 {workspaceDataVersion}，本客户端最高支持 {clientMaxDataVersion}。", params: { workspaceDataVersion, clientMaxDataVersion } });
   }
 }
 
@@ -68,6 +76,8 @@ function isSqliteBusy(e: unknown): boolean {
 /** Normalize a thrown value to an MhError when it maps to one of our codes. */
 export function asMhError(e: unknown): MhError | null {
   if (e instanceof MhError) return e;
+  const lock = e instanceof Error && /^client_update_required:(\d+):(\d+)$/.exec(e.message);
+  if (lock) return new ClientUpdateRequired(Number(lock[1]), Number(lock[2]));
   if (isSqliteBusy(e)) return mhError("busy", "数据库正被另一个进程写入，请稍后重试");
   return null;
 }
