@@ -6,7 +6,7 @@ import { useTheme } from "@/lib/theme";
 import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
 import { useRecents } from "@/lib/navigation/use-recents";
 import { useSites } from "@/lib/navigation/use-sites";
-import { BrowseRow } from "@/components/BrowseRow";
+import { HomeFeed } from "@/components/native/HomeFeed";
 import { BrowseCreate } from "@/components/BrowseCreate";
 import { BrowseSearch } from "@/components/native/BrowseSearch";
 import { NativeButton } from "@/components/native/NativeButton";
@@ -48,111 +48,112 @@ export default function HomeScreen() {
       {query.trim() ? (
         <SearchResults query={query} />
       ) : (
-        <ScrollView
-          style={{ flex: 1, backgroundColor: tokens.bg }}
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={{
-            paddingTop: 8,
-            paddingBottom: Platform.OS === "android" ? 104 : 32,
-          }}
-        >
-          <BrowseSearch />
-          <Text
-            accessibilityRole="header"
-            style={{
-              fontSize: 22,
-              fontWeight: "700",
-              color: tokens.fg,
-              marginHorizontal: 20,
-              marginTop: 20,
-              marginBottom: 20,
-            }}
-          >
-            最近使用的 Sites
-          </Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-          >
-            {recentSites.map((site) => (
-              <SiteShortcut
-                key={site.id}
-                title={site.title}
-                iconUri={site.iconUri}
-                onPress={() => {
-                  setOpenError(null);
-                  void sites
-                    .open(site)
-                    .catch(() => setOpenError("站点暂时无法打开，请稍后重试"));
-                }}
-              />
-            ))}
-            <SiteShortcut
-              title="更多"
-              more
-              onPress={() => router.push("/sites")}
-            />
-          </ScrollView>
-          {!recentSites.length ? (
-            <Text
-              style={{
-                color: tokens.fgSoft,
-                fontSize: 14,
-                marginHorizontal: 20,
-                marginTop: 6,
-              }}
-            >
-              使用过的站点会显示在这里
-            </Text>
-          ) : null}
-          {sites.error ? (
-            <ErrorBanner message="Sites 加载失败" onRetry={sites.refetch} />
-          ) : null}
-          {openError ? <ErrorBanner message={openError} /> : null}
-          <Text
-            accessibilityRole="header"
-            style={{
-              fontSize: 22,
-              fontWeight: "700",
-              color: tokens.fg,
-              marginHorizontal: 20,
-              marginTop: 36,
-              marginBottom: 8,
-            }}
-          >
-            最近打开的文档
-          </Text>
-          {recent.error ? (
-            <ErrorBanner message="最近文档加载失败" onRetry={recent.refetch} />
-          ) : null}
-          {documents.slice(0, 12).map((doc) => (
-            <BrowseRow
-              key={doc.id}
-              title={doc.title || "未命名"}
-              onPress={() => router.push(`/doc/${doc.id}`)}
-            />
-          ))}
-          {!documents.length && !recent.error ? (
+        <HomeFeed
+          documents={documents.slice(0, 12)}
+          openDocument={(id) => router.push(`/doc/${id}`)}
+          header={
             <View>
-              <EmptyState
-                title={recent.loading ? "正在读取最近文档…" : "从一篇文档开始"}
-                hint={
-                  recent.loading
-                    ? undefined
-                    : "在资料库打开文档，下次从这里继续"
-                }
-              />
-              {!recent.loading ? (
-                <View style={{ alignItems: "center" }}>
-                  <NativeButton onPress={() => router.push("/library")}>
-                    浏览资料库
-                  </NativeButton>
-                </View>
+              <BrowseSearch />
+              <Text
+                accessibilityRole="header"
+                style={{
+                  fontSize: 22,
+                  fontWeight: "700",
+                  color: tokens.fg,
+                  marginHorizontal: 20,
+                  marginTop: 20,
+                  marginBottom: 20,
+                }}
+              >
+                最近使用的 Sites
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+              >
+                {recentSites.map((site) => (
+                  <SiteShortcut
+                    key={site.id}
+                    title={site.title}
+                    iconUri={site.iconUri}
+                    onPress={() => {
+                      setOpenError(null);
+                      void sites
+                        .open(site)
+                        .catch(() =>
+                          setOpenError("站点暂时无法打开，请稍后重试"),
+                        );
+                    }}
+                  />
+                ))}
+                <SiteShortcut
+                  title="更多"
+                  more
+                  onPress={() => router.push("/sites")}
+                />
+              </ScrollView>
+              {!recentSites.length ? (
+                <Text
+                  style={{
+                    color: tokens.fgSoft,
+                    fontSize: 14,
+                    marginHorizontal: 20,
+                    marginTop: 6,
+                  }}
+                >
+                  使用过的站点会显示在这里
+                </Text>
+              ) : null}
+              {sites.error ? (
+                <ErrorBanner message="Sites 加载失败" onRetry={sites.refetch} />
+              ) : null}
+              {openError ? <ErrorBanner message={openError} /> : null}
+              <Text
+                accessibilityRole="header"
+                style={{
+                  fontSize: 22,
+                  fontWeight: "700",
+                  color: tokens.fg,
+                  marginHorizontal: 20,
+                  marginTop: 36,
+                  marginBottom: 8,
+                }}
+              >
+                最近打开的文档
+              </Text>
+              {recent.error ? (
+                <ErrorBanner
+                  message="最近文档加载失败"
+                  onRetry={recent.refetch}
+                />
               ) : null}
             </View>
-          ) : null}
-        </ScrollView>
+          }
+          empty={
+            !documents.length && !recent.error ? (
+              <View>
+                <EmptyState
+                  title={
+                    recent.loading ? "正在读取最近文档…" : "从一篇文档开始"
+                  }
+                  hint={
+                    recent.loading
+                      ? undefined
+                      : "在资料库打开文档，下次从这里继续"
+                  }
+                />
+                {!recent.loading ? (
+                  <View style={{ alignItems: "center" }}>
+                    <NativeButton onPress={() => router.push("/library")}>
+                      浏览资料库
+                    </NativeButton>
+                  </View>
+                ) : null}
+              </View>
+            ) : null
+          }
+        />
       )}
       <Stack.Title large={Platform.OS === "ios"}>首页</Stack.Title>
       {Platform.OS === "ios" ? (
