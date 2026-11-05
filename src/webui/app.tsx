@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-import { LocalRecovery } from "./settings/local-recovery.tsx";
+import { UpgradePrompt, UpgradeWarning } from "./settings/upgrade-prompt.tsx";
 import { render } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, type Db, type DocSummary, type Hit, NAV_INVALIDATE } from "./api.ts";
@@ -884,6 +884,7 @@ function App() {
         </div>
         )}
 
+        {(view.kind !== "settings" || resolvePage(view.sec) !== "backup") && <UpgradeWarning />}
         {offline && (
           <div class="offline-bar">
             {replicaActive()
@@ -1076,7 +1077,10 @@ function HydratingReplica() {
     return onReplicaStatus(setStatus);
   },[]);
   if (!status.recoveryRequired?.length) return <Splash text={t("正在从同步存储桶恢复本地副本…")} />;
-  return <main><LocalRecovery desktop={false} buckets={status.recoveryRequired.map(url => ({ url,enabled:true }))} /><UiHost /></main>;
+  return <main>
+    <UpgradeWarning />
+    <UiHost />
+  </main>;
 }
 
 function Root() {
@@ -1123,8 +1127,7 @@ function Root() {
   if (mode === "detecting") return <Splash text={t("加载中…")} />;
   if (mode === "enroll")
     return <Enroll onDone={() => setMode(replicaActive() ? "app" : "hydrating")} />;
-  if (mode === "hydrating") return <HydratingReplica />;
-  return <App />;
+  return <UpgradePrompt>{mode === "hydrating" ? <HydratingReplica /> : <App />}</UpgradePrompt>;
 }
 
 // Inside the desktop shell, tag <body> so the WebUI can adapt its chrome: the

@@ -864,8 +864,18 @@ export async function syncWithStorage(
   config: S3Config,
   opts: StorageSyncOpts = {},
 ): Promise<SyncResult> {
-  if (readReplicaGeneration(db))
-    return syncWithStorageV2(db, client, config, opts);
+  if (readReplicaGeneration(db)) {
+    const key = `sync_v2_rebuild_required:${peerUrl}`;
+    try {
+      const result = await syncWithStorageV2(db, client, config, opts);
+      if (!opts.signal?.aborted) db.query("DELETE FROM meta WHERE key=?").run(key);
+      return result;
+    } catch (error) {
+      if (!opts.signal?.aborted && errorCode(error) === "rebootstrap_required")
+        db.query("INSERT OR REPLACE INTO meta(key,value) VALUES(?, '1')").run(key);
+      throw error;
+    }
+  }
   if (client.getWithMetadata) {
     const { createV2Bucket } = await import("./bucket-v2.ts");
     if (await createV2Bucket(client, config).root())

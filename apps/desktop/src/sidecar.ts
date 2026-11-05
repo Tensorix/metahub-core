@@ -21,7 +21,11 @@ import { startServer } from "../../../src/core/sync/server.ts";
 import { serveWebui, warmWebui } from "../../../src/webui/server/assets.ts";
 import { webuiRoutes, webuiOnStart } from "../../../src/webui/server/routes.ts";
 
+import { upgradeBuckets } from "../../../src/core/sync/recovery-local.ts";
+
 const recoveryRoutes: Route[] = [
+  { method: "GET", path: "/api/local-recovery/upgrade", summary: "Available workspace upgrades", response: z.array(z.string()),
+    handler: (_, { db }) => Response.json(upgradeBuckets(db)) },
   { method: "GET", path: "/api/local-recovery/items", summary: "Pending desktop recovery items", response: z.any(),
     handler: (_, { db }) => Response.json(recoveryItems(db)) },
   { method: "POST", path: "/api/local-recovery/items", summary: "Resolve a desktop recovery item", response: z.any(),

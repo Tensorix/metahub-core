@@ -2,17 +2,9 @@
 import { useEffect, useState } from "preact/hooks";
 import { t } from "../i18n/t.ts";
 import { call } from "../data/replica.ts";
-import { getReplicaBus } from "../data/replica-bus.ts";
-import { withSavedWorkspace } from "../document-lifecycle.ts";
 import { confirmDialog } from "../ui.tsx";
 import { SetSection } from "./primitives.tsx";
 import type { RecoveryItem } from "../../core/sync/recovery-v2.ts";
-
-type Bucket = {
-  url: string;
-  bucket?: string | null;
-  enabled: number | boolean;
-};
 
 function displayField(raw: string, field: "title" | "body", fallback: string): string {
   try {
@@ -36,22 +28,10 @@ async function desktopItems(id?: string, action?: "copy" | "discard") {
   return response.json();
 }
 
-export function LocalRecovery({
-  buckets,
-  desktop,
-}: {
-  buckets: Bucket[];
-  desktop: boolean;
-}) {
+export function LocalRecovery({ desktop }: { desktop: boolean }) {
   const [items, setItems] = useState<RecoveryItem[]>([]);
-  const [selected, select] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const enabled = buckets.filter((bucket) => bucket.enabled);
-  const shellUpdate = desktop && !window.metahubDesktop?.rebuildReplica;
-  const url = enabled.some((bucket) => bucket.url === selected)
-    ? selected
-    : enabled[0]?.url;
   async function refresh() {
     setItems(
       desktop
@@ -74,30 +54,6 @@ export function LocalRecovery({
       setBusy(false);
     }
   }
-  async function rebuild() {
-    if (
-      !url ||
-      !(await confirmDialog({
-        title: t("重建本地副本"),
-        message: t(
-          "先保存编辑并备份数据库和附件，再从所选存储桶下载当前副本。",
-        ),
-        confirmLabel: t("开始重建"),
-      }))
-    )
-      return;
-    await perform(async () => {
-      setMessage(t("正在保存编辑并更新本地副本…"));
-      const result = await withSavedWorkspace(() => desktop
-        ? window.metahubDesktop!.rebuildReplica!(url)
-        : getReplicaBus().rebuild(url));
-      setMessage(
-        result.pending
-          ? t("本地副本已更新，有 {n} 项编辑待恢复。", { n: result.pending })
-          : t("本地副本已更新。"),
-      );
-    });
-  }
   async function resolve(id: string, action: "copy" | "discard") {
     if (
       action === "discard" &&
@@ -114,28 +70,9 @@ export function LocalRecovery({
       else await call("resolveRecoveryItem", id, action);
     });
   }
+  if (!items.length && !message) return null;
   return (
     <SetSection label={t("本地副本与恢复")}>
-      {enabled.length > 1 && (
-        <select
-          aria-label={t("重建使用的存储桶")}
-          value={url}
-          disabled={busy}
-          onChange={(e) => select(e.currentTarget.value)}
-        >
-          {enabled.map((bucket) => (
-            <option value={bucket.url}>{bucket.bucket ?? bucket.url}</option>
-          ))}
-        </select>
-      )}
-      {shellUpdate && <p>{t("升级桌面应用后即可重建本地副本。")}</p>}
-      <button
-        class="btn"
-        disabled={busy || !url || shellUpdate}
-        onClick={() => void rebuild()}
-      >
-        {t("保全编辑并重建本地副本")}
-      </button>
       {message && <p role="status">{message}</p>}
       {items.map((item) => (
         <details key={item.id}>

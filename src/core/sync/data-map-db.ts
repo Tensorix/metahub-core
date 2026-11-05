@@ -15,6 +15,8 @@ import {
 } from "../data-map.ts";
 import { getNodeId, getNodeLabel } from "../node.ts";
 import { pendingBlobs, readPolicy } from "../blobs-core.ts";
+import { bucketPushCursor } from "./retention-protocol.ts";
+import { INTENT_RECEIPT_DATASET, intentReceiptCutoffHlc } from "../intent-retention.ts";
 import { listPeers } from "./peers.ts";
 import type { S3Config } from "./storage.ts";
 
@@ -27,9 +29,9 @@ export function dataMap(db: DbDriver): DataMap {
   const selfNodeId = getNodeId(db);
   const high = db
     .query(
-      "SELECT MAX(seq) AS global_seq, MAX(CASE WHEN node_id = ? THEN seq END) AS own_seq FROM crdt_changes",
+      "SELECT MAX(seq) AS global_seq, MAX(CASE WHEN node_id = ? THEN seq END) AS own_seq FROM crdt_changes WHERE dataset != ? OR hlc >= ?",
     )
-    .get(selfNodeId) as { global_seq: number | null; own_seq: number | null };
+    .get(selfNodeId, INTENT_RECEIPT_DATASET, intentReceiptCutoffHlc()) as { global_seq: number | null; own_seq: number | null };
   const interval = db
     .query("SELECT value FROM meta WHERE key = 'cfg_sync_interval'")
     .get() as { value: string } | null;
@@ -61,7 +63,7 @@ export function dataMap(db: DbDriver): DataMap {
         lastSuccessAt: p.last_success_at,
         lastStatus: p.last_status,
         lastError: p.last_error,
-        pushCursor: p.push_cursor,
+        pushCursor: p.kind === "s3" ? bucketPushCursor(db, p.url, p.push_cursor) : p.push_cursor,
         bucket,
         publish,
       };

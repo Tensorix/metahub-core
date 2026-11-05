@@ -36,6 +36,22 @@ export function readReplicaGeneration(db: DbDriver): ReplicaGeneration | null {
   if (!parsed.success) throw new MhError("rebootstrap_required", "local synchronization generation is invalid");
   return parsed.data;
 }
+/** Storage v2 records local upload progress per incarnation. Do not credit a
+ * different bucket with that acknowledgement when reporting its status. */
+export function bucketPushCursor(db: DbDriver, url: string, peerCursor: number): number {
+  const generation = readReplicaGeneration(db);
+  if (!generation) return peerCursor;
+  const bound = db.query("SELECT value FROM meta WHERE key='local_v2_history_peer'").get() as { value: string } | null;
+  if (bound ? bound.value !== url : db.query("SELECT 1 FROM peers WHERE kind='s3' AND url<>? LIMIT 1").get(url))
+    return peerCursor;
+  const progress = db.query("SELECT value FROM meta WHERE key=?").get(`sync_v2_transport:${generation.incarnationId}`) as { value: string } | null;
+  return progress ? JSON.parse(progress.value).cursor : 0;
+}
+
+export function needsBucketUpgrade(db: DbDriver, url: string): boolean {
+  return !readReplicaGeneration(db) || !!db.query("SELECT 1 FROM meta WHERE key=?").get(`sync_v2_rebuild_required:${url}`);
+}
+
 export function writeReplicaGeneration(db: DbDriver, value: ReplicaGeneration): void {
   const next = ReplicaGenerationSchema.parse(value), current = readReplicaGeneration(db);
   if (current && (next.workspaceId !== current.workspaceId || next.epoch < current.epoch))

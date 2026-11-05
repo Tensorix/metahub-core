@@ -1,13 +1,14 @@
 import { pendingPeerChanges } from "./peer-v2.ts";
 import { restoreUncontestedText } from "./recovery-intent.ts";
 import { observeHistory } from "./history-observation.ts";
-import { changesAfterSeq } from "../crdt.ts";
+import { ChangeSchema } from "./protocol.ts";
+import { changesAfterSeq, type Change } from "../crdt.ts";
 import { getNodeId } from "../node.ts";
 import { ingestV2Batch } from "./v2-ingest.ts";
 import type { DbDriver } from "../driver.ts";
 import { writeTx } from "../driver.ts";
 import { createV2Bucket } from "./bucket-v2.ts";
-import type { StorageClient, S3Config } from "./storage.ts";
+import { syncWithStorage, type StorageClient, type S3Config } from "./storage.ts";
 import { captureCurrentCheckpoint, installCurrentCheckpoint } from "./current-checkpoint.ts";
 import { splitDocumentArchive, captureDocumentArchive, DocumentArchiveSchema, installDocumentArchive } from "../history-archive.ts";
 import { readReplicaGeneration, writeReplicaGeneration } from "./retention-protocol.ts";
@@ -39,9 +40,38 @@ function readableRecoveryItem(db: DbDriver, item: RecoveryItem): RecoveryItem {
   return { ...item, local: JSON.stringify({ ...local, body: `版本一\n${local.body}\n\n版本二\n${other.body}` }) };
 }
 
+// A v1 device has no v2 upload cursor. Compare the last intended value of
+// each register, since the checkpoint can legitimately omit intermediate saves.
+function alreadyRecovered(db: DbDriver, changes: Change[]): boolean {
+  if (!changes.length) return false;
+  const latest = new Map<string, Change>();
+  const { dataset, row_id } = changes[0]!;
+  for (const change of changes) {
+    if (change.dataset !== dataset || change.row_id !== row_id) return false;
+    const previous = latest.get(change.col);
+    if (previous?.hlc === change.hlc && previous.value !== change.value) return false;
+    if (!previous || previous.hlc < change.hlc) latest.set(change.col, change);
+  }
+  const register = db.query("SELECT value FROM crdt_changes WHERE dataset=? AND row_id=? AND col=? ORDER BY hlc DESC LIMIT 1");
+  const value = (col: string) => (register.get(dataset, row_id, col) as { value: string | null } | null)?.value;
+  if (value("__deleted") === "1" && latest.get("__deleted")?.value !== "1") return false;
+  return [...latest.values()].every(change => value(change.col) === change.value);
+}
+
 export function recoveryItems(db: DbDriver): RecoveryItem[] {
   schema(db);
-  return (db.query("SELECT * FROM sync_recovery_items WHERE status='pending' ORDER BY id").all() as RecoveryItem[]).map(item => readableRecoveryItem(db, item));
+  return writeTx(db, () => {
+    const rows = db.query("SELECT * FROM sync_recovery_items WHERE status='pending' ORDER BY id").all() as RecoveryItem[];
+    return rows.filter(item => {
+      if (item.kind !== "entity") return true;
+      let payload;
+      try { payload = JSON.parse(item.local); } catch { return true; }
+      const parsed = ChangeSchema.array().safeParse(payload?.changes);
+      if (!parsed.success || !alreadyRecovered(db, parsed.data)) return true;
+      db.query("UPDATE sync_recovery_items SET status='matched' WHERE id=? AND status='pending'").run(item.id);
+      return false;
+    }).map(item => readableRecoveryItem(db, item));
+  });
 }
 /** Explicit user decisions are idempotent. No TTL deletes unresolved items. */
 export function resolveRecoveryItem(db: DbDriver, id: string, action: "copy" | "discard"): string | null {
@@ -64,6 +94,8 @@ export function resolveRecoveryItem(db: DbDriver, id: string, action: "copy" | "
 }
 
 export interface RecoveryAdapter {
+  /** Connected v1 bucket to drain before publishing the first v2 checkpoint. */
+  legacyPeerUrl?: string;
   /** Flush every active editor then quiesce mutations and old transport. */
   pauseAndFlush(): Promise<void>;
   /** Durable consistent database + drafts + unpublished attachment bytes.
@@ -90,6 +122,20 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
     if (!protection.proof) throw new MhError("invalid_input", "recovery protection was not verified");
     const bucket = createV2Bucket(client, config);
     let root = await bucket.root();
+    const oldGeneration = readReplicaGeneration(source);
+    if (!root && oldGeneration) throw new MhError("busy", "workspace root is unavailable");
+    if (!root && adapter.legacyPeerUrl) {
+      try {
+        const result = await syncWithStorage(source, adapter.legacyPeerUrl, client, config, { forcePush: true });
+        if (result.pendingPull || result.pendingPush || result.warnings?.length)
+          throw new MhError("busy", "请先完成旧版同步，再升级工作区");
+      } catch (error) {
+        // Another device may have published the v2 root after our first read.
+        if (!(error instanceof MhError) || error.code !== "upgrade_required") throw error;
+        root = await bucket.root();
+        if (!root) throw error;
+      }
+    }
     if (!root) {
       const checkpoint = captureCurrentCheckpoint(source, workspaceId, 0);
       for (const row of source.query("SELECT id FROM documents ORDER BY id").all() as { id: string }[]) {
@@ -98,7 +144,6 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
       }
       root = await bucket.initialize(checkpoint);
     }
-    const oldGeneration = readReplicaGeneration(source);
     if (oldGeneration && oldGeneration.workspaceId !== root.workspaceId)
       throw new MhError("invalid_input", "recovery cannot switch workspace identities");
     phase("downloading");
@@ -158,6 +203,7 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
       otherIntents.set(key, [...(otherIntents.get(key) ?? []), change]);
     }
     for (const [target, changes] of otherIntents) {
+      if (alreadyRecovered(shadow, changes)) continue;
       const itemId = await commitHash(new TextEncoder().encode(JSON.stringify([root.workspaceId, target, changes])));
       shadow.query("INSERT OR IGNORE INTO sync_recovery_items(id,kind,target,local,remote) VALUES(?,?,?,?,NULL)")
         .run(itemId, "entity", target, JSON.stringify({ title: "未提交的数据编辑", changes }));

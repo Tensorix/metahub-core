@@ -5,19 +5,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ScrollView } from "react-native";
 import { Button, Column, FieldGroup, Text } from "@expo/ui";
 import { NativeHost } from "@/components/native/NativeHost";
-import { useSession, useSessionCtx } from "@/lib/auth/session";
-import { recoverMobileWorkspace } from "@/lib/replica/recovery";
+import { useSession } from "@/lib/auth/session";
 import { readReplicaGeneration } from "../../../../src/core/sync/retention-protocol";
-import { recoveryItems, resolveRecoveryItem, type RecoveryPhase } from "../../../../src/core/sync/recovery-v2";
+import { recoveryItems, resolveRecoveryItem } from "../../../../src/core/sync/recovery-v2";
 import { inspectRetention, type RetentionReport } from "../../../../src/core/sync/retention-executor";
 import { storageClientFor } from "../../../../src/core/sync/storage";
 
-const phases: Record<RecoveryPhase, string> = {
-  saving: "正在保存本地编辑", protecting: "正在校验保护副本和附件", downloading: "正在下载当前内容",
-  verifying: "正在检查待恢复编辑", swapping: "正在更新本地副本", pending: "本地副本已更新",
-};
 export default function SyncRecoveryScreen() {
-  const session = useSession(), { connect } = useSessionCtx();
+  const session = useSession();
   const [busy, setBusy] = useState(false), [message, setMessage] = useState<string | null>(null);
   const [revision, setRevision] = useState(0), [report, setReport] = useState<RetentionReport | null>(null);
   const [page, setPage] = useState(0);
@@ -35,12 +30,6 @@ export default function SyncRecoveryScreen() {
     <ScrollView><NativeHost matchContents><FieldGroup>
       <FieldGroup.Section title="本地副本">
         <Text>{generation ? "已使用新版同步" : "可升级同步格式"}</Text>
-        <Text>升级或重新下载前，先保全本地数据库、草稿和未上传附件。尚未处理的恢复包不会自动过期。</Text>
-        <Button label={busy ? "正在处理…" : generation ? "保全编辑并重新下载" : "升级同步格式"}
-          disabled={busy || !session.creds.bucket} onPress={() => void act(async () => {
-            const result = await recoverMobileWorkspace(session, () => connect(session.creds), value => setMessage(phases[value]));
-            setMessage(result.pending ? `有 ${result.pending} 项编辑待恢复` : "本地副本已更新；等待云端同步确认");
-          })} />
         {message && <Text>{message}</Text>}
       </FieldGroup.Section>
       <FieldGroup.Section title={`待恢复编辑 · ${items.length}`}>

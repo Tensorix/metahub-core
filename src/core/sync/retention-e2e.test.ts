@@ -456,3 +456,27 @@ test("legacy block copies use surviving version evidence and preserve both alter
     }
   } finally { f.close(); }
 });
+
+test("migration reconciles covered entity history and pending items from earlier upgrades", async () => {
+  const f = fixture();
+  try {
+    const source = f.db();
+    const { emit } = await import("../crdt.ts");
+    const fields = [emit(source, "databases", "db", "title", "old"), emit(source, "databases", "db", "title", "new")];
+    recoveryItems(source);
+    const save = (id: string, changes: unknown[]) => source.query(
+      "INSERT INTO sync_recovery_items(id,kind,target,local) VALUES(?,'entity','db',?)"
+    ).run(id, JSON.stringify({ changes }));
+    save("covered", fields);
+    save("divergent", [{ ...fields[1], value: '"offline"' }]);
+    save("unknown", [{}]);
+    const shadow = f.db();
+    const result = await recoverV2Workspace(source, f.client, f.config, "workspace", {
+      pauseAndFlush: async () => {}, protect: async () => ({ proof: "verified" }), createShadow: async () => shadow,
+      swap: async () => {}, releaseShadow: async () => {}, resume: async () => {},
+    });
+    expect(result.pending).toBe(2);
+    expect(recoveryItems(shadow).map(i => i.id)).toEqual(["divergent", "unknown"]);
+    expect(shadow.query("SELECT status FROM sync_recovery_items WHERE id='covered'").get()).toEqual({ status: "matched" });
+  } finally { f.close(); }
+});

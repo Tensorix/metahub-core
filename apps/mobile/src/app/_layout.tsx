@@ -3,6 +3,7 @@ import {
   DarkTheme,
   DefaultTheme,
 } from "expo-router/react-navigation";
+import { SyncUpgradePrompt } from "@/components/SyncUpgradePrompt";
 import { NativeDiagnostics } from "@/lib/diagnostics/NativeDiagnostics";
 import { diagnosticsEnabled } from "@/lib/diagnostics/build-mode";
 import {
@@ -183,6 +184,7 @@ function ThemedNavigation() {
         },
       }}
     >
+      <SyncUpgradePrompt />
       <RootStack />
     </NavigationThemeProvider>
   );

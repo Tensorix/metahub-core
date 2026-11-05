@@ -58,7 +58,7 @@ test('failed generation can retry and expired code cannot be copied', async () =
 });
 
 test('bucket invitation switches between native app, validated PWA and CLI without changing enrollment data', async () => {
- const config = { endpoint: 'https://storage.example.com', bucket: 'fixture', region: 'test', accessKeyId: 'test-id', secretAccessKey: 'test-secret', encrypt: true };
+ const config = { endpoint: 'https://storage.example.com', bucket: 'fixture', prefix: '', region: 'test', accessKeyId: 'test-id', secretAccessKey: 'test-secret', encrypt: true };
  await act(async () => render(<AddDeviceModal buckets={[{ url: 'fixture', name: 'Fixture' }]} getConfig={async () => config} environment="desktop" onClosed={() => {}} />, host));
  await act(async () => { await Bun.sleep(0); });
  const link = () => host.querySelector('.enroll-cmd')?.textContent;

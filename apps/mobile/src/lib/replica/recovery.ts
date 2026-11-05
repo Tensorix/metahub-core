@@ -5,15 +5,28 @@ import { ExpoDriver, nativeSqliteOpenOptions } from "./expo-driver";
 import { selectMobileReplica } from "./open";
 import { initSchema } from "../../../../../src/core/schema-init";
 import { recoverV2Workspace, type RecoveryPhase } from "../../../../../src/core/sync/recovery-v2";
+import { storageUrl } from "../../../../../src/core/sync/storage-url";
 import { storageClientFor, type StorageClient } from "../../../../../src/core/sync/storage";
 import { commitHash } from "../../../../../src/core/sync/commit-log";
 import { createAttachmentStore, type AttachmentTransfer } from "../attachments/store";
 import { hashFile } from "../attachments/native";
 import type { Session } from "../auth/session";
 
+const rebuilding = new WeakSet<Session>();
+
 /** Native recovery uses SQLite's online backup, never copies an open WAL file.
  * The active filename is one atomic SQLite row; a crash sees old or new DB. */
 export async function recoverMobileWorkspace(session: Session, reload: () => Promise<void>, phase: (value: RecoveryPhase) => void, client?: StorageClient) {
+  if (rebuilding.has(session)) throw new Error("本地副本正在升级");
+  rebuilding.add(session);
+  try {
+    return await rebuild(session, reload, phase, client);
+  } finally {
+    rebuilding.delete(session);
+  }
+}
+
+async function rebuild(session: Session, reload: () => Promise<void>, phase: (value: RecoveryPhase) => void, client?: StorageClient) {
   if (!session.creds.bucket) throw new Error("此工作区未连接存储桶");
   const config = session.creds.bucket;
   let shadowSqlite: ReturnType<typeof openDatabaseSync> | null = null;
@@ -22,6 +35,7 @@ export async function recoverMobileWorkspace(session: Session, reload: () => Pro
   const protectedTransfers: AttachmentTransfer[] = [];
   const protectedAttachments: ReturnType<typeof createAttachmentStore>["list"] extends () => infer R ? R : never = [];
   return recoverV2Workspace(session.replica.db, client ?? storageClientFor(config), config, session.workspaceId, {
+    legacyPeerUrl: storageUrl(config.endpoint, config.bucket, config.prefix),
     phase,
     async pauseAndFlush() {
       await session.sync.stop();

@@ -44,6 +44,7 @@ export async function rebuildBrowserReplica(
     config,
     workspaceId,
     {
+      legacyPeerUrl: url,
       phase,
       async pauseAndFlush() {
         await files.reserve();

@@ -11,7 +11,7 @@
 // the tab is alive and online. Status transitions and post-pull invalidation
 // hints are broadcast as events.
 
-import { hydrateLocalHistory, openActiveReplica } from "../../core/sync/recovery-local.ts";
+import { hydrateLocalHistory, openActiveReplica, upgradeBuckets } from "../../core/sync/recovery-local.ts";
 import { recoveryItems, resolveRecoveryItem } from "../../core/sync/recovery-v2.ts";
 import { rebuildBrowserReplica } from "./rebuild.ts";
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
@@ -29,6 +29,7 @@ import { randomSuffix } from "../../core/ids.ts";
 import { MhError, errorCode } from "../../core/errors.ts";
 import { t } from "../i18n/t.ts";
 import { setLocaleOverride, type Locale } from "../i18n/locale.ts";
+import { bucketPushCursor } from "../../core/sync/retention-protocol.ts";
 import { changesAfterSeq } from "../../core/crdt.ts";
 import { referencedHashes, setBlobBytesResolver } from "../../core/blobs-core.ts";
 import { syncWithPeer } from "../../core/sync/client.ts";
@@ -139,6 +140,7 @@ export interface ReplicaStatus {
   bucketSyncing?: boolean;
   /** Last direct bucket sync error, if the dirty changes could not be saved. */
   bucketError?: string;
+  upgradeBuckets?: string[];
   recoveryRequired?: string[];
   checkpointInstalled?: boolean;
   /** A sync round (any trigger: load, focus, online, debounced push, poll) is
@@ -277,7 +279,7 @@ const ready: Promise<void> = (async () => {
   const bucketDirty = hasPendingBucketPush(driver);
   if (bucketDirty) scheduleBucketFlush();
   const checkpointInstalled = !!driver.query("SELECT 1 FROM meta WHERE key='sync_v2_checkpoint'").get();
-  setStatus({ state: "ready", node, paired, bucketDirty, checkpointInstalled });
+  setStatus({ state: "ready", node, paired, bucketDirty, checkpointInstalled, upgradeBuckets: upgradeBuckets(driver) });
 })().catch((e) => {
   setStatus({ state: "error", error: e instanceof Error ? e.message : String(e) });
   throw e;
@@ -336,7 +338,7 @@ setBlobBytesResolver(browserRoomBlob);
 function hasPendingBucketPush(d: DbDriver): boolean {
   const node = getNodeId(d);
   return enabledStoragePeers(d).some(
-    (p) => changesAfterSeq(d, p.push_cursor, { onlyNode: node }).changes.length > 0,
+    (p) => changesAfterSeq(d, bucketPushCursor(d, p.url, p.push_cursor), { onlyNode: node, limit: 1 }).changes.length > 0,
   );
 }
 
@@ -564,6 +566,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
       bucketSyncing: false,
       syncing: false,
       recoveryRequired,
+      upgradeBuckets: upgradeBuckets(d),
       bucketError: bucketErrors.join("; ") || undefined,
     });
     if (touched.length || pushed) {
@@ -780,7 +783,7 @@ const ops: Record<string, Op> = {
       },() => setStatus({ syncing: true }));
       bucketInitialSynced.clear();
       setStatus({ state:"ready", node:getNodeId(requireDb()), paired:!!getPeer(requireDb(),origin)?.token,
-        lastSync:undefined, bucketDirty:true, bucketError:undefined, recoveryRequired:[], checkpointInstalled:true });
+        lastSync:undefined, bucketDirty:true, bucketError:undefined, recoveryRequired:[], upgradeBuckets:[], checkpointInstalled:true });
       post({ event:"synced", datasets:["documents","doc_blocks","databases","records"], rowIds:[], pushed:0, pulled:0 });
       schedulePush();
       return result;
@@ -1187,7 +1190,7 @@ const ops: Record<string, Op> = {
       state: "ready",
       paired: false,
       node: getNodeId(requireDb()),
-      checkpointInstalled:false,
+      checkpointInstalled:false, upgradeBuckets:[],
       recoveryRequired:[],
       hydrated: undefined,
       lastSync: undefined,

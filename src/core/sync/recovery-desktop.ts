@@ -28,6 +28,7 @@ export async function rebuildDesktopReplica(
       config,
       workspaceId,
       {
+        legacyPeerUrl: url,
         async pauseAndFlush() {
           // The desktop shell has flushed its renderers and stopped its sidecar.
           // Keep other local writers out until the pointer commits or rolls back.

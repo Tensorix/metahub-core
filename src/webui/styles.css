@@ -3207,3 +3207,15 @@
   overflow-wrap: anywhere;
 }
 .device-enroll .enroll-cmd { user-select: text; margin-top: 10px; }
+
+.sync-upgrade { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; }
+.sync-upgrade > div { flex:1 1 18rem; }
+.sync-upgrade p { margin:2px 0 0; }
+.main > .sync-upgrade, main > .sync-upgrade { margin:12px 24px 0; }
+.page-header-banner > .sync-upgrade + .set-callout { margin-top:8px; }
+.sync-upgrade-dialog { margin:auto; padding:20px; width:min(26rem, calc(100% - 32px)); border:1px solid var(--line);
+  border-radius:var(--radius-sm); background:var(--bg); color:var(--fg); }
+.sync-upgrade-dialog::backdrop { background:rgb(0 0 0 / 40%); }
+.sync-upgrade-dialog p { margin:8px 0 16px; }
+.sync-upgrade-dialog select { display:block; margin-bottom:12px; max-width:100%; }
+.sync-upgrade-dialog .btn + .btn { margin-left:8px; }

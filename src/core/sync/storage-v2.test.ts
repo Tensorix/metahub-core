@@ -5,6 +5,8 @@ import { createDocument, getDocument } from "../documents.ts";
 import { captureCurrentCheckpoint, installCurrentCheckpoint } from "./current-checkpoint.ts";
 import { createV2Bucket } from "./bucket-v2.ts";
 import { syncWithStorageV2 } from "./storage-v2.ts";
+import { dataMap } from "./data-map-db.ts";
+import { addStoragePeer, updatePeerStatus } from "./peers.ts";
 import { readReplicaGeneration, writeReplicaGeneration } from "./retention-protocol.ts";
 import { MhError } from "../errors.ts";
 import type { StorageClient, StorageReadResult, S3Config } from "./storage.ts";
@@ -115,5 +117,27 @@ test("late transport completion after abort never acknowledges the durable outbo
     await syncWithStorageV2(f.a, f.client, f.config);
     expect((await f.bucket.log(f.root).read()).state.members.a!.sequence).toBeGreaterThan(0);
     expect((await f.bucket.log(f.root).read()).sequence).toBe(2);
+  } finally { f.a.close(); f.b.close(); }
+});
+
+test("bucket status follows v2 acknowledgements through partial and completed uploads", async () => {
+  const f = await pair();
+  const url = "s3://test/workspace", other = "s3://test/other";
+  try {
+    for (const target of [url, other]) {
+      addStoragePeer(f.a, { url: target, config: f.config });
+      updatePeerStatus(f.a, target, "ok");
+    }
+    f.a.query("INSERT INTO meta(key,value) VALUES('local_v2_history_peer',?)").run(url);
+    const status = (target: string) => dataMap(f.a).places.find(p => p.url === target)!;
+    await syncWithStorageV2(f.a, f.client, f.config, { pushLimit: 1 });
+    expect(status(url).freshness).toBe("behind");
+    await syncWithStorageV2(f.a, f.client, f.config);
+    expect(status(url).freshness).toBe("current");
+    expect(status(other).freshness).toBe("behind");
+    createDocument(f.a, { title: "new local edit" });
+    expect(status(url).freshness).toBe("behind");
+    await syncWithStorageV2(f.a, f.client, f.config);
+    expect(status(url).lag).toBe(0);
   } finally { f.a.close(); f.b.close(); }
 });

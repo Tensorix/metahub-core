@@ -3,7 +3,7 @@ import { MhError } from "../errors.ts";
 import { addPeer, addStoragePeer, getPeer, listPeers } from "./peers.ts";
 import { loadV2DocumentHistory } from "./recovery-v2.ts";
 import { storageClientFor } from "./storage.ts";
-import { readReplicaGeneration } from "./retention-protocol.ts";
+import { needsBucketUpgrade, readReplicaGeneration } from "./retention-protocol.ts";
 
 const pointer = "local_recovery_successor";
 export const replicaName = (id: string) => `replica-${id}.db`;
@@ -60,6 +60,10 @@ export function publishSuccessor(source: DbDriver, name: string) {
       "CREATE TRIGGER retired_replica BEFORE INSERT ON crdt_changes BEGIN SELECT RAISE(ABORT,'local replica was rebuilt; reopen it'); END",
     );
   });
+}
+
+export function upgradeBuckets(db: DbDriver): string[] {
+  return listPeers(db).filter(p => p.enabled && p.kind === "s3" && p.config && needsBucketUpgrade(db, p.url)).map(p => p.url);
 }
 
 export function localRecoveryTarget(db: DbDriver, url: string) {
