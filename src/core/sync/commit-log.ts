@@ -90,14 +90,15 @@ export function createCommitLog<S, T>(options: {
   };
   return {
     initial,
-    async read(from = initial(), visit?: (record: CommitRecord<T>, head: CommitHead<S>, rejected: MhError | null) => Promise<void>): Promise<CommitHead<S>> {
+    async read(from = initial(), visit?: (record: CommitRecord<T>, head: CommitHead<S>, rejected: MhError | null) => Promise<void>, through = Infinity): Promise<CommitHead<S>> {
       let head = from;
-      for (;;) {
+      while (head.sequence < through) {
         const next = await readNext(head);
         if (!next) return head;
         if (visit) await visit(next.record, next.head, next.rejected);
         head = next.head;
       }
+      return head;
     },
     async append(requestId: string, propose: (state: S) => T): Promise<CommitHead<S>> {
       if (!await client.conditionalCreateCapability?.())

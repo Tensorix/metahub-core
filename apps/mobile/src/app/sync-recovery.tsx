@@ -49,12 +49,12 @@ export default function SyncRecoveryScreen() {
           const local = JSON.parse(item.local), remote = item.remote ? JSON.parse(item.remote) : null;
           return <Column key={item.id}>
             <Text>{local.title ?? item.target}</Text>
-            <Text>{`本地内容：${local.body ?? JSON.stringify(local)}`}</Text>
-            <Text>{`云端内容：${remote?.body ?? (remote ? JSON.stringify(remote) : "原位置已删除或没有共同基线")}`}</Text>
+            <Text>{`待恢复内容：${local.body ?? JSON.stringify(local)}`}</Text>
+            <Text>{`另一份内容：${remote?.body ?? (remote ? JSON.stringify(remote) : "原位置已删除或没有共同基线")}`}</Text>
             <Button label="创建恢复副本" disabled={busy} onPress={() => void act(async () => {
               resolveRecoveryItem(session.replica.db, item.id, "copy"); session.sync.requestSync();
             })} />
-            <Button label="丢弃此项本地编辑" disabled={busy} onPress={() => void act(async () => {
+            <Button label="丢弃此项编辑" disabled={busy} onPress={() => void act(async () => {
               resolveRecoveryItem(session.replica.db, item.id, "discard");
             })} />
           </Column>;

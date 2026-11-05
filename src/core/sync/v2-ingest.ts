@@ -72,11 +72,12 @@ export function ingestV2Batch(db: DbDriver, batch: BucketBatch) {
         }
       }
       if ((terminal && change.col === "text" && !deliberateDeletion && current?.hlc !== change.hlc) || (!terminal && conflict)) {
+        const incomingWins = !terminal && current && change.hlc > current.hlc;
         const decode = (value: string | null) => value === null ? "" : JSON.parse(value);
         db.query("INSERT OR IGNORE INTO sync_recovery_items(id,kind,target,local,remote) VALUES(?,?,?,?,?)")
           .run(`${batch.workspaceId}:${change.hlc}:${change.row_id}:${change.col}`, "block", change.row_id,
-            JSON.stringify({ title: terminal ? "已删除段落的编辑" : "段落编辑冲突", body: decode(change.value) }),
-            current ? JSON.stringify({ body: decode(current.value) }) : null);
+            JSON.stringify({ title: terminal ? "已删除段落的编辑" : "段落编辑冲突", body: decode(incomingWins ? current.value : change.value), recoveryVersion: 2 }),
+            current ? JSON.stringify({ body: decode(incomingWins ? change.value : current.value) }) : null);
       }
       if (orphan || terminal || (change.dataset === "doc_blocks" && deleted.has(change.row_id) && change.col === "__deleted" && change.value !== "1")) continue;
       const result = ingestDetailed(db, [change]);

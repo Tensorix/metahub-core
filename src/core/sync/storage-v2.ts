@@ -8,8 +8,8 @@ import { changesAfterSeq } from "../crdt.ts";
 import { getNodeId } from "../node.ts";
 import type { S3Config, StorageClient, StorageSyncOpts } from "./storage.ts";
 import type { SyncResult } from "./client.ts";
-import { createV2Bucket, BucketBatchSchema, type BucketBatch } from "./bucket-v2.ts";
-import { readReplicaGeneration, writeReplicaGeneration } from "./retention-protocol.ts";
+import { createV2Bucket, BucketBatchSchema, type BucketBatch, type BucketRoot } from "./bucket-v2.ts";
+import { readReplicaGeneration, writeReplicaGeneration, type ReplicaGeneration } from "./retention-protocol.ts";
 import { MhError } from "../errors.ts";
 import { DAY_MS, RETENTION_POLICY } from "./retention-state.ts";
 
@@ -20,11 +20,50 @@ function get<T>(db: DbDriver, key: string, fallback: T): T {
 function set(db: DbDriver, key: string, value: unknown) {
   db.query("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, JSON.stringify(value));
 }
+function checkAbort(signal?: AbortSignal) {
+  if (signal?.aborted) throw signal.reason ?? new Error("sync aborted");
+}
 interface Outbox { requestId: string; cursor: number; batch: BucketBatch; hash?: string }
+export async function pullV2Log(db: DbDriver, bucket: ReturnType<typeof createV2Bucket>,
+  root: BucketRoot, log: ReturnType<typeof bucket.log>,
+  generation: ReplicaGeneration, opts: StorageSyncOpts = {}, through = Infinity) {
+  const check = () => checkAbort(opts.signal);
+  const key = `sync_v2_transport:${generation.incarnationId}`;
+  const checkpointMeta = get(db, "sync_v2_checkpoint", { coveredSequence: 0 });
+  let local = get(db, key, { applied: checkpointMeta.coveredSequence, cursor: 0, origin: 0 });
+  let pulled = 0;
+  // Validate and ingest all referenced objects before acknowledging their slot.
+  // A missing middle object stops here; a later slot never proves its coverage.
+  const head = await log.read(undefined, async (record, at, rejected) => {
+    check();
+    if (record.sequence <= local.applied) return;
+    if (at.state.epoch !== generation.epoch || at.state.checkpoint !== generation.checkpoint)
+      throw new MhError("rebootstrap_required", "checkpoint changed while downloading; preserve local edits before rebuilding");
+    const event = record.payload;
+    const batch = !rejected && event.type === "batch" ? await bucket.batchFor(root, event) : null;
+    check();
+    writeTx(db, () => {
+      local = get(db, key, local);
+      if (record.sequence <= local.applied) return;
+      if (batch) {
+        const result = ingestV2Batch(db, batch);
+        if (result.poisoned || Object.values(result.skewed).some(n => n > 0)) throw new MhError("clock_skew", "v2 batch cannot be completely applied");
+        observeHistory(db, batch.changes, at.serverTime!);
+        confirmPeerChanges(db, batch.changes);
+        pulled += result.received;
+      }
+      local = { ...local, applied: record.sequence };
+      set(db, key, local);
+    });
+    if (batch) opts.onIngest?.();
+  }, through);
+  return { head, local, pulled };
+}
+
 /** One durable source stream per incarnation. SQLite seq is a local scan cursor
  * only; the wire stream carries its own consecutive origin sequence numbers. */
 export async function syncWithStorageV2(db: DbDriver, client: StorageClient, config: S3Config, opts: StorageSyncOpts = {}): Promise<SyncResult> {
-  const check = () => { if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("sync aborted"); };
+  const check = () => checkAbort(opts.signal);
   check();
   const transport = client;
   const guarded = async <T>(operation: () => Promise<T>): Promise<T> => {
@@ -56,32 +95,11 @@ export async function syncWithStorageV2(db: DbDriver, client: StorageClient, con
   if (head.state.epoch !== generation.epoch || head.state.checkpoint !== generation.checkpoint)
     throw new MhError("rebootstrap_required", "current checkpoint must be installed before upload");
   const key = `sync_v2_transport:${generation.incarnationId}`;
-  const checkpointMeta = get(db, "sync_v2_checkpoint", { coveredSequence: 0 });
-  let local = get(db, key, { applied: checkpointMeta.coveredSequence, cursor: 0, origin: 0 });
-  let pulled = 0, pushed = 0;
-  // Validate and ingest all referenced objects before acknowledging their slot.
-  // A missing middle object stops here; a later slot never proves its coverage.
-  head = await log.read(undefined, async (record, at, rejected) => {
-    check();
-    if (record.sequence <= local.applied) return;
-    if (at.state.epoch !== generation.epoch || at.state.checkpoint !== generation.checkpoint)
-      throw new MhError("rebootstrap_required", "checkpoint changed while downloading; preserve local edits before rebuilding");
-    const event = record.payload;
-    const batch = !rejected && event.type === "batch" ? await bucket.batchFor(root, event) : null;
-    check();
-    writeTx(db, () => {
-      if (batch) {
-        const result = ingestV2Batch(db, batch);
-        if (result.poisoned || Object.values(result.skewed).some(n => n > 0)) throw new MhError("clock_skew", "v2 batch cannot be completely applied");
-        observeHistory(db, batch.changes, at.serverTime!);
-        confirmPeerChanges(db, batch.changes);
-        pulled += result.received;
-      }
-      local = { ...local, applied: record.sequence };
-      set(db, key, local);
-    });
-    if (batch) opts.onIngest?.();
-  });
+  const download = await pullV2Log(db, bucket, root, log, generation, opts);
+  head = download.head;
+  let local = download.local;
+  const pulled = download.pulled;
+  let pushed = 0;
   check();
   let member = head.state.members[generation.incarnationId];
   if (!member) {

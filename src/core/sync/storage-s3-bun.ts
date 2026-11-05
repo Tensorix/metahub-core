@@ -116,7 +116,7 @@ export async function putBucketCors(
   if (clean.length === 0) throw new MhError("invalid_input", "putBucketCors: no origins given");
   const { aws, url } = corsEndpoint(config);
 
-  const existing = await getBucketCors(config).catch(() => null);
+  const existing = await getBucketCors(config);
   const xml = buildCorsXml(existing, clean, opts.merge ?? false);
   const body = new TextEncoder().encode(xml);
   const contentMd5 = new Bun.CryptoHasher("md5").update(body).digest("base64");

@@ -1,3 +1,5 @@
+import { pullV2Log } from "./storage-v2.ts";
+import { writeTx } from "../driver.ts";
 import { pendingPeerChanges } from "./peer-v2.ts";
 import { historyChangeKey } from "./history-observation.ts";
 import { commitHash } from "./commit-log.ts";
@@ -79,7 +81,7 @@ export async function executeRetention(db: DbDriver, client: StorageClient, conf
   if (!options.enabled || !report.eligible) return { status: "dry_run" as const, report };
   const bucket = createV2Bucket(client, config), root = (await bucket.root())!, log = bucket.log(root);
   await log.append(crypto.randomUUID(), () => ({ type: "clock" }));
-  let head = await log.read();
+  const head = await log.read();
   if (!head.state.preparing) {
     const id = crypto.randomUUID();
     await log.append(`prepare-${id}`, state => ({ type: "prepare", epoch: state.epoch, id }));
@@ -92,9 +94,10 @@ export async function executeRetention(db: DbDriver, client: StorageClient, conf
   }
   if (!preparing.members.every(id => head.state.members[id]!.sealed)) return { status: "waiting_for_seals" as const, report };
   const generation = readReplicaGeneration(db)!;
-  const transport = db.query("SELECT value FROM meta WHERE key=?").get(`sync_v2_transport:${generation.incarnationId}`) as { value: string } | null;
-  if (!transport || changesAfterSeq(db, JSON.parse(transport.value).cursor, { onlyNode: getNodeId(db), limit: 1 }).changes.length)
-    throw new MhError("busy", "post-seal local edits must remain queued; use another complete node for collection");
+  if (generation.epoch !== head.state.epoch || generation.checkpoint !== head.state.checkpoint)
+    throw new MhError("rebootstrap_required", "retention epoch changed");
+  const downloaded = await pullV2Log(db, bucket, root, log, generation, {}, head.sequence);
+  if (downloaded.head.hash !== head.hash) throw new MhError("busy", "sealed log prefix unavailable");
   // Archive previously collected history before moving content out of current
   // state. Any missing dependency aborts the commit and preserves old data.
   const previous = await bucket.checkpointFor(root, generation.checkpoint!, generation.epoch);
@@ -103,24 +106,37 @@ export async function executeRetention(db: DbDriver, client: StorageClient, conf
     if (archive.documentId !== ref.documentId) throw new MhError("invalid_input", "history identity mismatch");
     installDocumentArchive(db, archive, generation.workspaceId);
   }
-  const checkpoint = captureCurrentCheckpoint(db, generation.workspaceId, generation.epoch + 1);
-  checkpoint.coveredSequence = head.sequence;
-  checkpoint.sourceCoverage = Object.fromEntries(Object.entries(head.state.members).map(([id, member]) => [id, member.sequence]));
-  for (const row of db.query("SELECT id FROM documents ORDER BY id").all() as { id: string }[]) {
-    const collected = captureDocumentArchive(db, generation.workspaceId, row.id);
-    collected.observedAt = collected.changes.map((_, i) => collected.observedAt?.[i] ?? head.serverTime!);
-    const archive = retainHistoryWindow(collected, head.serverTime! - RETENTION_POLICY.historyDays * DAY_MS);
-    for (const part of splitDocumentArchive(archive)) checkpoint.history.push({ documentId: row.id, hash: await bucket.publish(part) });
-  }
+  const latest = await log.read(head);
+  if (latest.state.preparing?.id !== preparing.id || latest.state.epoch !== generation.epoch)
+    throw new MhError("busy", "collection barrier changed");
+  const { checkpoint, parts } = writeTx(db, () => {
+    const transport = db.query("SELECT value FROM meta WHERE key=?").get(`sync_v2_transport:${generation.incarnationId}`) as { value: string } | null;
+    const local = transport && JSON.parse(transport.value);
+    if (readReplicaGeneration(db)?.incarnationId !== generation.incarnationId || local?.applied !== head.sequence)
+      throw new MhError("busy", "local replica does not cover the sealed log");
+    if (pendingPeerChanges(db).length || changesAfterSeq(db, local.cursor, { onlyNode: getNodeId(db), limit: 1 }).changes.length)
+      throw new MhError("busy", "post-seal local edits must remain queued; use another complete node for collection");
+    const checkpoint = captureCurrentCheckpoint(db, generation.workspaceId, generation.epoch + 1);
+    checkpoint.coveredSequence = head.sequence;
+    checkpoint.sourceCoverage = Object.fromEntries(Object.entries(head.state.members).map(([id, member]) => [id, member.sequence]));
+    const parts: DocumentArchive[] = [];
+    for (const row of db.query("SELECT id FROM documents ORDER BY id").all() as { id: string }[]) {
+      const collected = captureDocumentArchive(db, generation.workspaceId, row.id);
+      collected.observedAt = collected.changes.map((_, i) => collected.observedAt?.[i] ?? head.serverTime!);
+      const archive = retainHistoryWindow(collected, head.serverTime! - RETENTION_POLICY.historyDays * DAY_MS);
+      for (const part of splitDocumentArchive(archive)) parts.push(part);
+    }
+    return { checkpoint, parts };
+  });
+  for (const part of parts) checkpoint.history.push({ documentId: part.documentId, hash: await bucket.publish(part) });
   const candidates = new Set(report.candidates);
   checkpoint.changes = checkpoint.changes.filter(c => c.dataset !== "doc_blocks" || !candidates.has(c.row_id));
-  checkpoint.deletedBlocks = checkpoint.deletedBlocks.filter(c => !candidates.has(c.id)).map(c => ({ ...c, confirmedAt: report.deletionTimes[c.id] ?? report.observedAt }));
+  checkpoint.deletedBlocks = checkpoint.deletedBlocks.filter(c => !candidates.has(c.id)).map(c => ({ ...c, confirmedAt: report.deletionTimes[c.id] ?? head.serverTime! }));
   const digest = await bucket.publish(checkpoint);
   // Conditional slot arbitration revalidates the barrier and deadline. A slow
   // archive upload cannot commit after a concurrent cancellation.
-  await log.append(`commit-${preparing.id}`, state => ({ type: "commit", epoch: state.epoch, id: preparing.id, checkpoint: digest }));
-  head = await log.read();
-  return { status: "committed" as const, report, checkpoint: digest, protectedUntil: head.state.protectedUntil };
+  const committed = await log.append(`commit-${preparing.id}`, () => ({ type: "commit", epoch: generation.epoch, id: preparing.id, checkpoint: digest }));
+  return { status: "committed" as const, report, checkpoint: committed.state.checkpoint!, protectedUntil: committed.state.protectedUntil };
 }
 
 /** Delete only objects covered by an accepted checkpoint after its protection

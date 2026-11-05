@@ -49,3 +49,13 @@ test("non-managed (user) CORS rules are preserved", () => {
   expect(xml).toContain("<ID>metahub-pwa</ID>");
   expect(origins(xml)).toContain(A);
 });
+
+test("new and existing managed rules expose bucket time", () => {
+  const fresh = buildCorsXml(null, [A], false);
+  const legacy = fresh.replace("<ExposeHeader>Date</ExposeHeader>", "");
+  for (const xml of [fresh, buildCorsXml(legacy, [B], true)]) {
+    expect(xml).toContain("<ExposeHeader>Date</ExposeHeader>");
+    expect(xml).toContain("<ExposeHeader>ETag</ExposeHeader>");
+    expect(xml).toContain(A);
+  }
+});

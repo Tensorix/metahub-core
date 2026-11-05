@@ -90,7 +90,7 @@ function managedCorsRule(origins: string[]): string {
     `<CORSRule><ID>${MANAGED_CORS_RULE_ID}</ID>${o}` +
     `<AllowedMethod>GET</AllowedMethod><AllowedMethod>PUT</AllowedMethod>` +
     `<AllowedMethod>HEAD</AllowedMethod><AllowedMethod>DELETE</AllowedMethod>` +
-    `<AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader>` +
+    `<AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><ExposeHeader>Date</ExposeHeader>` +
     `<MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule>`
   );
 }
@@ -116,9 +116,9 @@ export async function presignGet(config: S3Config, key: string, expiresSec: numb
 export async function getBucketCors(config: S3Config): Promise<string | null> {
   const { aws, url } = corsEndpoint(config);
   const res = await aws.fetch(url, { method: "GET" });
-  if (res.status === 404) return null; // NoSuchCORSConfiguration
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
+    if (res.status === 404 && /<Code>\s*NoSuchCORSConfiguration\s*<\/Code>/.test(detail)) return null;
     throw new Error(`S3 get-cors failed: ${res.status} ${detail.slice(0, 200)}`);
   }
   return await res.text();

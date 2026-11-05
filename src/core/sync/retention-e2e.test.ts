@@ -34,7 +34,7 @@ function fixture() {
   const sync = (db: Database) => syncWithStorageV2(db, client, config);
   return { objects, client, config, db, sync, advance: (days: number) => { now += days * DAY_MS; }, close: () => databases.forEach(db => db.close()) };
 }
-test("encrypted two-device lifecycle: 30-day seal, history checkpoint, seven-day cleanup, obsolete device recovery", async () => {
+test.each([false, true])("sealed checkpoint includes the last batch across cleanup and recovery (missing on first read: %s)", async missing => {
   const f = fixture();
   try {
     const a = f.db(), b = f.db(), old = f.db(), bucket = createV2Bucket(f.client, f.config);
@@ -54,8 +54,32 @@ test("encrypted two-device lifecycle: 30-day seal, history checkpoint, seven-day
     f.advance(2); await f.sync(a); await f.sync(b); await f.sync(a);
     expect((await executeRetention(a, f.client, f.config, { enabled: false })).status).toBe("dry_run");
     expect((await executeRetention(a, f.client, f.config, { enabled: true })).status).toBe("waiting_for_seals");
-    await f.sync(a); await f.sync(b); await f.sync(a);
-    const result = await executeRetention(a, f.client, f.config, { enabled: true });
+    await f.sync(a); await f.sync(a);
+    const late = createDocument(b, { title: "late", body: "last confirmed batch" });
+    let roots = 0;
+    let missingKey = "", missingSequence = 0;
+    const client: StorageClient = { ...f.client, getWithMetadata: async (key, options) => {
+      if (key.endsWith("/root") && ++roots === 2) {
+        await f.sync(b);
+        await bucket.log(root).read(undefined, async record => {
+          if (record.payload.type === "batch" && record.payload.member === "b") {
+            missingKey = bucket.objectKey(record.payload.objectHash);
+            missingSequence = record.sequence;
+          }
+        });
+      }
+      if (missing && key === missingKey) return null;
+      return f.client.getWithMetadata!(key, options);
+    } };
+    if (missing) {
+      await expect(executeRetention(a, client, f.config, { enabled: true })).rejects.toMatchObject({ code: "busy" });
+      const progress = a.query("SELECT value FROM meta WHERE key='sync_v2_transport:a'").get() as { value: string };
+      expect(JSON.parse(progress.value).applied).toBe(missingSequence - 1);
+      expect((await bucket.log(root).read()).state.checkpoint).toBe(root.checkpoint);
+      expect(getDocument(a, late.id)).toBeNull();
+      await f.sync(a);
+    }
+    const result = await executeRetention(a, missing ? f.client : client, f.config, { enabled: true });
     expect(result.status).toBe("committed");
     expect((await cleanRetiredV2Objects(f.client, f.config, { enabled: true })).deleted).toBe(0);
     await expect(f.sync(old)).rejects.toMatchObject({ code: "rebootstrap_required" });
@@ -67,6 +91,7 @@ test("encrypted two-device lifecycle: 30-day seal, history checkpoint, seven-day
       createShadow: async () => f.db(), swap: async shadow => { replacement = shadow as Database; },
       releaseShadow: async () => {}, resume: async () => {},
     });
+    expect(getDocument(replacement!, late.id)?.body).toBe(late.body);
     expect(recovery.pending).toBeGreaterThan(0);
     expect(getDocument(replacement!, doc.id)?.body).toBe("retained paragraph");
     expect(readReplicaGeneration(replacement!)?.epoch).toBe(1);
@@ -106,8 +131,10 @@ test("same-block edits preserve both conflicting texts and ordinary edits keep i
     await f.sync(a); await f.sync(b); await f.sync(a);
     for (const db of [a, b]) {
       expect((db.query("SELECT count(*) AS n FROM doc_blocks WHERE __deleted=0").get() as { n: number }).n).toBe(1);
-      const preserved = JSON.stringify(recoveryItems(db)) + getDocument(db, doc.id)!.body;
-      expect(preserved).toContain("left edit"); expect(preserved).toContain("right edit");
+      const winner = getDocument(db, doc.id)!.body;
+      const copies = recoveryItems(db).map(item => getDocument(db, resolveRecoveryItem(db, item.id, "copy")!)!.body);
+      expect(copies).toContain(winner === "left edit" ? "right edit" : "left edit");
+
     }
   } finally { f.close(); }
 });
@@ -378,5 +405,54 @@ test("competing collectors produce one accepted epoch transition", async () => {
     const head = await bucket.log(root).read(undefined,async (record,_,rejected) => { if (!rejected && record.payload.type === "commit") commits++; });
     expect(head.state.epoch).toBe(1); expect(commits).toBe(1);
     await bucket.checkpointFor(root,head.state.checkpoint!,head.state.epoch);
+  } finally { f.close(); }
+});
+
+test("recovery retains offline reparent intent", async () => {
+  const f = fixture();
+  try {
+    const a = f.db(), b = f.db(), bucket = createV2Bucket(f.client, f.config);
+    const doc = createDocument(a, { title: "shared", body: "first\n\nsecond" });
+    const checkpoint = captureCurrentCheckpoint(a, "workspace", 0), root = await bucket.initialize(checkpoint);
+    installCurrentCheckpoint(b, checkpoint, "workspace");
+    for (const [db, incarnationId] of [[a,"a"],[b,"b"]] as const)
+      writeReplicaGeneration(db, { protocolVersion: 2, workspaceId: "workspace", epoch: 0, checkpoint: root.checkpoint, incarnationId });
+    await f.sync(a); await f.sync(b);
+    const parent = createDocument(a, { title: "parent" });
+    updateDocument(a, doc.id, { parent_id: parent.id });
+    await f.sync(a); await f.sync(b);
+    updateDocument(b, doc.id, { parent_id: null, database_id: "offline-db", body: "offline body" });
+    let replacement: Database | null = null;
+    const result = await recoverV2Workspace(b, f.client, f.config, "workspace", {
+      pauseAndFlush: async () => {}, protect: async () => ({ proof: "verified" }), createShadow: async () => f.db(),
+      swap: async db => { replacement = db as Database; }, releaseShadow: async () => {}, resume: async () => {},
+    });
+    expect(result.pending).toBeGreaterThan(0);
+    const items = recoveryItems(replacement!);
+    const structure = items.find(item => item.kind === "entity")!;
+    expect(JSON.parse(structure.local).fields).toMatchObject({ parent_id: null, database_id: "offline-db" });
+    expect(items.some(item => JSON.parse(item.local).body === "offline body")).toBe(true);
+    const copy = resolveRecoveryItem(replacement!, structure.id, "copy")!;
+    expect(getDocument(replacement!, copy)!.body).toContain("offline-db");
+  } finally { f.close(); }
+});
+
+test("legacy block copies use surviving version evidence and preserve both alternatives when ambiguous", () => {
+  const f = fixture();
+  try {
+    const db = f.db();
+    const doc = createDocument(db, { title: "legacy", body: "first" });
+    updateDocument(db, doc.id, { body: "second" }, { ifMatch: documentVersion(db, doc.id), preserveBlockIdentity: true });
+    const row = db.query("SELECT row_id, hlc FROM crdt_changes WHERE dataset='doc_blocks' AND col='text' ORDER BY hlc DESC LIMIT 1").get() as { row_id: string; hlc: string };
+    recoveryItems(db);
+    for (const [hlc, expected] of [[row.hlc, "first"], ["unknown", "版本一\nsecond\n\n版本二\nfirst"]] as const) {
+      const id = `workspace:${hlc}:${row.row_id}:text`;
+      db.query("INSERT INTO sync_recovery_items(id,kind,target,local,remote) VALUES(?,?,?,?,?)")
+        .run(id, "block", row.row_id, JSON.stringify({ title: "段落编辑冲突", body: "second" }), JSON.stringify({ body: "first" }));
+      expect(JSON.parse(recoveryItems(db)[0]!.local).body).toBe(expected);
+      const copy = resolveRecoveryItem(db, id, "copy")!;
+      expect(getDocument(db, copy)!.body).toBe(expected);
+      expect(resolveRecoveryItem(db, id, "copy")).toBe(copy);
+    }
   } finally { f.close(); }
 });

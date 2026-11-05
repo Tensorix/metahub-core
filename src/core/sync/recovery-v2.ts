@@ -23,9 +23,25 @@ function schema(db: DbDriver) {
     remote TEXT, status TEXT NOT NULL DEFAULT 'pending', result TEXT);
     CREATE TABLE IF NOT EXISTS sync_recovery_packages (id TEXT PRIMARY KEY, proof TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending');`);
 }
+function readableRecoveryItem(db: DbDriver, item: RecoveryItem): RecoveryItem {
+  if (item.kind !== "block" || !item.remote) return item;
+  const local = JSON.parse(item.local), other = JSON.parse(item.remote);
+  if (local.recoveryVersion || local.title !== "段落编辑冲突") return item;
+  const versions = db.query("SELECT hlc,value FROM crdt_changes WHERE dataset='doc_blocks' AND row_id=? AND col='text'")
+    .all(item.target) as { hlc: string; value: string | null }[];
+  const incoming = versions.find(v => item.id.endsWith(`:${v.hlc}:${item.target}:text`) && JSON.parse(v.value ?? '""') === local.body);
+  const alternatives = versions.filter(v => JSON.parse(v.value ?? '""') === other.body);
+  if (incoming && alternatives.length) {
+    if (alternatives.every(v => v.hlc < incoming.hlc))
+      return { ...item, local: JSON.stringify({ ...local, body: other.body }), remote: JSON.stringify({ body: local.body }) };
+    if (alternatives.every(v => v.hlc > incoming.hlc)) return item;
+  }
+  return { ...item, local: JSON.stringify({ ...local, body: `版本一\n${local.body}\n\n版本二\n${other.body}` }) };
+}
+
 export function recoveryItems(db: DbDriver): RecoveryItem[] {
   schema(db);
-  return db.query("SELECT * FROM sync_recovery_items WHERE status='pending' ORDER BY id").all() as RecoveryItem[];
+  return (db.query("SELECT * FROM sync_recovery_items WHERE status='pending' ORDER BY id").all() as RecoveryItem[]).map(item => readableRecoveryItem(db, item));
 }
 /** Explicit user decisions are idempotent. No TTL deletes unresolved items. */
 export function resolveRecoveryItem(db: DbDriver, id: string, action: "copy" | "discard"): string | null {
@@ -36,7 +52,7 @@ export function resolveRecoveryItem(db: DbDriver, id: string, action: "copy" | "
     if (item.status !== "pending") return item.result;
     let result: string | null = null;
     if (action === "copy") {
-      const local = JSON.parse(item.local);
+      const local = JSON.parse(readableRecoveryItem(db, item).local);
       // Non-document changes remain available as a readable recovery document;
       // they must not be replayed with obsolete identities or transport cursors.
       result = createDocument(db, { title: `${local.title ?? item.target} · 恢复副本`,
@@ -148,6 +164,15 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
     }
     for (const { id: docId } of candidates) {
       const local = getDocument(source, docId)!, remote = getDocument(shadow, docId);
+      const fields = Object.fromEntries((["parent_id", "database_id", "order_key"] as const)
+        .filter(field => remote && local[field] !== remote[field] && pending.some(c =>
+          c.dataset === "documents" && c.row_id === docId && c.col === field))
+        .map(field => [field, local[field]]));
+      if (Object.keys(fields).length) {
+        const itemId = await commitHash(new TextEncoder().encode(JSON.stringify([root.workspaceId, "document-structure", docId, fields])));
+        shadow.query("INSERT OR IGNORE INTO sync_recovery_items(id,kind,target,local,remote) VALUES(?,?,?,?,NULL)")
+          .run(itemId, "entity", docId, JSON.stringify({ title: "未提交的文档结构编辑", documentId: docId, fields }));
+      }
       if (remote && local.body === remote.body && local.title === remote.title) continue;
       if (sourceTransport && local.title === remote?.title && restoreUncontestedText(source, shadow, docId, pending)) continue;
       const itemId = await commitHash(new TextEncoder().encode(JSON.stringify([root.workspaceId, docId, local.title, local.body])));

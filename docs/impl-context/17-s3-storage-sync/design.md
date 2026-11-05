@@ -115,3 +115,13 @@
 **A3 真桶验证**:`core/sync/storage-s3.integration.test.ts`(env `METAHUB_TEST_S3_*` 守卫,默认 skip)对真实 COS 跑 list/get/put/del 往返 + 两节点收敛 + provision 创建/复用/错口令拒绝;真浏览器(no-origin)全流程见 [18-no-origin-shell](../18-no-origin-shell/design.md)。
 
 **涉及文件(Phase A 增量)**:`core/schema.ts`+`schema-init.ts`(seq 迁移)、`core/crdt.ts`/`compact.ts`(注释)、`core/sync/storage.ts`(攒批/GC/快照键/provision/`delimiter`/`isVirtualHostedStyle`)、`storage-s3-bun.ts`/`storage-s3-browser.ts`(条件写 + delimiter + vhost)、新增 `storage-s3.integration.test.ts`。
+
+## 已有桶升级 v2 浏览器同步
+
+升级桌面端后，从原有浏览器来源重新挂接桶，让桌面端合并托管 CORS 规则。也可以使用具备读取和写入桶 CORS 权限的 CLI：
+
+```sh
+mh config backup cors --url s3://BUCKET/PREFIX --allow https://shell.example,https://second-shell.example
+```
+
+将示例替换为已配置的桶 URL 和需要保留的**完整来源列表**。该命令重设 MetaHub 托管规则的来源，并保留其他规则。确认托管规则同时暴露 `Date` 和 `ETag`，再从浏览器重新同步。
