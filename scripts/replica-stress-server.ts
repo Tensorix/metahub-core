@@ -15,6 +15,7 @@ export function createReplicaStressServer(port = 0) {
   const db = new Database(join(folder, "relay.db"));
   db.exec("PRAGMA journal_mode=WAL;"); initSchema(db);
   const syncRoute = routes.find(route => route.method === "POST" && route.path === "/sync")!;
+  const healthRoute = routes.find(route => route.method === "GET" && route.path === "/health")!;
   const reports = new Map<string, unknown>();
   const faults = new Map<string, Fault>();
   const held = new Map<string, () => void>();
@@ -22,6 +23,7 @@ export function createReplicaStressServer(port = 0) {
   const server = Bun.serve({ hostname: "127.0.0.1", port, async fetch(req) {
     const url = new URL(req.url);
     if (req.headers.get("authorization") !== `Bearer ${STRESS_TOKEN}`) return new Response("fixture credentials required", { status: 401 });
+    if (url.pathname === "/health" && req.method === "GET") return healthRoute.handler(req, { db, node: getNodeId(db) });
     if (url.pathname === "/fixture" && req.method === "GET") return Response.json({ fixture: STRESS_FIXTURE, isolated: true });
     if (url.pathname === "/fixture/reports" && req.method === "GET") return Response.json(Object.fromEntries(reports));
     if (url.pathname === "/fixture/reports" && req.method === "POST") {

@@ -67,6 +67,7 @@ export async function runReplicaHttpStress(options: { queuedOps?: number; batchS
   let bSqlite = open("b");
   const b = measuredDriver(bSqlite).driver;
   const syncRoute = routes.find(route => route.method === "POST" && route.path === "/sync")!;
+  const healthRoute = routes.find(route => route.method === "GET" && route.path === "/health")!;
   const token = "isolated-http-stress-fixture";
   type Fault = "none" | "offline" | "lost-response" | "held-response" | "bad-json" | "unauthorized";
   let fault: Fault = "none";
@@ -76,8 +77,10 @@ export async function runReplicaHttpStress(options: { queuedOps?: number; batchS
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     async fetch(req) {
-      if (new URL(req.url).pathname !== "/sync") return new Response("not found", { status: 404 });
+      const path = new URL(req.url).pathname;
+      if (path !== "/sync" && path !== "/health") return new Response("not found", { status: 404 });
       if (req.headers.get("authorization") !== `Bearer ${token}` || fault === "unauthorized") return new Response("unauthorized", { status: 401 });
+      if (path === "/health") return healthRoute.handler(req, { db: relay, node: getNodeId(relay) });
       const request = await req.clone().json() as { changes: import("../src/core/crdt.ts").Change[] };
       const mode = fault;
       network.requests++;
