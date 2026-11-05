@@ -23,7 +23,7 @@ import { join, resolve } from "node:path";
 function assertSkillBody(path: string): number {
   const body = readFileSync(path, "utf8");
   if (body.length === 0) throw new Error("installed SKILL.md is empty");
-  if (!body.startsWith("---\n") || !body.includes("name: mh")) {
+  if (!/^---\r?\n/.test(body) || !body.includes("name: mh")) {
     throw new Error("installed SKILL.md is missing the expected frontmatter");
   }
   if (body !== EXPECTED_SKILL) {
