@@ -6,14 +6,15 @@ const CHUNK_BYTES = 64 * 1024;
 /** Feed bounded chunks and yield between them so a large snapshot does not
  * monopolize the native JS thread. fflate workers require Web Workers, which
  * Hermes does not provide. The bytes remain standard RFC 1952 gzip. */
-async function transform(bytes: Uint8Array, decompress: boolean): Promise<Uint8Array> {
+async function transform(bytes: Uint8Array, decompress: boolean, maxBytes = Infinity): Promise<Uint8Array> {
   if (decompress && (bytes.length < 18 || bytes[0] !== 0x1f || bytes[1] !== 0x8b || bytes[2] !== 8 || (bytes[3]! & 0xe0)))
     throw new Error("Invalid gzip segment");
   const chunks: Uint8Array[] = [];
   let size = 0;
   const ondata = (chunk: Uint8Array) => {
-    chunks.push(chunk);
     size += chunk.byteLength;
+    if (size > maxBytes) throw new Error("Decompressed object exceeds limit");
+    chunks.push(chunk);
   };
   const stream = decompress ? new Gunzip(ondata) : new Gzip({ mtime: 0 }, ondata);
   if (bytes.length === 0) stream.push(bytes, true);
@@ -33,5 +34,5 @@ async function transform(bytes: Uint8Array, decompress: boolean): Promise<Uint8A
 
 export const nativeStorageCodec: StorageCompressionCodec = {
   gzip: (bytes) => transform(bytes, false),
-  gunzip: (bytes) => transform(bytes, true),
+  gunzip: (bytes, maxBytes) => transform(bytes, true, maxBytes),
 };

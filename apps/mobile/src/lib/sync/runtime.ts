@@ -1,3 +1,4 @@
+import { setPasswordKdf } from "../../../../../src/core/sync/e2ee.ts";
 import QuickCrypto from "react-native-quick-crypto";
 import {
   setStorageClientFactory,
@@ -17,6 +18,11 @@ export function initializeNativeSyncRuntime(): Promise<void> {
     if (!nativeCrypto.subtle || !nativeCrypto.getRandomValues)
       throw new Error("Native sync crypto is unavailable; install a development build");
     Object.defineProperty(globalThis, "crypto", { value: nativeCrypto, configurable: true });
+    setPasswordKdf((passphrase, salt, iterations) => new Promise((resolve, reject) => {
+      QuickCrypto.pbkdf2(passphrase, salt, iterations, 32, "sha256", (error, key) => {
+        if (error) reject(error); else if (!key) reject(new Error("Native PBKDF2 returned no key")); else resolve(new Uint8Array(key));
+      });
+    }));
     setStorageCompressionCodec(nativeStorageCodec);
     setStorageClientFactory(createFetchStorageClient);
   }).catch((error: unknown) => {

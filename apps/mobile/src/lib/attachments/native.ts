@@ -28,7 +28,7 @@ const presentDirectly: NativePresentation = (open) => open();
 // session's native request until that request has actually settled.
 const activeTemps = new Set<string>();
 /** Hash in bounded chunks and yield, including large recordings/files. */
-async function hashFile(file: File, check: () => void): Promise<string> {
+export async function hashFile(file: File, check: () => void): Promise<string> {
   const hash = QuickCrypto.createHash("sha256");
   const handle = file.open(FileMode.ReadOnly);
   try {
@@ -725,6 +725,16 @@ export function createAttachmentManager(options: AttachmentManagerOptions) {
         progress.delete(entry.src);
       }
       emit();
+    },
+    async quiesce() {
+      if (picking) throw new Error("附件选择或导入尚未完成，请完成后再更新本地副本");
+      disposed = true;
+      cancellation.abort();
+      if (idle) clearTimeout(idle);
+      listeners.clear();
+      // A cancelled native copy/download can finish after abort. Wait for its
+      // owning promise before SQLite backup and attachment checksums begin.
+      await Promise.allSettled([...downloads.values(), ...(retrying ? [retrying] : []), ...(reconciling ? [reconciling] : [])]);
     },
     dispose() {
       disposed = true;

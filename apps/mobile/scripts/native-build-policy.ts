@@ -5,6 +5,7 @@ const diagnosticFlags = [
     "EXPO_PUBLIC_MH_TRANSPORT",
     "EXPO_PUBLIC_MH_NETWORK_STRESS",
     "EXPO_PUBLIC_MH_PERF",
+    "EXPO_PUBLIC_MH_RECOVERY_ADAPTER_ONLY",
 ];
 
 export function assertApplicationBuild(environment: Record<string, string | undefined>) {

@@ -146,6 +146,7 @@ export default function SettingsScreen() {
       <NativeHost style={{ flex: 1 }}>
         <FieldGroup>
           <FieldGroup.Section title="本地与同步">
+            {creds.bucket && <Button label="同步升级与编辑恢复" onPress={() => router.push("./sync-recovery")} />}
             <ListItem
               supportingText={
                 syncState.hydrationReady
