@@ -80,17 +80,6 @@ export function adjacentAnchor<T extends { id: string }>(
     : (records[index + 1] ?? next);
 }
 
-/** Pages are complete lists: tree expansion cannot hide children on another page. */
-export function documentPageRows<T extends { id: string }>(documents: T[]) {
-  return documents.map((doc) => ({
-    kind: "doc" as const,
-    doc,
-    depth: 0,
-    hasChildren: false,
-    expanded: false,
-  }));
-}
-
 /** Find visible neighbors in canonical order, including column neighbors beyond this page. */
 export async function findManualNeighbor<T extends { id: string }>(
   fetchPage: (offset: number) => Promise<{ records: T[]; hasMore: boolean }>,

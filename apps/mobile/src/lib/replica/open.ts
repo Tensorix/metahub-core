@@ -25,6 +25,7 @@ export function openMobileReplica(workspaceId: string, options: { platform: "ios
   try {
     db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     initSchema(db);
+    db.exec("CREATE INDEX IF NOT EXISTS mobile_library_siblings ON documents(parent_id,order_key,id) WHERE __deleted=0");
     describeSelf(db, { platform: options.platform, form: "phone", defaultLabel: options.label ?? "Metahub mobile" });
     const service = createReplicaService(db, { searchBatchSize: 25 });
     let closed = false;

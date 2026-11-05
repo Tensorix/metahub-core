@@ -3,25 +3,9 @@ import {
   adjacentAnchor,
   manualOrderAllowed,
   mergeView,
-  documentPageRows,
 } from "./management";
 import { emptyView } from "../../../../../src/shared/views/model.ts";
 describe("mobile management integrity", () => {
-  test("document pages expose children even when their parent lives outside the page", () => {
-    const docs = [
-      { id: "child", parent_id: "parent-on-other-page", database_id: null },
-      { id: "db-document", parent_id: null, database_id: "db" },
-    ];
-    expect(documentPageRows(docs).map((row) => row.doc.id)).toEqual([
-      "child",
-      "db-document",
-    ]);
-    expect(
-      documentPageRows(docs).every(
-        (row) => !row.hasChildren && row.depth === 0,
-      ),
-    ).toBe(true);
-  });
   test("editing one view retains unsupported layouts and opaque configuration", () => {
     const original = {
       ...emptyView("table", "Old", "a"),
