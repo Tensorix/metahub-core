@@ -69,6 +69,58 @@ export function createFetchStorageClient(config: S3Config, opts: FetchStorageCli
   }
 
   return {
+    async conditionalCreateCapability() {
+      const provider = conditionalWriteProvider(config);
+      if (provider === "cos") { await requireCosConditionalCreate(); return true; }
+      // S3-compatible does not itself promise atomic create semantics.
+      const host = new URL(config.endpoint).hostname;
+      return /(?:^|\.)amazonaws\.com(?:\.cn)?$|(?:^|\.)r2\.cloudflarestorage\.com$/i.test(host);
+    },
+    async getWithMetadata(key, options) {
+      const maxBytes = options.maxBytes;
+      if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+        throw new RangeError("maxBytes must be a nonnegative safe integer");
+      return request(objectUrl(key), {}, async (res, signal) => {
+        if (res.status === 404) return null;
+        if (!res.ok) await fail(res, "get");
+        const length = res.headers.get("content-length");
+        const tooLarge = () => new MhError("invalid_input", "Storage object exceeds the size limit");
+        if (length !== null && Number(length) > maxBytes) {
+          await res.body?.cancel();
+          throw tooLarge();
+        }
+        const reader = res.body?.getReader?.();
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        if (reader) {
+          const cancel = () => { void reader.cancel(signal.reason).catch(() => {}); };
+          signal.addEventListener("abort", cancel, { once: true });
+          try {
+            while (true) {
+              if (signal.aborted) throw signal.reason;
+              const chunk = await reader.read();
+              if (signal.aborted) throw signal.reason;
+              if (chunk.done) break;
+              total += chunk.value.length;
+              if (total > maxBytes) { await reader.cancel(); throw tooLarge(); }
+              chunks.push(chunk.value);
+            }
+          } finally { signal.removeEventListener("abort", cancel); reader.releaseLock(); }
+        } else {
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          if (bytes.length > maxBytes) throw tooLarge();
+          chunks.push(bytes); total = bytes.length;
+        }
+        const bytes = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+        const date = (name: string) => {
+          const raw = res.headers.get(name), value = raw === null ? NaN : Date.parse(raw);
+          return Number.isFinite(value) ? value : null;
+        };
+        return { bytes, serverDate: date("date"), lastModified: date("last-modified"), etag: res.headers.get("etag") };
+      });
+    },
     async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
       const out: StorageObject[] = [];
       let continuationToken: string | undefined;

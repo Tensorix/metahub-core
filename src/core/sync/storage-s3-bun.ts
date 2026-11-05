@@ -47,6 +47,14 @@ export function createBunStorageClient(config: S3Config): StorageClient {
   let conditionalClient: StorageClient | undefined;
 
   return {
+    async conditionalCreateCapability() {
+      conditionalClient ??= createFetchStorageClient(config);
+      return conditionalClient.conditionalCreateCapability!();
+    },
+    async getWithMetadata(key, options) {
+      conditionalClient ??= createFetchStorageClient(config);
+      return conditionalClient.getWithMetadata!(key, options);
+    },
     async list(prefix: string, startAfter?: string, delimiter?: string): Promise<StorageObject[]> {
       const out: StorageObject[] = [];
       let continuationToken: string | undefined;

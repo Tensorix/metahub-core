@@ -1,3 +1,4 @@
+import { ReplicaGenerationSchema } from "./retention-protocol.ts";
 import { z } from "zod";
 import type { Change as CrdtChange } from "../crdt.ts";
 
@@ -18,6 +19,8 @@ export const ChangeSchema = z.object({
 });
 
 export const SyncRequestSchema = z.object({
+  generation: ReplicaGenerationSchema.optional(),
+  bases: z.array(z.string().nullable()).optional(),
   node_id: z.string().describe("Calling client's node id"),
   since: z.number().describe("Server cursor the client last pulled"),
   changes: z.array(ChangeSchema).describe("Client's changes to push"),
@@ -33,6 +36,8 @@ export const SyncRequestSchema = z.object({
 });
 
 export const SyncResponseSchema = z.object({
+  generation: ReplicaGenerationSchema.optional(),
+  bases: z.array(z.string().nullable()).optional(),
   node_id: z.string().describe("Server's node id"),
   changes: z.array(ChangeSchema).describe("Server changes after `since`"),
   cursor: z.number().describe("New server cursor for the client to store"),
@@ -43,6 +48,7 @@ export const SyncResponseSchema = z.object({
 });
 
 export const HealthResponseSchema = z.object({
+  generation: ReplicaGenerationSchema.optional(),
   ok: z.boolean(),
   node: z.string().describe("Server's node id"),
   capabilities: z

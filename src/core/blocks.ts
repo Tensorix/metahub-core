@@ -99,12 +99,28 @@ export interface ReconcilePlan {
 /**
  * Align a new sequence of block texts against the old one. Unchanged blocks
  * (exact text match, in order — the LCS) are kept by index so their identity and
- * order survive; everything else in a gap is a delete (old) or insert (new).
+ * order survive. Optional stable replacement mode also reuses one-to-one
+ * gaps; the caller must write changed text to each reused block.
+ * Larger gaps remain deletes/inserts until an explicit edit supplies identity.
  */
-export function reconcile(oldTexts: string[], newTexts: string[]): ReconcilePlan {
+export function reconcile(oldTexts: string[], newTexts: string[], opts: { preserveReplacements?: boolean } = {}): ReconcilePlan {
   const keep = lcs(oldTexts, newTexts);
   const keptOld = new Set(keep.map((p) => p[0]));
   const newToOld = new Map(keep.map((p) => [p[1], p[0]]));
+
+  // Only a one-to-one gap between unchanged anchors is an unambiguous
+  // replacement. Larger gaps (including split/merge) require explicit edits.
+  if (opts.preserveReplacements) {
+    const anchors: [number, number][] = [[-1, -1], ...keep, [oldTexts.length, newTexts.length]];
+    for (let i = 1; i < anchors.length; i++) {
+      const [a, b] = anchors[i - 1]!;
+      const [c, d] = anchors[i]!;
+      if (c - a === 2 && d - b === 2) {
+        keptOld.add(a + 1);
+        newToOld.set(b + 1, a + 1);
+      }
+    }
+  }
 
   const items: ReconcileItem[] = newTexts.map((text, ni) =>
     newToOld.has(ni) ? { keep: newToOld.get(ni)! } : { insert: text },

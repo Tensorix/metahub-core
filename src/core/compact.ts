@@ -77,6 +77,8 @@ const COMPACTABLE = `
   )`;
 
 export function compactOplog(db: Database, opts: CompactOptions): CompactResult {
+  if (!opts.dryRun && db.query("SELECT 1 FROM meta WHERE key='sync_v2_generation'").get())
+    throw new MhError("invalid_input", "v2 history requires verified archive retention; legacy local compaction is disabled");
   if (!Number.isFinite(opts.keepDays) || opts.keepDays < 0)
     throw new MhError("invalid_input", "keepDays must be a non-negative number");
   const now = opts.now ?? Date.now();
@@ -185,6 +187,25 @@ export function gcBlobs(
       v: string | null;
     }[],
   );
+
+  // Independent history is a retention root even when its document/block no
+  // longer exists in the current-state tables or synchronization oplog.
+  if (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='document_history_changes'").get()) {
+    collectDocRefs(db.query("SELECT DISTINCT value AS v FROM document_history_changes WHERE (dataset='doc_blocks' AND col='text') OR (dataset='documents' AND col='body')").all() as { v: string | null }[]);
+  }
+
+  if (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_recovery_items'").get()) {
+    collectDocRefs(db.query("SELECT local AS v FROM sync_recovery_items WHERE status='pending' UNION ALL SELECT remote AS v FROM sync_recovery_items WHERE status='pending'").all() as { v: string | null }[]);
+  }
+  if (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_v2_peer_pending'").get()) {
+    collectDocRefs(db.query("SELECT change_json AS v FROM sync_v2_peer_pending").all() as { v: string | null }[]);
+  }
+  for (const table of ["replica_document_drafts", "replica_field_drafts"]) {
+    if (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
+      const column = table === "replica_document_drafts" ? "body" : "value";
+      collectDocRefs(db.query(`SELECT ${column} AS v FROM ${table}`).all() as { v: string | null }[]);
+    }
+  }
 
   let deleted = 0;
   let bytes = 0;

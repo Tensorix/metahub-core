@@ -71,7 +71,18 @@ export function generateMasterKey(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(KEY_BYTES));
 }
 
+type PasswordKdf = (passphrase: string, salt: Uint8Array, iterations: number) => Promise<Uint8Array>;
+let passwordKdf: PasswordKdf | null = null;
+/** Native adapters can supply the platform PBKDF2 primitive while preserving
+ * the exact shared envelope format and work factor. */
+export function setPasswordKdf(kdf: PasswordKdf | null): void { passwordKdf = kdf; }
+
 async function deriveKek(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+  if (passwordKdf) {
+    const raw = await passwordKdf(passphrase, salt, PBKDF2_ITERATIONS);
+    if (raw.length !== KEY_BYTES) throw new MhError("invalid_input", "invalid derived key length");
+    return crypto.subtle.importKey("raw", ab(raw), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  }
   const base = await crypto.subtle.importKey(
     "raw",
     ab(new TextEncoder().encode(passphrase)),

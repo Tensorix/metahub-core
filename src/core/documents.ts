@@ -1,3 +1,5 @@
+import { readReplicaGeneration } from "./sync/retention-protocol.ts";
+import { isBlockManaged } from "./crdt.ts";
 import type { DbDriver } from "./driver.ts";
 import { newId } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
@@ -80,7 +82,7 @@ function insertBlocks(
 
 /** Lazily migrate a legacy body-only document into blocks (idempotent). */
 function ensureBlocks(db: DbDriver, docId: string): void {
-  if (db.query("SELECT 1 AS x FROM doc_blocks WHERE doc_id = ? LIMIT 1").get(docId))
+  if (isBlockManaged(db, docId))
     return;
   const row = db.query("SELECT body FROM documents WHERE id = ?").get(docId) as
     | { body: string | null }
@@ -90,12 +92,13 @@ function ensureBlocks(db: DbDriver, docId: string): void {
 }
 
 /** Diff a full new body against current blocks; keep unchanged, delete/insert the rest. */
-function reconcileBody(db: DbDriver, docId: string, body: string): void {
+function reconcileBody(db: DbDriver, docId: string, body: string, preserveReplacements = !!readReplicaGeneration(db)): void {
   const old = liveBlocks(db, docId);
   const next = parseDocBlocks(body);
   const plan = reconcile(
     old.map((b) => b.text),
     next.map((b) => b.text),
+    { preserveReplacements },
   );
 
   for (const oi of plan.deleted) emit(db, "doc_blocks", old[oi]!.id, "__deleted", 1);
@@ -105,8 +108,9 @@ function reconcileBody(db: DbDriver, docId: string, body: string): void {
   while (i < items.length) {
     const it = items[i]!;
     if ("keep" in it) {
-      // Text unchanged: only the surrounding blank-line count may have shifted.
+      // Reused identity: write only fields which actually changed.
       const oldB = old[it.keep]!;
+      if (oldB.text !== next[i]!.text) emit(db, "doc_blocks", oldB.id, "text", next[i]!.text);
       const want = next[i]!.blankAfter;
       if ((oldB.blank_after ?? 0) !== want) emit(db, "doc_blocks", oldB.id, "blank_after", want);
       i++;
@@ -130,7 +134,8 @@ export function documentVersion(db: DbDriver, id: string): string {
           OR (dataset = 'doc_blocks' AND row_id IN (SELECT id FROM doc_blocks WHERE doc_id = ?))`,
     )
     .get(id, id) as { h: string | null };
-  return row.h ?? "";
+  const baseline = db.query("SELECT value FROM meta WHERE key=?").get(`sync_v2_doc_version:${id}`) as { value: string } | null;
+  return (baseline?.value ?? "") > (row.h ?? "") ? baseline!.value : row.h ?? "";
 }
 
 // ---- public API ------------------------------------------------------------
@@ -388,8 +393,12 @@ export const updateDocument = grouped(function updateDocument(
   db: DbDriver,
   id: string,
   fields: { title?: string; body?: string; database_id?: string; parent_id?: string | null },
-  opts: { ifMatch?: string } = {},
+  // Versioned full saves reuse reliable one-to-one identities in v2.
+  // Unversioned legacy callers retain conservative replacement behavior.
+  opts: { ifMatch?: string; preserveBlockIdentity?: boolean } = {},
 ): DocumentRow {
+  if (opts.preserveBlockIdentity && opts.ifMatch === undefined)
+    throw new MhError("invalid_input", "stable block edits require ifMatch");
   const doc = getDocument(db, id);
   if (!doc) throw new MhError("not_found", `no such document: ${id}`);
   // Same staleness backstop as editDocument: a version from documentVersion()
@@ -414,7 +423,7 @@ export const updateDocument = grouped(function updateDocument(
   }
   if (fields.body !== undefined) {
     ensureBlocks(db, id);
-    reconcileBody(db, id, fields.body);
+    reconcileBody(db, id, fields.body, opts.preserveBlockIdentity ?? (opts.ifMatch !== undefined && !!readReplicaGeneration(db)));
   }
   return getDocument(db, id)!;
 });
@@ -583,3 +592,96 @@ function countOccurrences(haystack: string, needle: string): number {
   }
   return n;
 }
+
+export type BlockEdit =
+  | { type: "update"; id: string; text: string; blankAfter?: number }
+  | { type: "insert"; after: string | null; text: string; blankAfter?: number }
+  | { type: "delete"; id: string }
+  | { type: "move"; id: string; after: string | null }
+  | { type: "split"; id: string; parts: { text: string; blankAfter?: number }[] }
+  | { type: "merge"; ids: string[]; text: string; blankAfter?: number };
+
+/** Atomic identity-aware edits. Deleted block identities are never reused. */
+export const editDocumentBlocks = grouped(function editDocumentBlocks(
+  db: DbDriver, docId: string, edits: readonly BlockEdit[], opts: { ifMatch: string },
+): { document: DocumentRow; version: string; inserted: string[] } {
+  const doc = getDocument(db, docId);
+  if (!doc) throw new MhError("not_found", `no such document: ${docId}`);
+  if (!opts?.ifMatch) throw new MhError("invalid_input", "block edits require ifMatch");
+  if (documentVersion(db, docId) !== opts.ifMatch) throw new MhError("stale", "document changed; re-read first");
+  ensureBlocks(db, docId);
+  const inserted: string[] = [];
+  const get = (id: string) => {
+    const b = liveBlocks(db, docId).find(b => b.id === id);
+    if (!b) throw new MhError("not_found", "block is missing, deleted, or belongs to another document");
+    return b;
+  };
+  const validate = (text: string, blankAfter?: number) => {
+    if (typeof text !== "string" || !text.length || parseDocBlocks(text).length !== 1)
+      throw new MhError("invalid_input", "expected one nonempty block");
+    if (blankAfter !== undefined && (!Number.isSafeInteger(blankAfter) || blankAfter < 0))
+      throw new MhError("invalid_input", "blankAfter must be a nonnegative integer");
+  };
+  const update = (id: string, text: string, blankAfter?: number) => {
+    validate(text, blankAfter);
+    const b = get(id);
+    if (b.text !== text) emit(db, "doc_blocks", id, "text", text);
+    if (blankAfter !== undefined && b.blank_after !== blankAfter) emit(db, "doc_blocks", id, "blank_after", blankAfter);
+  };
+  const position = (after: string | null, exclude?: string) => {
+    const blocks = liveBlocks(db, docId).filter(b => b.id !== exclude);
+    const i = after === null ? -1 : blocks.findIndex(b => b.id === after);
+    if (after !== null && i === -1) throw new MhError("not_found", "insertion anchor is missing");
+    return keyBetween(blocks[i]?.order_key ?? null, blocks[i + 1]?.order_key ?? null);
+  };
+  const insert = (after: string | null, text: string, blankAfter = 0) => {
+    validate(text, blankAfter);
+    const id = makeBlockId(text);
+    const order = position(after);
+    emit(db, "doc_blocks", id, "doc_id", docId);
+    emit(db, "doc_blocks", id, "order_key", order);
+    if (blankAfter) emit(db, "doc_blocks", id, "blank_after", blankAfter);
+    emit(db, "doc_blocks", id, "text", text);
+    inserted.push(id);
+    return id;
+  };
+  for (const edit of edits) {
+    switch (edit.type) {
+      case "update": update(edit.id, edit.text, edit.blankAfter); break;
+      case "insert": insert(edit.after, edit.text, edit.blankAfter); break;
+      case "delete": get(edit.id); emit(db, "doc_blocks", edit.id, "__deleted", 1); break;
+      case "move": {
+        const b = get(edit.id);
+        if (edit.after === edit.id) throw new MhError("invalid_input", "cannot move after itself");
+        const blocks = liveBlocks(db, docId);
+        if ((blocks[blocks.findIndex(x => x.id === b.id) - 1]?.id ?? null) === edit.after) break;
+        emit(db, "doc_blocks", edit.id, "order_key", position(edit.after, edit.id));
+        break;
+      }
+      case "split": {
+        const original = get(edit.id);
+        if (edit.parts.length < 2) throw new MhError("invalid_input", "split requires at least two parts");
+        edit.parts.forEach(p => validate(p.text, p.blankAfter));
+        update(edit.id, edit.parts[0]!.text, edit.parts[0]!.blankAfter ?? 0);
+        let after = edit.id;
+        for (let i = 1; i < edit.parts.length; i++) {
+          const p = edit.parts[i]!;
+          after = insert(after, p.text, p.blankAfter ?? (i === edit.parts.length - 1 ? original.blank_after : 0));
+        }
+        break;
+      }
+      case "merge": {
+        if (edit.ids.length < 2 || new Set(edit.ids).size !== edit.ids.length)
+          throw new MhError("invalid_input", "merge requires distinct adjacent blocks");
+        const blocks = liveBlocks(db, docId), start = blocks.findIndex(b => b.id === edit.ids[0]);
+        if (start < 0 || !edit.ids.every((id, i) => blocks[start + i]?.id === id))
+          throw new MhError("invalid_input", "merge blocks must be adjacent and ordered");
+        update(edit.ids[0]!, edit.text, edit.blankAfter ?? blocks[start + edit.ids.length - 1]!.blank_after);
+        for (const id of edit.ids.slice(1)) emit(db, "doc_blocks", id, "__deleted", 1);
+        break;
+      }
+      default: throw new MhError("invalid_input", "unknown block edit");
+    }
+  }
+  return { document: getDocument(db, docId)!, version: documentVersion(db, docId), inserted };
+}, "block-edit");

@@ -1,6 +1,8 @@
+import { editBases, ingestPeerChanges } from "./peer-v2.ts";
+import { assertReplicaGeneration, readReplicaGeneration } from "./retention-protocol.ts";
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
-import { ingestDetailed, changesAfterSeq, type Change } from "../crdt.ts";
+import { changesAfterSeq, type Change } from "../crdt.ts";
 import { type SyncResponse, SYNC_PATH } from "./protocol.ts";
 import { MhError } from "../errors.ts";
 import { withSyncBudget } from "./transport.ts";
@@ -130,11 +132,19 @@ export async function syncWithPeer(
 
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (bearer) headers.authorization = `Bearer ${bearer}`;
+  const generation = readReplicaGeneration(db);
   const data = await withSyncBudget(async (signal) => {
+  if (generation) {
+    const health = await (o.fetch ?? fetch)(new URL("/health", url), { headers, signal });
+    if (!health.ok) throw new MhError("network", `sync preflight failed: ${health.status}`);
+    const remote = await health.json() as { generation?: unknown };
+    assertReplicaGeneration(db, remote.generation);
+  }
   const res = await (o.fetch ?? fetch)(new URL(SYNC_PATH, url), {
     method: "POST",
     headers,
     body: measure("serialize", () => JSON.stringify({
+      ...(generation ? { generation, bases: editBases(db, toPush.changes) } : {}),
       node_id: node,
       since: peer.pull_cursor,
       changes: toPush.changes,
@@ -143,22 +153,27 @@ export async function syncWithPeer(
     })),
     signal,
   });
-  if (!res.ok)
-    throw new MhError(
-      res.status === 401 || res.status === 403 ? "auth" : "network",
-      `sync failed: ${res.status} ${await res.text()}`,
-    );
+  if (!res.ok) {
+    const detail = await res.text();
+    let protocolCode: "upgrade_required" | "rebootstrap_required" | "history_unavailable" | undefined;
+    try {
+      const body = JSON.parse(detail);
+      if (body.code === "upgrade_required" || body.code === "rebootstrap_required" || body.code === "history_unavailable") protocolCode = body.code;
+    } catch { /* Legacy endpoints may return plain text. */ }
+    throw new MhError(protocolCode ?? (res.status === 401 || res.status === 403 ? "auth" : "network"), `sync failed: ${res.status} ${detail}`);
+  }
 
   return (await res.json()) as SyncResponse;
   }, o.timeoutMs, o.signal);
   // A disposed session must never write back cursors after transport completion.
   if (o.signal?.aborted) throw o.signal.reason ?? new Error("sync request aborted");
+  assertReplicaGeneration(db, data.generation);
   const changes = data.changes ?? [];
   // `pulled` = changes new to our oplog (ingest's return), not the response size,
   // so re-pulled-but-known data doesn't read as activity (consistent with the
   // storage path; keeps the auto-sync backoff honest). `received` carries the
   // response page size separately so paginated hydration can break on it.
-  const r = measure("ingest", () => ingestDetailed(db, changes));
+  const r = measure("ingest", () => ingestPeerChanges(db, changes, data.bases));
   return measure("acknowledge", () => {
     const pulled = r.received;
     const pushCursor = advanceAckedPrefix(db, toPush.cursor, changes);

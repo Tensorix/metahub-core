@@ -1,3 +1,4 @@
+import { readReplicaGeneration } from "../sync/retention-protocol.ts";
 import { queryDocuments, queryRecords, queryRecordsAsync, type RecordQuery } from "../../shared/views/query.ts";
 import type { DbDriver } from "../driver.ts";
 import * as databases from "../databases.ts";
@@ -67,6 +68,7 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
   if (!Number.isSafeInteger(searchBatchSize) || searchBatchSize <= 0) throw new RangeError("searchBatchSize must be a positive integer");
   const searches = new AbortController();
   let disposed = false;
+  let paused = false;
   const listeners = new Set<(change: ReplicaChange) => void>();
   if (options.onChange) listeners.add(options.onChange);
   const emit = (change: ReplicaChange) => { for (const listener of listeners) listener(change); };
@@ -116,9 +118,10 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
       return { ...doc, version: documents.documentVersion(db, doc.id) };
     },
     updateDocument: (id: string, fields: Parameters<typeof documents.updateDocument>[2], ifMatch?: string) => {
-      const doc = documents.updateDocument(db, id, fields, { ifMatch });
+      const doc = documents.updateDocument(db, id, fields, { ifMatch, preserveBlockIdentity: !!ifMatch && !!readReplicaGeneration(db) });
       return { ...doc, version: documents.documentVersion(db, id) };
     },
+    editDocumentBlocks: bind(db, documents.editDocumentBlocks),
     moveDocument: bind(db, documents.moveDocument),
     duplicateDocument: (id: string, options?: { title?: string; parent_id?: string | null }) => {
       const doc = documents.duplicateDocument(db, id, { title: options?.title, parentId: options?.parent_id });
@@ -141,6 +144,7 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
   type Commands = typeof commands;
   type Operation = keyof Commands;
   function dispatchRpc(op: string, args: unknown[]): unknown {
+    if (paused && !/^(list|get|query|search|reference|resolve|nodes|documentAt|recordAt|propertyAt)/.test(op)) throw new MhError("busy", "正在更新本地副本，编辑已暂停");
     if (!Object.hasOwn(commands, op)) throw new MhError("invalid_input", `unknown replica command: ${op}`);
     const before = replicaSequence(db);
     // Functions are all synchronous and typed at the public dispatch boundary.
@@ -192,6 +196,7 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
       const { if_match, ...fields } = input;
       return call("updateDocument", id, fields, if_match);
     },
+    editDocumentBlocks: (...args: Parameters<Commands["editDocumentBlocks"]>) => call("editDocumentBlocks", ...args),
     deleteDocument: (id: string) => call("deleteDocument", id),
     duplicateDocument: (...args: Parameters<Commands["duplicateDocument"]>) => call("duplicateDocument", ...args),
     moveDocument: (...args: Parameters<Commands["moveDocument"]>) => call("moveDocument", ...args),
@@ -210,6 +215,7 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
   };
   return {
     db, commands, dispatch, dispatchRpc, call, client, drafts: createDraftStore(db),
+    pauseMutations(value: boolean) { paused = value; },
     notifyChanges: emit,
     onChange(listener: (change: ReplicaChange) => void) {
       listeners.add(listener);

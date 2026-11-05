@@ -81,3 +81,12 @@ test("reconcile empty new clears everything", () => {
   expect(plan.items).toEqual([]);
   expect(plan.deleted).toEqual([0, 1]);
 });
+
+
+test("stable reconciliation preserves only one-to-one replacement gaps", () => {
+  expect(reconcile(["a", "b", "c"], ["a", "B", "c"], { preserveReplacements: true }))
+    .toEqual({ items: [{ keep: 0 }, { keep: 1 }, { keep: 2 }], deleted: [] });
+  expect(reconcile(["a", "b"], ["x", "y"], { preserveReplacements: true }).deleted).toEqual([0, 1]);
+  expect(reconcile(["a"], ["x", "y"], { preserveReplacements: true }).deleted).toEqual([0]);
+  expect(reconcile(["a", "b"], ["x"], { preserveReplacements: true }).deleted).toEqual([0, 1]);
+});
