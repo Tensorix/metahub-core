@@ -8,22 +8,22 @@ import {
   useState,
 } from "react";
 import {
-  ActivityIndicator,
   AppState,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { WebView } from "react-native-webview";
+import { EditorSurface } from "./EditorSurface";
+import type { EditorSurfaceHandle } from "./DefaultEditorSurface";
 import { EditorHost, type EditorHostServices } from "../lib/editor/host";
 import { createNativePresentationGuard } from "../lib/editor/native-presentation";
-import { editorHTML } from "../lib/editor/editor-bundle";
 import {
   parseEditorMessage,
   scriptJSON,
   type EditorCommandResult,
   type EditorState,
+  type EditorDraft,
 } from "../lib/editor/protocol";
 
 export interface DocumentEditorHandle {
@@ -50,7 +50,7 @@ export const DocumentEditor = forwardRef<
   { documentId, sessionId, host: services, dark = false, onState, onError },
   ref,
 ) {
-  const web = useRef<WebView<unknown>>(null);
+  const web = useRef<EditorSurfaceHandle>(null);
   const [generation, setGeneration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +62,7 @@ export const DocumentEditor = forwardRef<
       {
         resolve(result: { ok: boolean; error?: string }): void;
         timer: ReturnType<typeof setTimeout>;
+        deliver?: () => void;
       }
     >(),
   );
@@ -114,17 +115,24 @@ export const DocumentEditor = forwardRef<
       }),
     [nonce],
   );
+  const [initial, setInitial] = useState<(EditorDraft & { recovered: boolean }) | null>(null);
+  const ready = useRef(false);
+  const needsRefresh = useRef(false);
+  useEffect(() => {
+    let active = true;
+    void host.openDocument().then(doc => {
+      if (active) setInitial(doc);
+    }, cause => {
+      if (!active) return;
+      setLoading(false);
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+    return () => { active = false; };
+  }, [host]);
   const initialDark = useRef(dark);
-  const source = useMemo(
-    () => ({
-      html: editorHTML.replace(
-        "__METAHUB_BOOTSTRAP__",
-        scriptJSON({ session: nonce, documentId, dark: initialDark.current }),
-      ),
-      baseUrl: "about:blank",
-    }),
-    [nonce, documentId],
-  );
+  const bootstrap = useMemo(() => initial && scriptJSON({
+    session: nonce, documentId, dark: initialDark.current, initial,
+  }), [nonce, documentId, initial]);
   useEffect(() => {
     web.current?.injectJavaScript(
       `document.documentElement.dataset.resolved=${scriptJSON(dark ? "dark" : "light")};true;`,
@@ -152,10 +160,11 @@ export const DocumentEditor = forwardRef<
           commands.current.delete(id);
           resolve({ ok: false, error: "编辑器没有响应，草稿将保留。请重试。" });
         }, 35_000);
-        commands.current.set(id, { resolve, timer });
-        web.current?.injectJavaScript(
+        const deliver = () => web.current?.injectJavaScript(
           `window.__metahubEditorReceive?.(${scriptJSON({ v: 1, session: nonce, type: "command", id, method, mode })});true;`,
         );
+        commands.current.set(id, { resolve, timer, deliver: ready.current ? undefined : deliver });
+        if (ready.current) deliver();
       });
     },
     [nonce],
@@ -176,6 +185,8 @@ export const DocumentEditor = forwardRef<
     presentationRef.current?.dispose();
     host.dispose();
     failPending("正在恢复编辑器，草稿将保留");
+    ready.current = false;
+    setInitial(null);
     setLoading(true);
     setError(null);
     setGeneration((value) => value + 1);
@@ -195,7 +206,8 @@ export const DocumentEditor = forwardRef<
       },
       retry,
       refresh: () => {
-        void send("refresh");
+        if (ready.current) void send("refresh");
+        else needsRefresh.current = true;
       },
     }),
     [send, retry],
@@ -218,71 +230,57 @@ export const DocumentEditor = forwardRef<
     setError(message);
     callbacks.current.onError?.(message);
   };
+  const receive = (raw: string) => {
+    const message = parseEditorMessage(raw, nonce);
+    if (!message) return;
+    if (message.type === "ready") {
+      ready.current = true;
+      if (frozen.current) web.current?.injectJavaScript("document.body.inert=true;true;");
+      for (const command of commands.current.values()) {
+        command.deliver?.();
+        command.deliver = undefined;
+      }
+      setLoading(false);
+      if (needsRefresh.current) {
+        needsRefresh.current = false;
+        void send("refresh");
+      }
+      return;
+    }
+    if (message.type === "state") {
+      if (message.state === "error" && !ready.current) {
+        setLoading(false);
+        failPending(message.error || "编辑器加载失败");
+      }
+      callbacks.current.onState?.(message.state);
+      if (message.error) callbacks.current.onError?.(message.error);
+      return;
+    }
+    if (message.type === "result") {
+      const result = message as EditorCommandResult;
+      const command = commands.current.get(result.id);
+      if (command) {
+        clearTimeout(command.timer);
+        commands.current.delete(result.id);
+        command.resolve(result);
+      }
+      return;
+    }
+    void host.request(message).then((response) => {
+      if (response)
+        web.current?.injectJavaScript(
+          `window.__metahubEditorReceive?.(${scriptJSON(response)});true;`,
+        );
+    });
+  };
   return (
     <View style={[styles.root, { backgroundColor: dark ? "#171717" : "#fff" }]}>
-      <WebView<unknown>
-        key={nonce}
-        ref={web}
-        source={source}
-        style={styles.web}
-        originWhitelist={["about:blank"]}
-        javaScriptEnabled
-        domStorageEnabled={false}
-        allowFileAccess={false}
-        allowFileAccessFromFileURLs={false}
-        allowUniversalAccessFromFileURLs={false}
-        mixedContentMode="never"
-        setSupportMultipleWindows={false}
-        allowsInlineMediaPlayback
-        keyboardDisplayRequiresUserAction={false}
-        webviewDebuggingEnabled={__DEV__}
-        onShouldStartLoadWithRequest={(request) =>
-          request.url === "about:blank"
-        }
-        onLoad={() => {
-          if (frozen.current)
-            web.current?.injectJavaScript("document.body.inert=true;true;");
-          setLoading(false);
-          setError(null);
-        }}
-        onError={() =>
-          rendererFailed("编辑器加载失败，已保存的草稿可在重试后恢复")
-        }
-        onContentProcessDidTerminate={() =>
-          rendererFailed("编辑器进程已停止，请恢复草稿继续编辑")
-        }
-        onRenderProcessGone={() =>
-          rendererFailed("编辑器进程已停止，请恢复草稿继续编辑")
-        }
-        onMessage={(event) => {
-          const message = parseEditorMessage(event.nativeEvent.data, nonce);
-          if (!message) return;
-          if (message.type === "state") {
-            callbacks.current.onState?.(message.state);
-            if (message.error) callbacks.current.onError?.(message.error);
-            return;
-          }
-          if (message.type === "result") {
-            const result = message as EditorCommandResult;
-            const command = commands.current.get(result.id);
-            if (command) {
-              clearTimeout(command.timer);
-              commands.current.delete(result.id);
-              command.resolve(result);
-            }
-            return;
-          }
-          void host.request(message).then((response) => {
-            if (response)
-              web.current?.injectJavaScript(
-                `window.__metahubEditorReceive?.(${scriptJSON(response)});true;`,
-              );
-          });
-        }}
-      />
+      {bootstrap && <EditorSurface key={nonce} ref={web} bootstrap={bootstrap}
+        onMessage={receive} onFailure={rendererFailed} />}
       {loading && (
-        <View style={styles.overlay}>
-          <ActivityIndicator />
+        <View pointerEvents="none" accessibilityLabel="正在打开文档" style={[StyleSheet.absoluteFill, styles.skeleton]}>
+          <View style={[styles.skeletonTitle, { backgroundColor: dark ? "#383838" : "#e9e9e9" }]} />
+          <View style={[styles.skeletonLine, { backgroundColor: dark ? "#292929" : "#f2f2f2" }]} />
         </View>
       )}
       {error && (
@@ -312,7 +310,6 @@ export const DocumentEditor = forwardRef<
 });
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  web: { flex: 1, backgroundColor: "transparent" },
   overlay: {
     position: "absolute",
     top: 0,
@@ -322,5 +319,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  skeleton: { paddingHorizontal: 16, paddingTop: 18 },
+  skeletonTitle: { width: "45%", height: 18, borderRadius: 4, marginBottom: 16 },
+  skeletonLine: { width: "75%", height: 12, borderRadius: 4 },
   button: { padding: 16 },
 });

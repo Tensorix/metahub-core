@@ -4,7 +4,7 @@ import { Window } from "happy-dom";
 import { editorHTML } from "./editor-bundle";
 import { scriptJSON } from "./protocol";
 
-test("packaged CM6 shell opens offline and checkpoints title/body through native bridge", async () => {
+test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and checkpoints through the native bridge", async mode => {
   const window = new Window({ url: "about:blank", settings: { disableCSSFileLoading: true, disableJavaScriptFileLoading: true } });
   const messages: { type: string; method?: string; params?: Record<string, unknown>; id?: number }[] = [];
   let requests = 0;
@@ -12,7 +12,7 @@ test("packaged CM6 shell opens offline and checkpoints title/body through native
   let remote = { title: "Offline document", body: `# Heading\n\nOffline body\n\n![Cached image](${canonical})`, version: "v1" };
   // Never needs a server page, WebSocket, browser replica or credential.
   window.fetch = (() => { requests++; throw new Error("network disabled"); }) as typeof window.fetch;
-  const bootstrap = { session: "offline-test", documentId: "doc_test", dark: false };
+  const bootstrap = { session: "offline-test", documentId: "doc_test", dark: false, initial: { ...remote, revision: 0, recovered: false } };
   Object.assign(window, { __METAHUB_EDITOR__: bootstrap, ReactNativeWebView: { postMessage(raw: string) {
     const message = JSON.parse(raw); messages.push(message);
     if (message.type !== "request") return;
@@ -20,17 +20,26 @@ test("packaged CM6 shell opens offline and checkpoints title/body through native
     const value = message.method === "load" ? { ...remote, revision: 0, recovered: false } : message.method === "refresh" ? remote : message.method === "targets" ? [] : message.method === "save" ? { version: "v2" } : message.method === "media" ? { url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxioAAAAASUVORK5CYII=" } : null;
     queueMicrotask(() => (window as unknown as { __metahubEditorReceive(value: unknown): void }).__metahubEditorReceive({ v: 1, session: bootstrap.session, type: "response", id: message.id, ok: true, value }));
   } } });
-  const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", scriptJSON(bootstrap));
+  const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", () => mode === "prewarmed" ? "null" : scriptJSON(bootstrap));
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]!);
   window.document.body.innerHTML = '<div id="app"></div>';
   try {
     const sandbox = Object.fromEntries(Object.getOwnPropertyNames(window).map(key => [key, (window as unknown as Record<string, unknown>)[key]]).filter(([, value]) => value !== undefined));
     const context = createContext({ ...sandbox, window, document: window.document, console });
     for (const script of scripts) runInContext(script, context);
+    if (mode === "prewarmed") {
+      expect(messages).toHaveLength(0);
+      expect(window.document.querySelector(".cm-editor")).toBeNull();
+      const runtime = window as unknown as { __metahubStartEditor?: (options: typeof bootstrap) => void };
+      runtime.__metahubStartEditor!(bootstrap);
+      expect(runtime.__metahubStartEditor).toBeUndefined();
+    }
     const waitFor = async (predicate: () => boolean) => { for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error("Shell did not become ready"); };
     await waitFor(() => !!window.document.querySelector(".cm-editor"));
+    expect(messages.some(message => message.type === "ready")).toBe(true);
     const title = window.document.querySelector("input")!;
     expect(title.value).toBe("Offline document");
+    expect(messages.some(message => message.method === "load")).toBe(false);
     expect(window.document.querySelector(".cm-content")?.textContent).toContain("Offline body");
     await waitFor(() => !!window.document.querySelector("img[src^='data:image/']"));
     expect(messages.some(message => message.method === "media" && message.params?.src === canonical)).toBe(true);
@@ -73,7 +82,7 @@ test("failed initial load retries through the same host with fresh request IDs",
   try {
     const sandbox = Object.fromEntries(Object.getOwnPropertyNames(window).map(key => [key, (window as unknown as Record<string, unknown>)[key]]).filter(([, value]) => value !== undefined));
     const context = createContext({ ...sandbox, window, document: window.document, console });
-    const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", scriptJSON(bootstrap));
+    const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", () => scriptJSON(bootstrap));
     for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) runInContext(script[1]!, context);
     const waitFor = async (predicate: () => boolean) => { for (let i = 0; i < 100; i++) { if (predicate()) return; await Bun.sleep(10); } throw new Error("Shell retry did not become ready"); };
     await waitFor(() => !!window.document.querySelector(".mobile-error"));
@@ -103,7 +112,7 @@ test("packaged attachment controls and CM6 links reach the native host without s
   try {
     const sandbox = Object.fromEntries(Object.getOwnPropertyNames(window).map(key => [key, (window as unknown as Record<string, unknown>)[key]]).filter(([, value]) => value !== undefined));
     const context = createContext({ ...sandbox, window, document: window.document, console });
-    const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", scriptJSON(bootstrap));
+    const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", () => scriptJSON(bootstrap));
     for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) runInContext(script[1]!, context);
     const waitFor = async (predicate: () => boolean) => { for (let i = 0; i < 100; i++) { if (predicate()) return; await Bun.sleep(10); } throw new Error("Attachment shell did not become ready"); };
     await waitFor(() => !!window.document.querySelector(".void-file button"));
@@ -159,7 +168,7 @@ test("packaged CM6 document references save then route natively with partial tar
   try {
     const sandbox = Object.fromEntries(Object.getOwnPropertyNames(window).map(key => [key, (window as unknown as Record<string, unknown>)[key]]).filter(([, value]) => value !== undefined));
     const context = createContext({ ...sandbox, window, document: window.document, console });
-    const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", scriptJSON(bootstrap));
+    const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", () => scriptJSON(bootstrap));
     for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) runInContext(script[1]!, context);
     const waitFor = async (predicate: () => boolean) => { for (let i = 0; i < 100; i++) { if (predicate()) return; await Bun.sleep(10); } throw new Error("Reference shell did not become ready"); };
     await waitFor(() => window.document.querySelector('[data-doclink="db_target"]')?.textContent === "Linked database");

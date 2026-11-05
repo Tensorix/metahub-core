@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 import { render } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { CmDocBody, type CmHandle } from "../cm6/CmDocBody";
 import { DocumentSaveQueue, type DocumentSaveResult, type DocumentSaveState } from "../document-save";
 import { isDraft, type EditorDraft, type EditorMediaRequest } from "../../../apps/mobile/src/lib/editor/protocol";
@@ -84,7 +84,7 @@ function App() {
     finally { refreshing.current = false; }
   };
   const displayMode = (next: "blocks" | "source") => { cm.current?.setSource(next === "source"); setMode(next); };
-  useEffect(() => {
+  useLayoutEffect(() => {
     let alive = true;
     let loading = false;
     const clearPreviewGuard = onBeforeMediaPreview(async () => {
@@ -95,7 +95,8 @@ function App() {
       if (loading || !alive) return;
       loading = true; setError("");
       try {
-        const doc = await rpc<EditorDraft & { recovered: boolean }>("load");
+        const doc = window.__METAHUB_EDITOR__.initial ?? await rpc<EditorDraft & { recovered: boolean }>("load");
+        delete window.__METAHUB_EDITOR__.initial;
         if (!alive) return;
         if (!isDraft(doc)) throw new Error("Invalid document received from native host");
         title.current = doc.title;
@@ -178,7 +179,7 @@ function App() {
   return <main class="mobile-editor">
     <div class="mobile-toolbar"><button onClick={() => displayMode(mode === "blocks" ? "source" : "blocks")}>{mode === "blocks" ? "Markdown" : "富文本"}</button><button onClick={() => void attach("image")}>照片</button><button onClick={() => void attach("video")}>视频</button><button onClick={() => void attach()}>附件</button><span role="status">{{ saved: "已保存", dirty: "保存中…", saving: "保存中…", conflict: "保存冲突", error: "保存失败" }[state]}</span></div>
     {error && <div class="mobile-error" role="alert">{error}<button onClick={() => { if (loaded) { void checkpoint().then(() => saver.save()).catch(e => setError(String(e.message))); } else retryLoad.current(); }}>重试</button>{state === "conflict" && <button onClick={() => { if (confirm("用本地草稿覆盖已保存的版本？")) void saver.save(true); }}>覆盖保存</button>}</div>}
-    {loaded ? <div class="doc doc-embed"><input ref={titleInput} aria-label="文档标题" class="doc-title mobile-title" placeholder="无标题" defaultValue={title.current} onInput={e => { title.current = e.currentTarget.value; edit(); }} /><CmDocBody initialDoc={body.current} embedded disableUploads source={mode === "source"} onReady={handle => { cm.current = handle; if (refreshPending.current) void refreshDocument(); }} onChange={edit} onExitTop={() => titleInput.current?.focus()} onError={setError} onPreviewImage={block => void previewMedia(block.src, "image").catch(e => setError(String(e.message)))} /></div> : !error && <p role="status">正在载入文档…</p>}
+    {loaded ? <div class="doc doc-embed"><input ref={titleInput} aria-label="文档标题" class="doc-title mobile-title" placeholder="无标题" defaultValue={title.current} onInput={e => { title.current = e.currentTarget.value; edit(); }} /><CmDocBody initialDoc={body.current} embedded disableUploads source={mode === "source"} onReady={handle => { cm.current = handle; post({ type: "ready" }); if (refreshPending.current) void refreshDocument(); }} onChange={edit} onExitTop={() => titleInput.current?.focus()} onError={setError} onPreviewImage={block => void previewMedia(block.src, "image").catch(e => setError(String(e.message)))} /></div> : !error && <p role="status">正在载入文档…</p>}
   </main>;
 }
 document.documentElement.dataset.resolved = window.__METAHUB_EDITOR__.dark ? "dark" : "light";

@@ -1,10 +1,21 @@
 import { NativeTabs } from "expo-router/native-tabs";
-import { Platform } from "react-native";
+import { useFocusEffect } from "expo-router";
+import { useCallback } from "react";
+import { warmEditorSurface } from "@/lib/editor/warmup";
+import { AppState, Platform } from "react-native";
 
 import { useTheme } from "@/lib/theme";
 
 export default function TabsLayout() {
   const { tokens } = useTheme();
+  useFocusEffect(useCallback(() => {
+    if (Platform.OS !== "ios") return;
+    const idle = requestIdleCallback(warmEditorSurface);
+    const subscription = AppState.addEventListener("change", state => {
+      if (state === "active") warmEditorSurface();
+    });
+    return () => { cancelIdleCallback(idle); subscription.remove(); };
+  }, []));
 
   return (
     <NativeTabs

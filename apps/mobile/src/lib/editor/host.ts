@@ -14,6 +14,18 @@ export interface EditorHostServices {
 /** One instance per renderer. Every mutation runs in order; a late old-session
  * response cannot enter a replacement renderer or acknowledge its draft. */
 export class EditorHost {
+  async openDocument(): Promise<EditorDraft & { recovered: boolean }> {
+    this.current();
+    const draft = await this.services.readDraft();
+    this.current();
+    if (draft) {
+      this.lastRevision = draft.revision;
+      return { ...draft, recovered: true };
+    }
+    const doc = await this.services.load();
+    this.current();
+    return { ...doc, revision: 0, recovered: false };
+  }
   private disposed = false;
   private chain: Promise<unknown> = Promise.resolve();
   private seen = new Set<number>();
@@ -51,14 +63,7 @@ export class EditorHost {
   }
   private async perform(request: EditorRequest): Promise<unknown> {
     switch (request.method) {
-      case "load": {
-        const draft = await this.services.readDraft();
-        this.current();
-        if (draft) { this.lastRevision = draft.revision; return { ...draft, recovered: true }; }
-        const doc = await this.services.load();
-        this.current();
-        return { ...doc, revision: 0, recovered: false };
-      }
+      case "load": return this.openDocument();
       case "refresh": return this.services.load();
       case "checkpoint": {
         const draft = this.rebase(request.params as EditorDraft);

@@ -115,7 +115,14 @@ function RootStack() {
           name="record/[id]"
           options={{ presentation: "modal", headerShown: true }}
         />
-        <Stack.Screen name="doc/[id]" options={{ headerShown: true }} />
+        <Stack.Screen
+          name="doc/[id]"
+          options={{
+            headerShown: true,
+            headerTransparent: false,
+            headerStyle: { backgroundColor: tokens.bg },
+          }}
+        />
         <Stack.Screen
           name="manage/document/[id]"
           // Android form sheets do not support navigation headers or their save/cancel actions.

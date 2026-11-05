@@ -17,11 +17,12 @@ const revision = (x: unknown): x is number => typeof x === "number" && Number.is
 export function isDraft(x: unknown): x is EditorDraft {
   return object(x) && revision(x.revision) && typeof x.title === "string" && typeof x.body === "string" && (x.version === null || typeof x.version === "string");
 }
-export function parseEditorMessage(raw: string, session: string): EditorRequest | EditorEvent | EditorCommandResult | null {
+export function parseEditorMessage(raw: string, session: string): EditorRequest | EditorEvent | EditorCommandResult | { type: "ready" } | null {
   if (raw.length > 24 * 1024 * 1024) return null;
   let x: unknown;
   try { x = JSON.parse(raw); } catch { return null; }
   if (!object(x) || x.v !== EDITOR_PROTOCOL || x.session !== session) return null;
+  if (x.type === "ready") return { type: "ready" };
   if (x.type === "state" && ["saved", "dirty", "saving", "conflict", "error"].includes(String(x.state)) && typeof x.error === "string") return x as EditorEvent;
   if (!revision(x.id)) return null;
   if (x.type === "result" && typeof x.ok === "boolean" && (x.error === undefined || typeof x.error === "string")) return x as EditorCommandResult;

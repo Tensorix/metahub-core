@@ -1,9 +1,9 @@
-import { EDITOR_PROTOCOL, type EditorCommand, type EditorResponse, type EditorMediaRequest } from "../../../apps/mobile/src/lib/editor/protocol";
+import { EDITOR_PROTOCOL, type EditorCommand, type EditorResponse, type EditorDraft, type EditorMediaRequest } from "../../../apps/mobile/src/lib/editor/protocol";
 
 declare global {
   interface Window {
     ReactNativeWebView?: { postMessage(value: string): void };
-    __METAHUB_EDITOR__: { session: string; documentId: string; dark: boolean };
+    __METAHUB_EDITOR__: { session: string; documentId: string; dark: boolean; initial?: EditorDraft & { recovered: boolean } };
     __metahubEditorReceive?: (value: unknown) => void;
   }
 }
