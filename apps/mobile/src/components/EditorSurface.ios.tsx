@@ -4,7 +4,7 @@ import type { ViewProps } from "react-native";
 import { DefaultEditorSurface, type EditorSurfaceHandle, type EditorSurfaceProps } from "./DefaultEditorSurface";
 import { nativeEditorModule, prepareEditorSurface } from "../lib/editor/warmup.ios";
 
-const NativeSurface = nativeEditorModule && requireNativeViewManager<ViewProps & {
+const NativeSurface = nativeEditorModule?.sessionProtocol === 2 && requireNativeViewManager<ViewProps & {
   ref?: Ref<EditorSurfaceHandle>;
   bootstrap: string;
   onMessage(event: { nativeEvent: { data: string } }): void;
@@ -15,7 +15,7 @@ export const EditorSurface = forwardRef<EditorSurfaceHandle, EditorSurfaceProps>
     const [prepared, setPrepared] = useState(false);
     const [fallback, setFallback] = useState(false);
     useEffect(() => {
-      if (!nativeEditorModule) return;
+      if (!NativeSurface) return;
       let current = true;
       void prepareEditorSurface().then(() => { if (current) setPrepared(true); }, () => { if (current) setFallback(true); });
       return () => { current = false; };

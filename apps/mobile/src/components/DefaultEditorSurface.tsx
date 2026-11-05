@@ -2,7 +2,8 @@ import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 import { WebView } from "react-native-webview";
 import { editorHTML } from "../lib/editor/editor-bundle";
 
-export interface EditorSurfaceHandle { injectJavaScript(script: string): void }
+export interface EditorPosition { anchor: number; head: number; scroll: number; version: string | null }
+export interface EditorSurfaceHandle { closeSession?(id: string): Promise<EditorPosition | null>; injectJavaScript(script: string): void }
 export interface EditorSurfaceProps {
   bootstrap: string;
   onMessage(raw: string): void;

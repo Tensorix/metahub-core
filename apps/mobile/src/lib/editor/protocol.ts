@@ -10,7 +10,7 @@ export type EditorRequest = {
 export type EditorState = "saved" | "dirty" | "saving" | "conflict" | "error";
 export type EditorEvent = { v: 1; session: string; type: "state"; state: EditorState; error: string };
 export type EditorResponse = { v: 1; session: string; type: "response"; id: number; ok: boolean; value?: unknown; error?: string; code?: string };
-export type EditorCommand = { v: 1; session: string; type: "command"; id: number; method: "flush" | "mode" | "refresh"; mode?: "blocks" | "source" };
+export type EditorCommand = { v: 1; session: string; type: "command"; id: number; method: "flush" | "mode" | "refresh" | "retry"; mode?: "blocks" | "source" };
 export type EditorCommandResult = { v: 1; session: string; type: "result"; id: number; ok: boolean; error?: string };
 const object = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
 const revision = (x: unknown): x is number => typeof x === "number" && Number.isSafeInteger(x) && x >= 0;

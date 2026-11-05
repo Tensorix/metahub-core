@@ -1,3 +1,4 @@
+import { invalidateEditorRuntime } from "@/lib/editor/warmup";
 import {
   ThemeProvider as NavigationThemeProvider,
   DarkTheme,
@@ -45,6 +46,7 @@ function RootStack() {
   const previousSession = useRef<SessionIdentity | null | undefined>(undefined);
   const sessionId = session?.id;
   const workspaceId = session?.workspaceId;
+  useEffect(() => () => { if (workspaceId && sessionId !== undefined) invalidateEditorRuntime(workspaceId, String(sessionId)); }, [workspaceId, sessionId]);
   useEffect(() => {
     const updateNavigation = () => {
       if (!ready || !navigation.isReady()) return;

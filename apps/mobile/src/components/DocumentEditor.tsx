@@ -15,7 +15,7 @@ import {
   View,
 } from "react-native";
 import { EditorSurface } from "./EditorSurface";
-import type { EditorSurfaceHandle } from "./DefaultEditorSurface";
+import type { EditorPosition, EditorSurfaceHandle } from "./DefaultEditorSurface";
 import { EditorHost, type EditorHostServices } from "../lib/editor/host";
 import { createNativePresentationGuard } from "../lib/editor/native-presentation";
 import {
@@ -29,6 +29,7 @@ import {
 export interface DocumentEditorHandle {
   setFrozen(frozen: boolean): void;
   flush(): Promise<{ ok: boolean; error?: string }>;
+  closeSession(): Promise<EditorPosition | null | undefined>;
   setMode(mode: "blocks" | "source"): void;
   retry(): void;
   refresh(): void;
@@ -36,7 +37,9 @@ export interface DocumentEditorHandle {
 export interface DocumentEditorProps {
   documentId: string;
   sessionId: string;
+  workspaceId: string;
   host: EditorHostServices;
+  position?: EditorPosition | null;
   dark?: boolean;
   onState?(state: EditorState): void;
   onError?(error: string): void;
@@ -47,7 +50,7 @@ export const DocumentEditor = forwardRef<
   DocumentEditorHandle,
   DocumentEditorProps
 >(function DocumentEditor(
-  { documentId, sessionId, host: services, dark = false, onState, onError },
+  { documentId, sessionId, workspaceId, position, host: services, dark = false, onState, onError },
   ref,
 ) {
   const web = useRef<EditorSurfaceHandle>(null);
@@ -56,6 +59,8 @@ export const DocumentEditor = forwardRef<
   const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
   const frozen = useRef(false);
+  const freezeDepth = useRef(0);
+  const closing = useRef<{ nonce: string; result: Promise<EditorPosition | null> } | null>(null);
   const commands = useRef(
     new Map<
       number,
@@ -117,6 +122,7 @@ export const DocumentEditor = forwardRef<
   );
   const [initial, setInitial] = useState<(EditorDraft & { recovered: boolean }) | null>(null);
   const ready = useRef(false);
+  const failedRenderer = useRef(false);
   const needsRefresh = useRef(false);
   useEffect(() => {
     let active = true;
@@ -131,8 +137,8 @@ export const DocumentEditor = forwardRef<
   }, [host]);
   const initialDark = useRef(dark);
   const bootstrap = useMemo(() => initial && scriptJSON({
-    session: nonce, documentId, dark: initialDark.current, initial,
-  }), [nonce, documentId, initial]);
+    session: nonce, workspace: workspaceId, instance: sessionId, documentId, position, dark: initialDark.current, initial,
+  }), [nonce, documentId, initial, workspaceId, sessionId, position]);
   useEffect(() => {
     web.current?.injectJavaScript(
       `document.documentElement.dataset.resolved=${scriptJSON(dark ? "dark" : "light")};true;`,
@@ -153,7 +159,7 @@ export const DocumentEditor = forwardRef<
     [host, failPending],
   );
   const send = useCallback(
-    (method: "flush" | "mode" | "refresh", mode?: "blocks" | "source") => {
+    (method: "flush" | "mode" | "refresh" | "retry", mode?: "blocks" | "source") => {
       const id = ++sequence.current;
       return new Promise<{ ok: boolean; error?: string }>((resolve) => {
         const timer = setTimeout(() => {
@@ -182,6 +188,11 @@ export const DocumentEditor = forwardRef<
   presentationRef.current = presentation;
   useEffect(() => () => presentation.dispose(), [presentation]);
   const retry = useCallback(() => {
+    if (ready.current && !failedRenderer.current) {
+      void send("retry").then(result => { if (!result.ok) callbacks.current.onError?.(result.error || "保存失败"); });
+      return;
+    }
+    failedRenderer.current = false;
     presentationRef.current?.dispose();
     host.dispose();
     failPending("正在恢复编辑器，草稿将保留");
@@ -190,17 +201,31 @@ export const DocumentEditor = forwardRef<
     setLoading(true);
     setError(null);
     setGeneration((value) => value + 1);
-  }, [host, failPending]);
+  }, [host, failPending, send]);
   useImperativeHandle(
     ref,
     () => ({
       setFrozen: (value) => {
+        freezeDepth.current = Math.max(0, freezeDepth.current + (value ? 1 : -1));
+        value = freezeDepth.current > 0;
+        if (frozen.current === value) return;
         frozen.current = value;
         web.current?.injectJavaScript(
-          `document.body.inert=${value}; if(${value}) document.activeElement?.blur();true;`,
+          `window.__metahubSetFrozen?.(${scriptJSON(nonce)},${value});true;`,
         );
       },
       flush: () => send("flush"),
+      closeSession: async () => {
+        if (closing.current?.nonce === nonce) return closing.current.result;
+        const result = web.current?.closeSession?.(nonce);
+        if (!result) return undefined;
+        closing.current = { nonce, result };
+        try { return await result; }
+        catch (error) {
+          if (closing.current?.result === result) closing.current = null;
+          throw error;
+        }
+      },
       setMode: (mode) => {
         void send("mode", mode);
       },
@@ -210,7 +235,7 @@ export const DocumentEditor = forwardRef<
         else needsRefresh.current = true;
       },
     }),
-    [send, retry],
+    [send, retry, nonce],
   );
   useEffect(() => {
     const listener = AppState.addEventListener("change", (state) => {
@@ -223,6 +248,8 @@ export const DocumentEditor = forwardRef<
     return () => listener.remove();
   }, [send, presentation]);
   const rendererFailed = (message: string) => {
+    if (rendererNonce.current !== nonce) return;
+    failedRenderer.current = true;
     presentationRef.current?.dispose();
     host.dispose();
     failPending(message);
@@ -231,11 +258,12 @@ export const DocumentEditor = forwardRef<
     callbacks.current.onError?.(message);
   };
   const receive = (raw: string) => {
+    if (rendererNonce.current !== nonce) return;
     const message = parseEditorMessage(raw, nonce);
     if (!message) return;
     if (message.type === "ready") {
       ready.current = true;
-      if (frozen.current) web.current?.injectJavaScript("document.body.inert=true;true;");
+      if (frozen.current) web.current?.injectJavaScript(`window.__metahubSetFrozen?.(${scriptJSON(nonce)},true);true;`);
       for (const command of commands.current.values()) {
         command.deliver?.();
         command.deliver = undefined;

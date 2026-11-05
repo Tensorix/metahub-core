@@ -1,6 +1,9 @@
+import { documentOwner, type DocumentLease } from "@/lib/editor/session-owner";
+import { reusesEditorRuntime } from "@/lib/editor/warmup";
+import type { EditorPosition } from "@/components/DefaultEditorSurface";
 import { registerRecoveryEditor } from "@/lib/editor/recovery-barrier";
 import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
-import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useNavigation, Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Linking, StyleSheet, Text, View } from "react-native";
@@ -28,11 +31,14 @@ export default function DocScreen() {
 function LocalDocument({ id }: { id: string }) {
   const session = useSession();
   const router = useRouter();
+  const navigation = useNavigation();
   const { tokens, scheme } = useTheme();
   const editor = useRef<DocumentEditorHandle>(null);
-  useEffect(() => registerRecoveryEditor(session, () => editor.current), [session]);
+  const [position, setPosition] = useState<EditorPosition | null>(null);
+  const [admitted, setAdmitted] = useState(!reusesEditorRuntime);
   const phase = useRef<"active" | "deleting" | "deleted">("active");
   const navigating = useRef(false);
+  const pendingLink = useRef<{ path: string; completion: Promise<void> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const [exitAllowed, setExitAllowed] = useState(false);
@@ -46,6 +52,43 @@ function LocalDocument({ id }: { id: string }) {
   const [title, setTitle] = useState("文档");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => !admitted ? undefined : registerRecoveryEditor(session.replica, () => editor.current), [session, admitted]);
+  const detach = useCallback(async () => {
+    const saved = await editor.current?.closeSession();
+    if (saved === undefined) return;
+    setPosition(saved);
+    setAdmitted(false);
+  }, []);
+  const isCurrent = session.isCurrent;
+  const lease = useMemo<DocumentLease>(() => ({
+    async yield() {
+      const current = editor.current;
+      if (!current || !isCurrent()) return;
+      try {
+        await withFlushedDocument(current, isCurrent, detach);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      }
+    },
+  }), [isCurrent, detach]);
+  useEffect(() => () => documentOwner.release(lease), [lease]);
+  const acquire = useCallback(() => {
+    if (!reusesEditorRuntime) return;
+    void documentOwner.acquire(lease).then(ok => {
+      if (ok && navigation.isFocused()) setAdmitted(true);
+    }, error => {
+      if (navigation.isFocused()) {
+        setError(error instanceof Error ? error.message : String(error));
+        if (router.canGoBack()) router.back();
+      }
+    });
+  }, [lease, navigation, router]);
+  useFocusEffect(useCallback(() => {
+    acquire();
+    return () => documentOwner.cancel(lease);
+  }, [lease, acquire]));
   const recent = useMemo(
     () => createRecentStore(session.replica.db, session.workspaceId),
     [session.replica, session.workspaceId],
@@ -77,11 +120,13 @@ function LocalDocument({ id }: { id: string }) {
     },
     [session.isCurrent],
   );
-  usePreventRemove(!deleted && !exitAllowed, ({ repeat }) => {
+  usePreventRemove(admitted && !deleted && !exitAllowed, ({ repeat }) => {
     if (navigating.current || phase.current !== "active") return;
-    void runAction(() => {
+    void runAction(async () => {
+      await detach();
       setExitAllowed(true);
       repeat();
+      requestAnimationFrame(() => { if (navigation.isFocused()) acquire(); });
     }).catch((e) => {
       if (session.isCurrent())
         setError(e instanceof Error ? e.message : String(e));
@@ -171,25 +216,32 @@ function LocalDocument({ id }: { id: string }) {
         return session.attachments.media(request, present);
       },
       async navigate(target, present) {
+        const match = /^(?:#)?\/(doc|db|rec)\/([^/?#]+)$/.exec(target);
+        if (match) {
+          const route = match[1] === "rec" ? "record" : match[1];
+          const path = "/" + route + "/" + encodeURIComponent(decodeURIComponent(match[2]!));
+          if (pendingLink.current) {
+            pendingLink.current.path = path;
+            return pendingLink.current.completion;
+          }
+          const link = { path, completion: Promise.resolve() };
+          pendingLink.current = link;
+          link.completion = runAction(async () => {
+            check();
+            await detach();
+            check();
+            router.push(link.path as Parameters<typeof router.push>[0]);
+          }).catch(error => { if (navigation.isFocused()) acquire(); throw error; }).finally(() => {
+            pendingLink.current = null;
+          });
+          return link.completion;
+        }
         await runAction(async () => {
           check();
           if (target.startsWith("/blob/")) {
             await session.attachments.media(
               { action: "preview", src: target },
               present,
-            );
-            return;
-          }
-          const match = /^(?:#)?\/(doc|db|rec)\/([^/?#]+)$/.exec(target);
-          if (match) {
-            const route = match[1] === "rec" ? "record" : match[1];
-            router.push(
-              ("/" +
-                route +
-                "/" +
-                encodeURIComponent(
-                  decodeURIComponent(match[2]!),
-                )) as Parameters<typeof router.push>[0],
             );
             return;
           }
@@ -201,7 +253,7 @@ function LocalDocument({ id }: { id: string }) {
         });
       },
     };
-  }, [id, router, session, recent, runAction]);
+  }, [id, router, session, recent, runAction, detach, navigation, acquire]);
   const action = async (run: () => void | Promise<void>) => {
     try {
       await runAction(run);
@@ -374,10 +426,12 @@ function LocalDocument({ id }: { id: string }) {
           </NativeButton>
         </View>
       )}
-      {!deleted && (
+      {admitted && !deleted && (
         <DocumentEditor
           ref={editor}
           documentId={id}
+          position={position}
+          workspaceId={session.workspaceId}
           sessionId={String(session.id)}
           host={host}
           dark={scheme === "dark"}

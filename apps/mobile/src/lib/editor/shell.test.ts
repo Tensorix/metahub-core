@@ -4,8 +4,32 @@ import { Window } from "happy-dom";
 import { editorHTML } from "./editor-bundle";
 import { scriptJSON } from "./protocol";
 
+function listenerCount(target: EventTarget) {
+  const active = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  const add = target.addEventListener.bind(target);
+  const remove = target.removeEventListener.bind(target);
+  const key = (type: string, options?: boolean | EventListenerOptions) =>
+    type + ":" + (typeof options === "boolean" ? options : !!options?.capture);
+  target.addEventListener = (type, listener, options) => {
+    if (listener && !(typeof options === "object" && (options.once || options.signal))) {
+      const event = key(type, options);
+      const group = active.get(event) ?? new Set();
+      group.add(listener);
+      active.set(event, group);
+    }
+    add(type, listener, options);
+  };
+  target.removeEventListener = (type, listener, options) => {
+    if (listener) active.get(key(type, options))?.delete(listener);
+    remove(type, listener, options);
+  };
+  return () => [...active.values()].reduce((sum, group) => sum + group.size, 0);
+}
+
 test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and checkpoints through the native bridge", async mode => {
   const window = new Window({ url: "about:blank", settings: { disableCSSFileLoading: true, disableJavaScriptFileLoading: true } });
+  const documentListeners = listenerCount(window.document as unknown as EventTarget);
+  const windowListeners = listenerCount(window as unknown as EventTarget);
   const messages: { type: string; method?: string; params?: Record<string, unknown>; id?: number }[] = [];
   let requests = 0;
   const canonical = `/blob/${"a".repeat(32)}.png`;
@@ -30,9 +54,9 @@ test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and ch
     if (mode === "prewarmed") {
       expect(messages).toHaveLength(0);
       expect(window.document.querySelector(".cm-editor")).toBeNull();
-      const runtime = window as unknown as { __metahubStartEditor?: (options: typeof bootstrap) => void };
-      runtime.__metahubStartEditor!(bootstrap);
-      expect(runtime.__metahubStartEditor).toBeUndefined();
+      const runtime = window as unknown as { __metahubOpenSession(options: typeof bootstrap): void };
+      runtime.__metahubOpenSession(bootstrap);
+      expect(() => runtime.__metahubOpenSession(bootstrap)).toThrow("上一文档");
     }
     const waitFor = async (predicate: () => boolean) => { for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error("Shell did not become ready"); };
     await waitFor(() => !!window.document.querySelector(".cm-editor"));
@@ -45,6 +69,11 @@ test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and ch
     expect(messages.some(message => message.method === "media" && message.params?.src === canonical)).toBe(true);
     title.value = "Offline edit"; title.dispatchEvent(new window.Event("input", { bubbles: true }));
     await waitFor(() => messages.some(message => message.method === "checkpoint"));
+    if (mode === "prewarmed") {
+      const runtime = window as unknown as { __metahubCloseSession(id: string): unknown };
+      expect(runtime.__metahubCloseSession(bootstrap.session)).toEqual({ blocked: true });
+      expect(window.document.querySelectorAll(".cm-editor")).toHaveLength(1);
+    }
     expect(messages.find(message => message.method === "checkpoint")?.params?.title).toBe("Offline edit");
     (window as unknown as { __metahubEditorReceive(value: unknown): void }).__metahubEditorReceive({ v: 1, session: bootstrap.session, type: "command", id: 99, method: "flush" });
     await waitFor(() => messages.some(message => message.type === "result" && message.id === 99));
@@ -56,6 +85,37 @@ test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and ch
     expect(title.value).toBe("Synced elsewhere");
     expect(window.document.querySelector(".cm-content")?.textContent).toContain("New remote body");
     expect(messages.filter(message => message.method === "checkpoint")).toHaveLength(checkpoints);
+    if (mode === "prewarmed") {
+      const runtime = window as unknown as {
+        __metahubOpenSession(config: typeof bootstrap & { position?: { anchor: number; head: number; scroll: number; version: string } }): void;
+        __metahubCloseSession(id: string): unknown;
+      };
+      let owner = bootstrap.session;
+      let idleListeners = Infinity;
+      for (let i = 0; i < 20; i++) {
+        expect(runtime.__metahubCloseSession("late-session")).toBe(false);
+        expect(runtime.__metahubCloseSession(owner)).toMatchObject({ anchor: 0 });
+        expect(window.document.querySelector(".cm-editor")).toBeNull();
+        const remaining = documentListeners() + windowListeners();
+        expect(remaining).toBeLessThanOrEqual(idleListeners);
+        idleListeners = remaining;
+        owner = "owner-" + i;
+        runtime.__metahubOpenSession({ ...bootstrap, session: owner,
+          initial: { ...remote, body: "body-" + i, revision: 0, recovered: false } });
+        await waitFor(() => !!window.document.querySelector(".cm-editor"));
+        expect(window.document.querySelectorAll(".cm-editor")).toHaveLength(1);
+        expect(window.document.querySelector(".cm-content")?.textContent).toBe("body-" + i);
+      }
+      const content = window.document.querySelector(".cm-content")!;
+      content.dispatchEvent(new window.KeyboardEvent("keydown", { key: "z", code: "KeyZ", ctrlKey: true, bubbles: true, cancelable: true }));
+      expect(content.textContent).toBe("body-19");
+      runtime.__metahubCloseSession(owner);
+      runtime.__metahubOpenSession({ ...bootstrap, session: "shortened",
+        position: { anchor: 5, head: 50, scroll: 0, version: "v1" },
+        initial: { ...remote, body: "abc", revision: 0, recovered: false } });
+      await waitFor(() => !!window.document.querySelector(".cm-editor"));
+      expect(runtime.__metahubCloseSession("shortened")).toMatchObject({ anchor: 3, head: 3, version: remote.version });
+    }
     expect(requests).toBe(0);
     expect(html).toContain("connect-src 'none'"); expect(html).not.toContain("mh_token"); expect(html).not.toContain("db-worker");
   } finally { await window.happyDOM.close(); }
@@ -219,7 +279,7 @@ test("preview guard cleanup blocks old in-flight previews and retains a newer ow
   const window = new Window({ url: "about:blank" });
   const source = new URL("../../../../../src/webui/mobile-editor/bridge.ts", import.meta.url).pathname;
   const built = await Bun.build({ entrypoints: [source], target: "browser", format: "iife", plugins: [{ name: "expose-preview-guard", setup(build) {
-    build.onLoad({ filter: /mobile-editor\/bridge\.ts$/ }, async args => ({ loader: "ts", contents: `${await Bun.file(args.path).text()}\nObject.assign(window, { testBridge: { onBeforeMediaPreview, previewMedia } });` }));
+    build.onLoad({ filter: /mobile-editor\/bridge\.ts$/ }, async args => ({ loader: "ts", contents: `${await Bun.file(args.path).text()}\nObject.assign(window, { testBridge: bindBridge("guard-owner-test"), bindBridge, releaseBridge });` }));
   } }] });
   expect(built.success).toBe(true);
   const previews: unknown[] = [];
@@ -229,7 +289,7 @@ test("preview guard cleanup blocks old in-flight previews and retains a newer ow
   } } });
   try {
     runInContext(await built.outputs[0]!.text(), createContext({ window, setTimeout, clearTimeout }));
-    const bridge = (window as unknown as { testBridge: typeof import("../../../../../src/webui/mobile-editor/bridge") }).testBridge;
+    const bridge = (window as unknown as { testBridge: import("../../../../../src/webui/mobile-editor/bridge").EditorBridge }).testBridge;
     let release!: () => void;
     const blocked = new Promise<void>(resolve => { release = resolve; });
     const removeOld = bridge.onBeforeMediaPreview(() => blocked);
@@ -247,5 +307,27 @@ test("preview guard cleanup blocks old in-flight previews and retains a newer ow
     removeNew();
     await expect(bridge.previewMedia(`/blob/${"d".repeat(32)}.txt`, "file")).rejects.toThrow("编辑器尚未就绪");
     expect(previews).toHaveLength(1);
+    const runtime = window as unknown as Pick<typeof import("../../../../../src/webui/mobile-editor/bridge"), "bindBridge" | "releaseBridge">;
+    runtime.releaseBridge(bridge);
+    const calls: { id: number; session: string }[] = [];
+    Object.assign(window, { ReactNativeWebView: { postMessage(raw: string) {
+      expect(arguments.length).toBe(1); // Android exposes a single-argument Java method.
+      calls.push(JSON.parse(raw));
+    } } });
+    const first = runtime.bindBridge("A");
+    const abandoned = first.rpc("targets");
+    runtime.releaseBridge(first);
+    await expect(abandoned).rejects.toThrow("会话已结束");
+    Object.assign(window, { ReactNativeWebView: { sessionProtocol: 2, postMessage(raw: string, session: string) {
+      expect(session).toBe("B");
+      calls.push(JSON.parse(raw));
+    } } });
+    const second = runtime.bindBridge("B");
+    const pending = second.rpc("targets");
+    expect(calls).toMatchObject([{ id: 1, session: "A" }, { id: 1, session: "B" }]);
+    second.receive({ v: 1, type: "response", id: 1, session: "A", ok: true, value: "stale" });
+    second.receive({ v: 1, type: "response", id: 1, session: "B", ok: true, value: "current" });
+    expect(await pending).toBe("current");
+    runtime.releaseBridge(second);
   } finally { await window.happyDOM.close(); }
 });

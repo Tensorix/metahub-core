@@ -39,7 +39,7 @@ async function rebuild(session: Session, reload: () => Promise<void>, phase: (va
     phase,
     async pauseAndFlush() {
       await session.sync.stop();
-      releaseEditors = await freezeAndFlushEditors(session);
+      releaseEditors = await freezeAndFlushEditors(session.replica);
       session.replica.service.pauseMutations(true);
       // Input is frozen and every mounted editor bridge has acknowledged its
       // flush before database and attachment protection begins.
@@ -109,9 +109,12 @@ async function rebuild(session: Session, reload: () => Promise<void>, phase: (va
     async resume() {
       // Reopen through the atomic pointer on both success and failure; this also
       // reinstates attachment transfer ownership after cancellation.
-      releaseEditors();
-      session.replica.service.pauseMutations(false);
-      if (session.isCurrent()) await reload();
+      try {
+        if (session.isCurrent()) await reload();
+      } finally {
+        if (session.isCurrent()) session.replica.service.pauseMutations(false);
+        releaseEditors();
+      }
     },
   });
 }

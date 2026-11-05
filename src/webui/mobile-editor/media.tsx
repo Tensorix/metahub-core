@@ -1,11 +1,12 @@
 /** @jsxImportSource preact */
 import { useEffect, useState } from "preact/hooks";
 import type { Block } from "../blocks";
-import { previewMedia, rpc } from "./bridge";
+import { currentBridge } from "./bridge";
 
 /** Mount actual media only after native persistence resolves its bytes. This
  * avoids an initial /blob request, credentials, and CSP/onError races. */
 function NativeMedia({ block, kind, onPreview }: { block: Block; kind: "image" | "video" | "audio" | "file"; onPreview?(): void }) {
+  const bridge = currentBridge();
   const [url, setURL] = useState("");
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -13,7 +14,7 @@ function NativeMedia({ block, kind, onPreview }: { block: Block; kind: "image" |
   useEffect(() => {
     let alive = true; setURL(""); setError(""); setReady(false);
     if (kind === "file") return () => { alive = false; };
-    void rpc<{ url?: string }>("media", { action: "resolve", src: block.src, kind }).then(value => {
+    void bridge.rpc<{ url?: string }>("media", { action: "resolve", src: block.src, kind }).then(value => {
       if (!alive) return;
       if (value.url && !/^data:/.test(value.url)) throw new Error("无效的附件地址");
       setURL(value.url ?? ""); setReady(true);
@@ -22,7 +23,7 @@ function NativeMedia({ block, kind, onPreview }: { block: Block; kind: "image" |
   }, [block.src, kind, attempt]);
   const preview = () => {
     if (onPreview) { onPreview(); return; }
-    void previewMedia(block.src, kind).catch(error => setError(String(error.message)));
+    void bridge.previewMedia(block.src, kind).catch(error => setError(String(error.message)));
   };
   return <div class={`void-block void-${kind}`} style={{ maxWidth: "100%" }}>
     {url && kind === "image" && <img src={url} alt={block.name ?? "图片"} style={{ maxWidth: "100%", width: block.width ? `${block.width}px` : undefined }} onClick={preview} onError={() => setError("图片无法显示，请打开附件预览")} />}

@@ -45,6 +45,7 @@ import {
   upsertServer,
   type Credentials,
 } from "./credentials";
+import { freezeAndFlushEditors } from "../editor/recovery-barrier";
 import { replaceSession, type ManagedSession } from "./session-lifecycle";
 
 interface LocalFeed {
@@ -315,19 +316,37 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     async (creds: Credentials | null, resetGrant = false) => {
       if (!providerActive.current) return false;
       const generation = epoch.current;
-      return replaceSession({
-        current,
-        prepare: () => creds ? makeSession(creds, resetGrant) : Promise.resolve(null),
-        valid: () => providerActive.current && generation === epoch.current,
-        publish: (next) => {
-          setSession(next);
-          setError(null);
-        },
-        onCleanupError: (error) => {
-          if (providerActive.current && generation === epoch.current)
-            setError(error instanceof Error ? error.message : String(error));
-        },
-      });
+      const previous = current.current;
+      const release = previous ? await freezeAndFlushEditors(previous.replica) : undefined;
+      try {
+        return await replaceSession({
+          current,
+          prepare: async () => {
+            if (!creds) return null;
+            const next = await makeSession(creds, resetGrant);
+            try {
+              if (resetGrant && !creds.bucket) {
+                await SecureStore.deleteItemAsync(`mh.sync.grant.${next.workspaceId}`);
+              }
+              return next;
+            } catch (cause) {
+              await next.dispose();
+              throw cause;
+            }
+          },
+          valid: () => providerActive.current && generation === epoch.current,
+          publish: (next) => {
+            setSession(next);
+            setError(null);
+          },
+          onCleanupError: (error) => {
+            if (providerActive.current && generation === epoch.current)
+              setError(error instanceof Error ? error.message : String(error));
+          },
+        });
+      } finally {
+        release?.();
+      }
     },
     [makeSession],
   );
@@ -376,11 +395,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           epoch.current++;
           await initializeNativeSyncRuntime();
           if (!providerActive.current) return;
-          if (!creds.bucket) {
-            const grantKey = `mh.sync.grant.${await workspaceKey(creds.baseUrl)}`;
-            if (!providerActive.current) return;
-            await SecureStore.deleteItemAsync(grantKey);
-          }
           if (!await adopt(creds, true)) return;
           await upsertServer(creds);
           if (providerActive.current) await saveCredentials(creds);
@@ -396,9 +410,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       disconnect: () =>
         persist(async () => {
           const cur = current.current;
-          const rest = cur ? await removeServer(cur.creds.baseUrl) : [];
+          const rest = cur ? (await listServers()).filter(server => server.baseUrl !== cur.creds.baseUrl) : [];
           epoch.current++;
           if (!await adopt(rest[0] ?? null)) return;
+          if (cur) await removeServer(cur.creds.baseUrl);
           if (rest[0]) await saveCredentials(rest[0]);
           else await clearCredentials();
         }),

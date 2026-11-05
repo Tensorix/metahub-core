@@ -13,6 +13,7 @@ import { api, NAV_INVALIDATE, type DocSummary, type Db } from "./api";
 const titles = new Map<string, string>();
 const owners = new Map<string, { parent_id: string | null; database_id: string | null }>();
 let state: "empty" | "fresh" | "stale" = "empty";
+let generation = 0;
 let inflight: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
@@ -39,6 +40,15 @@ export function primeDocTitles(docs: DocSummary[], dbs: Db[]): void {
   for (const [id, t] of next) titles.set(id, t);
   state = "fresh";
   if (changed) for (const fn of listeners) fn();
+}
+
+/** A persistent mobile renderer releases its document's target snapshot on close. */
+export function resetDocTitles(): void {
+  generation++;
+  titles.clear();
+  owners.clear();
+  state = "empty";
+  inflight = null;
 }
 
 /** Every known target for the `[[` suggest menu (docs and dbs, nav order).
@@ -71,14 +81,15 @@ export function primeDocTitle(id: string, title: string): void {
 
 async function refresh(): Promise<void> {
   if (inflight) return inflight;
+  const started = generation;
   inflight = (async () => {
     try {
       const [docs, dbs] = await Promise.all([api.listDocuments(), api.listDatabases()]);
-      primeDocTitles(docs, dbs);
+      if (generation === started) primeDocTitles(docs, dbs);
     } catch {
       // Offline/unauthorized: keep whatever we have; the next lookup retries.
     } finally {
-      inflight = null;
+      if (generation === started) inflight = null;
     }
   })();
   return inflight;

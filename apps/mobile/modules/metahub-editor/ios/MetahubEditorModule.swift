@@ -2,12 +2,13 @@ import ExpoModulesCore
 import WebKit
 
 // WebKit retains installed message handlers. Keep the receiver weak so a popped
-// document releases its native view, JS heap, and any decrypted document data.
+// route can detach without retaining its document surface.
 private final class EditorMessages: NSObject, WKScriptMessageHandler {
   weak var surface: EditorSurface?
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-    guard message.frameInfo.isMainFrame, let text = message.body as? String else { return }
-    surface?.onMessage(["data": text])
+    guard message.frameInfo.isMainFrame, let packet = message.body as? [String: Any],
+      let session = packet["session"] as? String, let text = packet["data"] as? String else { return }
+    surface?.receive(text, sessionID: session, web: message.webView)
   }
 }
 
@@ -23,7 +24,7 @@ private final class EditorPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     config.websiteDataStore = .nonPersistent()
     config.allowsInlineMediaPlayback = true
     config.userContentController.add(messages, name: "editor")
-    let bridge = "window.ReactNativeWebView={postMessage:s=>window.webkit.messageHandlers.editor.postMessage(s)}"
+    let bridge = "window.ReactNativeWebView={sessionProtocol:2,postMessage:(data,session)=>window.webkit.messageHandlers.editor.postMessage({data,session})}"
     config.userContentController.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
     web = WKWebView(frame: .zero, configuration: config)
     super.init()
@@ -48,7 +49,7 @@ private final class EditorPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
     guard loaded, let bootstrap else { return }
     self.bootstrap = nil
-    web.evaluateJavaScript("window.__metahubStartEditor(\(bootstrap));true;") { [weak self] _, error in
+    web.evaluateJavaScript("window.__metahubOpenSession(\(bootstrap));true;") { [weak self] _, error in
       if let error { self?.fail(error.localizedDescription) }
     }
   }
@@ -58,6 +59,14 @@ private final class EditorPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     messages.surface?.onFailure(["message": reason])
   }
 
+  func retire() {
+    messages.surface = nil
+    web.stopLoading()
+    web.removeFromSuperview()
+    web.navigationDelegate = nil
+    web.uiDelegate = nil
+    web.loadHTMLString("", baseURL: nil)
+  }
   var usable: Bool { failure == nil }
 
   // Keep the editor's explicit conflict-overwrite confirmation on the owning scene.
@@ -117,13 +126,38 @@ private final class EditorPool {
     warm()
   }
   func warm() {
-    guard UIApplication.shared.applicationState == .active, idle?.usable != true, let template else { return }
+    guard UIApplication.shared.applicationState == .active, active == nil, idle?.usable != true, let template else { return }
     idle = EditorPage(html: template)
   }
-  func take() -> EditorPage? {
-    defer { idle = nil }
-    if let idle, idle.usable { return idle }
-    return template.map { EditorPage(html: $0) }
+  private weak var active: EditorPage?
+  private var workspace: String?
+  private var incarnation: String?
+  func take(workspace id: String, incarnation instance: String) -> EditorPage? {
+    if let workspace, workspace != id || incarnation != instance {
+      active?.retire()
+      active = nil
+      idle = nil
+    }
+    guard active?.usable != true else { return nil }
+    workspace = id
+    incarnation = instance
+    let page = idle.flatMap { $0.usable ? $0 : nil } ?? template.map { EditorPage(html: $0) }
+    idle = nil
+    active = page
+    return page
+  }
+  func release(_ page: EditorPage, clean: Bool) {
+    guard active === page else { return }
+    active = nil
+    if clean && page.usable && UIApplication.shared.applicationState == .active { idle = page }
+  }
+  func invalidate(_ id: String, incarnation instance: String) {
+    guard workspace == nil || (workspace == id && incarnation == instance) else { return }
+    incarnation = nil
+    workspace = nil
+    active?.retire()
+    active = nil
+    idle = nil
   }
 }
 
@@ -131,12 +165,43 @@ private final class EditorSurface: ExpoView {
   let onMessage = EventDispatcher()
   let onFailure = EventDispatcher()
   private var page: EditorPage?
+  private var session: String?
+  private weak var pool: EditorPool?
+  func close(_ id: String, promise: Promise) {
+    guard session == id else { promise.reject("STALE_SESSION", "文档会话已变更"); return }
+    guard let page else { promise.resolve(nil); return }
+    var completed = false
+    let finish: (Bool, Any?) -> Void = { clean, position in
+      guard !completed else { return }
+      completed = true
+      page.messages.surface = nil
+      page.web.removeFromSuperview()
+      self.pool?.release(page, clean: clean)
+      self.page = nil
+      promise.resolve(position)
+    }
+    let quoted = (try? JSONEncoder().encode(id)).flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+    page.web.evaluateJavaScript("window.__metahubCloseSession(\(quoted))") { result, error in
+      guard !completed else { return }
+      if let value = result as? NSDictionary, value["blocked"] as? Bool == true {
+        completed = true
+        promise.reject("EDITOR_BUSY", "文档仍有输入待保存")
+        return
+      }
+      finish(error == nil && result is NSDictionary, result as? NSDictionary)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish(false, nil) }
+  }
   func bind(pool: EditorPool, bootstrap: String) {
     guard page == nil else { return }
-    guard let next = pool.take() else {
+    guard let config = try? JSONSerialization.jsonObject(with: Data(bootstrap.utf8)) as? [String: Any],
+      let workspace = config["workspace"] as? String, let id = config["session"] as? String,
+      let instance = config["instance"] as? String, let next = pool.take(workspace: workspace, incarnation: instance) else {
       onFailure(["message": "编辑器尚未初始化"])
       return
     }
+    self.pool = pool
+    session = id
     page = next
     next.web.frame = bounds
     addSubview(next.web)
@@ -146,6 +211,10 @@ private final class EditorSurface: ExpoView {
     super.layoutSubviews()
     page?.web.frame = bounds
   }
+  func receive(_ text: String, sessionID: String, web: WKWebView?) {
+    guard session == sessionID, let page, web === page.web else { return }
+    onMessage(["data": text])
+  }
   func inject(_ script: String) { page?.web.evaluateJavaScript(script, completionHandler: nil) }
 }
 
@@ -153,6 +222,8 @@ public final class MetahubEditorModule: Module {
   private let pool = EditorPool()
   public func definition() -> ModuleDefinition {
     Name("MetahubEditor")
+    Constant("sessionProtocol") { 2 }
+    AsyncFunction("invalidate") { (workspace: String, instance: String) in self.pool.invalidate(workspace, incarnation: instance) }.runOnQueue(.main)
     AsyncFunction("prepare") { (html: String) in self.pool.prepare(html) }.runOnQueue(.main)
     AsyncFunction("warm") { self.pool.warm() }.runOnQueue(.main)
     View(EditorSurface.self) {
@@ -160,6 +231,7 @@ public final class MetahubEditorModule: Module {
       Prop("bootstrap") { (view: EditorSurface, bootstrap: String) in
         view.bind(pool: self.pool, bootstrap: bootstrap)
       }
+      AsyncFunction("closeSession") { (view: EditorSurface, id: String, promise: Promise) in view.close(id, promise: promise) }
       AsyncFunction("injectJavaScript") { (view: EditorSurface, script: String) in view.inject(script) }
     }
   }
