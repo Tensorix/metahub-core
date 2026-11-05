@@ -1,5 +1,6 @@
 import { useRef, useLayoutEffect, useCallback } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
+import { BrowseIcon } from "../BrowseIcon";
 import { LibrarySwitch } from "./LibrarySwitch";
 import type { ListProps } from "./LibraryList.types";
 import { replacementAnchor, type Row } from "../../lib/browse/library";
@@ -59,35 +60,60 @@ export function LibraryList(p: ListProps) {
       renderItem={({ item }) => (
         <View
           style={{
-            minHeight: 64,
+            minHeight: 52,
             flexDirection: "row",
             alignItems: "center",
-            paddingLeft: 16 + Math.min(item.depth, 6) * 12,
+            paddingLeft: 4 + Math.min(item.depth, 6) * 16,
           }}
         >
-          {item.children && (
+          {item.children ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={
                 (item.expanded ? "折叠" : "展开") + item.title
               }
               onPress={() => p.toggle(item)}
-              style={{ padding: 12 }}
+              style={{
+                width: 44,
+                height: 44,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
             >
               <Text style={{ color: tokens.fg }}>
                 {item.expanded ? "⌄" : "›"}
               </Text>
             </Pressable>
+          ) : (
+            <View style={{ width: 44 }} />
           )}
           <Pressable
-            style={{ flex: 1, paddingVertical: 12 }}
+            style={{
+              flex: 1,
+              minHeight: 44,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              paddingRight: 16,
+            }}
             accessibilityRole="button"
             onPress={() => (item.more ? p.more(item) : p.open(item))}
           >
-            <Text style={{ color: tokens.fg, fontSize: 17 }}>{item.title}</Text>
-            {!!item.path && (
-              <Text style={{ color: tokens.fgSoft }}>{item.path}</Text>
+            {!item.more && (
+              <View style={{ width: 28, alignItems: "center" }}>
+                <BrowseIcon
+                  kind={p.kind === "documents" ? "document" : "database"}
+                />
+              </View>
             )}
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: tokens.fg, fontSize: 17 }}>
+                {item.title}
+              </Text>
+              {!!item.path && (
+                <Text style={{ color: tokens.fgSoft }}>{item.path}</Text>
+              )}
+            </View>
           </Pressable>
         </View>
       )}
