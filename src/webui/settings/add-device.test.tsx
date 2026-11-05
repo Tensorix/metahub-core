@@ -56,3 +56,21 @@ test('failed generation can retry and expired code cannot be copied', async () =
  await click('生成接入命令'); expect(host.textContent).toContain('已过期');
  expect(Array.from(host.querySelectorAll('button')).some(b => b.textContent?.includes('复制命令'))).toBe(false);
 });
+
+test('bucket invitation switches between native app, validated PWA and CLI without changing enrollment data', async () => {
+ const config = { endpoint: 'https://storage.example.com', bucket: 'fixture', region: 'test', accessKeyId: 'test-id', secretAccessKey: 'test-secret', encrypt: true };
+ await act(async () => render(<AddDeviceModal buckets={[{ url: 'fixture', name: 'Fixture' }]} getConfig={async () => config} environment="desktop" onClosed={() => {}} />, host));
+ await act(async () => { await Bun.sleep(0); });
+ const link = () => host.querySelector('.enroll-cmd')?.textContent;
+ const native = link();
+ expect(native).toStartWith('metahub://connect?enroll=');
+ const token = native!.split('?enroll=')[1]!;
+ await change('#phone-enroll-target', 'web');
+ await change('#enroll-shell', 'http://localhost', 'input');
+ expect(link()).toBeUndefined();
+ await change('#enroll-shell', 'https://phone.example.com', 'input');
+ expect(link()).toBe('https://phone.example.com/#enroll=' + token);
+ await click('电脑 / 命令行');
+ expect(host.textContent).toContain('mh config backup connect --enroll ' + token);
+ localStorage.removeItem('mh_shell_base');
+});
