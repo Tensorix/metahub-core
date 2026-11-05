@@ -1,3 +1,5 @@
+import { File } from "expo-file-system";
+import { createSiteResources, liveSiteHashes } from "../site/resources";
 import { beginVersionCheck } from "../../../../../src/core/sync/data-version";
 import { storageUrl } from "../../../../../src/core/sync/storage-url";
 import { loadV2DocumentHistory } from "../../../../../src/core/sync/recovery-v2";
@@ -62,6 +64,8 @@ export interface Session {
   replica: MobileReplica;
   sync: ReplicaSync;
   attachments: AttachmentManager;
+  siteResources: ReturnType<typeof createSiteResources>;
+  onSiteSessionEnd(fn: () => void): () => void;
   live: LocalFeed;
   authInvalid: boolean;
   isCurrent(): boolean;
@@ -117,6 +121,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       let disposed = false,
         grant: string | null = null,
         pairing: Promise<void> | null = null;
+      const siteSessions = new Set<() => void>();
       const pairingAbort = new AbortController();
       const grantKey = `mh.sync.grant.${workspaceId}`;
       try {
@@ -141,6 +146,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         () => {
           const cur = current.current;
           if (cur?.id !== id || disposed) return;
+          for (const end of siteSessions) end();
           cur.authInvalid = true;
           setSession({ ...cur });
         },
@@ -226,14 +232,33 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         workspaceId,
         creds,
         api,
+        retainedSiteHashes: () => liveSiteHashes(replica.db),
         isCurrent: () => !disposed && current.current?.id === id,
       });
+      const siteResources = createSiteResources(
+        replica.db, attachments, () => !disposed && current.current?.id === id,
+        uri => new File(uri),
+      );
+      let lastSitePreparation = 0;
+      const prepareSites = () => {
+        lastSitePreparation = Date.now();
+        void siteResources.prepare().catch(error => {
+          if (!disposed && current.current?.id === id) setError(String(error));
+        });
+      };
+      const unsubscribeSites = replica.service.onChange(change => {
+        if (change.datasets.some(d => ["sites", "site_files", "doc_blocks"].includes(d))) prepareSites();
+      });
+      let siteConnected = false;
       const attachmentSync = sync.onStatus((status) => {
         const cur = current.current;
         if (status.authInvalid && !disposed && cur?.id === id && !cur.authInvalid) {
+          for (const end of siteSessions) end();
           cur.authInvalid = true;
           setSession({ ...cur });
         }
+        if (status.connected && !siteConnected) prepareSites();
+        siteConnected = status.connected;
         if (status.connected && !disposed)
           void attachments.retryPending().catch(() => {});
       });
@@ -247,6 +272,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         replica,
         sync,
         attachments,
+        siteResources,
+        onSiteSessionEnd(fn) {
+          siteSessions.add(fn);
+          return () => { siteSessions.delete(fn); };
+        },
         authInvalid: false,
         live: {
           get connected() {
@@ -272,6 +302,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           feed?.destroy();
           unsub();
           attachmentSync();
+          unsubscribeSites();
+          for (const end of siteSessions) end();
+          siteSessions.clear();
           attachments.dispose();
           api.dispose();
           await Promise.allSettled([sync.stop(), pairing]);
@@ -290,6 +323,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         };
         // The manager is constructed before session adoption; recover only now.
         void attachments.resume().catch(() => {});
+        prepareSites();
         sync.start();
         feed?.install();
         attempt();
@@ -297,13 +331,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           sync.setActive(state === "active");
           if (state === "active") {
             void attachments.resume().catch(() => {});
+            prepareSites();
             attempt();
           }
         });
         network = Network.addNetworkStateListener((state) => {
-          if (state.isConnected) attempt();
+          if (state.isConnected) {
+            attempt();
+            prepareSites();
+          }
         });
         retry = setInterval(() => {
+          if (AppState.currentState === "active" && sync.status.connected &&
+              siteResources.needsRetry() && Date.now() - lastSitePreparation >= 60_000)
+            prepareSites();
           if (!grant && !creds.bucket && AppState.currentState === "active")
             attempt();
         }, 15000);

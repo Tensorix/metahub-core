@@ -81,10 +81,6 @@ export default function HomeScreen() {
                 title={site.title}
                 iconUri={site.iconUri}
                 onPress={() => {
-                  if (!site.url) {
-                    router.push("/sites");
-                    return;
-                  }
                   setOpenError(null);
                   void sites
                     .open(site)

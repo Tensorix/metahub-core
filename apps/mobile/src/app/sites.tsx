@@ -72,12 +72,6 @@ export default function SitesScreen() {
               iconUri={item.iconUri}
               onPress={() => {
                 setError(null);
-                if (!item.url) {
-                  setError(
-                    "这个站点尚无可访问的发布链接。请先在桌面端发布；手机离线运行站点尚未支持。",
-                  );
-                  return;
-                }
                 void sites
                   .open(item)
                   .catch(() => setError("站点暂时无法打开，请稍后重试"));
@@ -90,8 +84,25 @@ export default function SitesScreen() {
                 textAlign: "center",
               }}
             >
-              {item.url ? "在浏览器打开" : "尚无发布链接"}
+              {!item.hasEntry
+                ? "入口文件尚未同步"
+                : sites.missing(item.id).length
+                  ? "正在准备资源"
+                  : "可离线使用"}
             </Text>
+            {item.url && (
+              <Text
+                accessibilityRole="link"
+                style={{ color: tokens.fgSoft }}
+                onPress={() =>
+                  void sites
+                    .published(item)
+                    ?.catch(() => setError("发布版暂时无法打开"))
+                }
+              >
+                打开发布版
+              </Text>
+            )}
           </View>
         )}
         ListEmptyComponent={

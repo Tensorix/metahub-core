@@ -53,6 +53,7 @@ export interface AttachmentManagerOptions {
   creds: Credentials;
   api: MobileApi;
   isCurrent(): boolean;
+  retainedSiteHashes?(): Set<string>;
 }
 export interface RetryPendingReport {
   uploaded: number;
@@ -699,9 +700,11 @@ export function createAttachmentManager(options: AttachmentManagerOptions) {
     },
     unpinDownloaded(src: string) {
       current();
-      parseBlobSource(src);
+      const { hash } = parseBlobSource(src);
       if (downloads.size || retrying || picking || reconciling)
         throw new Error("附件传输中，请稍后取消固定");
+      if (options.retainedSiteHashes?.().has(hash))
+        throw new Error("离线站点正在使用这个文件");
       const entry = store.get(src);
       if (entry?.pending)
         throw new Error("待上传附件必须保持固定，请先修复并上传");
@@ -719,8 +722,9 @@ export function createAttachmentManager(options: AttachmentManagerOptions) {
         [...activeTemps].some((uri) => uri.startsWith(`${directoryUri}/`))
       )
         throw new Error("附件传输中，请稍后清理缓存");
+      const siteHashes = options.retainedSiteHashes?.();
       for (const entry of store.list()) {
-        if (entry.pending || entry.pinned) continue;
+        if (entry.pending || entry.pinned || siteHashes?.has(entry.hash)) continue;
         remove(entry.uri);
         store.removeDownloaded(entry.src);
         progress.delete(entry.src);

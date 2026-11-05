@@ -78,6 +78,7 @@ try {
   if (expoConfig.name !== 'Metahub') throw new Error('Update native-build.ts workspace/scheme names when app name changes');
   manifest.sdkVersion = expoConfig.sdkVersion;
   await command(['bun', '--no-env-file', 'run', 'build:editor']);
+  await command(['bun', '--no-env-file', 'run', 'build:site']);
   await command(['bun', '--no-env-file', 'x', '--no-install', 'expo', 'prebuild', '--clean', '--no-install', '--platform', platform]);
   // CNG/editor generation can change source inputs. Capture what the native compiler consumes.
   const source = await captureBuildSources(root);

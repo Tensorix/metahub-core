@@ -44,6 +44,11 @@ export function mobileSites(db: DbDriver, serverUrl?: string) {
         ? `data:image/png;base64,${favicon.content}`
         : undefined;
     return {
+      hasEntry: !!db
+        .query(
+          "SELECT 1 FROM site_files WHERE site_id=? AND path='index.html' AND __deleted=0 AND content IS NOT NULL AND content_type IS NOT NULL AND encoding IN ('utf8','base64','blob') LIMIT 1",
+        )
+        .get(site.id),
       iconUri,
       id: site.id,
       title: site.title || site.name,

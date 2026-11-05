@@ -94,6 +94,7 @@ function RootStack() {
     >
       <Stack.Protected guard={session !== null}>
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="site/[id]" options={{headerShown:true,title:"Site"}} />
         <Stack.Screen
           name="find"
           options={{ headerShown: true, title: "搜索" }}

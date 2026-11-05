@@ -9,7 +9,9 @@ Metahub 的原生移动端，使用 Expo SDK 58、React Native 0.88.1 和 React 
 - 编辑器：WebView 加载 Bun 打包的本地 CM6 编辑器，通过消息桥与原生副本交互，保留共享文档编辑能力。
 - 首页：本机最近 Sites 和最近文档；资料库：原生分段控件切换文档/数据表；保留搜索、设置和既有管理页面。
 
-本地副本支持处理已有的本地资料，但未下载资源仍受网络影响。Sites 当前打开已发布 HTTP(S) 地址，没有移动端离线 Site runtime；对象存储工作区的未发布 Site 会显示“尚无发布链接”。
+从首页「更多」选一个 Site，会在 App 内打开当前工作区的本机版本。显示「可离线使用」后，即使站点从未发布或打开过，也能断网首次运行。手机会自动准备站点引用的资源；详情中可以查看缺失的文件并重试。外部 CDN 和第三方服务仍依赖网络。有公开地址的站点可单独选择「打开发布版」。
+
+本机站点按工作区所有者身份运行。Site 可以通过 SDK 或同源的工作区 API 查询数据表、读写记录和文档；离线写入会在恢复连接后同步。
 
 ## 开发
 
@@ -20,6 +22,7 @@ bun install
 cd apps/mobile
 bun install
 bun run build:editor
+bun run build:site
 bun run ios
 # 或 Android
 bun run android
@@ -33,7 +36,7 @@ bun run android
 bun run start
 ```
 
-`prestart` 会构建本地编辑器包；直接执行原生构建或修改共享编辑器后，可先显式执行 `bun run build:editor`。安装 Expo 依赖时使用 SDK 对齐的解析器：
+`prestart` 会构建本地编辑器包和 Site SDK；直接执行原生构建或修改共享编辑器后，可先显式执行 `bun run build:editor`。安装 Expo 依赖时使用 SDK 对齐的解析器：
 
 ```sh
 bunx expo install <package> --bun

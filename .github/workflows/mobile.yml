@@ -47,7 +47,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: apps/mobile
-      - run: bun run build:editor
+      - run: bun run build:editor && bun run build:site
         working-directory: apps/mobile
       - run: bun run typecheck
         working-directory: apps/mobile
