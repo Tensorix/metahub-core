@@ -60,7 +60,7 @@ function RootStack() {
       previousSession.current = next;
       const route = state.routes[state.index ?? 0]?.name;
       if (shouldResetSessionNavigation(previous, next, route)) {
-        // One owner resets private history; login/logout remain Protected transitions.
+        // Retire public connection screens and history from another workspace.
         navigation.reset({
           key: state.key,
           index: 0,

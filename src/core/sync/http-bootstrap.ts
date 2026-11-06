@@ -109,8 +109,14 @@ export function httpWorkspaceSource(db: DbDriver, target: HttpWorkspaceTarget): 
           ingestPeerChanges(shadow, snapshot.current.changes, snapshot.bases);
           shadow.query("INSERT OR REPLACE INTO meta(key,value) VALUES('sync_v2_baseline_http',?)").run(target.url);
           shadow.query("INSERT OR REPLACE INTO meta(key,value) VALUES(?, '1')").run(`sync_verified_peer:${target.url}`);
-          shadow.query("UPDATE peers SET pull_cursor=?,push_cursor=(SELECT COALESCE(MAX(seq),0) FROM crdt_changes),node_id=? WHERE url=?")
-            .run(snapshot.cursor, snapshot.node_id, target.url);
+          // Native hosts keep credentials outside SQLite and may create a
+          // shadow without a connection row. Commit the captured HTTP cursor
+          // even in that case, before requesting any post-snapshot changes.
+          shadow.query(`INSERT INTO peers(url,kind,enabled,pull_cursor,push_cursor,node_id)
+            VALUES(?,'http',1,?,(SELECT COALESCE(MAX(seq),0) FROM crdt_changes),?)
+            ON CONFLICT(url) DO UPDATE SET pull_cursor=excluded.pull_cursor,
+              push_cursor=excluded.push_cursor,node_id=excluded.node_id`)
+            .run(target.url, snapshot.cursor, snapshot.node_id);
           // The shadow has its own incarnation; never copy the server's identity.
           assertReplicaGeneration(shadow, generation);
           let pages = 0;

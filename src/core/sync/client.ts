@@ -1,6 +1,6 @@
 import { editBases, ingestPeerChanges } from "./peer-v2.ts";
 import { assertWorkspaceWritable, beginVersionCheck, dataVersionRange, localDataVersion, knownDataVersion, finishVersionCheck, observeDataVersion, requireSupportedVersion } from "./data-version.ts";
-import { assertReplicaGeneration, readReplicaGeneration } from "./retention-protocol.ts";
+import { assertReplicaGeneration, readReplicaGeneration, ReplicaGenerationSchema } from "./retention-protocol.ts";
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
 import { changesAfterSeq, type Change } from "../crdt.ts";
@@ -156,7 +156,6 @@ export async function syncWithPeer(
     if (signal.aborted) throw signal.reason;
     checkVersion(remote);
     if (remote.generation) {
-      const { ReplicaGenerationSchema } = await import("./retention-protocol.ts");
       const state = classifyWorkspaceAccess(db, url, ReplicaGenerationSchema.parse(remote.generation), remote.dataVersion ?? 2, "http");
       if (!generation && !remote.capabilities?.includes("sync_bootstrap_v1")) {
         setWorkspaceAccess(db, { url, kind: "error", reason: "请更新服务器以支持新设备接入" });

@@ -41,7 +41,7 @@ export interface SessionIdentity {
   workspaceId: string;
 }
 
-/** Auth guards own login/logout; only workspace changes reset private history. */
+/** Completed connections reset history; hydration preserves incoming deep links. */
 export function shouldResetSessionNavigation(
   previous: SessionIdentity | null | undefined,
   next: SessionIdentity | null,
@@ -49,6 +49,9 @@ export function shouldResetSessionNavigation(
 ): boolean {
   // The first hydrated session may be opening a deep link.
   if (previous === undefined || !next || previous?.id === next.id) return false;
+  // Onboarding may sit above the public connect route. Protected removes only
+  // onboarding, leaving that route's retired workspace wrapper blank.
+  if (previous === null) return true;
   if (route === "add-server" || route === "connect") return true;
   return previous !== null && previous.workspaceId !== next.workspaceId;
 }

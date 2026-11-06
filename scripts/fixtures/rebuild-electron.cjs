@@ -53,7 +53,7 @@ async function run() {
     until(
       () =>
         js(
-          "document.querySelector('[role=status]')?.textContent.includes(" +
+          "document.body.textContent.includes(" +
             JSON.stringify(message) +
             ")",
         ),
@@ -84,19 +84,16 @@ async function run() {
         window.metahubDesktop.documents.saveDone(id,{ok:false,error:"secondary editor has pending input"}));
       window.metahubDesktop.documents.setDirty(true);
     `);
-    await click("保全编辑并重建本地副本");
-    await click("开始重建");
+    await click("立即升级");
     await status("secondary editor has pending input");
     if (!(await js("fetch('/health').then(r=>r.ok)")))
       throw new Error("original sidecar unavailable after editor refusal");
     editor.destroy();
-    await click("保全编辑并重建本地副本");
-    await click("开始重建");
+    await click("立即升级");
     await status("Attachment protection");
     unlinkSync(join(process.env.METAHUB_HOME, "cache", "0".repeat(32)));
-    await click("保全编辑并重建本地副本");
-    await click("开始重建");
-    await status("本地副本已更新");
+    await click("立即升级");
+    await until(() => js("fetch('/api/local-recovery/items').then(r=>r.json()).then(items=>items.some(i=>i.local.includes('unpublished desktop draft'))).catch(()=>false)"), "installed recovery items");
     const path =
       "/api/document/at?" +
       new URLSearchParams({

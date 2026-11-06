@@ -16,6 +16,8 @@ import { readReplicaGeneration, writeReplicaGeneration, type ReplicaGeneration }
 import { createDocument, getDocument } from "../documents.ts";
 import { MhError } from "../errors.ts";
 import { commitHash } from "./commit-log.ts";
+import { inspectBucketAccess } from "./workspace-bucket.ts";
+import { canAutoJoinWorkspace } from "./workspace-access.ts";
 
 export type RecoveryPhase = "saving" | "protecting" | "downloading" | "verifying" | "swapping" | "pending";
 export interface RecoveryItem { id: string; kind: string; target: string; local: string; remote: string | null; status: string; result: string | null }
@@ -258,7 +260,6 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
       if (!root && oldGeneration) throw new MhError("busy", "workspace root is unavailable");
       if (!root && adapter.legacyPeerUrl) {
         // Only an actual legacy layout may be drained through the v1 writer.
-        const { inspectBucketAccess } = await import("./workspace-bucket.ts");
         const access = await inspectBucketAccess(source, adapter.legacyPeerUrl, client, config);
         if (access.kind === "error" || access.kind === "client-update") throw new MhError("busy", access.reason ?? "工作区状态尚未确认");
         if (access.kind === "migration" && access.reason === "legacy-layout") {
@@ -282,7 +283,6 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
         root = await bucket.initialize(checkpoint);
         // Another initializer's content may not replace a populated local workspace.
         if (root.workspaceId !== workspaceId && !oldGeneration) {
-          const { canAutoJoinWorkspace } = await import("./workspace-access.ts");
           if (!canAutoJoinWorkspace(source)) throw new MhError("conflict", "另一个设备已建立工作区，请确认后保全编辑并加入");
         }
       }

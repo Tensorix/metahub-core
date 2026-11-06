@@ -102,9 +102,9 @@ test("workspace changes and completed connection routes reset old private histor
   expect(shouldResetSessionNavigation(old, reauth, "add-server")).toBe(true);
   expect(shouldResetSessionNavigation(null, old, "connect")).toBe(true);
 });
-test("Protected routes exclusively own first onboarding login and final logout", () => {
-  expect(shouldResetSessionNavigation(null, old, "onboarding/index")).toBe(false);
-  expect(shouldResetSessionNavigation(null, old, "onboarding/scan")).toBe(false);
+test("first onboarding login retires public connection history while logout stays guarded", () => {
+  expect(shouldResetSessionNavigation(null, old, "onboarding/index")).toBe(true);
+  expect(shouldResetSessionNavigation(null, old, "onboarding/scan")).toBe(true);
   expect(shouldResetSessionNavigation(old, null, "(tabs)")).toBe(false);
 });
 test("workspace navigation targets the app Stack inside SDK 57's internal root", () => {

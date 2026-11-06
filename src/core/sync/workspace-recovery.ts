@@ -28,7 +28,11 @@ export async function recoverConnectedWorkspace(db: DbDriver, target: WorkspaceT
   if (automatic && db.query("SELECT 1 FROM peers WHERE enabled=1 AND kind IN ('s3','http') AND url<>? LIMIT 1").get(target.url))
     throw new MhError("busy", "此副本连接了多个同步来源，请先保留一个已确认的工作区连接再重试");
   if (automatic) db.query("INSERT OR REPLACE INTO meta(key,value) VALUES('sync_workspace_initializing',?)").run(target.url);
+  let resumeRequested = false;
   const owned: RecoveryAdapter = { ...adapter,
+    // The host may close the source while reopening the active replica. Finish
+    // source bookkeeping before handing ownership back to that host.
+    async resume() { resumeRequested = true; },
     validateSource() {
       adapter.validateSource?.();
       if (automatic && access.reason !== "empty-bucket" && !canAutoJoinWorkspace(db))
@@ -45,5 +49,11 @@ export async function recoverConnectedWorkspace(db: DbDriver, target: WorkspaceT
     return await recoverV2Workspace(db, target.client ?? storageClientFor(target.config), target.config,
       readReplicaGeneration(db)?.workspaceId ?? crypto.randomUUID(), { ...owned, legacyPeerUrl: target.url });
   } catch (error) { workspaceAccessError(db, target.url, error); throw error; }
-  finally { if (automatic) db.query("DELETE FROM meta WHERE key='sync_workspace_initializing' AND value=?").run(target.url); }
+  finally {
+    try {
+      if (automatic) db.query("DELETE FROM meta WHERE key='sync_workspace_initializing' AND value=?").run(target.url);
+    } finally {
+      if (resumeRequested) await adapter.resume();
+    }
+  }
 }
