@@ -119,8 +119,9 @@ test("encrypted blob limits account for wire overhead and cancelled transfers ne
 
 test("metadata reads return bounded bytes and timestamps from the same response", async () => {
   let requests = 0;
-  const client = createFetchStorageClient(config, { fetch: (async () => {
+  const client = createFetchStorageClient(config, { fetch: (async (input: RequestInfo | URL) => {
     requests++;
+    expect(new URL((input as Request).url).searchParams.has("__mh_refresh")).toBe(true);
     return new Response("data", { headers: { date: "Wed, 04 Nov 2026 08:00:00 GMT", "last-modified": "Tue, 03 Nov 2026 08:00:00 GMT", etag: "version" } });
   }) as typeof fetch });
   const result = await client.getWithMetadata!("commit", { maxBytes: 4 });

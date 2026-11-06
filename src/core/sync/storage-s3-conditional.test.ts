@@ -78,7 +78,7 @@ test("COS unavailable versioning permission fails clearly without a HEAD or PUT 
     requests.push(requestOf(input).method);
     return new Response("<Error><Code>AccessDenied</Code></Error>", { status: 403 });
   }) as typeof fetch });
-  await expect(client.put("synthetic/key", new Uint8Array([1]), { ifNoneMatch: true })).rejects.toMatchObject({ code: "auth", message: expect.stringContaining("cos:GetBucketVersioning") });
+  await expect(client.put("synthetic/key", new Uint8Array([1]), { ifNoneMatch: true })).rejects.toMatchObject({ code: "invalid_input", message: expect.stringContaining("cos:GetBucketVersioning") });
   expect(requests).toEqual(["GET"]);
 });
 

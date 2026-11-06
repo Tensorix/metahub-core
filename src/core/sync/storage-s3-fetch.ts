@@ -33,6 +33,15 @@ export function createFetchStorageClient(config: S3Config, opts: FetchStorageCli
   // retry behavior by default; an injected transport owns its own retry policy.
   async function request<T>(url: string, init: RequestInit, read: (res: Response, signal: AbortSignal) => Promise<T>): Promise<T> {
     return withSyncBudget(async (signal) => {
+      // React Native's Request adds a cache-busting query for these modes.
+      // Finalize that query before signing, and don't let Request mutate it again.
+      if (init.cache === "no-store" || init.cache === "no-cache") {
+        const fresh = new URL(url);
+        fresh.searchParams.set("__mh_refresh", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        url = fresh.toString();
+        const { cache: _cache, ...rest } = init;
+        init = rest;
+      }
       const res = opts.fetch
         ? await opts.fetch(await aws.sign(url, { ...init, signal }))
         : await aws.fetch(url, { ...init, signal });
@@ -51,8 +60,7 @@ export function createFetchStorageClient(config: S3Config, opts: FetchStorageCli
   async function requireCosConditionalCreate(): Promise<void> {
     await request(`${base}/?versioning`, { method: "GET" }, async (res) => {
       if (!res.ok) {
-        throw new MhError(res.status === 401 || res.status === 403 ? "auth" : "network",
-          `Tencent COS conditional creation requires cos:GetBucketVersioning permission; versioning check failed: ${res.status}`);
+        await fail(res, "versioning check", "Tencent COS conditional creation requires cos:GetBucketVersioning permission; ");
       }
       const xml = await res.text();
       // The documented never-enabled response has an empty root (optionally
@@ -64,8 +72,23 @@ export function createFetchStorageClient(config: S3Config, opts: FetchStorageCli
     });
   }
 
-  async function fail(res: Response, what: string): Promise<never> {
-    throw new MhError(res.status === 401 || res.status === 403 ? "auth" : "network", `S3 ${what} failed: ${res.status}`);
+  async function fail(res: Response, what: string, context = ""): Promise<never> {
+    const prefix = `${context}S3 ${what} failed: ${res.status}`;
+    if (res.status === 401 || res.status === 403) {
+      const body = await res.text().catch(() => "");
+      const code = body.match(/<Code>\s*([A-Za-z0-9]+)\s*<\/Code>/)?.[1];
+      // Only fixed explanations and known codes may escape this layer; error
+      // bodies can contain credentials, signatures and canonical requests.
+      if (code === "SignatureDoesNotMatch")
+        throw new MhError("network", `${prefix}：请求签名校验失败，请检查签名与请求 URL 是否一致 (SignatureDoesNotMatch)`);
+      if (code === "AccessDenied" || code === "AllAccessDisabled" || code === "UnauthorizedOperation")
+        throw new MhError("invalid_input", `${prefix}：存储桶权限不足，请检查访问策略 (${code})`);
+      if (code === "RequestTimeTooSkewed" || code === "RequestExpired")
+        throw new MhError("clock_skew", `${prefix}：请求时间无效，请检查设备时钟 (${code})`);
+      if (["InvalidAccessKeyId", "InvalidSecurity", "ExpiredToken", "InvalidToken", "TokenRefreshRequired", "InvalidClientTokenId"].includes(code ?? ""))
+        throw new MhError("auth", `${prefix}：连接凭据无效或已过期，请更新凭据 (${code})`);
+    }
+    throw new MhError(res.status === 401 ? "auth" : "network", prefix);
   }
 
   return {
@@ -80,7 +103,9 @@ export function createFetchStorageClient(config: S3Config, opts: FetchStorageCli
       const maxBytes = options.maxBytes;
       if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
         throw new RangeError("maxBytes must be a nonnegative safe integer");
-      return request(objectUrl(key), {}, async (res, signal) => {
+      // Time verification needs a current storage response, including current
+      // CORS headers. A page reload need not invalidate cached object responses.
+      return request(objectUrl(key), { cache: "no-store" }, async (res, signal) => {
         if (res.status === 404) return null;
         if (!res.ok) await fail(res, "get");
         const length = res.headers.get("content-length");
