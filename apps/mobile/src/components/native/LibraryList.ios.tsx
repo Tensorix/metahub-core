@@ -157,7 +157,7 @@ export function LibraryList({
           >
             {/* Scroll this clearance away so content can pass behind the glass. */}
             <Text modifiers={[
-              frame({ height: 48 }),
+              frame({ height: 40 }),
               listRowInsets({ top: 0, bottom: 0 }),
               listRowSeparator("hidden"),
               listRowBackground("clear"),

@@ -12,6 +12,8 @@ import {
   frame,
   navigationBarTitleDisplayMode,
   pickerStyle,
+  scaleEffect,
+  offset,
   tag,
 } from "@expo/ui/swift-ui/modifiers";
 import { NativeHost } from "./NativeHost";
@@ -36,7 +38,8 @@ export function LibraryKindPicker({
         height: 80,
       }}
     >
-      <NavigationStack>
+      {/* Scale track, labels and lens together. Offset by 80 * (1 - 0.85) / 2 to keep the top fixed. */}
+      <NavigationStack modifiers={[scaleEffect(0.85), offset({ y: -6 })]}>
         <Toolbar
           modifiers={[
             navigationBarTitleDisplayMode("inline"),
