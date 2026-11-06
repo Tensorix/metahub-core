@@ -1,5 +1,34 @@
 import ExpoModulesCore
 import WebKit
+import ObjectiveC.runtime
+
+private final class EditorInputAccessory: UIView {
+  override var inputAccessoryView: UIView? { nil }
+}
+
+// Match react-native-webview's hideKeyboardAccessoryView for our pooled WebKit surface.
+// Change only this editor's content view, never WebKit's class globally.
+private func hideEditorKeyboardAccessory(_ web: WKWebView) {
+  for content in web.scrollView.subviews where NSStringFromClass(type(of: content)).hasPrefix("WK") {
+    guard let base = object_getClass(content) else { continue }
+    let name = NSStringFromClass(base) + "_MetahubNoAccessory"
+    if NSStringFromClass(base).hasSuffix("_MetahubNoAccessory") { continue }
+    let replacement: AnyClass
+    if let existing = NSClassFromString(name) {
+      replacement = existing
+    } else {
+      guard let created = objc_allocateClassPair(base, name, 0),
+        let method = class_getInstanceMethod(EditorInputAccessory.self, #selector(getter: UIResponder.inputAccessoryView)) else { continue }
+      class_addMethod(created, #selector(getter: UIResponder.inputAccessoryView), method_getImplementation(method), method_getTypeEncoding(method))
+      objc_registerClassPair(created)
+      replacement = created
+    }
+    object_setClass(content, replacement)
+    content.inputAssistantItem.leadingBarButtonGroups = []
+    content.inputAssistantItem.trailingBarButtonGroups = []
+    content.reloadInputViews()
+  }
+}
 
 // WebKit retains installed message handlers. Keep the receiver weak so a popped
 // route can detach without retaining its document surface.
@@ -33,6 +62,7 @@ private final class EditorPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     web.scrollView.contentInsetAdjustmentBehavior = .never
     web.isOpaque = false
     web.backgroundColor = .clear
+    hideEditorKeyboardAccessory(web)
     web.loadHTMLString(html, baseURL: nil)
   }
 
@@ -91,6 +121,7 @@ private final class EditorPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     decisionHandler(local && navigationAction.targetFrame?.isMainFrame == true ? .allow : .cancel)
   }
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    hideEditorKeyboardAccessory(webView)
     loaded = true
     startIfReady()
   }

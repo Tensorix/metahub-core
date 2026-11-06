@@ -3,9 +3,9 @@ import { reusesEditorRuntime } from "@/lib/editor/warmup";
 import type { EditorPosition } from "@/components/DefaultEditorSurface";
 import { registerRecoveryEditor } from "@/lib/editor/recovery-barrier";
 import { useFocusEffect, useNavigation, Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { usePreventRemove } from "expo-router/react-navigation";
+import { useHeaderHeight, usePreventRemove } from "expo-router/react-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Linking, StyleSheet, Text, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Linking, Platform, StyleSheet, Text, View } from "react-native";
 import {
   DocumentEditor,
   type DocumentEditorHandle,
@@ -32,6 +32,8 @@ function LocalDocument({ id }: { id: string }) {
   const router = useRouter();
   const navigation = useNavigation();
   const { tokens, scheme } = useTheme();
+  const headerHeight = useHeaderHeight();
+  const [mode, setMode] = useState<"blocks" | "source">("blocks");
   const editor = useRef<DocumentEditorHandle>(null);
   const [position, setPosition] = useState<EditorPosition | null>(null);
   const [admitted, setAdmitted] = useState(!reusesEditorRuntime);
@@ -327,7 +329,8 @@ function LocalDocument({ id }: { id: string }) {
   };
 
   return (
-    <View style={[styles.root, { backgroundColor: tokens.bg }]}>
+    <KeyboardAvoidingView style={[styles.root, { backgroundColor: tokens.bg }]}
+      behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={headerHeight}>
       <Stack.Screen options={{ title, headerBackButtonMenuEnabled: false }} />
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
@@ -351,6 +354,9 @@ function LocalDocument({ id }: { id: string }) {
               : require("@/components/native/assets/more.xml")
           }
         >
+          <Stack.Toolbar.MenuAction disabled={busy || !admitted} onPress={() => setMode(value => value === "blocks" ? "source" : "blocks")}>
+            {mode === "blocks" ? "代码方式显示" : "块方式显示"}
+          </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction
             disabled={busy}
             destructive={false}
@@ -440,6 +446,7 @@ function LocalDocument({ id }: { id: string }) {
           sessionId={String(session.id)}
           host={host}
           dark={scheme === "dark"}
+          mode={mode}
           onError={(message) => {
             if (phase.current === "active") setError(message);
           }}
@@ -458,7 +465,7 @@ function LocalDocument({ id }: { id: string }) {
           }}
         />
       )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 const styles = StyleSheet.create({ root: { flex: 1 } });

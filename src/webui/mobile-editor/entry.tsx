@@ -147,6 +147,10 @@ function App({ bridge }: { bridge: EditorBridge }) {
         );
       } else if (command.method === "refresh") { void refreshDocument().then(() => post({ type: "result", id: command.id, ok: true })); }
       else if (command.method === "mode") { displayMode(command.mode!); post({ type: "result", id: command.id, ok: true }); }
+      else if (command.method === "attach") { void attach(command.kind!).then(
+        () => post({ type: "result", id: command.id, ok: true }),
+        cause => post({ type: "result", id: command.id, ok: false, error: String(cause.message) }),
+      ); }
       else void flush().then(result => post({ type: "result", id: command.id, ...result }));
     });
     return () => { alive = false; clearPreviewGuard(); retryLoad.current = () => {}; clearTimeout(timer.current); };
@@ -194,7 +198,7 @@ function App({ bridge }: { bridge: EditorBridge }) {
     };
   }, []);
   const attach = async (kind: "file" | "image" | "video" = "file") => {
-    try {
+      if (freezeRequested || !cm.current?.view) throw new Error("编辑器尚未就绪，请稍后重试");
       const result = await rpc<{ src?: string; name?: string; mime?: string }>("media", { action: "pick", kind } satisfies EditorMediaRequest);
       if (!result.src) return;
       if (!/^\/blob\/[\w.-]+$/.test(result.src)) throw new Error("Invalid attachment reference");
@@ -202,10 +206,8 @@ function App({ bridge }: { bridge: EditorBridge }) {
       const image = /^(image|audio|video)\//.test(result.mime ?? "");
       const view = cm.current?.view;
       if (view) view.dispatch({ changes: { from: view.state.selection.main.head, insert: `\n${image ? "!" : ""}[${name}](${result.src})\n` } });
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   return <main class="mobile-editor">
-    <div class="mobile-toolbar"><button onClick={() => displayMode(mode === "blocks" ? "source" : "blocks")}>{mode === "blocks" ? "Markdown" : "富文本"}</button><button onClick={() => void attach("image")}>照片</button><button onClick={() => void attach("video")}>视频</button><button onClick={() => void attach()}>附件</button><span role="status">{{ saved: "已保存", dirty: "保存中…", saving: "保存中…", conflict: "保存冲突", error: "保存失败" }[state]}</span></div>
     {error && <div class="mobile-error" role="alert">{error}<button onClick={() => { if (loaded) { void checkpoint().then(() => saver.save()).catch(e => setError(String(e.message))); } else retryLoad.current(); }}>重试</button>{state === "conflict" && <button onClick={() => { if (confirm("用本地草稿覆盖已保存的版本？")) void saver.save(true); }}>覆盖保存</button>}</div>}
     {loaded ? <div class="doc doc-embed"><input ref={titleInput} aria-label="文档标题" class="doc-title mobile-title" placeholder="无标题" defaultValue={title.current} onCompositionStart={() => { titleComposing.current = true; }} onCompositionEnd={() => { titleComposing.current = false; }} onInput={e => { title.current = e.currentTarget.value; edit(); }} /><CmDocBody initialDoc={body.current} embedded disableUploads source={mode === "source"} onReady={handle => { cm.current = handle;
       const view = handle.view!;

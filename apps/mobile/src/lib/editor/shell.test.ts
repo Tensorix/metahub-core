@@ -41,8 +41,8 @@ test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and ch
     const message = JSON.parse(raw); messages.push(message);
     if (message.type !== "request") return;
     if (message.method === "save") remote = { title: message.params.title, body: message.params.body, version: "v2" };
-    const value = message.method === "load" ? { ...remote, revision: 0, recovered: false } : message.method === "refresh" ? remote : message.method === "targets" ? [] : message.method === "save" ? { version: "v2" } : message.method === "media" ? { url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxioAAAAASUVORK5CYII=" } : null;
-    queueMicrotask(() => (window as unknown as { __metahubEditorReceive(value: unknown): void }).__metahubEditorReceive({ v: 1, session: bootstrap.session, type: "response", id: message.id, ok: true, value }));
+    const value = message.method === "load" ? { ...remote, revision: 0, recovered: false } : message.method === "refresh" ? remote : message.method === "targets" ? [] : message.method === "save" ? { version: "v2" } : message.method === "media" ? (message.params.action === "pick" ? { src: canonical, name: "Picked attachment", mime: "image/png" } : { url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxioAAAAASUVORK5CYII=" }) : null;
+    queueMicrotask(() => (window as unknown as { __metahubEditorReceive(value: unknown): void }).__metahubEditorReceive({ v: 1, session: message.session, type: "response", id: message.id, ok: true, value }));
   } } });
   const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", () => mode === "prewarmed" ? "null" : scriptJSON(bootstrap));
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]!);
@@ -115,7 +115,29 @@ test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and ch
         initial: { ...remote, body: "abc", revision: 0, recovered: false } });
       await waitFor(() => !!window.document.querySelector(".cm-editor"));
       expect(runtime.__metahubCloseSession("shortened")).toMatchObject({ anchor: 3, head: 3, version: remote.version });
+      runtime.__metahubOpenSession({ ...bootstrap, session: "shortened", initial: { ...remote, revision: 0, recovered: false } });
+      await waitFor(() => !!window.document.querySelector(".cm-editor"));
     }
+    // Native menu and toolbar commands act on the existing CM6 session, including a reused page.
+    const session = mode === "prewarmed" ? "shortened" : bootstrap.session;
+    const send = async (id: number, method: string, extra: Record<string, string> = {}) => {
+      (window as unknown as { __metahubEditorReceive(value: unknown): void }).__metahubEditorReceive({ v: 1, session, type: "command", id, method, ...extra });
+      await waitFor(() => messages.some(message => message.type === "result" && message.id === id));
+      expect(messages.find(message => message.type === "result" && message.id === id)).toMatchObject({ ok: true });
+    };
+    const originalBody = remote.body;
+    const originalTitle = remote.title;
+    await send(200, "mode", { mode: "source" });
+    await send(201, "mode", { mode: "blocks" });
+    await send(202, "flush");
+    expect(remote).toMatchObject({ body: originalBody, title: originalTitle });
+    for (const [index, kind] of ["image", "video", "file"].entries()) {
+      await send(210 + index, "attach", { kind });
+      expect(messages.some(message => message.method === "media" && message.params?.action === "pick" && message.params.kind === kind)).toBe(true);
+    }
+    await send(220, "flush");
+    expect(remote.body.match(/Picked attachment/g)).toHaveLength(3);
+    expect(window.document.querySelector(".mobile-toolbar")).toBeNull();
     expect(requests).toBe(0);
     expect(html).toContain("connect-src 'none'"); expect(html).not.toContain("mh_token"); expect(html).not.toContain("db-worker");
   } finally { await window.happyDOM.close(); }

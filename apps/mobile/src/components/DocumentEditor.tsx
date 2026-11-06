@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 import { EditorSurface } from "./EditorSurface";
+import { DocumentToolbar } from "./DocumentToolbar";
 import type { EditorPosition, EditorSurfaceHandle } from "./DefaultEditorSurface";
 import { EditorHost, type EditorHostServices } from "../lib/editor/host";
 import { createNativePresentationGuard } from "../lib/editor/native-presentation";
@@ -30,7 +31,6 @@ export interface DocumentEditorHandle {
   setFrozen(frozen: boolean): void;
   flush(): Promise<{ ok: boolean; error?: string }>;
   closeSession(): Promise<EditorPosition | null | undefined>;
-  setMode(mode: "blocks" | "source"): void;
   retry(): void;
   refresh(): void;
 }
@@ -41,6 +41,7 @@ export interface DocumentEditorProps {
   host: EditorHostServices;
   position?: EditorPosition | null;
   dark?: boolean;
+  mode?: "blocks" | "source";
   onState?(state: EditorState): void;
   onError?(error: string): void;
 }
@@ -50,13 +51,17 @@ export const DocumentEditor = forwardRef<
   DocumentEditorHandle,
   DocumentEditorProps
 >(function DocumentEditor(
-  { documentId, sessionId, workspaceId, position, host: services, dark = false, onState, onError },
+  { documentId, sessionId, workspaceId, position, host: services, dark = false, mode = "blocks", onState, onError },
   ref,
 ) {
   const web = useRef<EditorSurfaceHandle>(null);
   const [generation, setGeneration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<EditorState>("saved");
+  const [controlsFrozen, setControlsFrozen] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const attachmentPending = useRef(false);
   const sequence = useRef(0);
   const frozen = useRef(false);
   const freezeDepth = useRef(0);
@@ -159,15 +164,15 @@ export const DocumentEditor = forwardRef<
     [host, failPending],
   );
   const send = useCallback(
-    (method: "flush" | "mode" | "refresh" | "retry", mode?: "blocks" | "source") => {
+    (method: "flush" | "mode" | "refresh" | "retry" | "attach", mode?: "blocks" | "source", kind?: "image" | "video" | "file") => {
       const id = ++sequence.current;
       return new Promise<{ ok: boolean; error?: string }>((resolve) => {
         const timer = setTimeout(() => {
           commands.current.delete(id);
           resolve({ ok: false, error: "编辑器没有响应，草稿将保留。请重试。" });
-        }, 35_000);
+        }, method === "attach" ? 11 * 60_000 : 35_000);
         const deliver = () => web.current?.injectJavaScript(
-          `window.__metahubEditorReceive?.(${scriptJSON({ v: 1, session: nonce, type: "command", id, method, mode })});true;`,
+          `window.__metahubEditorReceive?.(${scriptJSON({ v: 1, session: nonce, type: "command", id, method, mode, kind })});true;`,
         );
         commands.current.set(id, { resolve, timer, deliver: ready.current ? undefined : deliver });
         if (ready.current) deliver();
@@ -175,6 +180,28 @@ export const DocumentEditor = forwardRef<
     },
     [nonce],
   );
+  useEffect(() => {
+    if (!ready.current || loading) return;
+    let current = true;
+    void send("mode", mode).then(result => {
+      if (current && !result.ok) callbacks.current.onError?.(result.error ?? "切换模式失败");
+    });
+    return () => { current = false; };
+  }, [mode, loading, nonce, send]);
+  const attach = async (kind: "image" | "video" | "file") => {
+    if (!ready.current || frozen.current || attachmentPending.current) return;
+    attachmentPending.current = true;
+    setAttaching(true);
+    const result = await send("attach", undefined, kind);
+    if (rendererNonce.current !== nonce) return;
+    attachmentPending.current = false;
+    setAttaching(false);
+    if (!result.ok) callbacks.current.onError?.(result.error ?? "插入附件失败");
+  };
+  useEffect(() => {
+    attachmentPending.current = false;
+    setAttaching(false);
+  }, [nonce]);
   const presentation = useMemo(
     () =>
       createNativePresentationGuard(
@@ -210,6 +237,7 @@ export const DocumentEditor = forwardRef<
         value = freezeDepth.current > 0;
         if (frozen.current === value) return;
         frozen.current = value;
+        setControlsFrozen(value);
         web.current?.injectJavaScript(
           `window.__metahubSetFrozen?.(${scriptJSON(nonce)},${value});true;`,
         );
@@ -225,9 +253,6 @@ export const DocumentEditor = forwardRef<
           if (closing.current?.result === result) closing.current = null;
           throw error;
         }
-      },
-      setMode: (mode) => {
-        void send("mode", mode);
       },
       retry,
       refresh: () => {
@@ -276,6 +301,7 @@ export const DocumentEditor = forwardRef<
       return;
     }
     if (message.type === "state") {
+      setSaveState(message.state);
       if (message.state === "error" && !ready.current) {
         setLoading(false);
         failPending(message.error || "编辑器加载失败");
@@ -305,6 +331,8 @@ export const DocumentEditor = forwardRef<
     <View style={[styles.root, { backgroundColor: dark ? "#171717" : "#fff" }]}>
       {bootstrap && <EditorSurface key={nonce} ref={web} bootstrap={bootstrap}
         onMessage={receive} onFailure={rendererFailed} />}
+      <DocumentToolbar state={saveState} disabled={loading || !!error || controlsFrozen || attaching}
+        onAttach={kind => void attach(kind)} />
       {loading && (
         <View pointerEvents="none" accessibilityLabel="正在打开文档" style={[StyleSheet.absoluteFill, styles.skeleton]}>
           <View style={[styles.skeletonTitle, { backgroundColor: dark ? "#383838" : "#e9e9e9" }]} />

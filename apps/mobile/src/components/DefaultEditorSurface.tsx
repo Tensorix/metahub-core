@@ -27,6 +27,7 @@ export const DefaultEditorSurface = forwardRef<EditorSurfaceHandle, EditorSurfac
       allowFileAccessFromFileURLs={false} allowUniversalAccessFromFileURLs={false}
       mixedContentMode="never" setSupportMultipleWindows={false} allowsInlineMediaPlayback
       keyboardDisplayRequiresUserAction={false} webviewDebuggingEnabled={__DEV__}
+      hideKeyboardAccessoryView
       onShouldStartLoadWithRequest={request => request.url === "about:blank"}
       onMessage={event => onMessage(event.nativeEvent.data)}
       onError={() => onFailure("编辑器加载失败，已保存的草稿可在重试后恢复")}
