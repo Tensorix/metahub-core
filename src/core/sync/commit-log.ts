@@ -64,15 +64,19 @@ export function createCommitLog<S, T>(options: {
       if (!object) return null; // Never cache absence: visibility may lag a committed PUT.
       const decoded = record(await codec.decode(object.bytes));
       const at = object.lastModified, now = object.serverDate;
-      if (at === null || now === null || at > now)
-        throw new MhError("clock_skew", "commit time cannot be verified");
+      if (at === null || now === null) {
+        const missing = [at === null ? "Last-Modified" : null, now === null ? "Date" : null].filter(Boolean).join(", ");
+        throw new MhError("clock_skew", `commit time cannot be verified: missing or invalid ${missing} response header; check bucket CORS ExposeHeaders`);
+      }
+      if (at > now)
+        throw new MhError("clock_skew", `commit time cannot be verified: Last-Modified (${at}) is later than Date (${now})`);
       entry = { record: decoded, hash: await commitHash(object.bytes), at };
     }
     const r = cloneProtocolState(entry.record), at = entry.at;
     if (r.sequence !== head.sequence + 1 || r.previous !== head.hash)
       throw new MhError("conflict", "commit chain is discontinuous");
     if (head.serverTime !== null && at < head.serverTime)
-      throw new MhError("clock_skew", "commit time cannot be verified");
+      throw new MhError("clock_skew", `commit time cannot be verified: timestamp regressed at sequence ${r.sequence} (${at} < ${head.serverTime})`);
     // Only verified immutable records are cached, scoped to this log instance.
     verified.set(r.sequence, entry);
     // Storage time may cross a deadline between proposal and PUT. A validly

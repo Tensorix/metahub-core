@@ -134,6 +134,9 @@ export async function getBucketCors(config: S3Config): Promise<string | null> {
  *    server origin alongside the official PWA shell) adds to the allow-list
  *    instead of clobbering it.
  * A wildcard `*` collapses the set. Pure (no I/O) so it's unit-testable.
+ * Keep the managed rule first: COS uses the first matching rule, so an older
+ * user wildcard rule must not hide Date/ETag from the browser. User rules keep
+ * their contents and relative order for origins outside the managed rule.
  */
 export function buildCorsXml(existing: string | null, origins: string[], merge: boolean): string {
   const kept: string[] = [];
@@ -153,6 +156,6 @@ export function buildCorsXml(existing: string | null, origins: string[], merge: 
   const finalOrigins = merged.includes("*") ? ["*"] : merged;
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<CORSConfiguration>${kept.join("")}${managedCorsRule(finalOrigins)}</CORSConfiguration>`
+    `<CORSConfiguration>${managedCorsRule(finalOrigins)}${kept.join("")}</CORSConfiguration>`
   );
 }

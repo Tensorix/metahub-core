@@ -251,13 +251,13 @@ async function getJsStamped(): Promise<string> {
   return (await getJs()).replaceAll("__MH_WEBUI_VERSION__", pkg.version);
 }
 
-/** /sw.js with its cache version stamped in: a hash of the current js+css, so
+/** /sw.js with its cache version stamped in: a hash of the current js+css+db worker, so
  *  any bundle change byte-diffs the worker (the browser's update trigger) and
  *  stale shell caches are dropped on activation. Hashing the *stamped* js means
  *  a version-only bump (identical code) still busts the shell cache. */
 async function getSw(): Promise<string> {
-  const [raw, js, css] = await Promise.all([getSwRaw(), getJsStamped(), getCss()]);
-  const version = new Bun.CryptoHasher("sha256").update(js).update(css).digest("hex").slice(0, 16);
+  const [raw, js, css, dbWorker] = await Promise.all([getSwRaw(), getJsStamped(), getCss(), getDbWorker()]);
+  const version = new Bun.CryptoHasher("sha256").update(js).update(css).update(dbWorker).digest("hex").slice(0, 16);
   return raw.replaceAll("__MH_SW_VERSION__", version);
 }
 

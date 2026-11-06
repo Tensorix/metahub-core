@@ -124,4 +124,4 @@
 mh config backup cors --url s3://BUCKET/PREFIX --allow https://shell.example,https://second-shell.example
 ```
 
-将示例替换为已配置的桶 URL 和需要保留的**完整来源列表**。该命令重设 MetaHub 托管规则的来源，并保留其他规则。确认托管规则同时暴露 `Date` 和 `ETag`，再从浏览器重新同步。
+将示例替换为已配置的桶 URL 和需要保留的**完整来源列表**。该命令重设 MetaHub 托管规则的来源，并保留其他规则。自动配置和 CLI 均将托管规则置于最前，避免 COS 的首条匹配规则选择被旧的通配规则遮蔽；其他规则内容和相对顺序不变。确认首条托管规则同时暴露 `Date` 和 `ETag`，再从浏览器重新同步。

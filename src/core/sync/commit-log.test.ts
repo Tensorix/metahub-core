@@ -66,6 +66,25 @@ test("unsupported conditional creation never writes", async () => {
   expect(f.objects.size).toBe(0);
 });
 
+test("time verification errors distinguish missing headers, future time and regression", async () => {
+  const f = fixture();
+  await f.log().append("a", () => 1);
+  await f.log().append("b", () => 2);
+  const [first, second] = [...f.objects.values()];
+  const at = first!.lastModified!;
+  first!.serverDate = null;
+  await expect(f.log().read()).rejects.toThrow("missing or invalid Date response header");
+  first!.lastModified = null;
+  await expect(f.log().read()).rejects.toThrow("missing or invalid Last-Modified, Date response header");
+  first!.serverDate = at;
+  await expect(f.log().read()).rejects.toThrow("missing or invalid Last-Modified response header");
+  first!.lastModified = at + 1;
+  await expect(f.log().read()).rejects.toThrow("is later than Date");
+  first!.lastModified = at;
+  second!.lastModified = at - 1;
+  await expect(f.log().read()).rejects.toThrow("timestamp regressed at sequence 2");
+});
+
 
 test("deadline crossed during PUT is a rejected no-op rather than a poisoned chain", async () => {
   const f = fixture();

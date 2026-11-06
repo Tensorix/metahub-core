@@ -59,3 +59,24 @@ test("new and existing managed rules expose bucket time", () => {
     expect(xml).toContain(A);
   }
 });
+
+test("legacy wildcard rules cannot shadow the managed time headers", () => {
+  const wildcard = "<CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>GET</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><ExposeHeader>x-cos-request-id</ExposeHeader></CORSRule>";
+  const unrelated = "<CORSRule><ID>other-app</ID><AllowedOrigin>https://other.example</AllowedOrigin><AllowedMethod>GET</AllowedMethod></CORSRule>";
+  const legacy = buildCorsXml(null, [A], false).replace("<ExposeHeader>Date</ExposeHeader>", "");
+  const existing = legacy.replace("<CORSConfiguration>", `<CORSConfiguration>${wildcard}${unrelated}`);
+
+  for (const merge of [false, true]) {
+    const xml = buildCorsXml(existing, [B], merge);
+    const rules = xml.match(/<CORSRule>[\s\S]*?<\/CORSRule>/g)!;
+    // The first rule matching B must expose Date even when a user wildcard
+    // precedes the legacy managed rule in the bucket's stored configuration.
+    const firstMatch = rules.find(rule => origins(rule).some(origin => origin === B || origin === "*"))!;
+    expect(firstMatch).toContain("<ID>metahub-pwa</ID>");
+    expect(firstMatch).toContain("<ExposeHeader>Date</ExposeHeader>");
+    expect(firstMatch).toContain("<ExposeHeader>ETag</ExposeHeader>");
+    expect(rules.slice(1)).toEqual([wildcard, unrelated]);
+    expect(origins(rules[0]!)).toEqual(merge ? [A, B] : [B]);
+    expect(buildCorsXml(xml, [B], merge)).toBe(xml);
+  }
+});
