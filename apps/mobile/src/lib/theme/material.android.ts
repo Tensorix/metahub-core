@@ -1,5 +1,5 @@
 // Android: Material 3 palette as the app's token source. Default is a
-// brand-seeded palette (SchemeTonalSpot from metahub indigo — consistent on
+// brand-seeded palette (SchemeTonalSpot from the shared accent — consistent on
 // every device and API level); the Material You toggle switches to the
 // wallpaper-derived palette on Android 12+.
 import {
@@ -9,7 +9,7 @@ import {
 
 import { light, type Tokens } from "./tokens";
 
-const SEED = light.accent; // #4a55d6 — the metahub brand indigo
+const SEED = light.accent;
 
 export const dynamicColorAvailable = isDynamicColorAvailable;
 
