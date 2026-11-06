@@ -12,7 +12,9 @@ export type EditorEvent = { v: 1; session: string; type: "state"; state: EditorS
 export type EditorResponse = { v: 1; session: string; type: "response"; id: number; ok: boolean; value?: unknown; error?: string; code?: string };
 export const EDITOR_BLOCK_TYPES = ["p", "h1", "h2", "h3", "bullet", "numbered", "todo", "quote", "code", "table", "divider", "html"] as const;
 export type EditorBlockType = typeof EDITOR_BLOCK_TYPES[number];
-export type EditorCommand = { v: 1; session: string; type: "command"; id: number; method: "flush" | "mode" | "refresh" | "retry" | "attach" | "block"; block?: EditorBlockType; mode?: "blocks" | "source"; kind?: "library" | "image" | "video" | "audio" | "file" };
+export const EDITOR_FORMAT_TYPES = ["bold", "italic", "inlineCode", "heading"] as const;
+export type EditorFormatType = typeof EDITOR_FORMAT_TYPES[number];
+export type EditorCommand = { v: 1; session: string; type: "command"; id: number; method: "flush" | "mode" | "refresh" | "retry" | "attach" | "block" | "format"; format?: EditorFormatType; block?: EditorBlockType; mode?: "blocks" | "source"; kind?: "library" | "image" | "video" | "audio" | "file" };
 export type EditorCommandResult = { v: 1; session: string; type: "result"; id: number; ok: boolean; error?: string };
 const object = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
 const revision = (x: unknown): x is number => typeof x === "number" && Number.isSafeInteger(x) && x >= 0;

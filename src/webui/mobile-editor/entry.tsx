@@ -1,3 +1,6 @@
+import { applyInlineFormat } from "../cm6/chrome/format-bar";
+import { turnInto } from "../cm6/convert";
+import { docModel } from "../cm6/doc-model";
 import { insertBlock } from "../cm6/chrome/slash-menu";
 /** @jsxImportSource preact */
 import { render } from "preact";
@@ -148,6 +151,25 @@ function App({ bridge }: { bridge: EditorBridge }) {
         );
       } else if (command.method === "refresh") { void refreshDocument().then(() => post({ type: "result", id: command.id, ok: true })); }
       else if (command.method === "mode") { displayMode(command.mode!); post({ type: "result", id: command.id, ok: true }); }
+      else if (command.method === "format") {
+        void (async () => {
+          const view = cm.current?.view;
+          if (freezeRequested || !view || view.composing) throw new Error("请先完成当前输入");
+          if (command.format === "heading") {
+            const sel = view.state.selection.main;
+            const first = view.state.doc.lineAt(sel.from);
+            const last = view.state.doc.lineAt(sel.to > sel.from ? sel.to - 1 : sel.to);
+            const role = docModel(view.state).lines[first.number - 1]?.role;
+            const next = role === "h1" ? "h2" : role === "h2" ? "h3" : role === "h3" ? "p" : "h1";
+            if (!first.text.trim() && first.number === last.number) insertBlock(view, next);
+            else turnInto(view, first.number, last.number, next);
+            view.focus();
+          } else {
+            if (docModel(view.state).voids.some(v => view.state.selection.main.from >= v.from && view.state.selection.main.to <= v.to)) throw new Error("请先在正文中选择文字");
+            await applyInlineFormat(view, command.format === "inlineCode" ? "code" : command.format!);
+          }
+        })().then(() => post({ type: "result", id: command.id, ok: true }), cause => post({ type: "result", id: command.id, ok: false, error: String(cause.message) }));
+      }
       else if (command.method === "block") {
         try {
           if (freezeRequested || !cm.current?.view) throw new Error("编辑器尚未就绪");

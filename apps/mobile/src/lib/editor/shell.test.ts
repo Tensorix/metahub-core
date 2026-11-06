@@ -131,6 +131,16 @@ test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and ch
     await send(201, "mode", { mode: "blocks" });
     await send(202, "flush");
     expect(remote).toMatchObject({ body: originalBody, title: originalTitle });
+    // Native formatting uses the current caret and can be toggled back without losing content.
+    for (const [index, format] of ["bold", "italic", "inlineCode"].entries()) {
+      await send(300 + index * 3, "format", { format });
+      await send(301 + index * 3, "format", { format });
+      await send(302 + index * 3, "flush");
+      expect(remote.body).toBe(originalBody);
+    }
+    for (let step = 0; step < 4; step++) await send(320 + step, "format", { format: "heading" });
+    await send(324, "flush");
+    expect(remote.body).toBe(originalBody);
     for (const [index, kind] of ["library", "image", "video", "audio", "file"].entries()) {
       await send(210 + index, "attach", { kind });
       expect(messages.some(message => message.method === "media" && message.params?.action === "pick" && message.params.kind === kind)).toBe(true);

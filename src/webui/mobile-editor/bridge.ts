@@ -1,4 +1,4 @@
-import { EDITOR_PROTOCOL, EDITOR_BLOCK_TYPES, type EditorCommand, type EditorResponse, type EditorDraft, type EditorMediaRequest } from "../../../apps/mobile/src/lib/editor/protocol";
+import { EDITOR_PROTOCOL, EDITOR_BLOCK_TYPES, EDITOR_FORMAT_TYPES, type EditorCommand, type EditorResponse, type EditorDraft, type EditorMediaRequest } from "../../../apps/mobile/src/lib/editor/protocol";
 
 declare global {
   interface Window {
@@ -38,7 +38,7 @@ export function createBridge(session: string) {
     const msg = value as EditorResponse | EditorCommand;
     if (msg.v !== EDITOR_PROTOCOL || msg.session !== session || !Number.isSafeInteger(msg.id)) return;
     if (msg.type === "command") {
-      if ((msg.method === "block" && EDITOR_BLOCK_TYPES.includes(msg.block!)) || msg.method === "retry" || msg.method === "flush" || msg.method === "refresh" || (msg.method === "mode" && (msg.mode === "blocks" || msg.mode === "source")) || (msg.method === "attach" && ["library", "image", "video", "audio", "file"].includes(msg.kind ?? ""))) commandHandler?.(msg);
+      if ((msg.method === "format" && EDITOR_FORMAT_TYPES.includes(msg.format!)) || (msg.method === "block" && EDITOR_BLOCK_TYPES.includes(msg.block!)) || msg.method === "retry" || msg.method === "flush" || msg.method === "refresh" || (msg.method === "mode" && (msg.mode === "blocks" || msg.mode === "source")) || (msg.method === "attach" && ["library", "image", "video", "audio", "file"].includes(msg.kind ?? ""))) commandHandler?.(msg);
       return;
     }
     if (msg.type !== "response" || typeof msg.ok !== "boolean") return;

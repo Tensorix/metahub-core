@@ -44,6 +44,67 @@ function inVoid(view: EditorView, from: number, to: number): boolean {
   return docModel(view.state).voids.some((v) => from >= v.from && to <= v.to);
 }
 
+export async function applyInlineFormat(view: EditorView, cmd: Cmd) {
+  if (cmd === "link") {
+    // URL dialog (old-editor behavior): a link with an empty target is
+    // dead markup the user then has to hand-edit. Selection survives the
+    // modal — CM keeps state while unfocused.
+    const url = (await promptDialog({ title: t("插入链接"), label: t("链接地址"), placeholder: "https://…" }))?.trim();
+    if (!url) { view.focus(); return; }
+    const changes = view.state.changeByRange((r) => {
+      const text = view.state.sliceDoc(r.from, r.to);
+      const insert = `[${text}](${url})`;
+      return {
+        changes: { from: r.from, to: r.to, insert },
+        range: EditorSelection.range(r.from + 1, r.from + 1 + text.length),
+      };
+    });
+    view.dispatch(changes, { userEvent: "input.format", scrollIntoView: true });
+    view.focus();
+    return;
+  }
+  const changes = view.state.changeByRange((r) => {
+    const marker = WRAP[cmd];
+    // Empty pairs have no inline token yet; a second tap cancels the pending format.
+    if (r.empty && r.from >= marker.length &&
+      view.state.sliceDoc(r.from - marker.length, r.from) === marker &&
+      view.state.sliceDoc(r.to, r.to + marker.length) === marker) {
+      return { changes: { from: r.from - marker.length, to: r.to + marker.length, insert: "" },
+        range: EditorSelection.cursor(r.from - marker.length) };
+    }
+    // TOGGLE, not blind wrap: if the selection sits in (or equals) an
+    // existing token of this kind on its line, remove that token's
+    // delimiters — clicking B on bold text un-bolds instead of piling up
+    // `****text****`. Detection goes through the shared tokenizer, so it
+    // can never disagree with what actually renders.
+    const line = view.state.doc.lineAt(r.from);
+    if (r.to <= line.to) {
+      const tok = tokenizeInline(line.text).find(
+        (x) =>
+          x.kind === KIND[cmd] &&
+          ((line.from + x.innerFrom <= r.from && r.to <= line.from + x.innerTo) ||
+            (line.from + x.start === r.from && line.from + x.end === r.to)),
+      );
+      if (tok) {
+        const inner = line.text.slice(tok.innerFrom, tok.innerTo);
+        return {
+          changes: { from: line.from + tok.start, to: line.from + tok.end, insert: inner },
+          range: EditorSelection.range(line.from + tok.start, line.from + tok.start + inner.length),
+        };
+      }
+    }
+    const text = view.state.sliceDoc(r.from, r.to);
+    const w = WRAP[cmd];
+    const insert = `${w}${text}${w}`;
+    return {
+      changes: { from: r.from, to: r.to, insert },
+      range: EditorSelection.range(r.from + w.length, r.from + w.length + text.length),
+    };
+  });
+  view.dispatch(changes, { userEvent: "input.format", scrollIntoView: true });
+  view.focus();
+}
+
 export function formatBar(): Extension {
   return ViewPlugin.fromClass(
     class {
@@ -105,59 +166,7 @@ export function formatBar(): Extension {
         this.hide();
       }
 
-      async apply(cmd: Cmd) {
-        const view = this.view;
-        if (cmd === "link") {
-          // URL dialog (old-editor behavior): a link with an empty target is
-          // dead markup the user then has to hand-edit. Selection survives the
-          // modal — CM keeps state while unfocused.
-          const url = (await promptDialog({ title: t("插入链接"), label: t("链接地址"), placeholder: "https://…" }))?.trim();
-          if (!url) { view.focus(); return; }
-          const changes = view.state.changeByRange((r) => {
-            const text = view.state.sliceDoc(r.from, r.to);
-            const insert = `[${text}](${url})`;
-            return {
-              changes: { from: r.from, to: r.to, insert },
-              range: EditorSelection.range(r.from + 1, r.from + 1 + text.length),
-            };
-          });
-          view.dispatch(changes, { userEvent: "input.format", scrollIntoView: true });
-          view.focus();
-          return;
-        }
-        const changes = view.state.changeByRange((r) => {
-          // TOGGLE, not blind wrap: if the selection sits in (or equals) an
-          // existing token of this kind on its line, remove that token's
-          // delimiters — clicking B on bold text un-bolds instead of piling up
-          // `****text****`. Detection goes through the shared tokenizer, so it
-          // can never disagree with what actually renders.
-          const line = view.state.doc.lineAt(r.from);
-          if (r.to <= line.to) {
-            const tok = tokenizeInline(line.text).find(
-              (x) =>
-                x.kind === KIND[cmd] &&
-                ((line.from + x.innerFrom <= r.from && r.to <= line.from + x.innerTo) ||
-                  (line.from + x.start === r.from && line.from + x.end === r.to)),
-            );
-            if (tok) {
-              const inner = line.text.slice(tok.innerFrom, tok.innerTo);
-              return {
-                changes: { from: line.from + tok.start, to: line.from + tok.end, insert: inner },
-                range: EditorSelection.range(line.from + tok.start, line.from + tok.start + inner.length),
-              };
-            }
-          }
-          const text = view.state.sliceDoc(r.from, r.to);
-          const w = WRAP[cmd];
-          const insert = `${w}${text}${w}`;
-          return {
-            changes: { from: r.from, to: r.to, insert },
-            range: EditorSelection.range(r.from + w.length, r.from + w.length + text.length),
-          };
-        });
-        view.dispatch(changes, { userEvent: "input.format", scrollIntoView: true });
-        view.focus();
-      }
+      apply(cmd: Cmd) { return applyInlineFormat(this.view, cmd); }
 
       paint() {
         const view = this.view;

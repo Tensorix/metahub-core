@@ -5,16 +5,17 @@ import { Keyboard, Platform, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DocumentToolbarButton } from "./DocumentToolbarButton";
 import { useTheme } from "@/lib/theme";
-import type { EditorState, EditorBlockType } from "@/lib/editor/protocol";
+import type { EditorState, EditorBlockType, EditorFormatType } from "@/lib/editor/protocol";
 
 const labels: Record<EditorState, string> = {
   saved: "已保存", dirty: "保存中…", saving: "保存中…", conflict: "保存冲突", error: "保存失败",
 };
 
 /** Native controls stay outside the WebView so opening a picker preserves its selection. */
-export function DocumentToolbar({ state, disabled, onAttach, onBlock }: {
+export function DocumentToolbar({ state, disabled, onAttach, onBlock, onFormat }: {
   state: EditorState;
   disabled: boolean;
+  onFormat(type: EditorFormatType): void;
   onBlock(type: EditorBlockType): void;
   onAttach(kind: "library" | "image" | "video" | "audio" | "file"): void;
 }) {
@@ -39,7 +40,7 @@ export function DocumentToolbar({ state, disabled, onAttach, onBlock }: {
             style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 4 }}>
             {DOCUMENT_TOOLBAR_ACTIONS.map(({kind, label}) => (
               <DocumentToolbarButton key={kind} kind={kind} label={label} disabled={disabled}
-                onPress={() => kind === "library" || kind === "file" || kind === "audio" ? onAttach(kind) : onBlock(kind)} />
+                onPress={() => kind === "library" || kind === "file" || kind === "audio" ? onAttach(kind) : kind === "bold" || kind === "italic" || kind === "inlineCode" || kind === "heading" ? onFormat(kind) : onBlock(kind)} />
             ))}
           </ScrollView>
           <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, flexShrink: 0, paddingRight: 4,
