@@ -33,7 +33,7 @@ export function HomeFeed({
 }: HomeFeedProps) {
   const { tokens } = useTheme();
   return (
-    <NativeHost style={{ flex: 1, backgroundColor: tokens.bg }}>
+    <NativeHost style={{ flex: 1 }}>
       <List modifiers={[listStyle("plain"), scrollContentBackground("hidden")]}>
         <VStack
           modifiers={[

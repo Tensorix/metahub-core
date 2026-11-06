@@ -147,10 +147,10 @@ export function LibraryList({
   return (
     <View
       ref={root}
-      style={{ flex: 1, backgroundColor: tokens.bg }}
+      style={{ flex: 1 }}
       onLayout={() => root.current?.measureInWindow((_, y) => setRootY(y))}
     >
-      <NativeHost style={{ flex: 1, backgroundColor: tokens.bg }}>
+      <NativeHost style={{ flex: 1 }}>
         <ZStack alignment="top">
           <List
             modifiers={[
