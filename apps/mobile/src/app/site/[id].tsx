@@ -1,4 +1,5 @@
 import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { Button, ScrollView, Text, View } from "react-native";
 import { WebView } from "react-native-webview";
@@ -21,6 +22,7 @@ function SiteViewer({ restart }: { restart(): void }) {
   const session = useSession();
   const { store } = useRecents();
   const { tokens } = useTheme();
+  const headerHeight = useHeaderHeight();
   const loadedEntry = useRef(false);
   const [server, setServer] = useState<Listener | null>(null);
   const [error, setError] = useState("");
@@ -105,9 +107,16 @@ function SiteViewer({ restart }: { restart(): void }) {
   };
   return (
     <View style={{ flex: 1, backgroundColor: tokens.bg }}>
-      <Stack.Screen options={{ title, headerBackButtonDisplayMode: "minimal" }} />
+      <Stack.Screen
+        options={{
+          title,
+          headerBackButtonDisplayMode: "minimal",
+          headerTransparent: true,
+          headerShadowVisible: false,
+        }}
+      />
       {(!hasEntry || error || missing.length > 0) && (
-        <View style={{ padding: 12, gap: 6 }}>
+        <View style={{ padding: 12, paddingTop: headerHeight + 12, gap: 6 }}>
           <Text style={{ color: tokens.fg }}>
             {error ||
               (!site
@@ -136,6 +145,7 @@ function SiteViewer({ restart }: { restart(): void }) {
         <WebView
           key={server.url}
           source={{ uri: server.url }}
+          contentInsetAdjustmentBehavior="automatic"
           incognito
           sharedCookiesEnabled={false}
           thirdPartyCookiesEnabled={false}
