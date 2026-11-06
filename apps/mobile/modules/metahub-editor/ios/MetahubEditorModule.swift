@@ -60,6 +60,10 @@ private final class EditorPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     web.uiDelegate = self
     web.navigationDelegate = self
     web.scrollView.contentInsetAdjustmentBehavior = .never
+    // Let the document's native pan gesture dismiss the keyboard interactively,
+    // including on short documents that do not fill the viewport.
+    web.scrollView.keyboardDismissMode = .interactive
+    web.scrollView.alwaysBounceVertical = true
     web.isOpaque = false
     web.backgroundColor = .clear
     hideEditorKeyboardAccessory(web)

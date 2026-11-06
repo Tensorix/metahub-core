@@ -22,6 +22,7 @@ import { createNativePresentationGuard } from "../lib/editor/native-presentation
 import {
   parseEditorMessage,
   scriptJSON,
+  type EditorBlockType,
   type EditorCommandResult,
   type EditorState,
   type EditorDraft,
@@ -164,7 +165,7 @@ export const DocumentEditor = forwardRef<
     [host, failPending],
   );
   const send = useCallback(
-    (method: "flush" | "mode" | "refresh" | "retry" | "attach", mode?: "blocks" | "source", kind?: "image" | "video" | "file") => {
+    (method: "flush" | "mode" | "refresh" | "retry" | "attach" | "block", mode?: "blocks" | "source", kind?: "library" | "image" | "video" | "audio" | "file", block?: EditorBlockType) => {
       const id = ++sequence.current;
       return new Promise<{ ok: boolean; error?: string }>((resolve) => {
         const timer = setTimeout(() => {
@@ -172,7 +173,7 @@ export const DocumentEditor = forwardRef<
           resolve({ ok: false, error: "编辑器没有响应，草稿将保留。请重试。" });
         }, method === "attach" ? 11 * 60_000 : 35_000);
         const deliver = () => web.current?.injectJavaScript(
-          `window.__metahubEditorReceive?.(${scriptJSON({ v: 1, session: nonce, type: "command", id, method, mode, kind })});true;`,
+          `window.__metahubEditorReceive?.(${scriptJSON({ v: 1, session: nonce, type: "command", id, method, mode, kind, block })});true;`,
         );
         commands.current.set(id, { resolve, timer, deliver: ready.current ? undefined : deliver });
         if (ready.current) deliver();
@@ -188,7 +189,7 @@ export const DocumentEditor = forwardRef<
     });
     return () => { current = false; };
   }, [mode, loading, nonce, send]);
-  const attach = async (kind: "image" | "video" | "file") => {
+  const attach = async (kind: "library" | "image" | "video" | "audio" | "file") => {
     if (!ready.current || frozen.current || attachmentPending.current) return;
     attachmentPending.current = true;
     setAttaching(true);
@@ -332,7 +333,8 @@ export const DocumentEditor = forwardRef<
       {bootstrap && <EditorSurface key={nonce} ref={web} bootstrap={bootstrap}
         onMessage={receive} onFailure={rendererFailed} />}
       <DocumentToolbar state={saveState} disabled={loading || !!error || controlsFrozen || attaching}
-        onAttach={kind => void attach(kind)} />
+        onAttach={kind => void attach(kind)}
+        onBlock={block => { void send("block", undefined, undefined, block).then(result => { if (!result.ok) callbacks.current.onError?.(result.error || "插入失败"); }); }} />
       {loading && (
         <View pointerEvents="none" accessibilityLabel="正在打开文档" style={[StyleSheet.absoluteFill, styles.skeleton]}>
           <View style={[styles.skeletonTitle, { backgroundColor: dark ? "#383838" : "#e9e9e9" }]} />

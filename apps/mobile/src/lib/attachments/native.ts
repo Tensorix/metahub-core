@@ -391,11 +391,11 @@ export function createAttachmentManager(options: AttachmentManagerOptions) {
     kind: EditorMediaRequest["kind"] = "file",
     present: NativePresentation = presentDirectly,
   ) {
-    if (kind === "image" || kind === "video") {
+    if (kind === "library" || kind === "image" || kind === "video") {
       const result = await present(() => {
         current();
         return ImagePicker.launchImageLibraryAsync({
-          mediaTypes: kind === "image" ? ["images"] : ["videos"],
+          mediaTypes: kind === "library" ? ["images", "videos"] : kind === "image" ? ["images"] : ["videos"],
           quality: 1,
         });
       });

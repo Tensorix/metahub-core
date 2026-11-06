@@ -49,7 +49,7 @@ test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and ch
   window.document.body.innerHTML = '<div id="app"></div>';
   try {
     const sandbox = Object.fromEntries(Object.getOwnPropertyNames(window).map(key => [key, (window as unknown as Record<string, unknown>)[key]]).filter(([, value]) => value !== undefined));
-    const context = createContext({ ...sandbox, window, document: window.document, console });
+    const context = createContext({ ...sandbox, window, document: window.document, console, structuredClone });
     for (const script of scripts) runInContext(script, context);
     if (mode === "prewarmed") {
       expect(messages).toHaveLength(0);
@@ -131,12 +131,19 @@ test.each(["embedded", "prewarmed"])("packaged %s CM6 shell opens offline and ch
     await send(201, "mode", { mode: "blocks" });
     await send(202, "flush");
     expect(remote).toMatchObject({ body: originalBody, title: originalTitle });
-    for (const [index, kind] of ["image", "video", "file"].entries()) {
+    for (const [index, kind] of ["library", "image", "video", "audio", "file"].entries()) {
       await send(210 + index, "attach", { kind });
       expect(messages.some(message => message.method === "media" && message.params?.action === "pick" && message.params.kind === kind)).toBe(true);
     }
     await send(220, "flush");
-    expect(remote.body.match(/Picked attachment/g)).toHaveLength(3);
+    expect(remote.body.match(/Picked attachment/g)).toHaveLength(5);
+    for (const [index, block] of ["p", "h1", "h2", "h3", "bullet", "numbered", "todo", "quote", "code", "table", "divider", "html"].entries()) {
+      await send(230 + index, "block", { block });
+    }
+    await send(250, "flush");
+    expect(remote.title).toBe(originalTitle);
+    expect(remote.body.match(/Picked attachment/g)).toHaveLength(5);
+    for (const marker of ["# ", "## ", "### ", "- ", "1. ", "- [ ] ", "> ", "```", "| --- |", "---", "```mh-html"]) expect(remote.body).toContain(marker);
     expect(window.document.querySelector(".mobile-toolbar")).toBeNull();
     expect(requests).toBe(0);
     expect(html).toContain("connect-src 'none'"); expect(html).not.toContain("mh_token"); expect(html).not.toContain("db-worker");
@@ -163,7 +170,7 @@ test("failed initial load retries through the same host with fresh request IDs",
   window.document.body.innerHTML = '<div id="app"></div>';
   try {
     const sandbox = Object.fromEntries(Object.getOwnPropertyNames(window).map(key => [key, (window as unknown as Record<string, unknown>)[key]]).filter(([, value]) => value !== undefined));
-    const context = createContext({ ...sandbox, window, document: window.document, console });
+    const context = createContext({ ...sandbox, window, document: window.document, console, structuredClone });
     const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", () => scriptJSON(bootstrap));
     for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) runInContext(script[1]!, context);
     const waitFor = async (predicate: () => boolean) => { for (let i = 0; i < 100; i++) { if (predicate()) return; await Bun.sleep(10); } throw new Error("Shell retry did not become ready"); };
@@ -193,7 +200,7 @@ test("packaged attachment controls and CM6 links reach the native host without s
   window.document.body.innerHTML = '<div id="app"></div>';
   try {
     const sandbox = Object.fromEntries(Object.getOwnPropertyNames(window).map(key => [key, (window as unknown as Record<string, unknown>)[key]]).filter(([, value]) => value !== undefined));
-    const context = createContext({ ...sandbox, window, document: window.document, console });
+    const context = createContext({ ...sandbox, window, document: window.document, console, structuredClone });
     const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", () => scriptJSON(bootstrap));
     for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) runInContext(script[1]!, context);
     const waitFor = async (predicate: () => boolean) => { for (let i = 0; i < 100; i++) { if (predicate()) return; await Bun.sleep(10); } throw new Error("Attachment shell did not become ready"); };
@@ -249,7 +256,7 @@ test("packaged CM6 document references save then route natively with partial tar
   window.document.body.innerHTML = '<div id="app"></div>';
   try {
     const sandbox = Object.fromEntries(Object.getOwnPropertyNames(window).map(key => [key, (window as unknown as Record<string, unknown>)[key]]).filter(([, value]) => value !== undefined));
-    const context = createContext({ ...sandbox, window, document: window.document, console });
+    const context = createContext({ ...sandbox, window, document: window.document, console, structuredClone });
     const html = editorHTML.replace("__METAHUB_BOOTSTRAP__", () => scriptJSON(bootstrap));
     for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) runInContext(script[1]!, context);
     const waitFor = async (predicate: () => boolean) => { for (let i = 0; i < 100; i++) { if (predicate()) return; await Bun.sleep(10); } throw new Error("Reference shell did not become ready"); };

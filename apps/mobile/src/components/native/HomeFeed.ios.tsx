@@ -1,3 +1,4 @@
+import { useTheme } from "@/lib/theme";
 import {
   Button,
   HStack,
@@ -17,6 +18,8 @@ import {
   listRowInsets,
   listRowSeparator,
   listStyle,
+  scrollContentBackground,
+  listRowBackground,
   shapes,
 } from "@expo/ui/swift-ui/modifiers";
 import { NativeHost } from "./NativeHost";
@@ -28,11 +31,13 @@ export function HomeFeed({
   openDocument,
   empty,
 }: HomeFeedProps) {
+  const { tokens } = useTheme();
   return (
-    <NativeHost style={{ flex: 1 }}>
-      <List modifiers={[listStyle("plain")]}>
+    <NativeHost style={{ flex: 1, backgroundColor: tokens.bg }}>
+      <List modifiers={[listStyle("plain"), scrollContentBackground("hidden")]}>
         <VStack
           modifiers={[
+            listRowBackground(tokens.bg),
             listRowInsets({ top: 8, bottom: 0, leading: 0, trailing: 0 }),
             listRowSeparator("hidden"),
           ]}
@@ -46,6 +51,7 @@ export function HomeFeed({
             modifiers={[
               buttonStyle("plain"),
               accessibilityLabel(doc.title || "未命名"),
+              listRowBackground(tokens.bg),
               listRowInsets({ top: 4, bottom: 4, leading: 20, trailing: 16 }),
             ]}
           >
@@ -70,7 +76,7 @@ export function HomeFeed({
           </Button>
         ))}
         {empty && (
-          <RNHostView matchContents={{ vertical: true }}>{empty}</RNHostView>
+          <VStack modifiers={[listRowBackground(tokens.bg)]}><RNHostView matchContents={{ vertical: true }}>{empty}</RNHostView></VStack>
         )}
       </List>
     </NativeHost>

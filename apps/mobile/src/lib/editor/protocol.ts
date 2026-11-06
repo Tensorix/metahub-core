@@ -1,7 +1,7 @@
 /** Credentials and arbitrary network requests are intentionally absent. */
 export const EDITOR_PROTOCOL = 1;
 export type EditorDraft = { revision: number; title: string; body: string; version: string | null };
-export type EditorMediaRequest = { action: "pick" | "resolve" | "preview"; src?: string; kind?: "image" | "video" | "audio" | "file" };
+export type EditorMediaRequest = { action: "pick" | "resolve" | "preview"; src?: string; kind?: "library" | "image" | "video" | "audio" | "file" };
 export type EditorRequest = {
   v: 1; session: string; id: number; type: "request";
   method: "load" | "refresh" | "checkpoint" | "save" | "targets" | "media" | "navigate";
@@ -10,7 +10,9 @@ export type EditorRequest = {
 export type EditorState = "saved" | "dirty" | "saving" | "conflict" | "error";
 export type EditorEvent = { v: 1; session: string; type: "state"; state: EditorState; error: string };
 export type EditorResponse = { v: 1; session: string; type: "response"; id: number; ok: boolean; value?: unknown; error?: string; code?: string };
-export type EditorCommand = { v: 1; session: string; type: "command"; id: number; method: "flush" | "mode" | "refresh" | "retry" | "attach"; mode?: "blocks" | "source"; kind?: "image" | "video" | "file" };
+export const EDITOR_BLOCK_TYPES = ["p", "h1", "h2", "h3", "bullet", "numbered", "todo", "quote", "code", "table", "divider", "html"] as const;
+export type EditorBlockType = typeof EDITOR_BLOCK_TYPES[number];
+export type EditorCommand = { v: 1; session: string; type: "command"; id: number; method: "flush" | "mode" | "refresh" | "retry" | "attach" | "block"; block?: EditorBlockType; mode?: "blocks" | "source"; kind?: "library" | "image" | "video" | "audio" | "file" };
 export type EditorCommandResult = { v: 1; session: string; type: "result"; id: number; ok: boolean; error?: string };
 const object = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
 const revision = (x: unknown): x is number => typeof x === "number" && Number.isSafeInteger(x) && x >= 0;
@@ -35,7 +37,7 @@ export function parseEditorMessage(raw: string, session: string): EditorRequest 
     case "media": {
       if (!object(x.params) || !["pick", "resolve", "preview"].includes(String(x.params.action))) return null;
       if (x.params.src !== undefined && (typeof x.params.src !== "string" || x.params.src.length > 8192)) return null;
-      if (x.params.kind !== undefined && !["image", "video", "audio", "file"].includes(String(x.params.kind))) return null;
+      if (x.params.kind !== undefined && !["library", "image", "video", "audio", "file"].includes(String(x.params.kind))) return null;
       if (x.params.action !== "pick" && typeof x.params.src !== "string") return null;
       break;
     }

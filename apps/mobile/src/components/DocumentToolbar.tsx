@@ -1,20 +1,22 @@
+import { DOCUMENT_TOOLBAR_ACTIONS } from "./document-toolbar-actions";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useEffect, useState } from "react";
 import { Keyboard, Platform, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { NativeButton } from "./native/NativeButton";
+import { DocumentToolbarButton } from "./DocumentToolbarButton";
 import { useTheme } from "@/lib/theme";
-import type { EditorState } from "@/lib/editor/protocol";
+import type { EditorState, EditorBlockType } from "@/lib/editor/protocol";
 
 const labels: Record<EditorState, string> = {
   saved: "已保存", dirty: "保存中…", saving: "保存中…", conflict: "保存冲突", error: "保存失败",
 };
 
 /** Native controls stay outside the WebView so opening a picker preserves its selection. */
-export function DocumentToolbar({ state, disabled, onAttach }: {
+export function DocumentToolbar({ state, disabled, onAttach, onBlock }: {
   state: EditorState;
   disabled: boolean;
-  onAttach(kind: "image" | "video" | "file"): void;
+  onBlock(type: EditorBlockType): void;
+  onAttach(kind: "library" | "image" | "video" | "audio" | "file"): void;
 }) {
   const { tokens } = useTheme();
   const insets = useSafeAreaInsets();
@@ -27,19 +29,17 @@ export function DocumentToolbar({ state, disabled, onAttach }: {
   }, []);
   const glass = Platform.OS === "ios" && isLiquidGlassAvailable();
   return (
-    <View style={{ paddingHorizontal: 12, paddingTop: 6, paddingBottom: keyboardVisible ? 8 : Math.max(insets.bottom, 8) }}>
+    <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: keyboardVisible ? 4 : Math.max(insets.bottom - 4, 4) }}>
       <GlassView glassEffectStyle="regular" style={{
-        borderRadius: 16, paddingHorizontal: 8, paddingVertical: 4,
+        borderRadius: 16, paddingHorizontal: 8, paddingVertical: 2,
         backgroundColor: glass ? undefined : tokens.surface2,
       }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always"
             style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 4 }}>
-            {([
-              ["image", "照片"], ["video", "视频"], ["file", "附件"],
-            ] as const).map(([kind, label]) => (
-              <NativeButton key={kind} label={label} variant="text" disabled={disabled}
-                style={{ height: 44, paddingHorizontal: 12 }} onPress={() => onAttach(kind)} />
+            {DOCUMENT_TOOLBAR_ACTIONS.map(({kind, label}) => (
+              <DocumentToolbarButton key={kind} kind={kind} label={label} disabled={disabled}
+                onPress={() => kind === "library" || kind === "file" || kind === "audio" ? onAttach(kind) : onBlock(kind)} />
             ))}
           </ScrollView>
           <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, flexShrink: 0, paddingRight: 4,

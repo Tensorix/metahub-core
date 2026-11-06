@@ -1,3 +1,4 @@
+import { insertBlock } from "../cm6/chrome/slash-menu";
 /** @jsxImportSource preact */
 import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -147,6 +148,13 @@ function App({ bridge }: { bridge: EditorBridge }) {
         );
       } else if (command.method === "refresh") { void refreshDocument().then(() => post({ type: "result", id: command.id, ok: true })); }
       else if (command.method === "mode") { displayMode(command.mode!); post({ type: "result", id: command.id, ok: true }); }
+      else if (command.method === "block") {
+        try {
+          if (freezeRequested || !cm.current?.view) throw new Error("编辑器尚未就绪");
+          insertBlock(cm.current.view, command.block!);
+          post({ type: "result", id: command.id, ok: true });
+        } catch (cause) { post({ type: "result", id: command.id, ok: false, error: String(cause) }); }
+      }
       else if (command.method === "attach") { void attach(command.kind!).then(
         () => post({ type: "result", id: command.id, ok: true }),
         cause => post({ type: "result", id: command.id, ok: false, error: String(cause.message) }),
@@ -197,7 +205,7 @@ function App({ bridge }: { bridge: EditorBridge }) {
       document.removeEventListener("click", click, true);
     };
   }, []);
-  const attach = async (kind: "file" | "image" | "video" = "file") => {
+  const attach = async (kind: "file" | "library" | "image" | "video" | "audio" = "file") => {
       if (freezeRequested || !cm.current?.view) throw new Error("编辑器尚未就绪，请稍后重试");
       const result = await rpc<{ src?: string; name?: string; mime?: string }>("media", { action: "pick", kind } satisfies EditorMediaRequest);
       if (!result.src) return;

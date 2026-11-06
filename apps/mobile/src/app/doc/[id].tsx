@@ -329,8 +329,8 @@ function LocalDocument({ id }: { id: string }) {
   };
 
   return (
-    <KeyboardAvoidingView style={[styles.root, { backgroundColor: tokens.bg }]}
-      behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={headerHeight}>
+    <KeyboardAvoidingView style={[styles.root, { backgroundColor: tokens.bg, paddingTop: headerHeight }]}
+      behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
       <Stack.Screen options={{ title, headerBackButtonMenuEnabled: false }} />
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button

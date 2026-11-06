@@ -1,3 +1,4 @@
+import { useTheme } from "@/lib/theme";
 import { useCallback, useLayoutEffect, useRef, useState, type ComponentRef } from "react";
 import { View } from "react-native";
 import {
@@ -16,6 +17,7 @@ import {
   accessibilityHidden,
   buttonStyle,
   listStyle,
+  scrollContentBackground,
   onAppear,
   onGeometryChange,
   scrollPosition,
@@ -46,6 +48,7 @@ export function LibraryList({
   toggle,
   open,
 }: ListProps) {
+  const { tokens } = useTheme();
   const root = useRef<ComponentRef<typeof View>>(null);
   const [rootY, setRootY] = useState(0);
   const [pickerY, setPickerY] = useState<number | null>(null);
@@ -60,9 +63,9 @@ export function LibraryList({
     ({ item }: { item: Row }) => {
       if (item.more)
         return item.error ? (
-          <Button label={item.title} onPress={() => more(item)} />
+          <Button label={item.title} onPress={() => more(item)} modifiers={[listRowBackground(tokens.bg)]} />
         ) : (
-          <Text modifiers={[onAppear(() => more(item))]}>{item.title}</Text>
+          <Text modifiers={[listRowBackground(tokens.bg), onAppear(() => more(item))]}>{item.title}</Text>
         );
       const indent = Math.min(item.depth, 6) * 16;
       const symbol =
@@ -77,6 +80,7 @@ export function LibraryList({
           modifiers={[
             id(item.key),
             padding({ leading: indent }),
+            listRowBackground(tokens.bg),
             listRowInsets({ top: 4, bottom: 4, leading: 4, trailing: 16 }),
             alignmentGuide("listRowSeparatorLeading", indent + 44 + 28 + 8),
           ]}
@@ -138,19 +142,19 @@ export function LibraryList({
         </HStack>
       );
     },
-    [kind, more, toggle, open],
+    [kind, more, toggle, open, tokens.bg],
   );
   return (
     <View
       ref={root}
-      style={{ flex: 1 }}
+      style={{ flex: 1, backgroundColor: tokens.bg }}
       onLayout={() => root.current?.measureInWindow((_, y) => setRootY(y))}
     >
-      <NativeHost style={{ flex: 1 }}>
+      <NativeHost style={{ flex: 1, backgroundColor: tokens.bg }}>
         <ZStack alignment="top">
           <List
             modifiers={[
-              listStyle("plain"),
+              listStyle("plain"), scrollContentBackground("hidden"),
               refreshable(refresh),
               scrollPosition(anchor, { anchor: "top" }),
             ]}
@@ -164,9 +168,9 @@ export function LibraryList({
               accessibilityHidden(true),
             ]}>{" "}</Text>
             {!!error && (
-              <Button label={error + " · 重试"} onPress={() => void refresh()} />
+              <Button label={error + " · 重试"} onPress={() => void refresh()} modifiers={[listRowBackground(tokens.bg)]} />
             )}
-            {!rows.length && <Text>暂无匹配资料</Text>}
+            {!rows.length && <Text modifiers={[listRowBackground(tokens.bg)]}>暂无匹配资料</Text>}
             <List.ForEach
               estimatedItemSize={44}
               modifiers={[scrollTargetLayout()]}

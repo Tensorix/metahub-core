@@ -93,6 +93,57 @@ function blockInsertion(type: BlockType, from: number): { insert: string | null;
   }
 }
 
+/** Shared insertion for the slash picker and native toolbar. Existing content is preserved. */
+export function insertBlock(view: EditorView, type: BlockType, deps: SlashDeps = {}) {
+  const state = view.state;
+  const line = state.doc.lineAt(state.selection.main.head);
+  const found = slashAt(state, line);
+  if (!found) {
+    const model = docModel(state);
+    const block = model.voids.find(v => line.number >= v.fromLine && line.number <= v.toLine);
+    const at = block?.to ?? line.to;
+    if (line.text.trim() || block) {
+      const insertion = blockInsertion(type, at + 1);
+      if (insertion.insert === null) { deps.onUpload?.(type, view, at); return; }
+      view.dispatch({ changes: { from: at, insert: "\n" + insertion.insert }, selection: { anchor: insertion.caret }, scrollIntoView: true });
+      view.focus();
+      if (type === "code") focusNewCodeVoid(view, insertion.caret);
+      return;
+    }
+  }
+  const info = found?.info;
+  // On a marker line the chosen type REPLACES the marker (old editor's
+  // convert semantics): rewrite from `markerFrom`, keeping the indent.
+  const onMarker = info !== undefined && MARKER_ROLES.has(info.role);
+  const from = onMarker ? info.markerFrom : line.from;
+  let { insert, caret } = blockInsertion(type, from);
+  if (insert === null) {
+    view.dispatch({ changes: { from, to: line.to, insert: "" }, selection: { anchor: from } });
+    view.focus();
+    deps.onUpload?.(type, view, from);
+    return;
+  }
+  let changeFrom = from;
+  if (onMarker && MULTILINE_TYPES.has(type)) {
+    // A fence/table can't live on a list marker line: replace the whole
+    // line and indent every inserted line two columns past the item's
+    // indent, so the block parses as the list item's child.
+    const prefix = state.sliceDoc(line.from, info.markerFrom) + "  ";
+    const rel = caret - from; // caret offset inside `insert`
+    const newlinesBeforeCaret = (insert.slice(0, rel).match(/\n/g) ?? []).length;
+    insert = insert.split("\n").map((l) => prefix + l).join("\n");
+    changeFrom = line.from;
+    caret = line.from + rel + prefix.length * (newlinesBeforeCaret + 1);
+  }
+  view.dispatch({ changes: { from: changeFrom, to: line.to, insert }, selection: { anchor: caret }, scrollIntoView: true });
+  view.focus();
+  // The inserted fence is an atomic void: the dispatched caret sits inside
+  // the replaced range where nothing renders. Hand focus to the island's
+  // textarea as soon as its widget mounts (same handoff as enterCommand's
+  // fence paths). html is reveal-to-edit (non-atomic) — no handoff needed.
+  if (type === "code") focusNewCodeVoid(view, caret);
+}
+
 interface Active {
   slashFrom: number;
   query: string;
@@ -175,42 +226,8 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
       }
 
       select(type: BlockType) {
-        const state = this.view.state;
-        const line = state.doc.lineAt(state.selection.main.head);
-        const found = slashAt(state, line);
         this.close();
-        if (!found) return;
-        const info = found.info;
-        // On a marker line the chosen type REPLACES the marker (old editor's
-        // convert semantics): rewrite from `markerFrom`, keeping the indent.
-        const onMarker = info !== undefined && MARKER_ROLES.has(info.role);
-        const from = onMarker ? info.markerFrom : line.from;
-        let { insert, caret } = blockInsertion(type, from);
-        if (insert === null) {
-          this.view.dispatch({ changes: { from, to: line.to, insert: "" }, selection: { anchor: from } });
-          this.view.focus();
-          deps.onUpload?.(type, this.view, from);
-          return;
-        }
-        let changeFrom = from;
-        if (onMarker && MULTILINE_TYPES.has(type)) {
-          // A fence/table can't live on a list marker line: replace the whole
-          // line and indent every inserted line two columns past the item's
-          // indent, so the block parses as the list item's child.
-          const prefix = state.sliceDoc(line.from, info.markerFrom) + "  ";
-          const rel = caret - from; // caret offset inside `insert`
-          const newlinesBeforeCaret = (insert.slice(0, rel).match(/\n/g) ?? []).length;
-          insert = insert.split("\n").map((l) => prefix + l).join("\n");
-          changeFrom = line.from;
-          caret = line.from + rel + prefix.length * (newlinesBeforeCaret + 1);
-        }
-        this.view.dispatch({ changes: { from: changeFrom, to: line.to, insert }, selection: { anchor: caret }, scrollIntoView: true });
-        this.view.focus();
-        // The inserted fence is an atomic void: the dispatched caret sits inside
-        // the replaced range where nothing renders. Hand focus to the island's
-        // textarea as soon as its widget mounts (same handoff as enterCommand's
-        // fence paths). html is reveal-to-edit (non-atomic) — no handoff needed.
-        if (type === "code") focusNewCodeVoid(this.view, caret);
+        insertBlock(this.view, type, deps);
       }
 
       renderMenu() {

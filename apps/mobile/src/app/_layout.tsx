@@ -122,8 +122,9 @@ function RootStack() {
           name="doc/[id]"
           options={{
             headerShown: true,
-            headerTransparent: false,
-            headerStyle: { backgroundColor: tokens.bg },
+            headerTransparent: true,
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: "transparent" },
           }}
         />
         <Stack.Screen

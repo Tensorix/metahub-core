@@ -12,6 +12,7 @@ export default function BrowseStack() {
         ...(Platform.OS === "ios"
           ? {
               headerTransparent: true,
+              headerStyle: { backgroundColor: "transparent" },
               headerShadowVisible: false,
               headerLargeTitleShadowVisible: false,
               headerLargeStyle: { backgroundColor: "transparent" },
