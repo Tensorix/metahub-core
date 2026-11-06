@@ -1,5 +1,11 @@
 import { useTheme } from "@/lib/theme";
-import { useCallback, useLayoutEffect, useRef, useState, type ComponentRef } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentRef,
+} from "react";
 import { View } from "react-native";
 import {
   useNativeState,
@@ -34,11 +40,13 @@ import {
   foregroundStyle,
   refreshable,
 } from "@expo/ui/swift-ui/modifiers";
+import { DocumentRowActions } from "./DocumentRowActions.ios";
 import { NativeHost } from "./NativeHost";
 import { LibraryKindPicker } from "./LibraryKindPicker.ios";
 import type { ListProps } from "./LibraryList.types";
 import { replacementAnchor, type Row } from "../../lib/browse/library";
 export function LibraryList({
+  actions,
   rows,
   kind,
   changeKind,
@@ -63,9 +71,20 @@ export function LibraryList({
     ({ item }: { item: Row }) => {
       if (item.more)
         return item.error ? (
-          <Button label={item.title} onPress={() => more(item)} modifiers={[listRowBackground(tokens.bg)]} />
+          <Button
+            label={item.title}
+            onPress={() => more(item)}
+            modifiers={[listRowBackground(tokens.bg)]}
+          />
         ) : (
-          <Text modifiers={[listRowBackground(tokens.bg), onAppear(() => more(item))]}>{item.title}</Text>
+          <Text
+            modifiers={[
+              listRowBackground(tokens.bg),
+              onAppear(() => more(item)),
+            ]}
+          >
+            {item.title}
+          </Text>
         );
       const indent = Math.min(item.depth, 6) * 16;
       const symbol =
@@ -74,15 +93,18 @@ export function LibraryList({
           : item.children
             ? "doc.on.doc"
             : "doc.text";
-      return (
+      const rowModifiers = [
+        id(item.key),
+        listRowBackground(tokens.bg),
+        listRowInsets({ top: 4, bottom: 4, leading: 4, trailing: 16 }),
+        alignmentGuide("listRowSeparatorLeading", indent + 44 + 28 + 8),
+      ];
+      const content = (
         <HStack
           spacing={0}
           modifiers={[
-            id(item.key),
             padding({ leading: indent }),
-            listRowBackground(tokens.bg),
-            listRowInsets({ top: 4, bottom: 4, leading: 4, trailing: 16 }),
-            alignmentGuide("listRowSeparatorLeading", indent + 44 + 28 + 8),
+            ...(kind === "documents" ? [] : rowModifiers),
           ]}
         >
           {item.children ? (
@@ -141,8 +163,19 @@ export function LibraryList({
           </Button>
         </HStack>
       );
+      return kind === "documents" ? (
+        <DocumentRowActions
+          id={item.key}
+          actions={actions}
+          modifiers={rowModifiers}
+        >
+          {content}
+        </DocumentRowActions>
+      ) : (
+        content
+      );
     },
-    [kind, more, toggle, open, tokens.bg],
+    [actions, kind, more, toggle, open, tokens.bg],
   );
   return (
     <View
@@ -154,23 +187,36 @@ export function LibraryList({
         <ZStack alignment="top">
           <List
             modifiers={[
-              listStyle("plain"), scrollContentBackground("hidden"),
+              listStyle("plain"),
+              scrollContentBackground("hidden"),
               refreshable(refresh),
               scrollPosition(anchor, { anchor: "top" }),
             ]}
           >
             {/* Scroll this clearance away so content can pass behind the glass. */}
-            <Text modifiers={[
-              frame({ height: 40 }),
-              listRowInsets({ top: 0, bottom: 0 }),
-              listRowSeparator("hidden"),
-              listRowBackground("clear"),
-              accessibilityHidden(true),
-            ]}>{" "}</Text>
+            <Text
+              modifiers={[
+                frame({ height: 40 }),
+                listRowInsets({ top: 0, bottom: 0 }),
+                listRowSeparator("hidden"),
+                listRowBackground("clear"),
+                accessibilityHidden(true),
+              ]}
+            >
+              {" "}
+            </Text>
             {!!error && (
-              <Button label={error + " · 重试"} onPress={() => void refresh()} modifiers={[listRowBackground(tokens.bg)]} />
+              <Button
+                label={error + " · 重试"}
+                onPress={() => void refresh()}
+                modifiers={[listRowBackground(tokens.bg)]}
+              />
             )}
-            {!rows.length && <Text modifiers={[listRowBackground(tokens.bg)]}>暂无匹配资料</Text>}
+            {!rows.length && (
+              <Text modifiers={[listRowBackground(tokens.bg)]}>
+                暂无匹配资料
+              </Text>
+            )}
             <List.ForEach
               estimatedItemSize={44}
               modifiers={[scrollTargetLayout()]}
@@ -181,11 +227,15 @@ export function LibraryList({
             </List.ForEach>
           </List>
           {/* Follow the list host's safe area as the title/search bar collapses. */}
-          <Text modifiers={[
-            frame({ width: 168, height: 44 }),
-            onGeometryChange(({ y }) => setPickerY(y)),
-            accessibilityHidden(true),
-          ]}>{" "}</Text>
+          <Text
+            modifiers={[
+              frame({ width: 168, height: 44 }),
+              onGeometryChange(({ y }) => setPickerY(y)),
+              accessibilityHidden(true),
+            ]}
+          >
+            {" "}
+          </Text>
         </ZStack>
       </NativeHost>
       {pickerY !== null && (

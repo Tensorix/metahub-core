@@ -1,4 +1,4 @@
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, type PressableProps } from "react-native";
 import { BrowseIcon } from "./BrowseIcon";
 import { useTheme } from "@/lib/theme";
 export function BrowseRow({
@@ -7,16 +7,18 @@ export function BrowseRow({
   kind = "document",
   onPress,
   depth = 0,
+  ...pressableProps
 }: {
   title: string;
   subtitle?: string;
   kind?: "document" | "database" | "site";
   onPress: () => void;
   depth?: number;
-}) {
+} & Pick<PressableProps, "onLongPress" | "accessibilityActions" | "onAccessibilityAction">) {
   const { tokens } = useTheme();
   return (
     <Pressable
+      {...pressableProps}
       accessibilityRole="button"
       accessibilityLabel={title}
       onPress={onPress}

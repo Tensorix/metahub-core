@@ -6,6 +6,7 @@ import { useTheme } from "@/lib/theme";
 import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
 import { useRecents } from "@/lib/navigation/use-recents";
 import { useSites } from "@/lib/navigation/use-sites";
+import { useDocumentActions } from "@/lib/browse/use-document-actions";
 import { HomeFeed } from "@/components/native/HomeFeed";
 import { BrowseCreate } from "@/components/BrowseCreate";
 import { BrowseSearch } from "@/components/native/BrowseSearch";
@@ -16,6 +17,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 export default function HomeScreen() {
   const router = useRouter();
+  const actions = useDocumentActions();
   const { client } = useSession();
   const { tokens } = useTheme();
   const { items } = useRecents();
@@ -49,6 +51,7 @@ export default function HomeScreen() {
         <SearchResults query={query} />
       ) : (
         <HomeFeed
+          actions={actions}
           documents={documents.slice(0, 12)}
           openDocument={(id) => router.push(`/doc/${id}`)}
           header={

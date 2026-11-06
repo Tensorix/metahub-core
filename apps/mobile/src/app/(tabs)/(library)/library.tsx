@@ -11,6 +11,7 @@ import { Platform, TextInput, View } from "react-native";
 import { useSession } from "@/lib/auth/session";
 import { useLiveInvalidate } from "@/lib/api/hooks";
 import { LibraryTree, type LibraryKind, type Row } from "@/lib/browse/library";
+import { useDocumentActions } from "@/lib/browse/use-document-actions";
 import { LibraryList } from "@/components/native/LibraryList";
 import { BrowseCreate } from "@/components/BrowseCreate";
 export default function LibraryScreen() {
@@ -18,6 +19,7 @@ export default function LibraryScreen() {
   return <WorkspaceLibrary key={session.id} />;
 }
 function WorkspaceLibrary() {
+  const actions = useDocumentActions();
   const session = useSession(),
     router = useRouter();
   const [kind, setKind] = useState<LibraryKind>("documents"),
@@ -100,6 +102,7 @@ function WorkspaceLibrary() {
     return active.current;
   };
   const listProps = {
+    actions,
     kind,
     changeKind: setKind,
     more,

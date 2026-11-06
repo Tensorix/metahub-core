@@ -22,10 +22,12 @@ import {
   listRowBackground,
   shapes,
 } from "@expo/ui/swift-ui/modifiers";
+import { DocumentRowActions } from "./DocumentRowActions.ios";
 import { NativeHost } from "./NativeHost";
 import type { HomeFeedProps } from "./HomeFeed.types";
 
 export function HomeFeed({
+  actions,
   header,
   documents,
   openDocument,
@@ -45,38 +47,51 @@ export function HomeFeed({
           <RNHostView matchContents={{ vertical: true }}>{header}</RNHostView>
         </VStack>
         {documents.map((doc) => (
-          <Button
+          <DocumentRowActions
             key={doc.id}
-            onPress={() => openDocument(doc.id)}
+            id={doc.id}
+            recent
+            actions={actions}
             modifiers={[
-              buttonStyle("plain"),
-              accessibilityLabel(doc.title || "未命名"),
               listRowBackground(tokens.bg),
               listRowInsets({ top: 4, bottom: 4, leading: 20, trailing: 16 }),
             ]}
           >
-            <HStack
-              spacing={8}
+            <Button
+              onPress={() => openDocument(doc.id)}
               modifiers={[
-                frame({ minHeight: 44 }),
-                contentShape(shapes.rectangle()),
+                buttonStyle("plain"),
+                accessibilityLabel(doc.title || "未命名"),
               ]}
             >
-              <Image
-                systemName="doc.text"
-                size={20}
+              <HStack
+                spacing={8}
                 modifiers={[
-                  frame({ width: 28 }),
-                  foregroundStyle({ type: "hierarchical", style: "secondary" }),
+                  frame({ minHeight: 44 }),
+                  contentShape(shapes.rectangle()),
                 ]}
-              />
-              <Text>{doc.title || "未命名"}</Text>
-              <Spacer minLength={0} />
-            </HStack>
-          </Button>
+              >
+                <Image
+                  systemName="doc.text"
+                  size={20}
+                  modifiers={[
+                    frame({ width: 28 }),
+                    foregroundStyle({
+                      type: "hierarchical",
+                      style: "secondary",
+                    }),
+                  ]}
+                />
+                <Text>{doc.title || "未命名"}</Text>
+                <Spacer minLength={0} />
+              </HStack>
+            </Button>
+          </DocumentRowActions>
         ))}
         {empty && (
-          <VStack modifiers={[listRowBackground(tokens.bg)]}><RNHostView matchContents={{ vertical: true }}>{empty}</RNHostView></VStack>
+          <VStack modifiers={[listRowBackground(tokens.bg)]}>
+            <RNHostView matchContents={{ vertical: true }}>{empty}</RNHostView>
+          </VStack>
         )}
       </List>
     </NativeHost>

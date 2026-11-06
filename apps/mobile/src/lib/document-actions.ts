@@ -44,6 +44,31 @@ export async function deleteFlushedDocument(actions: {
   actions.discardDraft();
 }
 
+/** List entries have no editor handle of their own. Protect any mounted editor
+ * before committing, and retain both recovery and recents on failed deletion. */
+export async function deleteListedDocument(actions: {
+  protect(): Promise<() => void>;
+  isCurrent(): boolean;
+  commit(): Promise<{ ok: boolean }>;
+  discardDraft(): void;
+  forgetRecent(): void;
+}) {
+  const release = await actions.protect();
+  try {
+    if (!actions.isCurrent()) throw new Error("工作区会话已结束");
+    await deleteFlushedDocument({
+      pause: () => {},
+      resume: () => {},
+      deleted: () => {},
+      commit: actions.commit,
+      discardDraft: actions.discardDraft,
+    });
+    actions.forgetRecent();
+  } finally {
+    release();
+  }
+}
+
 /** Keep successful write identity/version for retry, but only the captured form
  * revision may authorize leaving. Native input can arrive after blur/save. */
 export async function saveDocumentForm<T>(actions: {

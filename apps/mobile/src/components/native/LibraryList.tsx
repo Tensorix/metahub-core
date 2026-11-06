@@ -4,8 +4,22 @@ import { BrowseIcon } from "../BrowseIcon";
 import { LibrarySwitch } from "./LibrarySwitch";
 import type { ListProps } from "./LibraryList.types";
 import { replacementAnchor, type Row } from "../../lib/browse/library";
+import {
+  DocumentSwipeList,
+  DocumentSwipeRow,
+  useCloseDocumentSwipe,
+} from "./DocumentSwipeRow";
+import type { PressableProps } from "react-native";
 import { useTheme } from "../../lib/theme";
 export function LibraryList(p: ListProps) {
+  return (
+    <DocumentSwipeList>
+      <LibraryRows {...p} />
+    </DocumentSwipeList>
+  );
+}
+function LibraryRows(p: ListProps) {
+  const closeSwipe = useCloseDocumentSwipe();
   const { tokens } = useTheme();
   const list = useRef<FlatList<Row>>(null);
   const first = useRef<string | null>(null);
@@ -35,6 +49,7 @@ export function LibraryList(p: ListProps) {
   return (
     <FlatList
       ref={list}
+      onScrollBeginDrag={closeSwipe}
       onScrollToIndexFailed={({ index, averageItemLength }) =>
         list.current?.scrollToOffset({
           offset: index * averageItemLength,
@@ -57,66 +72,81 @@ export function LibraryList(p: ListProps) {
       ListEmptyComponent={
         <Text style={{ color: tokens.fgSoft }}>暂无匹配资料</Text>
       }
-      renderItem={({ item }) => (
-        <View
-          style={{
-            minHeight: 52,
-            flexDirection: "row",
-            alignItems: "center",
-            paddingLeft: 4 + Math.min(item.depth, 6) * 16,
-          }}
-        >
-          {item.children ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                (item.expanded ? "折叠" : "展开") + item.title
-              }
-              onPress={() => p.toggle(item)}
-              style={{
-                width: 44,
-                height: 44,
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Text style={{ color: tokens.fg }}>
-                {item.expanded ? "⌄" : "›"}
-              </Text>
-            </Pressable>
-          ) : (
-            <View style={{ width: 44 }} />
-          )}
-          <Pressable
+      renderItem={({ item }) => {
+        const renderRow = (
+          pressableProps: Pick<
+            PressableProps,
+            "onLongPress" | "accessibilityActions" | "onAccessibilityAction"
+          > = {},
+        ) => (
+          <View
             style={{
-              flex: 1,
-              minHeight: 44,
+              minHeight: 52,
               flexDirection: "row",
               alignItems: "center",
-              gap: 8,
-              paddingRight: 16,
+              paddingLeft: 4 + Math.min(item.depth, 6) * 16,
             }}
-            accessibilityRole="button"
-            onPress={() => (item.more ? p.more(item) : p.open(item))}
           >
-            {!item.more && (
-              <View style={{ width: 28, alignItems: "center" }}>
-                <BrowseIcon
-                  kind={p.kind === "documents" ? "document" : "database"}
-                />
-              </View>
+            {item.children ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  (item.expanded ? "折叠" : "展开") + item.title
+                }
+                onPress={() => p.toggle(item)}
+                style={{
+                  width: 44,
+                  height: 44,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Text style={{ color: tokens.fg }}>
+                  {item.expanded ? "⌄" : "›"}
+                </Text>
+              </Pressable>
+            ) : (
+              <View style={{ width: 44 }} />
             )}
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: tokens.fg, fontSize: 17 }}>
-                {item.title}
-              </Text>
-              {!!item.path && (
-                <Text style={{ color: tokens.fgSoft }}>{item.path}</Text>
+            <Pressable
+              {...pressableProps}
+              style={{
+                flex: 1,
+                minHeight: 44,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 8,
+                paddingRight: 16,
+              }}
+              accessibilityRole="button"
+              onPress={() => (item.more ? p.more(item) : p.open(item))}
+            >
+              {!item.more && (
+                <View style={{ width: 28, alignItems: "center" }}>
+                  <BrowseIcon
+                    kind={p.kind === "documents" ? "document" : "database"}
+                  />
+                </View>
               )}
-            </View>
-          </Pressable>
-        </View>
-      )}
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: tokens.fg, fontSize: 17 }}>
+                  {item.title}
+                </Text>
+                {!!item.path && (
+                  <Text style={{ color: tokens.fgSoft }}>{item.path}</Text>
+                )}
+              </View>
+            </Pressable>
+          </View>
+        );
+        return p.kind === "documents" && !item.more ? (
+          <DocumentSwipeRow id={item.key} actions={p.actions}>
+            {renderRow}
+          </DocumentSwipeRow>
+        ) : (
+          renderRow()
+        );
+      }}
     />
   );
 }

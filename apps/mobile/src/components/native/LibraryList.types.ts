@@ -1,5 +1,7 @@
+import type { DocumentActions } from "@/lib/browse/use-document-actions";
 import type { LibraryKind, Row } from "../../lib/browse/library";
 export interface ListProps {
+  actions: DocumentActions;
   kind: LibraryKind;
   changeKind(kind: LibraryKind): void;
   rows: Row[];
