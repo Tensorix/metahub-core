@@ -1,7 +1,7 @@
+import { recoverConnectedWorkspace, connectedWorkspaceTarget } from "../../core/sync/workspace-recovery.ts";
 import { initSchema } from "../../core/schema-init.ts";
 import type { DbDriver } from "../../core/driver.ts";
 import {
-  recoverV2Workspace,
   type RecoveryPhase,
 } from "../../core/sync/recovery-v2.ts";
 import {
@@ -35,14 +35,12 @@ export async function rebuildBrowserReplica(
   phase: (state: RecoveryPhase) => void,
   transport?: StorageClient,
   attachments: () => Promise<SpoolBlob[]> = spoolPending,
+  automatic = false,
 ) {
-  const { config, workspaceId } = localRecoveryTarget(source, url);
+  const target = connectedWorkspaceTarget(source, url, transport);
   let replacement: BrowserDatabase | undefined;
-  return recoverV2Workspace(
-    source,
-    transport ?? storageClientFor(config),
-    config,
-    workspaceId,
+  return recoverConnectedWorkspace(
+    source, target,
     {
       legacyPeerUrl: url,
       phase,
@@ -107,6 +105,6 @@ export async function rebuildBrowserReplica(
         if (!committed) replacement?.close();
       },
       async resume() {},
-    },
+    }, automatic,
   );
 }

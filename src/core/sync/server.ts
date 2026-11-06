@@ -1,3 +1,5 @@
+import { prepareDesktopWorkspace } from "./recovery-desktop.ts";
+import { readReplicaGeneration } from "./retention-protocol.ts";
 import { assertWorkspaceWritable, knownDataVersion, dataVersionRange } from "./data-version.ts";
 import "./storage-s3-bun.ts"; // side effect: register the Bun S3 storage-sync client (auto-sync timer)
 import { openMetahub } from "../db.ts";
@@ -9,6 +11,7 @@ import pkg from "../../../package.json" with { type: "json" };
 import { inspectWorkspaceVersion } from "./recovery-local.ts";
 import { errorResponse, routes, type Route, type RouteCtx } from "./routes.ts";
 import { SYNC_PATH, HEALTH_PATH, RENEW_PATH, PAIR_PATH } from "./protocol.ts";
+import { BOOTSTRAP_PATH } from "./http-bootstrap.ts";
 import { DEFAULT_TTL_MS, DEFAULT_GRACE_MS } from "./token.ts";
 import { syncPeer, listPeers } from "./peers.ts";
 import { getEdgeConfig } from "./edge-config.ts";
@@ -141,7 +144,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   // METAHUB_APP=desktop for its sidecar before we get here).
   process.env.METAHUB_APP ??= "server";
   const tDb = Date.now();
-  const db = openMetahub();
+  let db = openMetahub();
   const startupVersionCheck = inspectWorkspaceVersion(db);
   const dbMs = Date.now() - tDb;
   const node = getNodeId(db);
@@ -153,12 +156,12 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
   const allRoutes = opts.ui ? [...routes, ...opts.ui.routes] : routes;
   opts.ui?.onStart?.(db);
 
+  const routeJobs = new Set<Promise<Response>>();
   async function dispatchRoute(route: Route, req: Request) {
-    try {
-      return await route.handler(req, ctx);
-    } catch (error) {
-      return errorResponse(error, req, route.path === SYNC_PATH ? knownDataVersion(db)?.workspaceId : undefined);
-    }
+    const job = Promise.resolve().then(() => route.handler(req, ctx)).catch(error =>
+      errorResponse(error, req, route.path === SYNC_PATH || route.path === BOOTSTRAP_PATH ? knownDataVersion(db)?.workspaceId : undefined));
+    routeJobs.add(job);
+    try { return await job; } finally { routeJobs.delete(job); }
   }
 
   // In-process forward into the route table for /sites/<name>/api/* requests
@@ -191,6 +194,27 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
           graceMs: DEFAULT_GRACE_MS,
         };
 
+  let preparation: Promise<void> | undefined;
+  let lastPreparation = 0;
+  async function prepareWorkspace() {
+    // Electron owns its sidecar lifecycle via IPC. The headless server owns and
+    // reopens its own handle; admission waits for all earlier route jobs.
+    if (opts.loopbackUiOnly || readReplicaGeneration(db)) return;
+    if (preparation) return preparation;
+    if (Date.now() - lastPreparation < 15_000) return;
+    lastPreparation = Date.now();
+    preparation = (async () => {
+      await Promise.allSettled([...routeJobs]);
+      const active = await prepareDesktopWorkspace(db);
+      if (active !== db) {
+        db = active; ctx.db = active;
+        if (auth.db) auth.db = active;
+        opts.ui?.onStart?.(active);
+      }
+    })().catch(error => console.error("[sync] workspace initialization failed —", error instanceof Error ? error.message : String(error)))
+      .finally(() => { preparation = undefined; });
+    return preparation;
+  }
   let server: ReturnType<typeof Bun.serve>;
   const tServe = Date.now();
   try {
@@ -202,6 +226,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
       : undefined,
     async fetch(req, srv) {
       await startupVersionCheck;
+      await prepareWorkspace();
       const url = new URL(req.url);
       if (opts.loopbackUiOnly) {
         const rejection = loopbackUiRejection(req, srv.port!, opts.host);
@@ -244,7 +269,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
         ((req.method === "GET" || req.method === "DELETE") &&
           url.pathname === "/api/share/request");
       if (
-        url.pathname === SYNC_PATH ||
+        url.pathname === SYNC_PATH || url.pathname === BOOTSTRAP_PATH ||
         url.pathname.startsWith("/blob/") ||
         url.pathname === "/api/blobs/has" ||
         shareMgmt
@@ -418,6 +443,7 @@ export function startServer(opts: ServerOptions = {}): RunningServer {
     const DROP_KEY = " drop"; // never collides with a peers.url
     const tick = async (): Promise<void> => {
       await startupVersionCheck;
+      await prepareWorkspace();
       if ((knownDataVersion(db)?.dataVersion ?? 2) > dataVersionRange.maxSupportedDataVersion) return;
       const maxSeq =
         (db.query("SELECT MAX(seq) AS s FROM crdt_changes").get() as { s: number | null }).s ?? 0;

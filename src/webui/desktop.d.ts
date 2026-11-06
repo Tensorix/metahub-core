@@ -9,7 +9,7 @@ export interface QuickNoteSettings {
 }
 
 export interface MetahubDesktop {
-  rebuildReplica?: (url: string) => Promise<{ packageId: string; pending: number }>;
+  rebuildReplica?: (url: string, automatic?: boolean) => Promise<{ packageId: string; pending: number }>;
   documents?: {
     /** Set only on a native document window; routes cannot change its identity. */
     initialId: string | null;

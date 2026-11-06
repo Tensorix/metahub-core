@@ -3,16 +3,16 @@ import { restoreUncontestedText } from "./recovery-intent.ts";
 import { observeHistory } from "./history-observation.ts";
 import { observeDataVersion, assertWorkspaceWritable } from "./data-version.ts";
 import { ChangeSchema } from "./protocol.ts";
-import { changesAfterSeq, type Change } from "../crdt.ts";
+import { changesAfterSeq, ingestDetailed, type Change } from "../crdt.ts";
 import { getNodeId } from "../node.ts";
 import { ingestV2Batch } from "./v2-ingest.ts";
 import type { DbDriver } from "../driver.ts";
 import { writeTx } from "../driver.ts";
 import { createV2Bucket } from "./bucket-v2.ts";
 import { syncWithStorage, type StorageClient, type S3Config } from "./storage.ts";
-import { captureCurrentCheckpoint, installCurrentCheckpoint } from "./current-checkpoint.ts";
+import { captureCurrentCheckpoint, installCurrentCheckpoint, type CurrentCheckpoint } from "./current-checkpoint.ts";
 import { splitDocumentArchive, captureDocumentArchive, DocumentArchiveSchema, installDocumentArchive } from "../history-archive.ts";
-import { readReplicaGeneration, writeReplicaGeneration } from "./retention-protocol.ts";
+import { readReplicaGeneration, writeReplicaGeneration, type ReplicaGeneration } from "./retention-protocol.ts";
 import { createDocument, getDocument } from "../documents.ts";
 import { MhError } from "../errors.ts";
 import { commitHash } from "./commit-log.ts";
@@ -96,6 +96,8 @@ export function resolveRecoveryItem(db: DbDriver, id: string, action: "copy" | "
 }
 
 export interface RecoveryAdapter {
+  /** Recheck automatic eligibility after freezing editors, before protecting or publishing. */
+  validateSource?(): void;
   /** Connected v1 bucket to drain before publishing the first v2 checkpoint. */
   legacyPeerUrl?: string;
   /** Flush every active editor then quiesce mutations and old transport. */
@@ -110,63 +112,44 @@ export interface RecoveryAdapter {
   resume(): Promise<void>;
   phase?(phase: RecoveryPhase): void;
 }
-/** Transaction boundary across runtimes. No old database is reset in place.
- * Adapter failures before swap leave the original database available. */
-export async function recoverV2Workspace(source: DbDriver, client: StorageClient, config: S3Config, workspaceId: string, adapter: RecoveryAdapter) {
-  const preflight = createV2Bucket(client, config, source);
-  const existing = await preflight.root();
-  if (existing) await preflight.log(existing).read();
+export interface WorkspaceSnapshotSource {
+  preflight(): Promise<void>;
+  download(): Promise<{
+    workspaceId: string; epoch: number; checkpointId: string | null; dataVersion: number;
+    current: CurrentCheckpoint;
+    install(shadow: DbDriver, generation: ReplicaGeneration): Promise<void>;
+    verify(): Promise<void>;
+    retire?: { member: string; sequence: number };
+  }>;
+}
+/** Transaction boundary shared by bucket and HTTP recovery. No live database
+ * is reset in place; the host alone publishes the verified shadow pointer. */
+export async function recoverWorkspace(source: DbDriver, adapter: RecoveryAdapter, remote: WorkspaceSnapshotSource) {
+  await remote.preflight();
   const id = crypto.randomUUID();
   let shadow: DbDriver | null = null, committed = false;
   const phase = (value: RecoveryPhase) => adapter.phase?.(value);
   phase("saving");
   try {
     await adapter.pauseAndFlush();
+    adapter.validateSource?.();
     phase("protecting");
     const protection = await adapter.protect(id);
     if (!protection.proof) throw new MhError("invalid_input", "recovery protection was not verified");
-    const bucket = createV2Bucket(client, config, source);
-    let root = await bucket.root();
     const oldGeneration = readReplicaGeneration(source);
-    if (!root && oldGeneration) throw new MhError("busy", "workspace root is unavailable");
-    if (!root && adapter.legacyPeerUrl) {
-      try {
-        const result = await syncWithStorage(source, adapter.legacyPeerUrl, client, config, { forcePush: true });
-        if (result.pendingPull || result.pendingPush || result.warnings?.length)
-          throw new MhError("busy", "请先完成旧版同步，再升级工作区");
-      } catch (error) {
-        // Another device may have published the v2 root after our first read.
-        if (!(error instanceof MhError) || error.code !== "upgrade_required") throw error;
-        root = await bucket.root();
-        if (!root) throw error;
-      }
-    }
-    if (!root) {
-      const checkpoint = captureCurrentCheckpoint(source, workspaceId, 0);
-      for (const row of source.query("SELECT id FROM documents ORDER BY id").all() as { id: string }[]) {
-        const archive = captureDocumentArchive(source, workspaceId, row.id);
-        for (const part of splitDocumentArchive(archive)) checkpoint.history.push({ documentId: row.id, hash: await bucket.publish(part) });
-      }
-      root = await bucket.initialize(checkpoint);
-    }
-    if (oldGeneration && oldGeneration.workspaceId !== root.workspaceId)
-      throw new MhError("invalid_input", "recovery cannot switch workspace identities");
     phase("downloading");
-    const log = bucket.log(root), head = await log.read();
-    const checkpoint = await bucket.checkpointFor(root, head.state.checkpoint!, head.state.epoch);
+    const downloaded = await remote.download();
+    const root = { workspaceId: downloaded.workspaceId };
+    if (oldGeneration && oldGeneration.workspaceId !== root.workspaceId)
+      throw new MhError("conflict", "recovery cannot switch workspace identities");
     shadow = await adapter.createShadow(id);
-    installCurrentCheckpoint(shadow, checkpoint, root.workspaceId);
-    observeDataVersion(shadow, root.workspaceId, head.state.dataVersion);
-    // Replay only records beyond checkpoint coverage. Old data objects may have
-    // been collected; compact control metadata remains readable indefinitely.
-
-    await log.read(undefined, async (record, after, rejected) => {
-      if (rejected || record.sequence <= checkpoint.coveredSequence || record.payload.type !== "batch") return;
-      const batch = await bucket.batchFor(root!, record.payload);
-      const result = ingestV2Batch(shadow!, batch);
-      observeHistory(shadow!, batch.changes, after.serverTime!);
-      if (result.poisoned || Object.values(result.skewed).some(n => n > 0)) throw new MhError("clock_skew", "recovery rejected remote data");
-    });
+    shadow.query("INSERT OR REPLACE INTO meta(key,value) VALUES('node_id',?)").run(getNodeId(source));
+    installCurrentCheckpoint(shadow, downloaded.current, root.workspaceId);
+    observeDataVersion(shadow, root.workspaceId, downloaded.dataVersion);
+    const generation: ReplicaGeneration = { protocolVersion: 2, workspaceId: root.workspaceId, epoch: downloaded.epoch,
+      checkpoint: downloaded.checkpointId, incarnationId: crypto.randomUUID() };
+    writeReplicaGeneration(shadow, generation);
+    await downloaded.install(shadow, generation);
     phase("verifying");
     schema(shadow);
     const retentionReview = source.query("SELECT value FROM meta WHERE key='sync_v2_retention_review'").get() as { value: string } | null;
@@ -188,13 +171,14 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
       for (const pkg of source.query("SELECT * FROM sync_recovery_packages").all() as { id: string; proof: string; status: string }[])
         shadow.query("INSERT OR IGNORE INTO sync_recovery_packages(id,proof,status) VALUES(?,?,?)").run(pkg.id,pkg.proof,pkg.status);
     }
-    writeReplicaGeneration(shadow, { protocolVersion: 2, workspaceId: root.workspaceId, epoch: head.state.epoch,
-      checkpoint: head.state.checkpoint, incarnationId: crypto.randomUUID() });
     shadow.query("INSERT INTO sync_recovery_packages(id,proof) VALUES(?,?)").run(id, protection.proof);
     // Durable intent records are separate from the old oplog. Conservative
     // copies preserve edits when a common baseline is unavailable.
     const sourceTransport = oldGeneration ? source.query("SELECT value FROM meta WHERE key=?").get(`sync_v2_transport:${oldGeneration.incarnationId}`) as { value: string } | null : null;
     const pending = [...changesAfterSeq(source, sourceTransport ? JSON.parse(sourceTransport.value).cursor : 0, { onlyNode: getNodeId(source) }).changes, ...pendingPeerChanges(source)];
+    // Preserve this device's roster as ordinary queued changes, not as a user
+    // recovery item. For HTTP, install() has already established its push cursor.
+    ingestDetailed(shadow, pending.filter(c => c.dataset === "nodes" && c.row_id === getNodeId(source)));
     const changedDocuments = new Set(pending.filter(c => c.dataset === "documents").map(c => c.row_id));
     for (const c of pending) if (c.dataset === "doc_blocks") {
       const owner = source.query("SELECT doc_id FROM doc_blocks WHERE id=?").get(c.row_id) as { doc_id: string | null } | null;
@@ -204,6 +188,7 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
       .filter(row => !sourceTransport || changedDocuments.has(row.id));
     const otherIntents = new Map<string, typeof pending>();
     for (const change of pending) {
+      if (change.dataset === "nodes" && change.row_id === getNodeId(source)) continue;
       if (change.dataset === "doc_blocks" || (change.dataset === "documents" && candidates.some(row => row.id === change.row_id))) continue;
       const key = JSON.stringify([change.dataset, change.row_id]);
       otherIntents.set(key, [...(otherIntents.get(key) ?? []), change]);
@@ -239,16 +224,13 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
           .run(itemId, table, String(draft.doc_id ?? draft.record_id), JSON.stringify(draft));
       }
     }
-    if (oldGeneration && head.state.members[oldGeneration.incarnationId]) {
-      shadow.query("INSERT OR REPLACE INTO meta(key,value) VALUES('sync_v2_retire',?)")
-        .run(JSON.stringify({ member: oldGeneration.incarnationId, sequence: head.state.members[oldGeneration.incarnationId]!.sequence }));
-    }
+    if (downloaded.retire) shadow.query("INSERT OR REPLACE INTO meta(key,value) VALUES('sync_v2_retire',?)")
+      .run(JSON.stringify(downloaded.retire));
 
     if ((shadow.query("PRAGMA quick_check").get() as Record<string, string>)?.quick_check !== "ok")
       throw new MhError("invalid_input", "shadow database integrity check failed");
     // If a new epoch won during download, do not publish a stale replacement.
-    const current = await log.read();
-    if (current.state.epoch !== head.state.epoch) throw new MhError("busy", "checkpoint changed during recovery; original database retained");
+    await downloaded.verify();
     phase("swapping");
     await adapter.swap(shadow, id);
     committed = true;
@@ -261,6 +243,78 @@ export async function recoverV2Workspace(source: DbDriver, client: StorageClient
       await adapter.resume();
     }
   }
+}
+
+export async function recoverV2Workspace(source: DbDriver, client: StorageClient, config: S3Config, workspaceId: string, adapter: RecoveryAdapter) {
+  return recoverWorkspace(source, adapter, {
+    async preflight() {
+      const bucket = createV2Bucket(client, config, source), root = await bucket.root();
+      if (root) await bucket.log(root).read();
+    },
+    async download() {
+      const bucket = createV2Bucket(client, config, source);
+      let root = await bucket.root();
+      const oldGeneration = readReplicaGeneration(source);
+      if (!root && oldGeneration) throw new MhError("busy", "workspace root is unavailable");
+      if (!root && adapter.legacyPeerUrl) {
+        // Only an actual legacy layout may be drained through the v1 writer.
+        const { inspectBucketAccess } = await import("./workspace-bucket.ts");
+        const access = await inspectBucketAccess(source, adapter.legacyPeerUrl, client, config);
+        if (access.kind === "error" || access.kind === "client-update") throw new MhError("busy", access.reason ?? "工作区状态尚未确认");
+        if (access.kind === "migration" && access.reason === "legacy-layout") {
+          try {
+            const result = await syncWithStorage(source, adapter.legacyPeerUrl, client, config, { forcePush: true });
+            if (result.pendingPull || result.pendingPush || result.warnings?.length)
+              throw new MhError("busy", "请先完成旧版同步，再升级工作区");
+          } catch (error) {
+            if (!(error instanceof MhError) || error.code !== "upgrade_required") throw error;
+            root = await bucket.root();
+            if (!root) throw error;
+          }
+        }
+      }
+      if (!root) {
+        const checkpoint = captureCurrentCheckpoint(source, workspaceId, 0);
+        for (const row of source.query("SELECT id FROM documents ORDER BY id").all() as { id: string }[]) {
+          const archive = captureDocumentArchive(source, workspaceId, row.id);
+          for (const part of splitDocumentArchive(archive)) checkpoint.history.push({ documentId: row.id, hash: await bucket.publish(part) });
+        }
+        root = await bucket.initialize(checkpoint);
+        // Another initializer's content may not replace a populated local workspace.
+        if (root.workspaceId !== workspaceId && !oldGeneration) {
+          const { canAutoJoinWorkspace } = await import("./workspace-access.ts");
+          if (!canAutoJoinWorkspace(source)) throw new MhError("conflict", "另一个设备已建立工作区，请确认后保全编辑并加入");
+        }
+      }
+      if (oldGeneration && oldGeneration.workspaceId !== root.workspaceId)
+        throw new MhError("conflict", "recovery cannot switch workspace identities");
+      const log = bucket.log(root), head = await log.read();
+      const current = await bucket.checkpointFor(root, head.state.checkpoint!, head.state.epoch);
+      const boundRoot = root;
+      return {
+        workspaceId: root.workspaceId, epoch: head.state.epoch, checkpointId: head.state.checkpoint, dataVersion: head.state.dataVersion, current,
+        retire: oldGeneration && head.state.members[oldGeneration.incarnationId]
+          ? { member: oldGeneration.incarnationId, sequence: head.state.members[oldGeneration.incarnationId]!.sequence } : undefined,
+        async install(shadow) {
+          await log.read(undefined, async (record, after, rejected) => {
+            if (rejected || record.sequence <= current.coveredSequence || record.payload.type !== "batch") return;
+            if (after.state.epoch !== head.state.epoch || after.state.checkpoint !== head.state.checkpoint)
+              throw new MhError("rebootstrap_required", "checkpoint changed during download");
+            const batch = await bucket.batchFor(boundRoot, record.payload);
+            const result = ingestV2Batch(shadow, batch);
+            observeHistory(shadow, batch.changes, after.serverTime!);
+            if (result.poisoned || Object.values(result.skewed).some(n => n > 0)) throw new MhError("clock_skew", "recovery rejected remote data");
+          });
+          shadow.query("DELETE FROM meta WHERE key='sync_v2_baseline_http'").run();
+        },
+        async verify() {
+          const currentHead = await log.read();
+          if (currentHead.state.epoch !== head.state.epoch || currentHead.state.checkpoint !== head.state.checkpoint)
+            throw new MhError("rebootstrap_required", "checkpoint changed during recovery; original database retained");
+        },
+      };
+    },
+  });
 }
 
 export async function loadV2DocumentHistory(db: DbDriver, client: StorageClient, config: S3Config, documentId: string) {

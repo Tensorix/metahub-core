@@ -435,7 +435,8 @@ export function emit(
   col: string,
   value: unknown,
 ): Change {
-  assertUserEditAllowed(db);
+  if (dataset === "nodes" && rowId === getNodeId(db)) assertWorkspaceWritable(db);
+  else assertUserEditAllowed(db);
   const mint = (): Change => {
     const node = currentNodeOverride ?? getNodeId(db);
     const change: Change = {

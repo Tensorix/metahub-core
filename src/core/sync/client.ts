@@ -1,5 +1,5 @@
 import { editBases, ingestPeerChanges } from "./peer-v2.ts";
-import { assertWorkspaceWritable, dataVersionRange, localDataVersion, knownDataVersion, finishVersionCheck, observeDataVersion, requireSupportedVersion } from "./data-version.ts";
+import { assertWorkspaceWritable, beginVersionCheck, dataVersionRange, localDataVersion, knownDataVersion, finishVersionCheck, observeDataVersion, requireSupportedVersion } from "./data-version.ts";
 import { assertReplicaGeneration, readReplicaGeneration } from "./retention-protocol.ts";
 import type { DbDriver } from "../driver.ts";
 import { getNodeId } from "../node.ts";
@@ -7,6 +7,7 @@ import { changesAfterSeq, type Change } from "../crdt.ts";
 import { type SyncResponse, SYNC_PATH } from "./protocol.ts";
 import { MhError } from "../errors.ts";
 import { withSyncBudget } from "./transport.ts";
+import { classifyWorkspaceAccess, setWorkspaceAccess } from "./workspace-access.ts";
 
 interface PeerCursors {
   pull_cursor: number;
@@ -118,6 +119,7 @@ export async function syncWithPeer(
 ): Promise<SyncResult> {
   // Back-compat: the third parameter used to be the bare token string.
   const o: SyncOpts = typeof opts === "string" ? { token: opts } : opts;
+  beginVersionCheck(db, url);
   const measure = o.measureSync ?? (<T>(_phase: SyncSynchronousPhase, run: () => T): T => run());
   const { node, peer, bearer, toPush } = measure("prepare", () => {
     const node = getNodeId(db);
@@ -150,9 +152,19 @@ export async function syncWithPeer(
   {
     const health = await (o.fetch ?? fetch)(new URL("/health", url), { method: "GET", headers, signal });
     if (!health.ok) throw new MhError(health.status === 401 || health.status === 403 ? "auth" : "network", `sync preflight failed: ${health.status}`);
-    const remote = await health.json() as { generation?: unknown; dataVersion?: number };
+    const remote = await health.json() as { generation?: unknown; dataVersion?: number; capabilities?: string[] };
     if (signal.aborted) throw signal.reason;
     checkVersion(remote);
+    if (remote.generation) {
+      const { ReplicaGenerationSchema } = await import("./retention-protocol.ts");
+      const state = classifyWorkspaceAccess(db, url, ReplicaGenerationSchema.parse(remote.generation), remote.dataVersion ?? 2, "http");
+      if (!generation && !remote.capabilities?.includes("sync_bootstrap_v1")) {
+        setWorkspaceAccess(db, { url, kind: "error", reason: "请更新服务器以支持新设备接入" });
+        throw new MhError("busy", "请更新服务器以支持新设备接入");
+      }
+      setWorkspaceAccess(db, state);
+      if (state.kind === "initializing") throw new MhError("busy", "正在初始化工作区，请稍候");
+    }
     assertReplicaGeneration(db, remote.generation);
   }
   assertWorkspaceWritable(db);

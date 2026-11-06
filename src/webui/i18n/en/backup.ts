@@ -1,6 +1,9 @@
 import { plural, type Msg } from "./util.ts";
 
 export const backup = {
+  "更新本地副本": "Update local replica",
+  "立即更新": "Update now",
+  "正在连接工作区并校验本地数据…": "Connecting to the workspace and verifying local data…",
   "查看": "Review",
   "稍后": "Later",
   "需要更新客户端": "App update required",

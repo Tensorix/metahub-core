@@ -1,12 +1,13 @@
+import { recoverConnectedWorkspace, type WorkspaceTarget } from "../../../../../src/core/sync/workspace-recovery";
 import { freezeAndFlushEditors } from "../editor/recovery-barrier";
 import { backupDatabaseSync, openDatabaseSync } from "expo-sqlite";
 import { Directory, File, Paths } from "expo-file-system";
 import { ExpoDriver, nativeSqliteOpenOptions } from "./expo-driver";
 import { selectMobileReplica } from "./open";
 import { initSchema } from "../../../../../src/core/schema-init";
-import { recoverV2Workspace, type RecoveryPhase } from "../../../../../src/core/sync/recovery-v2";
+import { type RecoveryPhase } from "../../../../../src/core/sync/recovery-v2";
 import { storageUrl } from "../../../../../src/core/sync/storage-url";
-import { storageClientFor, type StorageClient } from "../../../../../src/core/sync/storage";
+import { type StorageClient } from "../../../../../src/core/sync/storage";
 import { commitHash } from "../../../../../src/core/sync/commit-log";
 import { createAttachmentStore, type AttachmentTransfer } from "../attachments/store";
 import { hashFile } from "../attachments/native";
@@ -16,26 +17,26 @@ const rebuilding = new WeakSet<Session>();
 
 /** Native recovery uses SQLite's online backup, never copies an open WAL file.
  * The active filename is one atomic SQLite row; a crash sees old or new DB. */
-export async function recoverMobileWorkspace(session: Session, reload: () => Promise<void>, phase: (value: RecoveryPhase) => void, client?: StorageClient) {
+export async function recoverMobileWorkspace(session: Session, reload: () => Promise<void>, phase: (value: RecoveryPhase) => void, client?: StorageClient, automatic = false) {
   if (rebuilding.has(session)) throw new Error("本地副本正在升级");
   rebuilding.add(session);
   try {
-    return await rebuild(session, reload, phase, client);
+    return await rebuild(session, reload, phase, client, automatic);
   } finally {
     rebuilding.delete(session);
   }
 }
 
-async function rebuild(session: Session, reload: () => Promise<void>, phase: (value: RecoveryPhase) => void, client?: StorageClient) {
-  if (!session.creds.bucket) throw new Error("此工作区未连接存储桶");
+async function rebuild(session: Session, reload: () => Promise<void>, phase: (value: RecoveryPhase) => void, client?: StorageClient, automatic = false) {
   const config = session.creds.bucket;
+  const target: WorkspaceTarget = config ? { kind: "s3", url: storageUrl(config.endpoint, config.bucket, config.prefix), config, client }
+    : { kind: "http", url: session.creds.baseUrl, fetch: ((input: string | URL | Request, init?: RequestInit) => session.api.fetchUrl(String(input), init)) as typeof fetch };
   let shadowSqlite: ReturnType<typeof openDatabaseSync> | null = null;
   let shadowName = "";
   let releaseEditors = () => {};
   const protectedTransfers: AttachmentTransfer[] = [];
   const protectedAttachments: ReturnType<typeof createAttachmentStore>["list"] extends () => infer R ? R : never = [];
-  return recoverV2Workspace(session.replica.db, client ?? storageClientFor(config), config, session.workspaceId, {
-    legacyPeerUrl: storageUrl(config.endpoint, config.bucket, config.prefix),
+  return recoverConnectedWorkspace(session.replica.db, target, {
     phase,
     async pauseAndFlush() {
       await session.sync.stop();
@@ -116,5 +117,5 @@ async function rebuild(session: Session, reload: () => Promise<void>, phase: (va
         releaseEditors();
       }
     },
-  });
+  }, automatic);
 }

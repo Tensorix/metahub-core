@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 export function runRecoveryChild(
   command: { cmd: string; args: string[] },
   url: string,
+  automatic = false,
 ) {
   return new Promise<{ packageId: string; pending: number }>(
     (resolve, reject) => {
@@ -12,6 +13,7 @@ export function runRecoveryChild(
           ...process.env,
           METAHUB_APP: "desktop",
           METAHUB_REBUILD_PEER: url,
+          METAHUB_REBUILD_AUTOMATIC: automatic ? "1" : "0",
         },
       });
       let output = "",

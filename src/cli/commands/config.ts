@@ -1,3 +1,4 @@
+import { prepareDesktopWorkspace } from "../../core/sync/recovery-desktop.ts";
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
 import { getNodeId } from "../../core/node.ts";
@@ -510,12 +511,15 @@ async function storagePeerAdd(
   const passphrase =
     encrypt && !recoveryCode ? flagOrAsk(args.passphrase, "passphrase", usage) : undefined;
 
-  const { url, config, sync } = await addAndSyncStoragePeer(db, {
+  const connected = await addAndSyncStoragePeer(db, {
     endpoint, region, bucket, prefix, accessKeyId, secretAccessKey,
     virtualHostedStyle: enrolled?.virtualHostedStyle,
     encrypt, passphrase, recoveryCode,
     publish: true, priority: enrolled ? 10 : 100, label: bucket,
   });
+  const { url, config } = connected;
+  const active = await prepareDesktopWorkspace(db, url);
+  const sync = active !== db ? await syncPeer(active, url) : connected.sync;
 
   // Optional one-shot: open CORS for a browser shell so a phone can connect
   // straight after scanning. Best-effort — the peer is already added; a failure
@@ -955,10 +959,13 @@ async function peerWizard(
         s.start("连接存储并配置…");
         try {
           // CLI runs on the data home → this node is the bucket publisher.
-          const { url, sync } = await addAndSyncStoragePeer(db, {
+          const { url, sync: firstSync } = await addAndSyncStoragePeer(db, {
             endpoint, region: region || "auto", bucket, prefix: prefix || "metahub",
             accessKeyId, secretAccessKey, encrypt, passphrase, publish: true, priority: 100, label: bucket,
           });
+          const active = await prepareDesktopWorkspace(db, url);
+          const sync = active !== db ? await syncPeer(active, url) : firstSync;
+          db = active;
           s.stop(`✓ 已添加存储 ${url}`);
           p.note(syncLine(sync), "同步结果");
         } catch (e) {
@@ -1003,7 +1010,7 @@ async function peerWizard(
         s.start("连接存储并同步…");
         try {
           // Pasted enroll code → join as a secondary device (low publisher priority).
-          const { url, sync } = await addAndSyncStoragePeer(db, {
+          const { url, sync: firstSync } = await addAndSyncStoragePeer(db, {
             endpoint: payload.endpoint,
             region: payload.region || "auto",
             bucket: payload.bucket,
@@ -1018,6 +1025,9 @@ async function peerWizard(
             priority: 10,
             label: payload.bucket,
           });
+          const active = await prepareDesktopWorkspace(db, url);
+          const sync = active !== db ? await syncPeer(active, url) : firstSync;
+          db = active;
           s.stop(`✓ 已加入存储 ${url}`);
           p.note(syncLine(sync), "同步结果");
         } catch (e) {

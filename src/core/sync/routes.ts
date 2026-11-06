@@ -20,6 +20,7 @@ import { asMhError, MhError, errorCode, type MhErrorCode } from "../errors.ts";
 import { pickLocale } from "./locale.ts";
 import { localizeError } from "./page-messages.ts";
 import pkg from "../../../package.json" with { type: "json" };
+import { BOOTSTRAP_PATH, BOOTSTRAP_CAPABILITY, BootstrapRequestSchema, BootstrapResponseSchema, captureHttpBootstrap } from "./http-bootstrap.ts";
 
 /** Injected at server startup; handlers reuse the open DB connection. */
 export interface RouteCtx {
@@ -79,6 +80,11 @@ export interface Route {
 const VersionDraftSchema = z.object({ editor: z.string().min(1).max(64), doc_id: z.string().min(1), title: z.string(), body: z.string(), version: z.string().nullable() });
 
 const syncRoutes: Route[] = [
+  { method: "POST", path: BOOTSTRAP_PATH, summary: "Download a consistent v2 workspace snapshot for a new replica",
+    request: BootstrapRequestSchema, response: BootstrapResponseSchema,
+    async handler(req, { db, node }) {
+      return Response.json(await captureHttpBootstrap(db, node, await req.json()), { headers: { "cache-control": "no-store" } });
+    } },
   { method: "POST", path: "/api/local-recovery/version-draft", summary: "Protect editor text locally while a client update is required",
     request: VersionDraftSchema, response: z.object({ saved: z.boolean() }),
     async handler(req, { db }) {
@@ -127,7 +133,7 @@ const syncRoutes: Route[] = [
         ...dataVersionRange, dataVersion: localDataVersion(db),
         ...(readReplicaGeneration(db) ? { generation: readReplicaGeneration(db) } : {}),
         node,
-        capabilities: ["site_channels"],
+        capabilities: ["site_channels", BOOTSTRAP_CAPABILITY],
         version: pkg.version,
       });
     },

@@ -74,3 +74,43 @@ test("a newer data format offers the app updater and keeps a read-only warning a
   expect(host.querySelector(".sync-upgrade")?.textContent).toContain("需要更新客户端");
   expect(calls).toEqual([]);
 });
+
+test("a new workspace initializes once without offering an upgrade confirmation", async () => {
+  const calls: unknown[][] = [];
+  window.metahubDesktop = { platform: "darwin", versions: { electron: "", chrome: "", node: "" },
+    rebuildReplica: async (...args) => { calls.push(args); return { packageId: "fresh", pending: 0 }; } };
+  globalThis.fetch = (async () => Response.json({ urls: [], dataVersion: 2,
+    workspaceAccess: [{ url: "s3://fresh", kind: "initializing", dataVersion: 2 }] })) as unknown as typeof fetch;
+  act(() => render(<UpgradePrompt><UpgradeWarning /></UpgradePrompt>, host));
+  await act(async () => { await Bun.sleep(10); });
+  expect(calls).toEqual([["s3://fresh", true]]);
+  expect(host.querySelector("dialog")).toBeNull();
+  expect(host.textContent).not.toContain("立即升级");
+  window.dispatchEvent(new Event("focus"));
+  await act(async () => { await Bun.sleep(5); });
+  expect(calls).toHaveLength(1);
+});
+
+test("an obsolete compatible replica asks to update the local replica", async () => {
+  window.metahubDesktop = { platform: "darwin", versions: { electron: "", chrome: "", node: "" },
+    rebuildReplica: async () => ({ packageId: "unused", pending: 0 }) };
+  globalThis.fetch = (async () => Response.json({ urls: ["https://server.invalid"], dataVersion: 2,
+    workspaceAccess: [{ url: "https://server.invalid", kind: "rebuild", dataVersion: 2 }] })) as unknown as typeof fetch;
+  act(() => render(<UpgradePrompt><UpgradeWarning /></UpgradePrompt>, host));
+  await act(async () => { await Bun.sleep(5); });
+  expect(host.querySelector("dialog")?.getAttribute("aria-label")).toBe("更新本地副本");
+  expect(host.querySelector("dialog")?.textContent).toContain("立即更新");
+  expect(host.querySelector("dialog")?.textContent).not.toContain("立即升级");
+});
+
+test("an unknown remote state shows retry feedback without an upgrade dialog", async () => {
+  window.metahubDesktop = { platform: "darwin", versions: { electron: "", chrome: "", node: "" },
+    rebuildReplica: async () => { throw new Error("unexpected initialization"); } };
+  globalThis.fetch = (async () => Response.json({ urls: [], dataVersion: 2,
+    workspaceAccess: [{ url: "s3://offline", kind: "error", reason: "403" }] })) as unknown as typeof fetch;
+  act(() => render(<UpgradePrompt><UpgradeWarning /></UpgradePrompt>, host));
+  await act(async () => { await Bun.sleep(5); });
+  expect(host.querySelector("dialog")).toBeNull();
+  expect(host.textContent).toContain("403");
+  expect(host.textContent).toContain("重试");
+});

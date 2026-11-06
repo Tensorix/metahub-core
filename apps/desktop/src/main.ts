@@ -1211,12 +1211,12 @@ function registerIpc(): void {
   // Open the frameless image-preview window for a doc image (see openPreview).
   documentWindows.registerIpc();
   let rebuilding = false;
-  ipcMain.handle("replica:rebuild", async (event, url: unknown) => {
+  ipcMain.handle("replica:rebuild", async (event, url: unknown, automatic: unknown = false) => {
     const origin = desktopOrigin(serverGate.port);
     if (event.sender !== mainWin?.webContents || event.senderFrame !== event.sender.mainFrame ||
         new URL(event.senderFrame.url).origin !== origin || new URL(event.senderFrame.url).pathname !== "/")
       throw new Error("Untrusted recovery request");
-    if (typeof url !== "string" || rebuilding || !sidecar) throw new Error("桌面副本正忙");
+    if (typeof url !== "string" || typeof automatic !== "boolean" || rebuilding || !sidecar) throw new Error("桌面副本正忙");
     rebuilding = true;
     let stopped = false;
     let rebuilt = false;
@@ -1236,7 +1236,7 @@ function registerIpc(): void {
       });
       stopped = true;
       const { runRecoveryChild } = await import("./recovery-process");
-      const result = await runRecoveryChild(resolveSidecarCommand(),url);
+      const result = await runRecoveryChild(resolveSidecarCommand(),url,automatic);
       rebuilt = true;
       return result;
     } finally {

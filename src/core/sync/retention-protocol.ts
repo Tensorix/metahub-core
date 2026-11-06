@@ -52,7 +52,12 @@ export function bucketPushCursor(db: DbDriver, url: string, peerCursor: number):
 
 export function needsBucketUpgrade(db: DbDriver, url: string): boolean {
   if (localDataVersion(db) > dataVersionRange.maxSupportedDataVersion) return false;
-  return !readReplicaGeneration(db) || !!db.query("SELECT 1 FROM meta WHERE key=?").get(`sync_v2_rebuild_required:${url}`);
+  const row = db.query("SELECT value FROM meta WHERE key=?").get(`sync_workspace_access:${url}`) as { value: string } | null;
+  if (row) {
+    const state = JSON.parse(row.value);
+    return state.kind === "migration" || state.kind === "rebuild";
+  }
+  return !!db.query("SELECT 1 FROM meta WHERE key=?").get(`sync_v2_rebuild_required:${url}`);
 }
 
 export function writeReplicaGeneration(db: DbDriver, value: ReplicaGeneration): void {

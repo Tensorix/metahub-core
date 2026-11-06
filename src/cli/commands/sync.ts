@@ -1,3 +1,4 @@
+import { prepareDesktopWorkspace } from "../../core/sync/recovery-desktop.ts";
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
 import { syncWithPeer, type SyncResult } from "../../core/sync/client.ts";
@@ -20,6 +21,9 @@ async function peerSync(
   token: string | undefined,
 ): Promise<SyncResult> {
   try {
+    if (token) addPeer(db, { url, token });
+    else if (!listPeers(db).some(peer => peer.url === url)) addPeer(db, { url });
+    db = await prepareDesktopWorkspace(db, url);
     const result = await syncWithPeer(db, url, token);
     if (token) addPeer(db, { url, token }); // remember an explicitly-passed token
     return result;
@@ -33,6 +37,8 @@ async function peerSync(
     }
     const entered = (globalThis.prompt("this server requires a token — enter it:") ?? "").trim();
     if (!entered) throw new MhError("auth", "no token provided");
+    addPeer(db, { url, token: entered });
+    db = await prepareDesktopWorkspace(db, url);
     const result = await syncWithPeer(db, url, entered);
     addPeer(db, { url, token: entered }); // save so future syncs are direct
     return result;
@@ -63,7 +69,7 @@ export default defineCommand({
     },
   },
   run: guard(async (args) => {
-    const db = openMetahub();
+    let db = openMetahub();
     if (args.src == null) {
       // Daily-driver form: one round against every enabled peer (buckets + servers).
       if (!listPeers(db).some((p) => p.enabled))
@@ -71,6 +77,7 @@ export default defineCommand({
           "invalid_input",
           "no sync targets configured — connect one first:\n  mh config backup connect   (cloud bucket)\n  mh config device add       (pair a device)",
         );
+      db = await prepareDesktopWorkspace(db);
       const results = await syncAllPeers(db);
       print(results, () =>
         results

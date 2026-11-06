@@ -874,6 +874,8 @@ export async function syncWithStorage(
 ): Promise<SyncResult> {
   requireSupportedVersion(localDataVersion(db));
   if (!client.getWithMetadata && knownDataVersion(db)) throw new MhError("busy", "Cannot verify known workspace version");
+  if (db.query("SELECT 1 FROM meta WHERE key='sync_v2_baseline_http'").get())
+    throw new MhError("rebootstrap_required", "请先安装存储桶检查点，HTTP 接收进度不能作为存储桶覆盖证明");
   if (readReplicaGeneration(db)) {
     const key = `sync_v2_rebuild_required:${peerUrl}`;
     try {
@@ -882,18 +884,22 @@ export async function syncWithStorage(
       if (!opts.signal?.aborted) db.query("DELETE FROM meta WHERE key=?").run(key);
       return result;
     } catch (error) {
-      if (!opts.signal?.aborted && errorCode(error) === "rebootstrap_required")
+      if (!opts.signal?.aborted && errorCode(error) === "rebootstrap_required") {
         db.query("INSERT OR REPLACE INTO meta(key,value) VALUES(?, '1')").run(key);
+        const { setWorkspaceAccess } = await import("./workspace-access.ts");
+        setWorkspaceAccess(db, { url: peerUrl, kind: "rebuild", dataVersion: localDataVersion(db) });
+      }
       throw error;
     }
   }
   if (client.getWithMetadata) {
-    const { createV2Bucket } = await import("./bucket-v2.ts");
-    const bucket = createV2Bucket(client, config, db);
-    const root = await bucket.root();
-    if (root) await bucket.log(root).read();
-    if (root)
-      throw new MhError("upgrade_required", "此工作区已升级同步格式；请先保全本地编辑并升级本地副本");
+    const { inspectBucketAccess } = await import("./workspace-bucket.ts");
+    const access = await inspectBucketAccess(db, peerUrl, client, config);
+    if (access.kind === "client-update") requireSupportedVersion(access.dataVersion ?? 2);
+    if (access.kind === "error") throw new MhError("busy", access.reason ?? "工作区连接尚未确认");
+    if (access.kind === "initializing") throw new MhError("busy", "正在初始化工作区，请稍候");
+    if (access.kind === "migration" && access.reason !== "legacy-layout")
+      throw new MhError("upgrade_required", "此副本需要保全编辑并更新本地同步格式");
   }
   const checkActive = () => { if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("sync request aborted"); };
   checkActive();

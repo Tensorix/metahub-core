@@ -257,7 +257,8 @@ export async function addAndSyncStoragePeer(
   const sync = await syncPeer(db, url);
   // A verified connection can require a local rebuild before the first round.
   // Keep it selectable in recovery settings.
-  if (!sync.ok && sync.code !== "client_update_required" && sync.code !== "upgrade_required" && sync.code !== "rebootstrap_required") {
+  const access = db.query("SELECT value FROM meta WHERE key=?").get(`sync_workspace_access:${url}`) as { value: string } | null;
+  if (!sync.ok && !(access && JSON.parse(access.value).kind === "initializing") && sync.code !== "client_update_required" && sync.code !== "upgrade_required" && sync.code !== "rebootstrap_required") {
     db.query("DELETE FROM meta WHERE key='sync_version_pending_join' AND value=?").run(url);
     if (previous) restorePeerRow(db, previous);
     else removePeer(db, url);

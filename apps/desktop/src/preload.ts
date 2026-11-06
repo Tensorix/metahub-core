@@ -71,7 +71,7 @@ window.addEventListener("load", () => {
 });
 
 contextBridge.exposeInMainWorld("metahubDesktop", {
-  rebuildReplica: (url: string) => ipcRenderer.invoke("replica:rebuild", url),
+  rebuildReplica: (url: string, automatic = false) => ipcRenderer.invoke("replica:rebuild", url, automatic),
   documents: {
     initialId: process.argv.find((arg) => arg.startsWith("--mh-document="))?.slice("--mh-document=".length) ?? null,
     open: (id: string) => ipcRenderer.invoke("documents:open", id),

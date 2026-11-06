@@ -26,6 +26,8 @@ const LOCK = "mh-replica-leader";
 const REMOTE_TIMEOUT_MS = 10_000;
 
 type BusMsg =
+  | { kind: "pause-views"; id: string }
+  | { kind: "resume-views"; id: string }
   | { kind: "req"; id: string; op: string; args: unknown[] }
   | { kind: "res"; id: string; ok: boolean; result?: unknown; error?: { message: string; code?: string } }
   | { kind: "event"; event: WorkerEvent };
@@ -50,6 +52,8 @@ export class ReplicaBus {
   private held: Promise<void> = Promise.resolve();
   private releaseView: (() => void) | undefined;
   private recoveryActive = false;
+  private viewsPausing = false;
+  private viewPause: { id: string; release: () => void } | undefined;
 
   private shareView(locks: LockManager) {
     let admitted!: () => void;
@@ -63,20 +67,31 @@ export class ReplicaBus {
     void this.held.catch(failed);
   }
 
-  async rebuild(url: string): Promise<{ packageId: string; pending: number }> {
+  async rebuild(url: string, automatic = false): Promise<{ packageId: string; pending: number }> {
     if (!this.started) this.start();
     if (!navigator.locks) throw new BusError("此浏览器无法安全独占本地副本","busy");
     await this.admission;
     if (this.recoveryActive) throw new BusError("本地副本正在重建","busy");
     this.recoveryActive = true;
+    this.viewsPausing = true;
+    const pauseId = crypto.randomUUID();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new BusError("其他标签页尚未保存，请关闭后重试", "busy")), 10_000);
     try {
+      if (!this.leader) throw new BusError("请在工作区主标签页更新本地副本", "busy");
+      this.ch?.postMessage({ kind: "pause-views", id: pauseId } satisfies BusMsg);
       this.releaseView?.();
       await this.held;
-      return await navigator.locks.request("mh-replica-open-views",{ ifAvailable:true },async lock => {
+      return await navigator.locks.request("mh-replica-open-views",{ signal: controller.signal },async lock => {
+        clearTimeout(timeout);
+        this.viewsPausing = false;
         if (!lock || !this.leader) throw new BusError("请先保存并关闭此工作区的其他标签页，再重建本地副本","busy");
-        return this.workerCall<{ packageId: string; pending: number }>("rebuildReplica",[url]);
+        return this.workerCall<{ packageId: string; pending: number }>("rebuildReplica",[url, automatic]);
       });
     } finally {
+      clearTimeout(timeout);
+      this.viewsPausing = false;
+      this.ch?.postMessage({ kind: "resume-views", id: pauseId } satisfies BusMsg);
       this.shareView(navigator.locks);
       try { await this.admission; } finally { this.recoveryActive = false; }
     }
@@ -139,6 +154,7 @@ export class ReplicaBus {
   private becomeLeader(): void {
     if (this.leader) return;
     this.leader = true;
+    if (this.viewPause) { this.viewPause.release(); this.viewPause = undefined; this.recoveryActive = false; }
     this.spawnWorker();
     // Re-run requests we broadcast while still a follower: no one answered
     // (or will answer) now that the lock is ours.
@@ -208,9 +224,35 @@ export class ReplicaBus {
   // ---- channel ----------------------------------------------------------------
 
   private onChannel(msg: BusMsg): void {
+    if (msg.kind === "pause-views" && !this.leader && !this.viewPause) {
+      let release!: () => void;
+      const paused = new Promise<void>(resolve => { release = resolve; });
+      const state = { id: msg.id, release };
+      this.viewPause = state;
+      // Flush while RPC is still admitted. Only then release the shared view
+      // lock and stop new calls; the leader cannot swap before this completes.
+      void import("../document-lifecycle.ts").then(({ withSavedWorkspace }) => withSavedWorkspace(async () => {
+        if (this.viewPause !== state) return;
+        this.recoveryActive = true;
+        this.releaseView?.(); await this.held;
+        try { await paused; } finally {
+          this.shareView(navigator.locks); await this.admission;
+          this.recoveryActive = false;
+        }
+      })).catch(() => { /* Keep the lock if saving failed; the leader times out. */ });
+      return;
+    }
+    if (msg.kind === "resume-views") {
+      if (this.viewPause?.id === msg.id) { this.viewPause.release(); this.viewPause = undefined; }
+      return;
+    }
     if (msg.kind === "req") {
       if (msg.op === "rebuildReplica") return;
       if (!this.leader) return; // someone else's request; only the leader answers
+      if (this.recoveryActive && !this.viewsPausing) {
+        this.ch?.postMessage({ kind: "res", id: msg.id, ok: false, error: { message: "正在更新本地副本", code: "busy" } } satisfies BusMsg);
+        return;
+      }
       this.workerCall(msg.op, msg.args).then(
         (result) => this.ch?.postMessage({ kind: "res", id: msg.id, ok: true, result } satisfies BusMsg),
         (err: BusError) =>

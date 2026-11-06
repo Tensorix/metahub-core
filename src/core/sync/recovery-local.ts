@@ -6,6 +6,7 @@ import { createV2Bucket } from "./bucket-v2.ts";
 import { knownDataVersion } from "./data-version.ts";
 import { storageClientFor } from "./storage.ts";
 import { needsBucketUpgrade, readReplicaGeneration } from "./retention-protocol.ts";
+import { workspaceAccess, requiresWorkspaceConfirmation } from "./workspace-access.ts";
 
 const pointer = "local_recovery_successor";
 export const replicaName = (id: string) => `replica-${id}.db`;
@@ -84,7 +85,16 @@ export async function inspectWorkspaceVersion(db: DbDriver) {
 }
 
 export function upgradeBuckets(db: DbDriver): string[] {
-  return listPeers(db).filter(p => p.enabled && p.kind === "s3" && p.config && needsBucketUpgrade(db, p.url)).map(p => p.url);
+  const states = workspaceAccess(db);
+  return listPeers(db).filter(p => p.enabled && (states.some(s => s.url === p.url && requiresWorkspaceConfirmation(s)) ||
+    (p.kind === "s3" && p.config && needsBucketUpgrade(db, p.url)))).map(p => p.url);
+}
+
+export async function inspectConnectedWorkspaceAccess(db: DbDriver) {
+  const { inspectWorkspaceAccess, connectedWorkspaceTarget } = await import("./workspace-recovery.ts");
+  for (const peer of listPeers(db).filter(p => p.enabled && (p.kind === "http" || p.kind === "s3" && p.config)))
+    await inspectWorkspaceAccess(db, connectedWorkspaceTarget(db, peer.url));
+  return workspaceAccess(db).filter(state => listPeers(db).some(p => p.enabled && p.url === state.url));
 }
 
 export function localRecoveryTarget(db: DbDriver, url: string) {
@@ -138,9 +148,14 @@ export function installLocalConnections(
   shadow: DbDriver,
   recoveryPeer: string,
 ) {
-  shadow
-    .query("INSERT INTO meta(key,value) VALUES('local_v2_history_peer',?)")
-    .run(recoveryPeer);
+  // These credentials/settings belong to this machine, never to the downloaded
+  // workspace. Retain them across a host-controlled database pointer swap.
+  for (const row of source.query("SELECT key,value FROM meta WHERE substr(key,1,4)='cfg_' OR key IN ('auth_token','auth_token_exp','auth_token_prev','auth_token_prev_exp','node_id')").all() as { key: string; value: string }[])
+    shadow.query("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)").run(row.key, row.value);
+  for (const row of source.query("SELECT token,peer_url,node_id,created_at FROM peer_grants").all() as { token: string; peer_url: string | null; node_id: string | null; created_at: number | null }[])
+    shadow.query("INSERT OR REPLACE INTO peer_grants(token,peer_url,node_id,created_at) VALUES(?,?,?,?)").run(row.token, row.peer_url, row.node_id, row.created_at);
+  if (getPeer(source, recoveryPeer)?.kind === "s3") shadow
+    .query("INSERT INTO meta(key,value) VALUES('local_v2_history_peer',?)").run(recoveryPeer);
   for (const peer of listPeers(source)) {
     if (peer.kind === "s3" && peer.config)
       addStoragePeer(shadow, {

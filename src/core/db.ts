@@ -22,9 +22,9 @@ export {
   initSchema,
 } from "./schema-init.ts";
 
-export function ensureDirs(): void {
-  mkdirSync(metahubHome(), { recursive: true });
-  mkdirSync(cacheDir(), { recursive: true });
+export function ensureDirs(home = metahubHome()): void {
+  mkdirSync(home, { recursive: true });
+  mkdirSync(join(home, "cache"), { recursive: true });
 }
 
 /** Which app opened the hub, for the synced device roster. The server sets
@@ -36,10 +36,10 @@ function appKind(): NodeApp {
 }
 
 /** Open (and migrate) the on-disk metahub database for the resolved home. */
-export function openMetahub(): Database {
-  ensureDirs();
+export function openMetahub(home = metahubHome()): Database {
+  ensureDirs(home);
   const { db } = openActiveReplica((name, initial) => {
-    const db = new Database(join(metahubHome(), name), initial ? { create: true } : { readwrite: true });
+    const db = new Database(join(home, name), initial ? { create: true } : { readwrite: true });
     db.exec("PRAGMA busy_timeout = 5000");
     return { db, close: () => db.close() };
   });

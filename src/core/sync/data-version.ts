@@ -30,7 +30,7 @@ export function localDataVersion(db: DbDriver) {
 // Scope offline editing protection to first enrollment of an empty replica.
 // A pre-existing offline workspace must be able to retain edits on upgrade.
 export function beginVersionCheck(db: DbDriver, url: string) {
-  if (knownDataVersion(db) || db.query("SELECT 1 FROM meta WHERE key IN (?, 'sync_v2_generation')").get(`sync_verified_peer:${url}`)) return;
+  if (db.query("SELECT 1 FROM meta WHERE key IN (?, 'sync_v2_generation')").get(`sync_verified_peer:${url}`)) return;
   if (db.query("SELECT 1 FROM peers WHERE url=? AND last_success_at IS NOT NULL").get(url)) return;
   if (db.query("SELECT 1 FROM crdt_changes WHERE dataset<>'nodes' LIMIT 1").get()) return;
   db.query("INSERT OR IGNORE INTO meta(key,value) VALUES('sync_version_pending_join',?)").run(url);

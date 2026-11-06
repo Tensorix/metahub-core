@@ -14,6 +14,7 @@
 import { hydrateLocalHistory, openActiveReplica, upgradeBuckets } from "../../core/sync/recovery-local.ts";
 import { recoveryItems, resolveRecoveryItem } from "../../core/sync/recovery-v2.ts";
 import { rebuildBrowserReplica } from "./rebuild.ts";
+import { workspaceAccess, type WorkspaceAccess } from "../../core/sync/workspace-access.ts";
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { WasmDriver, type Oo1Db } from "./wasm-driver.ts";
 import type { DbDriver } from "../../core/driver.ts";
@@ -129,6 +130,7 @@ export type RpcResponse =
   | { id: number; ok: false; error: { message: string; code?: string } };
 
 export interface ReplicaStatus {
+  workspaceAccess?: WorkspaceAccess[];
   state: "booting" | "hydrating" | "ready" | "error";
   paired: boolean;
   node: string | null;
@@ -569,6 +571,7 @@ async function runSync(force = false): Promise<SyncOutcome> {
       syncing: false,
       recoveryRequired,
       upgradeBuckets: upgradeBuckets(d),
+      workspaceAccess: workspaceAccess(d),
       bucketError: bucketErrors.join("; ") || undefined,
     });
     if (touched.length || pushed) {
@@ -764,7 +767,7 @@ const ops: Record<string, Op> = {
     if (action === "copy") { markBucketDirty(); schedulePush(); }
     return result;
   },
-  rebuildReplica: async (url: string) => {
+  rebuildReplica: async (url: string, automatic = false) => {
     rebuilding = true;
     try {
       await Promise.allSettled([...activeCalls]);
@@ -783,10 +786,10 @@ const ops: Record<string, Op> = {
           try { service?.dispose(); } catch (error) { console.warn("Retired replica service cleanup failed",error); }
           try { old?.close(); } catch (error) { console.warn("Retired database cleanup failed",error); }
         },
-      },() => setStatus({ syncing: true }));
+      },() => setStatus({ syncing: true }), undefined, undefined, automatic);
       bucketInitialSynced.clear();
       setStatus({ state:"ready", node:getNodeId(requireDb()), paired:!!getPeer(requireDb(),origin)?.token,
-        lastSync:undefined, bucketDirty:true, bucketError:undefined, recoveryRequired:[], upgradeBuckets:[], checkpointInstalled:true });
+        lastSync:undefined, bucketDirty:true, bucketError:undefined, recoveryRequired:[], upgradeBuckets:[], workspaceAccess: workspaceAccess(requireDb()), checkpointInstalled:true });
       post({ event:"synced", datasets:["documents","doc_blocks","databases","records"], rowIds:[], pushed:0, pulled:0 });
       schedulePush();
       return result;
@@ -816,7 +819,8 @@ const ops: Record<string, Op> = {
     addStoragePeer(d, { url, config: cfg, label: cfg.bucket });
     beginVersionCheck(d, url);
     await runSync(true);
-    if (status.bucketError && (status.dataVersion ?? 2) <= dataVersionRange.maxSupportedDataVersion && !status.recoveryRequired?.includes(url)) {
+    if (status.bucketError && (status.dataVersion ?? 2) <= dataVersionRange.maxSupportedDataVersion && !status.recoveryRequired?.includes(url) &&
+        !workspaceAccess(d).some(state => state.url === url && state.kind === "initializing")) {
       d.query("DELETE FROM meta WHERE key='sync_version_pending_join' AND value=?").run(url);
       if (previous) restorePeerRow(d, previous);
       else removePeer(d, url);

@@ -21,16 +21,17 @@ import { startServer } from "../../../src/core/sync/server.ts";
 import { serveWebui, warmWebui } from "../../../src/webui/server/assets.ts";
 import { webuiRoutes, webuiOnStart } from "../../../src/webui/server/routes.ts";
 
-import { inspectWorkspaceVersion, upgradeBuckets } from "../../../src/core/sync/recovery-local.ts";
+import { inspectWorkspaceVersion, upgradeBuckets, inspectConnectedWorkspaceAccess } from "../../../src/core/sync/recovery-local.ts";
 
 const recoveryRoutes: Route[] = [
   { method: "GET", path: "/api/local-recovery/upgrade", summary: "Available workspace upgrades", response: z.array(z.string()),
     handler: (_, { db }) => Response.json(upgradeBuckets(db)) },
   { method: "GET", path: "/api/local-recovery/compatibility", summary: "Workspace compatibility and recovery targets",
-    response: z.object({ urls: z.array(z.string()), dataVersion: z.number() }),
+    response: z.object({ urls: z.array(z.string()), dataVersion: z.number(), workspaceAccess: z.array(z.any()) }),
     handler: async (_, { db }) => {
       const dataVersion = await inspectWorkspaceVersion(db);
-      return Response.json({ urls: upgradeBuckets(db), dataVersion });
+      const workspaceAccess = await inspectConnectedWorkspaceAccess(db);
+      return Response.json({ urls: upgradeBuckets(db), dataVersion, workspaceAccess });
     } },
   { method: "GET", path: "/api/local-recovery/items", summary: "Pending desktop recovery items", response: z.any(),
     handler: (_, { db }) => Response.json(recoveryItems(db)) },
@@ -45,7 +46,7 @@ export function runSidecar(): void {
   if (process.argv.includes("--rebuild-replica")) {
     const url = process.env.METAHUB_REBUILD_PEER;
     if (!url) throw new Error("A connected bucket is required");
-    void rebuildDesktopReplica(url).then(
+    void rebuildDesktopReplica(url, undefined, process.env.METAHUB_REBUILD_AUTOMATIC === "1").then(
       result => console.log("METAHUB_REBUILT="+JSON.stringify(result)),
       error => { console.error(error instanceof Error ? error.message : "Local recovery failed"); process.exitCode = 1; },
     );
