@@ -123,6 +123,8 @@ function RootStack() {
           options={{
             headerShown: true,
             headerTransparent: true,
+            headerBlurEffect: "none",
+            scrollEdgeEffects: { top: "hidden" },
             headerShadowVisible: false,
             headerStyle: { backgroundColor: "transparent" },
           }}

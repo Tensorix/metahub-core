@@ -3,7 +3,7 @@ import { EDITOR_PROTOCOL, EDITOR_BLOCK_TYPES, EDITOR_FORMAT_TYPES, type EditorCo
 declare global {
   interface Window {
     ReactNativeWebView?: { sessionProtocol?: number; postMessage(value: string, session?: string): void };
-    __METAHUB_EDITOR__: { session: string; documentId: string; dark: boolean; position?: { anchor: number; head: number; scroll: number; version: string | null }; initial?: EditorDraft & { recovered: boolean } };
+    __METAHUB_EDITOR__: { session: string; documentId: string; dark: boolean; topInset?: number; position?: { anchor: number; head: number; scroll: number; version: string | null }; initial?: EditorDraft & { recovered: boolean } };
     __metahubEditorReceive?: (value: unknown) => void;
   }
 }

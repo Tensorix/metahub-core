@@ -264,6 +264,7 @@ function openSession(config: Bootstrap) {
   freezeRequested = false;
   document.body.inert = false;
   document.documentElement.dataset.resolved = config.dark ? "dark" : "light";
+  document.documentElement.style.setProperty("--editor-top-inset", `${Math.max(0, config.topInset ?? 0)}px`);
   render(<App bridge={bridge} />, root);
 }
 function closeSession(id: string) {

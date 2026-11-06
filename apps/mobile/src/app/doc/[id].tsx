@@ -329,7 +329,7 @@ function LocalDocument({ id }: { id: string }) {
   };
 
   return (
-    <KeyboardAvoidingView style={[styles.root, { backgroundColor: tokens.bg, paddingTop: headerHeight }]}
+    <KeyboardAvoidingView style={[styles.root, { backgroundColor: tokens.bg }]}
       behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
       <Stack.Screen options={{ title, headerBackButtonMenuEnabled: false }} />
       <Stack.Toolbar placement="left">
@@ -442,6 +442,7 @@ function LocalDocument({ id }: { id: string }) {
           ref={editor}
           documentId={id}
           position={position}
+          topInset={headerHeight}
           workspaceId={session.workspaceId}
           sessionId={String(session.id)}
           host={host}

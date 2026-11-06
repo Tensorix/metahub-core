@@ -43,6 +43,7 @@ export interface DocumentEditorProps {
   host: EditorHostServices;
   position?: EditorPosition | null;
   dark?: boolean;
+  topInset?: number;
   mode?: "blocks" | "source";
   onState?(state: EditorState): void;
   onError?(error: string): void;
@@ -53,7 +54,7 @@ export const DocumentEditor = forwardRef<
   DocumentEditorHandle,
   DocumentEditorProps
 >(function DocumentEditor(
-  { documentId, sessionId, workspaceId, position, host: services, dark = false, mode = "blocks", onState, onError },
+  { documentId, sessionId, workspaceId, position, host: services, dark = false, topInset = 0, mode = "blocks", onState, onError },
   ref,
 ) {
   const web = useRef<EditorSurfaceHandle>(null);
@@ -143,14 +144,21 @@ export const DocumentEditor = forwardRef<
     return () => { active = false; };
   }, [host]);
   const initialDark = useRef(dark);
+  const initialTopInset = useRef(topInset);
   const bootstrap = useMemo(() => initial && scriptJSON({
-    session: nonce, workspace: workspaceId, instance: sessionId, documentId, position, dark: initialDark.current, initial,
+    session: nonce, workspace: workspaceId, instance: sessionId, documentId, position, dark: initialDark.current, topInset: initialTopInset.current, initial,
   }), [nonce, documentId, initial, workspaceId, sessionId, position]);
   useEffect(() => {
     web.current?.injectJavaScript(
       `document.documentElement.dataset.resolved=${scriptJSON(dark ? "dark" : "light")};true;`,
     );
   }, [dark]);
+  useEffect(() => {
+    if (loading) return;
+    web.current?.injectJavaScript(
+      `document.documentElement.style.setProperty('--editor-top-inset', ${scriptJSON(`${Math.max(0, topInset)}px`)});true;`,
+    );
+  }, [loading, topInset]);
   const failPending = useCallback((message: string) => {
     for (const command of commands.current.values()) {
       clearTimeout(command.timer);
