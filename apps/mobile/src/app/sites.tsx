@@ -16,6 +16,7 @@ export default function SitesScreen() {
       <Stack.Screen
         options={{
           title: "Sites",
+          headerBackButtonDisplayMode: "minimal",
           headerTintColor: tokens.fg,
           ...(Platform.OS === "ios"
             ? {

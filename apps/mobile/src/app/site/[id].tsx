@@ -105,7 +105,7 @@ function SiteViewer({ restart }: { restart(): void }) {
   };
   return (
     <View style={{ flex: 1, backgroundColor: tokens.bg }}>
-      <Stack.Screen options={{ title }} />
+      <Stack.Screen options={{ title, headerBackButtonDisplayMode: "minimal" }} />
       {(!hasEntry || error || missing.length > 0) && (
         <View style={{ padding: 12, gap: 6 }}>
           <Text style={{ color: tokens.fg }}>

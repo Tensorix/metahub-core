@@ -2,7 +2,6 @@ import { documentOwner, type DocumentLease } from "@/lib/editor/session-owner";
 import { reusesEditorRuntime } from "@/lib/editor/warmup";
 import type { EditorPosition } from "@/components/DefaultEditorSurface";
 import { registerRecoveryEditor } from "@/lib/editor/recovery-barrier";
-import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { useFocusEffect, useNavigation, Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -330,19 +329,25 @@ function LocalDocument({ id }: { id: string }) {
   return (
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
       <Stack.Screen options={{ title, headerBackButtonMenuEnabled: false }} />
-      <NativeToolbarAction
-        placement="left"
-        label="返回"
-        disabled={busy}
-        onPress={leave}
-      />
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button
+          accessibilityLabel="返回"
+          icon={
+            process.env.EXPO_OS === "ios"
+              ? "chevron.left"
+              : require("@/components/native/assets/back.xml")
+          }
+          disabled={busy}
+          onPress={leave}
+        />
+      </Stack.Toolbar>
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
           title="文档操作"
           accessibilityLabel="文档操作"
           icon={
             process.env.EXPO_OS === "ios"
-              ? "ellipsis.circle"
+              ? "ellipsis"
               : require("@/components/native/assets/more.xml")
           }
         >
