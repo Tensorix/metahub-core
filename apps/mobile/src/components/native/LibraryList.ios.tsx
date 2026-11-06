@@ -5,6 +5,7 @@ import {
   Image,
   HStack,
   List,
+  ZStack,
   Picker,
   Text,
   VStack,
@@ -12,6 +13,7 @@ import {
 } from "@expo/ui/swift-ui";
 import {
   accessibilityLabel,
+  accessibilityHidden,
   buttonStyle,
   listStyle,
   onAppear,
@@ -22,12 +24,14 @@ import {
   padding,
   alignmentGuide,
   listRowInsets,
+  listRowBackground,
+  listRowSeparator,
   contentShape,
   shapes,
   foregroundStyle,
   pickerStyle,
-  refreshable,
   tag,
+  refreshable,
 } from "@expo/ui/swift-ui/modifiers";
 import { NativeHost } from "./NativeHost";
 import type { ListProps } from "./LibraryList.types";
@@ -135,35 +139,49 @@ export function LibraryList({
   );
   return (
     <NativeHost style={{ flex: 1 }}>
-      <List
-        modifiers={[
-          listStyle("plain"),
-          refreshable(refresh),
-          scrollPosition(anchor, { anchor: "top" }),
-        ]}
-      >
+      <ZStack alignment="top">
+        <List
+          modifiers={[
+            listStyle("plain"),
+            refreshable(refresh),
+            scrollPosition(anchor, { anchor: "top" }),
+          ]}
+        >
+          {/* Scroll this clearance away so content can pass behind the glass. */}
+          <Text modifiers={[
+            frame({ height: 48 }),
+            listRowInsets({ top: 0, bottom: 0 }),
+            listRowSeparator("hidden"),
+            listRowBackground("clear"),
+            accessibilityHidden(true),
+          ]}>{" "}</Text>
+          {!!error && (
+            <Button label={error + " · 重试"} onPress={() => void refresh()} />
+          )}
+          {!rows.length && <Text>暂无匹配资料</Text>}
+          <List.ForEach
+            estimatedItemSize={44}
+            modifiers={[scrollTargetLayout()]}
+            data={rows}
+            keyExtractor={(row) => row.key}
+          >
+            {render}
+          </List.ForEach>
+        </List>
         <Picker
           label="资料类型"
           selection={kind}
           onSelectionChange={changeKind}
-          modifiers={[pickerStyle("segmented")]}
+          modifiers={[
+            pickerStyle("segmented"),
+            frame({ width: 160, height: 36 }),
+            padding({ top: 4, horizontal: 16 }),
+          ]}
         >
           <Text modifiers={[tag("documents")]}>文档</Text>
           <Text modifiers={[tag("databases")]}>数据表</Text>
         </Picker>
-        {!!error && (
-          <Button label={error + " · 重试"} onPress={() => void refresh()} />
-        )}
-        {!rows.length && <Text>暂无匹配资料</Text>}
-        <List.ForEach
-          estimatedItemSize={44}
-          modifiers={[scrollTargetLayout()]}
-          data={rows}
-          keyExtractor={(row) => row.key}
-        >
-          {render}
-        </List.ForEach>
-      </List>
+      </ZStack>
     </NativeHost>
   );
 }
