@@ -542,7 +542,7 @@ export function createAttachmentManager(options: AttachmentManagerOptions) {
         });
         current();
         if (!bytes) throw new Error("附件尚未上传，恢复网络后重试");
-        temp.write(bytes);
+        await temp.write(bytes);
         update(src, { transferred: bytes.length, total: bytes.length });
       } else {
         const res = await options.api.fetch(src, {}, async (url, init) => {

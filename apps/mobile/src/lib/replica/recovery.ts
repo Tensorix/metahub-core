@@ -86,7 +86,7 @@ async function rebuild(session: Session, reload: () => Promise<void>, phase: (va
         }
         const content = JSON.stringify({ database: `metahub-protection-${id}.db`, attachments: manifest });
         const file = new File(directory, "manifest.json");
-        file.write(content);
+        await file.write(content);
         if (await file.text() !== content) throw new Error("保护清单写入失败");
         return { proof: await commitHash(new TextEncoder().encode(content)) };
       } finally { backup.closeSync(); }
