@@ -9,10 +9,11 @@ import {
   Switch,
   Text,
 } from "@expo/ui";
-import { Stack, useFocusEffect, useRouter } from "expo-router";
+import { Stack, useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Alert, View, Linking } from "react-native";
+import Constants from "expo-constants";
+import { SettingsForm } from "./SettingsForm";
 
 import { BucketForm } from "@/components/BucketForm";
 import { ServerForm } from "@/components/ServerForm";
@@ -33,8 +34,9 @@ const STATES = {
 };
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-export default function SettingsScreen() {
+export default function SettingsScreen({ page }: { page: "sync" | "workspace" | "offline" | "appearance" | "about" | "attachments" | "attachment" | "credentials" }) {
   const router = useRouter();
+  const { src } = useLocalSearchParams<{ src?: string }>();
   const { creds, api, sync, authInvalid, syncNow, attachments } = useSession();
   const {
     disconnect,
@@ -53,9 +55,10 @@ export default function SettingsScreen() {
   const [syncState, setSyncState] = useState(sync.status);
   const [files, setFiles] = useState(() => attachments.status());
   const [usage, setUsage] = useState(() => attachments.usage());
-  const [page, setPage] = useState(0);
+  const [filePage, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   useEffect(() => sync.onStatus(setSyncState), [sync]);
   useEffect(() => {
@@ -80,9 +83,11 @@ export default function SettingsScreen() {
     if (busy) return;
     setBusy(true);
     setFeedback(null);
+    setFailed(false);
     try {
       await action();
     } catch (error) {
+      setFailed(true);
       setFeedback(error instanceof Error ? error.message : "操作失败，请重试");
     } finally {
       setBusy(false);
@@ -130,23 +135,26 @@ export default function SettingsScreen() {
       b.pinned - a.pinned,
   );
   const lastPage = Math.max(0, Math.ceil(ordered.length / PAGE_SIZE) - 1);
-  const currentPage = Math.min(page, lastPage);
-  const visible = ordered.slice(
+  const currentPage = Math.min(filePage, lastPage);
+  const visible = page === "attachment" ? ordered.filter(file => file.src === src) : ordered.slice(
     currentPage * PAGE_SIZE,
     (currentPage + 1) * PAGE_SIZE,
   );
   const failures = files.filter((file) => file.state === "error").length;
   const syncing = syncState.syncing;
   return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: tokens.bg }}
-      edges={["top"]}
-    >
-      <Stack.Screen options={{ title: "设置" }} />
+    <>
+      <Stack.Screen options={{ title: ({sync:"数据与同步",workspace:"当前工作区",offline:"离线与缓存",appearance:"外观",about:"关于",attachments:"附件管理",attachment:"附件详情",credentials:"更新连接凭据"})[page] }} />
       <NativeHost style={{ flex: 1 }}>
-        <FieldGroup>
-          <FieldGroup.Section title="本地与同步">
-            {creds.bucket && <Button label="同步升级与编辑恢复" onPress={() => router.push("./sync-recovery")} />}
+        <SettingsForm>
+          {page === "about" && <FieldGroup.Section title="Metahub">
+            <ListItem supportingText={Constants.expoConfig?.version ?? "未知"}>App 版本</ListItem>
+            {!creds.bucket && <ListItem supportingText={version?.version ?? versionError?.message ?? "正在读取…"}>Core 版本</ListItem>}
+            <Button label="GitHub 仓库" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core")} />
+            <Button label="更新日志" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core/releases")} />
+          </FieldGroup.Section>}
+          {page === "sync" && (<FieldGroup.Section title="本地与同步">
+            {creds.bucket && <Button label="同步升级与编辑恢复" onPress={() => router.push("/settings/recovery")} />}
             <ListItem
               supportingText={
                 syncState.hydrationReady
@@ -194,12 +202,13 @@ export default function SettingsScreen() {
               onPress={() => void retry()}
             />
             {feedback ? (
-              <NativeDataText textStyle={{ color: tokens.danger }}>
+              <NativeDataText textStyle={{ color: failed ? tokens.danger : tokens.fg }}>
                 {feedback}
               </NativeDataText>
             ) : null}
-          </FieldGroup.Section>
-          <FieldGroup.Section title="工作区">
+          </FieldGroup.Section>)}
+          {["workspace", "credentials"].includes(page) && (<FieldGroup.Section title="工作区">
+{page === "workspace" && <>
             <Picker
               selectedValue={creds.baseUrl}
               enabled={!busy}
@@ -233,25 +242,15 @@ export default function SettingsScreen() {
               disabled={busy}
               variant="text"
               label={reconnecting ? "关闭凭据表单" : "更新连接凭据"}
-              onPress={() => {
-                if (reconnecting)
-                  Alert.alert("关闭凭据表单？", "尚未保存的输入会被丢弃。", [
-                    { text: "继续填写", style: "cancel" },
-                    {
-                      text: "关闭",
-                      style: "destructive",
-                      onPress: () => setReconnecting(false),
-                    },
-                  ]);
-                else setReconnecting(true);
-              }}
+              onPress={() => router.push("/settings/credentials")}
             />
             {authInvalid ? (
               <Text textStyle={{ color: tokens.danger }}>
                 连接凭据已失效，请重新验证。本地内容已保留。
               </Text>
             ) : null}
-            {authInvalid || reconnecting ? (
+</>}
+            {page === "credentials" ? (
               <RNHostView matchContents={{ vertical: true }}>
                 <View>
                   {creds.bucket ? (
@@ -259,6 +258,7 @@ export default function SettingsScreen() {
                       onVerified={async (value) => {
                         await connect(value);
                         setReconnecting(false);
+                        router.back();
                       }}
                     />
                   ) : (
@@ -268,20 +268,21 @@ export default function SettingsScreen() {
                       onVerified={async (value) => {
                         await connect(value);
                         setReconnecting(false);
+                        router.back();
                       }}
                     />
                   )}
                 </View>
               </RNHostView>
             ) : null}
-            <Button
+            {page === "workspace" && <Button
               disabled={busy}
               variant="text"
               label="断开连接"
               onPress={confirmDisconnect}
-            />
-          </FieldGroup.Section>
-          <FieldGroup.Section title="离线附件">
+            />}
+          </FieldGroup.Section>)}
+          {["offline", "attachments", "attachment"].includes(page) && (<FieldGroup.Section title="离线附件">
             <Text>{`${usage.count} 个文件 · ${mb(usage.bytes)}`}</Text>
             {usage.orphanCount > 0 ? (
               <NativeDataText textStyle={{ color: tokens.muted }}>
@@ -300,8 +301,9 @@ export default function SettingsScreen() {
                 还没有离线附件。在文档中打开或固定附件后会显示在这里。
               </Text>
             ) : null}
-            {visible.map((file) => (
+            {page === "offline" ? <Button label="管理附件" onPress={() => router.push("/settings/attachments")} /> : visible.map((file) => (
               <Column key={file.src} spacing={6}>
+                {page === "attachments" && <Button label="查看详情" onPress={() => router.push({ pathname: "/settings/attachment", params: { src: file.src } })} />}
                 <NativeDataText
                   textStyle={{ fontWeight: "600", color: tokens.fg }}
                 >
@@ -315,14 +317,8 @@ export default function SettingsScreen() {
                     {file.error}
                   </NativeDataText>
                 ) : null}
-                {file.pending ? (
+                {page === "attachment" && (file.pending ? (
                   <>
-                    <Button
-                      disabled={busy}
-                      variant="text"
-                      label="重试全部待上传"
-                      onPress={() => void retry()}
-                    />
                     <Button
                       disabled={busy}
                       variant="text"
@@ -351,8 +347,8 @@ export default function SettingsScreen() {
                     label="重试下载"
                     onPress={() => void run(() => attachments.cache(file.src))}
                   />
-                ) : null}
-                {!file.pending && file.pinned ? (
+                ) : null)}
+                {page === "attachment" && !file.pending && file.pinned ? (
                   <Button
                     disabled={busy}
                     variant="text"
@@ -364,7 +360,7 @@ export default function SettingsScreen() {
                 ) : null}
               </Column>
             ))}
-            {lastPage > 0 ? (
+            {page === "attachments" && lastPage > 0 ? (
               <Column spacing={6}>
                 <Text>{`第 ${currentPage + 1} / ${lastPage + 1} 页`}</Text>
                 <Button
@@ -381,8 +377,8 @@ export default function SettingsScreen() {
                 />
               </Column>
             ) : null}
-          </FieldGroup.Section>
-          <FieldGroup.Section title="外观">
+          </FieldGroup.Section>)}
+          {page === "appearance" && (<FieldGroup.Section title="外观">
             <Picker
               selectedValue={pref}
               onValueChange={(value: ThemePref) => setPref(value)}
@@ -398,9 +394,9 @@ export default function SettingsScreen() {
                 label="跟随系统壁纸（Material You）"
               />
             ) : null}
-          </FieldGroup.Section>
-        </FieldGroup>
+          </FieldGroup.Section>)}
+        </SettingsForm>
       </NativeHost>
-    </SafeAreaView>
+    </>
   );
 }
