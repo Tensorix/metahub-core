@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type ComponentRef } from "react";
+import { View } from "react-native";
 import {
   useNativeState,
   Button,
@@ -6,7 +7,6 @@ import {
   HStack,
   List,
   ZStack,
-  Picker,
   Text,
   VStack,
   Spacer,
@@ -17,6 +17,7 @@ import {
   buttonStyle,
   listStyle,
   onAppear,
+  onGeometryChange,
   scrollPosition,
   scrollTargetLayout,
   id,
@@ -29,11 +30,10 @@ import {
   contentShape,
   shapes,
   foregroundStyle,
-  pickerStyle,
-  tag,
   refreshable,
 } from "@expo/ui/swift-ui/modifiers";
 import { NativeHost } from "./NativeHost";
+import { LibraryKindPicker } from "./LibraryKindPicker.ios";
 import type { ListProps } from "./LibraryList.types";
 import { replacementAnchor, type Row } from "../../lib/browse/library";
 export function LibraryList({
@@ -46,6 +46,9 @@ export function LibraryList({
   toggle,
   open,
 }: ListProps) {
+  const root = useRef<ComponentRef<typeof View>>(null);
+  const [rootY, setRootY] = useState(0);
+  const [pickerY, setPickerY] = useState<number | null>(null);
   const anchor = useNativeState<string | null>(null);
   const previous = useRef(rows);
   useLayoutEffect(() => {
@@ -138,50 +141,56 @@ export function LibraryList({
     [kind, more, toggle, open],
   );
   return (
-    <NativeHost style={{ flex: 1 }}>
-      <ZStack alignment="top">
-        <List
-          modifiers={[
-            listStyle("plain"),
-            refreshable(refresh),
-            scrollPosition(anchor, { anchor: "top" }),
-          ]}
-        >
-          {/* Scroll this clearance away so content can pass behind the glass. */}
+    <View
+      ref={root}
+      style={{ flex: 1 }}
+      onLayout={() => root.current?.measureInWindow((_, y) => setRootY(y))}
+    >
+      <NativeHost style={{ flex: 1 }}>
+        <ZStack alignment="top">
+          <List
+            modifiers={[
+              listStyle("plain"),
+              refreshable(refresh),
+              scrollPosition(anchor, { anchor: "top" }),
+            ]}
+          >
+            {/* Scroll this clearance away so content can pass behind the glass. */}
+            <Text modifiers={[
+              frame({ height: 48 }),
+              listRowInsets({ top: 0, bottom: 0 }),
+              listRowSeparator("hidden"),
+              listRowBackground("clear"),
+              accessibilityHidden(true),
+            ]}>{" "}</Text>
+            {!!error && (
+              <Button label={error + " · 重试"} onPress={() => void refresh()} />
+            )}
+            {!rows.length && <Text>暂无匹配资料</Text>}
+            <List.ForEach
+              estimatedItemSize={44}
+              modifiers={[scrollTargetLayout()]}
+              data={rows}
+              keyExtractor={(row) => row.key}
+            >
+              {render}
+            </List.ForEach>
+          </List>
+          {/* Follow the list host's safe area as the title/search bar collapses. */}
           <Text modifiers={[
-            frame({ height: 48 }),
-            listRowInsets({ top: 0, bottom: 0 }),
-            listRowSeparator("hidden"),
-            listRowBackground("clear"),
+            frame({ width: 168, height: 44 }),
+            onGeometryChange(({ y }) => setPickerY(y)),
             accessibilityHidden(true),
           ]}>{" "}</Text>
-          {!!error && (
-            <Button label={error + " · 重试"} onPress={() => void refresh()} />
-          )}
-          {!rows.length && <Text>暂无匹配资料</Text>}
-          <List.ForEach
-            estimatedItemSize={44}
-            modifiers={[scrollTargetLayout()]}
-            data={rows}
-            keyExtractor={(row) => row.key}
-          >
-            {render}
-          </List.ForEach>
-        </List>
-        <Picker
-          label="资料类型"
-          selection={kind}
-          onSelectionChange={changeKind}
-          modifiers={[
-            pickerStyle("segmented"),
-            frame({ width: 160, height: 36 }),
-            padding({ top: 4, horizontal: 16 }),
-          ]}
-        >
-          <Text modifiers={[tag("documents")]}>文档</Text>
-          <Text modifiers={[tag("databases")]}>数据表</Text>
-        </Picker>
-      </ZStack>
-    </NativeHost>
+        </ZStack>
+      </NativeHost>
+      {pickerY !== null && (
+        <LibraryKindPicker
+          top={pickerY - rootY + 4}
+          kind={kind}
+          changeKind={changeKind}
+        />
+      )}
+    </View>
   );
 }
