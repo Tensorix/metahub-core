@@ -1,3 +1,4 @@
+import { recordWriter } from "@/lib/database-drafts";
 import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { Button, FieldGroup, Picker, Switch, Text } from "@expo/ui";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
@@ -17,7 +18,7 @@ import { usePreventRemove } from "expo-router/react-navigation";
 import { createRecentStore } from "@/lib/navigation/recent";
 import { NativeHost } from "@/components/native/NativeHost";
 import { RecordTextInput } from "@/components/RecordTextInput";
-import { RecordDrafts, parseNumberDraft } from "@/lib/record-drafts";
+import { parseNumberDraft } from "@/lib/record-drafts";
 import { HistorySheet } from "@/components/HistorySheet";
 import { MultiSelectSheet } from "@/components/MultiSelectSheet";
 import {
@@ -63,39 +64,27 @@ export default function RecordScreen() {
   const [savingBeforeLeave, setSavingBeforeLeave] = useState(false);
 
   const [refreshVersion, setRefreshVersion] = useState(0);
-  const drafts = useMemo(() => {
-    const store = replica.service.drafts;
-    const draftState = new RecordDrafts(
-      (pid, value) => client.updateRecord(id, { [pid]: value }),
-      () => {
-        setLeaveError(null);
-        redraw((n) => n + 1);
-      },
-      () => setRefreshVersion((n) => n + 1),
-      (fields) => {
-        for (const [pid, draft] of fields) {
-          if (draft.status === "saved")
-            store.acknowledgeField(id, pid, draft.value);
-          else
-            store.checkpointField(id, pid, {
-              value: draft.value,
-              status: draft.status === "saving" ? "pending" : draft.status,
-              error: draft.error,
-            });
-        }
-      },
-    );
-    for (const [pid, draft] of Object.entries(store.readFields(id)))
-      draftState.fields.set(pid, {
-        ...draft,
-        status: draft.status === "pending" ? "draft" : draft.status,
-      });
-    return draftState;
-  }, [client, id, replica]);
+  const writer = useMemo(
+    () => recordWriter(replica.service, id),
+    [replica, id],
+  );
+  const drafts = writer.drafts;
   useEffect(() => {
+    let acknowledged = drafts.acknowledgedVersion;
+    const changed = () => {
+      setLeaveError(null);
+      redraw((n) => n + 1);
+      if (acknowledged !== drafts.acknowledgedVersion) {
+        acknowledged = drafts.acknowledgedVersion;
+        setRefreshVersion((n) => n + 1);
+      }
+    };
+    writer.listeners.add(changed);
     drafts.resume();
-    return () => drafts.stop();
-  }, [drafts]);
+    return () => {
+      writer.listeners.delete(changed);
+    };
+  }, [writer, drafts]);
   useEffect(() => {
     if (deleted) {
       if (router.canGoBack()) router.back();

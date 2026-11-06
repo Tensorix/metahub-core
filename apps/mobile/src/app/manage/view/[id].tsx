@@ -23,7 +23,11 @@ const screenOptions = {
 
 export default function ManageView() {
   const [saving, setSaving] = useState(false);
-  const { id, viewId } = useLocalSearchParams<{ id: string; viewId: string }>(),
+  const { id, viewId, section } = useLocalSearchParams<{
+      id: string;
+      viewId: string;
+      section?: string;
+    }>(),
     router = useRouter(),
     session = useSession(),
     { client } = session,
@@ -84,7 +88,17 @@ export default function ManageView() {
   };
   return (
     <View style={{ flex: 1, backgroundColor: tokens.bg }}>
-      <Stack.Screen options={screenOptions} />
+      <Stack.Screen
+        options={{
+          ...screenOptions,
+          title:
+            section === "filter"
+              ? "筛选"
+              : section === "sort"
+                ? "排序"
+                : "视图设置",
+        }}
+      />
       <NativeToolbarAction
         placement="left"
         tintColor={tokens.accent}
@@ -94,6 +108,9 @@ export default function ManageView() {
       />
       {data.data?.view ? (
         <ViewSettingsSheet
+          section={
+            section === "filter" || section === "sort" ? section : "settings"
+          }
           view={data.data.view}
           props={data.data.props}
           onDirtyChange={onDirtyChange}

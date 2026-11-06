@@ -27,7 +27,9 @@ export function ViewSettingsSheet({
   onSave,
   onSaved,
   onDirtyChange,
+  section = "settings",
 }: {
+  section?: "settings" | "filter" | "sort";
   view: ViewDef;
   props: PropertyRow[];
   onClose(): void;
@@ -95,267 +97,304 @@ export function ViewSettingsSheet({
     <View style={{ flex: 1 }}>
       <NativeHost style={{ flex: 1 }}>
         <FieldGroup disabled={busy}>
-          <FieldGroup.Section title="视图">
-            <RecordTextInput
-              text={draft.name}
-              placeholder="视图名称"
-              editable={!busy}
-              onChangeText={(name) => edit((v) => ({ ...v, name }))}
-            />
-            <Picker
-              selectedValue={draft.layout}
-              enabled={!busy}
-              onValueChange={(layout) =>
-                edit((v) => ({ ...v, layout: layout as ViewDef["layout"] }))
-              }
-            >
-              <Picker.Item label="列表" value="table" />
-              <Picker.Item label="看板" value="board" />
-              {!["table", "board"].includes(draft.layout) ? (
-                <Picker.Item
-                  label={`保留 ${draft.layout} 布局`}
-                  value={draft.layout}
+          {section === "settings" && (
+            <FieldGroup.Section title="视图">
+              <RecordTextInput
+                text={draft.name}
+                placeholder="视图名称"
+                editable={!busy}
+                onChangeText={(name) => edit((v) => ({ ...v, name }))}
+              />
+              <Picker
+                selectedValue={draft.layout}
+                enabled={!busy}
+                onValueChange={(layout) =>
+                  edit((v) => ({ ...v, layout: layout as ViewDef["layout"] }))
+                }
+              >
+                <Picker.Item label="表格" value="table" />
+                <Picker.Item label="看板" value="board" />
+                <Picker.Item label="日历" value="calendar" />
+                <Picker.Item label="时间轴" value="timeline" />
+              </Picker>
+            </FieldGroup.Section>
+          )}
+          {section === "sort" && (
+            <FieldGroup.Section title="排序">
+              {props.map((prop) => {
+                const sort = draft.sort.find((s) => s.prop === prop.id);
+                return (
+                  <Picker
+                    key={prop.id}
+                    enabled={!busy}
+                    selectedValue={sort ? (sort.desc ? "desc" : "asc") : "none"}
+                    onValueChange={(value) =>
+                      edit((v) => ({
+                        ...v,
+                        sort:
+                          value === "none"
+                            ? v.sort.filter((s) => s.prop !== prop.id)
+                            : v.sort.some((s) => s.prop === prop.id)
+                              ? v.sort.map((s) =>
+                                  s.prop === prop.id
+                                    ? { ...s, desc: value === "desc" }
+                                    : s,
+                                )
+                              : [
+                                  ...v.sort,
+                                  { prop: prop.id, desc: value === "desc" },
+                                ],
+                      }))
+                    }
+                  >
+                    <Picker.Item
+                      label={`${prop.name} · 默认顺序`}
+                      value="none"
+                    />
+                    <Picker.Item label={`${prop.name} · 升序`} value="asc" />
+                    <Picker.Item label={`${prop.name} · 降序`} value="desc" />
+                  </Picker>
+                );
+              })}
+            </FieldGroup.Section>
+          )}
+          {section === "settings" && (
+            <>
+              <FieldGroup.Section title="显示字段">
+                <Switch
+                  label="单元格内容换行"
+                  value={!!draft.wrap}
+                  onValueChange={(wrap) => edit((v) => ({ ...v, wrap }))}
                 />
-              ) : null}
-            </Picker>
-          </FieldGroup.Section>
-          <FieldGroup.Section title="排序">
-            {props.map((prop) => {
-              const sort = draft.sort.find((s) => s.prop === prop.id);
-              return (
+                {props.map((prop) => (
+                  <Checkbox
+                    key={prop.id}
+                    label={prop.name}
+                    disabled={busy}
+                    value={!draft.hidden.includes(prop.id)}
+                    onValueChange={(visible) =>
+                      edit((v) => ({
+                        ...v,
+                        hidden: visible
+                          ? v.hidden.filter((id) => id !== prop.id)
+                          : [...new Set([...v.hidden, prop.id])],
+                      }))
+                    }
+                  />
+                ))}
+              </FieldGroup.Section>
+              <FieldGroup.Section title="看板分组">
                 <Picker
-                  key={prop.id}
                   enabled={!busy}
-                  selectedValue={sort ? (sort.desc ? "desc" : "asc") : "none"}
-                  onValueChange={(value) =>
+                  selectedValue={draft.group ?? ""}
+                  onValueChange={(group) =>
+                    edit((v) => ({ ...v, group: String(group) || undefined }))
+                  }
+                >
+                  <Picker.Item label="默认分组" value="" />
+                  {selectProps.map((prop) => (
+                    <Picker.Item
+                      key={prop.id}
+                      label={prop.name}
+                      value={prop.id}
+                    />
+                  ))}
+                  {draft.group &&
+                  !selectProps.some((p) => p.id === draft.group) ? (
+                    <Picker.Item label="保留原分组字段" value={draft.group} />
+                  ) : null}
+                </Picker>
+              </FieldGroup.Section>
+            </>
+          )}
+          {section === "filter" && (
+            <>
+              <FieldGroup.Section title="筛选组合">
+                <Picker
+                  enabled={!busy}
+                  selectedValue={draft.filter.op}
+                  onValueChange={(op) =>
                     edit((v) => ({
                       ...v,
-                      sort:
-                        value === "none"
-                          ? v.sort.filter((s) => s.prop !== prop.id)
-                          : v.sort.some((s) => s.prop === prop.id)
-                            ? v.sort.map((s) =>
-                                s.prop === prop.id
-                                  ? { ...s, desc: value === "desc" }
-                                  : s,
-                              )
-                            : [
-                                ...v.sort,
-                                { prop: prop.id, desc: value === "desc" },
-                              ],
+                      filter: { ...v.filter, op: op as "and" | "or" },
                     }))
                   }
                 >
-                  <Picker.Item label={`${prop.name} · 默认顺序`} value="none" />
-                  <Picker.Item label={`${prop.name} · 升序`} value="asc" />
-                  <Picker.Item label={`${prop.name} · 降序`} value="desc" />
+                  <Picker.Item label="满足全部条件" value="and" />
+                  <Picker.Item label="满足任一条件" value="or" />
                 </Picker>
-              );
-            })}
-          </FieldGroup.Section>
-          <FieldGroup.Section title="显示字段">
-            {props.map((prop) => (
-              <Checkbox
-                key={prop.id}
-                label={prop.name}
-                disabled={busy}
-                value={!draft.hidden.includes(prop.id)}
-                onValueChange={(visible) =>
-                  edit((v) => ({
-                    ...v,
-                    hidden: visible
-                      ? v.hidden.filter((id) => id !== prop.id)
-                      : [...new Set([...v.hidden, prop.id])],
-                  }))
-                }
-              />
-            ))}
-          </FieldGroup.Section>
-          <FieldGroup.Section title="看板分组">
-            <Picker
-              enabled={!busy}
-              selectedValue={draft.group ?? ""}
-              onValueChange={(group) =>
-                edit((v) => ({ ...v, group: String(group) || undefined }))
-              }
-            >
-              <Picker.Item label="默认分组" value="" />
-              {selectProps.map((prop) => (
-                <Picker.Item key={prop.id} label={prop.name} value={prop.id} />
-              ))}
-              {draft.group && !selectProps.some((p) => p.id === draft.group) ? (
-                <Picker.Item label="保留原分组字段" value={draft.group} />
-              ) : null}
-            </Picker>
-          </FieldGroup.Section>
-          <FieldGroup.Section title="筛选组合">
-            <Picker
-              enabled={!busy}
-              selectedValue={draft.filter.op}
-              onValueChange={(op) =>
-                edit((v) => ({
-                  ...v,
-                  filter: { ...v.filter, op: op as "and" | "or" },
-                }))
-              }
-            >
-              <Picker.Item label="满足全部条件" value="and" />
-              <Picker.Item label="满足任一条件" value="or" />
-            </Picker>
-          </FieldGroup.Section>
-          {draft.filter.rules.map((rule) => {
-            const prop = props.find((p) => p.id === rule.prop),
-              conditions = prop ? condsFor(prop.type) : [],
-              condition = conditions.find((c) => c.id === rule.cond);
-            const selected = Array.isArray(rule.value)
-              ? rule.value.filter((v): v is string => typeof v === "string")
-              : [];
-            return (
-              <FieldGroup.Section
-                key={rule.id}
-                title={prop?.name ?? `不可用字段 · ${rule.prop}`}
-              >
-                <Picker
-                  enabled={!busy}
-                  selectedValue={rule.cond}
-                  onValueChange={(cond) =>
-                    changeRule(rule.id, { cond: String(cond) })
-                  }
-                >
-                  {conditions.map((cond) => (
-                    <Picker.Item
-                      key={cond.id}
-                      label={cond.label}
-                      value={cond.id}
-                    />
-                  ))}
-                  {!condition ? (
-                    <Picker.Item
-                      label={`保留原条件 ${rule.cond}`}
-                      value={rule.cond}
-                    />
-                  ) : null}
-                </Picker>
-                {rule.cond === "empty" ||
-                rule.cond === "not_empty" ? null : prop?.type === "relation" ||
-                  prop?.type === "doc" ? (
-                  <Button
-                    variant="text"
-                    disabled={busy}
-                    onPress={() => setReference(rule.id)}
-                    label={`选择关联项（已选 ${selected.length}）`}
-                  />
-                ) : prop?.type === "checkbox" ? (
-                  <Switch
-                    disabled={busy}
-                    label="筛选值"
-                    value={rule.value === true || rule.value === "true"}
-                    onValueChange={(value) => changeRule(rule.id, { value })}
-                  />
-                ) : prop?.type === "select" ? (
-                  <Picker
-                    enabled={!busy}
-                    selectedValue={String(rule.value ?? "")}
-                    onValueChange={(value) => changeRule(rule.id, { value })}
+              </FieldGroup.Section>
+              {draft.filter.rules.map((rule) => {
+                const prop = props.find((p) => p.id === rule.prop),
+                  conditions = prop ? condsFor(prop.type) : [],
+                  condition = conditions.find((c) => c.id === rule.cond);
+                const selected = Array.isArray(rule.value)
+                  ? rule.value.filter((v): v is string => typeof v === "string")
+                  : [];
+                return (
+                  <FieldGroup.Section
+                    key={rule.id}
+                    title={prop?.name ?? `不可用字段 · ${rule.prop}`}
                   >
-                    <Picker.Item label="选择选项" value="" />
-                    {[
-                      ...new Set([
-                        ...(prop.config?.options ?? []),
-                        ...(typeof rule.value === "string" && rule.value
-                          ? [rule.value]
-                          : []),
-                      ]),
-                    ].map((value) => (
-                      <Picker.Item key={value} label={value} value={value} />
-                    ))}
-                  </Picker>
-                ) : prop?.type === "multi_select" ? (
-                  <>
-                    {[
-                      ...new Set([
-                        ...(prop.config?.options ?? []),
-                        ...selected,
-                      ]),
-                    ].map((option) => (
-                      <Checkbox
-                        key={option}
-                        label={option}
+                    <Picker
+                      enabled={!busy}
+                      selectedValue={rule.cond}
+                      onValueChange={(cond) =>
+                        changeRule(rule.id, { cond: String(cond) })
+                      }
+                    >
+                      {conditions.map((cond) => (
+                        <Picker.Item
+                          key={cond.id}
+                          label={cond.label}
+                          value={cond.id}
+                        />
+                      ))}
+                      {!condition ? (
+                        <Picker.Item
+                          label={`保留原条件 ${rule.cond}`}
+                          value={rule.cond}
+                        />
+                      ) : null}
+                    </Picker>
+                    {rule.cond === "empty" ||
+                    rule.cond === "not_empty" ? null : prop?.type ===
+                        "relation" || prop?.type === "doc" ? (
+                      <Button
+                        variant="text"
                         disabled={busy}
-                        value={selected.includes(option)}
-                        onValueChange={(checked) =>
-                          changeRule(rule.id, {
-                            value: checked
-                              ? [...new Set([...selected, option])]
-                              : selected.filter((value) => value !== option),
-                          })
+                        onPress={() => setReference(rule.id)}
+                        label={`选择关联项（已选 ${selected.length}）`}
+                      />
+                    ) : prop?.type === "checkbox" ? (
+                      <Switch
+                        disabled={busy}
+                        label="筛选值"
+                        value={rule.value === true || rule.value === "true"}
+                        onValueChange={(value) =>
+                          changeRule(rule.id, { value })
                         }
                       />
-                    ))}
-                  </>
-                ) : (
-                  <RecordTextInput
-                    editable={!busy}
-                    text={String(rule.value ?? "")}
-                    placeholder={
-                      prop?.type === "date"
-                        ? "YYYY-MM-DD 或 today / this_week / past7"
-                        : "筛选值"
-                    }
-                    onChangeText={(value) => changeRule(rule.id, { value })}
-                  />
-                )}
+                    ) : prop?.type === "select" ? (
+                      <Picker
+                        enabled={!busy}
+                        selectedValue={String(rule.value ?? "")}
+                        onValueChange={(value) =>
+                          changeRule(rule.id, { value })
+                        }
+                      >
+                        <Picker.Item label="选择选项" value="" />
+                        {[
+                          ...new Set([
+                            ...(prop.config?.options ?? []),
+                            ...(typeof rule.value === "string" && rule.value
+                              ? [rule.value]
+                              : []),
+                          ]),
+                        ].map((value) => (
+                          <Picker.Item
+                            key={value}
+                            label={value}
+                            value={value}
+                          />
+                        ))}
+                      </Picker>
+                    ) : prop?.type === "multi_select" ? (
+                      <>
+                        {[
+                          ...new Set([
+                            ...(prop.config?.options ?? []),
+                            ...selected,
+                          ]),
+                        ].map((option) => (
+                          <Checkbox
+                            key={option}
+                            label={option}
+                            disabled={busy}
+                            value={selected.includes(option)}
+                            onValueChange={(checked) =>
+                              changeRule(rule.id, {
+                                value: checked
+                                  ? [...new Set([...selected, option])]
+                                  : selected.filter(
+                                      (value) => value !== option,
+                                    ),
+                              })
+                            }
+                          />
+                        ))}
+                      </>
+                    ) : (
+                      <RecordTextInput
+                        editable={!busy}
+                        text={String(rule.value ?? "")}
+                        placeholder={
+                          prop?.type === "date"
+                            ? "YYYY-MM-DD 或 today / this_week / past7"
+                            : "筛选值"
+                        }
+                        onChangeText={(value) => changeRule(rule.id, { value })}
+                      />
+                    )}
+                    <Button
+                      label="移除此条件"
+                      variant="text"
+                      disabled={busy}
+                      onPress={() =>
+                        edit((v) => ({
+                          ...v,
+                          filter: {
+                            ...v.filter,
+                            rules: v.filter.rules.filter(
+                              (r) => r.id !== rule.id,
+                            ),
+                          },
+                        }))
+                      }
+                    />
+                  </FieldGroup.Section>
+                );
+              })}
+              <FieldGroup.Section title="添加筛选条件">
+                <Picker
+                  enabled={!busy}
+                  selectedValue={addProperty}
+                  onValueChange={(value) => setAddProperty(String(value))}
+                >
+                  {props.map((prop) => (
+                    <Picker.Item
+                      key={prop.id}
+                      label={prop.name}
+                      value={prop.id}
+                    />
+                  ))}
+                </Picker>
                 <Button
-                  label="移除此条件"
+                  label="添加条件"
                   variant="text"
-                  disabled={busy}
-                  onPress={() =>
+                  disabled={busy || !addProperty}
+                  onPress={() => {
+                    const prop = props.find((p) => p.id === addProperty);
+                    if (!prop) return;
                     edit((v) => ({
                       ...v,
                       filter: {
                         ...v.filter,
-                        rules: v.filter.rules.filter((r) => r.id !== rule.id),
+                        rules: [
+                          ...v.filter.rules,
+                          {
+                            id: `f_${Date.now()}_${Math.random()}`,
+                            prop: prop.id,
+                            cond: condsFor(prop.type)[0]!.id,
+                          },
+                        ],
                       },
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </FieldGroup.Section>
-            );
-          })}
-          <FieldGroup.Section title="添加筛选条件">
-            <Picker
-              enabled={!busy}
-              selectedValue={addProperty}
-              onValueChange={(value) => setAddProperty(String(value))}
-            >
-              {props.map((prop) => (
-                <Picker.Item key={prop.id} label={prop.name} value={prop.id} />
-              ))}
-            </Picker>
-            <Button
-              label="添加条件"
-              variant="text"
-              disabled={busy || !addProperty}
-              onPress={() => {
-                const prop = props.find((p) => p.id === addProperty);
-                if (!prop) return;
-                edit((v) => ({
-                  ...v,
-                  filter: {
-                    ...v.filter,
-                    rules: [
-                      ...v.filter.rules,
-                      {
-                        id: `f_${Date.now()}_${Math.random()}`,
-                        prop: prop.id,
-                        cond: condsFor(prop.type)[0]!.id,
-                      },
-                    ],
-                  },
-                }));
-              }}
-            />
-          </FieldGroup.Section>
+            </>
+          )}
           <FieldGroup.Section>
             <Button
               disabled={busy || !draft.name.trim()}

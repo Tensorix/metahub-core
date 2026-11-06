@@ -60,3 +60,29 @@ test("manual pages preserve null ordering, deletions, empty predicates and full 
   expect(page.hasMore).toBe(false);
   expect(page.records.at(-1)?.id).toBe("rec_00001");
 });
+
+test("layout constraints AND the saved OR filter and aggregate all matching pages", () => {
+  const f = fixture(10000);
+  const group = f.service.commands.addProperty(f.database.id, {name:"Status",type:"select",config:{options:["Open","Done"]}});
+  f.db.query("UPDATE records SET data = json_set(data, ?, ?) WHERE id >= ?").run(`$.${group.id}`, "Open", "rec_09500");
+  const filter = {op:"or" as const,rules:[{id:"a",prop:f.n.id,cond:"eq",value:1},{id:"b",prop:f.n.id,cond:"eq",value:2}]};
+  const all = applyFilter(listRecords(f.db,f.database.id), [...f.props,group],filter).filter(r => r.cells[group.id] === "Open");
+  const result = queryRecords(f.db,f.database.id,{filter,group:{prop:group.id,value:"Open"},limit:3,calc:{[f.n.id]:"sum"}});
+  expect(result.total).toBe(all.length);
+  expect(result.records).toHaveLength(3);
+  expect(Number(result.calc[f.n.id])).toBe(all.reduce((n,r)=>n+Number(r.cells[f.n.id]),0));
+  expect(queryRecords(f.db,f.database.id,{group:{prop:group.id,value:null}}).total).toBe(9500);
+});
+
+test("date windows include crossing ranges, milestones, and separately query undated rows", () => {
+  const f = fixture(0);
+  const start = f.service.commands.addProperty(f.database.id,{name:"Start",type:"date"});
+  const end = f.service.commands.addProperty(f.database.id,{name:"End",type:"date"});
+  const insert = f.db.query("INSERT INTO records (id,database_id,data) VALUES (?,?,?)");
+  for (const [id,a,b] of [["cross","2026-10-01","2026-12-01"],["point","2026-11-07",null],["outside","2026-12-07",null],["empty",null,null]]) {
+    insert.run(id,f.database.id,JSON.stringify({[start.id]:a,[end.id]:b}));
+  }
+  const dates = {start:start.id,end:end.id,from:"2026-11-01",to:"2026-11-30"};
+  expect(queryRecords(f.db,f.database.id,{dates}).records.map(r=>r.id).sort()).toEqual(["cross","point"]);
+  expect(queryRecords(f.db,f.database.id,{dates:{...dates,unscheduled:true}}).records.map(r=>r.id)).toEqual(["empty"]);
+});

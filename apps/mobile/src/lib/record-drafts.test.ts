@@ -158,3 +158,12 @@ describe("record navigation flush", () => {
     expect(drafts.fields.get("number")).toMatchObject({ value: "bad latest value", status: "invalid" });
   });
 });
+
+test('shared writer commits both timeline endpoints in one mutation', async () => {
+  const writes: Record<string,unknown>[] = [];
+  const drafts = new RecordDrafts(async () => { throw new Error('must batch'); }, () => {}, () => {}, undefined, async cells => { writes.push(cells); });
+  drafts.stage('start', '2026-11-02');
+  drafts.stage('end', '2026-11-05');
+  expect(await drafts.flush()).toEqual({ok:true});
+  expect(writes).toEqual([{start:'2026-11-02',end:'2026-11-05'}]);
+});

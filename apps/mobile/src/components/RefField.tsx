@@ -111,6 +111,9 @@ export function RefPickerSheet({
   onChange,
   onClose,
   onRetry,
+  error,
+  busy = false,
+  onOpen,
 }: {
   prop: PropInfo;
   candidates?: Candidate[];
@@ -120,6 +123,8 @@ export function RefPickerSheet({
   loading?: boolean;
   error?: Error | null;
   onRetry?: () => void;
+  busy?: boolean;
+  onOpen?: (id: string) => void;
 }) {
   const { tokens } = useTheme();
   const { client } = useSession();
@@ -171,11 +176,17 @@ export function RefPickerSheet({
     onChange(next);
   };
   const close = () => {
+    if (busy) return;
     Keyboard.dismiss();
     onClose();
   };
   return (
-    <NativeSheet isPresented onDismiss={close} testID="reference-picker">
+    <NativeSheet
+      isPresented
+      onDismiss={close}
+      dismissible={!busy}
+      testID="reference-picker"
+    >
       <RNHostView matchContents={{ vertical: true }}>
         <View
           style={{
@@ -198,9 +209,11 @@ export function RefPickerSheet({
             >
               {prop.name}
             </Text>
-            <NativeButton onPress={close}>完成</NativeButton>
+            <NativeButton disabled={busy} onPress={close}>
+              {busy ? "保存中…" : "完成"}
+            </NativeButton>
           </View>
-          <FlatList
+          <FlatList<Candidate>
             style={{ flex: 1 }}
             data={[
               ...candidates.filter((c) => c.missing && selected.includes(c.id)),
@@ -214,11 +227,21 @@ export function RefPickerSheet({
               <View style={[styles.row, { borderColor: tokens.line }]}>
                 <NativeHost matchContents style={{ flex: 1 }}>
                   <Checkbox
+                    disabled={busy}
                     label={item.title}
                     value={selected.includes(item.id)}
                     onValueChange={() => toggle(item.id)}
                   />
                 </NativeHost>
+                {onOpen && !item.missing && (
+                  <NativeButton
+                    disabled={busy}
+                    variant="text"
+                    onPress={() => onOpen(item.id)}
+                  >
+                    打开
+                  </NativeButton>
+                )}
               </View>
             )}
             ListHeaderComponent={
@@ -236,6 +259,19 @@ export function RefPickerSheet({
                 <Text selectable style={{ color: tokens.muted }}>
                   已选 {selected.length} 项 · 点按选项以添加或移除
                 </Text>
+                {!!error && (
+                  <Text
+                    accessibilityRole="alert"
+                    style={{ color: tokens.danger }}
+                  >
+                    {error.message}
+                  </Text>
+                )}
+                {error && onRetry && (
+                  <NativeButton disabled={busy} onPress={onRetry}>
+                    重试保存
+                  </NativeButton>
+                )}
                 {page.loading ? <ActivityIndicator /> : null}
                 {page.error ? (
                   <NativeButton

@@ -5,38 +5,55 @@ import type { LiveChange } from "./live";
 
 /** Minimal fetch-state hook: load on mount / when `fetcher` identity changes,
  *  expose refetch for pull-to-refresh and live invalidation. */
-export function useApiData<T>(fetcher: () => Promise<T>) {
+export function useApiData<T>(fetcher: () => Promise<T>, retainKey?: string) {
   const [state, setState] = useState<{
     source: typeof fetcher;
+    retainKey?: string;
     data: T | null;
     error: Error | null;
     loading: boolean;
-  }>({ source: fetcher, data: null, error: null, loading: true });
+  }>({ source: fetcher, retainKey, data: null, error: null, loading: true });
   const gen = useRef(0);
   const load = useCallback(async () => {
     const g = ++gen.current;
-    setState(prev => ({
+    setState((prev) => ({
       source: fetcher,
-      data: prev.source === fetcher ? prev.data : null,
+      retainKey,
+      data:
+        prev.source === fetcher ||
+        (retainKey !== undefined && retainKey === prev.retainKey)
+          ? prev.data
+          : null,
       error: null,
       loading: true,
     }));
     try {
       const data = await fetcher();
       if (g === gen.current) {
-        setState({ source: fetcher, data, error: null, loading: false });
+        setState({
+          source: fetcher,
+          retainKey,
+          data,
+          error: null,
+          loading: false,
+        });
       }
     } catch (e) {
       if (g === gen.current) {
-        setState(prev => ({
+        setState((prev) => ({
           source: fetcher,
-          data: prev.source === fetcher ? prev.data : null,
+          retainKey,
+          data:
+            prev.source === fetcher ||
+            (retainKey !== undefined && retainKey === prev.retainKey)
+              ? prev.data
+              : null,
           error: e instanceof Error ? e : new Error(String(e)),
           loading: false,
         }));
       }
     }
-  }, [fetcher]);
+  }, [fetcher, retainKey]);
   useEffect(() => {
     const generation = gen;
     void load();
@@ -44,7 +61,11 @@ export function useApiData<T>(fetcher: () => Promise<T>) {
       generation.current++;
     };
   }, [load]);
-  const current = state.source === fetcher ? state : { data: null, error: null, loading: true };
+  const current =
+    state.source === fetcher ||
+    (retainKey !== undefined && state.retainKey === retainKey)
+      ? state
+      : { data: null, error: null, loading: true };
   return { ...current, refetch: load };
 }
 

@@ -1,7 +1,10 @@
-import { useMemo } from "react";
+import type { ComponentRef } from "react";
+import { FlashList, type FlashListRef } from "@shopify/flash-list";
+import { useEdgeScroll } from "./database/useEdgeScroll";
+import { DragItem } from "./database/DragItem";
+import { useMemo, useState, useRef } from "react";
 import {
   useWindowDimensions,
-  FlatList,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,7 +16,7 @@ import { NativeMenu } from "@/components/native/NativeMenu";
 import type { NativeMenuItem } from "@/components/native/NativeMenu.types";
 import { RecordCard } from "@/components/RecordCard";
 import type { PropInfo, RecordInfo } from "@/lib/api/sdk";
-import { chipColor, selectOptions } from "@/lib/format";
+import { chipColor, selectOptions, recordTitle } from "@/lib/format";
 import { useTheme } from "@/lib/theme";
 import { fs, radii } from "@/lib/theme/tokens";
 
@@ -25,13 +28,12 @@ interface Column {
   records: RecordInfo[];
 }
 
-/** Kanban: one column per option of the grouping select property, horizontal
- *  paging between columns. Mirrors the WebUI board's grouping semantics
- *  (option order from config, ungrouped last). Cross-column move = long-press
- *  a card → column menu (narrow screens make true drag-to-offscreen-column a
- *  poor gesture, and it fights the horizontal scroll). */
+/** Native columns keep independent vertical paging; a held card can move across
+ * groups or reorder within one group when the current query permits it. */
 export function BoardView({
   records,
+  totals,
+  onMore,
   props,
   groupProp,
   onOpenRecord,
@@ -39,14 +41,18 @@ export function BoardView({
   onMoveRecord,
   recordActions,
   onMoveColumn,
+  onReorderRecord,
 }: {
   records: RecordInfo[];
+  totals?: Record<string, number>;
+  onMore?(group: string | null): void;
   props: PropInfo[];
   groupProp: PropInfo;
   onOpenRecord: (id: string) => void;
   onAddRecord: (presetOption: string | null) => void;
   onMoveRecord: (recordId: string, option: string | null) => void;
   recordActions?: (recordId: string) => NativeMenuItem[];
+  onReorderRecord?(id: string, anchor: string, where: "before" | "after"): void;
   onMoveColumn?: (
     option: string,
     anchor: string,
@@ -55,6 +61,42 @@ export function BoardView({
 }) {
   const { tokens, scheme } = useTheme();
   const { width } = useWindowDimensions();
+  const {
+    attach: edgeRef,
+    measure: measureEdge,
+    onScroll: onEdgeScroll,
+    onContentSizeChange: edgeContentSize,
+    move: moveEdge,
+    stop: stopEdge,
+  } = useEdgeScroll(true);
+  const targets = useRef(new Map<string, ComponentRef<typeof View>>());
+  const {
+    attach: attachColumn,
+    measure: measureColumn,
+    onScroll: scrollColumn,
+    onContentSizeChange: sizeColumn,
+    move: moveColumnEdge,
+    stop: stopColumnEdge,
+    reset: resetColumn,
+  } = useEdgeScroll(false);
+  const lists = useRef(new Map<string, FlashListRef<RecordInfo>>());
+  const sizes = useRef(new Map<string, { offset: number; extent: number }>());
+  const activeColumn = useRef<string | null>(null);
+  const origin = useRef({ x: 0, y: 0 });
+  const [preview, setPreview] = useState<{
+    title: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const cards = useRef(new Map<string, ComponentRef<typeof View>>());
+  const [drop, setDrop] = useState<string | null>(null);
+  const targetAt = (x: number, y: number, found: (key: string) => void) => {
+    targets.current.forEach((node, key) =>
+      node.measureInWindow((left, top, w, h) => {
+        if (x >= left && x < left + w && y >= top && y < top + h) found(key);
+      }),
+    );
+  };
   const COL_W = Math.min(width * 0.78, 340);
 
   const columns = useMemo<Column[]>(() => {
@@ -78,106 +120,244 @@ export function BoardView({
   }, [records, groupProp]);
 
   return (
-    <ScrollView
-      horizontal
-      snapToInterval={COL_W + 12}
-      decelerationRate="fast"
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.strip}
+    <View
+      style={{ flex: 1 }}
+      ref={(node) => {
+        node?.measureInWindow((x, y) => {
+          origin.current = { x, y };
+        });
+      }}
     >
-      {columns.map((col, index) => (
-        <View
-          key={col.key}
-          style={[
-            styles.col,
-            {
-              width: COL_W,
-              backgroundColor: tokens.sidebar,
-              borderColor: tokens.line,
-            },
-          ]}
-        >
-          <View style={styles.colHead}>
-            {col.key !== UNGROUPED ? (
-              <View
-                style={[
-                  styles.dot,
-                  { backgroundColor: chipColor(col.label, scheme) },
-                ]}
-              />
-            ) : null}
-            <Text
-              numberOfLines={1}
-              style={[styles.colTitle, { color: tokens.fgSoft }]}
-            >
-              {col.label}
-            </Text>
-            {onMoveColumn && col.key !== UNGROUPED ? (
-              <NativeMenu
-                label="列顺序"
-                items={[
-                  {
-                    id: "left",
-                    title: "左移此列",
-                    disabled: !index,
-                    onPress: () =>
-                      onMoveColumn(col.key, columns[index - 1]!.key, "before"),
-                  },
-                  {
-                    id: "right",
-                    title: "右移此列",
-                    disabled: index >= columns.length - 2,
-                    onPress: () =>
-                      onMoveColumn(col.key, columns[index + 1]!.key, "after"),
-                  },
-                ]}
-              />
-            ) : null}
-            <Text style={[styles.colCount, { color: tokens.muted }]}>
-              {col.records.length}
-            </Text>
-          </View>
-          <FlatList
-            data={col.records}
-            keyExtractor={(r) => r.id}
-            renderItem={({ item }) => (
-              <RecordCard
-                record={item}
-                props={props}
-                onPress={() => onOpenRecord(item.id)}
-                actions={[
-                  ...(recordActions?.(item.id) ?? []),
-                  ...columns.map((target) => ({
-                    id: `column:${target.key}`,
-                    title: `移动到 ${target.label}`,
-                    disabled:
-                      (item.cells[groupProp.id] ?? UNGROUPED) === target.key,
-                    onPress: () =>
-                      onMoveRecord(
-                        item.id,
-                        target.key === UNGROUPED ? null : target.key,
-                      ),
-                  })),
-                ]}
-              />
-            )}
-            contentContainerStyle={styles.colContent}
-            showsVerticalScrollIndicator={false}
-          />
-          <Pressable
-            onPress={() => onAddRecord(col.key === UNGROUPED ? null : col.key)}
-            style={({ pressed }) => [
-              styles.addBtn,
-              pressed && { backgroundColor: tokens.hover },
+      <ScrollView
+        ref={edgeRef}
+        onLayout={measureEdge}
+        onScroll={onEdgeScroll}
+        onContentSizeChange={edgeContentSize}
+        scrollEventThrottle={16}
+        horizontal
+        snapToInterval={COL_W + 12}
+        decelerationRate="fast"
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.strip}
+      >
+        {columns.map((col, index) => (
+          <View
+            key={col.key}
+            ref={(node) => {
+              if (node) targets.current.set(col.key, node);
+              else targets.current.delete(col.key);
+            }}
+            style={[
+              styles.col,
+              {
+                width: COL_W,
+                backgroundColor: tokens.sidebar,
+                borderColor: drop === col.key ? tokens.accent : tokens.line,
+              },
             ]}
           >
-            <Text style={[styles.addText, { color: tokens.muted }]}>
-              ＋ 新建
-            </Text>
-          </Pressable>
+            <View style={styles.colHead}>
+              {col.key !== UNGROUPED ? (
+                <View
+                  style={[
+                    styles.dot,
+                    { backgroundColor: chipColor(col.label, scheme) },
+                  ]}
+                />
+              ) : null}
+              <Text
+                numberOfLines={1}
+                style={[styles.colTitle, { color: tokens.fgSoft }]}
+              >
+                {col.label}
+              </Text>
+              {onMoveColumn && col.key !== UNGROUPED ? (
+                <NativeMenu
+                  label="列顺序"
+                  items={[
+                    {
+                      id: "left",
+                      title: "左移此列",
+                      disabled: !index,
+                      onPress: () =>
+                        onMoveColumn(
+                          col.key,
+                          columns[index - 1]!.key,
+                          "before",
+                        ),
+                    },
+                    {
+                      id: "right",
+                      title: "右移此列",
+                      disabled: index >= columns.length - 2,
+                      onPress: () =>
+                        onMoveColumn(col.key, columns[index + 1]!.key, "after"),
+                    },
+                  ]}
+                />
+              ) : null}
+              <Text style={[styles.colCount, { color: tokens.muted }]}>
+                {totals?.[col.key] ?? col.records.length}
+              </Text>
+            </View>
+            <FlashList
+              ref={(node) => {
+                if (node) lists.current.set(col.key, node);
+                else lists.current.delete(col.key);
+              }}
+              onScroll={(e) => {
+                const old = sizes.current.get(col.key);
+                sizes.current.set(col.key, {
+                  offset: e.nativeEvent.contentOffset.y,
+                  extent: old?.extent ?? 0,
+                });
+                if (activeColumn.current === col.key) scrollColumn(e);
+              }}
+              onContentSizeChange={(w, h) => {
+                const old = sizes.current.get(col.key);
+                sizes.current.set(col.key, {
+                  offset: old?.offset ?? 0,
+                  extent: h,
+                });
+                if (activeColumn.current === col.key) sizeColumn(w, h);
+              }}
+              data={col.records}
+              onEndReached={() =>
+                onMore?.(col.key === UNGROUPED ? null : col.key)
+              }
+              keyExtractor={(r) => r.id}
+              renderItem={({ item }) => (
+                <DragItem
+                  floating
+                  onMove={(p) => {
+                    moveEdge(p.x);
+                    setPreview({
+                      title: recordTitle(item, props),
+                      x: p.x - origin.current.x,
+                      y: p.y - origin.current.y,
+                    });
+                    targetAt(p.x, p.y, (key) => {
+                      setDrop(key);
+                      if (activeColumn.current !== key) {
+                        stopColumnEdge();
+                        activeColumn.current = key;
+                        attachColumn(
+                          (lists.current.get(key)?.getNativeScrollRef() ??
+                            null) as unknown as ComponentRef<
+                            typeof ScrollView
+                          > | null,
+                        );
+                        const size = sizes.current.get(key);
+                        resetColumn(size?.offset ?? 0, size?.extent ?? 0);
+                        measureColumn();
+                      }
+                      moveColumnEdge(p.y);
+                    });
+                  }}
+                  onFinish={() => {
+                    setDrop(null);
+                    setPreview(null);
+                    stopEdge();
+                    stopColumnEdge();
+                    activeColumn.current = null;
+                  }}
+                  onDrop={(p) =>
+                    targetAt(p.x, p.y, (key) => {
+                      if (key !== col.key) {
+                        onMoveRecord(item.id, key === UNGROUPED ? null : key);
+                        return;
+                      }
+                      if (!onReorderRecord) return;
+                      for (const record of col.records)
+                        if (record.id !== item.id)
+                          cards.current
+                            .get(record.id)
+                            ?.measureInWindow((x, y, w, h) => {
+                              if (
+                                p.x >= x &&
+                                p.x < x + w &&
+                                p.y >= y &&
+                                p.y < y + h
+                              )
+                                onReorderRecord(
+                                  item.id,
+                                  record.id,
+                                  p.y < y + h / 2 ? "before" : "after",
+                                );
+                            });
+                    })
+                  }
+                >
+                  <View
+                    ref={(node) => {
+                      if (node) cards.current.set(item.id, node);
+                      else cards.current.delete(item.id);
+                    }}
+                  >
+                    <RecordCard
+                      record={item}
+                      props={props}
+                      onPress={() => onOpenRecord(item.id)}
+                      actions={[
+                        ...(recordActions?.(item.id) ?? []),
+                        ...columns.map((target) => ({
+                          id: `column:${target.key}`,
+                          title: `移动到 ${target.label}`,
+                          disabled:
+                            (item.cells[groupProp.id] ?? UNGROUPED) ===
+                            target.key,
+                          onPress: () =>
+                            onMoveRecord(
+                              item.id,
+                              target.key === UNGROUPED ? null : target.key,
+                            ),
+                        })),
+                      ]}
+                    />
+                  </View>
+                </DragItem>
+              )}
+              contentContainerStyle={styles.colContent}
+              showsVerticalScrollIndicator={false}
+            />
+            <Pressable
+              onPress={() =>
+                onAddRecord(col.key === UNGROUPED ? null : col.key)
+              }
+              style={({ pressed }) => [
+                styles.addBtn,
+                pressed && { backgroundColor: tokens.hover },
+              ]}
+            >
+              <Text style={[styles.addText, { color: tokens.muted }]}>
+                ＋ 新建
+              </Text>
+            </Pressable>
+          </View>
+        ))}
+      </ScrollView>
+      {preview && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: Math.max(0, Math.min(width - 220, preview.x - 110)),
+            top: preview.y - 24,
+            width: 220,
+            padding: 12,
+            borderWidth: 1,
+            borderColor: tokens.accent,
+            borderRadius: 12,
+            backgroundColor: tokens.surface,
+            zIndex: 100,
+          }}
+        >
+          <Text numberOfLines={2} style={{ color: tokens.fg }}>
+            {preview.title}
+          </Text>
         </View>
-      ))}
-    </ScrollView>
+      )}
+    </View>
   );
 }
 
