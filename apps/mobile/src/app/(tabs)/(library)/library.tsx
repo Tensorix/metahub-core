@@ -1,3 +1,4 @@
+import { UndoNotice } from "@/components/UndoNotice";
 import { Stack, useRouter } from "expo-router";
 import {
   useCallback,
@@ -19,11 +20,11 @@ export default function LibraryScreen() {
   return <WorkspaceLibrary key={session.id} />;
 }
 function WorkspaceLibrary() {
-  const actions = useDocumentActions();
   const session = useSession(),
     router = useRouter();
   const [kind, setKind] = useState<LibraryKind>("documents"),
     [query, setQuery] = useState("");
+  const actions = useDocumentActions(kind);
   const browse = useMemo(
     () => new LibraryTree(session.replica.db, kind, ""),
     [session.replica, kind],
@@ -133,6 +134,7 @@ function WorkspaceLibrary() {
       </View>
       {!!needle && <LibraryList {...listProps} rows={rows} />}
       <BrowseCreate />
+      <UndoNotice />
     </>
   );
 }

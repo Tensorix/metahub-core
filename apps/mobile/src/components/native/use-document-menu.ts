@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useReducer } from "react";
 import { useSession } from "@/lib/auth/session";
 import type { DocumentActions } from "@/lib/browse/use-document-actions";
-import { documentMenuItems } from "@/lib/browse/document-menu";
 
 export function useDocumentMenu(id: string, actions: DocumentActions) {
   const session = useSession();
@@ -16,11 +15,11 @@ export function useDocumentMenu(id: string, actions: DocumentActions) {
   const document = read();
   useEffect(() => {
     return session.live.onChange((change) => {
-      if (change.datasets.includes("documents")) refresh();
+      if (change.datasets.includes(actions.kind)) refresh();
     });
-  }, [session, refresh]);
+  }, [session, actions.kind, refresh]);
   return {
-    items: documentMenuItems(!!document?.parent_id),
+    items: actions.menuItems(!!document?.parent_id),
     available: !!document,
     refresh,
   };

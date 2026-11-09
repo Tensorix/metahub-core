@@ -30,3 +30,19 @@ export function readDocumentMenu(db: DbDriver, id: string) {
     .query("SELECT title,parent_id FROM documents WHERE id=? AND __deleted=0")
     .get(id) as { title: string; parent_id: string | null } | null;
 }
+
+export function databaseMenuItems(): DocumentMenuItem[] {
+  return [
+    { id: "copy-id", title: "复制 ID", symbol: "number" },
+    { id: "rename", title: "重命名…", symbol: "pencil" },
+    { id: "delete", title: "删除数据库", symbol: "trash", destructive: true },
+  ];
+}
+
+export function readDatabaseMenu(db: DbDriver, id: string) {
+  return db
+    .query(
+      "SELECT name AS title,NULL AS parent_id FROM databases WHERE id=? AND __deleted=0",
+    )
+    .get(id) as { title: string; parent_id: null } | null;
+}

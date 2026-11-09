@@ -1,3 +1,4 @@
+import { UndoNotice } from "@/components/UndoNotice";
 import { Stack, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { Platform, ScrollView, Text, View } from "react-native";
@@ -169,6 +170,7 @@ export default function HomeScreen() {
         />
       ) : null}
       <BrowseCreate />
+      <UndoNotice />
     </>
   );
 }

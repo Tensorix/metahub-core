@@ -102,10 +102,7 @@ export function LibraryList({
       const content = (
         <HStack
           spacing={0}
-          modifiers={[
-            padding({ leading: indent }),
-            ...(kind === "documents" ? [] : rowModifiers),
-          ]}
+          modifiers={[padding({ leading: indent })]}
         >
           {item.children ? (
             <Button
@@ -163,7 +160,7 @@ export function LibraryList({
           </Button>
         </HStack>
       );
-      return kind === "documents" ? (
+      return (
         <DocumentRowActions
           id={item.key}
           actions={actions}
@@ -171,8 +168,6 @@ export function LibraryList({
         >
           {content}
         </DocumentRowActions>
-      ) : (
-        content
       );
     },
     [actions, kind, more, toggle, open, tokens.bg],

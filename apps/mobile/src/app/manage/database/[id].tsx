@@ -13,7 +13,7 @@ import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
 import { useSession } from "@/lib/auth/session";
 import { useTheme } from "@/lib/theme";
 export default function ManageDatabase() {
-  const { id } = useLocalSearchParams<{ id: string }>(),
+  const { id, mode } = useLocalSearchParams<{ id: string; mode?: string }>(),
     router = useRouter(),
     session = useSession(),
     { client } = session,
@@ -47,11 +47,16 @@ export default function ManageDatabase() {
   const close = useCallback(() => router.back(), [router]);
   const screenOptions = useMemo(
     () => ({
-      title: id === "new" ? "新建数据库" : "管理数据库",
+      title:
+        id === "new"
+          ? "新建数据库"
+          : mode === "rename"
+            ? "重命名数据库"
+            : "管理数据库",
       gestureEnabled: false,
       headerBackVisible: false,
     }),
-    [id],
+    [id, mode],
   );
   const fetch = useCallback(async () => {
     if (id === "new") return null;
@@ -152,6 +157,7 @@ export default function ManageDatabase() {
         </>
       ) : data.data?.database ? (
         <DatabaseManageSheet
+          renameOnly={mode === "rename"}
           onBusyChange={onChildBusy}
           onDirtyChange={onChildDirty}
           database={data.data.database}

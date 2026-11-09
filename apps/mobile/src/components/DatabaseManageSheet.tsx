@@ -84,12 +84,14 @@ export function DatabaseManageSheet({
   onClose,
   onBusyChange,
   onDirtyChange,
+  renameOnly = false,
 }: {
   database: DatabaseRow;
   props: PropertyRow[];
   onClose(): void;
   onBusyChange?: (busy: boolean) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  renameOnly?: boolean;
 }) {
   const session = useSession(),
     { client } = session,
@@ -191,229 +193,246 @@ export function DatabaseManageSheet({
           {error}
         </Text>
       ) : null}
-      {props.map((prop, index) => (
-        <ManagementSection key={prop.id} title={`${prop.name} · ${prop.type}`}>
-          <Rename
-            draftKey={`property:${prop.id}`}
-            onDraftState={reportDraft}
-            label="字段名称"
-            value={prop.name}
-            onSave={(value) =>
-              mutate(() => client.updateProperty(prop.id, { name: value }))
-            }
-          />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <ManagementAction
-              label="字段上移"
-              disabled={busy || index === 0}
-              onPress={() =>
-                run(() =>
-                  client.moveProperty(prop.id, props[index - 1]!.id, "before"),
-                )
-              }
-            />
-            <ManagementAction
-              label="字段下移"
-              disabled={busy || index === props.length - 1}
-              onPress={() =>
-                run(() =>
-                  client.moveProperty(prop.id, props[index + 1]!.id, "after"),
-                )
-              }
-            />
-          </View>
-          {prop.type === "select" || prop.type === "multi_select" ? (
-            <>
-              {(prop.config?.options ?? []).map((option, i, all) => {
-                const key = optionKey(prop.id, option, all);
-                return (
-                  <View key={key}>
-                    <Rename
-                      draftKey={`option:${key}`}
-                      onDraftState={reportDraft}
-                      label="选项名称"
-                      value={option}
-                      onSave={(value) => {
-                        setOptionAliases((previous) => [
-                          ...previous,
-                          {
-                            property: prop.id,
-                            source: option,
-                            target: value,
-                            key,
-                          },
-                        ]);
-                        return mutate(() =>
-                          client.renameSelectOption(prop.id, option, value),
-                        );
-                      }}
-                    />
-                    <View style={{ flexDirection: "row" }}>
-                      <ManagementAction
-                        label="选项上移"
-                        disabled={busy || !i}
-                        onPress={() =>
-                          run(() =>
-                            client.moveSelectOption(
-                              prop.id,
-                              option,
-                              all[i - 1]!,
-                              "before",
-                            ),
-                          )
-                        }
-                      />
-                      <ManagementAction
-                        label="选项下移"
-                        disabled={busy || i === all.length - 1}
-                        onPress={() =>
-                          run(() =>
-                            client.moveSelectOption(
-                              prop.id,
-                              option,
-                              all[i + 1]!,
-                              "after",
-                            ),
-                          )
-                        }
-                      />
-                    </View>
-                  </View>
-                );
-              })}
+      {!renameOnly && (
+        <>
+          {props.map((prop, index) => (
+            <ManagementSection
+              key={prop.id}
+              title={`${prop.name} · ${prop.type}`}
+            >
               <Rename
-                draftKey={`new-option:${prop.id}`}
+                draftKey={`property:${prop.id}`}
                 onDraftState={reportDraft}
-                key={prop.id}
-                clearAfterSave
-                label="添加选项"
-                value=""
+                label="字段名称"
+                value={prop.name}
                 onSave={(value) =>
-                  mutate(async () => {
-                    const latest = (
-                      await client.listProperties(database.id)
-                    ).find((p) => p.id === prop.id);
-                    if (!latest) throw new Error("字段已不存在");
-                    return client.updateProperty(prop.id, {
-                      config: {
-                        ...latest.config,
-                        options: [
-                          ...new Set([
-                            ...(latest.config?.options ?? []),
-                            value,
-                          ]),
-                        ],
-                      },
-                    });
-                  })
+                  mutate(() => client.updateProperty(prop.id, { name: value }))
                 }
               />
-            </>
-          ) : null}
-        </ManagementSection>
-      ))}
-      <ManagementSection title="添加字段">
-        <ManagementInput
-          disabled={busy}
-          label="新字段名称"
-          value={name}
-          onChange={(name) => editField({ name })}
-        />
-        <NativeHost matchContents>
-          <Picker
-            enabled={!busy}
-            selectedValue={type}
-            onValueChange={(v) => editField({ type: v as PropType })}
-          >
-            {(
-              [
-                "text",
-                "number",
-                "checkbox",
-                "select",
-                "multi_select",
-                "date",
-                "url",
-                "relation",
-                "doc",
-              ] as PropType[]
-            ).map((t) => (
-              <Picker.Item key={t} label={t} value={t} />
-            ))}
-          </Picker>
-        </NativeHost>
-        {type === "select" || type === "multi_select" ? (
-          <ManagementInput
-            disabled={busy}
-            label="选项，每行一个"
-            value={options}
-            onChange={(options) => editField({ options })}
-            multiline
-          />
-        ) : null}
-        {type === "relation" ? (
-          <>
-            <ManagementAction
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <ManagementAction
+                  label="字段上移"
+                  disabled={busy || index === 0}
+                  onPress={() =>
+                    run(() =>
+                      client.moveProperty(
+                        prop.id,
+                        props[index - 1]!.id,
+                        "before",
+                      ),
+                    )
+                  }
+                />
+                <ManagementAction
+                  label="字段下移"
+                  disabled={busy || index === props.length - 1}
+                  onPress={() =>
+                    run(() =>
+                      client.moveProperty(
+                        prop.id,
+                        props[index + 1]!.id,
+                        "after",
+                      ),
+                    )
+                  }
+                />
+              </View>
+              {prop.type === "select" || prop.type === "multi_select" ? (
+                <>
+                  {(prop.config?.options ?? []).map((option, i, all) => {
+                    const key = optionKey(prop.id, option, all);
+                    return (
+                      <View key={key}>
+                        <Rename
+                          draftKey={`option:${key}`}
+                          onDraftState={reportDraft}
+                          label="选项名称"
+                          value={option}
+                          onSave={(value) => {
+                            setOptionAliases((previous) => [
+                              ...previous,
+                              {
+                                property: prop.id,
+                                source: option,
+                                target: value,
+                                key,
+                              },
+                            ]);
+                            return mutate(() =>
+                              client.renameSelectOption(prop.id, option, value),
+                            );
+                          }}
+                        />
+                        <View style={{ flexDirection: "row" }}>
+                          <ManagementAction
+                            label="选项上移"
+                            disabled={busy || !i}
+                            onPress={() =>
+                              run(() =>
+                                client.moveSelectOption(
+                                  prop.id,
+                                  option,
+                                  all[i - 1]!,
+                                  "before",
+                                ),
+                              )
+                            }
+                          />
+                          <ManagementAction
+                            label="选项下移"
+                            disabled={busy || i === all.length - 1}
+                            onPress={() =>
+                              run(() =>
+                                client.moveSelectOption(
+                                  prop.id,
+                                  option,
+                                  all[i + 1]!,
+                                  "after",
+                                ),
+                              )
+                            }
+                          />
+                        </View>
+                      </View>
+                    );
+                  })}
+                  <Rename
+                    draftKey={`new-option:${prop.id}`}
+                    onDraftState={reportDraft}
+                    key={prop.id}
+                    clearAfterSave
+                    label="添加选项"
+                    value=""
+                    onSave={(value) =>
+                      mutate(async () => {
+                        const latest = (
+                          await client.listProperties(database.id)
+                        ).find((p) => p.id === prop.id);
+                        if (!latest) throw new Error("字段已不存在");
+                        return client.updateProperty(prop.id, {
+                          config: {
+                            ...latest.config,
+                            options: [
+                              ...new Set([
+                                ...(latest.config?.options ?? []),
+                                value,
+                              ]),
+                            ],
+                          },
+                        });
+                      })
+                    }
+                  />
+                </>
+              ) : null}
+            </ManagementSection>
+          ))}
+          <ManagementSection title="添加字段">
+            <ManagementInput
               disabled={busy}
-              label={
-                targetName ? `目标数据库：${targetName}` : "选择目标数据库"
-              }
-              onPress={() => setPickingDatabase(true)}
+              label="新字段名称"
+              value={name}
+              onChange={(name) => editField({ name })}
             />
-            {pickingDatabase ? (
-              <DatabasePickerSheet
-                onClose={() => setPickingDatabase(false)}
-                onSelect={(id, name) => {
-                  editField({ target: id, targetName: name });
-                }}
+            <NativeHost matchContents>
+              <Picker
+                enabled={!busy}
+                selectedValue={type}
+                onValueChange={(v) => editField({ type: v as PropType })}
+              >
+                {(
+                  [
+                    "text",
+                    "number",
+                    "checkbox",
+                    "select",
+                    "multi_select",
+                    "date",
+                    "url",
+                    "relation",
+                    "doc",
+                  ] as PropType[]
+                ).map((t) => (
+                  <Picker.Item key={t} label={t} value={t} />
+                ))}
+              </Picker>
+            </NativeHost>
+            {type === "select" || type === "multi_select" ? (
+              <ManagementInput
+                disabled={busy}
+                label="选项，每行一个"
+                value={options}
+                onChange={(options) => editField({ options })}
+                multiline
               />
             ) : null}
-          </>
-        ) : null}
-        <ManagementAction
-          label={busy ? "保存中…" : "添加字段"}
-          disabled={busy || !name.trim() || (type === "relation" && !target)}
-          onPress={() =>
-            run(async () => {
-              const snapshot = latestField.current;
-              if (
-                !snapshot.name.trim() ||
-                (snapshot.type === "relation" && !snapshot.target)
-              )
-                throw new Error("请填写字段名称并选择关联数据库");
-              const { name, type, options, target } = snapshot;
-              await client.createProperty({
-                db: database.id,
-                name: name.trim(),
-                type,
-                ...(type === "select" || type === "multi_select"
-                  ? {
-                      config: {
-                        options: [
-                          ...new Set(
-                            options
-                              .split("\n")
-                              .map((v) => v.trim())
-                              .filter(Boolean),
-                          ),
-                        ],
-                      },
-                    }
-                  : type === "relation"
-                    ? { config: { database: target } }
-                    : {}),
-              });
-              if (session.isCurrent() && latestField.current === snapshot) {
-                const clean = { ...snapshot, name: "", options: "" };
-                fieldBaseline.current = clean;
-                latestField.current = clean;
-                reportField();
-                setField(clean);
+            {type === "relation" ? (
+              <>
+                <ManagementAction
+                  disabled={busy}
+                  label={
+                    targetName ? `目标数据库：${targetName}` : "选择目标数据库"
+                  }
+                  onPress={() => setPickingDatabase(true)}
+                />
+                {pickingDatabase ? (
+                  <DatabasePickerSheet
+                    onClose={() => setPickingDatabase(false)}
+                    onSelect={(id, name) => {
+                      editField({ target: id, targetName: name });
+                    }}
+                  />
+                ) : null}
+              </>
+            ) : null}
+            <ManagementAction
+              label={busy ? "保存中…" : "添加字段"}
+              disabled={
+                busy || !name.trim() || (type === "relation" && !target)
               }
-            })
-          }
-        />
-      </ManagementSection>
+              onPress={() =>
+                run(async () => {
+                  const snapshot = latestField.current;
+                  if (
+                    !snapshot.name.trim() ||
+                    (snapshot.type === "relation" && !snapshot.target)
+                  )
+                    throw new Error("请填写字段名称并选择关联数据库");
+                  const { name, type, options, target } = snapshot;
+                  await client.createProperty({
+                    db: database.id,
+                    name: name.trim(),
+                    type,
+                    ...(type === "select" || type === "multi_select"
+                      ? {
+                          config: {
+                            options: [
+                              ...new Set(
+                                options
+                                  .split("\n")
+                                  .map((v) => v.trim())
+                                  .filter(Boolean),
+                              ),
+                            ],
+                          },
+                        }
+                      : type === "relation"
+                        ? { config: { database: target } }
+                        : {}),
+                  });
+                  if (session.isCurrent() && latestField.current === snapshot) {
+                    const clean = { ...snapshot, name: "", options: "" };
+                    fieldBaseline.current = clean;
+                    latestField.current = clean;
+                    reportField();
+                    setField(clean);
+                  }
+                })
+              }
+            />
+          </ManagementSection>
+        </>
+      )}
       <ManagementAction
         label="完成"
         disabled={busy}

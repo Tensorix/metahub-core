@@ -57,6 +57,12 @@ export function createRecentStore(db: DbDriver, workspaceId: string) {
       ).run(workspaceId, kind, id);
       emit();
     },
+    /** Undo removal without bumping visit time or replacing a newer visit. */
+    restore(item: RecentItem) {
+      db.query("INSERT OR IGNORE INTO mobile_recent(workspace,kind,id,title,opened_at) VALUES(?,?,?,?,?)")
+        .run(workspaceId, item.kind, item.id, item.title, item.openedAt);
+      emit();
+    },
     subscribe(cb: () => void) {
       let listeners = events.get(workspaceId);
       if (!listeners) {

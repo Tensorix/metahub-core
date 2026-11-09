@@ -5,25 +5,40 @@ import * as Clipboard from "expo-clipboard";
 import { useSession } from "../auth/session";
 import { createRecentStore } from "../navigation/recent";
 import { freezeAndFlushEditors } from "../editor/recovery-barrier";
-import { deleteListedDocument } from "../document-actions";
-import { readDocumentMenu, type DocumentMenuAction } from "./document-menu";
+import { deleteBrowseItem } from "./undo-delete";
+import { undoStoreFor } from "./undo-store";
+import type { LibraryKind } from "./library";
+import {
+  readDatabaseMenu,
+  databaseMenuItems,
+  documentMenuItems,
+  readDocumentMenu,
+  type DocumentMenuAction,
+} from "./document-menu";
 
-export function useDocumentActions() {
+export function useDocumentActions(kind: LibraryKind = "documents") {
   const session = useSession();
   const router = useRouter();
   const busy = useRef(false);
   return useMemo(() => {
+    const undoStore = undoStoreFor(session.replica);
+    const database = kind === "databases";
     const recents = createRecentStore(session.replica.db, session.workspaceId);
     const current = () => {
       if (!session.isCurrent()) throw new Error("工作区会话已结束");
     };
     const read = (id: string) => {
       current();
-      return readDocumentMenu(session.replica.db, id);
+      return database
+        ? readDatabaseMenu(session.replica.db, id)
+        : readDocumentMenu(session.replica.db, id);
     };
     const requireDocument = (id: string) => {
       const doc = read(id);
-      if (!doc) throw new Error("文档不存在，可能已被删除");
+      if (!doc)
+        throw new Error(
+          database ? "数据库不存在，可能已被删除" : "文档不存在，可能已被删除",
+        );
       return doc;
     };
     const run = async (job: () => void | Promise<void>) => {
@@ -43,43 +58,43 @@ export function useDocumentActions() {
       }
     };
     const removeRecent = (id: string) =>
-      void run(() => recents.forget("document", id));
-    const deleteDocument = (id: string) =>
       void run(() => {
-        const doc = requireDocument(id);
-        Alert.alert(
-          "删除文档",
-          `删除「${doc.title || "未命名"}」？仅删除此文档，子文档移到顶层。本地恢复草稿只在删除成功后清除。`,
-          [
-            { text: "取消", style: "cancel" },
-            {
-              text: "删除",
-              style: "destructive",
-              onPress: () =>
-                void run(async () => {
-                  await deleteListedDocument({
-                    protect: () => freezeAndFlushEditors(session.replica),
-                    isCurrent: session.isCurrent,
-                    commit: () => {
-                      requireDocument(id);
-                      return session.client.deleteDocument(id);
-                    },
-                    discardDraft: () =>
-                      session.replica.service.drafts.discardDocument(id),
-                    forgetRecent: () => recents.forget("document", id),
-                  });
-                }),
-            },
-          ],
+        const kind = database ? "database" : "document";
+        const previous = recents
+          .read()
+          .find((item) => item.kind === kind && item.id === id);
+        if (!previous) return;
+        recents.forget(kind, id);
+        undoStore.push(
+          `已移出最近「${previous.title || "未命名"}」`,
+          async () => {
+            current();
+            requireDocument(id);
+            recents.restore(previous);
+            return "已恢复最近记录";
+          },
         );
+      });
+    const deleteDirect = (id: string) =>
+      void run(async () => {
+        const receipt = await deleteBrowseItem({
+          service: session.replica.service,
+          recents,
+          kind: database ? "database" : "document",
+          id,
+          isCurrent: session.isCurrent,
+          protect: () => freezeAndFlushEditors(session.replica),
+        });
+        undoStore.push(`已删除「${receipt.title}」`, receipt.undo);
       });
     const perform = (id: string, action: DocumentMenuAction) => {
       if (action === "delete") {
-        deleteDocument(id);
+        deleteDirect(id);
         return;
       }
       void run(async () => {
         requireDocument(id);
+        if (database && !["copy-id", "rename"].includes(action)) return;
         if (action === "copy-id") {
           await Clipboard.setStringAsync(id);
           if (!session.isCurrent()) return;
@@ -98,12 +113,20 @@ export function useDocumentActions() {
           }
         } else {
           router.push(
-            `/manage/document/${encodeURIComponent(id)}?mode=${action}`,
+            `/manage/${database ? "database" : "document"}/${encodeURIComponent(id)}?mode=${action}`,
           );
         }
       });
     };
-    return { read, perform, deleteDocument, removeRecent };
-  }, [session, router]);
+    return {
+      kind,
+      read,
+      perform,
+      deleteDirect,
+      removeRecent,
+      menuItems: (hasParent: boolean) =>
+        database ? databaseMenuItems() : documentMenuItems(hasParent),
+    };
+  }, [session, router, kind]);
 }
 export type DocumentActions = ReturnType<typeof useDocumentActions>;

@@ -41,15 +41,14 @@ export function DocumentRowActions({
           ])}
         </ContextMenu.Items>
       </ContextMenu>
-      <SwipeActions.Actions edge="trailing" allowsFullSwipe={false}>
+      <SwipeActions.Actions edge="trailing" allowsFullSwipe>
         <Button
           label={recent ? "移出最近" : "删除"}
           systemImage={recent ? "clock.badge.xmark" : "trash"}
-          // Keep the row until confirmation and successful deletion. A destructive
-          // SwiftUI swipe button can optimistically remove it before confirmation.
+          // Let the successful mutation remove the row; failed writes remain visible.
           modifiers={[tint(recent ? tokens.muted : tokens.danger)]}
           onPress={() =>
-            recent ? actions.removeRecent(id) : actions.deleteDocument(id)
+            recent ? actions.removeRecent(id) : actions.deleteDirect(id)
           }
         />
       </SwipeActions.Actions>

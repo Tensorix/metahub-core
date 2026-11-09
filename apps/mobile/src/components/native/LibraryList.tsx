@@ -139,7 +139,7 @@ function LibraryRows(p: ListProps) {
             </Pressable>
           </View>
         );
-        return p.kind === "documents" && !item.more ? (
+        return !item.more ? (
           <DocumentSwipeRow id={item.key} actions={p.actions}>
             {renderRow}
           </DocumentSwipeRow>

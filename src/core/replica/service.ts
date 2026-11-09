@@ -11,6 +11,8 @@ import { lookupCandidates } from "../resolve.ts";
 import { displayNodes, getNodeId, setNodeLabel } from "../node.ts";
 import { MhError } from "../errors.ts";
 import { createDraftStore } from "./drafts.ts";
+import { deleteWithUndo } from "./undo.ts";
+import { revertChangeGroup } from "../audit.ts";
 
 export interface ReplicaChange {
   datasets: string[];
@@ -73,6 +75,8 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
   if (options.onChange) listeners.add(options.onChange);
   const emit = (change: ReplicaChange) => { for (const listener of listeners) listener(change); };
   const commands = {
+    deleteWithUndo: bind(db, deleteWithUndo),
+    undoChangeGroup: bind(db, revertChangeGroup),
     listDatabases: bind(db, databases.listDatabases),
     queryDocuments: (query?: Parameters<typeof queryDocuments>[1]) => queryDocuments(db, query),
     createDatabase: bind(db, databases.createDatabase),
@@ -161,6 +165,8 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
     return dispatch(op, args);
   }
   const client = {
+    deleteWithUndo: (...args: Parameters<Commands["deleteWithUndo"]>) => call("deleteWithUndo", ...args),
+    undoChangeGroup: (txn: string) => call("undoChangeGroup", txn),
     listDatabases: () => call("listDatabases"),
     queryDocuments: (query?: Parameters<typeof queryDocuments>[1]) => call("queryDocuments", query),
     createDatabase: (...args: Parameters<Commands["createDatabase"]>) => call("createDatabase", ...args),
