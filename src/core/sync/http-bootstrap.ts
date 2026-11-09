@@ -92,9 +92,15 @@ export function httpWorkspaceSource(db: DbDriver, target: HttpWorkspaceTarget): 
           if (detail.code === "client_update_required" && detail.workspaceDataVersion) observeDataVersion(db, expected.workspaceId, detail.workspaceDataVersion);
           throw new MhError(res.status === 401 || res.status === 403 ? "auth" : detail.code === "rebootstrap_required" ? "rebootstrap_required" : "network", `工作区下载失败 (${res.status})`);
         }
-        const raw = await res.json();
-        if (typeof raw?.sha256 !== "string" || await commitHash(new TextEncoder().encode(JSON.stringify(raw.snapshot))) !== raw.sha256)
+        const raw: unknown = await res.json();
+        // Hash the received snapshot before schema parsing can reorder its keys.
+        if (
+          typeof raw !== "object" || raw === null ||
+          !("sha256" in raw) || typeof raw.sha256 !== "string" || !("snapshot" in raw) ||
+          await commitHash(new TextEncoder().encode(JSON.stringify(raw.snapshot))) !== raw.sha256
+        ) {
           throw new MhError("invalid_input", "工作区快照校验失败");
+        }
         return BootstrapResponseSchema.parse(raw);
       }, undefined, target.signal);
       const snapshot = response.snapshot;
