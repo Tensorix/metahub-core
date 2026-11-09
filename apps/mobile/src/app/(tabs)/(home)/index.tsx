@@ -84,7 +84,7 @@ export default function HomeScreen() {
                     onPress={() => {
                       setOpenError(null);
                       void sites
-                        .open(site)
+                        .open(site, "home")
                         .catch(() =>
                           setOpenError("站点暂时无法打开，请稍后重试"),
                         );

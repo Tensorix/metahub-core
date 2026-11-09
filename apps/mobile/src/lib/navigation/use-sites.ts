@@ -24,13 +24,13 @@ export function useSites() {
     ["sites", "site_channels", "site_files"],
     () => void state.refetch(),
   );
-  const open = async (site: MobileSite) => {
+  const open = async (site: MobileSite, from?: "home") => {
     if (Platform.OS === "web") {
       if (site.url) await WebBrowser.openBrowserAsync(site.url);
       else throw new Error("本机运行需要 iOS 或 Android");
       return;
     }
-    router.push({ pathname: "/site/[id]", params: { id: site.id } });
+    router.push({ pathname: "/site/[id]", params: { id: site.id, from } });
   };
   return {
     ...state,

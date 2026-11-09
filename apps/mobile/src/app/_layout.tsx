@@ -94,7 +94,18 @@ function RootStack() {
     >
       <Stack.Protected guard={session !== null}>
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="site/[id]" options={{headerShown:true,title:"Site"}} />
+        <Stack.Screen
+          name="site/[id]"
+          options={({ route }) => ({
+            headerShown: true,
+            title: "Site",
+            headerBackButtonDisplayMode: "minimal",
+            headerBackTitle:
+              (route.params as { from?: string } | undefined)?.from === "home"
+                ? "首页"
+                : undefined,
+          })}
+        />
         <Stack.Screen
           name="find"
           options={{ headerShown: true, title: "搜索" }}
@@ -104,6 +115,8 @@ function RootStack() {
           options={{
             headerShown: true,
             title: "Sites",
+            headerBackButtonDisplayMode: "minimal",
+            headerBackTitle: "首页",
             headerLargeTitleEnabled: Platform.OS === "ios",
           }}
         />

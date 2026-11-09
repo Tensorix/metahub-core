@@ -110,7 +110,6 @@ function SiteViewer({ restart }: { restart(): void }) {
       <Stack.Screen
         options={{
           title,
-          headerBackButtonDisplayMode: "minimal",
           headerTransparent: true,
           headerShadowVisible: false,
         }}
