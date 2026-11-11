@@ -143,6 +143,7 @@ export const editor = {
   链接地址: "URL",
   "{name} 超过 {mb}MB 上限": "{name} exceeds the {mb}MB limit",
   "上传失败：{msg}": "Upload failed: {msg}",
+  不支持上传文件夹: "Folder uploads are not supported",
   "已选 {n} 字": "{n} words selected",
   "{n} 字符": "{n} chars",
   "{n} 字": "{n} words",

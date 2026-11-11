@@ -19,6 +19,7 @@ import { htmlToMarkdown } from "../../html-md.ts";
 import { startUpload, updateUpload, finishUpload, toast } from "../../ui.tsx";
 import { addUpload, removeUpload, uploadField, beginUpload, endUpload, embedAnchor } from "./upload-field";
 import { doclinkFromUrl } from "../../view.ts";
+import { readUploadTransfer } from "./upload-transfer";
 
 export interface UploadDeps {
   onError?: (message: string) => void;
@@ -29,15 +30,14 @@ function newToken(): string {
   return `${Date.now().toString(36)}-${(seq++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function mediaFilesFrom(dt: DataTransfer | null | undefined): File[] {
-  if (!dt) return [];
-  const out: File[] = [];
-  if (dt.items) for (let i = 0; i < dt.items.length; i++) {
-    const it = dt.items[i];
-    if (it && it.kind === "file") { const f = it.getAsFile(); if (f) out.push(f); }
+export function mediaFilesFrom(dt: DataTransfer | null | undefined, onError?: (m: string) => void) {
+  const result = readUploadTransfer(dt);
+  if (result.hasDirectories) {
+    const message = t("不支持上传文件夹");
+    if (onError) onError(message);
+    else toast(message);
   }
-  if (!out.length && dt.files) for (let i = 0; i < dt.files.length; i++) out.push(dt.files[i]!);
-  return out;
+  return result;
 }
 
 function safeName(name: string): string {
@@ -139,8 +139,8 @@ export function pickAndUpload(view: EditorView, pos: number, accept: string, onE
 export function uploadPaste(deps: UploadDeps = {}): Extension {
   return EditorView.domEventHandlers({
     paste(event, view) {
-      const files = mediaFilesFrom(event.clipboardData);
-      if (files.length) {
+      const { files, hasDirectories } = mediaFilesFrom(event.clipboardData, deps.onError);
+      if (files.length || hasDirectories) {
         event.preventDefault();
         uploadFilesAt(view, view.state.selection.main.head, files, deps.onError);
         return true;
@@ -175,8 +175,8 @@ export function uploadPaste(deps: UploadDeps = {}): Extension {
       return false;
     },
     drop(event, view) {
-      const files = mediaFilesFrom(event.dataTransfer);
-      if (!files.length) return false;
+      const { files, hasDirectories } = mediaFilesFrom(event.dataTransfer, deps.onError);
+      if (!files.length && !hasDirectories) return false;
       event.preventDefault();
       const at = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.head;
       uploadFilesAt(view, at, files, deps.onError);

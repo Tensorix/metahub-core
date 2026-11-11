@@ -503,9 +503,10 @@ export function DocView({
       onDrop={(e) => {
         if (e.defaultPrevented) return; // CM's drop handler already took it
         const v = cmRef.current?.view;
-        const files = mediaFilesFrom(e.dataTransfer);
-        if (!v || !files.length) return;
+        const { files, hasDirectories } = mediaFilesFrom(e.dataTransfer, onError);
+        if (!files.length && !hasDirectories) return;
         e.preventDefault();
+        if (!v) return;
         uploadFilesAt(v, v.state.doc.length, files, onError); // append at doc end
       }}
     >
