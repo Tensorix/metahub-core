@@ -940,6 +940,21 @@ export function DatabaseView({
     };
   }, [cellSel, editing, records, props, view, query, sel, peek]);
 
+  const viewToolbar = (
+      <ViewToolbar
+        bottom={embedded}
+        props={props}
+        view={view}
+        onChange={(patch) => updateView(patch)}
+        onReorder={persistColumnMove}
+        pickRefs={pickRefs}
+        query={query}
+        onQuery={setQuery}
+      >
+        {view.layout !== "board" && !embedded && <PopOutBoard dbId={db.id} />}
+      </ViewToolbar>
+  );
+
   return (
     <div
       class="db"
@@ -992,17 +1007,7 @@ export function DatabaseView({
         <button class="btn btn-primary" aria-label="新建记录" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建")}</button>
       </ViewTabs>
 
-      <ViewToolbar
-        props={props}
-        view={view}
-        onChange={(patch) => updateView(patch)}
-        onReorder={persistColumnMove}
-        pickRefs={pickRefs}
-        query={query}
-        onQuery={setQuery}
-      >
-        {view.layout !== "board" && !embedded && <PopOutBoard dbId={db.id} />}
-      </ViewToolbar>
+      {!embedded && viewToolbar}
       <ChipRow props={props} view={view} onChange={(patch) => updateView(patch)} pickRefs={pickRefs} />
 
       {editing?.row && <GridCellEditor key={editing.rec+editing.prop} recordId={editing.rec} propId={editing.prop} cell={()=>tableRef.current?.querySelector<HTMLElement>(`td[data-r="${editing.r}"][data-c="${editing.c}"]`) ?? null}>
@@ -1279,6 +1284,8 @@ export function DatabaseView({
         <span>{sorted.length === records.length ? t("共 {n} 条记录", { n: records.length }) : t("显示 {m} / {n} 条记录", { m: sorted.length, n: records.length })}</span>
         {view.layout === "table" && cols.length < props.length && <span>{t("{n} 列已隐藏", { n: props.length - cols.length })}</span>}
       </div>
+
+      {embedded && viewToolbar}
 
       {sel.size > 0 && (
         <div class="selbar">

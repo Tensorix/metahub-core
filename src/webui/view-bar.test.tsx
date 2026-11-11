@@ -16,10 +16,10 @@ const records: Rec[] = ["Alpha", "Beta"].map((title, i) => ({
   id: String(i + 1), database_id: "db", cells: { title }, values: { Title: title },
 }));
 
-function Harness() {
+function Harness({ bottom = false }: { bottom?: boolean }) {
   const [query, setQuery] = useState("");
   return <>
-    <ViewToolbar props={props} view={emptyView("table", "Table")}
+    <ViewToolbar bottom={bottom} props={props} view={emptyView("table", "Table")}
       onChange={() => {}} onReorder={() => {}} pickRefs={() => {}}
       query={query} onQuery={setQuery} />
     <output>{searchRecords(records, props, query).map((r) => r.id).join(",")}</output>
@@ -99,4 +99,25 @@ test("find respects handled events, IME, other modifiers, and modal ownership", 
 test("unmount removes the table find shortcut", () => {
   act(() => render(null, host));
   expect(findKey().defaultPrevented).toBe(false);
+});
+
+
+test("mobile bottom tools keep search reachable while filtering and closing restores records", () => {
+  act(() => render(<Harness bottom />, host));
+  const search = host.querySelector<HTMLButtonElement>('.mobile-db-tools button[aria-expanded]')!;
+  expect(search.textContent).toContain("搜索");
+  act(() => search.click());
+  const input = host.querySelector<HTMLInputElement>('.mobile-db-tools input')!;
+  expect(document.activeElement).toBe(input);
+  expect(search.getAttribute('aria-expanded')).toBe('true');
+  act(() => {
+    input.value = 'beta';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(host.querySelector('output')!.textContent).toBe('2');
+  expect(host.querySelectorAll('.mobile-db-tools .toolbar > button').length).toBe(4);
+  act(() => host.querySelector<HTMLButtonElement>('.tb-search .clear')!.click());
+  expect(host.querySelector('input')).toBeNull();
+  expect(search.getAttribute('aria-expanded')).toBe('false');
+  expect(host.querySelector('output')!.textContent).toBe('1,2');
 });

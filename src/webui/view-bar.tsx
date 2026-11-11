@@ -117,7 +117,7 @@ export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDupl
 
 // ---- toolbar ----------------------------------------------------------------
 
-export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query, onQuery, children }: {
+export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query, onQuery, children, bottom = false }: {
   props: Prop[];
   view: ViewDef;
   onChange: (patch: ViewPatch) => void;
@@ -126,6 +126,7 @@ export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query,
   query: string;
   onQuery: (q: string) => void;
   children?: ComponentChildren;
+  bottom?: boolean;
 }) {
   const [searchOpen, setSearchOpen] = useState(query.length > 0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -152,25 +153,13 @@ export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query,
   const nSort = view.sort.length;
   const nHidden = view.hidden.filter((h) => props.some((p) => p.id === h)).length;
   const hideable = view.layout === "table";
-  return (
-    <div class="toolbar">
-      <button class={"tbtn" + (nFilter ? " on" : "")} onClick={(e) => openAddFilter(e, props, view, onChange, pickRefs)}>
-        <Icon name="filter" cls="ico sm" />{t("筛选")}{nFilter > 0 && <span class="tb-n">{nFilter}</span>}
-      </button>
-      <button class={"tbtn" + (nSort ? " on" : "")} onClick={(e) => openSortMenu(e, props, view, onChange)}>
-        <Icon name="sort" cls="ico sm" />{t("排序")}{nSort > 0 && <span class="tb-n">{nSort}</span>}
-      </button>
-      {hideable && (
-        <button class={"tbtn" + (nHidden ? " on" : "")} onClick={(e) => openPropsMenu(e, props, view, onChange, onReorder)}>
-          <Icon name="eyeOff" cls="ico sm" />{t("属性")}{nHidden > 0 && <span class="tb-n">{nHidden}</span>}
-        </button>
-      )}
-      {searchOpen ? (
+  const searchField = (
         <div class="tb-search">
           <Icon name="search" cls="ico sm" />
           <input
             ref={inputRef}
             value={query}
+            aria-label={t("在表中搜索")}
             placeholder={t("在表中搜索…")}
             onInput={(e) => onQuery((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => {
@@ -182,7 +171,37 @@ export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query,
             <Icon name="x" cls="ico sm" />
           </button>
         </div>
-      ) : (
+  );
+  const controls = <>
+      <button class={"tbtn" + (nFilter ? " on" : "")} onClick={(e) => openAddFilter(e, props, view, onChange, pickRefs)}>
+        <Icon name="filter" cls="ico sm" />{t("筛选")}{nFilter > 0 && <span class="tb-n">{nFilter}</span>}
+      </button>
+      <button class={"tbtn" + (nSort ? " on" : "")} onClick={(e) => openSortMenu(e, props, view, onChange)}>
+        <Icon name="sort" cls="ico sm" />{t("排序")}{nSort > 0 && <span class="tb-n">{nSort}</span>}
+      </button>
+      {hideable && (
+        <button class={"tbtn" + (nHidden ? " on" : "")} onClick={(e) => openPropsMenu(e, props, view, onChange, onReorder)}>
+          <Icon name="eyeOff" cls="ico sm" />{t("属性")}{nHidden > 0 && <span class="tb-n">{nHidden}</span>}
+        </button>
+      )}
+  </>;
+  if (bottom) return (
+    <section class="mobile-db-tools" aria-label={t("视图设置")}>
+      {searchOpen && searchField}
+      <div class="toolbar">
+        {controls}
+        <button class={"tbtn" + (searchOpen || query ? " on" : "")} aria-label={t("在表中搜索")} aria-expanded={searchOpen}
+          onClick={() => { setSearchOpen(true); inputRef.current?.focus(); }}>
+          <Icon name="search" cls="ico sm" />{t("搜索")}
+        </button>
+        {children}
+      </div>
+    </section>
+  );
+  return (
+    <div class="toolbar">
+      {controls}
+      {searchOpen ? searchField : (
         <button class="tbtn icon" {...tip(t("在表中搜索"), "tableFind")} onClick={() => setSearchOpen(true)}><Icon name="search" cls="ico sm" /></button>
       )}
       <div class="spacer" />

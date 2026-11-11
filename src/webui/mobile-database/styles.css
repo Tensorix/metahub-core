@@ -1,7 +1,7 @@
 html,body,#app{height:100%;width:100%;margin:0;overflow:hidden}
 #app{display:block}
 .mobile-database{--fs-ui:calc(14px * var(--database-font-scale,1));--fs-sm:calc(12px * var(--database-font-scale,1))}
-.mobile-database .db{height:100%;box-sizing:border-box;padding:0 12px 8px;display:flex;flex-direction:column;overflow:hidden}
+.mobile-database .db{height:100%;box-sizing:border-box;padding:0 12px;display:flex;flex-direction:column;overflow:hidden}
 .mobile-database .db-head{display:none}
 .mobile-database .db-view,.mobile-database .gridhost,.mobile-database .tablewrap{flex:1;min-height:0;display:flex;flex-direction:column}
 .mobile-database button{min-width:48px;min-height:48px;box-sizing:border-box}
@@ -12,11 +12,16 @@ html,body,#app{height:100%;width:100%;margin:0;overflow:hidden}
 .mobile-database .view-tab .caret{opacity:1}
 .mobile-database .view-tab .nm{max-width:140px}
 .mobile-database .view-actions .btn{padding:8px 12px;white-space:nowrap}
-.mobile-database .toolbar{flex:none;display:flex;flex-wrap:wrap;gap:0;padding:4px 0;margin:0;min-width:0}
-.mobile-database .toolbar>.tbtn{padding:8px;flex:none}
-.mobile-database .toolbar>.spacer{display:none}
-.mobile-database .tb-search{order:2;flex:1 0 100%;min-width:0;height:48px;box-sizing:border-box;margin:4px 0}
-.mobile-database .tb-search input{width:0;min-width:0;flex:1}
+.mobile-database .mobile-db-tools{flex:none;min-width:0;margin:0 -12px;padding:4px 12px;background:var(--bg);border-top:1px solid var(--line)}
+.mobile-database .mobile-db-tools .toolbar{display:flex;flex-wrap:nowrap;gap:4px;padding:0;margin:0;min-width:0}
+.mobile-database .mobile-db-tools .tbtn{position:relative;flex:1;min-width:0;min-height:56px;padding:6px 4px;flex-direction:column;justify-content:center;gap:4px;font-size:var(--fs-sm);line-height:1.25;color:var(--fg-soft)}
+.mobile-database .mobile-db-tools .tbtn>.ico{width:20px;height:20px;flex:none}
+.mobile-database .mobile-db-tools .tbtn.on{color:var(--accent);background:var(--accent-soft)}
+.mobile-database .mobile-db-tools .tbtn:active{background:var(--hover-2)}
+.mobile-database .mobile-db-tools .tb-n{position:absolute;top:2px;left:calc(50% + 8px);font-size:11px;min-width:16px;height:16px;padding:0 4px}
+.mobile-database .mobile-db-tools .tb-search{display:flex;min-width:0;min-height:48px;box-sizing:border-box;margin:4px 0 8px;padding:0 4px 0 12px;border-radius:var(--radius-sm)}
+.mobile-database .mobile-db-tools .tb-search input{width:0;min-width:0;flex:1;min-height:48px}
+.mobile-database .mobile-db-tools .tb-search .clear{width:48px;height:48px;border-radius:var(--radius-sm)}
 .mobile-database .tb-chips{flex:none;max-height:112px;overflow:auto}
 .mobile-database .tablescroll{flex:1;min-height:0;overflow:auto;touch-action:pan-x pan-y}
 .mobile-database .gridfoot{flex-shrink:0}
