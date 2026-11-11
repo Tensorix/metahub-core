@@ -116,6 +116,7 @@ function WorkspaceLibrary() {
   };
   return (
     <>
+      {Platform.OS === "android" && <Stack.Screen options={{ headerShown: false }} />}
       <Stack.Title large={Platform.OS === "ios"}>资料库</Stack.Title>
       {Platform.OS === "ios" ? (
         <Stack.SearchBar
@@ -127,12 +128,14 @@ function WorkspaceLibrary() {
         <LibrarySearch
           value={query}
           onChangeText={setQuery}
-        />
+        >
+          {(close) => <LibraryList {...listProps} rows={rows} open={(row) => { close(); open(row); }} />}
+        </LibrarySearch>
       )}
-      <View style={{ flex: 1, display: needle ? "none" : "flex" }}>
+      <View style={{ flex: 1, display: needle && Platform.OS !== "android" ? "none" : "flex" }}>
         <LibraryList {...listProps} rows={browseRows} />
       </View>
-      {!!needle && <LibraryList {...listProps} rows={rows} />}
+      {!!needle && Platform.OS !== "android" && <LibraryList {...listProps} rows={rows} />}
       <BrowseCreate />
       <UndoNotice />
     </>
