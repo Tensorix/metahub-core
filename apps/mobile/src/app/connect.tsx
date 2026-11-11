@@ -18,12 +18,20 @@ export default function ConnectScreen() {
     >
       <Stack.Screen options={{ title: "连接存储桶", headerShown: true }} />
       <ScrollView
-        contentContainerStyle={{ padding: 24 }}
+        contentContainerStyle={{
+          padding: 24,
+          paddingBottom: 48,
+          width: "100%",
+          maxWidth: 560,
+          alignSelf: "center",
+        }}
+        contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
       >
         <BucketForm
           key={code}
           initialCode={code}
+          showTitle={false}
           onVerified={async (credentials) => {
             await connect(credentials);
           }}

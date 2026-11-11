@@ -1,7 +1,11 @@
 import { useConnectionLeaveGuard } from "@/components/use-connection-leave-guard";
 import { NativeDataText } from "@/components/native/NativeDataText";
 import { useEffect, useRef, useState } from "react";
-import { Button, Column, Picker, Text } from "@expo/ui";
+import { Button, Column, Text } from "@expo/ui";
+import {
+  ConnectionAction,
+  ConnectionChoice,
+} from "@/components/native/ConnectionControls";
 import { NativeHost } from "@/components/native/NativeHost";
 import { connectionFieldModifiers } from "@/components/native/connection-field-modifiers";
 import { RecordTextInput } from "@/components/RecordTextInput";
@@ -19,9 +23,11 @@ import { useTheme } from "@/lib/theme";
 export function BucketForm({
   onVerified,
   initialCode = "",
+  showTitle = true,
 }: {
   onVerified: (credentials: Credentials) => Promise<void>;
   initialCode?: string;
+  showTitle?: boolean;
 }) {
   const { tokens } = useTheme();
   const operation = useRef<AbortController | null>(null);
@@ -59,8 +65,12 @@ export function BucketForm({
     change: (s: string) => void,
     secret = false,
   ) => (
-    <Column key={label} spacing={6}>
-      <Text textStyle={{ color: tokens.fg }}>{label}</Text>
+    <Column key={label} spacing={8} style={{ width: "100%" }}>
+      <Text
+        textStyle={{ color: tokens.fgSoft, fontSize: 15, fontWeight: "500" }}
+      >
+        {label}
+      </Text>
       <RecordTextInput
         testID={`bucket-${id}`}
         modifiers={connectionFieldModifiers(label)}
@@ -72,11 +82,9 @@ export function BucketForm({
         autoCapitalize="none"
         autoCorrect={false}
         style={{
-          backgroundColor: tokens.surface,
-          borderColor: tokens.line,
-          borderWidth: 1,
-          borderRadius: 10,
-          padding: 12,
+          backgroundColor: tokens.surface2,
+          borderRadius: 14,
+          padding: 16,
         }}
       />
     </Column>
@@ -151,60 +159,86 @@ export function BucketForm({
   }
   return (
     <NativeHost matchContents={{ vertical: true }} style={{ width: "100%" }}>
-      <Column spacing={12} style={{ paddingVertical: 16 }}>
-        <Text textStyle={{ color: tokens.fg, fontSize: 20, fontWeight: "600" }}>
-          连接存储桶
-        </Text>
-        <Text textStyle={{ color: tokens.muted }}>
+      <Column spacing={24} style={{ paddingVertical: 16, width: "100%" }}>
+        {showTitle ? (
+          <Text
+            textStyle={{ color: tokens.fg, fontSize: 22, fontWeight: "600" }}
+          >
+            连接存储桶
+          </Text>
+        ) : null}
+        <Text
+          textStyle={{ color: tokens.fgSoft, fontSize: 16, lineHeight: 24 }}
+        >
           直接同步已有存储桶，下载完成后可离线编辑。
         </Text>
-        <Picker
-          selectedValue={manual ? "manual" : "code"}
-          enabled={!busy}
-          onValueChange={(value) => setManual(value === "manual")}
-        >
-          <Picker.Item value="code" label="使用接入码" />
-          <Picker.Item value="manual" label="手动填写配置" />
-        </Picker>
-        {manual ? (
-          <>
-            {input("endpoint", "Endpoint", endpoint, setEndpoint)}
-            {input("bucket", "Bucket", bucket, setBucket)}
-            {input("region", "Region", region, setRegion)}
-            {input("prefix", "Prefix", prefix, setPrefix)}
-            {input("access-key", "Access Key", accessKeyId, setAccessKeyId)}
-            {input("secret-key", "Secret Key", secretAccessKey, setSecretAccessKey, true)}
-          </>
-        ) : (
-          input("enrollment-code", "接入码或链接", code, setCode, true)
-        )}
-        <Picker
-          selectedValue={unlockMethod}
-          enabled={!busy}
-          onValueChange={(value) => {
-            setUnlockMethod(value);
-            setError(null);
-          }}
-        >
-          <Picker.Item value="passphrase" label="使用解密密码" />
-          <Picker.Item value="recovery" label="使用恢复码" />
-        </Picker>
-        {unlockMethod === "recovery" ? (
-          <>
-            {input("recovery-code", "恢复码", recoveryCode, setRecoveryCode, true)}
-            <Text textStyle={{ color: tokens.muted }}>
-              输入以 MH1 开头的恢复码，仅用于在此设备解密已有数据。
-            </Text>
-          </>
-        ) : (
-          input("passphrase", "解密密码", passphrase, setPassphrase, true)
-        )}
+        <Column spacing={16} style={{ width: "100%" }}>
+          <ConnectionChoice
+            label="连接方式"
+            value={manual ? "manual" : "code"}
+            disabled={busy}
+            onChange={(value) => setManual(value === "manual")}
+            options={[
+              { value: "code", label: "使用接入码" },
+              { value: "manual", label: "手动填写配置" },
+            ]}
+          />
+          {manual ? (
+            <>
+              {input("endpoint", "Endpoint", endpoint, setEndpoint)}
+              {input("bucket", "Bucket", bucket, setBucket)}
+              {input("region", "Region", region, setRegion)}
+              {input("prefix", "Prefix", prefix, setPrefix)}
+              {input("access-key", "Access Key", accessKeyId, setAccessKeyId)}
+              {input(
+                "secret-key",
+                "Secret Key",
+                secretAccessKey,
+                setSecretAccessKey,
+                true,
+              )}
+            </>
+          ) : (
+            input("enrollment-code", "接入码或链接", code, setCode, true)
+          )}
+        </Column>
+        <Column spacing={16} style={{ width: "100%" }}>
+          <ConnectionChoice<"passphrase" | "recovery">
+            label="解密方式"
+            value={unlockMethod}
+            disabled={busy}
+            onChange={(value) => {
+              setUnlockMethod(value);
+              setError(null);
+            }}
+            options={[
+              { value: "passphrase", label: "使用解密密码" },
+              { value: "recovery", label: "使用恢复码" },
+            ]}
+          />
+          {unlockMethod === "recovery" ? (
+            <>
+              {input(
+                "recovery-code",
+                "恢复码",
+                recoveryCode,
+                setRecoveryCode,
+                true,
+              )}
+              <Text textStyle={{ color: tokens.muted }}>
+                输入以 MH1 开头的恢复码，仅用于在此设备解密已有数据。
+              </Text>
+            </>
+          ) : (
+            input("passphrase", "解密密码", passphrase, setPassphrase, true)
+          )}
+        </Column>
         {error ? (
           <NativeDataText textStyle={{ color: tokens.danger }}>
             {error}
           </NativeDataText>
         ) : null}
-        <Button
+        <ConnectionAction
           disabled={busy}
           label={busy ? "正在验证并连接…" : "连接并同步"}
           onPress={() => void connect()}
