@@ -8,12 +8,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { Platform, TextInput, View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSession } from "@/lib/auth/session";
 import { useLiveInvalidate } from "@/lib/api/hooks";
 import { LibraryTree, type LibraryKind, type Row } from "@/lib/browse/library";
 import { useDocumentActions } from "@/lib/browse/use-document-actions";
 import { LibraryList } from "@/components/native/LibraryList";
+import { LibrarySearch } from "@/components/native/LibrarySearch";
 import { BrowseCreate } from "@/components/BrowseCreate";
 export default function LibraryScreen() {
   const session = useSession();
@@ -123,10 +124,9 @@ function WorkspaceLibrary() {
           onCancelButtonPress={() => setQuery("")}
         />
       ) : (
-        <TextInput
+        <LibrarySearch
           value={query}
           onChangeText={setQuery}
-          placeholder="搜索资料库"
         />
       )}
       <View style={{ flex: 1, display: needle ? "none" : "flex" }}>

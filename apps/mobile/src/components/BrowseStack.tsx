@@ -2,7 +2,7 @@ import { Stack } from "expo-router/stack";
 import { Platform } from "react-native";
 import { useTheme } from "@/lib/theme";
 export default function BrowseStack() {
-  const { tokens } = useTheme();
+  const { tokens, scheme } = useTheme();
   return (
     <Stack
       screenOptions={{
@@ -18,7 +18,11 @@ export default function BrowseStack() {
               headerLargeTitleEnabled: true,
               headerBlurEffect: "none",
             }
-          : { headerStyle: { backgroundColor: tokens.bg } }),
+          : {
+              headerStyle: { backgroundColor: tokens.bg },
+              headerShadowVisible: false,
+              statusBarStyle: scheme === "dark" ? "light" : "dark",
+            }),
       }}
     />
   );
