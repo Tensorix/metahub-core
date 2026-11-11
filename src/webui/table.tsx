@@ -1,3 +1,4 @@
+import { databaseViewQuery } from '../shared/views/database-view-query';
 import { flushSync } from 'preact/compat';
 import { DatabaseQueryWindow, type DatabaseHost } from '../shared/views/database-source';
 import { deferTouchDrag } from "./touch-intent";
@@ -112,6 +113,7 @@ export function DatabaseView({
   onTabReq,
   onError,
   embedded = false,
+  initialProperties,
   host,
 }: {
   db: Db;
@@ -128,12 +130,13 @@ export function DatabaseView({
   onTabReq: (tab: DbTab | null) => void;
   onError: (m: string) => void;
   embedded?: boolean;
+  initialProperties?: Prop[];
   host?: DatabaseHost;
 }) {
   const presentation = useDatabasePresentation();
-  const [props, setProps] = useState<Prop[]>([]);
+  const [props, setProps] = useState<Prop[]>(initialProperties ?? []);
   const [records, setRecords] = useState<Rec[]>([]);
-  const [queryRevision,setQueryRevision]=useState(0);
+  const [queryRevision,setQueryRevision]=useState(initialProperties ? 1 : 0);
   const [,redrawQuery]=useState(0);
   const queryWindow=useMemo(()=>new DatabaseQueryWindow(api,()=>{setRecords(queryWindow.rows());redrawQuery(n=>n+1);},e=>{if(e.message.includes('stale'))setQueryRevision(n=>n+1);else onError(e.message);}),[db.id]);
   useEffect(()=>()=>{void queryWindow.dispose().catch(()=>{});},[queryWindow]);
@@ -144,18 +147,26 @@ export function DatabaseView({
   const [views, setViews] = useState<ViewDef[]>(() => normalizeViews(db.meta?.views));
   const viewsRef = useRef(views);
   viewsRef.current = views;
-  const [activeViewId, setActiveViewId] = useState<string>(() => localStorage.getItem(`mh.db.view.${db.id}`) ?? "");
+  const [activeViewId, setActiveViewId] = useState<string>(() => views.find(v=>v.id===tabReq || v.layout===tabReq)?.id ?? localStorage.getItem(`mh.db.view.${db.id}`) ?? "");
   const view = views.find((v) => v.id === activeViewId) ?? views[0]!;
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dirtyViews=useRef(false);
+  const saveViews=()=>{const next=viewsRef.current;return api.updateDatabase(db.id,{meta:{views:next}}).then(()=>{if(viewsRef.current===next)dirtyViews.current=false;}).catch(e=>onError(String(e.message)));};
   const persistViews = (next: ViewDef[]) => {
+    dirtyViews.current=true;
     setViews(next);
     viewsRef.current = next;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
       persistTimer.current = null;
-      api.updateDatabase(db.id, { meta: { views: viewsRef.current } }).catch((e) => onError(String(e.message)));
+      void saveViews();
     }, 300);
   };
+  useLayoutEffect(()=>{
+    const flushView=()=>{if(!dirtyViews.current)return;if(persistTimer.current)clearTimeout(persistTimer.current);persistTimer.current=null;void saveViews();};
+    document.addEventListener('database-before-flush',flushView);
+    return()=>{document.removeEventListener('database-before-flush',flushView);};
+  },[db.id]);
   const updateView = (patch: ViewPatch, id = view.id) => persistViews(viewsRef.current.map((v) => (v.id === id ? { ...v, ...patch } : v)));
   const selectView = async (id: string) => {
     if(host && loaded){try{await host.flush();}catch(e){onError(String((e as Error).message));return;}}
@@ -207,9 +218,11 @@ export function DatabaseView({
     setViewport(v=>({...v,top:0,left:0}));
     let saved:any;try{saved=JSON.parse(localStorage.getItem(key)??'null');}catch{}
     if(saved && Number.isFinite(saved.top)){setViewport(v=>({...v,top:saved.top,left:saved.left??0}));requestAnimationFrame(()=>{const el=tableRef.current?.closest('.tablescroll');if(el){el.scrollTop=saved.top;el.scrollLeft=saved.left??0;}});}
-    let timer:ReturnType<typeof setTimeout>;
-    const save=(e:Event)=>{const el=e.target as HTMLElement;if(!el.matches?.('.tablescroll,.tl-scroll,.board,.board-col-body'))return;clearTimeout(timer);timer=setTimeout(()=>localStorage.setItem(key,JSON.stringify({top:el.scrollTop,left:el.scrollLeft})),120);};
-    document.addEventListener('scroll',save,true);return()=>{clearTimeout(timer);document.removeEventListener('scroll',save,true);};
+    let timer:ReturnType<typeof setTimeout>,position:{top:number;left:number}|null=null;
+    const flushPosition=()=>{clearTimeout(timer);if(position){localStorage.setItem(key,JSON.stringify(position));position=null;}};
+    const save=(e:Event)=>{const el=e.target as HTMLElement;if(!el.matches?.('.tablescroll,.tl-scroll,.board,.board-col-body'))return;position={top:el.scrollTop,left:el.scrollLeft};clearTimeout(timer);timer=setTimeout(flushPosition,120);};
+    document.addEventListener('scroll',save,true);document.addEventListener('database-before-flush',flushPosition);
+    return()=>{flushPosition();document.removeEventListener('scroll',save,true);document.removeEventListener('database-before-flush',flushPosition);};
   },[db.id,view.id]);
   const gridHostRef = useRef<HTMLDivElement>(null);
   const [grip, setGrip] = useState<{ id: string; top: number; height: number } | null>(null);
@@ -244,6 +257,14 @@ export function DatabaseView({
   const guard = (fn: () => Promise<void>) => fn().catch((e) => onError(String(e.message)));
 
   const [loaded, setLoaded] = useState(false);
+  useLayoutEffect(() => {
+    if (!embedded || !loaded || view.layout!=='table') return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => document.dispatchEvent(new Event('database-first-frame')));
+    });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [embedded, loaded, view.layout]);
   const [skelRows, rememberRows] = useSkeletonRows("table", 4);
   const reload = async () => {
     const p = await api.listProperties(db.id);
@@ -251,26 +272,28 @@ export function DatabaseView({
   };
   const [debouncedQuery,setDebouncedQuery]=useState(query);
   useEffect(()=>{const timer=setTimeout(()=>setDebouncedQuery(query),200);return()=>clearTimeout(timer);},[query]);
-  const dateProps=props.filter(p=>p.type==='date');
-  const partitionGroup=view.group ?? (props.find(p=>p.type==='select') ?? props.find(p=>p.type==='multi_select'))?.id;
-  const partitionDate=(view.layout==='calendar'?view.dateProp:view.start) ?? dateProps[0]?.id;
-  const partitionEnd=view.end===null?undefined:(view.end ?? dateProps.find(p=>p.id!==partitionDate)?.id);
-  const queryKey=JSON.stringify({filter:view.filter,sort:view.sort,search:debouncedQuery,calc:view.calc,partitions:{group:partitionGroup,date:partitionDate,end:partitionEnd}});
-  useEffect(()=>{
+  const queryKey=JSON.stringify(databaseViewQuery(view,props,debouncedQuery));
+  const queryView=useRef<string|null>(null);
+  useLayoutEffect(()=>{
     if(!queryRevision)return;
     let current=true;setLoaded(false);
-    const rowHeight=view.wrap?presentation.wrappedRow:presentation.row,anchor=records.find((r,i)=>!!r && i>=Math.floor(viewport.top/rowHeight))?.id;
+    const rowHeight=view.wrap?presentation.wrappedRow:presentation.row;
+    let top=viewport.top;
+    const sameView=queryView.current===view.id;
+    if(!sameView){try{const saved=JSON.parse(localStorage.getItem(`mh.db.position.${db.id}.${view.id}`)??'null');top=Number.isFinite(saved?.top)?Math.max(0,saved.top):0;}catch{top=0;}}
+    queryView.current=view.id;
+    const anchor=sameView?records.find((r,i)=>!!r && i>=Math.floor(top/rowHeight))?.id:undefined;
     void queryWindow.open(db.id,JSON.parse(queryKey)).then(async()=>{
       if(!current)return;
-      let row=Math.floor(viewport.top/rowHeight);
+      let row=Math.floor(top/rowHeight);
       if(anchor && queryWindow.index){const located=await api.locateRecordQuery(queryWindow.index.id,anchor);if(located>=0)row=located;}
       row=Math.max(0,Math.min(row,(queryWindow.index?.total??1)-1));
-      await queryWindow.ensure(Math.max(0,row-100),row+200);
+      if(view.layout==='table')await queryWindow.ensure(row,row+1);
       const scroller=tableRef.current?.closest('.tablescroll');if(scroller)scroller.scrollTop=row*rowHeight;
       if(current){setViewport(v=>({...v,top:row*rowHeight}));setLoaded(true);rememberRows(queryWindow.index?.total ?? 0);}
     }).catch(e=>{if(current && !e.message.includes('cancelled'))onError(e.message);});
     return()=>{current=false;};
-  },[queryKey,queryRevision,queryWindow]);
+  },[queryKey,queryRevision,queryWindow,view.id]);
   useEffect(() => {
     setSel(new Set());
     setPeek(null);
@@ -282,8 +305,8 @@ export function DatabaseView({
     const vs = normalizeViews(db.meta?.views);
     setViews(vs);
     viewsRef.current = vs;
-    setActiveViewId(localStorage.getItem(`mh.db.view.${db.id}`) ?? vs[0]!.id);
-    reload().catch((e) => onError(String(e.message)));
+    setActiveViewId(vs.find(v=>v.id===tabReq || v.layout===tabReq)?.id ?? localStorage.getItem(`mh.db.view.${db.id}`) ?? vs[0]!.id);
+    if(!initialProperties)reload().catch((e) => onError(String(e.message)));
   }, [db.id]);
   // A sync (or another tab) rewrote the saved views: adopt them unless a local
   // edit is still waiting to be flushed.
@@ -826,7 +849,7 @@ export function DatabaseView({
   },[rowHeight]);
   const rowsWindow = virtualWindow(sorted.length, rowHeight, viewport.top, viewport.height);
   const columnsWindow = virtualColumns(cols.map(colWidth), viewport.left, viewport.width);
-  useEffect(()=>{if(view.layout==='table')void queryWindow.ensure(Math.max(0,rowsWindow.start-100),rowsWindow.end+100);},[view.layout,rowsWindow.start,rowsWindow.end,loaded,queryWindow]);
+  useEffect(()=>{if(loaded && view.layout==='table')void queryWindow.ensure(Math.max(0,rowsWindow.start-100),rowsWindow.end+100);},[view.layout,rowsWindow.start,rowsWindow.end,loaded,queryWindow]);
   const visibleCols = cols.slice(columnsWindow.start, columnsWindow.end);
   const beforeCols = cols.slice(0, columnsWindow.start).reduce((n,p)=>n+colWidth(p),0);
   const afterCols = cols.slice(columnsWindow.end).reduce((n,p)=>n+colWidth(p),0);
@@ -1281,7 +1304,7 @@ export function DatabaseView({
       )}
 
       <div class="gridfoot">
-        <span>{sorted.length === records.length ? t("共 {n} 条记录", { n: records.length }) : t("显示 {m} / {n} 条记录", { m: sorted.length, n: records.length })}</span>
+        <span>{queryWindow.index?.statistics==='loading'?'正在统计…':sorted.length === records.length ? t("共 {n} 条记录", { n: records.length }) : t("显示 {m} / {n} 条记录", { m: sorted.length, n: records.length })}</span>
         {view.layout === "table" && cols.length < props.length && <span>{t("{n} 列已隐藏", { n: props.length - cols.length })}</span>}
       </div>
 

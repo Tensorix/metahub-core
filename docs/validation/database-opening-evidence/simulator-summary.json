@@ -1,0 +1,762 @@
+[
+  {
+    "variant": "baseline",
+    "size": 16,
+    "query": "table",
+    "mode": "cold",
+    "count": 20,
+    "median": 978.0482914987952,
+    "p95": 2071.3239159993827,
+    "max": 2650.063750002533,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 9.04483349993825,
+        "p95": 10.277290999889374,
+        "max": 10.587625000625849
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 876.4890205003321,
+        "p95": 1961.334332998842,
+        "max": 2533.4189170002937
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 898.3865204993635,
+        "p95": 1979.0452909991145,
+        "max": 2571.1111670024693
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 978.0482914987952,
+        "p95": 2071.3239159993827,
+        "max": 2650.063750002533
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 16,
+    "query": "table",
+    "mode": "warm",
+    "count": 20,
+    "median": 659.9114789981395,
+    "p95": 1196.303707998246,
+    "max": 1761.707541000098,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 8.284333501011133,
+        "p95": 10.080916997045279,
+        "max": 14.112124998122454
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 533.0864164996892,
+        "p95": 1039.3307079970837,
+        "max": 1686.308125000447
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 570.91118699871,
+        "p95": 1105.855000000447,
+        "max": 1699.8517910018563
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 659.9114789981395,
+        "p95": 1196.303707998246,
+        "max": 1761.707541000098
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 16,
+    "query": "v_complex",
+    "mode": "cold",
+    "count": 20,
+    "median": 902.009979499504,
+    "p95": 1043.551249999553,
+    "max": 1192.6505410000682,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 9.012249998748302,
+        "p95": 9.735374998301268,
+        "max": 10.366750001907349
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 796.9451669994742,
+        "p95": 921.5101670026779,
+        "max": 1086.723250001669
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 824.585874998942,
+        "p95": 953.0355000011623,
+        "max": 1109.913208000362
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 902.009979499504,
+        "p95": 1043.551249999553,
+        "max": 1192.6505410000682
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 16,
+    "query": "v_complex",
+    "mode": "warm",
+    "count": 20,
+    "median": 600.6645209994167,
+    "p95": 779.9991669990122,
+    "max": 1444.260708000511,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 8.11031249910593,
+        "p95": 9.171916998922825,
+        "max": 9.664958000183105
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 507.3426459990442,
+        "p95": 686.7504169978201,
+        "max": 858.1991669982672
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 539.6913130003959,
+        "p95": 716.5647919997573,
+        "max": 1366.1989170014858
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 600.6645209994167,
+        "p95": 779.9991669990122,
+        "max": 1444.260708000511
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 10000,
+    "query": "table",
+    "mode": "cold",
+    "count": 20,
+    "median": 2148.696312500164,
+    "p95": 2333.930583000183,
+    "max": 2367.4529590010643,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 9.139187501743436,
+        "p95": 9.893625002354383,
+        "max": 11.471167001873255
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 878.0304370000958,
+        "p95": 1046.128250002861,
+        "max": 1072.3267920017242
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 890.2516249995679,
+        "p95": 1066.4555830024183,
+        "max": 1097.824417002499
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 2148.696312500164,
+        "p95": 2333.930583000183,
+        "max": 2367.4529590010643
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 10000,
+    "query": "table",
+    "mode": "warm",
+    "count": 20,
+    "median": 1872.0979374982417,
+    "p95": 2210.4640419967473,
+    "max": 2429.3209999985993,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 7.744937499985099,
+        "p95": 9.295291997492313,
+        "max": 9.36183400079608
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 539.9970624987036,
+        "p95": 914.7477499991655,
+        "max": 1150.2661250010133
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 605.7586665004492,
+        "p95": 930.12108399719,
+        "max": 1164.5833339989185
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 1872.0979374982417,
+        "p95": 2210.4640419967473,
+        "max": 2429.3209999985993
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 10000,
+    "query": "v_complex",
+    "mode": "cold",
+    "count": 20,
+    "median": 2541.779249999672,
+    "p95": 2612.2273340001702,
+    "max": 2838.880582999438,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 8.800812499597669,
+        "p95": 9.80545800179243,
+        "max": 9.843249998986721
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 813.9345210008323,
+        "p95": 884.1925840005279,
+        "max": 1101.0832499973476
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 829.0358125008643,
+        "p95": 899.0122500024736,
+        "max": 1118.8657079972327
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 2541.779249999672,
+        "p95": 2612.2273340001702,
+        "max": 2838.880582999438
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 10000,
+    "query": "v_complex",
+    "mode": "warm",
+    "count": 20,
+    "median": 2280.5936249997467,
+    "p95": 2360.672540999949,
+    "max": 2380.5748750008643,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 7.804041499271989,
+        "p95": 8.884791001677513,
+        "max": 9.19666699692607
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 518.1973539981991,
+        "p95": 566.9750420004129,
+        "max": 567.7677499987185
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 565.0009580012411,
+        "p95": 620.2750419974327,
+        "max": 627.4033749997616
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 2280.5936249997467,
+        "p95": 2360.672540999949,
+        "max": 2380.5748750008643
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 50000,
+    "query": "table",
+    "mode": "cold",
+    "count": 20,
+    "median": 6930.442687500268,
+    "p95": 7129.55904199928,
+    "max": 7131.0289589986205,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 9.52483350224793,
+        "p95": 12.393833998590708,
+        "max": 13.801834002137184
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 927.6610835008323,
+        "p95": 1083.8317920006812,
+        "max": 1106.606832999736
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 959.664708500728,
+        "p95": 1124.1192910000682,
+        "max": 1134.166166998446
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 6930.442687500268,
+        "p95": 7129.55904199928,
+        "max": 7131.0289589986205
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 50000,
+    "query": "table",
+    "mode": "warm",
+    "count": 20,
+    "median": 6598.205020498484,
+    "p95": 6704.536334000528,
+    "max": 11446.447958000004,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 8.046312499791384,
+        "p95": 11.27420799806714,
+        "max": 12.902791999280453
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 543.0284160003066,
+        "p95": 681.0608749985695,
+        "max": 5469.886332999915
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 619.929500002414,
+        "p95": 731.1742089986801,
+        "max": 5495.688875000924
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 6598.205020498484,
+        "p95": 6704.536334000528,
+        "max": 11446.447958000004
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 50000,
+    "query": "v_complex",
+    "mode": "cold",
+    "count": 20,
+    "median": 9536.985771000385,
+    "p95": 9609.425374999642,
+    "max": 9693.01920799911,
+    "errors": 0,
+    "fixtureErrors": 1,
+    "stages": {
+      "metadata-ready": {
+        "count": 21,
+        "median": 8.865708999335766,
+        "p95": 10.09570799767971,
+        "max": 10.37516700103879
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 720.925874998793,
+        "p95": 786.0316670015454,
+        "max": 879.8052079975605
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 732.8758335001767,
+        "p95": 798.617499999702,
+        "max": 892.2934579998255
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 9536.985771000385,
+        "p95": 9609.425374999642,
+        "max": 9693.01920799911
+      }
+    }
+  },
+  {
+    "variant": "baseline",
+    "size": 50000,
+    "query": "v_complex",
+    "mode": "warm",
+    "count": 20,
+    "median": 9355.388521002606,
+    "p95": 9393.583374999464,
+    "max": 9484.252082999796,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 8.034833498299122,
+        "p95": 11.763875000178814,
+        "max": 13.521457999944687
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 486.270021000877,
+        "p95": 522.1046249978244,
+        "max": 583.7921249978244
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 531.7818130012602,
+        "p95": 566.4217920005322,
+        "max": 651.7771659977734
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 9355.388521002606,
+        "p95": 9393.583374999464,
+        "max": 9484.252082999796
+      }
+    }
+  },
+  {
+    "variant": "optimized",
+    "size": 16,
+    "query": "table",
+    "mode": "cold",
+    "count": 20,
+    "median": 830.2847295012325,
+    "p95": 907.6616670005023,
+    "max": 1138.579374998808,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 12.319646498188376,
+        "p95": 12.83508400246501,
+        "max": 12.87687499821186
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 765.5332709979266,
+        "p95": 831.5494589991868,
+        "max": 1069.4314160011709
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 765.7568339984864,
+        "p95": 831.7809589989483,
+        "max": 1069.6880830004811
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 830.2847295012325,
+        "p95": 907.6616670005023,
+        "max": 1138.579374998808
+      }
+    }
+  },
+  {
+    "variant": "optimized",
+    "size": 16,
+    "query": "table",
+    "mode": "warm",
+    "count": 20,
+    "median": 279.5143964998424,
+    "p95": 321.400582998991,
+    "max": 339.2318749986589,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 8.4181459993124,
+        "p95": 9.984833996742964,
+        "max": 12.19608299806714
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 14.849291501566768,
+        "p95": 18.4241659976542,
+        "max": 23.514124996960163
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 15.068207999691367,
+        "p95": 18.60970799997449,
+        "max": 23.68587499856949
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 279.5143964998424,
+        "p95": 321.400582998991,
+        "max": 339.2318749986589
+      }
+    }
+  },
+  {
+    "variant": "optimized",
+    "size": 16,
+    "query": "v_complex",
+    "mode": "cold",
+    "count": 20,
+    "median": 820.3596669994295,
+    "p95": 894.4232500009239,
+    "max": 1026.7009999975562,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 11.631416499614716,
+        "p95": 12.257750000804663,
+        "max": 14.582040999084711
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 759.3171044997871,
+        "p95": 816.126333002001,
+        "max": 954.7071659974754
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 759.5231670010835,
+        "p95": 816.3192920014262,
+        "max": 954.9823329970241
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 820.3596669994295,
+        "p95": 894.4232500009239,
+        "max": 1026.7009999975562
+      }
+    }
+  },
+  {
+    "variant": "optimized",
+    "size": 16,
+    "query": "v_complex",
+    "mode": "warm",
+    "count": 20,
+    "median": 260.3454995006323,
+    "p95": 297.1631669998169,
+    "max": 311.7798749990761,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 7.821145499125123,
+        "p95": 9.201875001192093,
+        "max": 9.442750003188848
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 14.379770999774337,
+        "p95": 15.312958002090454,
+        "max": 20.897375002503395
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 14.577166499570012,
+        "p95": 15.489458002150059,
+        "max": 21.146625000983477
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 260.3454995006323,
+        "p95": 297.1631669998169,
+        "max": 311.7798749990761
+      }
+    }
+  },
+  {
+    "variant": "optimized",
+    "size": 10000,
+    "query": "table",
+    "mode": "cold",
+    "count": 20,
+    "median": 801.8460415005684,
+    "p95": 912.2140420004725,
+    "max": 917.6883750036359,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 14.784958500415087,
+        "p95": 15.15625,
+        "max": 15.186792001128197
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 741.7829580008984,
+        "p95": 834.4375,
+        "max": 843.5666250027716
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 741.9941040016711,
+        "p95": 834.6786670014262,
+        "max": 843.7791250012815
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 801.8460415005684,
+        "p95": 912.2140420004725,
+        "max": 917.6883750036359
+      }
+    }
+  },
+  {
+    "variant": "optimized",
+    "size": 10000,
+    "query": "table",
+    "mode": "warm",
+    "count": 20,
+    "median": 249.2946045026183,
+    "p95": 285.8594999983907,
+    "max": 298.025541998446,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 11.888520499691367,
+        "p95": 14.566708002239466,
+        "max": 14.708124998956919
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 18.126438001170754,
+        "p95": 20.701292000710964,
+        "max": 27.308207999914885
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 18.307250501587987,
+        "p95": 20.873417001217604,
+        "max": 27.5074580013752
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 249.2946045026183,
+        "p95": 285.8594999983907,
+        "max": 298.025541998446
+      }
+    }
+  },
+  {
+    "variant": "optimized",
+    "size": 10000,
+    "query": "v_complex",
+    "mode": "cold",
+    "count": 20,
+    "median": 1678.5860420018435,
+    "p95": 1692.8028750009835,
+    "max": 1699.8907079994678,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 20,
+        "median": 11.682208500802517,
+        "p95": 12.137125000357628,
+        "max": 12.2011660002172
+      },
+      "web-shell-ready-received": {
+        "count": 20,
+        "median": 770.3275830000639,
+        "p95": 842.202500000596,
+        "max": 855.2025830000639
+      },
+      "web-metadata-ready-received": {
+        "count": 20,
+        "median": 770.5750625003129,
+        "p95": 842.3946669995785,
+        "max": 855.4068330004811
+      },
+      "web-first-frame-received": {
+        "count": 20,
+        "median": 1678.5860420018435,
+        "p95": 1692.8028750009835,
+        "max": 1699.8907079994678
+      }
+    }
+  },
+  {
+    "variant": "optimized",
+    "size": 10000,
+    "query": "v_complex",
+    "mode": "warm",
+    "count": 5,
+    "median": 1680.0817079991102,
+    "p95": 1682.928041998297,
+    "max": 1682.928041998297,
+    "errors": 0,
+    "fixtureErrors": 0,
+    "stages": {
+      "metadata-ready": {
+        "count": 5,
+        "median": 7.9015830010175705,
+        "p95": 8.105957999825478,
+        "max": 8.105957999825478
+      },
+      "web-shell-ready-received": {
+        "count": 5,
+        "median": 13.940000001341105,
+        "p95": 18.91466600075364,
+        "max": 18.91466600075364
+      },
+      "web-metadata-ready-received": {
+        "count": 5,
+        "median": 14.138209000229836,
+        "p95": 19.114791002124548,
+        "max": 19.114791002124548
+      },
+      "web-first-frame-received": {
+        "count": 5,
+        "median": 1680.0817079991102,
+        "p95": 1682.928041998297,
+        "max": 1682.928041998297
+      }
+    }
+  }
+]

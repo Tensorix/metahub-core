@@ -18,6 +18,8 @@ export interface ReplicaChange {
   datasets: string[];
   rowIds: string[];
   truncated: boolean;
+  /** Resolved locally; absent means callers must conservatively invalidate. */
+  databaseIds?: string[];
 }
 export function replicaSequence(db: DbDriver): number {
   return (db.query("SELECT coalesce(max(seq),0) AS seq FROM crdt_changes").get() as { seq: number }).seq;
@@ -70,11 +72,28 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
   if (!Number.isSafeInteger(searchBatchSize) || searchBatchSize <= 0) throw new RangeError("searchBatchSize must be a positive integer");
   const searches = new AbortController();
   let disposed = false;
-  const recordQueries = createRecordQuerySessions(db, () => replicaSequence(db));
+  const databaseVersions=new Map<string,number>();
+  const recordQueries = createRecordQuerySessions(db, id => id ? databaseVersions.get(id) ?? 0 : replicaSequence(db));
   let paused = false;
   const listeners = new Set<(change: ReplicaChange) => void>();
   if (options.onChange) listeners.add(options.onChange);
-  const emit = (change: ReplicaChange) => { for (const listener of listeners) listener(change); };
+  const emit = (change: ReplicaChange) => {
+    if(change.datasets.some(dataset=>['records','properties','databases'].includes(dataset))){
+      if(!change.truncated && change.rowIds.length){
+        const ids=new Set<string>();
+        if(change.datasets.includes('databases'))for(const id of change.rowIds)ids.add(id);
+        for(const table of ['records','properties'])if(change.datasets.includes(table)){
+          for(let start=0;start<change.rowIds.length;start+=200){const batch=change.rowIds.slice(start,start+200);
+            const rows=db.query(`SELECT DISTINCT database_id FROM ${table} WHERE id IN (${batch.map(()=>'?').join(',')})`).all(...batch) as {database_id:string}[];
+            for(const row of rows)if(row.database_id)ids.add(row.database_id);
+          }
+        }
+        if(ids.size){change={...change,databaseIds:[...ids]};for(const id of ids)databaseVersions.set(id,(databaseVersions.get(id)??0)+1);}
+        else {recordQueries.clear();}
+      } else {recordQueries.clear();}
+    }
+    for (const listener of listeners) listener(change);
+  };
   const commands = {
     deleteWithUndo: bind(db, deleteWithUndo),
     undoChangeGroup: bind(db, revertChangeGroup),
@@ -193,6 +212,7 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
       if (disposed) return Promise.reject(new Error("Replica query cancelled"));
       return recordQueries.open(id, query, () => !disposed);
     },
+    recordQueryStatus: async(id:string)=>{if(disposed)throw new Error('Replica query cancelled');return recordQueries.status(id);},
     readRecordQuery: async (id: string, offset?: number, limit?: number, partition?: string) => {
       if (disposed) throw new Error("Replica query cancelled");
       return recordQueries.page(id, offset, limit, partition);

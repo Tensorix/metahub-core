@@ -1,3 +1,4 @@
+import { databaseFirstFrame } from './database-first-frame';
 import type { DatabaseQueryWindow } from '../shared/views/database-source';
 import { startPointerDrag } from "./pointer-drag";
 import { deferTouchDrag } from "./touch-intent";
@@ -8,7 +9,7 @@ import { deferTouchDrag } from "./touch-intent";
 // range, or the left/right edge handle to change just the start/end.
 import { useDatabasePresentation, useViewport } from "./database-presentation";
 import { virtualWindow } from "./virtual-window";
-import { useRef, useState, useEffect } from "preact/hooks";
+import { useLayoutEffect, useRef, useState, useEffect } from "preact/hooks";
 import type { Prop, Rec } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "./ui.tsx";
@@ -65,7 +66,7 @@ export function TimelineView({
 
   const partition = presentation.touch ? 'date:scheduled' : undefined;
   const sourceRows = queryWindow && partition ? queryWindow.rows(partition) : records;
-  useEffect(()=>{const start=Math.max(0,Math.floor(viewport.top/ROW)-4);void queryWindow?.ensure(start,start+Math.ceil(size.height/ROW)+8,partition);},[queryWindow,queryWindow?.index?.id,viewport.top,ROW,size.height,partition]);
+  useLayoutEffect(()=>{if(!queryWindow?.index)return;let current=true;const start=Math.max(0,Math.floor(viewport.top/ROW)-4);void queryWindow.ensure(start,start+Math.ceil(size.height/ROW)+8,partition).then(()=>databaseFirstFrame(()=>current));return()=>{current=false;};},[queryWindow,queryWindow?.index?.id,queryWindow?.index?.progress,viewport.top,ROW,size.height,partition]);
   const [undatedPage,setUndatedPage]=useState(0);
   useEffect(()=>{if(showUndated)void queryWindow?.ensure(undatedPage*100,(undatedPage+1)*100,'date:');},[showUndated,undatedPage,queryWindow,queryWindow?.index?.id]);
   if (!startProp) {
@@ -230,7 +231,7 @@ export function TimelineView({
           {startProp.name}{endProp ? ` → ${endProp.name}` : t("（里程碑）")}
         </button>
         <button class="tbtn" onClick={()=>{if(scrollRef.current)scrollRef.current.scrollLeft=Math.max(0,todayOffset*DAY_PX-(size.width-SIDE)/2);}}>今天</button>
-        {presentation.touch && <button class="tbtn" aria-expanded={showUndated} onClick={()=>setShowUndated(v=>!v)}>未排期 {queryWindow?.index?.partitions['date:'] ?? records.filter(r=>r && !parseDate(r.cells[startProp.id])).length}</button>}
+        {presentation.touch && <button class="tbtn" aria-expanded={showUndated} onClick={()=>setShowUndated(v=>!v)}>未排期 {queryWindow?.index?.statistics==="loading"?"…":queryWindow?.index?.partitions['date:'] ?? records.filter(r=>r && !parseDate(r.cells[startProp.id])).length}</button>}
       </div>
       {showUndated && <div class="tl-undated">
         {(queryWindow ? queryWindow.rows('date:') : records.filter(r=>r && !parseDate(r.cells[startProp.id]))).slice(undatedPage*100,(undatedPage+1)*100).map(rec=><div class="tl-undated-record" key={rec.id}><button onClick={()=>onOpenRecord(rec.id)}>{titleText(rec,titleProp) || '无标题'}</button><button onClick={()=>scheduleStart(rec,now)}>排到今天</button></div>)}

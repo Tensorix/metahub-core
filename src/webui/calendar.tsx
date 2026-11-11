@@ -1,3 +1,4 @@
+import { databaseFirstFrame } from './database-first-frame';
 import type { DatabaseQueryWindow } from '../shared/views/database-source';
 import { startPointerDrag } from "./pointer-drag";
 import { deferTouchDrag } from "./touch-intent";
@@ -48,10 +49,13 @@ export function CalendarView({
 
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [detail,setDetail]=useState<string|null>(null),[detailPage,setDetailPage]=useState(0);
-  useEffect(()=>{
-    if(!dateProp || !queryWindow)return;
-    for(const day of monthMatrix(cursor.y,cursor.m).flat()) void queryWindow.ensure(0,3,'date:'+toISO(day),3);
-  },[queryWindow,queryWindow?.index?.id,cursor.y,cursor.m,dateProp?.id]);
+  useLayoutEffect(()=>{
+    if(!queryWindow?.index)return;
+    let current=true;
+    const jobs=dateProp?monthMatrix(cursor.y,cursor.m).flat().map(day=>queryWindow.ensure(0,3,'date:'+toISO(day),3)):[];
+    void Promise.all(jobs).then(()=>databaseFirstFrame(()=>current));
+    return()=>{current=false;};
+  },[queryWindow,queryWindow?.index?.id,queryWindow?.index?.progress,cursor.y,cursor.m,dateProp?.id]);
   useEffect(()=>{if(detail!==null)void queryWindow?.ensure(detailPage*100,(detailPage+1)*100,'date:'+detail);},[detail,detailPage,queryWindow,queryWindow?.index?.id]);
   useLayoutEffect(()=>{
     const dialog=dialogRef.current;
@@ -140,7 +144,7 @@ export function CalendarView({
         <button disabled={(detailPage+1)*100>=(queryWindow?.index?.partitions['date:'+detail]??records.filter(rec=>rec && (parseDate(rec.cells[dateProp.id]) ? toISO(parseDate(rec.cells[dateProp.id])!) : '')===detail).length)} onClick={()=>setDetailPage(p=>p+1)}>下一页</button>
       </dialog>}
       <div class="cal-nav">
-        <button class="tbtn" onClick={()=>{setDetail('');setDetailPage(0);}}>未排期 {queryWindow?.index?.partitions['date:'] ?? 0}</button>
+        <button class="tbtn" onClick={()=>{setDetail('');setDetailPage(0);}}>未排期 {queryWindow?.index?.statistics==="loading"?"…":queryWindow?.index?.partitions['date:'] ?? 0}</button>
         <button class="iconbtn" title={t("上个月")} onClick={() => step(-1)}><Icon name="chevron" cls="ico flip" /></button>
         <div class="cal-title">{fmtDate(new Date(cursor.y, cursor.m, 1), "yearMonth")}</div>
         <button class="iconbtn" title={t("下个月")} onClick={() => step(1)}><Icon name="chevron" cls="ico" /></button>

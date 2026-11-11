@@ -14,6 +14,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { preferSurface } from '../lib/database/prewarm';
 import { EditorSurface } from "./EditorSurface";
 import { DocumentToolbar } from "./DocumentToolbar";
 import type { EditorPosition, EditorSurfaceHandle } from "./DefaultEditorSurface";
@@ -57,6 +58,7 @@ export const DocumentEditor = forwardRef<
   { documentId, sessionId, workspaceId, position, host: services, dark = false, topInset = 0, mode = "blocks", onState, onError },
   ref,
 ) {
+  useEffect(() => { preferSurface('document'); }, []);
   const web = useRef<EditorSurfaceHandle>(null);
   const [generation, setGeneration] = useState(0);
   const [loading, setLoading] = useState(true);

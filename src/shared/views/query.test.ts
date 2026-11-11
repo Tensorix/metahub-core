@@ -151,3 +151,53 @@ test('new generation cancels an outstanding scan for the same page owner',async(
  expect(await rejected).toContain('cancelled');expect((await next).total).toBe(1000);
  const closing=queries.open(f.database.id,{owner:'close'});queries.close('owner:close');await expect(closing).rejects.toThrow('cancelled');
 });
+
+test('v2 default query returns cursor pages without materializing the whole ID index',async()=>{
+ const f=fixture(401);f.db.query("UPDATE records SET order_key=NULL WHERE id >= 'rec_00200'").run();
+ let revision=1;const reads:string[]=[];
+ const driver={query(sql:string){reads.push(sql);return f.db.query(sql);},exec:f.db.exec.bind(f.db),transaction:f.db.transaction.bind(f.db)};
+ const sessions=createRecordQuerySessions(driver,()=>revision);
+ const opened=await sessions.open(f.database.id,{protocol:2});
+ expect(opened.id.startsWith('cursor_')).toBe(true);
+ expect(reads.some(sql=>sql.includes(' AS data'))).toBe(false);
+ const expected=queryRecords(f.db,f.database.id,{limit:200}).records;
+ const first=sessions.page(opened.id,0,100),second=sessions.page(opened.id,100,100);
+ expect([...first.records,...second.records]).toEqual(expected);
+ expect(reads.filter(sql=>sql.includes('OFFSET'))).toHaveLength(0);
+ const distant=sessions.page(opened.id,300,100);
+ expect(distant.records).toEqual(queryRecords(f.db,f.database.id,{offset:300,limit:100}).records);
+ expect(sessions.locate(opened.id,distant.records[0]!.id)).toBe(300);
+ revision++;expect(()=>sessions.page(opened.id)).toThrow('stale');
+});
+
+test('v2 filtered sessions publish first page before full statistics, then converge',async()=>{
+ const f=fixture(2000);const sessions=createRecordQuerySessions(f.db,()=>1);
+ const query={protocol:2 as const,filter:{op:'and' as const,rules:[{id:'filter',prop:f.n.id,cond:'ge' as const,value:0}]}};
+ const opened=await sessions.open(f.database.id,query);
+ expect(opened.id.startsWith('stream_')).toBe(true);
+ expect((opened as any).statistics).toBe('loading');
+ expect(sessions.page(opened.id,0,100).records).toHaveLength(100);
+ let status=sessions.status(opened.id);
+ while(status.statistics==='loading'){await Bun.sleep(1);status=sessions.status(opened.id);}
+ const expected=queryRecords(f.db,f.database.id,query);
+ expect(status.total).toBe(expected.total);
+ expect(sessions.page(opened.id,0,60).records).toEqual(expected.records);
+ sessions.close(opened.id);expect(()=>sessions.status(opened.id)).toThrow('stale');
+});
+test('closing then reusing an owner cannot revive the cancelled generation',async()=>{
+ const f=fixture(1000),sessions=createRecordQuerySessions(f.db,()=>1);
+ const pending=sessions.open(f.database.id,{owner:'same',protocol:2,search:'else'});
+ const result=pending.then(()=>false,e=>e.message.includes('cancelled'));
+ sessions.close('owner:same');
+ const next=await sessions.open(f.database.id,{owner:'same',protocol:2,sort:[{prop:f.n.id,desc:true}]});
+ expect(await result).toBe(true);expect(next.total).toBe(1000);
+ sessions.clear();expect(()=>sessions.page(next.id)).toThrow('stale');
+});
+test('field-only sorts project required cells but retain legacy filter and full-page semantics',async()=>{
+ const f=fixture(600),reads:string[]=[];
+ const driver={query(sql:string){reads.push(sql);return f.db.query(sql);},exec:f.db.exec.bind(f.db),transaction:f.db.transaction.bind(f.db)};
+ const query={protocol:2 as const,filter:{op:'and' as const,rules:[{id:'n',prop:f.n.id,cond:'ge',value:3}]},sort:[{prop:f.n.id,desc:true}]};
+ const sessions=createRecordQuerySessions(driver,()=>1),index=await sessions.open(f.database.id,query);
+ expect(reads.some(sql=>sql.includes('json_object')&&sql.includes('LIMIT 200'))).toBe(true);
+ expect(sessions.page(index.id,0,60).records).toEqual(queryRecords(f.db,f.database.id,query).records);
+});

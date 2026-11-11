@@ -1,3 +1,4 @@
+import { databaseFirstFrame } from './database-first-frame';
 import type { DatabaseQueryWindow } from '../shared/views/database-source';
 import { deferTouchDrag } from "./touch-intent";
 /** @jsxImportSource preact */
@@ -6,7 +7,7 @@ import { deferTouchDrag } from "./touch-intent";
 // (single-select only) and reordered within the global record order via onMove.
 import { useDatabasePresentation, useViewport } from "./database-presentation";
 import { virtualWindow } from "./virtual-window";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Prop, Rec } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
@@ -77,11 +78,16 @@ export function BoardView({
     groupable[0] ??
     null;
 
-  useEffect(()=>{
-    if(!groupProp || !queryWindow)return;
+  useLayoutEffect(()=>{
+    if(!queryWindow?.index)return;
+    let current=true;
+    if(!groupProp){databaseFirstFrame(()=>current);return()=>{current=false;};}
+    const jobs:Promise<void>[]=[];
     const keys=[...(groupProp.config?.options ?? []),UNGROUPED].slice(Math.max(0,Math.floor(horizontal/columnStep)-1),Math.floor(horizontal/columnStep)+visibleColumns+1);
-    for(const key of keys){const start=Math.max(0,Math.floor((scrolls[key]??0)/cardStep)-5);void queryWindow.ensure(start,start+Math.ceil(size.height/cardStep)+8,'group:'+JSON.stringify(key===UNGROUPED?null:key));}
-  },[queryWindow,queryWindow?.index?.id,groupProp?.id,horizontal,scrolls,cardStep,size.height,visibleColumns]);
+    for(const key of keys){const start=Math.max(0,Math.floor((scrolls[key]??0)/cardStep)-5);jobs.push(queryWindow.ensure(start,start+Math.ceil(size.height/cardStep)+8,'group:'+JSON.stringify(key===UNGROUPED?null:key)));}
+    void Promise.all(jobs).then(()=>databaseFirstFrame(()=>current));
+    return()=>{current=false;};
+  },[queryWindow,queryWindow?.index?.id,queryWindow?.index?.progress,groupProp?.id,horizontal,scrolls,cardStep,size.height,visibleColumns]);
   if (!groupProp) {
     return (
       <div class="view-placeholder">
@@ -224,7 +230,7 @@ export function BoardView({
             >
               <div class="board-col-head">
                 {ungrouped ? <span class="muted" style={{ fontWeight: 600 }}>{t("未分组")}</span> : <Chip text={key} />}
-                <span class="board-count">{recs.length}</span>
+                <span class="board-count">{queryWindow?.index?.statistics==="loading"?"…":recs.length}</span>
                 <div class="spacer" />
                 <button class="iconbtn sm" {...tip(t("新建记录"))} onClick={() => onCreate(ungrouped ? {} : { [groupProp.id]: key })}>
                   <Icon name="plus" cls="ico sm" />

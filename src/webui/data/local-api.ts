@@ -76,6 +76,7 @@ export const localApi = {
     rpc("renameSelectOption", id, from, to),
   removeSelectOption: (id: string, name: string) => rpc("removeSelectOption", id, name),
 
+  recordQueryStatus:(id:string)=>rpc('recordQueryStatus',id),
   openRecordQuery: (db: string, query: import('../../shared/views/query').RecordQuery) => rpc('openRecordQuery', db, query),
   readRecordQuery: (id: string, offset=0, limit=100, partition?: string) => rpc('readRecordQuery',id,offset,limit,partition),
   locateRecordQuery: (id: string, record: string) => rpc('locateRecordQuery',id,record),

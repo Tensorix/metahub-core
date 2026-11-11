@@ -1,0 +1,293 @@
+import ExpoModulesCore
+import WebKit
+import ObjectiveC.runtime
+
+private final class DatabaseInputAccessory: UIView {
+  override var inputAccessoryView: UIView? { nil }
+}
+
+// Match react-native-webview's hideKeyboardAccessoryView for our pooled WebKit surface.
+// Change only this database's content view, never WebKit's class globally.
+private func hideDatabaseKeyboardAccessory(_ web: WKWebView) {
+  for content in web.scrollView.subviews where NSStringFromClass(type(of: content)).hasPrefix("WK") {
+    guard let base = object_getClass(content) else { continue }
+    let name = NSStringFromClass(base) + "_MetahubNoAccessory"
+    if NSStringFromClass(base).hasSuffix("_MetahubNoAccessory") { continue }
+    let replacement: AnyClass
+    if let existing = NSClassFromString(name) {
+      replacement = existing
+    } else {
+      guard let created = objc_allocateClassPair(base, name, 0),
+        let method = class_getInstanceMethod(DatabaseInputAccessory.self, #selector(getter: UIResponder.inputAccessoryView)) else { continue }
+      class_addMethod(created, #selector(getter: UIResponder.inputAccessoryView), method_getImplementation(method), method_getTypeEncoding(method))
+      objc_registerClassPair(created)
+      replacement = created
+    }
+    object_setClass(content, replacement)
+    content.inputAssistantItem.leadingBarButtonGroups = []
+    content.inputAssistantItem.trailingBarButtonGroups = []
+    content.reloadInputViews()
+  }
+}
+
+// WebKit retains installed message handlers. Keep the receiver weak so a popped
+// route can detach without retaining its document surface.
+private final class DatabaseMessages: NSObject, WKScriptMessageHandler {
+  weak var surface: DatabaseSurface?
+  func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+    guard message.frameInfo.isMainFrame, let packet = message.body as? [String: Any],
+      let session = packet["session"] as? String, let text = packet["data"] as? String else { return }
+    surface?.receive(text, sessionID: session, web: message.webView)
+  }
+}
+
+private final class DatabasePage: NSObject, WKNavigationDelegate, WKUIDelegate {
+  static var created = 0
+  static var destroyed = 0
+  deinit { DatabasePage.destroyed += 1 }
+  let web: WKWebView
+  let messages = DatabaseMessages()
+  private var loaded = false
+  private var failure: String?
+  private var bootstrap: String?
+
+  init(html: String) {
+    DatabasePage.created += 1
+    let config = WKWebViewConfiguration()
+    config.websiteDataStore = .nonPersistent()
+    config.allowsInlineMediaPlayback = true
+    config.userContentController.add(messages, name: "database")
+    let bridge = "window.ReactNativeWebView={sessionProtocol:2,postMessage:(data,session)=>window.webkit.messageHandlers.database.postMessage({data,session})}"
+    config.userContentController.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    web = WKWebView(frame: .zero, configuration: config)
+    super.init()
+    web.uiDelegate = self
+    web.navigationDelegate = self
+    web.scrollView.contentInsetAdjustmentBehavior = .never
+    // Let the document's native pan gesture dismiss the keyboard interactively,
+    // including on short documents that do not fill the viewport.
+    web.scrollView.keyboardDismissMode = .interactive
+    web.scrollView.alwaysBounceVertical = false
+    web.isOpaque = false
+    web.backgroundColor = .clear
+    hideDatabaseKeyboardAccessory(web)
+    web.loadHTMLString(html, baseURL: nil)
+  }
+
+  func claim(_ surface: DatabaseSurface, bootstrap: String) {
+    messages.surface = surface
+    self.bootstrap = bootstrap
+    startIfReady()
+  }
+
+  private func startIfReady() {
+    if let failure {
+      messages.surface?.onFailure(["message": failure])
+      return
+    }
+    guard loaded, let bootstrap else { return }
+    self.bootstrap = nil
+    web.evaluateJavaScript("window.__metahubOpenDatabaseSession(\(bootstrap));true;") { [weak self] _, error in
+      if let error { self?.fail(error.localizedDescription) }
+    }
+  }
+
+  private func fail(_ reason: String) {
+    failure = reason
+    messages.surface?.onFailure(["message": reason])
+  }
+
+  func retire() {
+    messages.surface = nil
+    web.stopLoading()
+    web.removeFromSuperview()
+    web.navigationDelegate = nil
+    web.uiDelegate = nil
+    web.loadHTMLString("", baseURL: nil)
+  }
+  var usable: Bool { failure == nil }
+
+  // Keep the database's explicit conflict-overwrite confirmation on the owning scene.
+  func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+    initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+    guard frame.isMainFrame, var presenter = webView.window?.rootViewController,
+      UIApplication.shared.applicationState == .active else { completionHandler(false); return }
+    while let presented = presenter.presentedViewController { presenter = presented }
+    guard !presenter.isBeingDismissed, !(presenter is UIAlertController) else {
+      completionHandler(false)
+      return
+    }
+    let dialog = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+    dialog.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(false) })
+    dialog.addAction(UIAlertAction(title: "确定", style: .destructive) { _ in completionHandler(true) })
+    presenter.present(dialog, animated: true)
+  }
+
+  func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    let local = navigationAction.request.url?.absoluteString == "about:blank"
+    decisionHandler(local && navigationAction.targetFrame?.isMainFrame == true ? .allow : .cancel)
+  }
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    hideDatabaseKeyboardAccessory(webView)
+    loaded = true
+    startIfReady()
+  }
+  func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    fail(error.localizedDescription)
+  }
+  func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    fail(error.localizedDescription)
+  }
+  func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    fail("数据表进程已停止，请恢复草稿继续编辑")
+  }
+}
+
+private final class DatabasePool {
+  private var template: String?
+  private var idle: DatabasePage?
+  private var observers: [NSObjectProtocol] = []
+  init() {
+    for name in [UIApplication.didReceiveMemoryWarningNotification, UIApplication.didEnterBackgroundNotification] {
+      observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+        self?.idle = nil
+      })
+    }
+  }
+  deinit { for observer in observers { NotificationCenter.default.removeObserver(observer) } }
+
+  func prepare(_ html: String) {
+    if template != html {
+      idle = nil
+      template = html
+    }
+    warm()
+  }
+  func diagnostics() -> [String: Int] {
+    ["created": DatabasePage.created, "destroyed": DatabasePage.destroyed, "active": active == nil ? 0 : 1, "idle": idle == nil ? 0 : 1]
+  }
+  func warm() {
+    guard UIApplication.shared.applicationState == .active, active == nil, idle?.usable != true, let template else { return }
+    idle = DatabasePage(html: template)
+  }
+  private weak var active: DatabasePage?
+  private var workspace: String?
+  private var incarnation: String?
+  func take(workspace id: String, incarnation instance: String) -> DatabasePage? {
+    if let workspace, workspace != id || incarnation != instance {
+      active?.retire()
+      active = nil
+      idle = nil
+    }
+    guard active?.usable != true else { return nil }
+    workspace = id
+    incarnation = instance
+    let page = idle.flatMap { $0.usable ? $0 : nil } ?? template.map { DatabasePage(html: $0) }
+    idle = nil
+    active = page
+    return page
+  }
+  func release(_ page: DatabasePage, clean: Bool) {
+    guard active === page else { return }
+    active = nil
+    if clean && page.usable && UIApplication.shared.applicationState == .active { idle = page }
+  }
+  func invalidate(_ id: String, incarnation instance: String) {
+    guard workspace == nil || (workspace == id && incarnation == instance) else { return }
+    incarnation = nil
+    workspace = nil
+    active?.retire()
+    active = nil
+    idle = nil
+  }
+}
+
+private final class DatabaseSurface: ExpoView {
+  let onMessage = EventDispatcher()
+  let onFailure = EventDispatcher()
+  private var page: DatabasePage?
+  private var session: String?
+  private weak var pool: DatabasePool?
+  func close(_ id: String, promise: Promise) {
+    guard session == id else { promise.reject("STALE_SESSION", "数据表会话已变更"); return }
+    guard let page else { promise.resolve(nil); return }
+    var completed = false
+    let finish: (Bool, Any?) -> Void = { clean, position in
+      guard !completed else { return }
+      completed = true
+      page.messages.surface = nil
+      page.web.removeFromSuperview()
+      self.pool?.release(page, clean: clean)
+      self.page = nil
+      promise.resolve(position)
+    }
+    page.web.callAsyncJavaScript("return await window.__metahubCloseDatabaseSession(id)", arguments: ["id": id], in: nil, in: .page) { outcome in
+      let result = try? outcome.get()
+      let succeeded: Bool
+      switch outcome { case .success: succeeded = true; case .failure: succeeded = false }
+      guard !completed else { return }
+      if let value = result as? NSDictionary, value["blocked"] as? Bool == true {
+        completed = true
+        promise.reject("EDITOR_BUSY", "数据表仍有输入待保存")
+        return
+      }
+      guard succeeded, let position = result as? NSDictionary, position["closed"] as? Bool == true else { completed = true; promise.reject("DATABASE_CLOSE_FAILED", "数据表尚未完成保存，请重试"); return }
+      finish(true, position)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+      guard !completed else { return }
+      completed = true
+      page.retire()
+      self?.pool?.release(page, clean: false)
+      self?.page = nil
+      self?.onFailure(["message": "数据表保存确认超时，请恢复已保留草稿后重试"])
+      promise.reject("DATABASE_CLOSE_TIMEOUT", "数据表保存超时，请重试")
+    }
+  }
+  func bind(pool: DatabasePool, bootstrap: String) {
+    guard page == nil else { return }
+    guard let config = try? JSONSerialization.jsonObject(with: Data(bootstrap.utf8)) as? [String: Any],
+      let workspace = config["workspace"] as? String, let id = config["session"] as? String,
+      let instance = config["instance"] as? String, let next = pool.take(workspace: workspace, incarnation: instance) else {
+      onFailure(["message": "数据表尚未初始化"])
+      return
+    }
+    self.pool = pool
+    session = id
+    page = next
+    next.web.frame = bounds
+    addSubview(next.web)
+    next.claim(self, bootstrap: bootstrap)
+  }
+  deinit { if let page { page.retire(); pool?.release(page, clean: false) } }
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    page?.web.frame = bounds
+  }
+  func receive(_ text: String, sessionID: String, web: WKWebView?) {
+    guard session == sessionID, let page, web === page.web else { return }
+    onMessage(["data": text])
+  }
+  func inject(_ script: String) { page?.web.evaluateJavaScript(script, completionHandler: nil) }
+}
+
+public final class MetahubDatabaseModule: Module {
+  private let pool = DatabasePool()
+  public func definition() -> ModuleDefinition {
+    Name("MetahubDatabase")
+    Constant("sessionProtocol") { 2 }
+    AsyncFunction("invalidate") { (workspace: String, instance: String) in self.pool.invalidate(workspace, incarnation: instance) }.runOnQueue(.main)
+    AsyncFunction("prepare") { (html: String) in self.pool.prepare(html) }.runOnQueue(.main)
+    AsyncFunction("warm") { self.pool.warm() }.runOnQueue(.main)
+    AsyncFunction("diagnostics") { self.pool.diagnostics() }.runOnQueue(.main)
+    View(DatabaseSurface.self) {
+      Events("onMessage", "onFailure")
+      Prop("bootstrap") { (view: DatabaseSurface, bootstrap: String) in
+        view.bind(pool: self.pool, bootstrap: bootstrap)
+      }
+      AsyncFunction("closeSession") { (view: DatabaseSurface, id: String, promise: Promise) in view.close(id, promise: promise) }
+      AsyncFunction("injectJavaScript") { (view: DatabaseSurface, script: String) in view.inject(script) }
+    }
+  }
+}

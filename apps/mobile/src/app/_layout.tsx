@@ -1,3 +1,5 @@
+import { DatabaseBenchmarkWorkspace } from "@/lib/diagnostics/database-workspace";
+import { invalidateDatabaseRuntime } from "@/lib/database/warmup";
 import { invalidateEditorRuntime } from "@/lib/editor/warmup";
 import {
   ThemeProvider as NavigationThemeProvider,
@@ -46,7 +48,7 @@ function RootStack() {
   const previousSession = useRef<SessionIdentity | null | undefined>(undefined);
   const sessionId = session?.id;
   const workspaceId = session?.workspaceId;
-  useEffect(() => () => { if (workspaceId && sessionId !== undefined) invalidateEditorRuntime(workspaceId, String(sessionId)); }, [workspaceId, sessionId]);
+  useEffect(() => () => { if (workspaceId && sessionId !== undefined) { invalidateEditorRuntime(workspaceId, String(sessionId)); invalidateDatabaseRuntime(workspaceId, String(sessionId)); } }, [workspaceId, sessionId]);
   useEffect(() => {
     const updateNavigation = () => {
       if (!ready || !navigation.isReady()) return;
@@ -228,6 +230,7 @@ export default function RootLayout() {
     )
   ) {
     void SplashScreen.hideAsync();
+    if(process.env.EXPO_PUBLIC_MH_DATABASE_BENCHMARK === "1")return <ThemeProvider><DatabaseBenchmarkWorkspace><ThemedNavigation /></DatabaseBenchmarkWorkspace></ThemeProvider>;
     return <NativeDiagnostics />;
   }
   return (

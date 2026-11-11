@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Keyboard,
+  Platform,
   Pressable,
   StyleSheet,
   Text as RNText,
@@ -49,6 +50,7 @@ export default function RecordScreen() {
   const [multiOpen, setMultiOpen] = useState<PropInfo | null>(null);
   const [refOpen, setRefOpen] = useState<PropInfo | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [dateOpen, setDateOpen] = useState<string | null>(null);
   const [, redraw] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const [deleted, setDeleted] = useState(false);
@@ -529,17 +531,28 @@ export default function RecordScreen() {
                     : null;
                 return (
                   <FieldGroup.Section key={prop.id} title={prop.name}>
-                    <DateTimePicker
-                      value={cur ?? new Date()}
-                      mode="date"
-                      display="compact"
-                      locale="zh_CN"
-                      onChange={(_e, date) => {
-                        if (!date) return;
-                        const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-                        if (iso !== value) void commit(prop, iso);
-                      }}
-                    />
+                    {Platform.OS === "android" && (
+                      <Button
+                        label={
+                          cur ? cur.toLocaleDateString("zh-CN") : "选择日期"
+                        }
+                        onPress={() => setDateOpen(prop.id)}
+                      />
+                    )}
+                    {(Platform.OS !== "android" || dateOpen === prop.id) && (
+                      <DateTimePicker
+                        value={cur ?? new Date()}
+                        mode="date"
+                        display="compact"
+                        locale="zh_CN"
+                        onChange={(event, date) => {
+                          if (Platform.OS === "android") setDateOpen(null);
+                          if (event.type !== "set" || !date) return;
+                          const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+                          if (iso !== value) void commit(prop, iso);
+                        }}
+                      />
+                    )}
                     {cur ? (
                       <Text onPress={() => void commit(prop, null)}>
                         清除日期

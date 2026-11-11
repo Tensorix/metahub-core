@@ -507,6 +507,7 @@ function blobList(db: DbDriver) {
 }
 
 export const webuiRoutes: Route[] = [
+ {method:'GET',path:'/api/record-query/status',summary:'Read progressive query status',response:z.unknown(),handler:handle((req,{db})=>recordQueries(db).status(need(req,'id')))},
  {method:'POST',path:'/api/reference-summaries',summary:'Batch reference titles',response:z.unknown(),handler:handle(async(req,{db})=>referenceSummaries(db,(await req.json()) as ReferenceSummaryQuery))},
   {method:'POST',path:'/api/record-query',summary:'Open a disposable record query',response:z.unknown(),handler:handle(async(req,{db})=>recordQueries(db).open(need(req,'db'),(await req.json()) as RecordQuery,()=>!req.signal.aborted))},
   {method:'POST',path:'/api/record-query/page',summary:'Read a bounded query page',response:z.unknown(),handler:handle(async(req,{db})=>{const p=(await req.json()) as { offset?: number; limit?: number; partition?: string };return recordQueries(db).page(need(req,'id'),p.offset,p.limit,p.partition);})},

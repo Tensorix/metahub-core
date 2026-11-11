@@ -52,8 +52,9 @@ export default function DatabaseScreen() {
             setTitle(rows.find((row) => row.id === id)?.name ?? "数据表");
         })
         .catch(() => {});
-    load();
-    const stop = session.replica.service.onChange(load);
+    const stop = session.replica.service.onChange(change => {
+      if(change.datasets.includes("databases") && (!change.databaseIds || change.databaseIds.includes(id))) load();
+    });
     return () => {
       live = false;
       stop();
@@ -170,6 +171,7 @@ export default function DatabaseScreen() {
         key={`${workspaceId}:${id}`}
         databaseId={id}
         initialView={view}
+        onTitle={setTitle}
         deleted={deleted}
       />
     </>

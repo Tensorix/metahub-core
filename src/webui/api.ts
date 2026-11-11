@@ -803,6 +803,7 @@ const httpApi = {
     req<{ property: Prop; cleared: number }>("POST", `/api/property/option/remove?id=${q(id)}`, { name }),
 
   referenceSummaries: (query: import('../core/replica/service').ReferenceSummaryQuery) => req<import('../core/replica/service').ReferenceSummary[]>('POST','/api/reference-summaries',query),
+  recordQueryStatus:(id:string)=>req<import('../shared/views/database-source').QueryIndex>('GET','/api/record-query/status?id='+q(id)),
   openRecordQuery: (db: string, query: import('../shared/views/query').RecordQuery) => req<import('../shared/views/database-source').QueryIndex>('POST', '/api/record-query?db='+q(db), query),
   readRecordQuery: (id: string, offset=0, limit=100, partition?: string) => req<import('../shared/views/database-source').QueryPage>('POST','/api/record-query/page?id='+q(id), {offset,limit,partition}),
   locateRecordQuery: (id: string, record: string) => req<number>('GET','/api/record-query/locate?id='+q(id)+'&record='+q(record)),

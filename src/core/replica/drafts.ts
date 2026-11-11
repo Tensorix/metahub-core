@@ -27,6 +27,16 @@ export function createDraftStore(db: DbDriver) {
     key TEXT PRIMARY KEY, value TEXT NOT NULL
   );`);
   return {
+    /** A page needs one bounded existence query, not one SQLite round trip per row. */
+    recordsWithDrafts(recordIds: string[]): Set<string> {
+      const found = new Set<string>();
+      for (let offset = 0; offset < recordIds.length; offset += 200) {
+        const ids = recordIds.slice(offset, offset + 200);
+        const rows = db.query(`SELECT DISTINCT record_id FROM replica_field_drafts WHERE record_id IN (${ids.map(() => '?').join(',')})`).all(...ids) as { record_id: string }[];
+        for (const row of rows) found.add(row.record_id);
+      }
+      return found;
+    },
     readPreferences(prefix: string): Record<string,string> {
       const rows=db.query('SELECT key,value FROM replica_ui_preferences').all() as {key:string;value:string}[];
       return Object.fromEntries(rows.filter(r=>r.key.startsWith(prefix)).map(r=>[r.key.slice(prefix.length),r.value]));

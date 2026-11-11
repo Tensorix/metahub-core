@@ -463,6 +463,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
+/** Only injected by the explicitly gated, offline diagnostic workspace. */
+export function StaticSessionProvider({session,children}:{session:Session;children:React.ReactNode}) {
+  const unavailable=async()=>{throw new Error("Workspace switching is unavailable in diagnostics");};
+  return <Ctx.Provider value={{ready:true,error:null,session,connect:unavailable,switchServer:unavailable,disconnect:unavailable}}>{children}</Ctx.Provider>;
+}
 export function useSessionCtx(): SessionCtx {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error("useSessionCtx outside provider");
