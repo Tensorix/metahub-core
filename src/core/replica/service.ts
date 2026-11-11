@@ -6,6 +6,7 @@ import * as properties from "../properties.ts";
 import * as records from "../records.ts";
 import * as documents from "../documents.ts";
 import * as history from "../history.ts";
+import { updateSite } from "../sites-core.ts";
 import { search, searchIncrementally, querySearch, querySearchIncrementally, type SearchQuery } from "../search.ts";
 import { lookupCandidates } from "../resolve.ts";
 import { displayNodes, getNodeId, setNodeLabel } from "../node.ts";
@@ -95,6 +96,8 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
     for (const listener of listeners) listener(change);
   };
   const commands = {
+    updateSiteConfiguration: (id: string, input: { title?: string; name?: string; spa?: boolean }) =>
+      updateSite(db, id, { title: input.title, name: input.name, spa: input.spa }),
     deleteWithUndo: bind(db, deleteWithUndo),
     undoChangeGroup: bind(db, revertChangeGroup),
     listAuditEntries: bind(db,listAuditEntries),

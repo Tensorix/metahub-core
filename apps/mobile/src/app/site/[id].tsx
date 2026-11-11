@@ -1,7 +1,9 @@
-import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
-import { Button, ScrollView, Text, View } from "react-native";
+import { Alert, Button, ScrollView, Text, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import * as WebBrowser from "expo-web-browser";
 import { WebView } from "react-native-webview";
 import { getSite, getFileRow } from "../../../../../src/core/sites-core";
 import { useSession } from "@/lib/auth/session";
@@ -9,6 +11,7 @@ import { useRecents } from "@/lib/navigation/use-recents";
 import { serveLocalSite } from "@/lib/site/gateway";
 import { siteSdk } from "@/lib/site/sdk-bundle";
 import { useTheme } from "@/lib/theme";
+import { useSites } from "@/lib/navigation/use-sites";
 
 type Listener = Awaited<
   ReturnType<typeof import("@/lib/site/listener").listenSite>
@@ -20,8 +23,14 @@ export default function LocalSiteScreen() {
 function SiteViewer({ restart }: { restart(): void }) {
   const { id } = useLocalSearchParams<{ id: string }>();
   const session = useSession();
+  const router = useRouter();
   const { store } = useRecents();
   const { tokens } = useTheme();
+  const sites = useSites();
+  const publishedUrl = sites.data?.find((item) => item.id === id)?.url;
+  const running = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const web = useRef<WebView<unknown>>(null);
   const headerHeight = useHeaderHeight();
   const loadedEntry = useRef(false);
   const [server, setServer] = useState<Listener | null>(null);
@@ -105,6 +114,20 @@ function SiteViewer({ restart }: { restart(): void }) {
     await resources.prepare();
     if (session.isCurrent()) restart();
   };
+  const action = async (run: () => unknown | Promise<unknown>) => {
+    if (running.current || !session.isCurrent()) return;
+    running.current = true;
+    setBusy(true);
+    try {
+      await run();
+    } catch (e) {
+      if (session.isCurrent())
+        Alert.alert("操作失败", e instanceof Error ? e.message : String(e));
+    } finally {
+      running.current = false;
+      setBusy(false);
+    }
+  };
   return (
     <View style={{ flex: 1, backgroundColor: tokens.bg }}>
       <Stack.Screen
@@ -114,6 +137,67 @@ function SiteViewer({ restart }: { restart(): void }) {
           headerShadowVisible: false,
         }}
       />
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Menu
+          title="站点操作"
+          accessibilityLabel="站点操作"
+          icon={
+            process.env.EXPO_OS === "ios"
+              ? "ellipsis"
+              : require("@/components/native/assets/more.xml")
+          }
+        >
+          <Stack.Toolbar.MenuAction
+            disabled={busy || !site}
+            onPress={() => router.push(`/manage/site/${encodeURIComponent(id)}` as Parameters<typeof router.push>[0])}
+          >
+            {"配置详情"}
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction
+            disabled={busy || !site}
+            onPress={() => void action(() => {
+              if (server && !error) web.current?.reload();
+              else restart();
+            })}
+          >
+            {"刷新站点"}
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction
+            disabled={busy || !site}
+            onPress={() => void action(retry)}
+          >
+            {"同步并重新加载"}
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction
+            disabled={busy || !site}
+            onPress={() => void action(async () => {
+              await Clipboard.setStringAsync(id);
+              if (session.isCurrent()) Alert.alert("已复制 ID");
+            })}
+          >
+            {"复制 ID"}
+          </Stack.Toolbar.MenuAction>
+          {publishedUrl ? (
+            <Stack.Toolbar.MenuAction
+              disabled={busy}
+              onPress={() => void action(() => WebBrowser.openBrowserAsync(publishedUrl))}
+            >
+              {"打开发布版"}
+            </Stack.Toolbar.MenuAction>
+          ) : null}
+          {publishedUrl ? (
+            <Stack.Toolbar.MenuAction
+              disabled={busy}
+              onPress={() => void action(async () => {
+                await Clipboard.setStringAsync(publishedUrl);
+                if (session.isCurrent()) Alert.alert("已复制发布链接");
+              })}
+            >
+              {"复制发布链接"}
+            </Stack.Toolbar.MenuAction>
+          ) : null}
+        </Stack.Toolbar.Menu>
+      </Stack.Toolbar>
       {(!hasEntry || error || missing.length > 0) && (
         <View style={{ padding: 12, paddingTop: headerHeight + 12, gap: 6 }}>
           <Text style={{ color: tokens.fg }}>
@@ -135,13 +219,15 @@ function SiteViewer({ restart }: { restart(): void }) {
           {site && (
             <Button
               title="重试"
-              onPress={() => void retry().catch((e) => setError(String(e)))}
+              disabled={busy}
+              onPress={() => void action(retry)}
             />
           )}
         </View>
       )}
       {server && (
         <WebView
+          ref={web}
           key={server.url}
           source={{ uri: server.url }}
           contentInsetAdjustmentBehavior="automatic"
