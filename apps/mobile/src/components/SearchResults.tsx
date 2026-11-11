@@ -1,37 +1,50 @@
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { FlatList, Text, View } from "react-native";
 
-import { NativeButton } from "@/components/native/NativeButton";
+import {
+  SearchLoading,
+  SearchRetry,
+  SearchPlaceholder,
+  SearchResultRow,
+} from "./native/SearchPresentation";
 
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { scheduleSearch } from "@/lib/api/request-state";
-import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
-import { EmptyState } from "@/components/EmptyState";
+import { useLiveInvalidate } from "@/lib/api/hooks";
 import type { SearchHitInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
+import { createSearchFeed } from "@/lib/api/search-feed";
 import { useTheme } from "@/lib/theme";
-import { fs, radii } from "@/lib/theme/tokens";
 
 export function SearchResults({ query }: { query: string }) {
   const router = useRouter();
   const { client, workspaceId } = useSession();
   const { tokens } = useTheme();
-  const q = query;
-  const [page, setPage] = useState({ key: "", offset: 0 });
-  const pageKey = `${workspaceId}:${q.trim()}`;
-  const offset = page.key === pageKey ? page.offset : 0;
-  const [debounced, setDebounced] = useState(q);
+  const q = query.trim();
+  const queryKey = `${workspaceId}:${q}`;
+  const feed = useMemo(
+    () => ({
+      key: queryKey,
+      ...createSearchFeed((offset) =>
+        client.querySearch(q, { offset, limit: 60 }),
+      ),
+    }),
+    [client, q, queryKey],
+  );
+  const { hits, hasMore, loading, loadingMore, error, moreError } =
+    useSyncExternalStore(feed.subscribe, feed.snapshot);
   useEffect(() => {
-    return scheduleSearch(() => setDebounced(q));
-  }, [q]);
-  const fetchSearch = useCallback(async () => {
-    const text = debounced.trim();
-    if (!text) return null;
-    return client.querySearch(text, { offset, limit: 60 });
-  }, [debounced, client, offset]);
-  const { data: hits, error, loading, refetch } = useApiData(fetchSearch);
-  useLiveInvalidate(["documents", "records"], () => void refetch());
+    feed.activate();
+    const cancel = q ? scheduleSearch(() => void feed.reload()) : () => {};
+    return () => {
+      cancel();
+      feed.dispose();
+    };
+  }, [feed, q]);
+  useLiveInvalidate(["documents", "records"], () => {
+    if (q) void feed.reload();
+  });
 
   const open = (hit: SearchHitInfo) => {
     if (hit.type === "document") router.push(`/doc/${hit.id}`);
@@ -40,106 +53,82 @@ export function SearchResults({ query }: { query: string }) {
 
   return (
     <FlatList
+      key={feed.key}
       style={{ flex: 1, backgroundColor: tokens.bg }}
       ListHeaderComponent={
         <>
-          {error && q === debounced ? (
-            <ErrorBanner message="搜索失败，请重试" onRetry={refetch} />
+          {error && q ? (
+            <ErrorBanner message="搜索失败，请重试" onRetry={feed.reload} />
           ) : null}
-          {(loading || q !== debounced) && q.trim() ? (
-            <Text style={{ color: tokens.muted }}>搜索中…</Text>
-          ) : null}
+          {loading && q ? <SearchLoading /> : null}
+          {q && !loading && !error && hits.length > 0 && (
+            <View
+              style={{
+                paddingHorizontal: 20,
+                paddingTop: 12,
+                paddingBottom: 8,
+              }}
+            >
+              <Text
+                accessibilityRole="header"
+                style={{ color: tokens.fgSoft, fontSize: 13 }}
+              >
+                {`${hits.length}${hasMore ? "+" : ""} 项结果`}
+              </Text>
+            </View>
+          )}
         </>
       }
-      data={q === debounced ? (hits?.hits ?? []) : []}
+      data={q ? hits : []}
+      onEndReached={() => {
+        if (q && !moreError) void feed.loadMore();
+      }}
+      onEndReachedThreshold={0.5}
       keyExtractor={(h) => `${h.type}:${h.id}`}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      ItemSeparatorComponent={() => (
+        <View
+          style={{
+            height: 0.5,
+            backgroundColor: tokens.line,
+            marginLeft: 62,
+            marginRight: 20,
+          }}
+        />
+      )}
       renderItem={({ item }) => (
-        <Pressable
-          onPress={() => open(item)}
-          style={({ pressed }) => [
-            styles.hit,
-            pressed && { backgroundColor: tokens.hover },
-          ]}
-        >
-          <Text
-            numberOfLines={1}
-            style={[styles.hitTitle, { color: tokens.fg }]}
-          >
-            {item.title || "未命名"}
-          </Text>
-          {item.snippet ? (
-            <Text
-              numberOfLines={2}
-              style={[styles.hitSnippet, { color: tokens.muted }]}
-            >
-              {item.snippet}
-            </Text>
-          ) : null}
-        </Pressable>
+        <SearchResultRow hit={item} onPress={() => open(item)} />
       )}
       ListEmptyComponent={
         !q.trim() ? (
-          <EmptyState
-            title="搜索你的资料"
-            hint="输入关键词，查找文档正文和数据表记录"
-          />
-        ) : !loading && q === debounced && !error && hits !== undefined ? (
-          <EmptyState title="没有匹配结果" hint="试试更短的关键词" />
+          <SearchPlaceholder />
+        ) : !loading && !error ? (
+          <SearchPlaceholder searching />
         ) : undefined
       }
       ListFooterComponent={
-        q.trim() && q === debounced ? (
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              padding: 12,
-            }}
-          >
-            <NativeButton
-              disabled={!offset || loading}
-              onPress={() =>
-                setPage({ key: pageKey, offset: Math.max(0, offset - 60) })
-              }
+        q && hits.length > 0 ? (
+          loadingMore ? (
+            <SearchLoading />
+          ) : moreError ? (
+            <SearchRetry onPress={() => void feed.loadMore()} />
+          ) : !hasMore ? (
+            <Text
+              style={{
+                color: tokens.fgSoft,
+                textAlign: "center",
+                padding: 24,
+                fontSize: 13,
+              }}
             >
-              上一页
-            </NativeButton>
-            <Text style={{ color: tokens.muted }}>
-              第 {Math.floor(offset / 60) + 1} 页
+              已显示全部 {hits.length} 项结果
             </Text>
-            <NativeButton
-              disabled={!hits?.hasMore || loading}
-              onPress={() => setPage({ key: pageKey, offset: offset + 60 })}
-            >
-              下一页
-            </NativeButton>
-          </View>
+          ) : undefined
         ) : undefined
       }
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.listContent}
+      contentContainerStyle={{ paddingBottom: 32 }}
     />
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  searchWrap: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
-  input: {
-    height: 42,
-    borderRadius: radii.lg,
-    paddingHorizontal: 14,
-    fontSize: fs.body,
-  },
-  hit: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 2,
-    borderRadius: radii.md,
-    marginHorizontal: 6,
-  },
-  hitTitle: { fontSize: fs.ui, fontWeight: "500" },
-  hitSnippet: { fontSize: fs.sm, lineHeight: 18 },
-  listContent: { paddingBottom: 20 },
-});
