@@ -1167,16 +1167,6 @@
   .popout-btn .i-card { transition:transform .18s ease; }
   .popout-btn:hover .i-card { transform:translateY(-2px); }
   .toolbar { display:flex; align-items:center; gap:2px; padding:8px 0 6px; flex-wrap:wrap; }
-  /* Keep database controls anchored to the main pane while records scroll. */
-  .content:has(.db-footer) { padding-bottom:48px; }
-  .db-footer { position:absolute; inset:auto 0 0; z-index:20; background:var(--bg); border-top:1px solid var(--line); }
-  .db-footer .toolbar { min-height:48px; padding:8px 36px; box-sizing:border-box; }
-  .db-footer .tb-search { min-width:0; max-width:100%; }
-  @media (max-width:768px) and (pointer:coarse) {
-    .db-footer { position:fixed; padding-bottom:env(safe-area-inset-bottom); }
-    .db-footer .toolbar { padding-inline:14px; }
-    .content:has(.db-footer) { padding-bottom:calc(80px + env(safe-area-inset-bottom)); }
-  }
   .toolbar .spacer { flex:1; }
   .tbtn { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:var(--radius-sm); color:var(--fg-soft); font-size:13px; font-weight:500; white-space:nowrap; }
   .tbtn:hover { background:var(--hover-2); color:var(--fg); }
