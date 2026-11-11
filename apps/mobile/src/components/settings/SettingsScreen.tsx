@@ -1,7 +1,7 @@
+import { SettingsSection } from "@/components/settings/SettingsSection";
 import { NativeDataText } from "@/components/native/NativeDataText";
 import {
   Column,
-  FieldGroup,
   Picker,
   RNHostView,
   Switch,
@@ -146,13 +146,13 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
       <Stack.Screen options={{ title: ({sync:"数据与同步",workspace:"当前工作区",offline:"离线与缓存",appearance:"外观",about:"关于",attachments:"附件管理",attachment:"附件详情",credentials:"更新连接凭据"})[page] }} />
       <NativeHost style={{ flex: 1 }}>
         <SettingsForm>
-          {page === "about" && <FieldGroup.Section title="Metahub">
+          {page === "about" && <SettingsSection title="Metahub">
             <ListItem supportingText={Constants.expoConfig?.version ?? "未知"}>App 版本</ListItem>
             {!creds.bucket && <ListItem supportingText={version?.version ?? versionError?.message ?? "正在读取…"}>Core 版本</ListItem>}
             <Button variant="outlined" label="GitHub 仓库" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core")} />
             <Button variant="text" label="更新日志" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core/releases")} />
-          </FieldGroup.Section>}
-          {page === "sync" && (<><FieldGroup.Section title="本地与同步">
+          </SettingsSection>}
+          {page === "sync" && (<><SettingsSection title="本地与同步">
             {creds.bucket && <Button variant="text" label="同步升级与编辑恢复" onPress={() => router.push("/settings/recovery")} />}
             <ListItem
               supportingText={
@@ -189,8 +189,8 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
                 {new Date(syncState.lastSuccessAt).toLocaleString()}
               </NativeDataText>
             ) : null}
-          </FieldGroup.Section>
-          <FieldGroup.Section title="同步操作">
+          </SettingsSection>
+          <SettingsSection title="同步操作">
             <Button
               disabled={busy || syncing}
               label={syncing ? "正在同步数据…" : "立即同步数据"}
@@ -207,8 +207,8 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
                 {feedback}
               </NativeDataText>
             ) : null}
-          </FieldGroup.Section></>)}
-          {["workspace", "credentials"].includes(page) && (<FieldGroup.Section title="工作区">
+          </SettingsSection></>)}
+          {["workspace", "credentials"].includes(page) && (<SettingsSection title="工作区">
 {page === "workspace" && <>
             <Picker
               selectedValue={creds.baseUrl}
@@ -284,8 +284,8 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
               onPress={confirmDisconnect}
             />}
             {feedback ? <NativeDataText textStyle={{ color: failed ? tokens.danger : tokens.fg }}>{feedback}</NativeDataText> : null}
-          </FieldGroup.Section>)}
-          {["offline", "attachments", "attachment"].includes(page) && (<FieldGroup.Section title="离线附件">
+          </SettingsSection>)}
+          {["offline", "attachments", "attachment"].includes(page) && (<SettingsSection title="离线附件">
             <Text>{`${usage.count} 个文件 · ${mb(usage.bytes)}`}</Text>
             {usage.orphanCount > 0 ? (
               <NativeDataText textStyle={{ color: tokens.muted }}>
@@ -381,17 +381,19 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
               </Column>
             ) : null}
             {feedback ? <NativeDataText textStyle={{ color: failed ? tokens.danger : tokens.fg }}>{feedback}</NativeDataText> : null}
-          </FieldGroup.Section>)}
-          {page === "appearance" && (<FieldGroup.Section title="外观">
+          </SettingsSection>)}
+          {page === "appearance" && (<SettingsSection title="外观">
             <AppearancePicker />
             {dynamicAvailable ? (
+              <Column style={{ paddingHorizontal: 16, paddingTop: 8 }}>
               <Switch
                 value={materialYou}
                 onValueChange={setMaterialYou}
                 label="跟随系统壁纸（Material You）"
               />
+              </Column>
             ) : null}
-          </FieldGroup.Section>)}
+          </SettingsSection>)}
         </SettingsForm>
       </NativeHost>
     </>
