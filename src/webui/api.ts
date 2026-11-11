@@ -802,6 +802,11 @@ const httpApi = {
   removeSelectOption: (id: string, name: string) =>
     req<{ property: Prop; cleared: number }>("POST", `/api/property/option/remove?id=${q(id)}`, { name }),
 
+  referenceSummaries: (query: import('../core/replica/service').ReferenceSummaryQuery) => req<import('../core/replica/service').ReferenceSummary[]>('POST','/api/reference-summaries',query),
+  openRecordQuery: (db: string, query: import('../shared/views/query').RecordQuery) => req<import('../shared/views/database-source').QueryIndex>('POST', '/api/record-query?db='+q(db), query),
+  readRecordQuery: (id: string, offset=0, limit=100, partition?: string) => req<import('../shared/views/database-source').QueryPage>('POST','/api/record-query/page?id='+q(id), {offset,limit,partition}),
+  locateRecordQuery: (id: string, record: string) => req<number>('GET','/api/record-query/locate?id='+q(id)+'&record='+q(record)),
+  closeRecordQuery: (id: string) => req<void>('DELETE','/api/record-query?id='+q(id)),
   // records
   listRecords: (dbId: string, opts: { sort?: string; limit?: number } = {}) => {
     const p = new URLSearchParams({ db: dbId });

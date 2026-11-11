@@ -7,7 +7,7 @@ import { api, type Db, type Prop, type Rec } from "./api.ts";
 import { DatabaseView } from "./table.tsx";
 
 GlobalRegistrator.register();
-const original = { listProperties: api.listProperties, listRecords: api.listRecords, listLocalShares: api.listLocalShares };
+const original = {openRecordQuery:api.openRecordQuery,readRecordQuery:api.readRecordQuery,closeRecordQuery:api.closeRecordQuery, listProperties: api.listProperties, listRecords: api.listRecords, listLocalShares: api.listLocalShares };
 const db: Db = { id: "db-click", name: "Clicks", icon: null, meta: null, created_hlc: "" };
 const props: Prop[] = [{ id: "title", database_id: db.id, name: "Title", type: "text", config: null, position: 0 }];
 const records: Rec[] = ["Alpha", "Beta"].map((title, i) => ({
@@ -26,6 +26,9 @@ function clickCell(r: number, shiftKey = false) {
 }
 
 beforeEach(async () => {
+  api.openRecordQuery=async()=>({id:'q',revision:1,total:records.length,calc:{},partitions:{},range:{min:null,max:null}});
+  api.readRecordQuery=async(_id,offset=0,limit=100)=>({records:records.slice(offset,offset+limit),total:records.length,offset,limit,hasMore:false,calc:{}});
+  api.closeRecordQuery=async()=>{};
   api.listProperties = async () => props;
   api.listRecords = async () => records;
   api.listLocalShares = async () => [];
@@ -36,6 +39,7 @@ beforeEach(async () => {
     render(<DatabaseView db={db} rec={null} onRecNav={() => {}} tabReq={null} onTabReq={() => {}}
       onError={(message) => { throw new Error(message); }} />, host);
   });
+  await act(async()=>{await new Promise(r=>setTimeout(r,10));});
 });
 afterEach(() => {
   act(() => render(null, host));
@@ -91,4 +95,38 @@ test("dragging or cancelling over a selected cell never opens its editor", () =>
   } finally { document.elementFromPoint = originalHit; }
   expect(host.querySelectorAll("td.cellsel").length).toBe(2);
   expect(editor()).toBeNull();
+});
+
+test('50k row viewport stays bounded and scrolling does not unmount an active editor',async()=>{
+ api.openRecordQuery=async()=>({id:'large',revision:1,total:50000,calc:{},partitions:{},range:{min:null,max:null}});
+ api.readRecordQuery=async(_id,offset=0,limit=100)=>({records:Array.from({length:limit},(_,i)=>({id:`large-${offset+i}`,database_id:db.id,cells:{title:`Row ${offset+i}`},values:{Title:`Row ${offset+i}`}})),offset,limit,total:50000,hasMore:true,calc:{}});
+ await act(async()=>{render(null,host);render(<DatabaseView db={db} rec={null} onRecNav={()=>{}} tabReq={null} onTabReq={()=>{}} onError={message=>{throw new Error(message);}}/>,host);});
+ await act(async()=>{await new Promise(r=>setTimeout(r,15));});
+ for(let i=0;i<5&&!cell(0);i++)await act(async()=>{await new Promise(r=>setTimeout(r,20));});
+ clickCell(0);clickCell(0);const input=editor();expect(input).not.toBeNull();
+ const scroller=host.querySelector<HTMLElement>('.tablescroll')!;
+ Object.defineProperty(scroller,'clientHeight',{value:500});Object.defineProperty(scroller,'clientWidth',{value:600});
+ await act(async()=>{scroller.scrollTop=44*40000;scroller.dispatchEvent(new Event('scroll'));await new Promise(r=>setTimeout(r,15));});
+ await act(async()=>{await new Promise(r=>setTimeout(r,20));});
+ expect(editor()).toBe(input);expect(host.querySelectorAll('tbody tr').length).toBeLessThan(40);
+ expect(host.querySelector('tr[data-row-id="large-40000"]')).not.toBeNull();
+});
+
+test('touch tap selects then trailing click opens an editor that survives pointerup',()=>{
+ const tap=()=>{act(()=>pointer(cell(0),'pointerdown',{pointerType:'touch'}));act(()=>pointer(window,'pointerup',{pointerType:'touch'}));act(()=>{cell(0).dispatchEvent(new MouseEvent('click',{bubbles:true}));});};
+ tap();expect(editor()).toBeNull();tap();expect(editor()).not.toBeNull();expect(document.activeElement?.closest('.celledit')).not.toBeNull();
+});
+
+test('failed field save keeps the editor and input available for retry',async()=>{
+ const update=api.updateRecord;const messages:string[]=[];
+ await act(async()=>render(<DatabaseView db={db} rec={null} onRecNav={()=>{}} tabReq={null} onTabReq={()=>{}} onError={m=>messages.push(m)}/>,host));
+ api.updateRecord=async()=>{throw new Error('offline');};
+ try{
+  clickCell(0);clickCell(0);
+  const input=document.querySelector<HTMLTextAreaElement>('.celledit textarea')!;
+  input.value='尚未保存的中文';
+  await act(async()=>{input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));await new Promise(r=>setTimeout(r,30));});
+  expect(editor()).not.toBeNull();expect(input.value).toBe('尚未保存的中文');
+  expect(editor()?.textContent).toContain('重试');expect(messages.length).toBeGreaterThan(0);
+ }finally{api.updateRecord=update;}
 });

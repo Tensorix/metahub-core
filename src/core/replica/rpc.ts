@@ -22,5 +22,7 @@ export function replicaRpcOps(resolve: () => ReplicaService): Record<string, (..
     const { version: _version, ...row } = resolve().dispatchRpc("createDocument", args) as ReturnType<ReplicaService["commands"]["createDocument"]>;
     return row;
   };
+  for (const operation of ['openRecordQuery','readRecordQuery','locateRecordQuery','closeRecordQuery'] as const)
+    ops[operation] = (...args: any[]) => (resolve().client[operation] as Function)(...args);
   return ops;
 }

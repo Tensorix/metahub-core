@@ -1,5 +1,5 @@
 import { readReplicaGeneration } from "../sync/retention-protocol.ts";
-import { queryDocuments, queryRecords, queryRecordsAsync, type RecordQuery } from "../../shared/views/query.ts";
+import { createRecordQuerySessions, queryDocuments, queryRecords, queryRecordsAsync, type RecordQuery } from "../../shared/views/query.ts";
 import type { DbDriver } from "../driver.ts";
 import * as databases from "../databases.ts";
 import * as properties from "../properties.ts";
@@ -12,7 +12,7 @@ import { displayNodes, getNodeId, setNodeLabel } from "../node.ts";
 import { MhError } from "../errors.ts";
 import { createDraftStore } from "./drafts.ts";
 import { deleteWithUndo } from "./undo.ts";
-import { revertChangeGroup } from "../audit.ts";
+import { revertChangeGroup, listAuditEntries } from "../audit.ts";
 
 export interface ReplicaChange {
   datasets: string[];
@@ -70,6 +70,7 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
   if (!Number.isSafeInteger(searchBatchSize) || searchBatchSize <= 0) throw new RangeError("searchBatchSize must be a positive integer");
   const searches = new AbortController();
   let disposed = false;
+  const recordQueries = createRecordQuerySessions(db, () => replicaSequence(db));
   let paused = false;
   const listeners = new Set<(change: ReplicaChange) => void>();
   if (options.onChange) listeners.add(options.onChange);
@@ -77,6 +78,7 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
   const commands = {
     deleteWithUndo: bind(db, deleteWithUndo),
     undoChangeGroup: bind(db, revertChangeGroup),
+    listAuditEntries: bind(db,listAuditEntries),
     listDatabases: bind(db, databases.listDatabases),
     queryDocuments: (query?: Parameters<typeof queryDocuments>[1]) => queryDocuments(db, query),
     createDatabase: bind(db, databases.createDatabase),
@@ -167,6 +169,8 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
   const client = {
     deleteWithUndo: (...args: Parameters<Commands["deleteWithUndo"]>) => call("deleteWithUndo", ...args),
     undoChangeGroup: (txn: string) => call("undoChangeGroup", txn),
+    auditList: (opts?:Parameters<typeof listAuditEntries>[1])=>call("listAuditEntries",opts),
+    auditRevert: (txn:string)=>call("undoChangeGroup",txn),
     listDatabases: () => call("listDatabases"),
     queryDocuments: (query?: Parameters<typeof queryDocuments>[1]) => call("queryDocuments", query),
     createDatabase: (...args: Parameters<Commands["createDatabase"]>) => call("createDatabase", ...args),
@@ -185,6 +189,19 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
     deleteProperty: (id: string) => call("removeProperty", id),
     listRecords: (...args: Parameters<Commands["listRecords"]>) => call("listRecords", ...args),
     queryRecords: (id: string, query?: RecordQuery) => queryRecordsAsync(db, id, query, () => !disposed),
+    openRecordQuery: (id: string, query?: RecordQuery) => {
+      if (disposed) return Promise.reject(new Error("Replica query cancelled"));
+      return recordQueries.open(id, query, () => !disposed);
+    },
+    readRecordQuery: async (id: string, offset?: number, limit?: number, partition?: string) => {
+      if (disposed) throw new Error("Replica query cancelled");
+      return recordQueries.page(id, offset, limit, partition);
+    },
+    locateRecordQuery: async (id: string, recordId: string) => {
+      if (disposed) throw new Error("Replica query cancelled");
+      return recordQueries.locate(id, recordId);
+    },
+    closeRecordQuery: async (id: string) => { recordQueries.close(id); },
     renameSelectOption: (...args: Parameters<Commands["renameSelectOption"]>) => call("renameSelectOption", ...args),
     getRecord: (id: string) => call("getRecord", id),
     createRecord: (...args: Parameters<Commands["createRecord"]>) => call("createRecord", ...args),
@@ -227,7 +244,7 @@ export function createReplicaService(db: DbDriver, options: { onChange?: (change
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    dispose() { disposed = true; searches.abort(); listeners.clear(); },
+    dispose() { disposed = true; recordQueries.clear(); searches.abort(); listeners.clear(); },
   };
 }
 export type ReplicaService = ReturnType<typeof createReplicaService>;

@@ -11,12 +11,14 @@ export function ManagementInput({
   onChange,
   multiline = false,
   disabled = false,
+  secureTextEntry = false,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   multiline?: boolean;
   disabled?: boolean;
+  secureTextEntry?: boolean;
 }) {
   const { tokens } = useTheme();
   return (
@@ -25,6 +27,7 @@ export function ManagementInput({
       <NativeHost matchContents style={{ minHeight: 44 }}>
         <RecordTextInput
           editable={!disabled}
+          secureTextEntry={secureTextEntry}
           text={value}
           onChangeText={onChange}
           placeholder={label}

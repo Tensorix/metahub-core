@@ -12,6 +12,7 @@ import {
 } from "@/components/DocumentEditor";
 import { DocumentHistorySheet } from "@/components/DocumentHistorySheet";
 import { NativeButton } from "@/components/native/NativeButton";
+import * as Clipboard from "expo-clipboard";
 import { useLiveInvalidate } from "@/lib/api/hooks";
 import { useSession } from "@/lib/auth/session";
 import type { EditorHostServices } from "@/lib/editor/host";
@@ -345,6 +346,7 @@ function LocalDocument({ id }: { id: string }) {
         />
       </Stack.Toolbar>
       <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button accessibilityLabel="分享" icon={process.env.EXPO_OS === "ios" ? "square.and.arrow.up" : require("@/components/native/assets/share.xml")} disabled={busy} onPress={() => void action(() => router.push(`/manage/share/${encodeURIComponent(id)}?kind=doc` as Parameters<typeof router.push>[0]))} />
         <Stack.Toolbar.Menu
           title="文档操作"
           accessibilityLabel="文档操作"
@@ -374,9 +376,12 @@ function LocalDocument({ id }: { id: string }) {
           <Stack.Toolbar.MenuAction
             disabled={busy}
             destructive={false}
-            onPress={() => manage("copy")}
+            onPress={() => void action(async () => {
+              const copy = await session.client.duplicateDocument(id, { title: `${title || "无标题"} 副本` });
+              if (session.isCurrent()) router.push(`/doc/${copy.id}`);
+            })}
           >
-            {"复制文档"}
+            {"创建副本"}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction
             disabled={busy}
@@ -392,6 +397,8 @@ function LocalDocument({ id }: { id: string }) {
           >
             {"版本历史"}
           </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction disabled={busy} onPress={() => void action(async () => { await Clipboard.setStringAsync(id); setNotice("已复制 ID"); })}>{"复制 ID"}</Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction disabled={busy} onPress={() => void action(() => router.push(`/manage/share/${encodeURIComponent(id)}?kind=doc` as Parameters<typeof router.push>[0]))}>{"分享"}</Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction
             disabled={busy}
             destructive={false}

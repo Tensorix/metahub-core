@@ -1,6 +1,8 @@
 import { plural, type Msg } from "./util.ts";
 
 export const tables = {
+  "视图": "Views",
+  "视图设置": "View settings",
   上一条: "Previous",
   下一条: "Next",
   复制失败: "Copy failed",

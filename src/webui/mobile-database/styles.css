@@ -1,0 +1,94 @@
+html,body,#app{height:100%;width:100%;margin:0;overflow:hidden}
+#app{display:block}
+.mobile-database{--fs-ui:calc(14px * var(--database-font-scale,1));--fs-sm:calc(12px * var(--database-font-scale,1))}
+.mobile-database .db{height:100%;box-sizing:border-box;padding:0 12px 8px;display:flex;flex-direction:column;overflow:hidden}
+.mobile-database .db-head{display:none}
+.mobile-database .db-view,.mobile-database .gridhost,.mobile-database .tablewrap{flex:1;min-height:0;display:flex;flex-direction:column}
+.mobile-database button{min-width:48px;min-height:48px;box-sizing:border-box}
+.mobile-database button:disabled{opacity:.4;cursor:default}
+.mobile-database .views{flex:none;margin:0;gap:8px;min-height:56px}
+.mobile-database .view-strip{align-self:stretch}
+.mobile-database .view-tab{padding:8px;white-space:nowrap;font-size:var(--fs-ui)}
+.mobile-database .view-tab .caret{opacity:1}
+.mobile-database .view-tab .nm{max-width:140px}
+.mobile-database .view-actions .btn{padding:8px 12px;white-space:nowrap}
+.mobile-database .toolbar{flex:none;display:flex;flex-wrap:wrap;gap:0;padding:4px 0;margin:0;min-width:0}
+.mobile-database .toolbar>.tbtn{padding:8px;flex:none}
+.mobile-database .toolbar>.spacer{display:none}
+.mobile-database .tb-search{order:2;flex:1 0 100%;min-width:0;height:48px;box-sizing:border-box;margin:4px 0}
+.mobile-database .tb-search input{width:0;min-width:0;flex:1}
+.mobile-database .tb-chips{flex:none;max-height:112px;overflow:auto}
+.mobile-database .tablescroll{flex:1;min-height:0;overflow:auto;touch-action:pan-x pan-y}
+.mobile-database .gridfoot{flex-shrink:0}
+.mobile-database .cell{height:calc(48px * var(--database-font-scale,1));min-height:0;box-sizing:border-box;font-size:var(--fs-ui)}
+.mobile-database .wrap .cell{height:calc(84px * var(--database-font-scale,1))}
+.mobile-database .rowopen,.mobile-database .cell-read-more{width:48px;height:48px;min-height:48px;border:0;box-shadow:none;background:var(--bg);border-radius:4px;top:0;right:0;opacity:1}
+.mobile-database .firstcell{padding-right:48px}
+.mobile-database .rowactions{right:0;top:0}
+.mobile-database .rowopen svg,.mobile-database .cell-read-more svg{width:16px;height:16px}
+.mobile-database .cell-read-more{position:static;flex:none}
+.mobile-database .cell-text-preview{min-width:0;flex:1}
+.mobile-database .board-wrap{flex:1;min-height:0;display:flex;flex-direction:column}
+.mobile-database .board{flex:1;min-height:0}
+.mobile-database .board-bar{flex:none;flex-wrap:wrap;gap:4px}
+.mobile-database .board-col{max-height:100%;display:flex;flex-direction:column}
+.mobile-database .board-col-head{flex:none;min-height:48px;padding-top:0;padding-bottom:0}
+.mobile-database .board-col-body{max-height:none!important;flex:1;min-height:0;scrollbar-width:thin}
+.mobile-database .kcard{padding:12px;cursor:pointer}
+.mobile-database .kcard-title{font-size:var(--fs-ui);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-right:0}
+.mobile-database .kcard-field{font-size:var(--fs-sm);line-height:1.4;max-height:calc(20px * var(--database-font-scale,1));overflow:hidden;white-space:nowrap}
+.mobile-database .kcard-actions{display:none}
+.mobile-database .cal{flex:1;min-height:0;overflow:auto;min-width:0}
+.mobile-database .cal-nav{display:flex;flex-wrap:wrap;gap:0}
+.mobile-database .cal-nav .spacer{display:none}
+.mobile-database .cal-nav .cal-title{font-size:var(--fs-ui)}
+.mobile-database .cal-day{min-width:0;min-height:calc(216px * var(--database-font-scale,1));padding:0 2px 4px}
+.mobile-database .cal-week{min-height:0}
+.mobile-database .cal-daynum{height:auto;min-height:48px;justify-content:center}
+.mobile-database .cal-date{width:100%;min-width:0}
+.mobile-database .cal-ev{min-height:48px;box-sizing:border-box;display:flex;align-items:center;font-size:var(--fs-sm);overflow:hidden;white-space:nowrap;touch-action:pan-y}
+.mobile-database .cal-more{min-width:0;width:100%;font-size:var(--fs-sm);overflow:hidden;padding:0}
+.mobile-database .cal-add{display:none}
+.mobile-database .cal-detail{position:fixed;inset:auto 8px 8px;margin:0;width:auto;max-width:none;max-height:75%;box-sizing:border-box}
+.mobile-database .cal-detail button{text-align:left;padding:8px}
+.mobile-database .tl{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.mobile-database .tl-toolbar{flex:none;display:flex;flex-wrap:wrap;gap:0}
+.mobile-database .tl-scroll{flex:1;min-height:0;overflow:auto}
+.mobile-database .tl-rowlabel{height:100%;padding:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-ui)}
+.mobile-database .tl-item{top:calc((var(--timeline-row) - 32px)/2);height:32px;min-width:28px;touch-action:pan-x pan-y;overflow:visible}
+.mobile-database .tl-item:before{content:'';position:absolute;inset:-8px 0}
+.mobile-database .tl-item .tl-h{display:none}
+.mobile-database .tl-item.selected{outline:2px solid var(--accent);outline-offset:2px}
+.mobile-database .tl-milestone{top:calc((var(--timeline-row) - 48px)/2);width:48px;height:48px;transform:none;background:transparent;box-shadow:none;margin-left:-10px;touch-action:pan-x pan-y}
+.mobile-database .tl-milestone:before{content:'';position:absolute;width:18px;height:18px;top:15px;left:15px;transform:rotate(45deg);background:var(--accent);border-radius:3px}
+.mobile-database .tl-milestone.selected{outline:2px solid var(--accent)}
+.mobile-database .tl-undated{max-height:35%;overflow:auto;border-bottom:1px solid var(--line);flex-shrink:0}
+.mobile-database .tl-undated-record{display:flex;gap:8px}
+.mobile-database .tl-undated-record>button:first-child{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.mobile-database .tl-selection{display:flex;flex-wrap:wrap;gap:4px 8px;padding:8px;background:var(--bg2);max-height:40%;overflow:auto;flex-shrink:0}
+.mobile-database .tl-selection strong{flex-basis:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mobile-database .tl-selection label{display:flex;align-items:center;gap:8px;min-width:0}
+.mobile-database .tl-selection input{min-height:48px;max-width:180px}
+.mobile-database .pop{max-width:calc(100vw - 24px);max-height:70vh;overflow:auto}
+.mobile-database input,.mobile-database textarea{font-size:calc(16px * var(--database-font-scale,1))}
+.mobile-database .celledit{flex-direction:column;overflow:auto}
+.mobile-database .cell-editor-context{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:var(--fs-sm);flex-shrink:0}
+.mobile-database .cell-editor-context span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mobile-database .cell-editor-controls{display:flex;gap:0;padding:0;flex-shrink:0;justify-content:space-between}
+.mobile-database .cell-editor-controls button{padding:8px 6px;font-size:13px;flex:1;color:var(--accent)}
+.mobile-db-error{padding:12px;background:var(--bg2);color:var(--fg);position:sticky;top:0;z-index:100}
+.mobile-database .grid:not(.nowrap) .cell{height:calc(84px * var(--database-font-scale,1))}
+.mobile-database .editor-save-status{padding:8px 12px;font-size:var(--fs-sm);color:var(--fg)}
+.mobile-database .pop.sheet{max-height:75vh;max-width:none;left:8px;right:8px;bottom:8px}
+.mobile-database .cal-day{min-height:calc(128px * var(--database-font-scale,1))}
+.mobile-database .cal-ev{min-height:calc(24px * var(--database-font-scale,1))}
+.mobile-database .tl-item.selected .tl-h{display:block;position:absolute;top:-8px;width:48px;height:48px;opacity:1;visibility:visible;background:var(--bg);border:1px solid var(--accent);border-radius:8px;box-sizing:border-box}
+.mobile-database .tl-item.selected .tl-h.l{left:-48px}
+.mobile-database .tl-item.selected .tl-h.r{right:-48px}
+.mobile-database .tl-item .tl-h::before{background:var(--accent);height:18px}
+.mobile-database .tl-item.selected{z-index:3}
+.mobile-database .rowactions{top:50%;bottom:auto;height:48px;padding:0;transform:translateY(-50%);opacity:1;pointer-events:auto}
+.mobile-database .firstcell{box-sizing:border-box}
+.mobile-database .tl-rowlabel{display:block;line-height:calc(var(--timeline-row) - 16px);border-right:1px solid var(--line)}
+.mobile-database .cal-more{white-space:nowrap;text-overflow:ellipsis;font-size:11px}
+.mobile-database .kcard{touch-action:pan-x pan-y}

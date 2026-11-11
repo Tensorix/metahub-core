@@ -1,3 +1,11 @@
+import { referenceSummaries, type ReferenceSummaryQuery } from '../../core/replica/service.ts';
+import { createRecordQuerySessions, type RecordQuery } from '../../shared/views/query.ts';
+const queryOwners = new WeakMap<DbDriver,ReturnType<typeof createRecordQuerySessions>>();
+function recordQueries(db:DbDriver) {
+  let queries=queryOwners.get(db);
+  if(!queries) { queries=createRecordQuerySessions(db,()=> (db.query('SELECT coalesce(max(seq),0) AS seq FROM crdt_changes').get() as {seq:number}).seq);queryOwners.set(db,queries); }
+  return queries;
+}
 import { z } from "zod";
 import { repairClock } from "../../core/integrity.ts";
 import { MhError } from "../../core/errors.ts";
@@ -499,6 +507,11 @@ function blobList(db: DbDriver) {
 }
 
 export const webuiRoutes: Route[] = [
+ {method:'POST',path:'/api/reference-summaries',summary:'Batch reference titles',response:z.unknown(),handler:handle(async(req,{db})=>referenceSummaries(db,(await req.json()) as ReferenceSummaryQuery))},
+  {method:'POST',path:'/api/record-query',summary:'Open a disposable record query',response:z.unknown(),handler:handle(async(req,{db})=>recordQueries(db).open(need(req,'db'),(await req.json()) as RecordQuery,()=>!req.signal.aborted))},
+  {method:'POST',path:'/api/record-query/page',summary:'Read a bounded query page',response:z.unknown(),handler:handle(async(req,{db})=>{const p=(await req.json()) as { offset?: number; limit?: number; partition?: string };return recordQueries(db).page(need(req,'id'),p.offset,p.limit,p.partition);})},
+  {method:'GET',path:'/api/record-query/locate',summary:'Locate a reading anchor',response:z.number(),handler:handle((req,{db})=>recordQueries(db).locate(need(req,'id'),need(req,'record')))},
+  {method:'DELETE',path:'/api/record-query',summary:'Close query',response:z.unknown(),handler:handle((req,{db})=>recordQueries(db).close(need(req,'id')))},
   {
     method: "GET",
     path: "/api/version",

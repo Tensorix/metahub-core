@@ -22,8 +22,19 @@ export function createDraftStore(db: DbDriver) {
     record_id TEXT NOT NULL, prop_id TEXT NOT NULL, value TEXT NOT NULL,
     status TEXT NOT NULL, error TEXT, updated_at INTEGER NOT NULL,
     PRIMARY KEY(record_id, prop_id)
+  );
+  CREATE TABLE IF NOT EXISTS replica_ui_preferences (
+    key TEXT PRIMARY KEY, value TEXT NOT NULL
   );`);
   return {
+    readPreferences(prefix: string): Record<string,string> {
+      const rows=db.query('SELECT key,value FROM replica_ui_preferences').all() as {key:string;value:string}[];
+      return Object.fromEntries(rows.filter(r=>r.key.startsWith(prefix)).map(r=>[r.key.slice(prefix.length),r.value]));
+    },
+    setPreference(key: string,value: string|null): void {
+      if(value===null)db.query('DELETE FROM replica_ui_preferences WHERE key=?').run(key);
+      else db.query('INSERT INTO replica_ui_preferences(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,value);
+    },
     readDocument(docId: string): DocumentDraft | null {
       return db.query("SELECT revision, title, body, version FROM replica_document_drafts WHERE doc_id = ?").get(docId) as DocumentDraft | null;
     },

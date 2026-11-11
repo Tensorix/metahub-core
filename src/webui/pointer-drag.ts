@@ -28,8 +28,27 @@ export interface DragCallbacks {
 export function startPointerDrag(down: PointerDownLike, cb: DragCallbacks): void {
   const threshold = cb.threshold ?? 4;
   let active = threshold === 0;
+  let last:PointerEvent|null=null,frame=0;
+  const edgeScroll=()=>{
+    if(active && last){
+      let el=document.elementFromPoint(last.clientX,last.clientY) as HTMLElement|null;
+      let moved=false;
+      while(el && el!==document.body){
+        const style=getComputedStyle(el),rect=el.getBoundingClientRect();
+        const speed=(pos:number,lo:number,hi:number)=>pos<lo+28?-12:pos>hi-28?12:0;
+        const x=/(auto|scroll)/.test(style.overflowX)?speed(last.clientX,rect.left,rect.right):0;
+        const y=/(auto|scroll)/.test(style.overflowY)?speed(last.clientY,rect.top,rect.bottom):0;
+        if(x||y){const beforeX=el.scrollLeft,beforeY=el.scrollTop;el.scrollLeft+=x;el.scrollTop+=y;moved ||= beforeX!==el.scrollLeft || beforeY!==el.scrollTop;}
+        el=el.parentElement;
+      }
+      if(moved)cb.onMove(last);
+    }
+    frame=requestAnimationFrame(edgeScroll);
+  };
+  frame=requestAnimationFrame(edgeScroll);
   const move = (ev: PointerEvent) => {
     if (ev.pointerId !== down.pointerId) return;
+    last=ev;
     if (!active) {
       if (Math.hypot(ev.clientX - down.clientX, ev.clientY - down.clientY) < threshold) return;
       active = true;
@@ -40,10 +59,11 @@ export function startPointerDrag(down: PointerDownLike, cb: DragCallbacks): void
   };
   const up = (ev: PointerEvent) => {
     if (ev.pointerId !== down.pointerId) return;
+    cancelAnimationFrame(frame);
     removeEventListener("pointermove", move);
     removeEventListener("pointerup", up);
     removeEventListener("pointercancel", up);
-    cb.onEnd?.(ev, active);
+    cb.onEnd?.(ev, active && ev.type !== "pointercancel");
   };
   addEventListener("pointermove", move, { passive: false });
   addEventListener("pointerup", up);

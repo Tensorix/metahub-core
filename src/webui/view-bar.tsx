@@ -36,11 +36,21 @@ export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDupl
   onDelete: (id: string) => void;
   children?: ComponentChildren;
 }) {
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const strip = tabsRef.current;
+    const tab = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !tab) return;
+    if (tab.offsetLeft < strip.scrollLeft) strip.scrollLeft = tab.offsetLeft;
+    else if (tab.offsetLeft + tab.offsetWidth > strip.scrollLeft + strip.clientWidth)
+      strip.scrollLeft = tab.offsetLeft + tab.offsetWidth - strip.clientWidth;
+  }, [activeId, views.length]);
   const viewMenu = (e: MouseEvent, v: ViewDef) => {
     e.preventDefault();
     e.stopPropagation();
     openMenu(e, (close) => (
       <>
+        <MenuLabel>{v.name}</MenuLabel>
         <MenuItem icon="pencil" label={t("重命名视图")} onClick={() => {
           close();
           promptDialog({ title: t("重命名视图"), value: v.name, confirmLabel: t("保存") }).then((name) => { if (name && name !== v.name) onRename(v.id, name); });
@@ -73,11 +83,21 @@ export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDupl
     ));
   return (
     <div class="views">
+      <div class="view-strip" ref={tabsRef} role="tablist" aria-label={t("视图")}>
       {views.map((v) => {
         const active = v.id === activeId;
         return (
-          <div
+          <button
             key={v.id}
+            role="tab" aria-selected={active} title={v.name}
+            tabIndex={active ? 0 : -1}
+            onKeyDown={e => {
+              const i = views.indexOf(v);
+              const next = e.key === 'ArrowRight' ? (i + 1) % views.length : e.key === 'ArrowLeft' ? (i - 1 + views.length) % views.length : e.key === 'Home' ? 0 : e.key === 'End' ? views.length - 1 : -1;
+              if (next < 0) return;
+              e.preventDefault(); onSelect(views[next]!.id);
+              tabsRef.current?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus();
+            }}
             class={"view-tab" + (active ? " active" : "")}
             onClick={(e) => (active ? viewMenu(e, v) : onSelect(v.id))}
             onContextMenu={(e) => viewMenu(e, v)}
@@ -85,12 +105,12 @@ export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDupl
             <Icon name={LAYOUT_ICON[v.layout]} />
             <span class="nm">{v.name}</span>
             {active && <Icon name="chevronDown" cls="ico sm caret" />}
-          </div>
+          </button>
         );
       })}
       <button class="view-add" {...tip(t("新建视图"))} onClick={addMenu}><Icon name="plus" cls="ico sm" /></button>
-      <div class="spacer" style={{ flex: 1 }} />
-      {children}
+      </div>
+      <div class="view-actions">{children}</div>
     </div>
   );
 }

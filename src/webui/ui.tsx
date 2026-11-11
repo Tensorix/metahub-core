@@ -175,7 +175,7 @@ function MenuHost() {
   // edges — pin these discrete menus to the bottom as an action sheet instead.
   // The editor's slash menu / format bar render their own .pop and stay
   // caret-anchored on purpose. Read per open; menus never survive a rotation.
-  const sheet = matchMedia(MOBILE_MQ).matches;
+  const sheet = document.body.classList.contains('mobile-database') || matchMedia(MOBILE_MQ).matches;
   // Escape closes the open menu (capture phase: the menu is the topmost layer);
   // ↑↓/Home/End move real focus between items unless an inner input owns keys.
   useEffect(() => {
@@ -187,6 +187,10 @@ function MenuHost() {
         consumeKey(e);
         closeMenu();
         return;
+      }
+      if(sheet && e.key==='Tab'){
+        const items=Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select,textarea,[tabindex="0"]') ?? []);
+        if(items.length){const index=items.indexOf(document.activeElement as HTMLElement);consumeKey(e);items[(index+(e.shiftKey?-1:1)+items.length)%items.length]!.focus();}return;
       }
       if (!ROVING_KEYS.test(e.key) || isEditableTarget(e.target)) return;
       const pop = ref.current;
@@ -207,6 +211,17 @@ function MenuHost() {
       if (state.restore?.isConnected) state.restore.focus();
     };
   }, [state]);
+  useLayoutEffect(()=>{
+    if(!state || !sheet || !ref.current)return;
+    const changed:HTMLElement[]=[];
+    let node:HTMLElement|null=ref.current.parentElement;
+    while(node && node!==document.body){
+      for(const sibling of Array.from(node.parentElement?.children ?? []))if(sibling!==node && sibling instanceof HTMLElement && !sibling.inert){sibling.inert=true;changed.push(sibling);}
+      node=node.parentElement;
+    }
+    ref.current.querySelector<HTMLElement>('button:not(:disabled),input')?.focus();
+    return()=>{changed.forEach(el=>el.inert=false);};
+  },[state,sheet]);
   useLayoutEffect(() => {
     if (!state || !ref.current || sheet) return setPos(null);
     const { x, y } = anchorPoint(state.anchor);
@@ -222,6 +237,7 @@ function MenuHost() {
     <div class="menu-layer" onMouseDown={(e) => e.target === e.currentTarget && closeMenu()}>
       <div
         ref={ref}
+        role={sheet ? "dialog" : undefined} aria-modal={sheet ? true : undefined} aria-label={sheet ? t("视图设置") : undefined}
         class={"pop" + (sheet ? " sheet" : "")}
         style={sheet ? undefined : { left: pos?.left ?? -9999, top: pos?.top ?? -9999, minWidth: state.minWidth }}
         onMouseDown={(e) => e.stopPropagation()}

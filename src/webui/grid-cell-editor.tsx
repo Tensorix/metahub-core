@@ -5,14 +5,18 @@ import { useLayoutEffect, useRef } from "preact/hooks";
 
 /** Escape the table's overflow-x scrollport, which also clips vertical overflow.
  *  Keep the display cell in flow so editing never changes the row height. */
-export function GridCellEditor({ children }: { children: ComponentChildren }) {
+export function GridCellEditor({ children, cell: getCell, recordId, propId }: { children: ComponentChildren; cell?:()=>HTMLElement|null; recordId?:string;propId?:string }) {
   const anchor = useRef<HTMLSpanElement>(null);
   const editor = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const cell = anchor.current!.closest("td")!;
+    const cell = getCell?.() ?? anchor.current!.closest("td")!;
+    if(!cell)return;
+    let lastRect=cell.getBoundingClientRect();
     const el = editor.current!;
+    el.dataset.recordId = recordId ?? cell.closest<HTMLElement>("tr[data-row-id]")?.dataset.rowId;
+    el.dataset.propId = propId ?? cell.dataset.propId;
     const position = () => {
-      const rect = cell.getBoundingClientRect();
+      const rect = cell.isConnected ? (lastRect=cell.getBoundingClientRect()) : lastRect;
       const viewport = window.visualViewport;
       const x = viewport?.offsetLeft ?? 0;
       const y = viewport?.offsetTop ?? 0;
@@ -20,7 +24,8 @@ export function GridCellEditor({ children }: { children: ComponentChildren }) {
       const height = viewport?.height ?? window.innerHeight;
       const gap = 4;
       const availableHeight = Math.max(0, height - gap * 2);
-      const editorWidth = Math.min(rect.width, Math.max(0, width - gap * 2));
+      const desiredWidth=window.matchMedia("(pointer: coarse)").matches ? Math.max(rect.width,300) : rect.width;
+      const editorWidth = Math.min(desiredWidth, Math.max(0, width - gap * 2));
       el.style.width = `${editorWidth}px`;
       el.style.minHeight = `${Math.min(rect.height, availableHeight)}px`;
       el.style.maxHeight = `${availableHeight}px`;

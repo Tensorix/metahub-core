@@ -161,6 +161,8 @@ function RootStack() {
             gestureEnabled: false,
           }}
         />
+        <Stack.Screen name="manage/share/[id]" options={{ headerShown: true, headerBackButtonDisplayMode: "minimal", title: "分享" }} />
+        <Stack.Screen name="manage/activity/[id]" options={{ headerShown: true, headerBackButtonDisplayMode: "minimal", title: "最近动态" }} />
         <Stack.Screen
           name="manage/view/[id]"
           options={{

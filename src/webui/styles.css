@@ -1167,6 +1167,16 @@
   .popout-btn .i-card { transition:transform .18s ease; }
   .popout-btn:hover .i-card { transform:translateY(-2px); }
   .toolbar { display:flex; align-items:center; gap:2px; padding:8px 0 6px; flex-wrap:wrap; }
+  /* Keep database controls anchored to the main pane while records scroll. */
+  .content:has(.db-footer) { padding-bottom:48px; }
+  .db-footer { position:absolute; inset:auto 0 0; z-index:20; background:var(--bg); border-top:1px solid var(--line); }
+  .db-footer .toolbar { min-height:48px; padding:8px 36px; box-sizing:border-box; }
+  .db-footer .tb-search { min-width:0; max-width:100%; }
+  @media (max-width:768px) and (pointer:coarse) {
+    .db-footer { position:fixed; padding-bottom:env(safe-area-inset-bottom); }
+    .db-footer .toolbar { padding-inline:14px; }
+    .content:has(.db-footer) { padding-bottom:calc(80px + env(safe-area-inset-bottom)); }
+  }
   .toolbar .spacer { flex:1; }
   .tbtn { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:var(--radius-sm); color:var(--fg-soft); font-size:13px; font-weight:500; white-space:nowrap; }
   .tbtn:hover { background:var(--hover-2); color:var(--fg); }
@@ -3219,3 +3229,23 @@
 .sync-upgrade-dialog p { margin:8px 0 16px; }
 .sync-upgrade-dialog select { display:block; margin-bottom:12px; max-width:100%; }
 .sync-upgrade-dialog .btn + .btn { margin-left:8px; }
+/* Shared virtual grid: previews have stable geometry; editing overlays escape it. */
+.grid tbody .cell-td{height:80px;max-height:80px;box-sizing:border-box}.grid.nowrap tbody .cell-td{height:44px;max-height:44px}.grid tbody .cell{max-height:68px;overflow:hidden}.grid.nowrap tbody .cell{max-height:32px}.grid tbody .cell .txt{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.grid.nowrap tbody .cell .txt{-webkit-line-clamp:1}.tablescroll{max-height:70vh;overflow:auto}.grid thead{position:sticky;top:0;z-index:3;background:var(--bg)}
+.board-col{width:280px!important;min-width:280px!important;max-width:280px!important;flex:none}.board-col-body{overscroll-behavior:contain}.tl-scroll{overflow:auto}.tl-axis{position:sticky;top:0;z-index:4}
+.cell-editor-controls{display:none}@media(pointer:coarse){.cell-editor-controls{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px;border-top:1px solid var(--line)}.cell-editor-controls button{padding:6px;font-size:13px;color:var(--accent);min-height:36px}.tl-item:not(.selected) .tl-h{visibility:hidden}.tl-item.selected{outline:2px solid var(--accent)}}
+@media(pointer:coarse){.celledit{flex-direction:column;align-items:stretch}.cell-editor-controls{flex:none;width:100%;white-space:nowrap}.cell-editor-controls button{flex:none;white-space:nowrap}.celledit .inlineedit{flex:none;min-height:44px}.celledit textarea.inlineedit{min-height:72px}}
+
+/* Shared database chrome: only the views scroll, primary actions stay in view. */
+.views{overflow:visible;min-width:0;align-items:center;gap:8px}
+.view-strip{display:flex;align-items:center;gap:2px;min-width:0;flex:1;overflow-x:auto;scrollbar-width:none;position:relative}
+.view-strip::-webkit-scrollbar{display:none}
+.view-actions{flex:none;display:flex;align-items:center}
+.view-tab{flex:none;border:0;background:transparent;font:inherit;color:var(--muted);text-align:left}
+.view-tab .nm{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.view-tab:focus-visible,.cal-date:focus-visible,[role=button]:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.cell-editor-context{display:none}
+.cal-date{background:transparent;color:inherit;border:0;font:inherit;padding:0}
+.cal-detail{color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:16px;max-width:calc(100vw - 32px);max-height:80vh;overflow:auto}
+.cal-detail[open]{display:flex;flex-direction:column;gap:8px}
+.cal-detail::backdrop{background:rgb(0 0 0 / .32)}
+.tl-rowlabel{border:0;border-bottom:1px solid var(--line);font:inherit;color:inherit;text-align:left}

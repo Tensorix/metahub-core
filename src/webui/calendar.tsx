@@ -1,8 +1,11 @@
+import type { DatabaseQueryWindow } from '../shared/views/database-source';
+import { startPointerDrag } from "./pointer-drag";
+import { deferTouchDrag } from "./touch-intent";
 /** @jsxImportSource preact */
 // Calendar (month) view: positions records on a month grid by a date property.
 // Events can be dragged to another day to reschedule, and days have an inline
 // add button that creates a record pre-dated to that day.
-import { useRef, useState } from "preact/hooks";
+import { useRef, useState, useEffect, useLayoutEffect } from "preact/hooks";
 import type { Prop, Rec } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
 import { optColor } from "./cells.tsx";
@@ -17,12 +20,14 @@ const MAX_PER_DAY = 3;
 export function CalendarView({
   props,
   records,
+  queryWindow,
   onCommitValue,
   onCreate,
   onOpenRecord,
   dateField,
   onDateFieldChange,
 }: {
+  queryWindow?: DatabaseQueryWindow;
   props: Prop[];
   records: Rec[];
   onCommitValue: (rec: Rec, prop: Prop, value: unknown) => void;
@@ -41,6 +46,21 @@ export function CalendarView({
   const [cursor, setCursor] = useState<{ y: number; m: number }>({ y: now.getFullYear(), m: now.getMonth() });
   const dragRef = useRef<{ id: string; pointerId: number; startX: number; startY: number; active: boolean; ghost: HTMLElement | null } | null>(null);
 
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [detail,setDetail]=useState<string|null>(null),[detailPage,setDetailPage]=useState(0);
+  useEffect(()=>{
+    if(!dateProp || !queryWindow)return;
+    for(const day of monthMatrix(cursor.y,cursor.m).flat()) void queryWindow.ensure(0,3,'date:'+toISO(day),3);
+  },[queryWindow,queryWindow?.index?.id,cursor.y,cursor.m,dateProp?.id]);
+  useEffect(()=>{if(detail!==null)void queryWindow?.ensure(detailPage*100,(detailPage+1)*100,'date:'+detail);},[detail,detailPage,queryWindow,queryWindow?.index?.id]);
+  useLayoutEffect(()=>{
+    const dialog=dialogRef.current;
+    if(detail===null || !dialog)return;
+    const restore=document.activeElement as HTMLElement | null;
+    dialog.showModal();
+    dialog.querySelector<HTMLButtonElement>('button')?.focus();
+    return ()=>{dialog.close();if(restore?.isConnected)restore.focus();};
+  },[detail]);
   if (!dateProp) {
     return <div class="view-placeholder">{t("日历视图需要一个「日期」属性。请在表格视图中添加一个日期列后再切换到日历。")}</div>;
   }
@@ -52,7 +72,7 @@ export function CalendarView({
   const events = records
     .map((rec) => ({ rec, date: parseDate(rec.cells[dateProp.id]) }))
     .filter((e): e is { rec: Rec; date: Date } => e.date != null);
-  const eventsOn = (day: Date) => events.filter((e) => sameDay(e.date, day));
+  const eventsOn = (day: Date) => queryWindow ? queryWindow.rows('date:'+toISO(day)).map(rec=>({rec,date:day})) : events.filter((e) => sameDay(e.date, day));
 
   const step = (delta: number) => {
     const m = cursor.m + delta;
@@ -64,6 +84,7 @@ export function CalendarView({
     document.querySelectorAll(".cal-day.drop-into").forEach((n) => n.classList.remove("drop-into"));
 
   const startDrag = (e: any, rec: Rec) => {
+    if(deferTouchDrag(e,ev=>startDrag(ev,rec),()=>onOpenRecord(rec.id)))return;
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -85,21 +106,18 @@ export function CalendarView({
     const up = (ev: PointerEvent) => {
       const d = dragRef.current;
       if (!d || d.pointerId !== ev.pointerId) return;
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      removeEventListener("pointercancel", up);
+
       d.ghost?.remove();
       document.body.classList.remove("table-dragging");
       clearDrop();
       dragRef.current = null;
+      if(ev.type==="pointercancel")return;
       if (!d.active) { onOpenRecord(rec.id); return; } // click without drag → open
       const cell = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".cal-day") as HTMLElement | null;
       const iso = cell?.dataset.iso;
       if (iso && iso !== String(rec.cells[dateProp.id] ?? "")) onCommitValue(rec, dateProp, iso);
     };
-    addEventListener("pointermove", move, { passive: false });
-    addEventListener("pointerup", up);
-    addEventListener("pointercancel", up);
+    startPointerDrag(e,{onMove:move,onEnd:up});
   };
 
   const pickField = (e: MouseEvent) =>
@@ -114,7 +132,15 @@ export function CalendarView({
 
   return (
     <div class="cal">
+      {detail!==null && <dialog ref={dialogRef} class="cal-detail" aria-label="日期记录" onCancel={()=>setDetail(null)}>
+        <button onClick={()=>setDetail(null)}>关闭</button><strong>{detail || '未排期'}</strong>
+        <button onClick={()=>onCreate(detail?{[dateProp.id]:detail}:{})}>新增记录</button>
+        {(queryWindow?.rows('date:'+detail) ?? records.filter(rec=>rec && (parseDate(rec.cells[dateProp.id]) ? toISO(parseDate(rec.cells[dateProp.id])!) : '')===detail)).slice(detailPage*100,(detailPage+1)*100).map(rec=><button onClick={()=>onOpenRecord(rec.id)}>{titleText(rec,titleProp) || '无标题'}</button>)}
+        <button disabled={!detailPage} onClick={()=>setDetailPage(p=>p-1)}>上一页</button>
+        <button disabled={(detailPage+1)*100>=(queryWindow?.index?.partitions['date:'+detail]??records.filter(rec=>rec && (parseDate(rec.cells[dateProp.id]) ? toISO(parseDate(rec.cells[dateProp.id])!) : '')===detail).length)} onClick={()=>setDetailPage(p=>p+1)}>下一页</button>
+      </dialog>}
       <div class="cal-nav">
+        <button class="tbtn" onClick={()=>{setDetail('');setDetailPage(0);}}>未排期 {queryWindow?.index?.partitions['date:'] ?? 0}</button>
         <button class="iconbtn" title={t("上个月")} onClick={() => step(-1)}><Icon name="chevron" cls="ico flip" /></button>
         <div class="cal-title">{fmtDate(new Date(cursor.y, cursor.m, 1), "yearMonth")}</div>
         <button class="iconbtn" title={t("下个月")} onClick={() => step(1)}><Icon name="chevron" cls="ico" /></button>
@@ -138,16 +164,17 @@ export function CalendarView({
               return (
                 <div
                   class={"cal-day" + (dim ? " dim" : "") + (isToday ? " today" : "")}
+                  role="group" aria-label={iso}
                   data-iso={iso}
                   key={iso}
                   onClick={(e) => {
                     // Click empty space in the day to add a record dated to it.
                     if ((e.target as HTMLElement).closest(".cal-ev,.cal-add,.cal-more")) return;
-                    onCreate({ [dateProp.id]: iso });
+                    setDetail(iso);setDetailPage(0);
                   }}
                 >
                   <div class="cal-daynum">
-                    <span>{day.getDate()}</span>
+                    <button class="cal-date" aria-label={`${iso}，${evs.length} 条记录`} onClick={e=>{e.stopPropagation();setDetail(iso);setDetailPage(0);}}>{day.getDate()}</button>
                     <button class="cal-add" title={t("新建记录")} onClick={(e) => { e.stopPropagation(); onCreate({ [dateProp.id]: iso }); }}>
                       <Icon name="plus" cls="ico sm" />
                     </button>
@@ -155,6 +182,7 @@ export function CalendarView({
                   <div class="cal-events">
                     {evs.slice(0, MAX_PER_DAY).map(({ rec }) => (
                       <div
+                        role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter" || e.key===" "){e.preventDefault();onOpenRecord(rec.id);}}}
                         class="cal-ev"
                         key={rec.id}
                         style={{ ["--c" as any]: optColor(titleText(rec, titleProp) || rec.id) }}
@@ -168,6 +196,7 @@ export function CalendarView({
                         class="cal-more"
                         onClick={(e) => {
                           e.stopPropagation();
+                          if(queryWindow){setDetail(iso);setDetailPage(0);return;}
                           openMenu(e, (close) => (
                             <>
                               <MenuLabel>{t("{date} · {n} 条记录", { date: iso, n: evs.length })}</MenuLabel>

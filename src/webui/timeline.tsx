@@ -1,9 +1,14 @@
+import type { DatabaseQueryWindow } from '../shared/views/database-source';
+import { startPointerDrag } from "./pointer-drag";
+import { deferTouchDrag } from "./touch-intent";
 /** @jsxImportSource preact */
 // Timeline (gantt) view: lays records on a horizontal day axis using a start
 // date and an optional end date. Bars span start→end; records with only a start
 // render as a single-point milestone. Drag the bar body to shift the whole
 // range, or the left/right edge handle to change just the start/end.
-import { useRef, useState } from "preact/hooks";
+import { useDatabasePresentation, useViewport } from "./database-presentation";
+import { virtualWindow } from "./virtual-window";
+import { useRef, useState, useEffect } from "preact/hooks";
 import type { Prop, Rec } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "./ui.tsx";
@@ -11,8 +16,8 @@ import { parseDate, toISO, addDays, daysBetween, today } from "./date.ts";
 import { fmtDate } from "./i18n/fmt.ts";
 import { t } from "./i18n/t.ts";
 
-const SIDE = 200; // px width of the sticky record-name column
-const ROW = 36; // px row height
+const DESKTOP_SIDE = 200; // px width of the sticky record-name column
+const DESKTOP_ROW = 36; // px row height
 const HEAD = 44; // px axis height
 const DAY_PX = 28; // px per day
 const PAD = 3; // days of padding on each side of the data range
@@ -20,12 +25,14 @@ const PAD = 3; // days of padding on each side of the data range
 export function TimelineView({
   props,
   records,
+  queryWindow,
   onCommitValue,
   onOpenRecord,
   startField,
   endField,
   onFieldsChange,
 }: {
+  queryWindow?: DatabaseQueryWindow;
   props: Prop[];
   records: Rec[];
   onCommitValue: (rec: Rec, prop: Prop, value: unknown) => void;
@@ -36,6 +43,12 @@ export function TimelineView({
   endField?: string | null | "none";
   onFieldsChange?: (f: { start?: string; end?: string | "none" }) => void;
 }) {
+  const [scrollRef,size] = useViewport<HTMLDivElement>();
+  const presentation = useDatabasePresentation(size.width);
+  const SIDE = presentation.timelineSide, ROW = presentation.timelineRow;
+  const [showUndated,setShowUndated] = useState(false);
+  const [selected,setSelected]=useState<string|null>(null);
+  const [viewport,setViewport]=useState({top:0,left:0,width:1024,height:700});
   const dateProps = props.filter((p) => p.type === "date");
   const [ownStartId, setOwnStartId] = useState<string | null>(null);
   const [ownEndId, setOwnEndId] = useState<string | null | "none">(null);
@@ -50,6 +63,11 @@ export function TimelineView({
   const dragRef = useRef<{ pointerId: number; startX: number } | null>(null);
   const guideRef = useRef<HTMLDivElement>(null);
 
+  const partition = presentation.touch ? 'date:scheduled' : undefined;
+  const sourceRows = queryWindow && partition ? queryWindow.rows(partition) : records;
+  useEffect(()=>{const start=Math.max(0,Math.floor(viewport.top/ROW)-4);void queryWindow?.ensure(start,start+Math.ceil(size.height/ROW)+8,partition);},[queryWindow,queryWindow?.index?.id,viewport.top,ROW,size.height,partition]);
+  const [undatedPage,setUndatedPage]=useState(0);
+  useEffect(()=>{if(showUndated)void queryWindow?.ensure(undatedPage*100,(undatedPage+1)*100,'date:');},[showUndated,undatedPage,queryWindow,queryWindow?.index?.id]);
   if (!startProp) {
     return <div class="view-placeholder">{t("时间轴视图需要一个「日期」属性作为开始日期。请在表格视图中添加一个日期列后再切换到时间轴。")}</div>;
   }
@@ -58,7 +76,7 @@ export function TimelineView({
   const now = today();
 
   // Resolve each record's start/end days.
-  const rows = records.map((rec) => {
+  const rows = (presentation.touch && !queryWindow ? sourceRows.filter(rec=>rec && parseDate(rec.cells[startProp.id])) : sourceRows).map((rec) => {
     const s = parseDate(rec.cells[startProp.id]);
     const e = endProp ? parseDate(rec.cells[endProp.id]) : null;
     return { rec, s, e: e && s && e < s ? s : e };
@@ -80,6 +98,8 @@ export function TimelineView({
     min = addDays(now, -10);
     max = addDays(now, 14);
   }
+  if(queryWindow?.index?.range.min)min=parseDate(queryWindow.index.range.min)!;
+  if(queryWindow?.index?.range.max)max=parseDate(queryWindow.index.range.max)!;
   const rangeStart = addDays(min, -PAD);
   const rangeEnd = addDays(max, PAD);
   const totalDays = daysBetween(rangeStart, rangeEnd) + 1;
@@ -87,8 +107,9 @@ export function TimelineView({
   const xForOffset = (o: number) => SIDE + o * DAY_PX;
   const todayOffset = daysBetween(rangeStart, now);
 
-  const days: Date[] = [];
-  for (let i = 0; i < totalDays; i++) days.push(addDays(rangeStart, i));
+  const datesWindow=virtualWindow(totalDays,DAY_PX,Math.max(0,viewport.left-SIDE),size.width);
+  const rowsWindow=virtualWindow(rows.length,ROW,viewport.top,size.height);
+  const days=Array.from({length:datesWindow.end-datesWindow.start},(_,i)=>addDays(rangeStart,i+datesWindow.start));
 
   const commitDelta = (rec: Rec, s: Date | null, e: Date | null, mode: "move" | "l" | "r", deltaDays: number) => {
     if (deltaDays === 0) return;
@@ -117,9 +138,12 @@ export function TimelineView({
   };
 
   const startDrag = (ev: any, rec: Rec, s: Date | null, e: Date | null, mode: "move" | "l" | "r", el: HTMLElement) => {
+    if(deferTouchDrag(ev,next=>startDrag(next,rec,s,e,mode,el),()=>setSelected(rec.id)))return;
     if (ev.button !== 0 || !s) return;
     ev.preventDefault();
     ev.stopPropagation();
+    const startScroll=scrollRef.current?.scrollLeft ?? 0;
+    const delta=(event:PointerEvent)=>event.clientX-ev.clientX+(scrollRef.current?.scrollLeft ?? 0)-startScroll;
     const baseLeft = el.offsetLeft;
     const baseWidth = el.offsetWidth;
     let moved = false;
@@ -131,8 +155,8 @@ export function TimelineView({
     const move = (e2: PointerEvent) => {
       const d = dragRef.current;
       if (!d || d.pointerId !== e2.pointerId) return;
-      const dxDays = Math.round((e2.clientX - d.startX) / DAY_PX);
-      if (Math.abs(e2.clientX - d.startX) > 3) moved = true;
+      const dxDays = Math.round(delta(e2) / DAY_PX);
+      if (Math.abs(delta(e2)) > 3) moved = true;
       let edgeX: number; // canvas-x of the edge being aligned, and its date
       let edgeDate: Date;
       if (mode === "move") {
@@ -154,19 +178,16 @@ export function TimelineView({
     const up = (e2: PointerEvent) => {
       const d = dragRef.current;
       if (!d || d.pointerId !== e2.pointerId) return;
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      removeEventListener("pointercancel", up);
+
       dragRef.current = null;
       grip?.classList.remove("dragging");
       hideGuide();
-      const dxDays = Math.round((e2.clientX - d.startX) / DAY_PX);
+      if(e2.type==="pointercancel"){el.style.left=baseLeft+"px";el.style.width=baseWidth+"px";return;}
+      const dxDays = Math.round(delta(e2) / DAY_PX);
       if (!moved) { onOpenRecord(rec.id); return; }
       commitDelta(rec, s, e, mode, dxDays);
     };
-    addEventListener("pointermove", move, { passive: false });
-    addEventListener("pointerup", up);
-    addEventListener("pointercancel", up);
+    startPointerDrag(ev,{onMove:move,onEnd:up});
   };
 
   // Give an unscheduled record a start date (and matching end, if an end field
@@ -202,18 +223,25 @@ export function TimelineView({
     ));
 
   return (
-    <div class="tl">
+    <div class="tl" style={{"--timeline-row":`${ROW}px`}}>
       <div class="tl-toolbar">
         <button class="tbtn" onClick={pickField}>
           <Icon name="timeline" cls="ico sm" />
           {startProp.name}{endProp ? ` → ${endProp.name}` : t("（里程碑）")}
         </button>
+        <button class="tbtn" onClick={()=>{if(scrollRef.current)scrollRef.current.scrollLeft=Math.max(0,todayOffset*DAY_PX-(size.width-SIDE)/2);}}>今天</button>
+        {presentation.touch && <button class="tbtn" aria-expanded={showUndated} onClick={()=>setShowUndated(v=>!v)}>未排期 {queryWindow?.index?.partitions['date:'] ?? records.filter(r=>r && !parseDate(r.cells[startProp.id])).length}</button>}
       </div>
-      <div class="tl-scroll">
+      {showUndated && <div class="tl-undated">
+        {(queryWindow ? queryWindow.rows('date:') : records.filter(r=>r && !parseDate(r.cells[startProp.id]))).slice(undatedPage*100,(undatedPage+1)*100).map(rec=><div class="tl-undated-record" key={rec.id}><button onClick={()=>onOpenRecord(rec.id)}>{titleText(rec,titleProp) || '无标题'}</button><button onClick={()=>scheduleStart(rec,now)}>排到今天</button></div>)}
+        <div><button disabled={!undatedPage} onClick={()=>setUndatedPage(p=>p-1)}>上一页</button><button disabled={(undatedPage+1)*100>=(queryWindow?.index?.partitions['date:'] ?? records.length)} onClick={()=>setUndatedPage(p=>p+1)}>下一页</button></div>
+      </div>}
+      {presentation.touch && selected && (()=>{const rec=queryWindow?.find(selected) ?? records.find(r=>r?.id===selected);if(!rec)return null;return <div class="tl-selection" role="region" aria-label="任务操作"><strong>{titleText(rec,titleProp) || '无标题'}</strong><button onClick={()=>onOpenRecord(rec.id)}>查看详情</button><button onClick={()=>setSelected(null)}>取消选择</button><label>开始日期<input type="date" value={String(rec.cells[startProp.id] ?? '')} onChange={ev=>{if(ev.currentTarget.value)onCommitValue(rec,startProp,ev.currentTarget.value);}}/></label>{endProp && <label>结束日期<input type="date" value={String(rec.cells[endProp.id] ?? '')} onChange={ev=>onCommitValue(rec,endProp,ev.currentTarget.value || null)}/></label>}<button onClick={()=>commitDelta(rec,parseDate(rec.cells[startProp.id]),endProp?parseDate(rec.cells[endProp.id]):null,'move',-1)}>提前一天</button><button onClick={()=>commitDelta(rec,parseDate(rec.cells[startProp.id]),endProp?parseDate(rec.cells[endProp.id]):null,'move',1)}>推迟一天</button></div>;})()}
+      <div class="tl-scroll" ref={scrollRef} style={{maxHeight:presentation.touch ? undefined : "70vh"}} onScroll={event=>{const el=event.currentTarget;setViewport({top:el.scrollTop,left:el.scrollLeft,width:el.clientWidth,height:el.clientHeight});}}>
         <div class="tl-canvas" style={{ width: canvasW, height: HEAD + rows.length * ROW + 8 }}>
           <div class="tl-axis" style={{ height: HEAD }}>
             <div class="tl-corner" style={{ width: SIDE }}>{t("记录")}</div>
-            {days.map((d, i) => {
+            {days.map((d, index) => { const i=index+datesWindow.start;
               const first = d.getDate() === 1;
               return (
                 <div
@@ -228,12 +256,12 @@ export function TimelineView({
             })}
           </div>
 
-          {rows.map(({ rec, s, e }, ri) => {
+          {rows.slice(rowsWindow.start,rowsWindow.end).map(({ rec, s, e }, index) => { const ri=index+rowsWindow.start;
             const offset = s ? daysBetween(rangeStart, s) : 0;
             const span = s && e ? daysBetween(s, e) + 1 : 1;
             return (
               <div class="tl-row" key={rec.id} style={{ top: HEAD + ri * ROW, height: ROW }}>
-                <div class="tl-rowlabel" style={{ width: SIDE }}>{titleText(rec, titleProp) || <span class="muted">{t("无标题")}</span>}</div>
+                <button class="tl-rowlabel" onClick={()=>onOpenRecord(rec.id)} style={{ width: SIDE }}>{titleText(rec, titleProp) || <span class="muted">{t("无标题")}</span>}</button>
                 {!s ? (
                   <div class="tl-track-empty" style={{ left: SIDE }} onClick={(ev) => placeAt(ev, rec)} title={t("点击空白处排期")}>
                     <button class="tl-schedule" style={{ left: SIDE + 8 }} onClick={(ev) => { ev.stopPropagation(); scheduleStart(rec, now); }}>
@@ -242,7 +270,8 @@ export function TimelineView({
                   </div>
                 ) : e ? (
                   <div
-                    class="tl-item"
+                    role="button" tabIndex={0} aria-pressed={selected===rec.id} aria-label={titleText(rec,titleProp)} onKeyDown={ev=>{if(ev.key==="Enter" || ev.key===" "){ev.preventDefault();setSelected(rec.id);}}}
+                    class={"tl-item"+(selected===rec.id?" selected":"")}
                     style={{ left: xForOffset(offset), width: span * DAY_PX }}
                     onPointerDown={(ev) => startDrag(ev, rec, s, e, "move", ev.currentTarget as HTMLElement)}
                   >
@@ -252,7 +281,8 @@ export function TimelineView({
                   </div>
                 ) : (
                   <div
-                    class="tl-milestone"
+                    role="button" tabIndex={0} aria-label={titleText(rec,titleProp)} aria-pressed={selected===rec.id} onKeyDown={ev=>{if(ev.key==="Enter" || ev.key===" "){ev.preventDefault();setSelected(rec.id);}}}
+                    class={"tl-milestone"+(selected===rec.id?" selected":"")}
                     style={{ left: xForOffset(offset) }}
                     title={toISO(s)}
                     onPointerDown={(ev) => startDrag(ev, rec, s, null, "move", ev.currentTarget as HTMLElement)}

@@ -1,5 +1,8 @@
+import { flushSync } from 'preact/compat';
+import { DatabaseQueryWindow, type DatabaseHost } from '../shared/views/database-source';
+import { deferTouchDrag } from "./touch-intent";
 /** @jsxImportSource preact */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useMemo, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   api,
   TYPE_META,
@@ -66,6 +69,8 @@ import {
 } from "./view-model.ts";
 import { ViewTabs, ViewToolbar, ChipRow, openRuleEditor, type ViewPatch, type PickRefs } from "./view-bar.tsx";
 import { parseGrid, pastePatches, type CellPatch } from "./table-paste.ts";
+import { virtualWindow, virtualColumns } from "./virtual-window";
+import { useDatabasePresentation } from "./database-presentation";
 import { GridCellEditor } from "./grid-cell-editor.tsx";
 
 
@@ -106,6 +111,8 @@ export function DatabaseView({
   tabReq,
   onTabReq,
   onError,
+  embedded = false,
+  host,
 }: {
   db: Db;
   /** Record deep link from the hash (#/db/<id>/<rec>); the peek mirrors it. */
@@ -120,9 +127,16 @@ export function DatabaseView({
    *  so a repeated request is always a null→value change and fires again. */
   onTabReq: (tab: DbTab | null) => void;
   onError: (m: string) => void;
+  embedded?: boolean;
+  host?: DatabaseHost;
 }) {
+  const presentation = useDatabasePresentation();
   const [props, setProps] = useState<Prop[]>([]);
   const [records, setRecords] = useState<Rec[]>([]);
+  const [queryRevision,setQueryRevision]=useState(0);
+  const [,redrawQuery]=useState(0);
+  const queryWindow=useMemo(()=>new DatabaseQueryWindow(api,()=>{setRecords(queryWindow.rows());redrawQuery(n=>n+1);},e=>{if(e.message.includes('stale'))setQueryRevision(n=>n+1);else onError(e.message);}),[db.id]);
+  useEffect(()=>()=>{void queryWindow.dispose().catch(()=>{});},[queryWindow]);
   const shared = useSharedTargets();
   const [sel, setSel] = useState<Set<string>>(new Set());
   // Saved views live in db.meta.views (replicated); the active one is a device
@@ -143,7 +157,8 @@ export function DatabaseView({
     }, 300);
   };
   const updateView = (patch: ViewPatch, id = view.id) => persistViews(viewsRef.current.map((v) => (v.id === id ? { ...v, ...patch } : v)));
-  const selectView = (id: string) => {
+  const selectView = async (id: string) => {
+    if(host && loaded){try{await host.flush();}catch(e){onError(String((e as Error).message));return;}}
     setActiveViewId(id);
     localStorage.setItem(`mh.db.view.${db.id}`, id);
     setCellSel(null);
@@ -172,7 +187,7 @@ export function DatabaseView({
   const sorting = sort.length > 0;
   const [query, setQuery] = useState("");
   // seed: type-to-edit's first character — the editor opens with it, replacing the old value.
-  const [editing, setEditing] = useState<{ rec: string; prop: string; seed?: string } | null>(null);
+  const [editing, setEditing] = useState<{ rec: string; prop: string; seed?: string; row?:Rec; r?:number;c?:number } | null>(null);
   // Mirror for the SYNCED_EVENT handler below (its closure outlives renders).
   const editingRef = useRef(editing);
   editingRef.current = editing;
@@ -185,7 +200,17 @@ export function DatabaseView({
   // The row drag handle lives *outside* the table card (in the left margin), so it
   // can't be a table cell (clipped by .tablescroll/.tablewrap). A single handle
   // follows the hovered row: `grip` holds its row id + geometry relative to .gridhost.
+  const [viewport, setViewport] = useState({top:0,left:0,width:1024,height:700});
   const tableRef = useRef<HTMLTableElement>(null);
+  useEffect(()=>{
+    const key=`mh.db.position.${db.id}.${view.id}`;
+    setViewport(v=>({...v,top:0,left:0}));
+    let saved:any;try{saved=JSON.parse(localStorage.getItem(key)??'null');}catch{}
+    if(saved && Number.isFinite(saved.top)){setViewport(v=>({...v,top:saved.top,left:saved.left??0}));requestAnimationFrame(()=>{const el=tableRef.current?.closest('.tablescroll');if(el){el.scrollTop=saved.top;el.scrollLeft=saved.left??0;}});}
+    let timer:ReturnType<typeof setTimeout>;
+    const save=(e:Event)=>{const el=e.target as HTMLElement;if(!el.matches?.('.tablescroll,.tl-scroll,.board,.board-col-body'))return;clearTimeout(timer);timer=setTimeout(()=>localStorage.setItem(key,JSON.stringify({top:el.scrollTop,left:el.scrollLeft})),120);};
+    document.addEventListener('scroll',save,true);return()=>{clearTimeout(timer);document.removeEventListener('scroll',save,true);};
+  },[db.id,view.id]);
   const gridHostRef = useRef<HTMLDivElement>(null);
   const [grip, setGrip] = useState<{ id: string; top: number; height: number } | null>(null);
   // Row-reorder drop indicator: a full-width accent line in .gridhost at `dropY`
@@ -221,12 +246,31 @@ export function DatabaseView({
   const [loaded, setLoaded] = useState(false);
   const [skelRows, rememberRows] = useSkeletonRows("table", 4);
   const reload = async () => {
-    const [p, r] = await Promise.all([api.listProperties(db.id), api.listRecords(db.id)]);
-    setProps(p);
-    setRecords(r);
-    setLoaded(true);
-    rememberRows(r.length);
+    const p = await api.listProperties(db.id);
+    setProps(p);setQueryRevision(n=>n+1);
   };
+  const [debouncedQuery,setDebouncedQuery]=useState(query);
+  useEffect(()=>{const timer=setTimeout(()=>setDebouncedQuery(query),200);return()=>clearTimeout(timer);},[query]);
+  const dateProps=props.filter(p=>p.type==='date');
+  const partitionGroup=view.group ?? (props.find(p=>p.type==='select') ?? props.find(p=>p.type==='multi_select'))?.id;
+  const partitionDate=(view.layout==='calendar'?view.dateProp:view.start) ?? dateProps[0]?.id;
+  const partitionEnd=view.end===null?undefined:(view.end ?? dateProps.find(p=>p.id!==partitionDate)?.id);
+  const queryKey=JSON.stringify({filter:view.filter,sort:view.sort,search:debouncedQuery,calc:view.calc,partitions:{group:partitionGroup,date:partitionDate,end:partitionEnd}});
+  useEffect(()=>{
+    if(!queryRevision)return;
+    let current=true;setLoaded(false);
+    const rowHeight=view.wrap?presentation.wrappedRow:presentation.row,anchor=records.find((r,i)=>!!r && i>=Math.floor(viewport.top/rowHeight))?.id;
+    void queryWindow.open(db.id,JSON.parse(queryKey)).then(async()=>{
+      if(!current)return;
+      let row=Math.floor(viewport.top/rowHeight);
+      if(anchor && queryWindow.index){const located=await api.locateRecordQuery(queryWindow.index.id,anchor);if(located>=0)row=located;}
+      row=Math.max(0,Math.min(row,(queryWindow.index?.total??1)-1));
+      await queryWindow.ensure(Math.max(0,row-100),row+200);
+      const scroller=tableRef.current?.closest('.tablescroll');if(scroller)scroller.scrollTop=row*rowHeight;
+      if(current){setViewport(v=>({...v,top:row*rowHeight}));setLoaded(true);rememberRows(queryWindow.index?.total ?? 0);}
+    }).catch(e=>{if(current && !e.message.includes('cancelled'))onError(e.message);});
+    return()=>{current=false;};
+  },[queryKey,queryRevision,queryWindow]);
   useEffect(() => {
     setSel(new Set());
     setPeek(null);
@@ -253,7 +297,7 @@ export function DatabaseView({
   // always mirrors the drawer; the effect below covers the other direction
   // (chip clicks, back/forward). Declared after the db.id reset effect so a
   // deep-linked mount ends with the peek open, not reset.
-  const openPeek = (id: string, propId?: string) => { setPeekProp(propId ?? null); setPeek(id); onRecNav(id); };
+  const openPeek = (id: string, propId?: string) => { if (!embedded) { setPeekProp(propId ?? null); setPeek(id); } onRecNav(id); };
   const closePeek = () => { setPeek(null); setPeekProp(null); onRecNav(null); };
   useEffect(() => { setPeek(rec); }, [rec]);
   // Tab request → tab, consumed once then stripped from the hash (replace).
@@ -270,7 +314,7 @@ export function DatabaseView({
   const recordsRef = useRef(records);
   recordsRef.current = records;
   useEffect(() => {
-    if (rec && loaded && !recordsRef.current.some((r) => r.id === rec)) {
+    if (false && rec && loaded && !recordsRef.current.some((r) => r?.id === rec)) {
       toast(t("记录不存在或已被删除"));
       closePeek();
     }
@@ -279,11 +323,13 @@ export function DatabaseView({
   // Local-replica mode: a background sync that touched records/properties may
   // concern this table — re-read from the local store (cheap). Skipped while a
   // cell editor is open so a refresh never eats an in-progress edit.
+  const deferredReload=useRef(false);
+  useEffect(()=>{if(!editing && deferredReload.current){deferredReload.current=false;void reload();}},[editing]);
   useEffect(() => {
     const onSynced = (e: Event) => {
       const detail = (e as CustomEvent).detail as { datasets?: string[] } | undefined;
       if (!detail?.datasets?.some((d) => d === "records" || d === "properties")) return;
-      if (editingRef.current) return;
+      if (editingRef.current) {deferredReload.current=true;return;}
       // Mid-drag (row/card reorder) or mid-rubber-band: replacing records would
       // yank the DOM out from under the pointer. Skip; the drop's own commit
       // reconciles, and external edits surface on the next poke.
@@ -302,19 +348,20 @@ export function DatabaseView({
   // the server response in the background, roll back via reload() on failure.
   // Every write goes through applyCells so one call = one undo step.
   const undoRef = useRef<{ past: CellEdit[][]; future: CellEdit[][] }>({ past: [], future: [] });
-  const applyCells = (patches: CellPatch[], opts: { history?: boolean } = {}): Promise<void> => {
+  const [failedPatches,setFailedPatches]=useState<CellPatch[]>([]);
+  const applyCells = async (patches: CellPatch[], opts: { history?: boolean } = {}): Promise<CellEdit[]> => {
     const byRec = new Map<string, Record<string, unknown>>();
     const edits: CellEdit[] = [];
     for (const p of patches) {
-      const rec = recordsRef.current.find((r) => r.id === p.recId);
+      const rec = recordsRef.current.find((r) => r?.id === p.recId) ?? queryWindow.find(p.recId) ?? await api.getRecord(p.recId);
       if (!rec) continue;
       edits.push({ recId: p.recId, propId: p.propId, before: rec.cells[p.propId] ?? null, after: p.value });
       let patch = byRec.get(p.recId);
       if (!patch) { patch = {}; byRec.set(p.recId, patch); }
       patch[p.propId] = p.value;
     }
-    if (!edits.length) return Promise.resolve();
-    if (opts.history !== false) { undoRef.current.past.push(edits); undoRef.current.future = []; }
+    if (!edits.length) return [];
+
     const nameOf = new Map(props.map((p) => [p.id, p.name]));
     setRecords((rs) => rs.map((r) => {
       const patch = byRec.get(r.id);
@@ -323,38 +370,44 @@ export function DatabaseView({
       for (const [pid, v] of Object.entries(patch)) { const n = nameOf.get(pid); if (n) values[n] = v; }
       return { ...r, cells: { ...r.cells, ...patch }, values };
     }));
-    return Promise.all([...byRec].map(([id, patch]) => api.updateRecord(id, patch)))
-      .then((updates) => setRecords((rs) => rs.map((r) => updates.find((u) => u.id === r.id) ?? r)))
-      .catch((e) => {
-        onError(String(e.message));
-        reload().catch((err) => onError(String(err.message)));
-      });
+    const entries=[...byRec],results=await Promise.allSettled(entries.map(([id,patch])=>api.updateRecord(id,patch)));
+    const success=new Set<string>(),failed=new Set<string>();
+    results.forEach((result,i)=>{const id=entries[i]![0];if(result.status==='fulfilled'){success.add(id);queryWindow.patch(result.value);}else failed.add(id);});
+    if(opts.history!==false && success.size){undoRef.current.past.push(edits.filter(e=>success.has(e.recId)));undoRef.current.future=[];}
+    setFailedPatches(patches.filter(p=>failed.has(p.recId)));
+    if(failed.size)onError(`${failed.size} 条记录保存失败，可重试失败项`);
+    await reload();
+    return edits.filter(e=>success.has(e.recId));
+
   };
   const commit = (rec: Rec, prop: Prop, value: unknown) => {
     setEditing(null);
     void applyCells([{ recId: rec.id, propId: prop.id, value }]);
   };
-  const undoCells = () => {
-    const g = undoRef.current.past.pop();
-    if (!g) return;
-    undoRef.current.future.push(g);
-    void applyCells(g.map((e) => ({ recId: e.recId, propId: e.propId, value: e.before })), { history: false });
-    toast(t("已撤销"));
+  const undoCells = async () => {
+    const g=undoRef.current.past.pop();if(!g)return;
+    const saved=await applyCells(g.map(e=>({recId:e.recId,propId:e.propId,value:e.before})),{history:false});
+    const keys=new Set(saved.map(e=>e.recId+':'+e.propId));
+    const done=g.filter(e=>keys.has(e.recId+':'+e.propId)),failed=g.filter(e=>!keys.has(e.recId+':'+e.propId));
+    if(done.length)undoRef.current.future.push(done);if(failed.length)undoRef.current.past.push(failed);
+    if(done.length)toast(t('已撤销'));
   };
-  const redoCells = () => {
-    const g = undoRef.current.future.pop();
-    if (!g) return;
-    undoRef.current.past.push(g);
-    void applyCells(g.map((e) => ({ recId: e.recId, propId: e.propId, value: e.after })), { history: false });
-    toast(t("已重做"));
+  const redoCells = async () => {
+    const g=undoRef.current.future.pop();if(!g)return;
+    const saved=await applyCells(g.map(e=>({recId:e.recId,propId:e.propId,value:e.after})),{history:false});
+    const keys=new Set(saved.map(e=>e.recId+':'+e.propId));
+    const done=g.filter(e=>keys.has(e.recId+':'+e.propId)),failed=g.filter(e=>!keys.has(e.recId+':'+e.propId));
+    if(done.length)undoRef.current.past.push(done);if(failed.length)undoRef.current.future.push(failed);
+    if(done.length)toast(t('已重做'));
   };
 
   const [pendingEdit, setPendingEdit] = useState<string | null>(null);
   const createRecordWith = (values: Record<string, unknown>, edit = false) =>
     guard(async () => {
       const rec = await api.createRecord(db.id, values);
-      setRecords((rs) => [...rs, rec]);
+      setRecords((rs) => rs.concat(rec));
       if (edit) setPendingEdit(rec.id);
+      await reload();
     });
   const newRecord = () => createRecordWith({}, true);
 
@@ -368,6 +421,7 @@ export function DatabaseView({
           setRecords((rs) => rs.filter((r) => !ids.includes(r.id)));
           setSel(new Set());
           if (peek && ids.includes(peek)) closePeek();
+          void reload();
         },
         onRestored: () => void reload(),
       }),
@@ -377,10 +431,11 @@ export function DatabaseView({
     guard(async () => {
       const copy = await api.createRecord(db.id, rec.cells);
       setRecords((rs) => {
-        const i = rs.findIndex((r) => r.id === rec.id);
-        return [...rs.slice(0, i + 1), copy, ...rs.slice(i + 1)];
+        const i = rs.findIndex((r) => r?.id === rec.id);
+        return rs.slice(0,i+1).concat(copy,rs.slice(i+1));
       });
       await api.moveRecord(copy.id, rec.id, "after");
+      await reload();
     });
 
   const moveRecordLocal = (srcId: string, targetId: string, where: DropWhere) => {
@@ -391,7 +446,7 @@ export function DatabaseView({
   const persistRecordMove = (srcId: string, targetId: string, where: DropWhere) => {
     if (srcId === targetId || sorting) return;
     moveRecordLocal(srcId, targetId, where);
-    api.moveRecord(srcId, targetId, where).catch((e) => {
+    api.moveRecord(srcId, targetId, where).then(()=>reload()).catch((e) => {
       onError(String(e.message));
       reload().catch((err) => onError(String(err.message)));
     });
@@ -505,6 +560,10 @@ export function DatabaseView({
   // native text selection drags that selection into the input.
   const clickArm = useRef<{ r: number; c: number } | null>(null);
   const startCellSelect = (e: any, ri: number, ci: number) => {
+    if(deferTouchDrag(e, ev=>startCellSelect(ev,ri,ci),()=>{
+      if(cellSel?.a.r===ri && cellSel.a.c===ci && cellSel.b.r===ri && cellSel.b.c===ci) clickArm.current={r:ri,c:ci};
+      else setCellSel({a:{r:ri,c:ci},b:{r:ri,c:ci}});
+    }))return;
     clickArm.current = null;
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("input,textarea,button,a,.celledit,.cell-fill-handle")) return;
@@ -538,6 +597,9 @@ export function DatabaseView({
   const clampN = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
   const scrollCellIntoView = (r: number, c: number) =>
     requestAnimationFrame(() => {
+      const scroller=tableRef.current?.closest('.tablescroll');
+      if(scroller){const y=r*rowHeight,x=cols.slice(0,c).reduce((n,p)=>n+colWidth(p),40);if(y<scroller.scrollTop || y+rowHeight>scroller.scrollTop+scroller.clientHeight)scroller.scrollTop=y;if(x<scroller.scrollLeft || x+colWidth(cols[c]!)>scroller.scrollLeft+scroller.clientWidth)scroller.scrollLeft=x;}
+      void queryWindow.ensure(r,r+1);
       document.querySelector(`td.cell-td[data-r="${r}"][data-c="${c}"]`)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
@@ -586,8 +648,8 @@ export function DatabaseView({
       case "select": case "multi_select": openSelectMenu(cellAnchor(r, c), p, val, set, seed); return;
       case "relation": openRelationMenu(cellAnchor(r, c), p, val, set, seed, () => relCreated(p)); return;
       case "doc": openDocMenu(cellAnchor(r, c), val, set, seed); return;
-      case "date": openDatePicker(cellAnchor(r, c), val, set, seed); return;
-      default: setEditing({ rec: recRow.id, prop: p.id, seed });
+      case "date": if(host?.pickDate){void host.pickDate(val).then(result=>{if(!result.cancelled)set(result.value??null);}).catch(e=>onError(e.message));}else openDatePicker(cellAnchor(r,c),val,set,seed); return;
+      default: flushSync(()=>setEditing({ rec: recRow.id, prop: p.id, seed,row:recRow,r,c }));
     }
   };
   const isInline = (pt: PropType) => pt === "text" || pt === "number" || pt === "url";
@@ -596,7 +658,7 @@ export function DatabaseView({
     const p = cols[c];
     if (!rec || !p) return;
     selectCell(r, c);
-    if (isInline(p.type)) setEditing({ rec: rec.id, prop: p.id, seed });
+    if (isInline(p.type)) flushSync(()=>setEditing({ rec: rec.id, prop: p.id, seed,row:rec,r,c }));
   };
   const moveEditNeighbor = (r: number, c: number, dc: number) => {
     const nc = c + dc;
@@ -605,7 +667,7 @@ export function DatabaseView({
   };
   useEffect(() => {
     if (!pendingEdit) return;
-    const r = sorted.findIndex((x) => x.id === pendingEdit);
+    const r = sorted.findIndex((x) => x?.id === pendingEdit);
     if (r < 0) return;
     setPendingEdit(null);
     startEditAt(r, 0);
@@ -631,9 +693,10 @@ export function DatabaseView({
     return out;
   };
   // Apply a value to every cell in the current selection (one undo step).
-  const applyToSelection = (valueFor: (p: Prop) => unknown) => {
+  const applyToSelection = async (valueFor: (p: Prop) => unknown) => {
     if (!cellSel) return;
-    void applyCells(rectPatches(normRect(cellSel), (p) => valueFor(p)));
+    const rect=normRect(cellSel),rows=await queryWindow.readRange(rect.r0,rect.r1+1);
+    await applyCells(rows.flatMap(row=>cols.slice(rect.c0,rect.c1+1).map(p=>({recId:row.id,propId:p.id,value:valueFor(p)}))));
   };
 
   // Fill handle: drag the selection's bottom-right corner down to repeat the
@@ -677,7 +740,7 @@ export function DatabaseView({
     if (!cellSel) return;
     const { r0, r1, c0, c1 } = normRect(cellSel);
     const span = cols.slice(c0, c1 + 1);
-    const tsv = sorted.slice(r0, r1 + 1)
+    const tsv = (await queryWindow.readRange(r0,r1+1))
       .map((rec) => span.map((p) => cellText(p, rec.cells[p.id])).join("\t"))
       .join("\n");
     try { await navigator.clipboard.writeText(tsv); } catch { /* clipboard blocked */ }
@@ -743,13 +806,36 @@ export function DatabaseView({
   // Visible rows = filter → search → sort; visible columns = minus hidden.
   // Cell coordinates (r, c) index these two arrays everywhere below.
   const cols = view.layout === "table" ? props.filter((p) => !view.hidden.includes(p.id)) : props;
-  const sorted = applySort(searchRecords(applyFilter(records, props, view.filter), props, query), props, sort);
+  const sorted = records;
+  const rowHeight = view.wrap ? presentation.wrappedRow : presentation.row;
+  useLayoutEffect(()=>{
+    const el=tableRef.current?.closest<HTMLElement>('.tablescroll');
+    if(!el)return;
+    el.scrollTop=viewport.top;el.scrollLeft=viewport.left;
+    const measure=()=>setViewport(old=>old.width===el.clientWidth && old.height===el.clientHeight && old.left===el.scrollLeft && old.top===el.scrollTop ? old : {top:el.scrollTop,left:el.scrollLeft,width:el.clientWidth,height:el.clientHeight});
+    measure();const observer=new ResizeObserver(measure);observer.observe(el);return()=>observer.disconnect();
+  },[loaded,view.id]);
+  const previousRowHeight=useRef(rowHeight);
+  useLayoutEffect(()=>{
+    const scroller=tableRef.current?.closest('.tablescroll');
+    if(scroller && previousRowHeight.current!==rowHeight){
+      scroller.scrollTop=Math.floor(scroller.scrollTop/previousRowHeight.current)*rowHeight;
+      setViewport(old=>({...old,top:scroller.scrollTop}));
+    }
+    previousRowHeight.current=rowHeight;
+  },[rowHeight]);
+  const rowsWindow = virtualWindow(sorted.length, rowHeight, viewport.top, viewport.height);
+  const columnsWindow = virtualColumns(cols.map(colWidth), viewport.left, viewport.width);
+  useEffect(()=>{if(view.layout==='table')void queryWindow.ensure(Math.max(0,rowsWindow.start-100),rowsWindow.end+100);},[view.layout,rowsWindow.start,rowsWindow.end,loaded,queryWindow]);
+  const visibleCols = cols.slice(columnsWindow.start, columnsWindow.end);
+  const beforeCols = cols.slice(0, columnsWindow.start).reduce((n,p)=>n+colWidth(p),0);
+  const afterCols = cols.slice(columnsWindow.end).reduce((n,p)=>n+colWidth(p),0);
   const pickRefs: PickRefs = (anchor, prop, current, onPick) => {
     if (prop.type === "doc") openDocMenu(anchor, current, (v) => onPick(Array.isArray(v) ? (v as string[]) : []));
     else openRelationMenu(anchor, prop, current, (v) => onPick(Array.isArray(v) ? (v as string[]) : []));
   };
 
-  const peekRec = records.find((r) => r.id === peek) ?? null;
+  const peekRec = records.find((r) => r?.id === peek) ?? null;
   const cr = cellSel ? normRect(cellSel) : null;
 
   // Keyboard on the cell selection: arrows move (Shift extends), Cmd/Ctrl+C copies,
@@ -762,7 +848,7 @@ export function DatabaseView({
       if (pressed(e, "tableUndo")) { e.preventDefault(); undoCells(); return; }
       if (pressed(e, "tableRedo")) { e.preventDefault(); redoCells(); return; }
       if (peek && (e.metaKey || e.ctrlKey) && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-        const i = sorted.findIndex((r) => r.id === peek);
+        const i = sorted.findIndex((r) => r?.id === peek);
         const nb = sorted[i + (e.key === "ArrowUp" ? -1 : 1)];
         if (nb) { e.preventDefault(); openPeek(nb.id); }
         return;
@@ -799,11 +885,11 @@ export function DatabaseView({
         if (sorted[r]) openPeek(sorted[r].id);
       } else if (pressed(e, "tableSelectRow")) {
         e.preventDefault();
-        setSel(new Set(sorted.slice(rect.r0, rect.r1 + 1).map((x) => x.id)));
+        void queryWindow.readRange(rect.r0,rect.r1+1).then(rows=>setSel(new Set(rows.map(r=>r.id))));
         setCellSel(null);
       } else if (pressed(e, "tableDuplicate")) {
         e.preventDefault();
-        for (const rec of sorted.slice(rect.r0, rect.r1 + 1)) duplicateRecord(rec);
+        void queryWindow.readRange(rect.r0,rect.r1+1).then(async rows=>{for(const rec of rows)await duplicateRecord(rec);});
       } else if (e.key === "Escape") {
         setCellSel(null);
       } else if (e.key === "Delete" || e.key === "Backspace") {
@@ -826,7 +912,7 @@ export function DatabaseView({
         activateCell(r, c, e.key);
       }
     };
-    const onPaste = (e: ClipboardEvent) => {
+    const onPaste = async (e: ClipboardEvent) => {
       if (!cellSel || editing || isEditableTarget(document.activeElement)) return;
       const text = e.clipboardData?.getData("text/plain");
       if (!text) return;
@@ -839,7 +925,8 @@ export function DatabaseView({
       const tiled = one
         ? Array.from({ length: target.r1 - target.r0 + 1 }, () => Array.from({ length: target.c1 - target.c0 + 1 }, () => grid[0]![0]!))
         : grid;
-      const { patches, skipped } = pastePatches(tiled, sorted, cols, target.r0, target.c0);
+      const rows=await queryWindow.readRange(target.r0,target.r1+1);
+      const { patches, skipped } = pastePatches(tiled, rows, cols, 0, target.c0);
       void applyCells(patches);
       const r1 = clampN(target.r1, 0, sorted.length - 1), c1 = clampN(target.c1, 0, cols.length - 1);
       setCellSel({ a: { r: target.r0, c: target.c0 }, b: { r: r1, c: c1 } });
@@ -860,6 +947,7 @@ export function DatabaseView({
         if (!(e.target as HTMLElement).closest("td.cell-td, .cellselbar, .peek, .scrim, .selbar")) setCellSel(null);
       }}
     >
+      {failedPatches.length>0 && <button class="mobile-db-error" onClick={()=>void applyCells(failedPatches)}>部分记录保存失败 · 重试失败项</button>}
       <div class="db-head">
         <div class="db-icon">{db.icon || "🗂️"}</div>
         <div>
@@ -901,26 +989,32 @@ export function DatabaseView({
         onDuplicate={duplicateView}
         onDelete={deleteView}
       >
-        <button class="btn btn-primary" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建")}</button>
+        <button class="btn btn-primary" aria-label="新建记录" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建")}</button>
       </ViewTabs>
 
-      <ViewToolbar
-        props={props}
-        view={view}
-        onChange={(patch) => updateView(patch)}
-        onReorder={persistColumnMove}
-        pickRefs={pickRefs}
-        query={query}
-        onQuery={setQuery}
-      >
-        {view.layout !== "board" && <PopOutBoard dbId={db.id} />}
-      </ViewToolbar>
       <ChipRow props={props} view={view} onChange={(patch) => updateView(patch)} pickRefs={pickRefs} />
 
+      {editing?.row && <GridCellEditor key={editing.rec+editing.prop} recordId={editing.rec} propId={editing.prop} cell={()=>tableRef.current?.querySelector<HTMLElement>(`td[data-r="${editing.r}"][data-c="${editing.c}"]`) ?? null}>
+        <div class="cell-editor-context"><span>{String(editing.row.cells[props[0]?.id ?? ''] ?? '无标题')}</span><strong>{props.find(p=>p.id===editing.prop)?.name}</strong></div>
+        <InlineEditInput canPrevious={(editing.c ?? 0)>0} canNext={(editing.c ?? 0)<cols.length-1} prop={props.find(p=>p.id===editing.prop)!} val={editing.row.cells[editing.prop]} seed={editing.seed} captureTab onDone={async end=>{
+          const {row,prop,r=0,c=0}=editing;
+          if(end.reason==='cancel')await host?.discardCheckpoint?.(row!.id,prop);
+          else if(end.changed){
+            const saved=await applyCells([{recId:row!.id,propId:prop,value:end.value}]);
+            if(!saved.length)throw new Error('保存失败，请重试；输入仍保留');
+          }
+          setEditing(null);
+          if(end.reason==='tab')moveEditNeighbor(r,c,1);
+          else if(end.reason==='shifttab')moveEditNeighbor(r,c,-1);
+          else if(end.reason==='enter')selectCell(Math.min(r+1,sorted.length-1),c);
+        }}/>
+      </GridCellEditor>}
       {view.layout === "board" ? (
         <BoardView
+          hidden={view.hidden}
           props={props}
           records={sorted}
+          queryWindow={queryWindow}
           onCommitValue={commit}
           onCreate={createRecordWith}
           onOpenRecord={openPeek}
@@ -933,6 +1027,7 @@ export function DatabaseView({
         <CalendarView
           props={props}
           records={sorted}
+          queryWindow={queryWindow}
           onCommitValue={commit}
           onCreate={createRecordWith}
           onOpenRecord={openPeek}
@@ -943,6 +1038,7 @@ export function DatabaseView({
         <TimelineView
           props={props}
           records={sorted}
+          queryWindow={queryWindow}
           onCommitValue={commit}
           onCreate={createRecordWith}
           onOpenRecord={openPeek}
@@ -970,9 +1066,9 @@ export function DatabaseView({
           )}
           {dropY != null && <div class="rowdrop" style={{ top: dropY }} />}
           <div class="tablewrap">
-          <div class="tablescroll">
+          <div class="tablescroll" onScroll={e => { const el=e.currentTarget; setViewport({top:el.scrollTop,left:el.scrollLeft,width:el.clientWidth,height:el.clientHeight}); }}>
             {!loaded ? (
-              <table class="grid skel skel-list" aria-busy="true">
+              <table key="loading" class="grid skel skel-list" aria-busy="true">
                 <colgroup>
                   <col style={{ width: 38 }} />
                   {[0, 1, 2, 3].map((i) => <col key={i} style={{ width: i === 0 ? 240 : 150 }} />)}
@@ -996,14 +1092,14 @@ export function DatabaseView({
                 </tbody>
               </table>
             ) : (
-            <table class={"grid" + (view.wrap === false ? " nowrap" : "")} ref={tableRef}
+            <table key="records" class={"grid" + (!view.wrap ? " nowrap" : "")} ref={tableRef}
               style={{ width: 38 + cols.reduce((sum, p) => sum + colWidth(p), 0) + 46 }}>
               <colgroup>
                 <col style={{ width: 38 }} />
-                {cols.map((p) => (
+                {beforeCols > 0 && <col style={{width:beforeCols}}/>}{visibleCols.map((p) => (
                   <col key={p.id} data-col-id={p.id} style={{ width: colWidth(p) }} />
                 ))}
-                <col />
+                {afterCols > 0 && <col style={{width:afterCols}}/>}<col />
               </colgroup>
               <thead>
                 <tr>
@@ -1012,12 +1108,12 @@ export function DatabaseView({
                       type="checkbox"
                       checked={sel.size > 0 && sel.size === records.length}
                       onChange={(e) => {
-                        setSel((e.target as HTMLInputElement).checked ? new Set(records.map((r) => r.id)) : new Set());
+                        if((e.target as HTMLInputElement).checked)void queryWindow.readRange(0,sorted.length).then(rows=>setSel(new Set(rows.map(r=>r.id)))).catch(e=>onError(e.message));else setSel(new Set());
                         setCellSel(null);
                       }}
                     />
                   </th>
-                  {cols.map((p) => {
+                  {beforeCols > 0 && <th style={{width:beforeCols}}/>}{visibleCols.map((p) => {
                     const sr = sort.find((x) => x.prop === p.id);
                     return (
                     <th key={p.id} data-col-id={p.id}>
@@ -1050,7 +1146,7 @@ export function DatabaseView({
                     </th>
                     );
                   })}
-                  <th class="addcol">
+                  {afterCols > 0 && <th style={{width:afterCols}}/>}<th class="addcol">
                     <div class="colhead" title={t("新建属性")} onClick={(e) => openAddCol(e, db.id, props, reload)}>
                       <Icon name="plus" cls="ico sm" />
                     </div>
@@ -1058,10 +1154,11 @@ export function DatabaseView({
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((rec, ri) => (
+                {rowsWindow.start > 0 && <tr aria-hidden="true"><td colSpan={visibleCols.length+2+Number(beforeCols>0)+Number(afterCols>0)} style={{height:rowsWindow.start*rowHeight,padding:0,border:0}}/></tr>}
+                {Array.from({length:rowsWindow.end-rowsWindow.start},(_,index)=>{const ri=index+rowsWindow.start,rec=sorted[ri]; if(!rec)return <tr key={`loading-${ri}`} aria-busy="true"><td colSpan={visibleCols.length+2+Number(beforeCols>0)+Number(afterCols>0)} style={{height:rowHeight}}>…</td></tr>; return (
                   <tr
                     key={rec.id}
-                    data-row-id={rec.id}
+                    style={{height:rowHeight}} data-row-id={rec.id}
                     class={sel.has(rec.id) ? "sel" : ""}
                   >
                     <td class="selcell">
@@ -1071,7 +1168,7 @@ export function DatabaseView({
                         onClick={(e) => toggleRow(rec.id, e.shiftKey)}
                       />
                     </td>
-                    {cols.map((p, ci) => {
+                    {beforeCols > 0 && <td style={{width:beforeCols}}/>}{visibleCols.map((p, index) => { const ci=index+columnsWindow.start;
                       const inSel = cr != null && ri >= cr.r0 && ri <= cr.r1 && ci >= cr.c0 && ci <= cr.c1;
                       const inFill = cr != null && fillTo != null && ri > cr.r1 && ri <= fillTo && ci >= cr.c0 && ci <= cr.c1;
                       const boxShadow = cr ? edgeShadow(cr, ri, ci) : undefined;
@@ -1081,7 +1178,7 @@ export function DatabaseView({
                           key={p.id}
                           class={"cell-td" + (inSel ? " cellsel" : "") + (inFill ? " fillsel" : "")}
                           data-r={ri}
-                          data-c={ci}
+                          data-c={ci} data-prop-id={p.id}
                           style={boxShadow ? { boxShadow } : undefined}
                           onPointerDown={(e) => startCellSelect(e, ri, ci)}
                           onClick={() => cellClick(ri, ci)}
@@ -1092,7 +1189,7 @@ export function DatabaseView({
                             prop={p}
                             first={ci === 0}
                             wrap={view.wrap !== false}
-                            editing={editing?.rec === rec.id && editing?.prop === p.id}
+                            editing={false}
                             seed={editing?.rec === rec.id && editing?.prop === p.id ? editing.seed : undefined}
                             onCommit={(v) => commit(rec, p, v)}
                             onDone={(end) => {
@@ -1111,14 +1208,15 @@ export function DatabaseView({
                         </td>
                       );
                     })}
-                    <td class="filler" />
+                    {afterCols > 0 && <td style={{width:afterCols}}/>}<td class="filler" />
                   </tr>
-                ))}
+                );})}
+                {rowsWindow.end < sorted.length && <tr aria-hidden="true"><td colSpan={visibleCols.length+2+Number(beforeCols>0)+Number(afterCols>0)} style={{height:(sorted.length-rowsWindow.end)*rowHeight,padding:0,border:0}}/></tr>}
               </tbody>
               <tfoot>
                 <tr>
                   <td class="selcell" />
-                  {cols.map((p) => {
+                  {beforeCols > 0 && <td/>}{visibleCols.map((p) => {
                     const kind = view.calc?.[p.id];
                     return (
                       <td key={p.id} class={"calc" + (kind ? " on" : "")} onClick={(e) => openCalcMenu(e, p, kind, (k) => {
@@ -1127,14 +1225,14 @@ export function DatabaseView({
                         updateView({ calc });
                       })}>
                         {kind ? (
-                          <><span class="k">{calcLabel(kind)}</span><span class="v">{computeCalc(kind, p, sorted.map((r) => r.cells[p.id]))}</span></>
+                          <><span class="k">{calcLabel(kind)}</span><span class="v">{(queryWindow.index?.calc[p.id] ?? "…")}</span></>
                         ) : (
                           <span class="k ghost">{t("计算")}<Icon name="chevronDown" cls="ico sm" /></span>
                         )}
                       </td>
                     );
                   })}
-                  <td class="filler" />
+                  {afterCols > 0 && <td/>}<td class="filler" />
                 </tr>
               </tfoot>
             </table>
@@ -1171,6 +1269,20 @@ export function DatabaseView({
         {view.layout === "table" && cols.length < props.length && <span>{t("{n} 列已隐藏", { n: props.length - cols.length })}</span>}
       </div>
 
+      <div class={embedded ? "db-toolbar-inline" : "db-footer"}>
+        <ViewToolbar
+          props={props}
+          view={view}
+          onChange={(patch) => updateView(patch)}
+          onReorder={persistColumnMove}
+          pickRefs={pickRefs}
+          query={query}
+          onQuery={setQuery}
+        >
+          {view.layout !== "board" && !embedded && <PopOutBoard dbId={db.id} />}
+        </ViewToolbar>
+      </div>
+
       {sel.size > 0 && (
         <div class="selbar">
           <span class="cnt">{t("{n} 已选", { n: sel.size })}</span>
@@ -1178,7 +1290,7 @@ export function DatabaseView({
             <button onClick={() => openPeek([...sel][0]!)}><Icon name="openPeek" cls="ico sm" />{t("打开")}</button>
           )}
           <button onClick={(e) => openSetPropMenu(e, [...sel])}><Icon name="pencil" cls="ico sm" />{t("设置属性…")}</button>
-          <button onClick={() => guard(async () => { for (const id of sel) await duplicateRecord(records.find((r) => r.id === id)!); })}>
+          <button onClick={() => guard(async () => { for (const id of sel) await duplicateRecord(await api.getRecord(id)); })}>
             <Icon name="copy" cls="ico sm" />{t("复制")}
           </button>
           <button class="del" onClick={async () => {
@@ -1218,8 +1330,8 @@ export function DatabaseView({
           onReverted={() => reload().catch((e) => onError(String(e.message)))}
           onRelCreated={relCreated}
           hidden={view.hidden}
-          prevId={sorted[sorted.findIndex((r) => r.id === peekRec.id) - 1]?.id ?? null}
-          nextId={sorted[sorted.findIndex((r) => r.id === peekRec.id) + 1]?.id ?? null}
+          prevId={sorted[sorted.findIndex((r) => r?.id === peekRec.id) - 1]?.id ?? null}
+          nextId={sorted[sorted.findIndex((r) => r?.id === peekRec.id) + 1]?.id ?? null}
           onNavigate={openPeek}
         />
       )}
@@ -1247,15 +1359,20 @@ type EditEnd =
  *  the user typed and committing the stale value — the old "must press Enter
  *  or lose the edit" bug. */
 function InlineEditInput({
-  prop, val, seed, captureTab, onDone,
+  prop, val, seed, captureTab, onDone, canPrevious = true, canNext = true,
 }: {
   prop: Prop; val: unknown;
   /** type-to-edit: opens the editor with this text, replacing the old value */
   seed?: string;
   /** grid: Tab commits and moves to the neighbor; peek: leave Tab to the browser */
   captureTab?: boolean;
-  onDone: (end: EditEnd) => void;
+  canPrevious?: boolean; canNext?: boolean;
+  onDone: (end: EditEnd) => void | Promise<void>;
 }) {
+  const [draftStatus,setDraftStatus]=useState('');
+  useEffect(()=>{const listener=(event:Event)=>setDraftStatus((event as CustomEvent).detail);document.addEventListener('database-draft-status',listener);return()=>document.removeEventListener('database-draft-status',listener);},[]);
+  const [saveError,setSaveError]=useState('');
+  const [saving,setSaving]=useState(false);
   const initial = val == null ? "" : String(val);
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const done = useRef(false);
@@ -1266,7 +1383,7 @@ function InlineEditInput({
     el.style.height = "0";
     el.style.height = `${el.scrollHeight}px`;
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current!;
     el.value = seed ?? initial;
     el.focus();
@@ -1276,11 +1393,11 @@ function InlineEditInput({
   // Single exit point: Enter/Escape/Tab unmount the input, which fires a blur —
   // the `done` flag keeps that trailing blur from reporting a second end.
   const finish = (reason: EditEnd["reason"]) => {
-    if (done.current) return;
-    done.current = true;
-    if (reason === "cancel") return onDone({ reason: "cancel" });
+    if (done.current || (reason==='tab' && !canNext) || (reason==='shifttab' && !canPrevious)) return;
+    done.current = true; setSaveError('');
     const raw = ref.current!.value;
-    onDone({ reason, changed: raw !== initial, value: coerceInput(prop.type, raw) });
+    const result = onDone(reason==='cancel' ? {reason:'cancel'} : {reason,changed:raw!==initial,value:coerceInput(prop.type,raw)});
+    if(result instanceof Promise){setSaving(true);void result.catch(error=>{done.current=false;setSaveError(error.message);ref.current?.focus();}).finally(()=>setSaving(false));}
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (imeGhost(e)) return;
@@ -1288,9 +1405,14 @@ function InlineEditInput({
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish("cancel"); }
     else if (e.key === "Tab" && captureTab) { e.preventDefault(); finish(e.shiftKey ? "shifttab" : "tab"); }
   };
+  const controls=<>{!saving && !saveError && draftStatus && <div role="status" class="editor-save-status">{draftStatus}</div>}{saveError && <div role="alert" class="editor-save-status">{saveError}</div>}{saving && <div role="status" class="editor-save-status">正在保存…</div>}<div class="cell-editor-controls" onPointerDown={e=>e.preventDefault()}>
+    <button disabled={saving || !canPrevious} onClick={()=>finish('shifttab')} aria-label="上一字段">上一字段</button>
+    <button disabled={saving || !canNext} onClick={()=>finish('tab')} aria-label="下一字段">下一字段</button>
+    <button disabled={saving} onClick={()=>finish('cancel')}>取消</button><button disabled={saving} onClick={()=>finish('enter')}>{saveError?'重试':'完成'}</button>
+  </div></>;
   if (multiline) {
     return (
-      <textarea
+      <><textarea
         ref={ref as any}
         class="inlineedit"
         aria-label={prop.name}
@@ -1298,11 +1420,11 @@ function InlineEditInput({
         onInput={grow}
         onBlur={() => finish("blur")}
         onKeyDown={onKeyDown}
-      />
+      />{controls}</>
     );
   }
   return (
-    <input
+    <><input
       ref={ref as any}
       aria-label={prop.name}
       class={"inlineedit" + (prop.type === "number" ? " num" : "")}
@@ -1310,7 +1432,7 @@ function InlineEditInput({
       inputMode={prop.type === "number" ? "decimal" : prop.type === "url" ? "url" : "text"}
       onBlur={() => finish("blur")}
       onKeyDown={onKeyDown}
-    />
+    />{controls}</>
   );
 }
 
@@ -1333,7 +1455,7 @@ function CellView({
 
   // Click/keyboard activation is owned by the <td> (DatabaseView.activateCell).
   const body = prop.type === "text" && val != null && val !== ""
-    ? <GridTextPreview text={String(val)} label={prop.name} wrap={wrap} onOpen={() => onOpen(prop.id)} />
+    ? <GridTextPreview text={String(val)} label={prop.name} wrap={wrap} showExpand={!first} onOpen={() => onOpen(prop.id)} />
     : <CellDisplay prop={prop} val={val} />;
   const cls = "cell" + (prop.type === "number" ? " num" : "");
   const display = first ? (
@@ -1366,8 +1488,8 @@ function CellView({
 
 /** Measure the rendered preview, so CJK, newlines and resized columns all use
  *  the same overflow affordance. The complete value stays in the data model. */
-function GridTextPreview({ text, label, wrap, onOpen }: {
-  text: string; label: string; wrap: boolean; onOpen: () => void;
+function GridTextPreview({ text, label, wrap, onOpen, showExpand = true }: {
+  text: string; label: string; wrap: boolean; onOpen: () => void; showExpand?: boolean;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [clipped, setClipped] = useState(false);
@@ -1382,7 +1504,7 @@ function GridTextPreview({ text, label, wrap, onOpen }: {
   return (
     <div class="cell-preview">
       <span ref={ref} class="txt cell-preview-text">{text}</span>
-      {clipped && (
+      {clipped && showExpand && (
         <button class="cell-read-more" {...tip(t("查看全文"))} aria-label={t("查看「{name}」全文", { name: label })}
           onKeyDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onOpen(); }}>
@@ -1394,11 +1516,11 @@ function GridTextPreview({ text, label, wrap, onOpen }: {
 }
 
 function reorderById<T extends { id: string }>(items: T[], srcId: string, targetId: string, where: DropWhere): T[] {
-  const next = [...items];
-  const from = next.findIndex((r) => r.id === srcId);
+  const next = items.slice();
+  const from = next.findIndex((r) => r?.id === srcId);
   if (from < 0) return items;
   const moved = next.splice(from, 1)[0]!;
-  let to = next.findIndex((r) => r.id === targetId);
+  let to = next.findIndex((r) => r?.id === targetId);
   if (to < 0) return items;
   if (where === "after") to += 1;
   next.splice(to, 0, moved);
@@ -1571,17 +1693,21 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
     return un;
   }, []);
 
-  const state = target ? relationTitleState(target) : "error";
-  const all = target ? relationTitleList(target) : [];
-  const q = query.trim();
-  // Records legally share titles (unlike select options), so everything below
-  // keys and checks by record id, and "创建" stays available on an exact match.
-  const ranked = rankMatches(q, all, (r) => r.title ?? "");
-  const matches = ranked.map((r) => r.item);
-  const CAP = 50;
-  const shown = ranked.slice(0, CAP);
-  // No text property in the target db → nowhere to write the new title.
-  const titleProp = target ? relationTitleProp(target) : null;
+  const [state,setState]=useState<'loading'|'fresh'|'error'>('loading');
+  const [all,setAll]=useState<{id:string;title:string|null}[]>([]);
+  const [titleProp,setTitleProp]=useState<string|null>(null);
+  const [page,setPage]=useState(0),[total,setTotal]=useState(0);
+  useEffect(()=>{if(!target)return;let live=true;let id:string|undefined;
+    setState('loading');const timer=setTimeout(()=>{void (async()=>{
+      const fields=await api.listProperties(target);const title=fields.find(p=>p.type==='text')?.id??null;
+      const index=await api.openRecordQuery(target,{search:query});id=index.id;
+      if(!live){await api.closeRecordQuery(id);return;}
+      const result=await api.readRecordQuery(id,page*50,50);
+      if(live){setTitleProp(title);setTotal(index.total);setAll(result.records.map(r=>({id:r.id,title:title?String(r.cells[title]??''):null})));setState('fresh');}
+    })().catch(()=>{if(live)setState('error');});},200);
+    return()=>{live=false;clearTimeout(timer);if(id)void api.closeRecordQuery(id);};
+  },[target,query,page]);
+  const q=query.trim(),ranked=rankMatches(q,all,r=>r.title??''),matches=ranked.map(r=>r.item),CAP=50,shown=ranked;
   const canCreate = !!target && q.length > 0 && !!titleProp;
   const rowCount = shown.length + (canCreate ? 1 : 0);
   const sel = Math.min(selIdx, Math.max(0, rowCount - 1));
@@ -1631,6 +1757,7 @@ function RelationMenu({ prop, value, onPick, seed, onCreated }: {
         />
         <ClearQuery query={query} onClear={() => { setQuery(""); setSelIdx(0); }} />
       </div>
+      <div class="relation-pages"><button disabled={!page} onClick={()=>setPage(n=>n-1)}>上一页</button><span>{page+1} / {Math.max(1,Math.ceil(total/50))}</span><button disabled={(page+1)*50>=total} onClick={()=>setPage(n=>n+1)}>下一页</button></div>
       <div ref={listRef} class="rellist">
         {!target && <div class="pal-empty">{t("该属性未设置关联目标")}</div>}
         {target && state === "error" && <div class="pal-empty">{t("无法加载目标数据表")}</div>}

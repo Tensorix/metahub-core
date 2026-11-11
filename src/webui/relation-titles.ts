@@ -35,6 +35,7 @@ interface Bucket {
   inflight: Promise<void> | null;
 }
 
+const requested=new Map<string,Set<string>>();
 const buckets = new Map<string, Bucket>();
 const listeners = new Set<() => void>();
 
@@ -50,10 +51,11 @@ export function onRelationTitleChange(fn: () => void): () => void {
 export function relationTitle(dbId: string | undefined, recId: string): string | null | undefined {
   if (!dbId) return null; // misconfigured relation — nothing to look up
   const b = buckets.get(dbId);
-  if (!b) {
-    void refresh(dbId);
-    return undefined;
+  if(!b?.titles.has(recId) || b.state==='stale') {
+    const ids=requested.get(dbId)??new Set<string>();ids.add(recId);requested.set(dbId,ids);
+    queueMicrotask(()=>void refresh(dbId));
   }
+  if(!b)return undefined;
   if (b.state === "loading") return b.titles.size ? (b.titles.get(recId) ?? null) : undefined;
   if (b.state === "stale") void refresh(dbId);
   if (b.state === "error") return null;
@@ -108,10 +110,12 @@ async function refresh(dbId: string): Promise<void> {
   }
   b.inflight = (async () => {
     try {
-      const [props, recs] = await Promise.all([api.listProperties(dbId), api.listRecords(dbId)]);
+      const ids=[...(requested.get(dbId)??[])];requested.delete(dbId);
+      const [props, recs] = await Promise.all([api.listProperties(dbId), api.referenceSummaries({kind:'record',databaseId:dbId,ids})]);
       b.titleProp = props.find((p) => p.type === "text")?.id ?? null;
-      const next = new Map<string, string | null>();
-      for (const r of recs) next.set(r.id, recordTitle(props, r));
+      const next = new Map(b.titles);
+      for (const r of recs) next.set(r.id,r.title);
+      while(next.size>2000)next.delete(next.keys().next().value!);
       const changed =
         b.state !== "fresh" ||
         next.size !== b.titles.size ||
@@ -129,6 +133,7 @@ async function refresh(dbId: string): Promise<void> {
       }
     } finally {
       b.inflight = null;
+      if(requested.get(dbId)?.size)queueMicrotask(()=>void refresh(dbId));
     }
   })();
   return b.inflight;

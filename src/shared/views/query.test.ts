@@ -5,8 +5,48 @@ import { createReplicaService } from "../../core/replica/service.ts";
 import { listRecords } from "../../core/records.ts";
 import { applyFilter, applySort, normalizeViews, searchRecords } from "./model.ts";
 import { normalizeViews as browserNormalize } from "../../webui/view-model.ts";
-import { queryDocuments, queryRecords, queryRecordsAsync } from "./query.ts";
+import { createRecordQuerySessions, queryDocuments, queryRecords, queryRecordsAsync } from "./query.ts";
 const handles: Database[] = [];
+test("query sessions page a stable sorted index and invalidate on revision changes", async () => {
+  const f = fixture(1000);
+  let revision = 1;
+  const sessions = createRecordQuerySessions(f.db, () => revision);
+  const query = { sort: [{ prop: f.n.id, desc: true }], calc: { [f.n.id]: "sum" as const } };
+  const opened = await sessions.open(f.database.id, query);
+  const expected = applySort(listRecords(f.db, f.database.id), f.props, query.sort);
+  const actual = [];
+  for (let offset = 0; offset < opened.total; offset += 100)
+    actual.push(...sessions.page(opened.id, offset).records);
+  expect(actual).toEqual(expected);
+  expect(opened.calc).toEqual(queryRecords(f.db, f.database.id, query).calc);
+  expect(sessions.locate(opened.id, expected[301]!.id)).toBe(301);
+  expect(() => sessions.page(opened.id, -1)).toThrow("Invalid");
+  revision++;
+  expect(() => sessions.page(opened.id)).toThrow("stale");
+});
+test("query session indexes preserve null manual order and can be cancelled or closed", async () => {
+  const f = fixture(401);
+  f.db.query("UPDATE records SET order_key = NULL WHERE id >= 'rec_00200'").run();
+  const sessions = createRecordQuerySessions(f.db, () => 1);
+  const opened = await sessions.open(f.database.id);
+  const expected = queryRecords(f.db, f.database.id, { offset: 200, limit: 100 });
+  expect(sessions.page(opened.id, 200).records).toEqual(expected.records);
+  sessions.close(opened.id);
+  expect(() => sessions.page(opened.id)).toThrow("stale");
+  const pending = sessions.open(f.database.id);
+  sessions.clear();
+  await expect(pending).rejects.toThrow("cancelled");
+});
+test("query session page reads only requested IDs without another scan", async () => {
+  const f = fixture(1000);
+  const reads: string[] = [];
+  const sessions = createRecordQuerySessions({ ...f.db, query(sql: string) { reads.push(sql); return f.db.query(sql); }, exec: sql => f.db.exec(sql), transaction: fn => f.db.transaction(fn) }, () => 1);
+  const opened = await sessions.open(f.database.id, { search: "else" });
+  reads.length = 0;
+  expect(sessions.page(opened.id, 500).records).toHaveLength(100);
+  expect(reads.filter(sql => sql.includes("FROM records"))).toHaveLength(1);
+  expect(reads.find(sql => sql.includes("FROM records"))).toContain("id IN");
+});
 afterEach(() => { for (const db of handles.splice(0)) db.close(); });
 function fixture(count = 10000) {
   const db = new Database(":memory:"); handles.push(db); initSchema(db);
@@ -85,4 +125,29 @@ test("date windows include crossing ranges, milestones, and separately query und
   const dates = {start:start.id,end:end.id,from:"2026-11-01",to:"2026-11-30"};
   expect(queryRecords(f.db,f.database.id,{dates}).records.map(r=>r.id).sort()).toEqual(["cross","point"]);
   expect(queryRecords(f.db,f.database.id,{dates:{...dates,unscheduled:true}}).records.map(r=>r.id)).toEqual(["empty"]);
+});
+
+test('partition counts and pages share sorted results, including null across JSON bridge',async()=>{
+ const f=fixture(301);
+ const group=f.service.commands.addProperty(f.database.id,{name:'Group',type:'multi_select',config:{options:['A','B']}});
+ const date=f.service.commands.addProperty(f.database.id,{name:'Day',type:'date'});
+ f.db.query('UPDATE records SET data=json_set(data,?,?,?,?) WHERE id=?').run(`$.${group.id}`,JSON.stringify(['A','B']),`$.${date.id}`,'2026-11-09','rec_00000');
+ f.db.query('UPDATE records SET data=json_set(data,?,json(?)) WHERE id=?').run(`$.${group.id}`,JSON.stringify(['A','B']),'rec_00000');
+ const queries=createRecordQuerySessions(f.db,()=>1),index=await queries.open(f.database.id,{partitions:{group:group.id,date:date.id}});
+ expect(index.partitions['group:"A"']).toBe(1);expect(index.partitions['group:"B"']).toBe(1);
+ expect(index.partitions['group:null']).toBe(300);expect(index.partitions['date:2026-11-09']).toBe(1);
+ expect(index.partitions['date:scheduled']).toBe(1);
+ expect(index.partitions['date:']).toBe(300);
+ expect(queries.page(index.id,0,100,'date:scheduled').records.map(r=>r.id)).toEqual(['rec_00000']);
+ expect(index.range).toEqual({min:'2026-11-09',max:'2026-11-09'});
+ expect(queries.page(index.id,0,100,null as any).records).toHaveLength(100);
+ expect(queries.page(index.id,0,3,'date:2026-11-09').records[0]?.id).toBe('rec_00000');
+});
+test('new generation cancels an outstanding scan for the same page owner',async()=>{
+ const f=fixture(1000),queries=createRecordQuerySessions(f.db,()=>1);
+ const first=queries.open(f.database.id,{owner:'page',search:'else'});
+ const rejected=first.then(()=>'resolved',e=>e.message);
+ const next=queries.open(f.database.id,{owner:'page'});
+ expect(await rejected).toContain('cancelled');expect((await next).total).toBe(1000);
+ const closing=queries.open(f.database.id,{owner:'close'});queries.close('owner:close');await expect(closing).rejects.toThrow('cancelled');
 });

@@ -4,7 +4,6 @@
   "version": "0.1.0",
   "dependencies": {
     "@expo/ui": "~58.0.27",
-    "@shopify/flash-list": "2.3.2",
     "aws4fetch": "^1.0.20",
     "buffer": "^5.7.1",
     "expo": "^58.0.23",
@@ -59,14 +58,15 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
+    "android": "bun run build:database && expo run:android",
+    "ios": "bun run build:database && expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "build:editor": "bun scripts/build-editor.ts",
     "build:site": "bun scripts/build-site-sdk.ts",
-    "prestart": "bun run build:editor && bun run build:site"
+    "prestart": "bun run build:editor && bun run build:site && bun run build:database",
+    "build:database": "bun scripts/build-database.ts"
   },
   "private": true,
   "license": "AGPL-3.0-only"
