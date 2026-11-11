@@ -1,9 +1,7 @@
 import { NativeDataText } from "@/components/native/NativeDataText";
 import {
-  Button,
   Column,
   FieldGroup,
-  ListItem,
   Picker,
   RNHostView,
   Switch,
@@ -14,6 +12,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, View, Linking } from "react-native";
 import Constants from "expo-constants";
 import { SettingsForm } from "./SettingsForm";
+import { SettingsButton as Button } from "./settings-button";
+import { SettingsDetailRow as ListItem } from "./settings-detail-row";
+import { AppearancePicker } from "./appearance-picker";
 
 import { BucketForm } from "@/components/BucketForm";
 import { ServerForm } from "@/components/ServerForm";
@@ -21,7 +22,7 @@ import { NativeHost } from "@/components/native/NativeHost";
 import { useApiData } from "@/lib/api/hooks";
 import { listServers } from "@/lib/auth/credentials";
 import { useSession, useSessionCtx } from "@/lib/auth/session";
-import { useTheme, type ThemePref } from "@/lib/theme";
+import { useTheme } from "@/lib/theme";
 
 const PAGE_SIZE = 12;
 const STATES = {
@@ -46,8 +47,6 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
   } = useSessionCtx();
   const {
     tokens,
-    pref,
-    setPref,
     dynamicAvailable,
     materialYou,
     setMaterialYou,
@@ -150,11 +149,11 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
           {page === "about" && <FieldGroup.Section title="Metahub">
             <ListItem supportingText={Constants.expoConfig?.version ?? "未知"}>App 版本</ListItem>
             {!creds.bucket && <ListItem supportingText={version?.version ?? versionError?.message ?? "正在读取…"}>Core 版本</ListItem>}
-            <Button label="GitHub 仓库" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core")} />
-            <Button label="更新日志" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core/releases")} />
+            <Button variant="outlined" label="GitHub 仓库" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core")} />
+            <Button variant="text" label="更新日志" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core/releases")} />
           </FieldGroup.Section>}
-          {page === "sync" && (<FieldGroup.Section title="本地与同步">
-            {creds.bucket && <Button label="同步升级与编辑恢复" onPress={() => router.push("/settings/recovery")} />}
+          {page === "sync" && (<><FieldGroup.Section title="本地与同步">
+            {creds.bucket && <Button variant="text" label="同步升级与编辑恢复" onPress={() => router.push("/settings/recovery")} />}
             <ListItem
               supportingText={
                 syncState.hydrationReady
@@ -190,6 +189,8 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
                 {new Date(syncState.lastSuccessAt).toLocaleString()}
               </NativeDataText>
             ) : null}
+          </FieldGroup.Section>
+          <FieldGroup.Section title="同步操作">
             <Button
               disabled={busy || syncing}
               label={syncing ? "正在同步数据…" : "立即同步数据"}
@@ -206,7 +207,7 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
                 {feedback}
               </NativeDataText>
             ) : null}
-          </FieldGroup.Section>)}
+          </FieldGroup.Section></>)}
           {["workspace", "credentials"].includes(page) && (<FieldGroup.Section title="工作区">
 {page === "workspace" && <>
             <Picker
@@ -278,9 +279,11 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
             {page === "workspace" && <Button
               disabled={busy}
               variant="text"
+              destructive
               label="断开连接"
               onPress={confirmDisconnect}
             />}
+            {feedback ? <NativeDataText textStyle={{ color: failed ? tokens.danger : tokens.fg }}>{feedback}</NativeDataText> : null}
           </FieldGroup.Section>)}
           {["offline", "attachments", "attachment"].includes(page) && (<FieldGroup.Section title="离线附件">
             <Text>{`${usage.count} 个文件 · ${mb(usage.bytes)}`}</Text>
@@ -377,16 +380,10 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
                 />
               </Column>
             ) : null}
+            {feedback ? <NativeDataText textStyle={{ color: failed ? tokens.danger : tokens.fg }}>{feedback}</NativeDataText> : null}
           </FieldGroup.Section>)}
           {page === "appearance" && (<FieldGroup.Section title="外观">
-            <Picker
-              selectedValue={pref}
-              onValueChange={(value: ThemePref) => setPref(value)}
-            >
-              <Picker.Item value="system" label="跟随系统" />
-              <Picker.Item value="light" label="浅色" />
-              <Picker.Item value="dark" label="深色" />
-            </Picker>
+            <AppearancePicker />
             {dynamicAvailable ? (
               <Switch
                 value={materialYou}
