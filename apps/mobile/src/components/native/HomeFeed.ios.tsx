@@ -28,9 +28,10 @@ import type { HomeFeedProps } from "./HomeFeed.types";
 
 export function HomeFeed({
   actions,
+  databaseActions,
   header,
-  documents,
-  openDocument,
+  items,
+  openItem,
   empty,
 }: HomeFeedProps) {
   const { tokens } = useTheme();
@@ -46,19 +47,19 @@ export function HomeFeed({
         >
           <RNHostView matchContents={{ vertical: true }}>{header}</RNHostView>
         </VStack>
-        {documents.map((doc) => (
+        {items.map((doc) => (
           <DocumentRowActions
-            key={doc.id}
+            key={`${doc.kind}:${doc.id}`}
             id={doc.id}
             recent
-            actions={actions}
+            actions={doc.kind === "database" ? databaseActions : actions}
             modifiers={[
               listRowBackground(tokens.bg),
               listRowInsets({ top: 4, bottom: 4, leading: 20, trailing: 16 }),
             ]}
           >
             <Button
-              onPress={() => openDocument(doc.id)}
+              onPress={() => openItem(doc)}
               modifiers={[
                 buttonStyle("plain"),
                 accessibilityLabel(doc.title || "未命名"),
@@ -72,7 +73,9 @@ export function HomeFeed({
                 ]}
               >
                 <Image
-                  systemName="doc.text"
+                  systemName={
+                    doc.kind === "database" ? "tablecells" : "doc.text"
+                  }
                   size={20}
                   modifiers={[
                     frame({ width: 28 }),

@@ -17,9 +17,10 @@ export function HomeFeed(props: HomeFeedProps) {
 }
 function Feed({
   actions,
+  databaseActions,
   header,
-  documents,
-  openDocument,
+  items,
+  openItem,
   empty,
 }: HomeFeedProps) {
   const { tokens } = useTheme();
@@ -32,13 +33,19 @@ function Feed({
       contentContainerStyle={{ paddingTop: 8, paddingBottom: 104 }}
     >
       {header}
-      {documents.map((doc) => (
-        <DocumentSwipeRow key={doc.id} id={doc.id} recent actions={actions}>
+      {items.map((doc) => (
+        <DocumentSwipeRow
+          key={`${doc.kind}:${doc.id}`}
+          id={doc.id}
+          recent
+          actions={doc.kind === "database" ? databaseActions : actions}
+        >
           {(pressableProps) => (
             <BrowseRow
               {...pressableProps}
+              kind={doc.kind}
               title={doc.title || "未命名"}
-              onPress={() => openDocument(doc.id)}
+              onPress={() => openItem(doc)}
             />
           )}
         </DocumentSwipeRow>

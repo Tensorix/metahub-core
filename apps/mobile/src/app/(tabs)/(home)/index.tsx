@@ -5,6 +5,7 @@ import { Platform, ScrollView, Text, View } from "react-native";
 import { useSession } from "@/lib/auth/session";
 import { useTheme } from "@/lib/theme";
 import { useApiData, useLiveInvalidate } from "@/lib/api/hooks";
+import { recentContent } from "@/lib/navigation/recent-content";
 import { useRecents } from "@/lib/navigation/use-recents";
 import { useSites } from "@/lib/navigation/use-sites";
 import { useDocumentActions } from "@/lib/browse/use-document-actions";
@@ -19,6 +20,7 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 export default function HomeScreen() {
   const router = useRouter();
   const actions = useDocumentActions();
+  const databaseActions = useDocumentActions("databases");
   const { client } = useSession();
   const { tokens } = useTheme();
   const { items } = useRecents();
@@ -29,16 +31,20 @@ export default function HomeScreen() {
     items.filter((i) => i.kind === "document").map((i) => i.id),
   );
   const docIds = useMemo(() => JSON.parse(docIdsKey) as string[], [docIdsKey]);
-  const fetcher = useCallback(
-    () => client.referenceSummaries({ kind: "document", ids: docIds }),
-    [client, docIds],
-  );
+  const fetcher = useCallback(async () => {
+    const [documents, databases] = await Promise.all([
+      client.referenceSummaries({ kind: "document", ids: docIds }),
+      client.listDatabases(),
+    ]);
+    return { documents, databases };
+  }, [client, docIds]);
   const recent = useApiData(fetcher);
-  useLiveInvalidate(["documents"], () => void recent.refetch());
-  const documents = docIds.flatMap((id) => {
-    const d = recent.data?.find((d) => d.id === id && !d.missing);
-    return d ? [d] : [];
-  });
+  useLiveInvalidate(["documents", "databases"], () => void recent.refetch());
+  const content = recentContent(
+    items,
+    recent.data?.documents ?? [],
+    recent.data?.databases ?? [],
+  );
   const recentSites = items
     .filter((i) => i.kind === "site")
     .flatMap((i) => {
@@ -53,8 +59,13 @@ export default function HomeScreen() {
       ) : (
         <HomeFeed
           actions={actions}
-          documents={documents.slice(0, 12)}
-          openDocument={(id) => router.push(`/doc/${id}`)}
+          databaseActions={databaseActions}
+          items={content}
+          openItem={(item) =>
+            router.push(
+              item.kind === "database" ? `/db/${item.id}` : `/doc/${item.id}`,
+            )
+          }
           header={
             <View>
               <BrowseSearch />
@@ -124,27 +135,27 @@ export default function HomeScreen() {
                   marginBottom: 8,
                 }}
               >
-                最近打开的文档
+                最近打开
               </Text>
               {recent.error ? (
                 <ErrorBanner
-                  message="最近文档加载失败"
+                  message="最近内容加载失败"
                   onRetry={recent.refetch}
                 />
               ) : null}
             </View>
           }
           empty={
-            !documents.length && !recent.error ? (
+            !content.length && !recent.error ? (
               <View>
                 <EmptyState
                   title={
-                    recent.loading ? "正在读取最近文档…" : "从一篇文档开始"
+                    recent.loading ? "正在读取最近内容…" : "从文档或数据表开始"
                   }
                   hint={
                     recent.loading
                       ? undefined
-                      : "在资料库打开文档，下次从这里继续"
+                      : "在资料库打开文档或数据表，下次从这里继续"
                   }
                 />
                 {!recent.loading ? (

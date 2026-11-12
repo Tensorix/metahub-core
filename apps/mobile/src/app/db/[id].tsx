@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { createRecentStore } from "@/lib/navigation/recent";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Alert } from "react-native";
 import * as Clipboard from "expo-clipboard";
@@ -42,6 +43,26 @@ export default function DatabaseScreen() {
     if (deleted && session.isCurrent()) router.replace("/");
   }, [deleted, session, router]);
   const [title, setTitle] = useState("数据表");
+  const recent = useMemo(
+    () => createRecentStore(session.replica.db, workspaceId),
+    [session.replica.db, workspaceId],
+  );
+  const remembered = useRef<string | null>(null);
+  const onTitle = useCallback(
+    (name: string) => {
+      if (!session.isCurrent()) return;
+      setTitle(name);
+      const key = workspaceId + ":" + id;
+      if (remembered.current === key) return;
+      try {
+        recent.remember({ id, kind: "database", title: name });
+        remembered.current = key;
+      } catch {
+        /* Recent history must not prevent opening a table. */
+      }
+    },
+    [id, workspaceId, recent, session],
+  );
   useEffect(() => {
     let live = true;
     const load = () =>
@@ -52,8 +73,12 @@ export default function DatabaseScreen() {
             setTitle(rows.find((row) => row.id === id)?.name ?? "数据表");
         })
         .catch(() => {});
-    const stop = session.replica.service.onChange(change => {
-      if(change.datasets.includes("databases") && (!change.databaseIds || change.databaseIds.includes(id))) load();
+    const stop = session.replica.service.onChange((change) => {
+      if (
+        change.datasets.includes("databases") &&
+        (!change.databaseIds || change.databaseIds.includes(id))
+      )
+        load();
     });
     return () => {
       live = false;
@@ -62,13 +87,26 @@ export default function DatabaseScreen() {
   }, [session, id]);
   return (
     <>
-      <Stack.Screen options={{ title, headerBackVisible: false, headerBackButtonMenuEnabled: false }} />
+      <Stack.Screen
+        options={{
+          title,
+          headerBackVisible: false,
+          headerBackButtonMenuEnabled: false,
+        }}
+      />
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
           accessibilityLabel="返回"
-          icon={process.env.EXPO_OS === "ios" ? "chevron.left" : require("@/components/native/assets/back.xml")}
+          icon={
+            process.env.EXPO_OS === "ios"
+              ? "chevron.left"
+              : require("@/components/native/assets/back.xml")
+          }
           disabled={busy}
-          onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/"); }}
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace("/");
+          }}
         />
       </Stack.Toolbar>
       <Stack.Toolbar placement="right">
@@ -171,7 +209,7 @@ export default function DatabaseScreen() {
         key={`${workspaceId}:${id}`}
         databaseId={id}
         initialView={view}
-        onTitle={setTitle}
+        onTitle={onTitle}
         deleted={deleted}
       />
     </>
