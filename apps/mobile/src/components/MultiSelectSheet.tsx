@@ -1,4 +1,4 @@
-import { BottomSheet, Button, Checkbox, Column, Host, Text } from "@expo/ui";
+import { SelectionSheet } from "./native/SelectionSheet";
 import { useRef, useState } from "react";
 
 /** Multi-select editor: checkbox list in a native bottom sheet. Selection is
@@ -24,28 +24,27 @@ export function MultiSelectSheet({
   const latest = useRef(selected);
 
   const toggle = (opt: string, checked: boolean) => {
-    const next = checked ? [...new Set([...latest.current, opt])] : latest.current.filter((o) => o !== opt);
+    const next = checked
+      ? [...new Set([...latest.current, opt])]
+      : latest.current.filter((o) => o !== opt);
     latest.current = next;
     setSelected(next);
     onChange(next);
   };
 
   return (
-    <Host>
-      <BottomSheet isPresented={isPresented} onDismiss={onDismiss}>
-        <Column>
-          <Text>{title}</Text>
-          {options.map((opt) => (
-            <Checkbox
-              key={opt}
-              label={opt}
-              value={selected.includes(opt)}
-              onValueChange={(checked) => toggle(opt, checked)}
-            />
-          ))}
-          <Button variant="text" label="完成" onPress={onDismiss} />
-        </Column>
-      </BottomSheet>
-    </Host>
+    <SelectionSheet
+      title={title}
+      isPresented={isPresented}
+      onClose={onDismiss}
+      summary={`已选 ${selected.length} 项`}
+      onSelect={(option) => toggle(option, !latest.current.includes(option))}
+      items={options.map((option) => ({
+        id: option,
+        title: option,
+        selected: selected.includes(option),
+      }))}
+      empty="没有可选项"
+    />
   );
 }

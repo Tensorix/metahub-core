@@ -1,5 +1,4 @@
 import { recordWriter } from "@/lib/database-drafts";
-import { NativeToolbarAction } from "@/components/native/NativeToolbarAction";
 import { Button, FieldGroup, Picker, Switch, Text } from "@expo/ui";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -193,12 +192,18 @@ export default function RecordScreen() {
     else router.replace("/");
   };
   const closeToolbar = (
-    <NativeToolbarAction
-      placement="left"
-      label="关闭"
-      disabled={savingBeforeLeave || deleting}
-      onPress={close}
-    />
+    <Stack.Toolbar placement="left">
+      <Stack.Toolbar.Button
+        icon={
+          process.env.EXPO_OS === "ios"
+            ? "xmark"
+            : require("@/components/native/assets/close.xml")
+        }
+        accessibilityLabel="关闭"
+        disabled={savingBeforeLeave || deleting}
+        onPress={close}
+      />
+    </Stack.Toolbar>
   );
   const leaveNotice = leaveError ? (
     <RNText
@@ -322,15 +327,23 @@ export default function RecordScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
-      <Stack.Screen options={{ title }} />
+      <Stack.Screen
+        options={{
+          title,
+          headerTransparent: process.env.EXPO_OS === "ios",
+          headerShadowVisible: false,
+          headerBlurEffect: "none",
+        }}
+      />
       {closeToolbar}
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
+          hidesSharedBackground
           title="记录操作"
           accessibilityLabel="记录操作"
           icon={
             process.env.EXPO_OS === "ios"
-              ? "ellipsis.circle"
+              ? "ellipsis"
               : require("@/components/native/assets/more.xml")
           }
         >
@@ -410,37 +423,39 @@ export default function RecordScreen() {
           </Stack.Toolbar.MenuAction>
         </Stack.Toolbar.Menu>
       </Stack.Toolbar>
-      {leaveNotice}
-      <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-        <RNText
-          accessibilityLiveRegion="polite"
-          style={{ color: failed ? tokens.danger : tokens.muted }}
-        >
-          {failed
-            ? `保存失败：${failed.error}（修改已保留）`
-            : saving || savingBeforeLeave
-              ? "正在保存…"
-              : drafts.dirty
-                ? "有未保存的修改"
-                : "已保存"}
-        </RNText>
-        {failed ||
-        [...drafts.fields.values()].some((d) => d.status === "draft") ? (
-          <Pressable onPress={saveAll}>
-            <RNText style={{ color: tokens.accent }}>保存 / 重试</RNText>
-          </Pressable>
-        ) : null}
-        {error ? (
-          <Pressable onPress={() => void refetch()}>
-            <RNText style={{ color: tokens.danger }}>刷新失败，点按重试</RNText>
-          </Pressable>
-        ) : null}
-      </View>
       <NativeHost
         style={styles.host}
         pointerEvents={deleting || savingBeforeLeave ? "none" : "auto"}
       >
         <FieldGroup>
+          {(leaveError ||
+            failed ||
+            saving ||
+            savingBeforeLeave ||
+            drafts.dirty ||
+            error) && (
+            <FieldGroup.Section>
+              {leaveError && <Text>{leaveError + "（修改已保留）"}</Text>}
+              {(failed || saving || savingBeforeLeave || drafts.dirty) && (
+                <Text>
+                  {failed
+                    ? `保存失败：${failed.error}（修改已保留）`
+                    : saving || savingBeforeLeave
+                      ? "正在保存…"
+                      : "有未保存的修改"}
+                </Text>
+              )}
+              {(failed ||
+                [...drafts.fields.values()].some(
+                  (d) => d.status === "draft",
+                )) && <Button onPress={saveAll}>保存 / 重试</Button>}
+              {error && (
+                <Button onPress={() => void refetch()}>
+                  刷新失败，点按重试
+                </Button>
+              )}
+            </FieldGroup.Section>
+          )}
           {props.map((prop) => {
             const value = drafts.fields.has(prop.id)
               ? drafts.fields.get(prop.id)!.value

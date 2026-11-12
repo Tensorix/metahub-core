@@ -1,23 +1,10 @@
-import { Checkbox, RNHostView } from "@expo/ui";
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  FlatList,
-  Keyboard,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import { NativeSheet } from "@/components/native/NativeSheet";
-import { useSheetContentHeight } from "@/components/native/useSheetContentHeight";
-import { NativeHost } from "@/components/native/NativeHost";
-import { NativeButton } from "@/components/native/NativeButton";
-import { RecordTextInput } from "@/components/RecordTextInput";
+import { Keyboard } from "react-native";
+import { SelectionSheet } from "@/components/native/SelectionSheet";
 import { useApiData } from "@/lib/api/hooks";
 import type { PropInfo } from "@/lib/api/sdk";
 import { useSession } from "@/lib/auth/session";
 import { recordTitle } from "@/lib/format";
-import { useTheme } from "@/lib/theme";
 
 export interface Candidate {
   id: string;
@@ -126,9 +113,7 @@ export function RefPickerSheet({
   busy?: boolean;
   onOpen?: (id: string) => void;
 }) {
-  const { tokens } = useTheme();
   const { client } = useSession();
-  const sheetHeight = useSheetContentHeight(600, 0.7);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState(initialSelected);
   const latest = useRef(selected);
@@ -181,164 +166,83 @@ export function RefPickerSheet({
     onClose();
   };
   return (
-    <NativeSheet
-      isPresented
-      onDismiss={close}
-      dismissible={!busy}
+    <SelectionSheet
+      title={prop.name}
+      onClose={close}
+      busy={busy}
       testID="reference-picker"
-    >
-      <RNHostView matchContents={{ vertical: true }}>
-        <View
-          style={{
-            height: sheetHeight,
-            width: "100%",
-            backgroundColor: tokens.surface,
-            gap: 8,
-          }}
-        >
-          <View style={styles.head}>
-            <Text
-              selectable
-              numberOfLines={1}
-              style={{
-                color: tokens.fg,
-                fontSize: 18,
-                fontWeight: "600",
-                flex: 1,
-              }}
-            >
-              {prop.name}
-            </Text>
-            <NativeButton disabled={busy} onPress={close}>
-              {busy ? "保存中…" : "完成"}
-            </NativeButton>
-          </View>
-          <FlatList<Candidate>
-            style={{ flex: 1 }}
-            data={[
-              ...candidates.filter((c) => c.missing && selected.includes(c.id)),
-              ...(page.data?.candidates ?? []),
-            ]}
-            keyExtractor={(c) => c.id}
-            keyboardShouldPersistTaps="always"
-            keyboardDismissMode="interactive"
-            contentInsetAdjustmentBehavior="automatic"
-            renderItem={({ item }) => (
-              <View style={[styles.row, { borderColor: tokens.line }]}>
-                <NativeHost matchContents style={{ flex: 1 }}>
-                  <Checkbox
-                    disabled={busy}
-                    label={item.title}
-                    value={selected.includes(item.id)}
-                    onValueChange={() => toggle(item.id)}
-                  />
-                </NativeHost>
-                {onOpen && !item.missing && (
-                  <NativeButton
-                    disabled={busy}
-                    variant="text"
-                    onPress={() => onOpen(item.id)}
-                  >
-                    打开
-                  </NativeButton>
-                )}
-              </View>
-            )}
-            ListHeaderComponent={
-              <View style={{ gap: 8 }}>
-                <NativeHost matchContents>
-                  <RecordTextInput
-                    text={query}
-                    placeholder="搜索关联项"
-                    onChangeText={(value) => {
-                      setQuery(value);
-                      setOffset(0);
-                    }}
-                  />
-                </NativeHost>
-                <Text selectable style={{ color: tokens.muted }}>
-                  已选 {selected.length} 项 · 点按选项以添加或移除
-                </Text>
-                {!!error && (
-                  <Text
-                    accessibilityRole="alert"
-                    style={{ color: tokens.danger }}
-                  >
-                    {error.message}
-                  </Text>
-                )}
-                {error && onRetry && (
-                  <NativeButton disabled={busy} onPress={onRetry}>
-                    重试保存
-                  </NativeButton>
-                )}
-                {page.loading ? <ActivityIndicator /> : null}
-                {page.error ? (
-                  <NativeButton
-                    onPress={() => {
-                      void page.refetch();
-                      onRetry?.();
-                    }}
-                  >
-                    加载失败，重试
-                  </NativeButton>
-                ) : null}
-                {candidates.some((c) => c.missing) ? (
-                  <Text selectable style={{ color: tokens.muted }}>
-                    部分已选目标已删除；仍保留其引用，可在字段中移除。
-                  </Text>
-                ) : null}
-              </View>
+      search={{
+        value: query,
+        placeholder: "搜索关联项",
+        onChange: (value) => {
+          setQuery(value);
+          setOffset(0);
+        },
+      }}
+      summary={`已选 ${selected.length} 项`}
+      onSelect={toggle}
+      onOpen={onOpen}
+      items={(
+        [
+          ...candidates.filter((c) => c.missing && selected.includes(c.id)),
+          ...(page.data?.candidates ?? []),
+        ] as Candidate[]
+      ).map((item) => ({
+        id: item.id,
+        title: item.title,
+        selected: selected.includes(item.id),
+        canOpen: !!onOpen && !item.missing,
+      }))}
+      loading={page.loading}
+      notices={[
+        ...(error
+          ? [
+              {
+                text: error.message,
+                action: onRetry
+                  ? { label: "重试保存", onPress: onRetry }
+                  : undefined,
+              },
+            ]
+          : []),
+        ...(page.error
+          ? [
+              {
+                text: "加载失败",
+                action: {
+                  label: "重试",
+                  onPress: () => {
+                    void page.refetch();
+                    onRetry?.();
+                  },
+                },
+              },
+            ]
+          : []),
+        ...(candidates.some((c) => c.missing)
+          ? [{ text: "部分已选目标已删除；仍保留其引用，可在字段中移除。" }]
+          : []),
+      ]}
+      pagination={
+        offset > 0 || page.data?.hasMore
+          ? {
+              page: Math.floor(offset / 60) + 1,
+              hasPrevious: offset > 0,
+              hasNext: !!page.data?.hasMore,
+              onPrevious: () => setOffset(Math.max(0, offset - 60)),
+              onNext: () => setOffset(offset + 60),
             }
-            ListFooterComponent={
-              <View style={styles.head}>
-                <NativeButton
-                  disabled={!offset || page.loading}
-                  onPress={() => setOffset(Math.max(0, offset - 60))}
-                >
-                  上一页
-                </NativeButton>
-                <Text style={{ color: tokens.muted }}>
-                  第 {Math.floor(offset / 60) + 1} 页
-                </Text>
-                <NativeButton
-                  disabled={!page.data?.hasMore || page.loading}
-                  onPress={() => setOffset(offset + 60)}
-                >
-                  下一页
-                </NativeButton>
-              </View>
-            }
-            ListEmptyComponent={
-              !page.loading && !page.error ? (
-                <Text style={{ padding: 20, color: tokens.muted }}>
-                  {!target
-                    ? "该关联列未配置目标数据库"
-                    : query
-                      ? "没有匹配项"
-                      : "没有可选项"}
-                </Text>
-              ) : undefined
-            }
-          />
-        </View>
-      </RNHostView>
-    </NativeSheet>
+          : undefined
+      }
+      empty={
+        page.error
+          ? undefined
+          : !target
+            ? "该关联列未配置目标数据库"
+            : query
+              ? "没有匹配项"
+              : "没有可选项"
+      }
+    />
   );
 }
-const styles = StyleSheet.create({
-  head: {
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  row: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "center",
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-});
