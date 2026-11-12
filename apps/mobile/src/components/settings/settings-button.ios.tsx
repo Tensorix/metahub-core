@@ -16,7 +16,7 @@ export function SettingsButton({ label, onPress, disabled: isDisabled, variant =
     ]}>
       <Text modifiers={[
         font({ textStyle: "body", weight: variant === "filled" ? "semibold" : "regular" }),
-        frame({ maxWidth: Infinity, minHeight: 28, alignment: variant === "text" ? "leading" : "center" }),
+        frame({ minHeight: 28 }),
       ]}>{label ?? ""}</Text>
     </Button>
   );

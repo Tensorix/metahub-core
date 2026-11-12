@@ -149,7 +149,7 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
           {page === "about" && <SettingsSection title="Metahub">
             <ListItem supportingText={Constants.expoConfig?.version ?? "未知"}>App 版本</ListItem>
             {!creds.bucket && <ListItem supportingText={version?.version ?? versionError?.message ?? "正在读取…"}>Core 版本</ListItem>}
-            <Button variant="outlined" label="GitHub 仓库" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core")} />
+            <Button variant="text" label="GitHub 仓库" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core")} />
             <Button variant="text" label="更新日志" onPress={() => void Linking.openURL("https://github.com/Tensorix/metahub-core/releases")} />
           </SettingsSection>}
           {page === "sync" && (<><SettingsSection title="本地与同步">
