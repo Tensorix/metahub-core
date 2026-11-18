@@ -338,7 +338,6 @@ export default function RecordScreen() {
       {closeToolbar}
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
-          hidesSharedBackground
           title="记录操作"
           accessibilityLabel="记录操作"
           icon={
