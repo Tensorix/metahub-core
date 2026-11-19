@@ -9,7 +9,7 @@ import {
 } from "@expo/ui";
 import { Stack, useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, View, Linking } from "react-native";
+import { Alert, View, Linking, Platform } from "react-native";
 import Constants from "expo-constants";
 import { SettingsForm } from "./SettingsForm";
 import { SettingsButton as Button } from "./settings-button";
@@ -243,7 +243,7 @@ export default function SettingsScreen({ page }: { page: "sync" | "workspace" | 
               disabled={busy}
               variant="text"
               label={reconnecting ? "关闭凭据表单" : "更新连接凭据"}
-              onPress={() => router.push("/settings/credentials")}
+              onPress={() => router.push(creds.bucket && Platform.OS === "ios" ? "/connect" : "/settings/credentials")}
             />
             {authInvalid ? (
               <Text textStyle={{ color: tokens.danger }}>

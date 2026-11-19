@@ -6,6 +6,7 @@ import {
   disabled,
   font,
   frame,
+  foregroundStyle,
   pickerStyle,
   tag,
   tint,
@@ -44,21 +45,22 @@ export function ConnectionChoice<T extends string>(
 
 export function ConnectionAction(props: ConnectionActionProps) {
   const { tokens } = useTheme();
+  const style = props.secondary ? "glass" : "glassProminent";
+  const fallback = props.secondary ? "bordered" : "borderedProminent";
   return (
     <Button
       onPress={props.onPress}
       modifiers={[
-        buttonStyle(
-          isLiquidGlassAvailable() ? "glassProminent" : "borderedProminent",
-        ),
+        buttonStyle(isLiquidGlassAvailable() ? style : fallback),
         controlSize("large"),
-        tint(tokens.accent),
+        ...(props.secondary ? [] : [tint(tokens.accent)]),
         disabled(props.disabled),
       ]}
     >
       <Text
         modifiers={[
           font({ weight: "semibold" }),
+          foregroundStyle(props.secondary ? tokens.accent : tokens.accentFg),
           frame({ maxWidth: Infinity, minHeight: 28 }),
         ]}
       >

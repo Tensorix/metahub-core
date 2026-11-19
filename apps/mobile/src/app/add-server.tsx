@@ -1,4 +1,5 @@
-import { Stack } from "expo-router";
+import { NativeButton } from "@/components/native/NativeButton";
+import { Stack, useRouter } from "expo-router";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,6 +17,7 @@ import { fs } from "@/lib/theme/tokens";
 
 /** Add another server while signed in; connecting also switches to it. */
 export default function AddServerScreen() {
+  const router = useRouter();
   const { connect } = useSessionCtx();
   const { tokens } = useTheme();
 
@@ -40,11 +42,14 @@ export default function AddServerScreen() {
               await connect(creds);
             }}
           />
-          <BucketForm
-            onVerified={async (creds) => {
-              await connect(creds);
-            }}
-          />
+          {Platform.OS === "ios" ? (
+            <NativeButton
+              label="连接存储桶"
+              onPress={() => router.push("/connect")}
+            />
+          ) : (
+            <BucketForm onVerified={connect} />
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

@@ -48,7 +48,14 @@ export default function OnboardingScreen() {
 
           {error ? <Text style={{ color: tokens.danger }}>{error}</Text> : null}
           <ServerForm onVerified={connect} />
-          <BucketForm onVerified={connect} />
+          {Platform.OS === "ios" ? (
+            <NativeButton
+              label="连接存储桶"
+              onPress={() => router.push("/connect")}
+            />
+          ) : (
+            <BucketForm onVerified={connect} />
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

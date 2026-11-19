@@ -26,11 +26,21 @@ export function ConnectionChoice<T extends string>(
 }
 
 export interface ConnectionActionProps {
+  secondary?: boolean;
   label: string;
   disabled: boolean;
   onPress: () => void;
 }
 
-export function ConnectionAction(props: ConnectionActionProps) {
-  return <Button {...props} style={{ width: "100%", paddingVertical: 12 }} />;
+export function ConnectionAction({
+  secondary,
+  ...props
+}: ConnectionActionProps) {
+  return (
+    <Button
+      {...props}
+      variant={secondary ? "text" : "filled"}
+      style={{ width: "100%", paddingVertical: 12 }}
+    />
+  );
 }

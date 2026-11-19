@@ -1,7 +1,10 @@
+import { ScannerButton } from "@/components/ScannerButton";
 import { useConnectionLeaveGuard } from "@/components/use-connection-leave-guard";
 import { NativeDataText } from "@/components/native/NativeDataText";
 import { useEffect, useRef, useState } from "react";
-import { Button, Column, Text } from "@expo/ui";
+import { Keyboard, Platform, View } from "react-native";
+import { QrScanner } from "@/components/QrScanner";
+import { Column, Text } from "@expo/ui";
 import {
   ConnectionAction,
   ConnectionChoice,
@@ -34,6 +37,29 @@ export function BucketForm({
   useEffect(() => () => operation.current?.abort(), []);
   const [code, setCode] = useState(initialCode);
   const [manual, setManual] = useState(false);
+  const paged = Platform.OS === "ios";
+  const [step, setStep] = useState(initialCode ? 3 : 0);
+  const [scanning, setScanning] = useState(false);
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const scanHandled = useRef(false);
+  function goTo(next: number) {
+    Keyboard.dismiss();
+    setError(null);
+    setStep(next);
+  }
+  function acceptScan(data: string) {
+    if (scanHandled.current) return;
+    try {
+      decodeEnroll(data);
+    } catch {
+      setScanMessage("请扫描存储桶接入二维码");
+      return;
+    }
+    scanHandled.current = true;
+    setCode(data);
+    setScanning(false);
+    goTo(3);
+  }
   const [endpoint, setEndpoint] = useState("");
   const [bucket, setBucket] = useState("");
   const [region, setRegion] = useState("auto");
@@ -157,104 +183,192 @@ export function BucketForm({
       if (!attempt.signal.aborted) setBusy(false);
     }
   }
+  if (scanning) {
+    return (
+      <View style={{ flex: 1, gap: 8, paddingVertical: 8 }}>
+        <QrScanner onScan={acceptScan} message={scanMessage} />
+        <ScannerButton label="取消扫码" onPress={() => setScanning(false)} />
+      </View>
+    );
+  }
   return (
-    <NativeHost matchContents={{ vertical: true }} style={{ width: "100%" }}>
-      <Column spacing={24} style={{ paddingVertical: 16, width: "100%" }}>
-        {showTitle ? (
-          <Text
-            textStyle={{ color: tokens.fg, fontSize: 22, fontWeight: "600" }}
-          >
-            连接存储桶
-          </Text>
-        ) : null}
-        <Text
-          textStyle={{ color: tokens.fgSoft, fontSize: 16, lineHeight: 24 }}
+    <>
+      <NativeHost
+        ignoreSafeArea={paged ? "all" : undefined}
+        matchContents={{ vertical: true }}
+        style={{ width: "100%" }}
+      >
+        <Column
+          spacing={paged ? 16 : 24}
+          style={{ paddingVertical: 16, width: "100%" }}
         >
-          直接同步已有存储桶，下载完成后可离线编辑。
-        </Text>
-        <Column spacing={16} style={{ width: "100%" }}>
-          <ConnectionChoice
-            label="连接方式"
-            value={manual ? "manual" : "code"}
-            disabled={busy}
-            onChange={(value) => setManual(value === "manual")}
-            options={[
-              { value: "code", label: "使用接入码" },
-              { value: "manual", label: "手动填写配置" },
-            ]}
-          />
-          {manual ? (
-            <>
-              {input("endpoint", "Endpoint", endpoint, setEndpoint)}
-              {input("bucket", "Bucket", bucket, setBucket)}
-              {input("region", "Region", region, setRegion)}
-              {input("prefix", "Prefix", prefix, setPrefix)}
-              {input("access-key", "Access Key", accessKeyId, setAccessKeyId)}
-              {input(
-                "secret-key",
-                "Secret Key",
-                secretAccessKey,
-                setSecretAccessKey,
-                true,
-              )}
-            </>
-          ) : (
-            input("enrollment-code", "接入码或链接", code, setCode, true)
+          {showTitle ? (
+            <Text
+              textStyle={{ color: tokens.fg, fontSize: 22, fontWeight: "600" }}
+            >
+              连接存储桶
+            </Text>
+          ) : null}
+          {!paged && (
+            <Text
+              textStyle={{ color: tokens.fgSoft, fontSize: 16, lineHeight: 24 }}
+            >
+              直接同步已有存储桶，下载完成后可离线编辑。
+            </Text>
           )}
-        </Column>
-        <Column spacing={16} style={{ width: "100%" }}>
-          <ConnectionChoice<"passphrase" | "recovery">
-            label="解密方式"
-            value={unlockMethod}
-            disabled={busy}
-            onChange={(value) => {
-              setUnlockMethod(value);
-              setError(null);
-            }}
-            options={[
-              { value: "passphrase", label: "使用解密密码" },
-              { value: "recovery", label: "使用恢复码" },
-            ]}
-          />
-          {unlockMethod === "recovery" ? (
-            <>
-              {input(
-                "recovery-code",
-                "恢复码",
-                recoveryCode,
-                setRecoveryCode,
-                true,
+          {(!paged || step < 3) && (
+            <Column spacing={16} style={{ width: "100%" }}>
+              {(!paged || step === 0) && (
+                <ConnectionChoice
+                  label="连接方式"
+                  value={manual ? "manual" : "code"}
+                  disabled={busy}
+                  onChange={(value) => setManual(value === "manual")}
+                  options={[
+                    { value: "code", label: "使用接入码" },
+                    { value: "manual", label: "手动填写配置" },
+                  ]}
+                />
               )}
-              <Text textStyle={{ color: tokens.muted }}>
-                输入以 MH1 开头的恢复码，仅用于在此设备解密已有数据。
-              </Text>
-            </>
-          ) : (
-            input("passphrase", "解密密码", passphrase, setPassphrase, true)
+              {manual ? (
+                <>
+                  {(!paged || step === 0) && (
+                    <>
+                      {input("endpoint", "Endpoint", endpoint, setEndpoint)}
+                      {input("bucket", "Bucket", bucket, setBucket)}
+                    </>
+                  )}
+                  {(!paged || step === 1) && (
+                    <>
+                      {input("region", "Region", region, setRegion)}
+                      {input("prefix", "Prefix", prefix, setPrefix)}
+                    </>
+                  )}
+                  {(!paged || step === 2) && (
+                    <>
+                      {input(
+                        "access-key",
+                        "Access Key",
+                        accessKeyId,
+                        setAccessKeyId,
+                      )}
+                      {input(
+                        "secret-key",
+                        "Secret Key",
+                        secretAccessKey,
+                        setSecretAccessKey,
+                        true,
+                      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  {input(
+                    "enrollment-code",
+                    "接入码或链接",
+                    code,
+                    setCode,
+                    true,
+                  )}
+                </>
+              )}
+            </Column>
           )}
+          {(!paged || step === 3) && (
+            <Column spacing={16} style={{ width: "100%" }}>
+              <ConnectionChoice<"passphrase" | "recovery">
+                label="解密方式"
+                value={unlockMethod}
+                disabled={busy}
+                onChange={(value) => {
+                  setUnlockMethod(value);
+                  setError(null);
+                }}
+                options={[
+                  { value: "passphrase", label: "使用解密密码" },
+                  { value: "recovery", label: "使用恢复码" },
+                ]}
+              />
+              {unlockMethod === "recovery" ? (
+                <>
+                  {input(
+                    "recovery-code",
+                    "恢复码",
+                    recoveryCode,
+                    setRecoveryCode,
+                    true,
+                  )}
+                  <Text textStyle={{ color: tokens.muted }}>
+                    输入以 MH1 开头的恢复码，仅用于在此设备解密已有数据。
+                  </Text>
+                </>
+              ) : (
+                input("passphrase", "解密密码", passphrase, setPassphrase, true)
+              )}
+            </Column>
+          )}
+          {error ? (
+            <NativeDataText textStyle={{ color: tokens.danger }}>
+              {error}
+            </NativeDataText>
+          ) : null}
+          {paged && step > 0 && !busy && (
+            <ConnectionAction
+              disabled={false}
+              secondary
+              label="上一步"
+              onPress={() => goTo(manual ? step - 1 : 0)}
+            />
+          )}
+          {paged && step < 3 ? (
+            <ConnectionAction
+              label="下一步"
+              disabled={false}
+              onPress={() => {
+                if (!manual) {
+                  try {
+                    decodeEnroll(code);
+                  } catch {
+                    setError("请输入有效的存储桶接入码或链接");
+                    return;
+                  }
+                }
+                goTo(manual ? step + 1 : 3);
+              }}
+            />
+          ) : (
+            <ConnectionAction
+              disabled={busy}
+              label={busy ? "正在验证并连接…" : "连接并同步"}
+              onPress={() => void connect()}
+            />
+          )}
+          {busy && !saving ? (
+            <ConnectionAction
+              disabled={false}
+              secondary
+              label="取消连接"
+              onPress={() => {
+                operation.current?.abort();
+                operation.current = null;
+                setBusy(false);
+              }}
+            />
+          ) : null}
         </Column>
-        {error ? (
-          <NativeDataText textStyle={{ color: tokens.danger }}>
-            {error}
-          </NativeDataText>
-        ) : null}
-        <ConnectionAction
-          disabled={busy}
-          label={busy ? "正在验证并连接…" : "连接并同步"}
-          onPress={() => void connect()}
+      </NativeHost>
+      {paged && !manual && step === 0 && (
+        <ScannerButton
+          label="扫码填入接入码"
+          onPress={() => {
+            Keyboard.dismiss();
+            scanHandled.current = false;
+            setScanMessage(null);
+            setScanning(true);
+          }}
         />
-        {busy && !saving ? (
-          <Button
-            label="取消连接"
-            variant="text"
-            onPress={() => {
-              operation.current?.abort();
-              operation.current = null;
-              setBusy(false);
-            }}
-          />
-        ) : null}
-      </Column>
-    </NativeHost>
+      )}
+    </>
   );
 }

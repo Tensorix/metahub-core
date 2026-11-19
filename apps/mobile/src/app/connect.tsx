@@ -1,5 +1,7 @@
 import { Stack, useLocalSearchParams } from "expo-router";
-import { KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { useHeaderHeight } from "expo-router/react-navigation";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
 import { BucketForm } from "@/components/BucketForm";
 import { useSessionCtx } from "@/lib/auth/session";
 import { useTheme } from "@/lib/theme";
@@ -10,33 +12,60 @@ export default function ConnectScreen() {
   const code = typeof enroll === "string" ? enroll : "";
   const { connect } = useSessionCtx();
   const { tokens } = useTheme();
+  const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
+  const form = (
+    <BucketForm
+      key={code}
+      initialCode={code}
+      showTitle={false}
+      onVerified={async (credentials) => {
+        await connect(credentials);
+      }}
+    />
+  );
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: tokens.bg }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={96}
     >
-      <Stack.Screen options={{ title: "连接存储桶", headerShown: true }} />
-      <ScrollView
-        contentContainerStyle={{
-          padding: 24,
-          paddingBottom: 48,
-          width: "100%",
-          maxWidth: 560,
-          alignSelf: "center",
+      <Stack.Screen
+        options={{
+          title: "连接存储桶",
+          headerShown: true,
+          headerTransparent: Platform.OS === "ios",
+          headerBackButtonDisplayMode: "minimal",
         }}
-        contentInsetAdjustmentBehavior="automatic"
-        keyboardShouldPersistTaps="handled"
-      >
-        <BucketForm
-          key={code}
-          initialCode={code}
-          showTitle={false}
-          onVerified={async (credentials) => {
-            await connect(credentials);
+      />
+      {Platform.OS === "ios" ? (
+        <View
+          style={{
+            flex: 1,
+            paddingTop: headerHeight + 16,
+            paddingBottom: insets.bottom,
+            paddingHorizontal: 20,
+            width: "100%",
+            maxWidth: 560,
+            alignSelf: "center",
           }}
-        />
-      </ScrollView>
+        >
+          {form}
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{
+            padding: 24,
+            paddingBottom: 48,
+            width: "100%",
+            maxWidth: 560,
+            alignSelf: "center",
+          }}
+          contentInsetAdjustmentBehavior="automatic"
+          keyboardShouldPersistTaps="handled"
+        >
+          {form}
+        </ScrollView>
+      )}
     </KeyboardAvoidingView>
   );
 }
