@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ActivityIndicator, Alert, Linking, Modal, Platform, Pressable, Text, View } from "react-native";
+import { Alert, Linking, Modal, Platform, Pressable, Text } from "react-native";
 import { useSessionCtx } from "@/lib/auth/session";
 import { recoverMobileWorkspace } from "@/lib/replica/recovery";
 import { dataVersionRange, knownDataVersion } from "../../../../src/core/sync/data-version";
 import { storageUrl } from "../../../../src/core/sync/storage-url";
 import { workspaceAccess } from "../../../../src/core/sync/workspace-access";
+
+import { WorkspacePreparation } from "./WorkspacePreparation";
+import type { PreparationMode } from "./workspace-preparation";
+import type { RecoveryPhase } from "../../../../src/core/sync/recovery-v2";
 
 export function SyncUpgradePrompt() {
   const { session, connect } = useSessionCtx();
@@ -12,6 +16,8 @@ export function SyncUpgradePrompt() {
   const [attempt, retry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [phase, setPhase] = useState<RecoveryPhase | null>(null);
+  const [mode, setMode] = useState<PreparationMode>("initializing");
   const working = useRef(false);
   const subscribe = useCallback((notify: () => void) => session?.sync.onStatus(notify) ?? (() => {}), [session]);
   const lastSync = useSyncExternalStore(subscribe, () => session?.sync.status.lastSyncAt ?? null);
@@ -38,33 +44,42 @@ export function SyncUpgradePrompt() {
     const access = workspaceAccess(session.replica.db).find(state => state.url === url);
     if (!access || access.kind === "ready" || access.kind === "checking" || working.current) return;
     if (access.kind === "error") return;
-    const automatic = access.kind === "initializing";
-    const title = access.kind === "rebuild" ? "更新本地副本" : "升级工作区同步";
+    const kind = access.kind;
+    const automatic = kind === "initializing";
+    const title = kind === "rebuild" ? "更新本地副本" : "升级工作区同步";
     async function recover() {
       if (!session?.isCurrent() || working.current) return;
+      setPhase(null);
+      setMode(kind === "migration" || kind === "rebuild" ? kind : "initializing");
       working.current = true; setBusy(true); setError("");
       try {
-        const result = await recoverMobileWorkspace(session, () => connect(session.creds), () => {}, undefined, automatic);
+        const result = await recoverMobileWorkspace(session, () => connect(session.creds), setPhase, undefined, automatic);
         if (result.pending) Alert.alert("本地副本已更新", `有 ${result.pending} 项编辑需要核对，可在设置中查看。`);
       } catch (failure) {
         setError(failure instanceof Error ? failure.message : String(failure));
       } finally { working.current = false; setBusy(false); }
     }
     if (automatic) { void recover(); return; }
-    if (access.kind !== "migration" && access.kind !== "rebuild") return;
+    if (kind !== "migration" && kind !== "rebuild") return;
     const key = session.workspaceId;
     if (offered.current.has(key)) return;
     offered.current.add(key);
     Alert.alert(title, "应用会备份本机编辑并更新本地副本。期间请保持应用打开，编辑会短暂停用。", [
-      { text: "稍后", style: "cancel" },
+      {
+        text: "稍后",
+        style: "cancel",
+        onPress: () => {
+          setTimeout(() => {
+            offered.current.delete(key);
+            retry((n) => n + 1);
+          }, 60_000);
+        },
+      },
       { text: title === "更新本地副本" ? "立即更新" : "立即升级", onPress: () => void recover() },
     ]);
   }, [session, connect, lastSync, attempt, incompatible, version, openUpdate, updateMessage]);
   if (incompatible) return <Pressable accessibilityRole="button" onPress={openUpdate}><Text>{updateMessage} 更新应用</Text></Pressable>;
-  return <>{connectionError && <Pressable accessibilityRole="button" onPress={() => { offered.current.clear(); setError(""); retry(n => n + 1); void session?.syncNow(); }}><Text>{connectionError} · 重试</Text></Pressable>}<Modal visible={busy} transparent animationType="fade" onRequestClose={() => {}}>
-    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0009", gap: 12 }}>
-      <ActivityIndicator color="white" />
-      <Text style={{ color: "white" }}>正在连接工作区并校验本地数据…</Text>
-    </View>
-  </Modal></>;
+  return <>{connectionError && <Pressable accessibilityRole="button" onPress={() => { offered.current.clear(); setError(""); retry(n => n + 1); void session?.syncNow(); }}><Text>{connectionError} · 重试</Text></Pressable>}{busy && <Modal animationType="fade" presentationStyle="fullScreen" statusBarTranslucent onRequestClose={() => {}}>
+    <WorkspacePreparation phase={phase} bucket={session?.creds.bucket?.bucket} mode={mode} />
+  </Modal>}</>;
 }

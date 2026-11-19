@@ -19,7 +19,7 @@ export default function DatabaseScreen() {
     setBusy(true);
     let release: (() => void) | undefined;
     try {
-      release = await freezeAndFlushEditors(session);
+      release = await freezeAndFlushEditors(session.replica);
       if (session.isCurrent()) await run();
     } catch (e) {
       if (session.isCurrent())

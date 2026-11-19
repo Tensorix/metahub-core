@@ -262,9 +262,14 @@ export function DatabaseWebView({
   });
   useEffect(
     () =>
-      registerRecoveryEditor(session, () => ({
+      registerRecoveryEditor(session.replica, () => ({
         setFrozen: (value) => send({ session: nonce, type: "freeze", value }),
-        flush: flushRenderer,
+        flush: async () => {
+          if (!admittedRef.current || !rendererReady.current) {
+            return { ok: false, error: "数据表尚未就绪，无法安全保全编辑" };
+          }
+          return flushRenderer();
+        },
       })),
     [session, nonce, send, flushRenderer],
   );
