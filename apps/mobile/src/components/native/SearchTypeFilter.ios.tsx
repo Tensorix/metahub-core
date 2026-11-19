@@ -10,7 +10,8 @@ import {
   tag,
 } from "@expo/ui/swift-ui/modifiers";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
-import { KeyboardAvoidingView, StyleSheet, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Keyboard, KeyboardAvoidingView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeHost } from "./NativeHost";
 import type { SearchTypeFilterProps } from "./SearchTypeFilter";
@@ -23,6 +24,21 @@ const scopes = [
 
 export function SearchTypeFilter({ value, onChange }: SearchTypeFilterProps) {
   const insets = useSafeAreaInsets();
+  const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardWillShow", (event) => {
+      setKeyboardVisible(event.endCoordinates.height > 0);
+    });
+    const hide = Keyboard.addListener("keyboardWillHide", () => setKeyboardVisible(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  // The field starts 48 + 8 pt above the keyboard, or 7 pt inside the tab bar.
+  const searchFieldTopInset = keyboardVisible ? 56 : Math.max(insets.bottom, 54) - 7;
+  // The scaled glass already leaves about 2 pt inside its host.
+  const bottomPadding = searchFieldTopInset + 4;
   return (
     <KeyboardAvoidingView
       behavior="padding"
@@ -33,7 +49,7 @@ export function SearchTypeFilter({ value, onChange }: SearchTypeFilterProps) {
         pointerEvents="box-none"
         style={{
           alignItems: "center",
-          paddingBottom: Math.max(insets.bottom, 54) + 4,
+          paddingBottom: bottomPadding,
         }}
       >
         <NativeHost ignoreSafeArea="all" style={styles.control}>
@@ -75,5 +91,5 @@ export function SearchTypeFilter({ value, onChange }: SearchTypeFilterProps) {
 const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFill, justifyContent: "flex-end" },
   // Match the library picker’s 84 pt per segment before scaling.
-  control: { width: 84 * scopes.length, maxWidth: "100%", height: 44 },
+  control: { width: 84 * scopes.length, maxWidth: "100%", height: 37 },
 });
