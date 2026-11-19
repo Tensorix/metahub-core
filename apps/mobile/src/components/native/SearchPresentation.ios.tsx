@@ -32,7 +32,12 @@ import type { SearchResultRowProps } from "./SearchPresentation";
 export function SearchResultRow({ hit, onPress }: SearchResultRowProps) {
   const { tokens } = useTheme();
   const { fontScale } = useWindowDimensions();
+  const snippet = hit.snippet.replace(/\s+/g, " ").trim();
   const document = hit.type === "document";
+  const title = hit.title?.trim();
+  const fallback = document ? "未命名文档" : "数据表记录";
+  const headline = title || snippet || fallback;
+  const detail = title ? snippet : snippet ? fallback : "";
   return (
     <NativeHost matchContents={{ vertical: true }}>
       <Button
@@ -40,32 +45,33 @@ export function SearchResultRow({ hit, onPress }: SearchResultRowProps) {
         modifiers={[
           buttonStyle("plain"),
           accessibilityLabel(
-            `${hit.title || "未命名"}，${document ? "文档" : "记录"}${hit.snippet ? `，${hit.snippet}` : ""}`,
+            [headline, document ? "文档" : "记录", title && snippet]
+              .filter(Boolean)
+              .join("，"),
           ),
         ]}
       >
         <HStack
-          alignment="top"
-          spacing={14}
+          alignment="center"
+          spacing={12}
           modifiers={[
-            padding({ horizontal: 20, vertical: 16 }),
-            frame({ maxWidth: Infinity, minHeight: 76, alignment: "leading" }),
+            padding({ horizontal: 20, vertical: 10 }),
+            frame({ maxWidth: Infinity, minHeight: 48, alignment: "leading" }),
             contentShape(shapes.rectangle()),
           ]}
         >
           <Image
             systemName={document ? "doc.text" : "tablecells"}
             modifiers={[
-              font({ size: 22 }),
+              font({ textStyle: "title3" }),
               foregroundStyle(tokens.accent),
               frame({ width: 28 }),
-              padding({ top: 2 }),
               accessibilityHidden(),
             ]}
           />
           <VStack
             alignment="leading"
-            spacing={6}
+            spacing={3}
             modifiers={[frame({ maxWidth: Infinity, alignment: "leading" })]}
           >
             <Text
@@ -75,17 +81,9 @@ export function SearchResultRow({ hit, onPress }: SearchResultRowProps) {
                 ...(fontScale > 1.4 ? [] : [lineLimit(2)]),
               ]}
             >
-              {hit.title || "未命名"}
+              {headline}
             </Text>
-            <Text
-              modifiers={[
-                font({ textStyle: "caption" }),
-                foregroundStyle(tokens.fgSoft),
-              ]}
-            >
-              {document ? "文档" : "记录"}
-            </Text>
-            {!!hit.snippet && (
+            {!!detail && (
               <Text
                 modifiers={[
                   font({ textStyle: "subheadline" }),
@@ -93,7 +91,7 @@ export function SearchResultRow({ hit, onPress }: SearchResultRowProps) {
                   lineLimit(2),
                 ]}
               >
-                {hit.snippet}
+                {detail}
               </Text>
             )}
           </VStack>
@@ -102,7 +100,6 @@ export function SearchResultRow({ hit, onPress }: SearchResultRowProps) {
             modifiers={[
               font({ size: 12, weight: "semibold" }),
               foregroundStyle(tokens.muted),
-              padding({ top: 5 }),
               accessibilityHidden(),
             ]}
           />

@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { FlatList, Text, View } from "react-native";
+import { FlatList, Platform, Text, View } from "react-native";
 
 import {
   SearchLoading,
@@ -17,7 +17,15 @@ import { useSession } from "@/lib/auth/session";
 import { createSearchFeed } from "@/lib/api/search-feed";
 import { useTheme } from "@/lib/theme";
 
-export function SearchResults({ query, kind }: { query: string; kind?: "document" | "record" }) {
+export function SearchResults({
+  query,
+  kind,
+  bottomPadding = 32,
+}: {
+  query: string;
+  kind?: "document" | "record";
+  bottomPadding?: number;
+}) {
   const router = useRouter();
   const { client, workspaceId } = useSession();
   const { tokens } = useTheme();
@@ -73,7 +81,7 @@ export function SearchResults({ query, kind }: { query: string; kind?: "document
                 accessibilityRole="header"
                 style={{ color: tokens.fgSoft, fontSize: 13 }}
               >
-                {`${hits.length}${hasMore ? "+" : ""} 项结果`}
+                {`${hits.length}${hasMore ? "+" : ""} ${kind === "document" ? "篇文档" : kind === "record" ? "条记录" : "项结果"}`}
               </Text>
             </View>
           )}
@@ -113,7 +121,7 @@ export function SearchResults({ query, kind }: { query: string; kind?: "document
             <SearchLoading />
           ) : moreError ? (
             <SearchRetry onPress={() => void feed.loadMore()} />
-          ) : !hasMore ? (
+          ) : !hasMore && Platform.OS !== "ios" ? (
             <Text
               style={{
                 color: tokens.fgSoft,
@@ -128,7 +136,8 @@ export function SearchResults({ query, kind }: { query: string; kind?: "document
         ) : undefined
       }
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{ paddingBottom: 32 }}
+      automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+      contentContainerStyle={{ paddingBottom: bottomPadding }}
     />
   );
 }

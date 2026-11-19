@@ -1,12 +1,16 @@
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
 import type { SearchBarCommands } from "react-native-screens";
 import { Platform, View } from "react-native";
 import { NativeHost } from "./native/NativeHost";
 import { RecordTextInput } from "./RecordTextInput";
 import { SearchResults } from "./SearchResults";
 import { useTheme } from "@/lib/theme";
+import { SearchTypeFilter } from "./native/SearchTypeFilter";
+
 export default function SearchScreen() {
+  const [kind, setKind] = useState<"document" | "record">();
   const params = useLocalSearchParams<{ q?: string }>();
   const initialQuery = params.q ?? "";
   const [input, setInput] = useState({
@@ -28,15 +32,19 @@ export default function SearchScreen() {
   if (Platform.OS === "ios")
     return (
       <>
-        <SearchResults query={q} />
+        <SafeAreaView edges={["top"]} style={{ flex: 1, backgroundColor: tokens.bg }}>
+          <SearchResults query={q} kind={kind} bottomPadding={92} />
+        </SafeAreaView>
         <Stack.Title large>搜索</Stack.Title>
         <Stack.SearchBar
           ref={searchBar}
           placement="automatic"
+          allowToolbarIntegration
           placeholder="搜索文档与记录"
           onChangeText={(e) => setQ(e.nativeEvent.text)}
           onCancelButtonPress={() => setQ("")}
         />
+        <SearchTypeFilter value={kind} onChange={setKind} />
       </>
     );
   return (
