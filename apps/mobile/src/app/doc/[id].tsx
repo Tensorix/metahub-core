@@ -352,7 +352,7 @@ function LocalDocument({ id }: { id: string }) {
 
   return (
     <KeyboardAvoidingView style={[styles.root, { backgroundColor: tokens.bg }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={0}>
+      behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
       <DocumentAppBar title={title} busy={busy} onBack={leave} onShare={share} items={menuItems} />
       {!!notice && (
         <Text
