@@ -39,6 +39,7 @@ mh get <ref>                     # 通用查找:按 id/前缀/名字解析,自�
 mh db create <name> [--icon]
 mh db list
 mh db get <ref>
+mh db describe [<ref>]                 # Agent 用:库+列+example_create+当前 query operators
 mh db duplicate <ref> [--name <名>]    # 整库复制:属性列+全部记录;自引用 relation 重映射到副本(名称默认沿用原名)
 mh db activity [<ref>] [--limit N]     # 表级活动流:全表记录修订聚合,新→旧,每条带字段级"旧值 → 新值"
                                        #   与记录标题快照(已删记录显示删除时的标题而非裸 id)
@@ -74,11 +75,15 @@ mh prop remove <ref>
 mh record create [<db>] --data '{"field":"value"}'      # db 省略时用当前库
 mh record list [<db>] [--filter '{"field":"value"}'] [--sort field] [--desc] [--limit N]
 mh record get <ref>
-mh record update <ref> --data '{"field":"value"}'
+mh record update <ref> [--data '{"field":"value"}'] [--unset fieldA,fieldB]
+mh record unset <ref> <field> [--fields a,b]   # 删除单元格 JSON key(不同于写 null)
 mh record history <ref> [--field <名>]   # 修订历史(逐修订字段;--field 看单元格值变迁)
 mh record revert <ref> --to <version>    # 恢复历史值;对已删记录(完整 id)= 复活
 mh record delete <ref>
 ```
+
+- `null` 保留 key；`--unset` / `record unset` / REST `$unset` 删除 key。
+- 非法 `--limit` 等数值参数报 `invalid_input`(exit 2)。
 
 当前查询能力:
 
