@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { FlatList, RefreshControl, View } from "react-native";
 import {
-  DropdownMenu, DropdownMenuItem, Icon, IconButton, ListItem,
+  Icon, IconButton, ListItem,
   Row as ComposeRow, Spacer, Text,
 } from "@expo/ui/jetpack-compose";
 import { combinedClickable, fillMaxWidth, size } from "@expo/ui/jetpack-compose/modifiers";
@@ -11,7 +11,7 @@ import { EmptyState } from "../EmptyState";
 import { NativeButton } from "./NativeButton";
 import { NativeHost } from "./NativeHost";
 import { LibrarySwitch } from "./LibrarySwitch";
-import { useDocumentMenu } from "./use-document-menu";
+import { BrowseOverflowMenu } from "./BrowseOverflowMenu.android";
 import type { ListProps } from "./LibraryList.types";
 
 /** Keep paged data and scroll anchors in FlatList; Compose owns each native row. */
@@ -85,13 +85,11 @@ function LibraryRow({ item, actions, kind, open, toggle, expanded, showMenu, clo
   closeMenu(): void;
 }) {
   const { tokens } = useTheme();
-  const menu = useDocumentMenu(item.key, actions);
-  const show = () => { menu.refresh(); showMenu(); };
   return (
     <NativeHost matchContents={{ vertical: true }} style={{ marginStart: Math.min(item.depth, 3) * 16 }}>
       <ListItem
         colors={{ containerColor: tokens.bg, contentColor: tokens.fg, leadingContentColor: tokens.fgSoft, trailingContentColor: tokens.fgSoft }}
-        modifiers={[fillMaxWidth(), combinedClickable({ onClick: () => { closeMenu(); open(item); }, onLongClick: show })]}
+        modifiers={[fillMaxWidth(), combinedClickable({ onClick: () => { closeMenu(); open(item); }, onLongClick: showMenu })]}
       >
         <ListItem.LeadingContent>
           <ComposeRow verticalAlignment="center">
@@ -113,22 +111,8 @@ function LibraryRow({ item, actions, kind, open, toggle, expanded, showMenu, clo
           <Text maxLines={1} overflow="ellipsis" color={tokens.fgSoft}>{item.path}</Text>
         </ListItem.SupportingContent>}
         <ListItem.TrailingContent>
-            <DropdownMenu expanded={expanded} onDismissRequest={closeMenu}>
-              <DropdownMenu.Trigger>
-                <IconButton modifiers={[size(48, 48)]} onClick={show}>
-                  <Icon source={require("./assets/more-vert.xml")} size={24} contentDescription={`${item.title}，更多操作`} />
-                </IconButton>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Items>
-                {menu.items.map((action) => <DropdownMenuItem
-                  key={action.id} enabled={menu.available}
-                  elementColors={action.destructive ? { textColor: tokens.danger } : undefined}
-                  onClick={() => { closeMenu(); actions.perform(item.key, action.id); }}
-                >
-                  <DropdownMenuItem.Text><Text>{action.title}</Text></DropdownMenuItem.Text>
-                </DropdownMenuItem>)}
-              </DropdownMenu.Items>
-            </DropdownMenu>
+          <BrowseOverflowMenu id={item.key} title={item.title} actions={actions} expanded={expanded}
+            showMenu={showMenu} closeMenu={closeMenu} />
         </ListItem.TrailingContent>
       </ListItem>
     </NativeHost>

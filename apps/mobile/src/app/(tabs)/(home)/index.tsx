@@ -21,7 +21,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const actions = useDocumentActions();
   const databaseActions = useDocumentActions("databases");
-  const { client } = useSession();
+  const { client, workspaceId } = useSession();
   const { tokens } = useTheme();
   const { items } = useRecents();
   const sites = useSites();
@@ -38,7 +38,7 @@ export default function HomeScreen() {
     ]);
     return { documents, databases };
   }, [client, docIds]);
-  const recent = useApiData(fetcher);
+  const recent = useApiData(fetcher, workspaceId);
   useLiveInvalidate(["documents", "databases"], () => void recent.refetch());
   const content = recentContent(
     items,
