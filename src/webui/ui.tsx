@@ -137,6 +137,7 @@ type MenuState = {
   minWidth?: number;
   kb: boolean;
   restore: HTMLElement | null;
+  toolbarButton: HTMLElement | null;
 } | null;
 const menuStore = makeStore<MenuState>(null);
 export function openMenu(
@@ -154,7 +155,8 @@ export function openMenu(
     const el = (anchor.currentTarget ?? anchor.target) as HTMLElement | null;
     a = kb && el?.getBoundingClientRect ? { rect: el.getBoundingClientRect() } : { x: anchor.clientX, y: anchor.clientY };
   } else a = anchor;
-  menuStore.set({ render, anchor: a, minWidth: opts.minWidth, kb, restore: document.activeElement as HTMLElement | null });
+  const toolbarButton = anchor instanceof HTMLElement && anchor.matches(".mobile-db-tools .tbtn") ? anchor : null;
+  menuStore.set({ render, anchor: a, minWidth: opts.minWidth, kb, toolbarButton, restore: toolbarButton ?? document.activeElement as HTMLElement | null });
 }
 export function closeMenu() {
   menuStore.set(null);
@@ -176,6 +178,7 @@ function MenuHost() {
   // The editor's slash menu / format bar render their own .pop and stay
   // caret-anchored on purpose. Read per open; menus never survive a rotation.
   const sheet = document.body.classList.contains('mobile-database') || matchMedia(MOBILE_MQ).matches;
+  const toolbarFilter = state?.toolbarButton?.classList.contains("filter-trigger");
   // Escape closes the open menu (capture phase: the menu is the topmost layer);
   // ↑↓/Home/End move real focus between items unless an inner input owns keys.
   useEffect(() => {
@@ -223,6 +226,33 @@ function MenuHost() {
     return()=>{changed.forEach(el=>el.inert=false);};
   },[state,sheet]);
   useLayoutEffect(() => {
+    const button = state?.toolbarButton;
+    const menu = ref.current;
+    const bar = button?.parentElement;
+    if (!button || !menu || !bar) return;
+    const positionMenu = () => {
+      const rect = button.getBoundingClientRect();
+      menu.style.setProperty("--trigger-center", `${rect.left + rect.width / 2}px`);
+      const barRect = bar.getBoundingClientRect();
+      const menuBottom = toolbarFilter ? barRect.bottom : barRect.top - 8;
+      menu.style.setProperty("--bar-offset", `${window.innerHeight - menuBottom}px`);
+      if (toolbarFilter) {
+        menu.style.setProperty("--bar-left", `${barRect.left}px`);
+        menu.style.setProperty("--filter-origin", `${rect.left + rect.width / 2 - barRect.left}px`);
+      }
+    };
+    positionMenu();
+    const observer = new ResizeObserver(positionMenu);
+    observer.observe(bar);
+    window.addEventListener("resize", positionMenu);
+    button.setAttribute("aria-expanded", "true");
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", positionMenu);
+      button.removeAttribute("aria-expanded");
+    };
+  }, [state]);
+  useLayoutEffect(() => {
     if (!state || !ref.current || sheet) return setPos(null);
     const { x, y } = anchorPoint(state.anchor);
     const r = ref.current.getBoundingClientRect();
@@ -238,7 +268,7 @@ function MenuHost() {
       <div
         ref={ref}
         role={sheet ? "dialog" : undefined} aria-modal={sheet ? true : undefined} aria-label={sheet ? t("视图设置") : undefined}
-        class={"pop" + (sheet ? " sheet" : "")}
+        class={"pop" + (sheet ? " sheet" : "") + (state.toolbarButton ? " toolbar-menu" : "") + (toolbarFilter ? " filter-menu" : "")}
         style={sheet ? undefined : { left: pos?.left ?? -9999, top: pos?.top ?? -9999, minWidth: state.minWidth }}
         onMouseDown={(e) => e.stopPropagation()}
       >

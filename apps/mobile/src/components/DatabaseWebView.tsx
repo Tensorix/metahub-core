@@ -22,6 +22,9 @@ import {
   Linking,
   useWindowDimensions,
 } from "react-native";
+import { isLiquidGlassAvailable } from "expo-glass-effect";
+import { DatabaseGlassToolbar } from "./DatabaseGlassToolbar";
+import type { DatabaseToolbarFrame } from "../../../../src/shared/views/database-source";
 import { DatabaseSurface } from "./DatabaseSurface";
 import type { DatabaseSurfaceHandle } from "./DefaultDatabaseSurface";
 import { SessionOwner } from "@/lib/editor/session-owner";
@@ -74,6 +77,7 @@ export function DatabaseWebView({
   useEffect(() => {
     dateRef.current = dateRequest;
   }, [dateRequest]);
+  const [toolbar, setToolbar] = useState<{ session: string; frame: DatabaseToolbarFrame } | null>(null);
   const [initialFontScale] = useState(fontScale);
   const [bootstrapView] = useState(initialView);
   const openingView = generation === 0 ? bootstrapView : undefined;
@@ -299,6 +303,7 @@ export function DatabaseWebView({
         databaseId,
         view: openingView,
         dark: initialDark,
+        nativeGlassToolbar: Platform.OS === "ios" && isLiquidGlassAvailable(),
         fontScale: initialFontScale,
         preferences: host.preferences(),
         metadata,
@@ -411,6 +416,16 @@ export function DatabaseWebView({
               send({ session: nonce, id: message.id, ok: true, value: null });
               return;
             }
+            if (message.method === "showToolbar") {
+              const frame = message.args[0] as DatabaseToolbarFrame | null;
+              if (Platform.OS !== "ios" || !isLiquidGlassAvailable() || (frame && !Array.isArray(frame.actions))) {
+                send({ session: nonce, id: message.id, ok: false, error: "原生工具栏不可用" });
+                return;
+              }
+              setToolbar(frame ? { session: nonce, frame } : null);
+              send({ session: nonce, id: message.id, ok: true, value: null });
+              return;
+            }
             if (message.method === "pickDate") {
               dateRef.current?.resolve(undefined);
               setDateRequest({
@@ -458,6 +473,10 @@ export function DatabaseWebView({
             );
           }}
         />
+      )}
+      {admitted && !error && toolbar?.session === nonce && (
+        <DatabaseGlassToolbar frame={toolbar.frame} bottomInset={insets.bottom}
+          onAction={command => send({ session: nonce, type: "toolbarAction", command })} />
       )}
       <Modal
         visible={!!dateRequest}

@@ -59,6 +59,7 @@ export const tables = {
   数值: "Number",
   搜索属性: "Search properties",
   添加排序: "Add sort",
+  调整顺序: "Reorder",
   晚于: "is after",
   唯一值: "Unique",
   为空: "is empty",

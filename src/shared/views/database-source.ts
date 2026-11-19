@@ -34,7 +34,40 @@ export interface DatabaseDataSource {
   locateRecordQuery(id: string, recordId: string): Promise<number>;
   closeRecordQuery(id: string): Promise<unknown>;
 }
+export type DatabaseToolbarAction = "filter" | "sort" | "properties" | "search";
+type MoveField = { operation: "move"; propertyId: string; targetId: string; where: "before" | "after" };
+export type DatabaseToolbarCommand =
+  | { action: "filter"; propertyId?: string }
+  | ({ action: "search"; viewId: string } & ({ operation: "open" | "close" } | { operation: "change"; query: string }))
+  | ({ action: "sort"; viewId: string } & (
+      { operation: "set"; propertyId: string; desc: boolean } |
+      { operation: "remove"; propertyId: string } | { operation: "clear" } | MoveField))
+  | ({ action: "properties"; viewId: string } & (
+      { operation: "visible"; propertyId: string; visible: boolean } |
+      { operation: "all"; visible: boolean } | MoveField));
+export interface DatabaseToolbarSettings {
+  viewId: string;
+  searchOpen: boolean;
+  query: string;
+  properties: { id: string; name: string; type: string }[];
+  sort: { prop: string; desc: boolean }[];
+  hidden: string[];
+  labels: {
+    tableSearch: string; clear: string; cancel: string;
+    search: string; addSort: string; clearSort: string; removeSort: string; asc: string; desc: string;
+    showAll: string; hideAll: string; reorder: string; done: string; empty: string;
+  };
+}
+export interface DatabaseToolbarFrame extends DatabaseToolbarSettings {
+  left: number;
+  bottom: number;
+  width: number;
+  height: number;
+  coveredByMenu: boolean;
+  actions: { action: DatabaseToolbarAction; width: number; label: string; count: string; active: boolean }[];
+}
 export interface DatabaseHost {
+  showToolbar?(frame: DatabaseToolbarFrame | null): Promise<void>;
   pickDate?(
     value: unknown,
   ): Promise<{ cancelled?: boolean; value?: string | null }>;

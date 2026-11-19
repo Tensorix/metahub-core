@@ -6,6 +6,7 @@ export interface DatabaseBoot {
   databaseId: string;
   view?: string;
   dark: boolean;
+  nativeGlassToolbar?: boolean;
   fontScale?: number;
   preferences?: Record<string, string>;
   metadata?: { db: any; props: any[] };
@@ -113,6 +114,10 @@ export function rpc<T = any>(method: string, ...args: unknown[]): Promise<T> {
       () => rpc("flushed", message.token, null),
       (e) => rpc("flushed", message.token, e.message),
     );
+    return;
+  }
+  if (message.type === "toolbarAction") {
+    document.dispatchEvent(new CustomEvent("database-toolbar-action", { detail: message.command }));
     return;
   }
   if (message.type === "view") {

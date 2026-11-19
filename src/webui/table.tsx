@@ -963,9 +963,19 @@ export function DatabaseView({
     };
   }, [cellSel, editing, records, props, view, query, sel, peek]);
 
+  const floatingToolbar = embedded && !!host?.showToolbar && view.layout === "table" && loaded && sorted.length > 0;
+  const gridFooter = (
+    <div class="gridfoot">
+        <span>{queryWindow.index?.statistics==='loading'?'正在统计…':sorted.length === records.length ? t("共 {n} 条记录", { n: records.length }) : t("显示 {m} / {n} 条记录", { m: sorted.length, n: records.length })}</span>
+        {view.layout === "table" && cols.length < props.length && <span>{t("{n} 列已隐藏", { n: props.length - cols.length })}</span>}
+      </div>
+  );
+  const addRow = <div class="addrow" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建记录")}</div>;
+
   const viewToolbar = (
       <ViewToolbar
         bottom={embedded}
+        showToolbar={host?.showToolbar}
         props={props}
         view={view}
         onChange={(patch) => updateView(patch)}
@@ -980,7 +990,7 @@ export function DatabaseView({
 
   return (
     <div
-      class="db"
+      class={"db" + (floatingToolbar ? " glass-table" : "")}
       onPointerDown={(e) => {
         if (!(e.target as HTMLElement).closest("td.cell-td, .cellselbar, .peek, .scrim, .selbar")) setCellSel(null);
       }}
@@ -1276,6 +1286,7 @@ export function DatabaseView({
               </tfoot>
             </table>
             )}
+            {floatingToolbar && <>{addRow}{gridFooter}</>}
           </div>
           {loaded && sorted.length === 0 && records.length === 0 && (
             <div class="site-empty tbl-empty">
@@ -1298,15 +1309,12 @@ export function DatabaseView({
               </button>
             </div>
           )}
-          <div class="addrow" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建记录")}</div>
+          {!floatingToolbar && addRow}
           </div>
         </div>
       )}
 
-      <div class="gridfoot">
-        <span>{queryWindow.index?.statistics==='loading'?'正在统计…':sorted.length === records.length ? t("共 {n} 条记录", { n: records.length }) : t("显示 {m} / {n} 条记录", { m: sorted.length, n: records.length })}</span>
-        {view.layout === "table" && cols.length < props.length && <span>{t("{n} 列已隐藏", { n: props.length - cols.length })}</span>}
-      </div>
+      {!floatingToolbar && gridFooter}
 
       {embedded && viewToolbar}
 

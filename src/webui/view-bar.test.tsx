@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { render } from "preact";
 import { useState } from "preact/hooks";
 import { act } from "preact/test-utils";
+import { closeMenu } from "./ui";
 import { ViewToolbar } from "./view-bar.tsx";
 import { emptyView, searchRecords } from "./view-model.ts";
 import { IS_MAC } from "./shortcuts.ts";
@@ -120,4 +121,74 @@ test("mobile bottom tools keep search reachable while filtering and closing rest
   expect(host.querySelector('input')).toBeNull();
   expect(search.getAttribute('aria-expanded')).toBe('false');
   expect(host.querySelector('output')!.textContent).toBe('1,2');
+});
+
+test("native toolbar commands validate fields and filter records without a web input", () => {
+  const changes: unknown[] = [];
+  const queries: string[] = [];
+  const view = emptyView("table", "Table");
+  act(() => render(
+    <ViewToolbar bottom props={props} view={view}
+      onChange={patch => changes.push(patch)} onReorder={() => {}} pickRefs={() => {}}
+      query="" onQuery={q => queries.push(q)} showToolbar={async () => {}} />, host));
+  const send = (action: string, propertyId?: string) => act(() => {
+    document.dispatchEvent(new CustomEvent("database-toolbar-action", { detail: { action, propertyId } }));
+  });
+  send("filter", "deleted-property");
+  expect(changes).toEqual([]);
+  send("filter", "title");
+  expect(changes).toHaveLength(1);
+  expect(changes[0]).toMatchObject({ filter: { rules: [{ prop: "title" }] } });
+  closeMenu();
+  const search = (operation: string, query = "", viewId = view.id) => act(() => {
+    document.dispatchEvent(new CustomEvent("database-toolbar-action", { detail: { action: "search", operation, query, viewId } }));
+  });
+  search("open");
+  expect(host.querySelector("input")).toBeNull();
+  expect(host.querySelector('[data-action="search"]')?.getAttribute("aria-expanded")).toBe("true");
+  search("change", "alpha");
+  search("change", "ignored", "another-view");
+  search("close");
+  search("change", "after-close");
+  expect(queries).toEqual(["alpha", ""]);
+  expect(host.querySelector('[data-action="search"]')?.getAttribute("aria-expanded")).toBe("false");
+});
+
+test("native sort and column menus update the active view and protect its title", () => {
+  const fields = [...props, { ...props[0]!, id: "stage", name: "Stage" }];
+  const initial = emptyView("table", "Table");
+  let current = initial;
+  const moves: unknown[] = [];
+  function SettingsHarness() {
+    const [view, setView] = useState(initial);
+    current = view;
+    return <ViewToolbar bottom props={fields} view={view}
+      onChange={patch => setView(prev => ({ ...prev, ...patch }))} onReorder={(...args) => moves.push(args)}
+      pickRefs={() => {}} query="" onQuery={() => {}} showToolbar={async () => {}} />;
+  }
+  act(() => render(<SettingsHarness />, host));
+  const send = (command: Record<string, unknown>) => act(() => {
+    document.dispatchEvent(new CustomEvent("database-toolbar-action", { detail: { viewId: initial.id, ...command } }));
+  });
+  send({ action: "sort", operation: "set", propertyId: "stage", desc: false });
+  send({ action: "sort", operation: "set", propertyId: "title", desc: true });
+  send({ action: "sort", operation: "move", propertyId: "title", targetId: "stage", where: "before" });
+  expect(current.sort).toEqual([{ prop: "title", desc: true }, { prop: "stage", desc: false }]);
+  send({ action: "sort", operation: "set", propertyId: "stage", desc: true });
+  send({ action: "sort", operation: "remove", propertyId: "title" });
+  send({ action: "sort", operation: "clear", viewId: "stale" });
+  expect(current.sort).toEqual([{ prop: "stage", desc: true }]);
+  send({ action: "sort", operation: "clear" });
+  expect(current.sort).toEqual([]);
+  send({ action: "properties", operation: "visible", propertyId: "title", visible: false });
+  expect(current.hidden).toEqual([]);
+  send({ action: "properties", operation: "all", visible: false });
+  expect(current.hidden).toEqual(["stage"]);
+  send({ action: "properties", operation: "move", propertyId: "stage", targetId: "title", where: "before" });
+  expect(moves).toEqual([["stage", "title", "before"]]);
+  expect(current.hidden).toEqual([]);
+  send({ action: "properties", operation: "visible", propertyId: "stage", visible: false });
+  expect(current.hidden).toEqual(["stage"]);
+  send({ action: "properties", operation: "all", visible: true });
+  expect(current.hidden).toEqual([]);
 });

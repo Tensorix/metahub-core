@@ -4,6 +4,8 @@
 // ViewDef — persistence is the caller's (table.tsx updateView).
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
+import { observeGlassToolbar } from "./mobile-database/glass-toolbar";
+import type { DatabaseHost, DatabaseToolbarCommand, DatabaseToolbarSettings } from "../shared/views/database-source";
 import type { Prop } from "./api.ts";
 import { Icon, TYPE_ICON } from "./icons.tsx";
 import { consumeKey, imeGhost } from "./keys.ts";
@@ -117,7 +119,7 @@ export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDupl
 
 // ---- toolbar ----------------------------------------------------------------
 
-export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query, onQuery, children, bottom = false }: {
+export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query, onQuery, children, bottom = false, showToolbar }: {
   props: Prop[];
   view: ViewDef;
   onChange: (patch: ViewPatch) => void;
@@ -127,8 +129,34 @@ export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query,
   onQuery: (q: string) => void;
   children?: ComponentChildren;
   bottom?: boolean;
+  showToolbar?: DatabaseHost["showToolbar"];
 }) {
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const settingsRef = useRef<DatabaseToolbarSettings | null>(null);
   const [searchOpen, setSearchOpen] = useState(query.length > 0);
+  const lastNativeQuery = useRef(query);
+  useEffect(() => {
+    if (!bottom || !showToolbar) return;
+    // An action in the table (e.g. clearing all filters) can also reset the query.
+    if (!query && lastNativeQuery.current) setSearchOpen(false);
+    lastNativeQuery.current = query;
+    settingsRef.current = {
+      query, searchOpen,
+      viewId: view.id, properties: props.map(({ id, name, type }) => ({ id, name, type })),
+      sort: view.sort.filter(rule => props.some(p => p.id === rule.prop)), hidden: view.hidden,
+      labels: {
+        tableSearch: t("在表中搜索…"), clear: t("清除"), cancel: t("取消"),
+        search: t("搜索属性"), addSort: t("添加排序"), clearSort: t("清除排序"), removeSort: t("移除排序"),
+        asc: t("升序"), desc: t("降序"), showAll: t("全部显示"), hideAll: t("隐藏全部"),
+        reorder: t("调整顺序"), done: t("完成"), empty: t("没有匹配的属性"),
+      },
+    };
+    toolbarRef.current?.dispatchEvent(new Event("toolbar-settings"));
+  }, [bottom, showToolbar, props, view.id, view.sort, view.hidden, query, searchOpen]);
+  useEffect(() => {
+    if (bottom && toolbarRef.current && showToolbar)
+      return observeGlassToolbar(toolbarRef.current, showToolbar, () => settingsRef.current!);
+  }, [bottom, showToolbar]);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (searchOpen) { inputRef.current?.focus(); inputRef.current?.select(); }
@@ -149,6 +177,71 @@ export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query,
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  useEffect(() => {
+    if (!bottom || !showToolbar) return;
+    const run = (event: Event) => {
+      const command = (event as CustomEvent<DatabaseToolbarCommand>).detail;
+      const { action } = command;
+      if ("viewId" in command && command.viewId !== view.id) return;
+      const bar = toolbarRef.current;
+      if (!bar) return;
+      if (bar.closest("[inert]")) {
+        if (document.querySelector(".toolbar-menu")) closeMenu();
+        return;
+      }
+      const anchor = Array.from(bar.querySelectorAll<HTMLElement>("[data-action]")).find(el => el.dataset.action === action);
+      if (!anchor) return;
+      switch (command.action) {
+        case "filter":
+          openAddFilter(anchor, props, view, onChange, pickRefs, command.propertyId);
+          break;
+        case "sort":
+          if (command.operation === "clear") { onChange({ sort: [] }); break; }
+          if (!props.some(p => p.id === command.propertyId)) break;
+          const other = view.sort.filter(rule => rule.prop !== command.propertyId);
+          if (command.operation === "remove") onChange({ sort: other });
+          if (command.operation === "set") {
+            const next = { prop: command.propertyId, desc: command.desc };
+            onChange({ sort: other.length === view.sort.length ? [...other, next] : view.sort.map(rule => rule.prop === next.prop ? next : rule) });
+          }
+          if (command.operation === "move") {
+            const rule = view.sort.find(r => r.prop === command.propertyId);
+            const index = other.findIndex(r => r.prop === command.targetId);
+            if (rule && index >= 0) {
+              other.splice(index + Number(command.where === "after"), 0, rule);
+              onChange({ sort: other });
+            }
+          }
+          break;
+        case "properties":
+          if (view.layout !== "table") break;
+          if (command.operation === "all") {
+            onChange({ hidden: command.visible ? [] : props.slice(1).map(p => p.id) });
+          } else if (command.operation === "visible" && props.slice(1).some(p => p.id === command.propertyId)) {
+            const rest = view.hidden.filter(id => id !== command.propertyId);
+            onChange({ hidden: command.visible ? rest : [...rest, command.propertyId] });
+          } else if (command.operation === "move" && command.propertyId !== command.targetId &&
+              props.some(p => p.id === command.propertyId) && props.some(p => p.id === command.targetId)) {
+            const remaining = props.filter(p => p.id !== command.propertyId);
+            const firstId = command.targetId === remaining[0]?.id && command.where === "before" ? command.propertyId : remaining[0]?.id;
+            if (firstId && view.hidden.includes(firstId)) onChange({ hidden: view.hidden.filter(id => id !== firstId) });
+            onReorder(command.propertyId, command.targetId, command.where);
+          }
+          break;
+        case "search":
+          if (command.operation === "open") setSearchOpen(true);
+          else if (searchOpen) {
+            const next = command.operation === "change" ? command.query : "";
+            lastNativeQuery.current = next;
+            onQuery(next);
+            if (command.operation === "close") setSearchOpen(false);
+          }
+          break;
+      }
+    };
+    document.addEventListener("database-toolbar-action", run);
+    return () => document.removeEventListener("database-toolbar-action", run);
+  }, [bottom, showToolbar, props, view, onChange, onReorder, pickRefs, searchOpen, onQuery]);
   const nFilter = view.filter.rules.length;
   const nSort = view.sort.length;
   const nHidden = view.hidden.filter((h) => props.some((p) => p.id === h)).length;
@@ -172,27 +265,31 @@ export function ViewToolbar({ props, view, onChange, onReorder, pickRefs, query,
           </button>
         </div>
   );
+  const menuAnchor = (e: MouseEvent) => bottom ? e.currentTarget as HTMLButtonElement : e;
+  const menuProps = bottom ? { "aria-haspopup": "dialog" as const } : {};
   const controls = <>
-      <button class={"tbtn" + (nFilter ? " on" : "")} onClick={(e) => openAddFilter(e, props, view, onChange, pickRefs)}>
-        <Icon name="filter" cls="ico sm" />{t("筛选")}{nFilter > 0 && <span class="tb-n">{nFilter}</span>}
+      <button data-action="filter" class={"tbtn filter-trigger" + (nFilter ? " on" : "")} {...menuProps} onClick={(e) => openAddFilter(menuAnchor(e), props, view, onChange, pickRefs)}>
+        <Icon name="filter" cls="ico sm" />
+        {bottom && <Icon name="chevronDown" cls="ico tool-chevron" />}
+        <span class="filter-label">{t("筛选")}</span>{nFilter > 0 && <span class="tb-n">{nFilter}</span>}
       </button>
-      <button class={"tbtn" + (nSort ? " on" : "")} onClick={(e) => openSortMenu(e, props, view, onChange)}>
-        <Icon name="sort" cls="ico sm" />{t("排序")}{nSort > 0 && <span class="tb-n">{nSort}</span>}
+      <button data-action="sort" class={"tbtn" + (nSort ? " on" : "")} {...menuProps} onClick={(e) => openSortMenu(menuAnchor(e), props, view, onChange)}>
+        <Icon name="sort" cls="ico sm" /><span class="tool-label">{t("排序")}</span>{nSort > 0 && <span class="tb-n">{nSort}</span>}
       </button>
       {hideable && (
-        <button class={"tbtn" + (nHidden ? " on" : "")} onClick={(e) => openPropsMenu(e, props, view, onChange, onReorder)}>
-          <Icon name="eyeOff" cls="ico sm" />{t("属性")}{nHidden > 0 && <span class="tb-n">{nHidden}</span>}
+        <button data-action="properties" class={"tbtn" + (nHidden ? " on" : "")} {...menuProps} onClick={(e) => openPropsMenu(menuAnchor(e), props, view, onChange, onReorder)}>
+          <Icon name={bottom && !nHidden ? "eye" : "eyeOff"} cls="ico sm" /><span class="tool-label">{t("属性")}</span>{nHidden > 0 && <span class="tb-n">{nHidden}</span>}
         </button>
       )}
   </>;
   if (bottom) return (
     <section class="mobile-db-tools" aria-label={t("视图设置")}>
-      {searchOpen && searchField}
-      <div class="toolbar">
+      {searchOpen && !showToolbar && searchField}
+      <div class="toolbar" ref={toolbarRef}>
         {controls}
-        <button class={"tbtn" + (searchOpen || query ? " on" : "")} aria-label={t("在表中搜索")} aria-expanded={searchOpen}
+        <button data-action="search" class={"tbtn" + (searchOpen || query ? " on" : "")} aria-label={t("在表中搜索")} aria-expanded={searchOpen}
           onClick={() => { setSearchOpen(true); inputRef.current?.focus(); }}>
-          <Icon name="search" cls="ico sm" />{t("搜索")}
+          <Icon name="search" cls="ico sm" /><span class="tool-label">{t("搜索")}</span>
         </button>
         {children}
       </div>
@@ -280,29 +377,27 @@ function ruleText(p: Prop, r: FilterRule): string {
 
 // ---- filter: add + edit -----------------------------------------------------
 
-function openAddFilter(e: MouseEvent, props: Prop[], view: ViewDef, onChange: (p: ViewPatch) => void, pickRefs: PickRefs) {
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  openMenu(e, (close) => (
-    <PropPicker
-      label={t("按属性筛选")}
-      props={props}
-      onPick={(p) => {
-        close();
-        const conds = condsFor(p.type);
-        const rule: FilterRule = { id: newViewId().replace("v_", "f_"), prop: p.id, cond: conds[0]!.id, value: p.type === "checkbox" ? true : undefined };
-        const rules = [...view.filter.rules, rule];
-        onChange({ filter: { ...view.filter, rules } });
-        let cur = rule;
-        openRuleEditor(
-          { rect },
-          p,
-          rule,
-          (next) => { cur = next; onChange({ filter: { ...view.filter, rules: rules.map((r) => (r.id === next.id ? next : r)) } }); },
-          () => onChange({ filter: { ...view.filter, rules: rules.filter((r) => r.id !== cur.id) } }),
-          pickRefs,
-        );
-      }}
-    />
+function openAddFilter(anchor: HTMLElement | MouseEvent, props: Prop[], view: ViewDef, onChange: (p: ViewPatch) => void, pickRefs: PickRefs, propertyId?: string) {
+  const editorAnchor = anchor instanceof HTMLElement ? anchor : { rect: (anchor.currentTarget as HTMLElement).getBoundingClientRect() };
+  const applyProperty = (p: Prop) => {
+    const conds = condsFor(p.type);
+    const rule: FilterRule = { id: newViewId().replace("v_", "f_"), prop: p.id, cond: conds[0]!.id, value: p.type === "checkbox" ? true : undefined };
+    const rules = [...view.filter.rules, rule];
+    onChange({ filter: { ...view.filter, rules } });
+    let cur = rule;
+    openRuleEditor(editorAnchor, p, rule,
+      (next) => { cur = next; onChange({ filter: { ...view.filter, rules: rules.map((r) => (r.id === next.id ? next : r)) } }); },
+      () => onChange({ filter: { ...view.filter, rules: rules.filter((r) => r.id !== cur.id) } }),
+      pickRefs,
+    );
+  };
+  if (propertyId !== undefined) {
+    const prop = props.find(p => p.id === propertyId);
+    if (prop) applyProperty(prop);
+    return;
+  }
+  openMenu(anchor, (close) => (
+    <PropPicker label={t("按属性筛选")} props={props} onPick={p => { close(); applyProperty(p); }} />
   ), { minWidth: 240 });
 }
 
@@ -448,8 +543,8 @@ function RuleEditor({ prop, rule, onChange, onRemove, pickRefs, anchor }: {
 
 // ---- sort -------------------------------------------------------------------
 
-export function openSortMenu(e: MouseEvent, props: Prop[], view: ViewDef, onChange: (p: ViewPatch) => void) {
-  openMenu(e, (close) => <SortMenu props={props} initial={view.sort} onChange={(sort) => onChange({ sort })} close={close} />, { minWidth: 260 });
+export function openSortMenu(anchor: HTMLElement | MouseEvent, props: Prop[], view: ViewDef, onChange: (p: ViewPatch) => void) {
+  openMenu(anchor, (close) => <SortMenu props={props} initial={view.sort} onChange={(sort) => onChange({ sort })} close={close} />, { minWidth: 260 });
 }
 
 function SortMenu({ props, initial, onChange, close }: { props: Prop[]; initial: SortRule[]; onChange: (s: SortRule[]) => void; close: () => void }) {
@@ -507,8 +602,8 @@ function SortMenu({ props, initial, onChange, close }: { props: Prop[]; initial:
 
 // ---- properties (visibility + order) ---------------------------------------
 
-export function openPropsMenu(e: MouseEvent, props: Prop[], view: ViewDef, onChange: (p: ViewPatch) => void, onReorder: (srcId: string, targetId: string, where: DropWhere) => void) {
-  openMenu(e, () => <PropsMenu props={props} initial={view.hidden} onChange={(hidden) => onChange({ hidden })} onReorder={onReorder} />, { minWidth: 250 });
+export function openPropsMenu(anchor: HTMLElement | MouseEvent, props: Prop[], view: ViewDef, onChange: (p: ViewPatch) => void, onReorder: (srcId: string, targetId: string, where: DropWhere) => void) {
+  openMenu(anchor, () => <PropsMenu props={props} initial={view.hidden} onChange={(hidden) => onChange({ hidden })} onReorder={onReorder} />, { minWidth: 250 });
 }
 
 function PropsMenu({ props: initialProps, initial, onChange, onReorder }: { props: Prop[]; initial: string[]; onChange: (h: string[]) => void; onReorder: (srcId: string, targetId: string, where: DropWhere) => void }) {

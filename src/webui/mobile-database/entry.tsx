@@ -14,6 +14,8 @@ import {
   sessionActive,
   type DatabaseBoot,
 } from "./bridge";
+const showToolbar = (frame: import("../../shared/views/database-source").DatabaseToolbarFrame | null) =>
+  rpc<void>("showToolbar", frame);
 function App() {
   const [configuration] = useState(boot);
   const [requestedView, setRequestedView] = useState(boot.view ?? null);
@@ -84,6 +86,7 @@ function App() {
               await flush();
               await rpc("openRecord", id);
             },
+            showToolbar: boot.nativeGlassToolbar ? showToolbar : undefined,
             pickDate: (value) => rpc("pickDate", value),
             clipboardRead: () => rpc("clipboardRead"),
             clipboardWrite: (text) => rpc("clipboardWrite", text),
