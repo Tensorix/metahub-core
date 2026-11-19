@@ -3,7 +3,13 @@ import type { DbDriver } from "./driver.ts";
 import { newId } from "./ids.ts";
 import { emit, grouped } from "./crdt.ts";
 import { MhError } from "./errors.ts";
-import { addProperty, listProperties, type PropertyConfig } from "./properties.ts";
+import {
+  addProperty,
+  listProperties,
+  type PropType,
+  type PropertyConfig,
+  type PropertyRow,
+} from "./properties.ts";
 import { createRecord, listRecords, updateRecord } from "./records.ts";
 import type { ColumnsOf } from "./sqlcols.ts";
 
@@ -146,6 +152,55 @@ export function getDatabase(db: DbDriver, id: string): DatabaseRow | null {
       .query(`SELECT ${DATABASE_SELECT} FROM databases WHERE id = ? AND __deleted = 0`)
       .get(id) as (Omit<DatabaseRow, "meta"> & { meta: string | null }) | null,
   );
+}
+
+/** One-shot schema introspection for agents: database + columns + example write. */
+export interface DatabaseDescription {
+  database: DatabaseRow;
+  properties: PropertyRow[];
+  /** Sample `{column: value}` payload for `record create` / POST /api/records. */
+  example_create: Record<string, unknown>;
+  /** What core/CLI filter & sort currently accept (WebUI views are richer). */
+  query: {
+    filter: "equality";
+    sort: "single_field";
+    operators: string[];
+  };
+}
+
+function exampleValue(type: PropType, config: PropertyConfig | null): unknown {
+  switch (type) {
+    case "text":
+    case "url":
+      return "";
+    case "number":
+      return 0;
+    case "checkbox":
+      return false;
+    case "date":
+      return "2026-01-01";
+    case "select":
+      return config?.options?.[0] ?? null;
+    case "multi_select":
+    case "relation":
+    case "doc":
+      return [];
+  }
+}
+
+/** Schema + example payload — one call instead of `db get` + `prop list`. */
+export function describeDatabase(db: DbDriver, id: string): DatabaseDescription {
+  const database = getDatabase(db, id);
+  if (!database) throw new MhError("not_found", `no such database: ${id}`);
+  const properties = listProperties(db, id);
+  const example_create: Record<string, unknown> = {};
+  for (const p of properties) example_create[p.name] = exampleValue(p.type, p.config);
+  return {
+    database,
+    properties,
+    example_create,
+    query: { filter: "equality", sort: "single_field", operators: ["eq"] },
+  };
 }
 
 export function listDatabases(db: DbDriver): DatabaseRow[] {

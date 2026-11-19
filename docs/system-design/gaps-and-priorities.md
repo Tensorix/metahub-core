@@ -103,30 +103,20 @@ Metahub 的目标不是只做一个 SQLite 包装 CLI,而是为 AI Agent 和人�
 
 本轮确认的 CSV 跨库更新、重名列导出有损、复制库保存视图引用失效及翻译字典门禁失败已修复。CSV 仍为逐行事务，整文件原子导入不是本次修复范围。原始复现与修复状态见 [复核记录](./review-2026-10-24.md)。
 
-### 友好参数错误
+### 友好参数错误（已改善）
 
-当前非法 `--limit` 可能冒出 SQLite `datatype mismatch`。JSON parse 已统一成 `invalid_input`(exit 2)，未知属性与类型校验也已走 `MhError` 分类；数值参数校验仍不完整。
+CLI 数值参数（`--limit` / `--keep` / `--position` 等）经 `parseIntArg` 校验，非法值报 `invalid_input`(exit 2)，不再冒出 SQLite `datatype mismatch`。
 
-建议:
+### 明确 unset 语义（已改善）
 
-- CLI 层先校验 number 参数。
-- 沿用已有小写 `MhErrorCode` 与退出码契约，补齐输入校验；不要把这里的建议误当成已有大写错误码。
-
-### 明确 unset 语义
-
-当前 CLI 可以写 `null`,但不能表达删除单元格 key。
-
-建议:
+`null` 仍是合法单元格值（key 保留）；删除 JSON key 用：
 
 ```bash
 mh record unset <recordId> <field>
-```
-
-或:
-
-```bash
 mh record update <recordId> --unset fieldA,fieldB
 ```
+
+core 暴露 `UNSET` / `unsetRecordFields`；REST PATCH `/api/record` 接受 `$unset: ["field",…]`。
 
 ### 当前状态文档持续维护
 
@@ -262,23 +252,13 @@ mh chat around <messageId> --before 20 --after 20
 
 ## P4: AI Agent 操作体验
 
-### Schema introspection
-
-当前 Agent 要通过多个命令拼 schema。
-
-建议:
+### Schema introspection（已改善）
 
 ```bash
-mh db describe <dbId>
+mh db describe [<dbRef>]
 ```
 
-返回:
-
-- database 信息。
-- properties。
-- 类型配置。
-- 示例 create payload。
-- 可用 query operators。
+一次返回 database、properties、`example_create`、当前 query operators（现为等值 `eq`）。REST：`GET /api/database/describe?id=`。
 
 ### 稳定 JSON envelope
 

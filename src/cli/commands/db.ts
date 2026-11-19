@@ -4,6 +4,7 @@ import {
   createDatabase,
   listDatabases,
   getDatabase,
+  describeDatabase,
   duplicateDatabase,
   deleteDatabase,
 } from "../../core/databases.ts";
@@ -11,6 +12,7 @@ import { listDatabaseActivity, type DatabaseActivityEntry } from "../../core/his
 import { listProperties } from "../../core/properties.ts";
 import { resolveRef } from "../../core/resolve.ts";
 import { resolveDb } from "../refs.ts";
+import { parseIntArg } from "../args.ts";
 import { print, table, guard } from "../output.ts";
 import { FRESH_ARGS, freshDb } from "../fresh.ts";
 
@@ -44,6 +46,32 @@ const get = defineCommand({
   run: guard(async (args) => {
     const db = await freshDb(args);
     print(getDatabase(db, resolveRef(db, args.id, { kind: "db" })));
+  }),
+});
+
+const describe = defineCommand({
+  meta: {
+    name: "describe",
+    description: "Schema introspection: database + properties + example create payload",
+  },
+  args: {
+    id: { type: "positional", required: false, description: "Database ref (default: current)" },
+    ...FRESH_ARGS,
+  },
+  run: guard(async (args) => {
+    const db = await freshDb(args);
+    const info = describeDatabase(db, resolveDb(db, args.id));
+    print(info, () => {
+      const cols = info.properties
+        .map((p) => `${p.name}\t${p.type}${p.config?.options ? ` [${p.config.options.join(",")}]` : ""}`)
+        .join("\n");
+      return [
+        `${info.database.id}\t${info.database.name}`,
+        cols || "(no properties)",
+        `example: ${JSON.stringify(info.example_create)}`,
+        `query: ${info.query.operators.join(", ")} (${info.query.filter}, ${info.query.sort})`,
+      ].join("\n");
+    });
   }),
 });
 
@@ -105,7 +133,7 @@ const activity = defineCommand({
     const db = await freshDb(args);
     const databaseId = resolveDb(db, args.id);
     const rows = listDatabaseActivity(db, databaseId, {
-      limit: args.limit != null ? Number(args.limit) : undefined,
+      limit: parseIntArg(args.limit, "--limit", { min: 1 }),
     });
     const names = new Map(listProperties(db, databaseId).map((p) => [p.id, p.name]));
     print(rows, () =>
@@ -135,5 +163,5 @@ const del = defineCommand({
 
 export default defineCommand({
   meta: { name: "db", description: "Manage databases (notion-like tables)" },
-  subCommands: { create, list, get, duplicate, activity, delete: del },
+  subCommands: { create, list, get, describe, duplicate, activity, delete: del },
 });

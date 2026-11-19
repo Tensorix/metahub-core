@@ -90,6 +90,7 @@ mh init --claude # install this guide as a Claude Code /mh skill (~/.claude); --
 mh db create "Tasks"
 mh db list
 mh db get tasks                       # by name/prefix
+mh db describe tasks                  # schema + example_create + query operators (prefer this over get+prop list)
 mh db delete tasks
 
 # "Current db": record/prop/doc default to it, so you can omit the db arg
@@ -128,8 +129,14 @@ mh record list tasks --filter '{"Status":"todo"}' --sort created --desc --limit 
 #   pair is encoded as "-<field>"; you never need to write that form yourself.)
 mh record get <ref>
 mh record update <ref> --data '{"Status":"doing"}'
+mh record update <ref> --unset Status,Note   # remove cell keys (not the same as JSON null)
+mh record unset <ref> Status                 # same: deletes the JSON key via json_remove
 mh record delete <ref>
 ```
+
+Writing `"Status": null` keeps the key with a null value. To clear a field as
+if it were never set, use `unset` / `--unset`. Illegal `--limit` (and similar
+number flags) fail with `code:"invalid_input"` (exit 2) — do not retry as-is.
 
 ## Documents — the agent editing workflow
 
