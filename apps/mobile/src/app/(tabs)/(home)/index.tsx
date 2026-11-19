@@ -54,6 +54,8 @@ export default function HomeScreen() {
     .slice(0, 5);
   return (
     <>
+      {Platform.OS === "android" && <Stack.Screen options={{ headerShown: false }} />}
+      <BrowseSearch />
       {query.trim() ? (
         <SearchResults query={query} />
       ) : (
@@ -68,7 +70,6 @@ export default function HomeScreen() {
           }
           header={
             <View>
-              <BrowseSearch />
               <Text
                 accessibilityRole="header"
                 style={{

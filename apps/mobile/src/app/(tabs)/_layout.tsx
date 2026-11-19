@@ -1,3 +1,4 @@
+import { NavigationDrawer } from "@/components/native/NavigationDrawer";
 import { NativeTabs } from "expo-router/native-tabs";
 import { useFocusEffect } from "expo-router";
 import { useCallback } from "react";
@@ -18,6 +19,7 @@ export default function TabsLayout() {
   }, []));
 
   return (
+    <NavigationDrawer>
     <NativeTabs
       tintColor={tokens.accent}
       iconColor={{ default: tokens.muted, selected: tokens.accent }}
@@ -73,5 +75,6 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Label>搜索</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>
+    </NavigationDrawer>
   );
 }

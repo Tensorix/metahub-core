@@ -47,6 +47,7 @@ export default function SearchScreen() {
         style={{ marginHorizontal: 20, marginVertical: 8, minHeight: 56 }}
       >
         <RecordTextInput
+          autoFocus={!initialQuery}
           text={q}
           onChangeText={setQ}
           placeholder="搜索文档与记录"

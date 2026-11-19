@@ -14,7 +14,7 @@ import { useLiveInvalidate } from "@/lib/api/hooks";
 import { LibraryTree, type LibraryKind, type Row } from "@/lib/browse/library";
 import { useDocumentActions } from "@/lib/browse/use-document-actions";
 import { LibraryList } from "@/components/native/LibraryList";
-import { LibrarySearch } from "@/components/native/LibrarySearch";
+import { SectionSearch } from "@/components/native/SectionSearch";
 import { BrowseCreate } from "@/components/BrowseCreate";
 export default function LibraryScreen() {
   const session = useSession();
@@ -125,12 +125,12 @@ function WorkspaceLibrary() {
           onCancelButtonPress={() => setQuery("")}
         />
       ) : (
-        <LibrarySearch
+        <SectionSearch placeholder="搜索资料库"
           value={query}
           onChangeText={setQuery}
         >
           {(close) => <LibraryList {...listProps} rows={rows} open={(row) => { close(); open(row); }} />}
-        </LibrarySearch>
+        </SectionSearch>
       )}
       <View style={{ flex: 1, display: needle && Platform.OS !== "android" ? "none" : "flex" }}>
         <LibraryList {...listProps} rows={browseRows} />

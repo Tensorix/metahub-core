@@ -22,6 +22,7 @@
         "expo-haptics": "~58.0.7",
         "expo-image": "~58.0.18",
         "expo-image-picker": "~58.0.10",
+        "expo-intent-launcher": "~58.0.3",
         "expo-linking": "~58.0.16",
         "expo-network": "~58.0.4",
         "expo-router": "~58.0.30",
@@ -37,6 +38,7 @@
         "react": "19.3.0",
         "react-dom": "19.3.0",
         "react-native": "0.88.1",
+        "react-native-drawer-layout": "4.2.12",
         "react-native-gesture-handler": "~3.3.0",
         "react-native-nitro-modules": "^0.37.1",
         "react-native-quick-base64": "^3.0.1",
@@ -810,6 +812,8 @@
     "expo-image-loader": ["expo-image-loader@58.0.3", "", { "peerDependencies": { "expo": "*" } }, "sha512-zlHudxC8OObyqCHmvdxJqURI7886KJ0cUJyn7R/a8FOD9fP837xKDN+u4SIt7XsSSVPNXzMd4Y7mN0pmup8NGA=="],
 
     "expo-image-picker": ["expo-image-picker@58.0.10", "", { "dependencies": { "expo-image-loader": "~58.0.3" }, "peerDependencies": { "expo": "*" } }, "sha512-yqQC9UYMWSUxk6U0jaS1vE1w+b9Ru0FJmQ3KjUf9Q9oVg5xBxmg8+Ts+usazMAuPoskNIXJ++VZ+uK6br9yUGQ=="],
+
+    "expo-intent-launcher": ["expo-intent-launcher@58.0.3", "", { "peerDependencies": { "expo": "*" } }, "sha512-m+InwjvC5z9mAEqNhOmen5TkAFU6vqGdr+CSL9XSQmEpT1YfanJsHg9mc8P5g5mCepKk39If7v9vz8v9iekrsg=="],
 
     "expo-keep-awake": ["expo-keep-awake@58.0.3", "", { "peerDependencies": { "expo": "*", "react": "*" } }, "sha512-wLRF+XeVsD/Rt/ZyX+A0mk1brdf8vefWizNAPzqV5eOCgkj23LCRZdN8gUi5X8UwyR8UJ7Y7Dzdz4YDGB/4c9Q=="],
 
