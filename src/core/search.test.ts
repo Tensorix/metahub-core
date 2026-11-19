@@ -286,3 +286,23 @@ test("a failing bulk index insert rolls back deleted rows and checkpoint togethe
     expect(querySearch(db, "expiredword", { maintainIndex: false }).hits).toEqual([]);
   } finally { db.close(); }
 });
+
+test("type filters apply before pagination for indexed and substring searches", () => {
+  const db = makeNode();
+  try {
+    const { dbId } = withTextDb(db);
+    const body = "mixedneedle 项目进展";
+    const doc = createDocument(db, { title: "Example", body });
+    const records = [createRecord(db, dbId, { Body: body }), createRecord(db, dbId, { Body: body })];
+    for (const text of ["mixedneedle", "项目进展"]) {
+      expect(querySearch(db, text, { kind: "document", limit: 1 })).toMatchObject({
+        hits: [{ id: doc.id }], hasMore: false,
+      });
+      const first = querySearch(db, text, { kind: "record", limit: 1 });
+      const second = querySearch(db, text, { kind: "record", limit: 1, offset: 1 });
+      expect(first.hasMore).toBe(true);
+      expect(second.hasMore).toBe(false);
+      expect([...first.hits, ...second.hits].map(hit => hit.id).sort()).toEqual(records.map(r => r.id).sort());
+    }
+  } finally { db.close(); }
+});

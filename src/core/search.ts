@@ -243,7 +243,7 @@ export function rebuildSearchIndex(db: DbDriver): boolean {
   return true;
 }
 
-function ftsSearch(db: DbDriver, query: string, limit: number, offset = 0): SearchHit[] {
+function ftsSearch(db: DbDriver, query: string, limit: number, offset = 0, kind?: SearchHit["type"]): SearchHit[] {
   const match = query
     .split(/\s+/)
     .filter(Boolean)
@@ -252,9 +252,9 @@ function ftsSearch(db: DbDriver, query: string, limit: number, offset = 0): Sear
   if (!match) return [];
   const rows = db
     .query(
-      "SELECT kind, id, database_id, title, snippet(search_fts, -1, '[', ']', '…', 10) AS snippet FROM search_fts WHERE search_fts MATCH ? ORDER BY rank, kind, id LIMIT ? OFFSET ?",
+      `SELECT kind, id, database_id, title, snippet(search_fts, -1, '[', ']', '…', 10) AS snippet FROM search_fts WHERE search_fts MATCH ? ${kind ? "AND kind = ?" : ""} ORDER BY rank, kind, id LIMIT ? OFFSET ?`,
     )
-    .all(match, limit, offset) as {
+    .all(match, ...(kind ? [kind] : []), limit, offset) as {
     kind: "document" | "record";
     id: string;
     database_id: string | null;
@@ -343,22 +343,22 @@ export function search(
 }
 
 
-export interface SearchQuery { offset?: number; limit?: number }
+export interface SearchQuery { offset?: number; limit?: number; kind?: SearchHit["type"] }
 export interface SearchPage { hits: SearchHit[]; offset: number; limit: number; hasMore: boolean }
 
 /** Paginated substring search uses one ordering across documents and records. */
-function likeSearchPage(db: DbDriver, text: string, offset: number, limit: number): SearchHit[] {
+function likeSearchPage(db: DbDriver, text: string, offset: number, limit: number, kind?: SearchHit["type"]): SearchHit[] {
   const like = `%${text.replace(/[%_\\]/g, "\\$&")}%`;
   const rows = db.query(`
     SELECT 'document' AS kind, id, database_id, title, coalesce(body, title, '') AS body
-    FROM documents WHERE __deleted = 0 AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')
+    FROM documents WHERE ? != 'record' AND __deleted = 0 AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')
     UNION ALL
     SELECT 'record' AS kind, r.id, r.database_id, NULL AS title, group_concat(je.value, ' ') AS body
     FROM records r, json_each(r.data) je JOIN properties p ON p.id = je.key AND p.__deleted = 0
-    WHERE r.__deleted = 0 AND p.type IN ${TEXT_TYPES}
+    WHERE ? != 'document' AND r.__deleted = 0 AND p.type IN ${TEXT_TYPES}
     GROUP BY r.id HAVING body LIKE ? ESCAPE '\\'
     ORDER BY kind, id LIMIT ? OFFSET ?
-  `).all(like, like, like, limit, offset) as { kind: SearchHit["type"]; id: string; database_id: string | null; title: string | null; body: string }[];
+  `).all(kind ?? "all", like, like, kind ?? "all", like, limit, offset) as { kind: SearchHit["type"]; id: string; database_id: string | null; title: string | null; body: string }[];
   return rows.map(row => ({ type: row.kind, id: row.id, database_id: row.database_id,
     title: row.title ?? undefined, snippet: makeSnippet(row.body, text) }));
 }
@@ -375,10 +375,10 @@ export function querySearch(db: DbDriver, text: string, query: SearchQuery & { m
   // CJK needs substring matching because unicode61 indexes a whole run as one token.
   if (available && !/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(text)) {
     try {
-      if (ftsSearch(db, text, 1).length) hits = ftsSearch(db, text, limit + 1, offset);
+      if (ftsSearch(db, text, 1, 0, query.kind).length) hits = ftsSearch(db, text, limit + 1, offset, query.kind);
     } catch { /* Tokenizer/syntax unsupported: use the same fallback for every page. */ }
   }
-  hits ??= likeSearchPage(db, text, offset, limit + 1);
+  hits ??= likeSearchPage(db, text, offset, limit + 1, query.kind);
   return { hits: hits.slice(0, limit), offset, limit, hasMore: hits.length > limit };
 }
 

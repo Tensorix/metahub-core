@@ -6,9 +6,9 @@ import {
   SearchLoading,
   SearchRetry,
   SearchPlaceholder,
-  SearchResultRow,
 } from "./native/SearchPresentation";
 
+import { SearchResultRow } from "./native/SearchResultRow";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { scheduleSearch } from "@/lib/api/request-state";
 import { useLiveInvalidate } from "@/lib/api/hooks";
@@ -17,20 +17,20 @@ import { useSession } from "@/lib/auth/session";
 import { createSearchFeed } from "@/lib/api/search-feed";
 import { useTheme } from "@/lib/theme";
 
-export function SearchResults({ query }: { query: string }) {
+export function SearchResults({ query, kind }: { query: string; kind?: "document" | "record" }) {
   const router = useRouter();
   const { client, workspaceId } = useSession();
   const { tokens } = useTheme();
   const q = query.trim();
-  const queryKey = `${workspaceId}:${q}`;
+  const queryKey = `${workspaceId}:${kind ?? "all"}:${q}`;
   const feed = useMemo(
     () => ({
       key: queryKey,
       ...createSearchFeed((offset) =>
-        client.querySearch(q, { offset, limit: 60 }),
+        client.querySearch(q, { offset, limit: 60, kind }),
       ),
     }),
-    [client, q, queryKey],
+    [client, q, kind, queryKey],
   );
   const { hits, hasMore, loading, loadingMore, error, moreError } =
     useSyncExternalStore(feed.subscribe, feed.snapshot);
