@@ -2,7 +2,7 @@ import { documentOwner, type DocumentLease } from "@/lib/editor/session-owner";
 import { reusesEditorRuntime } from "@/lib/editor/warmup";
 import type { EditorPosition } from "@/components/DefaultEditorSurface";
 import { registerRecoveryEditor } from "@/lib/editor/recovery-barrier";
-import { useFocusEffect, useNavigation, Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useNavigation, useLocalSearchParams, useRouter } from "expo-router";
 import { useHeaderHeight, usePreventRemove } from "expo-router/react-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, KeyboardAvoidingView, Linking, Platform, StyleSheet, Text, View } from "react-native";
@@ -10,6 +10,7 @@ import {
   DocumentEditor,
   type DocumentEditorHandle,
 } from "@/components/DocumentEditor";
+import { DocumentAppBar, type DocumentAppBarProps } from "@/components/DocumentAppBar";
 import { DocumentHistorySheet } from "@/components/DocumentHistorySheet";
 import { NativeButton } from "@/components/native/NativeButton";
 import * as Clipboard from "expo-clipboard";
@@ -329,92 +330,30 @@ function LocalDocument({ id }: { id: string }) {
     else router.replace("/");
   };
 
+  const share = () => void action(() => router.push(`/manage/share/${encodeURIComponent(id)}?kind=doc` as Parameters<typeof router.push>[0]));
+  const menuItems: DocumentAppBarProps["items"] = [
+    { key: "mode", label: mode === "blocks" ? "代码方式显示" : "块方式显示", disabled: busy || !admitted,
+      onPress: () => setMode(value => value === "blocks" ? "source" : "blocks") },
+    { key: "rename", label: "重命名", onPress: () => manage("rename") },
+    { key: "child", label: "新建子文档", onPress: () => manage("child") },
+    { key: "duplicate", label: "创建副本", onPress: () => void action(async () => {
+      const copy = await session.client.duplicateDocument(id, { title: `${title || "无标题"} 副本` });
+      if (session.isCurrent()) router.push(`/doc/${copy.id}`);
+    }) },
+    { key: "move", label: "移动文档", onPress: () => manage("move") },
+    { key: "history", label: "版本历史", onPress: () => void action(() => setHistory(true)) },
+    { key: "copy-id", label: "复制 ID", onPress: () => void action(async () => {
+      await Clipboard.setStringAsync(id); setNotice("已复制 ID");
+    }) },
+    { key: "share", label: "分享", onPress: share },
+    { key: "attachments", label: "离线附件", onPress: downloadAttachments },
+    { key: "delete", label: "删除文档", destructive: true, onPress: deleteDocument },
+  ];
+
   return (
     <KeyboardAvoidingView style={[styles.root, { backgroundColor: tokens.bg }]}
-      behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
-      <Stack.Screen options={{ title, headerBackButtonMenuEnabled: false }} />
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button
-          accessibilityLabel="返回"
-          icon={
-            process.env.EXPO_OS === "ios"
-              ? "chevron.left"
-              : require("@/components/native/assets/back.xml")
-          }
-          disabled={busy}
-          onPress={leave}
-        />
-      </Stack.Toolbar>
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button accessibilityLabel="分享" icon={process.env.EXPO_OS === "ios" ? "square.and.arrow.up" : require("@/components/native/assets/share.xml")} disabled={busy} onPress={() => void action(() => router.push(`/manage/share/${encodeURIComponent(id)}?kind=doc` as Parameters<typeof router.push>[0]))} />
-        <Stack.Toolbar.Menu
-          title="文档操作"
-          accessibilityLabel="文档操作"
-          icon={
-            process.env.EXPO_OS === "ios"
-              ? "ellipsis"
-              : require("@/components/native/assets/more.xml")
-          }
-        >
-          <Stack.Toolbar.MenuAction disabled={busy || !admitted} onPress={() => setMode(value => value === "blocks" ? "source" : "blocks")}>
-            {mode === "blocks" ? "代码方式显示" : "块方式显示"}
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            disabled={busy}
-            destructive={false}
-            onPress={() => manage("rename")}
-          >
-            {"重命名"}
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            disabled={busy}
-            destructive={false}
-            onPress={() => manage("child")}
-          >
-            {"新建子文档"}
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            disabled={busy}
-            destructive={false}
-            onPress={() => void action(async () => {
-              const copy = await session.client.duplicateDocument(id, { title: `${title || "无标题"} 副本` });
-              if (session.isCurrent()) router.push(`/doc/${copy.id}`);
-            })}
-          >
-            {"创建副本"}
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            disabled={busy}
-            destructive={false}
-            onPress={() => manage("move")}
-          >
-            {"移动文档"}
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            disabled={busy}
-            destructive={false}
-            onPress={() => void action(() => setHistory(true))}
-          >
-            {"版本历史"}
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction disabled={busy} onPress={() => void action(async () => { await Clipboard.setStringAsync(id); setNotice("已复制 ID"); })}>{"复制 ID"}</Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction disabled={busy} onPress={() => void action(() => router.push(`/manage/share/${encodeURIComponent(id)}?kind=doc` as Parameters<typeof router.push>[0]))}>{"分享"}</Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            disabled={busy}
-            destructive={false}
-            onPress={downloadAttachments}
-          >
-            {"离线附件"}
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            disabled={busy}
-            destructive={true}
-            onPress={deleteDocument}
-          >
-            {"删除文档"}
-          </Stack.Toolbar.MenuAction>
-        </Stack.Toolbar.Menu>
-      </Stack.Toolbar>
+      behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={0}>
+      <DocumentAppBar title={title} busy={busy} onBack={leave} onShare={share} items={menuItems} />
       {!!notice && (
         <Text
           role="status"
@@ -449,7 +388,7 @@ function LocalDocument({ id }: { id: string }) {
           ref={editor}
           documentId={id}
           position={position}
-          topInset={headerHeight}
+          topInset={Platform.OS === "android" ? 0 : headerHeight}
           workspaceId={session.workspaceId}
           sessionId={String(session.id)}
           host={host}

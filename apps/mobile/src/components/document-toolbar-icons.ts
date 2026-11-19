@@ -1,0 +1,17 @@
+export const toolbarIcons = {
+  library: require("./native/assets/photo.xml"),
+  file: require("./native/assets/attachment.xml"),
+  bold: require("./native/assets/editor-bold.xml"),
+  italic: require("./native/assets/editor-italic.xml"),
+  inlineCode: require("./native/assets/editor-html.xml"),
+  heading: require("./native/assets/editor-heading.xml"),
+  bullet: require("./native/assets/editor-bullet.xml"),
+  numbered: require("./native/assets/editor-numbered.xml"),
+  todo: require("./native/assets/editor-todo.xml"),
+  quote: require("./native/assets/editor-quote.xml"),
+  code: require("./native/assets/editor-code.xml"),
+  table: require("./native/assets/editor-table.xml"),
+  divider: require("./native/assets/editor-divider.xml"),
+  audio: require("./native/assets/editor-audio.xml"),
+  html: require("./native/assets/editor-html.xml"),
+};

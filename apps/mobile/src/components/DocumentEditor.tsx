@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   AppState,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -16,6 +17,7 @@ import {
 } from "react-native";
 import { preferSurface } from '../lib/database/prewarm';
 import { EditorSurface } from "./EditorSurface";
+import { useTheme } from "@/lib/theme";
 import { DocumentToolbar } from "./DocumentToolbar";
 import type { EditorPosition, EditorSurfaceHandle } from "./DefaultEditorSurface";
 import { EditorHost, type EditorHostServices } from "../lib/editor/host";
@@ -58,6 +60,7 @@ export const DocumentEditor = forwardRef<
   { documentId, sessionId, workspaceId, position, host: services, dark = false, topInset = 0, mode = "blocks", onState, onError },
   ref,
 ) {
+  const { tokens } = useTheme();
   useEffect(() => { preferSurface('document'); }, []);
   const web = useRef<EditorSurfaceHandle>(null);
   const [generation, setGeneration] = useState(0);
@@ -155,6 +158,15 @@ export const DocumentEditor = forwardRef<
       `document.documentElement.dataset.resolved=${scriptJSON(dark ? "dark" : "light")};true;`,
     );
   }, [dark]);
+  useEffect(() => {
+    if (Platform.OS !== "android" || loading) return;
+    const palette = { "--bg": tokens.bg, "--paper": tokens.bg, "--fg": tokens.fg,
+      "--fg-soft": tokens.fgSoft, "--muted": tokens.muted, "--line": tokens.line,
+      "--surface": tokens.surface, "--code-bg": tokens.codeBg, "--accent": tokens.accent };
+    web.current?.injectJavaScript(
+      `Object.entries(${scriptJSON(palette)}).forEach(([key,value]) => document.documentElement.style.setProperty(key,value));true;`,
+    );
+  }, [loading, tokens]);
   useEffect(() => {
     if (loading) return;
     web.current?.injectJavaScript(
@@ -340,7 +352,7 @@ export const DocumentEditor = forwardRef<
     });
   };
   return (
-    <View style={[styles.root, { backgroundColor: dark ? "#171717" : "#fff" }]}>
+    <View style={[styles.root, { backgroundColor: Platform.OS === "android" ? tokens.bg : dark ? "#171717" : "#fff" }]}>
       {bootstrap && <EditorSurface key={nonce} ref={web} bootstrap={bootstrap}
         onMessage={receive} onFailure={rendererFailed} />}
       <DocumentToolbar state={saveState} disabled={loading || !!error || controlsFrozen || attaching}
@@ -357,7 +369,7 @@ export const DocumentEditor = forwardRef<
         <View
           style={[
             styles.overlay,
-            { backgroundColor: dark ? "#171717" : "#fff" },
+            { backgroundColor: Platform.OS === "android" ? tokens.bg : dark ? "#171717" : "#fff" },
           ]}
         >
           <Text
