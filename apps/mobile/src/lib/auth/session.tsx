@@ -73,6 +73,7 @@ export interface Session {
   dispose(): Promise<void>;
 }
 interface SessionCtx {
+  openingBucket: string | null;
   ready: boolean;
   error: string | null;
   session: Session | null;
@@ -94,6 +95,7 @@ async function workspaceKey(url: string) {
     .slice(0, 32);
 }
 export function SessionProvider({ children }: { children: React.ReactNode }) {
+  const [openingBucket, setOpeningBucket] = useState<string | null>(null);
   const [ready, setReady] = useState(false),
     [session, setSession] = useState<Session | null>(null),
     [error, setError] = useState<string | null>(null);
@@ -429,16 +431,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<SessionCtx>(
     () => ({
       ready,
+      openingBucket,
       error,
       session,
       connect: (creds) =>
         persist(async () => {
           epoch.current++;
-          await initializeNativeSyncRuntime();
-          if (!providerActive.current) return;
-          if (!await adopt(creds, true)) return;
-          await upsertServer(creds);
-          if (providerActive.current) await saveCredentials(creds);
+          const opening = creds.bucket && current.current?.creds.baseUrl !== creds.baseUrl;
+          if (opening) setOpeningBucket(creds.bucket!.bucket);
+          try {
+            await initializeNativeSyncRuntime();
+            if (!providerActive.current) return;
+            if (!await adopt(creds, true)) return;
+            await upsertServer(creds);
+            if (providerActive.current) await saveCredentials(creds);
+          } finally {
+            if (opening) setOpeningBucket(null);
+          }
         }),
       switchServer: (url) =>
         persist(async () => {
@@ -459,14 +468,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           else await clearCredentials();
         }),
     }),
-    [ready, error, session, persist, adopt],
+    [ready, openingBucket, error, session, persist, adopt],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 /** Only injected by the explicitly gated, offline diagnostic workspace. */
 export function StaticSessionProvider({session,children}:{session:Session;children:React.ReactNode}) {
   const unavailable=async()=>{throw new Error("Workspace switching is unavailable in diagnostics");};
-  return <Ctx.Provider value={{ready:true,error:null,session,connect:unavailable,switchServer:unavailable,disconnect:unavailable}}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ready:true,openingBucket:null,error:null,session,connect:unavailable,switchServer:unavailable,disconnect:unavailable}}>{children}</Ctx.Provider>;
 }
 export function useSessionCtx(): SessionCtx {
   const ctx = useContext(Ctx);

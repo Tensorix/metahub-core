@@ -114,6 +114,8 @@ test("workspace navigation targets the app Stack inside SDK 57's internal root",
   expect(target).toBe(app);
   expect(target?.routes[target.index ?? 0]?.name).toBe("add-server");
   expect(findWorkspaceStack(app)).toBe(app);
+  const signedOut = { ...app, routeNames: ["connect", "onboarding/index"], routes: [{ name: "connect" }] };
+  expect(findWorkspaceStack({ ...root, routes: [{ name: "__root", state: signedOut }] })).toBe(signedOut);
   expect(findWorkspaceStack({ ...root, routes: [{ name: "__root" }] })).toBeUndefined();
   expect(findWorkspaceStack(undefined)).toBeUndefined();
 });

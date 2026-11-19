@@ -11,6 +11,7 @@ import { NativeDiagnostics } from "@/lib/diagnostics/NativeDiagnostics";
 import { diagnosticsEnabled } from "@/lib/diagnostics/build-mode";
 import {
   Stack,
+  Redirect,
   useRootNavigationState,
   useNavigationContainerRef,
 } from "expo-router";
@@ -37,7 +38,8 @@ function WorkspaceScreen({
   children: ReactNode;
 }) {
   const [owner] = useState(workspaceId);
-  return owner === workspaceId ? children : null;
+  if (owner === workspaceId) return children;
+  return workspaceId ? <Redirect href="/(tabs)/(home)" /> : null;
 }
 
 function RootStack() {
@@ -57,16 +59,16 @@ function RootStack() {
           ? { id: sessionId, workspaceId }
           : null;
       const state = findWorkspaceStack(navigation.getRootState());
-      if (!state) return;
+      if (!state || (next && !state.routeNames?.includes("(tabs)"))) return;
       const previous = previousSession.current;
       previousSession.current = next;
       const route = state.routes[state.index ?? 0]?.name;
       if (shouldResetSessionNavigation(previous, next, route)) {
         // Retire public connection screens and history from another workspace.
-        navigation.reset({
-          key: state.key,
-          index: 0,
-          routes: [{ name: "(tabs)" }],
+        navigation.dispatch({
+          type: "RESET",
+          target: state.key,
+          payload: { index: 0, routes: [{ name: "(tabs)" }] },
         });
       }
     };
@@ -86,8 +88,8 @@ function RootStack() {
   return (
     <Stack
       // Retire stale route content without replacing the native navigator.
-      screenLayout={({ children }) => (
-        <WorkspaceScreen workspaceId={workspaceId}>{children}</WorkspaceScreen>
+      screenLayout={({ children, route }) => (
+        <WorkspaceScreen key={route.name === "(tabs)" ? workspaceId : route.key} workspaceId={workspaceId}>{children}</WorkspaceScreen>
       )}
       screenOptions={{
         headerShown: false,

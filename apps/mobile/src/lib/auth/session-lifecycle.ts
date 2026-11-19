@@ -69,7 +69,7 @@ export function findWorkspaceStack(
 ): (NavigationTree & { key: string }) | undefined {
   let state = root;
   while (state) {
-    if (state.key && state.routeNames?.includes("(tabs)")) {
+    if (state.key && state.routeNames?.includes("connect")) {
       return state as NavigationTree & { key: string };
     }
     state = state.routes[state.index ?? 0]?.state;

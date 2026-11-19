@@ -11,7 +11,7 @@ import type { PreparationMode } from "./workspace-preparation";
 import type { RecoveryPhase } from "../../../../src/core/sync/recovery-v2";
 
 export function SyncUpgradePrompt() {
-  const { session, connect } = useSessionCtx();
+  const { session, connect, openingBucket } = useSessionCtx();
   const offered = useRef(new Set<string>());
   const [attempt, retry] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -22,8 +22,18 @@ export function SyncUpgradePrompt() {
   const subscribe = useCallback((notify: () => void) => session?.sync.onStatus(notify) ?? (() => {}), [session]);
   const lastSync = useSyncExternalStore(subscribe, () => session?.sync.status.lastSyncAt ?? null);
   const version = session?.isCurrent() ? knownDataVersion(session.replica.db)?.dataVersion ?? 2 : 2;
+  const bucket = session?.creds.bucket;
+  const targetUrl = bucket ? storageUrl(bucket.endpoint, bucket.bucket, bucket.prefix) : session?.creds.baseUrl;
+  const access = session?.isCurrent()
+    ? workspaceAccess(session.replica.db).find(state => state.url === targetUrl)
+    : undefined;
+  // Only a replica awaiting its initial version check needs a blocking progress view.
+  const pendingJoin = Boolean(session?.creds.bucket && session.isCurrent() &&
+    session.replica.db.query("SELECT 1 FROM meta WHERE key='sync_version_pending_join' AND value=?").get(targetUrl!));
+  const checking = openingBucket !== null || (pendingJoin && lastSync === null) ||
+    (access?.kind === "initializing" && !error);
   const incompatible = version > dataVersionRange.maxSupportedDataVersion;
-  const connectionError = error || (session?.isCurrent() ? workspaceAccess(session.replica.db).find(state => state.kind === "error")?.reason : undefined);
+  const connectionError = error || (access?.kind === "error" ? access.reason : undefined);
   const updateMessage = `工作区数据版本为 ${version}，本客户端最高支持 ${dataVersionRange.maxSupportedDataVersion}。本地内容可查看和导出。`;
   const openUpdate = useCallback(() => {
     const url = Platform.OS === "ios" ? process.env.EXPO_PUBLIC_IOS_UPDATE_URL : process.env.EXPO_PUBLIC_ANDROID_UPDATE_URL;
@@ -39,12 +49,8 @@ export function SyncUpgradePrompt() {
       Alert.alert("需要更新客户端", updateMessage, [{ text: "只读查看" }, { text: "更新应用", onPress: openUpdate }]);
       return;
     }
-    const bucket = session.creds.bucket;
-    const url = bucket ? storageUrl(bucket.endpoint, bucket.bucket, bucket.prefix) : session.creds.baseUrl;
-    const access = workspaceAccess(session.replica.db).find(state => state.url === url);
-    if (!access || access.kind === "ready" || access.kind === "checking" || working.current) return;
-    if (access.kind === "error") return;
-    const kind = access.kind;
+    const kind = access?.kind;
+    if (!kind || kind === "ready" || kind === "checking" || kind === "error" || working.current) return;
     const automatic = kind === "initializing";
     const title = kind === "rebuild" ? "更新本地副本" : "升级工作区同步";
     async function recover() {
@@ -77,9 +83,9 @@ export function SyncUpgradePrompt() {
       },
       { text: title === "更新本地副本" ? "立即更新" : "立即升级", onPress: () => void recover() },
     ]);
-  }, [session, connect, lastSync, attempt, incompatible, version, openUpdate, updateMessage]);
-  if (incompatible) return <Pressable accessibilityRole="button" onPress={openUpdate}><Text>{updateMessage} 更新应用</Text></Pressable>;
-  return <>{connectionError && <Pressable accessibilityRole="button" onPress={() => { offered.current.clear(); setError(""); retry(n => n + 1); void session?.syncNow(); }}><Text>{connectionError} · 重试</Text></Pressable>}{busy && <Modal animationType="fade" presentationStyle="fullScreen" statusBarTranslucent onRequestClose={() => {}}>
-    <WorkspacePreparation phase={phase} bucket={session?.creds.bucket?.bucket} mode={mode} />
+  }, [session, connect, lastSync, access?.kind, attempt, incompatible, version, openUpdate, updateMessage]);
+  if (incompatible && !openingBucket) return <Pressable accessibilityRole="button" onPress={openUpdate}><Text>{updateMessage} 更新应用</Text></Pressable>;
+  return <>{connectionError && <Pressable accessibilityRole="button" onPress={() => { offered.current.clear(); setError(""); retry(n => n + 1); void session?.syncNow(); }}><Text>{connectionError} · 重试</Text></Pressable>}{(checking || busy) && <Modal animationType="none" presentationStyle="fullScreen" statusBarTranslucent onRequestClose={() => {}}>
+    <WorkspacePreparation phase={checking && !busy ? null : phase} bucket={openingBucket ?? session?.creds.bucket?.bucket} mode={checking && !busy ? "initializing" : mode} />
   </Modal>}</>;
 }
