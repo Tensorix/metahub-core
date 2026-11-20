@@ -16,9 +16,11 @@ export function SyncUpgradePrompt() {
   const [attempt, retry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [hiddenError, setHiddenError] = useState<string | null>(null);
   const [phase, setPhase] = useState<RecoveryPhase | null>(null);
   const [mode, setMode] = useState<PreparationMode>("initializing");
   const working = useRef(false);
+  const automaticRef = useRef(false);
   const subscribe = useCallback((notify: () => void) => session?.sync.onStatus(notify) ?? (() => {}), [session]);
   const lastSync = useSyncExternalStore(subscribe, () => session?.sync.status.lastSyncAt ?? null);
   const version = session?.isCurrent() ? knownDataVersion(session.replica.db)?.dataVersion ?? 2 : 2;
@@ -34,7 +36,22 @@ export function SyncUpgradePrompt() {
     (access?.kind === "initializing" && !error);
   const incompatible = version > dataVersionRange.maxSupportedDataVersion;
   const connectionError = error || (access?.kind === "error" ? access.reason : undefined);
+  const visibleError = connectionError && connectionError !== hiddenError ? connectionError : "";
   const updateMessage = `工作区数据版本为 ${version}，本客户端最高支持 ${dataVersionRange.maxSupportedDataVersion}。本地内容可查看和导出。`;
+  const runRecovery = useCallback(async (nextAutomatic: boolean, kind: PreparationMode) => {
+    if (!session?.isCurrent() || working.current) return;
+    setPhase(null);
+    setMode(kind);
+    automaticRef.current = nextAutomatic;
+    setHiddenError(null);
+    working.current = true; setBusy(true); setError("");
+    try {
+      const result = await recoverMobileWorkspace(session, () => connect(session.creds), setPhase, undefined, nextAutomatic);
+      if (result.pending) Alert.alert("本地副本已更新", `有 ${result.pending} 项编辑需要核对，可在设置中查看。`);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally { working.current = false; setBusy(false); }
+  }, [session, connect]);
   const openUpdate = useCallback(() => {
     const url = Platform.OS === "ios" ? process.env.EXPO_PUBLIC_IOS_UPDATE_URL : process.env.EXPO_PUBLIC_ANDROID_UPDATE_URL;
     if (url?.startsWith("https://")) void Linking.openURL(url).catch(() => Alert.alert("更新应用", "请从原安装渠道获取新版客户端。"));
@@ -53,19 +70,8 @@ export function SyncUpgradePrompt() {
     if (!kind || kind === "ready" || kind === "checking" || kind === "error" || working.current) return;
     const automatic = kind === "initializing";
     const title = kind === "rebuild" ? "更新本地副本" : "升级工作区同步";
-    async function recover() {
-      if (!session?.isCurrent() || working.current) return;
-      setPhase(null);
-      setMode(kind === "migration" || kind === "rebuild" ? kind : "initializing");
-      working.current = true; setBusy(true); setError("");
-      try {
-        const result = await recoverMobileWorkspace(session, () => connect(session.creds), setPhase, undefined, automatic);
-        if (result.pending) Alert.alert("本地副本已更新", `有 ${result.pending} 项编辑需要核对，可在设置中查看。`);
-      } catch (failure) {
-        setError(failure instanceof Error ? failure.message : String(failure));
-      } finally { working.current = false; setBusy(false); }
-    }
-    if (automatic) { void recover(); return; }
+    const recoveryKind: PreparationMode = kind === "migration" || kind === "rebuild" ? kind : "initializing";
+    if (automatic) { void runRecovery(true, recoveryKind); return; }
     if (kind !== "migration" && kind !== "rebuild") return;
     const key = session.workspaceId;
     if (offered.current.has(key)) return;
@@ -81,11 +87,19 @@ export function SyncUpgradePrompt() {
           }, 60_000);
         },
       },
-      { text: title === "更新本地副本" ? "立即更新" : "立即升级", onPress: () => void recover() },
+      { text: title === "更新本地副本" ? "立即更新" : "立即升级", onPress: () => void runRecovery(false, recoveryKind) },
     ]);
-  }, [session, connect, lastSync, access?.kind, attempt, incompatible, version, openUpdate, updateMessage]);
+  }, [session, connect, lastSync, access?.kind, attempt, incompatible, version, openUpdate, updateMessage, runRecovery]);
   if (incompatible && !openingBucket) return <Pressable accessibilityRole="button" onPress={openUpdate}><Text>{updateMessage} 更新应用</Text></Pressable>;
-  return <>{connectionError && <Pressable accessibilityRole="button" onPress={() => { offered.current.clear(); setError(""); retry(n => n + 1); void session?.syncNow(); }}><Text>{connectionError} · 重试</Text></Pressable>}{(checking || busy) && <Modal animationType="none" presentationStyle="fullScreen" statusBarTranslucent onRequestClose={() => {}}>
-    <WorkspacePreparation phase={checking && !busy ? null : phase} bucket={openingBucket ?? session?.creds.bucket?.bucket} mode={checking && !busy ? "initializing" : mode} />
+  const failed = !busy && Boolean(visibleError);
+  return <>{(checking || busy || failed) && <Modal animationType="none" presentationStyle="fullScreen" statusBarTranslucent onRequestClose={() => { if (failed) setHiddenError(visibleError); }}>
+    <WorkspacePreparation
+      phase={checking && !busy && !failed ? null : phase}
+      bucket={openingBucket ?? session?.creds.bucket?.bucket}
+      mode={checking && !busy && !failed ? "initializing" : mode}
+      error={failed ? visibleError : undefined}
+      onRetry={failed ? () => { offered.current.clear(); void runRecovery(automaticRef.current, mode); } : undefined}
+      onDismiss={failed ? () => setHiddenError(visibleError) : undefined}
+    />
   </Modal>}</>;
 }
