@@ -37,6 +37,18 @@ test("view share renders the live doc and carries no master-token runtime", asyn
   expect(html).toContain('<template id="mh-src"># Hello\n\nworld **bold**</template>');
 });
 
+test("a shared Mermaid document renders a diagram and keeps its original fenced source", async () => {
+  const ctx = makeCtx();
+  const body = "~~~mermaid\nsequenceDiagram\nAlice->>Bob: Hello\n~~~";
+  const doc = createDocument(ctx.db, { title: "Exchange", body });
+  const share = createShare(ctx.db, { kind: "doc", target_id: doc.id, permission: "edit" });
+  const html = await (await serveShare(htmlReq(`/share/${share.slug}`), ctx))!.text();
+  expect(html).toContain('class="pele pele-sequence"');
+  expect(html).toContain('<template id="mh-src">~~~mermaid\nsequenceDiagram\nAlice-&gt;&gt;Bob: Hello\n~~~</template>');
+  expect(getDocument(ctx.db, doc.id)?.body).toBe(body);
+  ctx.db.close();
+});
+
 test("expired share is 410 Gone but the row stays manageable (renewable)", async () => {
   const ctx = makeCtx();
   const doc = createDocument(ctx.db, { title: "T", body: "x" });

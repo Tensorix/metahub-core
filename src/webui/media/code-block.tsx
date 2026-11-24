@@ -106,7 +106,7 @@ function useWrapPref(): boolean {
  * the whole component anyway).
  */
 export function CodeEditorBody({
-  code, lang, onInput, onKeyDown, taRef, placeholder,
+  code, lang, onInput, onKeyDown, taRef, placeholder, ariaLabel,
   onCompositionStart, onCompositionEnd,
 }: {
   code: string;
@@ -115,6 +115,7 @@ export function CodeEditorBody({
   onKeyDown?: (e: KeyboardEvent) => void;
   taRef?: RefObject<HTMLTextAreaElement>;
   placeholder?: string;
+  ariaLabel?: string;
   onCompositionStart?: () => void;
   onCompositionEnd?: (value: string) => void;
 }) {
@@ -227,6 +228,8 @@ export function CodeEditorBody({
         <textarea
           ref={setTa}
           class="code-input"
+          aria-label={ariaLabel}
+          defaultValue={code}
           rows={1}
           spellcheck={false}
           wrap={wrap ? "soft" : "off"}
@@ -253,6 +256,32 @@ export function CodeEditorBody({
   );
 }
 
+export function CodeLanguagePicker({ lang, onLang }: { lang: string; onLang: (lang: string) => void }) {
+  return <span class="code-lang">
+    <select aria-label={t("代码语言")} value={lang} onChange={(e) => onLang(e.currentTarget.value)}>
+      {!COMMON_LANGS.some((l) => l.id === lang) && <option value={lang}>{lang || t("纯文本")}</option>}
+      {COMMON_LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+    </select>
+    <Icon name="chevronDown" cls="ico sm" />
+  </span>;
+}
+
+export function CopyCodeButton({ getCode }: { getCode: () => string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return <button class={"code-copy" + (copied ? " ok" : "")} title={t("复制代码")} onClick={() => {
+    navigator.clipboard?.writeText(getCode()).then(() => {
+      clearTimeout(timer.current);
+      setCopied(true);
+      timer.current = setTimeout(() => setCopied(false), 1400);
+    }).catch(() => {});
+  }}>
+    <Icon name={copied ? "check" : "copy"} cls="ico sm" />
+    {copied ? t("已复制") : t("复制")}
+  </button>;
+}
+
 /**
  * The always-editable code block widget: CodeEditorBody plus the language
  * picker + copy button in the bottom-right tools pill. The pill is an absolute
@@ -275,7 +304,6 @@ export function CodeIsland({
   onCompositionEnd?: (value: string) => void;
 }) {
   const wrap = useWrapPref();
-  const [copied, setCopied] = useState(false);
   const localTa = useRef<HTMLTextAreaElement | null>(null);
   const mergedRef: RefObject<HTMLTextAreaElement> = {
     get current() { return localTa.current; },
@@ -286,7 +314,6 @@ export function CodeIsland({
   };
 
   const langVal = lang ?? "";
-  const langKnown = COMMON_LANGS.some((l) => l.id === langVal);
 
   // 格式化 button state: transient ok/err flashes mirror the copy button.
   const [fmtState, setFmtState] = useState<"idle" | "busy" | "ok" | "err">("idle");
@@ -345,16 +372,7 @@ export function CodeIsland({
         onCompositionEnd={onCompositionEnd}
       />
       <div class="code-tools">
-        <span class="code-lang">
-          <select
-            value={langVal}
-            onChange={(e) => onLang((e.currentTarget as HTMLSelectElement).value)}
-          >
-            {!langKnown && <option value={langVal}>{langVal || t("纯文本")}</option>}
-            {COMMON_LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
-          </select>
-          <Icon name="chevronDown" cls="ico sm" />
-        </span>
+        <CodeLanguagePicker lang={langVal} onLang={onLang} />
         <button
           class={"code-wrap-btn" + (wrap ? " on" : "")}
           title={wrap ? t("关闭自动换行") : t("自动换行(所有代码块)")}
@@ -379,19 +397,7 @@ export function CodeIsland({
               : t("格式化")}
           </button>
         )}
-        <button
-          class={"code-copy" + (copied ? " ok" : "")}
-          title={t("复制代码")}
-          onClick={() => {
-            const text = localTa.current?.value ?? code;
-            navigator.clipboard?.writeText(text)
-              .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1400); })
-              .catch(() => {});
-          }}
-        >
-          <Icon name={copied ? "check" : "copy"} cls="ico sm" />
-          {copied ? t("已复制") : t("复制")}
-        </button>
+        <CopyCodeButton getCode={() => localTa.current?.value ?? code} />
       </div>
     </div>
   );

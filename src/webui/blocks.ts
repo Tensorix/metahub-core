@@ -791,8 +791,7 @@ function shouldPersist(block: Block): boolean {
 // leadingIndent / stripIndent / isFenceClose / cleanLang moved to
 // ../core/md/grammar.ts (re-exported above).
 
-/** Languages offered in the code block's language dropdown. Values are
- *  highlight.js language ids (also accepted by cleanLang for round-trip). */
+/** Fence languages offered in the code block's language dropdown. */
 export const COMMON_LANGS: { id: string; label: string }[] = [
   { id: "", label: t("纯文本") },
   { id: "bash", label: "Bash" },
@@ -813,6 +812,7 @@ export const COMMON_LANGS: { id: string; label: string }[] = [
   { id: "css", label: "CSS" },
   { id: "scss", label: "SCSS" },
   { id: "markdown", label: "Markdown" },
+  { id: "mermaid", label: "Mermaid" },
   { id: "php", label: "PHP" },
   { id: "ruby", label: "Ruby" },
   { id: "swift", label: "Swift" },
@@ -825,7 +825,10 @@ export const COMMON_LANGS: { id: string; label: string }[] = [
   { id: "diff", label: "Diff" },
 ];
 
-export const BLOCK_MENU: { type: BlockType; ic: string; t: string; d: string }[] = [
+/** Mermaid is an insertion command for an ordinary fenced code block. */
+export type BlockCommand = BlockType | "mermaid";
+
+export const BLOCK_MENU: { type: BlockCommand; ic: string; t: string; d: string }[] = [
   { type: "p", ic: "text", t: t("文本"), d: t("普通段落") },
   { type: "h1", ic: "heading", t: t("标题 1"), d: t("大号标题") },
   { type: "h2", ic: "heading", t: t("标题 2"), d: t("中号标题") },
@@ -835,6 +838,7 @@ export const BLOCK_MENU: { type: BlockType; ic: string; t: string; d: string }[]
   { type: "todo", ic: "checkbox", t: t("待办清单"), d: t("复选项") },
   { type: "quote", ic: "quote", t: t("引用"), d: t("引用块") },
   { type: "code", ic: "code", t: t("代码"), d: t("代码块") },
+  { type: "mermaid", ic: "relation", t: t("Mermaid 图表"), d: t("插入可编辑的流程图") },
   { type: "table", ic: "table", t: t("表格"), d: t("插入表格") },
   { type: "divider", ic: "minus", t: t("分隔线"), d: t("水平分隔") },
   { type: "image", ic: "image", t: t("图片"), d: t("上传或拖入图片") },

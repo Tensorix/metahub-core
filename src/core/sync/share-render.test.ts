@@ -4,6 +4,29 @@
 // renumber sequentially.
 import { test, expect } from "bun:test";
 import { renderMarkdown } from "./share-render";
+import { renderMermaid } from "./share-mermaid.ts";
+
+test("diagram views render only closed Mermaid fences and leave clipboard HTML as source", () => {
+  const source = 'flowchart LR\nA[Draft] --> B[Publish]\nclick A "https://example.org"';
+  const md = `~~~~MERMAID\n${source}\n~~~~`;
+  const options = { renderMermaid: (body: string) => renderMermaid(body, "en") };
+  const view = renderMarkdown(md, options);
+  expect(view).toContain('class="pele pele-flowchart"');
+  expect(view).toContain("<summary>Mermaid source</summary>");
+  expect(view).not.toContain("<a ");
+  expect(renderMarkdown(md)).toStartWith('<pre><code class="language-MERMAID">flowchart LR');
+  expect(renderMarkdown(md.slice(0, -5), options)).not.toContain("<svg");
+  expect(renderMarkdown("~~~text\n" + source + "\n~~~", options)).not.toContain("<svg");
+});
+
+test("invalid and empty diagrams keep their source safe and let the rest of the page render", () => {
+  const md = "~~~mermaid\n<tag>\n~~~\n\n~~~mermaid\n~~~\n\n# Next";
+  const html = renderMarkdown(md, { renderMermaid: (body) => renderMermaid(body, "en") });
+  expect(html).toContain("Couldn’t render this Mermaid diagram");
+  expect(html).toContain("&lt;tag&gt;</code>");
+  expect(html).toContain("Empty Mermaid diagram");
+  expect(html).toContain("<h1>Next</h1>");
+});
 
 test("an indented heading is still a heading (classification is indent-blind)", () => {
   expect(renderMarkdown("  # x")).toBe("<h1>x</h1>");

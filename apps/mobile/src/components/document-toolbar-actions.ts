@@ -11,6 +11,7 @@ export const DOCUMENT_TOOLBAR_ACTIONS = [
   { kind: "file", label: "附件", symbol: "paperclip" },
   { kind: "table", label: "表格", symbol: "tablecells" },
   { kind: "code", label: "代码块", symbol: "curlybraces" },
+  { kind: "mermaid", label: "插入 Mermaid 图表", symbol: "flowchart" },
   { kind: "divider", label: "分隔线", symbol: "minus" },
   { kind: "audio", label: "音频", symbol: "waveform" },
   { kind: "html", label: "HTML", symbol: "curlybraces.square" },

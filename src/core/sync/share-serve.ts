@@ -34,6 +34,7 @@ import { serveGrantedApi, grantedDepsFromPolicy } from "./grants-routes.ts";
 import { rateLimiter, SHARE_LIMIT } from "./rate-limit.ts";
 import { readGuestSession, mintGuestSession, type GuestSessionScope } from "./guest-session.ts";
 import { renderMarkdown, escapeHtml } from "./share-render.ts";
+import MERMAID_CSS from "./share-mermaid.css" with { type: "text" };
 import { SHARE_FILE_CSS } from "./share-file-styles.ts";
 import { COPY_CSS, copyButtonHtml, copySourceHtml, copyScript, markdownTable } from "./share-copy.ts";
 import { pickLocale, type Locale } from "./locale.ts";
@@ -142,7 +143,9 @@ async function serveDoc(
 
   if (sub !== "") return notFound();
 
+  const { renderMermaid } = await import("./share-mermaid.ts");
   const rendered = renderMarkdown(doc.body ?? "", {
+    renderMermaid: (source) => renderMermaid(source, locale),
     rewriteBlob: (u) => `/share/${share.slug}/${u.replace(/^\//, "")}`,
     // Title-only resolution: the label leaks about as much as the id's own
     // slug already does; the link itself stays inert (see RenderOpts).
@@ -154,24 +157,24 @@ async function serveDoc(
   const version = documentVersion(ctx.db, share.target_id);
   const editable = share.permission === "edit";
   const inner = `<article class="doc">${rendered || `<p class="muted">${escapeHtml(pm(locale, "（空文档）"))}</p>`}</article>`;
-  const script = editable ? docEditScript(locale, share.slug, version, doc.body ?? "") : "";
+  const script = editable ? docEditScript(locale, share.slug, version) : "";
   return new Response(
     pageShell(doc.title || pm(locale, "文档"), inner, { lang: locale, kind: "doc", editable, editLabel: pm(locale, "编辑文档"), script, copySource: doc.body ?? "" }),
     { headers: HTML },
   );
 }
 
-function docEditScript(locale: Locale, slug: string, version: string, body: string): string {
+function docEditScript(locale: Locale, slug: string, version: string): string {
   const L = JSON.stringify({ save: pm(locale, "保存"), saving: pm(locale, "保存中…"), failed: pm(locale, "保存失败") });
   return `
-  let editing=false; const ver=${JSON.stringify(version)}; const body0=${JSON.stringify(body)}; const L=${L};
+  let editing=false; const ver=${JSON.stringify(version)}; const L=${L};
   const art=document.querySelector('article.doc');
   const btn=document.getElementById('mh-edit');
   let ta;
   btn.addEventListener('click', async ()=>{
     if(!editing){
       editing=true; btn.textContent=L.save;
-      ta=document.createElement('textarea'); ta.className='mh-raw'; ta.value=body0;
+      ta=document.createElement('textarea'); ta.className='mh-raw'; ta.value=document.getElementById('mh-src').content.textContent;
       art.replaceWith(ta); ta.focus();
     } else {
       btn.disabled=true; btn.textContent=L.saving;
@@ -656,6 +659,7 @@ function pageShell(
   .muted{color:var(--muted)} .mh-img{text-align:center}
   .mh-media{text-align:center} .mh-media video,.mh-media audio{max-width:100%}
   ${SHARE_FILE_CSS}
+  ${MERMAID_CSS}
   .mh-doclink{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 5px;white-space:nowrap}
   .mh-doclink::before{content:"📄";font-size:.85em;margin-right:3px}
   iframe.mh-embed{width:100%;border:1px solid var(--line);border-radius:8px;min-height:240px}

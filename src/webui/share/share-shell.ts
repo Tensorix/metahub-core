@@ -1,6 +1,7 @@
 import { THEME_CSS } from "../../core/ui-theme.ts";
 import { COPY_CSS } from "../../core/sync/share-copy.ts";
 import { SHARE_FILE_CSS } from "../../core/sync/share-file-styles.ts";
+import MERMAID_CSS from "../../core/sync/share-mermaid.css" with { type: "text" };
 import { pm } from "../../core/sync/page-messages.ts";
 import { SHARE_TABLE_CSS } from "../../core/sync/share-table.ts";
 import { SHARE_TOOLS_CSS } from "../../core/sync/share-tools.ts";
@@ -19,6 +20,7 @@ table.db,article.doc table{border-collapse:collapse;width:100%;font-size:14px}ta
 table.db th{background:var(--card)}.table-wrap{overflow:auto}.tag{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:12px}
 .mh-img{text-align:center}.mh-media{text-align:center}.mh-media video,.mh-media audio{max-width:100%}
 ${SHARE_FILE_CSS}
+${MERMAID_CSS}
 a[data-blob][aria-disabled="true"]{pointer-events:none;color:var(--muted)}
 .mh-doclink{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 5px;white-space:nowrap}.mh-doclink::before{content:"📄";font-size:.85em;margin-right:3px}
 iframe.mh-embed{width:100%;border:1px solid var(--line);border-radius:8px;min-height:240px}

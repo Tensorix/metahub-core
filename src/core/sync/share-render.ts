@@ -32,6 +32,8 @@ import { escapeHtml } from "./html-escape.ts";
 export { escapeHtml };
 
 export interface RenderOpts {
+  /** Reading surfaces opt into diagrams. Rich clipboard and change diffs keep the code. */
+  renderMermaid?: (source: string) => string;
   /** Rewrite a `/blob/<hash>` URL to a reachable one (scoped endpoint or data URL). */
   rewriteBlob?: (url: string) => string;
   /** Resolve a `[[doc_x]]` internal reference to its current title. Absent (or
@@ -158,6 +160,8 @@ export function renderMarkdown(md: string, opts: RenderOpts = {}): string {
               body.join("\n"),
             )}"></iframe>`,
           );
+        } else if (info.toLowerCase() === "mermaid" && opts.renderMermaid) {
+          out.push(opts.renderMermaid(body.join("\n")));
         } else {
           const cls = info ? ` class="language-${escapeHtml(info)}"` : "";
           out.push(`<pre><code${cls}>${escapeHtml(body.join("\n"))}</code></pre>`);

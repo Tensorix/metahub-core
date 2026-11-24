@@ -143,6 +143,16 @@ async function main() {
     set("");
     root.append(tpl.content);
     root.dataset.shareKind = manifest.kind;
+    const diagrams = root.querySelectorAll<HTMLElement>('article.doc pre > code[class="language-mermaid" i]');
+    if (diagrams.length) {
+      // The readable source stays in place if the optional diagram chunk is unavailable.
+      void import("../../core/sync/share-mermaid.ts").then(({ renderMermaid }) => {
+        for (const code of diagrams) {
+          const block = code.parentElement;
+          if (block) block.outerHTML = renderMermaid(code.textContent ?? "", LOCALE, block.clientWidth);
+        }
+      }).catch(() => {});
+    }
     if (manifest.kind === "database") mountShareTable({ copied: m("已复制"), failed: m("复制失败"), record: m("记录") });
     const js = document.createElement("script");
     js.textContent = copyScript(LOCALE) + shareToolsScript(LOCALE);

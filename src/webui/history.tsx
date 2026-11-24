@@ -16,6 +16,9 @@ import { t } from "./i18n/t.ts";
 import { fmtDate } from "./i18n/fmt.ts";
 import { confirmDialog, toast, useDrawerResize, useDrawerTransition } from "./ui.tsx";
 import { renderMarkdown, type RenderOpts } from "../core/sync/share-render.ts";
+import { renderMermaid } from "../core/sync/share-mermaid.ts";
+import MERMAID_CSS from "../core/sync/share-mermaid.css" with { type: "text" };
+import { resolveLocale } from "./i18n/locale.ts";
 import { docLinkTitle } from "./doc-titles.ts";
 import {
   buildDocTimeline,
@@ -287,7 +290,9 @@ export function DocHistoryPanel({
     }),
     [],
   );
-  const md = (text: string) => ({ __html: renderMarkdown(text, mdOpts) });
+  const preview = useMemo(() => mode === "preview" && target?.body
+    ? renderMarkdown(target.body, { ...mdOpts, renderMermaid: (source) => renderMermaid(source, resolveLocale()) })
+    : "", [mode, target?.body, mdOpts]);
   const renderMd = useMemo(() => (text: string) => renderMarkdown(text, mdOpts), [mdOpts]);
 
   const lineRows = useMemo(
@@ -486,7 +491,10 @@ export function DocHistoryPanel({
                 </div>
                 {mode === "preview" &&
                   (target.body ? (
-                    <div class="hist-md" dangerouslySetInnerHTML={md(target.body)} />
+                    <>
+                      <style>{MERMAID_CSS}</style>
+                      <div class="hist-md" dangerouslySetInnerHTML={{ __html: preview }} />
+                    </>
                   ) : (
                     <div class="muted">{t("（空文档）")}</div>
                   ))}

@@ -25,16 +25,20 @@ async function main() {
     entrypoints: ["src/webui/share/share-viewer.ts"],
     target: "browser",
     minify: true,
-    naming: "share-viewer.js",
+    splitting: true,
+    naming: { entry: "share-viewer.js", chunk: "chunk-[hash].js" },
   });
   if (!result.success) {
     for (const log of result.logs) console.error(log);
     throw new Error("build-share-viewer: bundling failed");
   }
-  const js = await result.outputs[0]!.text();
+  const js = await result.outputs.find((file) => file.kind === "entry-point")!.text();
   // A new HTML shell must not reuse a previously cached viewer bundle.
   const revision = new Bun.CryptoHasher("sha256").update(js).digest("hex").slice(0, 12);
   await Bun.write(join(OUT, "share-viewer.js"), js);
+  for (const file of result.outputs.filter((file) => file.kind === "chunk")) {
+    await Bun.write(join(OUT, file.path), file);
+  }
   await Bun.write(join(OUT, "index.html"), shellHtml(`./share-viewer.js?v=${revision}`));
   // Absolute assets on deep links, relative assets for existing subpath hosts.
   await Bun.write(join(OUT, "short.html"), shellHtml(`/share-viewer.js?v=${revision}`).replace('href="./favicon.png"', 'href="/favicon.png"'));

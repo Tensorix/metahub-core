@@ -19,7 +19,7 @@ import type { Extension, EditorState, Line } from "@codemirror/state";
 import { Icon } from "../../icons.tsx";
 import { Highlight, MenuLabel, ReturnHint } from "../../ui.tsx";
 import { rankMatches } from "../../title-match.ts";
-import { BLOCK_MENU, type BlockType } from "../../blocks.ts";
+import { BLOCK_MENU, type BlockCommand, type BlockType } from "../../blocks.ts";
 import { docModel } from "../doc-model";
 import type { LineInfo, LineRole } from "../blockmodel";
 import { focusNewCodeVoid } from "../structure";
@@ -74,7 +74,7 @@ function matchesFor(query: string) {
 
 /** The Markdown to write for a chosen block type and the caret offset relative to
  *  the line start `from`. `insert === null` → an upload/embed type. */
-function blockInsertion(type: BlockType, from: number): { insert: string | null; caret: number } {
+function blockInsertion(type: BlockCommand, from: number): { insert: string | null; caret: number } {
   const marker = (m: string) => ({ insert: m, caret: from + m.length });
   switch (type) {
     case "p": return { insert: "", caret: from };
@@ -87,6 +87,11 @@ function blockInsertion(type: BlockType, from: number): { insert: string | null;
     case "quote": return marker("> ");
     case "divider": return { insert: "---\n", caret: from + 4 };
     case "code": return { insert: "```\n\n```", caret: from + 4 };
+    case "mermaid": {
+      const opener = "```mermaid\n";
+      const nodes = `  A["${t("开始##图表节点")}"] --> B["${t("完成##图表节点")}"]`;
+      return { insert: opener + "flowchart LR\n" + nodes + "\n```", caret: from + opener.length };
+    }
     case "table": return { insert: `| ${t("列1")} | ${t("列2")} |\n| --- | --- |\n|  |  |`, caret: from };
     case "html": return { insert: "```mh-html\n\n```", caret: from + 11 };
     default: return { insert: null, caret: from }; // image / video / audio / file
@@ -94,7 +99,8 @@ function blockInsertion(type: BlockType, from: number): { insert: string | null;
 }
 
 /** Shared insertion for the slash picker and native toolbar. Existing content is preserved. */
-export function insertBlock(view: EditorView, type: BlockType, deps: SlashDeps = {}) {
+export function insertBlock(view: EditorView, command: BlockCommand, deps: SlashDeps = {}) {
+  const type = command === "mermaid" ? "code" : command;
   const state = view.state;
   const line = state.doc.lineAt(state.selection.main.head);
   const found = slashAt(state, line);
@@ -103,7 +109,7 @@ export function insertBlock(view: EditorView, type: BlockType, deps: SlashDeps =
     const block = model.voids.find(v => line.number >= v.fromLine && line.number <= v.toLine);
     const at = block?.to ?? line.to;
     if (line.text.trim() || block) {
-      const insertion = blockInsertion(type, at + 1);
+      const insertion = blockInsertion(command, at + 1);
       if (insertion.insert === null) { deps.onUpload?.(type, view, at); return; }
       view.dispatch({ changes: { from: at, insert: "\n" + insertion.insert }, selection: { anchor: insertion.caret }, scrollIntoView: true });
       view.focus();
@@ -116,7 +122,7 @@ export function insertBlock(view: EditorView, type: BlockType, deps: SlashDeps =
   // convert semantics): rewrite from `markerFrom`, keeping the indent.
   const onMarker = info !== undefined && MARKER_ROLES.has(info.role);
   const from = onMarker ? info.markerFrom : line.from;
-  let { insert, caret } = blockInsertion(type, from);
+  let { insert, caret } = blockInsertion(command, from);
   if (insert === null) {
     view.dispatch({ changes: { from, to: line.to, insert: "" }, selection: { anchor: from } });
     view.focus();
@@ -124,11 +130,10 @@ export function insertBlock(view: EditorView, type: BlockType, deps: SlashDeps =
     return;
   }
   let changeFrom = from;
-  if (onMarker && MULTILINE_TYPES.has(type)) {
-    // A fence/table can't live on a list marker line: replace the whole
-    // line and indent every inserted line two columns past the item's
-    // indent, so the block parses as the list item's child.
-    const prefix = state.sliceDoc(line.from, info.markerFrom) + "  ";
+  if (found && MULTILINE_TYPES.has(type)) {
+    // Indent every fence/table line consistently: keep a prose slash's
+    // indentation, or use the child indent when replacing a list marker.
+    const prefix = onMarker ? state.sliceDoc(line.from, info.markerFrom) + "  " : state.sliceDoc(line.from, found.slashFrom);
     const rel = caret - from; // caret offset inside `insert`
     const newlinesBeforeCaret = (insert.slice(0, rel).match(/\n/g) ?? []).length;
     insert = insert.split("\n").map((l) => prefix + l).join("\n");
@@ -225,7 +230,7 @@ export function slashMenu(deps: SlashDeps = {}): Extension {
         }
       }
 
-      select(type: BlockType) {
+      select(type: BlockCommand) {
         this.close();
         insertBlock(this.view, type, deps);
       }

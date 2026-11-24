@@ -45,6 +45,7 @@ import { consumeKey } from "../../keys";
 import { minimalReplace } from "../min-diff";
 import { ImageBlock, VideoBlock, AudioBlock, FileBlock } from "../../media/media-blocks";
 import { CodeIsland } from "../../media/code-block";
+import { MermaidIsland } from "../../media/mermaid-block";
 import { tabEdit, newlineEdit, applyTaEdit } from "../../media/code-edit";
 import { TableBlock, focusCellEnd } from "../../media/table-block";
 import { type CellSel, normRect, moveCellSel, clearRect, selectionToTsv } from "../../cell-select";
@@ -127,17 +128,16 @@ function commit(view: EditorView, host: HTMLElement, block: Block) {
 /** Focus the code island hosting void `v` and put the textarea caret at its start
  *  or end. Used by structure keys (arrow into the block, fence autocomplete). */
 export function focusCodeVoid(view: EditorView, v: VoidRange, where: "start" | "end") {
-  for (const host of Array.from(view.contentDOM.querySelectorAll<HTMLElement>(".cm-void-code"))) {
-    const pos = view.posAtDOM(host);
-    if (pos < v.from || pos > v.to) continue;
-    const ta = host.querySelector<HTMLTextAreaElement>("textarea.code-input");
-    if (!ta) return;
-    ta.focus();
-    const at = where === "start" ? 0 : ta.value.length;
-    ta.setSelectionRange(at, at);
-    ta.scrollIntoView({ block: "nearest" });
-    return;
-  }
+  const cursor = view.state.field(voidField, false)?.deco.iter(v.from + 1);
+  if (cursor?.from !== v.from) return;
+  const host = (cursor.value?.spec.widget as VoidWidget | undefined)?.dom;
+  host?.querySelector<HTMLButtonElement>('.mermaid-edit[aria-expanded="false"]')?.click();
+  const ta = host?.querySelector<HTMLTextAreaElement>("textarea.code-input");
+  if (!ta) return;
+  ta.focus();
+  const at = where === "start" ? 0 : ta.value.length;
+  ta.setSelectionRange(at, at);
+  ta.scrollIntoView({ block: "nearest" });
 }
 
 /** Move the caret into the void's content (line after the opening fence) to trigger
@@ -411,8 +411,9 @@ function CodeHost({
     }
   };
 
+  const Island = lang.toLowerCase() === "mermaid" ? MermaidIsland : CodeIsland;
   return (
-    <CodeIsland
+    <Island
       code={b.content}
       lang={lang}
       selected={selected}

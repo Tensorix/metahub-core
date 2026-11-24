@@ -1,0 +1,35 @@
+.mh-mermaid {
+  --pele-bg: var(--paper);
+  --pele-fg: var(--fg);
+  --pele-muted: var(--muted);
+  --pele-line: var(--fg-soft);
+  --pele-border: var(--muted);
+  --pele-surface: var(--surface);
+  --pele-surface-alt: var(--surface-2);
+  --pele-accent: var(--accent);
+  margin: 1em 0;
+  min-width: 0;
+}
+.mh-mermaid-diagram {
+  overflow-x: auto;
+  padding-block: .5em;
+}
+.mh-mermaid-diagram > svg {
+  display: block;
+  margin-inline: auto;
+}
+.mh-mermaid summary, .mh-mermaid figcaption {
+  color: var(--muted);
+  font-size: .85em;
+}
+.mh-mermaid summary {
+  width: fit-content;
+  padding: .3em 0;
+  cursor: pointer;
+}
+.mh-mermaid summary:hover { color: var(--fg); }
+.mh-mermaid-empty > pre { display: none; }
+.mh-mermaid summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

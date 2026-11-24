@@ -815,6 +815,57 @@
      from the line below). */
   .cm-void-code .codeblock.ci-selected { box-shadow:0 0 0 2px var(--accent); }
 
+  .mermaid-block {
+    --pele-bg:var(--paper); --pele-fg:var(--fg); --pele-muted:var(--muted); --pele-line:var(--fg-soft);
+    --pele-surface:var(--surface); --pele-surface-alt:var(--surface-2); --pele-border:var(--muted);
+    --pele-accent:var(--accent); --pele-error:var(--danger); --pele-font:var(--ui); --pele-font-mono:var(--mono);
+    --code-fs:13px; --code-lh:1.6; --code-pad:12px;
+    min-width:0; margin:6px 0; border:1px solid var(--line-strong); border-radius:var(--radius);
+    background:var(--paper); overflow:hidden; white-space:normal; font-family:var(--ui);
+  }
+  .mermaid-block.ci-selected { outline:2px solid var(--accent); }
+  .mermaid-bar { display:flex; align-items:center; gap:8px; min-height:39px; padding:3px 8px 3px 14px;
+    background:var(--surface); border-bottom:1px solid var(--line); }
+  .mermaid-label { display:flex; align-items:center; gap:7px; margin-right:auto;
+    font-size:var(--fs-sm); font-weight:600; color:var(--fg-soft); }
+  .mermaid-label > svg { color:var(--muted); }
+  .mermaid-label select { font:inherit; color:inherit; padding-left:0; }
+  .mermaid-edit, .mermaid-bar .code-copy { display:inline-flex; align-items:center; gap:5px; padding:4px 7px;
+    min-height:28px; border-radius:var(--radius-sm); color:var(--fg-soft); font:500 var(--fs-sm)/1.3 var(--ui); }
+  .mermaid-edit:hover, .mermaid-bar .code-copy:hover { background:var(--hover-2); }
+  .mermaid-edit[aria-expanded=true] { color:var(--accent); }
+  .mermaid-edit:focus-visible, .mermaid-bar select:focus-visible, .mermaid-error button:focus-visible {
+    outline:2px solid var(--accent); outline-offset:-2px; }
+  .mermaid-source { max-height:min(36vh,320px); overflow:auto; background:var(--code-bg); border-bottom:1px solid var(--line); }
+  .mermaid-source:focus-within { box-shadow:inset 2px 0 var(--accent); }
+  .mermaid-preview { position:relative; min-width:0; margin:18px 14px; }
+  .mermaid-preview > svg { margin-inline:auto; }
+  /* Pele retains and dims the last good SVG. The localized status below it
+     gives the parser's location a keyboard-accessible link back into the code. */
+  .mermaid-preview > .pele-error { display:none; }
+  .mermaid-preview:not(:has(> svg)) { margin:0; }
+  .mermaid-empty, .mermaid-error { margin:0; padding:18px 16px; font:var(--fs-sm)/1.5 var(--ui); color:var(--muted); }
+  .mermaid-error { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; background:var(--warning-soft); color:var(--warning); }
+  .mermaid-error > svg { align-self:center; }
+  .mermaid-error button { text-decoration:underline; text-underline-offset:3px; font-weight:600; }
+  .doc.wide-mode .mermaid-block { container:mermaid / inline-size; }
+  @container mermaid (min-width:44rem) {
+    .mermaid-panes.is-editing {
+      display:grid; grid-template-columns:minmax(0,4fr) minmax(0,5fr);
+      grid-template-rows:minmax(8rem,auto);
+    }
+    .mermaid-panes.is-editing > .mermaid-source,
+    .mermaid-panes.is-editing > .mermaid-figure { min-width:0; max-height:min(60vh,36rem); overflow:auto; }
+    .mermaid-panes.is-editing > .mermaid-source { border-bottom:0; border-inline-end:1px solid var(--line); }
+    .mermaid-panes.is-editing > .mermaid-figure { display:grid; align-items:safe center; }
+    .mermaid-panes.is-editing > .mermaid-error { grid-column:1 / -1; }
+  }
+  @media (pointer:coarse) {
+    .mermaid-bar { padding-block:0; }
+    .mermaid-edit, .mermaid-bar .code-copy, .mermaid-bar select, .mermaid-error button { min-height:44px; }
+    .mermaid-source { --code-fs:16px; }
+  }
+
   /* Whole-void selected (the CM selection spans the block — click-to-select on
      media, Backspace-from-below, select-all): 2px accent ring, the old editor's
      `.block.selected .void-block` treatment. Code draws its own via .ci-selected. */

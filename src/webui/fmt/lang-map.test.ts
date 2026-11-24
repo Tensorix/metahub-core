@@ -38,7 +38,7 @@ test("gated-off languages have no engine", () => {
 test("every COMMON_LANGS entry is a deliberate decision", () => {
   // Languages we format (any engine) vs. deliberately buttonless. If someone
   // adds a language to COMMON_LANGS, this forces a conscious routing choice.
-  const buttonless = new Set(["", "markdown", "ruby", "makefile", "diff"]);
+  const buttonless = new Set(["", "markdown", "mermaid", "ruby", "makefile", "diff"]);
   for (const { id } of COMMON_LANGS) {
     if (buttonless.has(id)) expect(langEngine(id)).toBeNull();
     else expect(langEngine(id)).not.toBeNull();

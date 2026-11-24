@@ -10,6 +10,7 @@ export const toolbarIcons = {
   todo: require("./native/assets/editor-todo.xml"),
   quote: require("./native/assets/editor-quote.xml"),
   code: require("./native/assets/editor-code.xml"),
+  mermaid: require("./native/assets/editor-mermaid.xml"),
   table: require("./native/assets/editor-table.xml"),
   divider: require("./native/assets/editor-divider.xml"),
   audio: require("./native/assets/editor-audio.xml"),
