@@ -176,8 +176,8 @@ records(id, database_id, created_hlc, order_key, data, __deleted)
 - 写入的 data key 接受属性名或属性 id;名字命中**多个**重名属性时报 `ambiguous`(要求改用属性 id),不做静默 last-wins。重名本身合法(离线并发可产生),`prop add`/改名造成重名时 CLI 仅 stderr warning。
 - `duplicateDatabase` 复制记录按**旧→新属性 id 映射**搬单元格(不走 name-keyed,重名列也能无损复制)。
 - 删除属性时会**清理孤儿单元格**:`removeProperty` 软删属性的同时,把各记录 JSON 中该属性 key 删掉(`emit(undefined)` 物化为 `json_remove`);若属性 tombstone 经 sync 单独到达,`repairHub` 也会兜底清理(见「完整性约束」)。
-- `null` 是合法单元格值。
-- CLI 目前没有单独的 unset 命令来删除 JSON key。
+- `null` 是合法单元格值（key 仍在）。
+- 删除 JSON key：`mh record unset` / `update --unset` / PATCH `$unset`，core 走 `UNSET` → `emit(undefined)` → `json_remove`。
 
 ## 记录索引
 

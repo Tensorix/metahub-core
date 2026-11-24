@@ -1,6 +1,7 @@
 import { defineCommand } from "citty";
 import { openMetahub } from "../../core/db.ts";
 import { compactOplog } from "../../core/compact.ts";
+import { parseIntArg } from "../args.ts";
 import { print, guard } from "../output.ts";
 
 function fmtBytes(n: number): string {
@@ -29,7 +30,7 @@ export default defineCommand({
   run: guard((args) => {
     const db = openMetahub();
     const r = compactOplog(db, {
-      keepDays: args.keep != null ? Number(args.keep) : 90,
+      keepDays: parseIntArg(args.keep, "--keep") ?? 90,
       dryRun: args["dry-run"],
       vacuum: !args["no-vacuum"],
     });

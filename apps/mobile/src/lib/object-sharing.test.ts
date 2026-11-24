@@ -1,11 +1,17 @@
 import type { Session } from "./auth/session";
 import { test, expect, mock } from "bun:test";
+// Bun keeps the first mock.module for a specifier for the whole process, so
+// this stub must export every name other mobile tests import (Directory /
+// FileMode / Paths) — otherwise attachments/native.test fails to load.
 mock.module("expo-file-system", () => ({
+  Directory: class {},
   File: class {
     async bytes() {
       return new Uint8Array();
     }
   },
+  FileMode: { ReadOnly: "r", WriteOnly: "w", ReadWrite: "rw" },
+  Paths: { document: "file:///documents" },
 }));
 mock.module("expo-crypto", () => ({ randomUUID: () => crypto.randomUUID() }));
 const { objectSharing } = await import("./object-sharing");

@@ -195,3 +195,49 @@ test("asMhError maps a SQLite busy/locked error to code busy (exit 9)", () => {
   expect(errorCode(new Error("boom"))).toBeUndefined();
   expect(asMhError(new MhError("stale", "x"))?.code).toBe("stale");
 });
+
+test("illegal --limit → exit 2 invalid_input (not a SQLite datatype mismatch)", () => {
+  mh("db", "create", "ExitTasks");
+  mh("use", "ExitTasks");
+  const r = mh("record", "list", "--limit", "abc");
+  expect(r.exit).toBe(2);
+  expect(r.out.code).toBe("invalid_input");
+  expect(r.out.error).toContain("--limit");
+});
+
+test("record unset removes the cell key; null keeps it", () => {
+  mh("db", "create", "UnsetDemo");
+  mh("use", "UnsetDemo");
+  mh("prop", "add", "Title", "--type", "text");
+  mh("prop", "add", "Note", "--type", "text");
+  const created = mh("record", "create", "--data", '{"Title":"a","Note":"b"}');
+  expect(created.exit).toBe(0);
+
+  const nulled = mh("record", "update", created.out.id, "--data", '{"Note":null}');
+  expect(nulled.exit).toBe(0);
+  expect(nulled.out.values).toEqual({ Title: "a", Note: null });
+
+  const cleared = mh("record", "unset", created.out.id, "Note");
+  expect(cleared.exit).toBe(0);
+  expect(cleared.out.values).toEqual({ Title: "a" });
+  expect(Object.keys(cleared.out.cells)).toHaveLength(1);
+
+  const again = mh("record", "update", created.out.id, "--data", '{"Note":"back"}');
+  expect(again.exit).toBe(0);
+  const viaFlag = mh("record", "update", created.out.id, "--unset", "Note");
+  expect(viaFlag.exit).toBe(0);
+  expect(viaFlag.out.values).toEqual({ Title: "a" });
+});
+
+test("db describe returns properties and an example create payload", () => {
+  mh("db", "create", "DescribeMe");
+  mh("use", "DescribeMe");
+  mh("prop", "add", "Title", "--type", "text");
+  mh("prop", "add", "Status", "--type", "select", "--options", "todo,done");
+  // --offline: earlier tests may leave a dead sync peer; describe is a local read.
+  const r = mh("db", "describe", "DescribeMe", "--offline");
+  expect(r.exit).toBe(0);
+  expect(r.out.database.name).toBe("DescribeMe");
+  expect(r.out.example_create).toEqual({ Title: "", Status: "todo" });
+  expect(r.out.query.operators).toEqual(["eq"]);
+});
