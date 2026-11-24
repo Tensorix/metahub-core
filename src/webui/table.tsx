@@ -4,6 +4,7 @@ import { DatabaseQueryWindow, type DatabaseHost } from '../shared/views/database
 import { deferTouchDrag } from "./touch-intent";
 /** @jsxImportSource preact */
 import { useCallback, useMemo, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import {
   api,
   TYPE_META,
@@ -104,6 +105,30 @@ function PopOutBoard({ dbId }: { dbId: string }) {
     >
       <Icon name="boardPop" />
     </button>
+  );
+}
+
+function SelectionBar({ count, children, onClear, onMore, onDismiss }: {
+  count: string;
+  children: ComponentChildren;
+  onClear?: () => void;
+  onMore: (trigger: HTMLButtonElement) => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div class={onClear ? "selbar cellselbar" : "selbar"} role="group" aria-label={t("选区操作")}>
+      <span class="cnt">{count}</span>
+      <div class="selbar-primary">{children}</div>
+      {onClear && (
+        <button type="button" class="selbar-clear" {...tip(t("清空单元格"), "tableClear")} onClick={onClear}>
+          <Icon name="trash" cls="ico sm" />{t("清空")}
+        </button>
+      )}
+      <button type="button" class="selbar-icon" {...tip(t("更多操作"))} aria-haspopup="dialog" aria-expanded={false}
+        onClick={e => onMore(e.currentTarget)}><Icon name="dots" /></button>
+      <button type="button" class="selbar-icon selbar-dismiss" {...tip(t("取消选择"))}
+        onClick={onDismiss}><Icon name="x" cls="ico sm" /></button>
+    </div>
   );
 }
 
@@ -716,10 +741,11 @@ export function DatabaseView({
     return out;
   };
   // Apply a value to every cell in the current selection (one undo step).
-  const applyToSelection = async (valueFor: (p: Prop) => unknown) => {
+  const applyToSelection = async (valueFor: (p: Prop, first: Rec) => unknown) => {
     if (!cellSel) return;
     const rect=normRect(cellSel),rows=await queryWindow.readRange(rect.r0,rect.r1+1);
-    await applyCells(rows.flatMap(row=>cols.slice(rect.c0,rect.c1+1).map(p=>({recId:row.id,propId:p.id,value:valueFor(p)}))));
+    const first = rows[0];
+    if (first) await applyCells(rows.flatMap(row=>cols.slice(rect.c0,rect.c1+1).map(p=>({recId:row.id,propId:p.id,value:valueFor(p, first)}))));
   };
 
   // Fill handle: drag the selection's bottom-right corner down to repeat the
@@ -763,19 +789,29 @@ export function DatabaseView({
     if (!cellSel) return;
     const { r0, r1, c0, c1 } = normRect(cellSel);
     const span = cols.slice(c0, c1 + 1);
-    const tsv = (await queryWindow.readRange(r0,r1+1))
-      .map((rec) => span.map((p) => cellText(p, rec.cells[p.id])).join("\t"))
-      .join("\n");
-    try { await navigator.clipboard.writeText(tsv); } catch { /* clipboard blocked */ }
+    const text = queryWindow.readRange(r0, r1 + 1).then(rows =>
+      rows.map(rec => span.map(p => cellText(p, rec.cells[p.id])).join("\t")).join("\n"));
+    try {
+      if (host?.clipboardWrite) await host.clipboardWrite(await text);
+      else if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+        // Register the write during the gesture, before a virtualized page loads.
+        const blob = text.then(tsv => new Blob([tsv], { type: "text/plain" }));
+        void blob.catch(() => {}); // Permission can be denied before the item is read.
+        await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+      } else {
+        const tsv = await text;
+        await navigator.clipboard.writeText(tsv);
+      }
+      toast(t("已复制文本"));
+    } catch { toast(t("复制失败"), { tone: "error" }); }
   };
 
   // Bulk-edit one property across the selected rows: pick the property, then
   // its value through the same picker the cell uses.
-  const openSetPropMenu = (e: MouseEvent, ids: string[]) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const anchor: MenuAnchor = { rect };
+  const openSetPropMenu = (trigger: HTMLElement, ids: string[]) => {
+    const anchor: MenuAnchor = { rect: trigger.getBoundingClientRect() };
     const set = (p: Prop) => (v: unknown) => void applyCells(ids.map((id) => ({ recId: id, propId: p.id, value: v })));
-    openMenu(e, (close) => (
+    openMenu(trigger, (close) => (
       <>
         <MenuLabel>{t("设置属性")}</MenuLabel>
         {props.filter((p) => p.type !== "relation" && p.type !== "doc").map((p) => (
@@ -794,7 +830,7 @@ export function DatabaseView({
           }} />
         ))}
       </>
-    ));
+    ), { placement: "above", label: t("设置属性") });
   };
 
   const colMenuCtx: ColMenuCtx = {
@@ -865,15 +901,44 @@ export function DatabaseView({
   const peekRec = records.find((r) => r?.id === peek) ?? null;
   const cr = cellSel ? normRect(cellSel) : null;
 
+  const openCellActions = (trigger: HTMLButtonElement) => openMenu(trigger, close => (
+    <MenuItem icon="arrowDown" label={t("用首行填充")} onClick={() => {
+      close(); void guard(() => applyToSelection((p, first) => first.cells[p.id] ?? null));
+    }} />
+  ), { placement: "above", label: t("更多操作") });
+
+  const openRecordActions = (trigger: HTMLButtonElement) => {
+    const ids = [...sel];
+    openMenu(trigger, close => (
+      <>
+        {ids.length === 1 && <MenuItem icon="openPeek" label={t("打开记录")} onClick={() => { close(); openPeek(ids[0]!); }} />}
+        {view.layout === "table" && <MenuItem icon="pencil" label={t("设置属性…")} onClick={() => {
+          close(); openSetPropMenu(trigger, ids);
+        }} />}
+        <MenuItem icon="copy" label={t("创建副本")} onClick={() => {
+          close(); void guard(async () => { for (const id of ids) await duplicateRecord(await api.getRecord(id)); });
+        }} />
+        <MenuSep />
+        <MenuItem icon="trash" label={t("删除记录")} danger onClick={async () => {
+          close();
+          if (await confirmDialog({ title: t("删除记录？"), message: t("确定删除选中的 {n} 条记录？", { n: ids.length }), confirmLabel: t("删除"), danger: true }))
+            await deleteRecords(ids);
+        }} />
+      </>
+    ), { placement: "above", label: t("更多操作") });
+  };
+
   // Keyboard on the cell selection: arrows move (Shift extends), Cmd/Ctrl+C copies,
   // Delete/Backspace clears, Escape dismisses, Enter/F2 edits, and typing a
   // printable character starts editing with it (replacing the old value).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (editing || e.defaultPrevented || imeGhost(e)) return;
+      if (e.target instanceof Element && e.target.closest(".menu-layer, .modal-scrim")) return;
       if (isEditableTarget(document.activeElement)) return;
       if (pressed(e, "tableUndo")) { e.preventDefault(); undoCells(); return; }
       if (pressed(e, "tableRedo")) { e.preventDefault(); redoCells(); return; }
+      if (e.target instanceof Element && e.target.closest(".selbar") && e.key !== "Escape" && !pressed(e, "tableCopy")) return;
       if (peek && (e.metaKey || e.ctrlKey) && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
         const i = sorted.findIndex((r) => r?.id === peek);
         const nb = sorted[i + (e.key === "ArrowUp" ? -1 : 1)];
@@ -941,6 +1006,7 @@ export function DatabaseView({
     };
     const onPaste = async (e: ClipboardEvent) => {
       if (!cellSel || editing || isEditableTarget(document.activeElement)) return;
+      if (e.target instanceof Element && e.target.closest(".menu-layer, .modal-scrim")) return;
       const text = e.clipboardData?.getData("text/plain");
       if (!text) return;
       e.preventDefault();
@@ -1324,43 +1390,38 @@ export function DatabaseView({
       {embedded && viewToolbar}
 
       {sel.size > 0 && (
-        <div class="selbar">
-          <span class="cnt">{t("{n} 已选", { n: sel.size })}</span>
-          {sel.size === 1 && (
-            <button onClick={() => openPeek([...sel][0]!)}><Icon name="openPeek" cls="ico sm" />{t("打开")}</button>
+        <SelectionBar count={t("{n} 条记录", { n: sel.size })} onMore={openRecordActions} onDismiss={() => setSel(new Set())}>
+          {view.layout === "table" ? (
+            <button type="button" disabled={!imageQueryId || !cols.length} onClick={() => copyImage({ checked: sel })}>
+              <Icon name="image" cls="ico sm" />{t("复制为图片")}
+            </button>
+          ) : (
+            <button type="button" aria-haspopup="dialog" aria-expanded={false} onClick={e => openSetPropMenu(e.currentTarget, [...sel])}>
+              <Icon name="pencil" cls="ico sm" />{t("设置属性…")}
+            </button>
           )}
-          <button onClick={(e) => openSetPropMenu(e, [...sel])}><Icon name="pencil" cls="ico sm" />{t("设置属性…")}</button>
-          <button onClick={() => guard(async () => { for (const id of sel) await duplicateRecord(await api.getRecord(id)); })}>
-            <Icon name="copy" cls="ico sm" />{t("复制")}
-          </button>
-          {view.layout === "table" && imageQueryId && cols.length > 0 && (
-            <button {...tip(t("复制选区为图片"))} onClick={() => copyImage({ checked: sel })}><Icon name="image" cls="ico sm" /></button>
-          )}
-          <button class="del" onClick={async () => {
-            const ok = await confirmDialog({ title: t("删除记录？"), message: t("确定删除选中的 {n} 条记录？", { n: sel.size }), confirmLabel: t("删除"), danger: true });
-            if (ok) deleteRecords([...sel]);
-          }}>
-            <Icon name="trash" cls="ico sm" />{t("删除")}
-          </button>
-          <button onClick={() => setSel(new Set())}><Icon name="x" cls="ico sm" /></button>
-        </div>
+        </SelectionBar>
       )}
 
       {cr && (cr.r0 !== cr.r1 || cr.c0 !== cr.c1) && (
-        <div class="selbar cellselbar">
-          <span class="cnt">{t("{n} 个单元格", { n: (cr.r1 - cr.r0 + 1) * (cr.c1 - cr.c0 + 1) })}</span>
-          <button onClick={copySelection}><Icon name="copy" cls="ico sm" />{t("复制")}</button>
+        <SelectionBar count={t("{n} 个单元格", { n: (cr.r1 - cr.r0 + 1) * (cr.c1 - cr.c0 + 1) })}
+          onClear={() => void guard(() => applyToSelection(() => null))}
+          onMore={openCellActions} onDismiss={() => setCellSel(null)}>
+          <button type="button" {...tip(t("复制文本"), "tableCopy")} onClick={copySelection}>
+            <Icon name="copy" cls="ico sm" />{t("复制")}
+          </button>
           {imageQueryId && (
-            <button {...tip(t("复制选区为图片"))} onClick={() => copyImage({ rect: cr })}><Icon name="image" cls="ico sm" /></button>
+            <button type="button" class="selbar-format" {...tip(t("复制格式"))} aria-haspopup="dialog" aria-expanded={false}
+              onClick={e => openMenu(e.currentTarget, close => (
+                <>
+                  <MenuItem icon="text" label={t("复制文本")} shortcut="tableCopy" onClick={() => { close(); void copySelection(); }} />
+                  <MenuItem icon="image" label={t("复制为图片")} onClick={() => { close(); copyImage({ rect: cr }); }} />
+                </>
+              ), { placement: "above", label: t("复制格式") })}>
+              <Icon name="chevronDown" cls="ico sm" />
+            </button>
           )}
-          <button onClick={() => applyToSelection((p) => sorted[cr.r0]!.cells[p.id] ?? null)}>
-            <Icon name="copy" cls="ico sm" />{t("填充")}
-          </button>
-          <button class="del" onClick={() => applyToSelection(() => null)}>
-            <Icon name="trash" cls="ico sm" />{t("清空")}
-          </button>
-          <button onClick={() => setCellSel(null)}><Icon name="x" cls="ico sm" /></button>
-        </div>
+        </SelectionBar>
       )}
 
       {peekRec && (

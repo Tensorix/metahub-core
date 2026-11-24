@@ -203,6 +203,8 @@ html,body,#app{height:100%;width:100%;margin:0;overflow:hidden}
 .mobile-database .kcard{touch-action:pan-x pan-y}
 
 .mobile-database .mobile-db-tools .toolbar.native-glass { visibility: hidden; }
+.mobile-database .db:has(> .selbar) > .mobile-db-tools { visibility:hidden; }
+.mobile-database .selbar button { min-width:44px; min-height:44px; }
 
 /* In the native table, scrolling rows pass behind the SwiftUI glass capsule. */
 .mobile-database .glass-table { position: relative; }

@@ -131,19 +131,20 @@ function UploadTray() {
 // ---- menu / popover --------------------------------------------------------
 export type MenuAnchor = { x: number; y: number } | { rect: DOMRect } | MouseEvent | HTMLElement;
 type ResolvedAnchor = { x: number; y: number } | { rect: DOMRect };
-type MenuState = {
+type MenuOptions = { minWidth?: number; placement?: "above"; label?: string };
+type MenuState = MenuOptions & {
   render: (close: () => void) => ComponentChildren;
   anchor: ResolvedAnchor;
-  minWidth?: number;
   kb: boolean;
   restore: HTMLElement | null;
+  trigger: HTMLElement | null;
   toolbarButton: HTMLElement | null;
 } | null;
 const menuStore = makeStore<MenuState>(null);
 export function openMenu(
   anchor: MenuAnchor,
   render: (close: () => void) => ComponentChildren,
-  opts: { minWidth?: number } = {},
+  opts: MenuOptions = {},
 ) {
   let a: ResolvedAnchor;
   let kb = false;
@@ -156,7 +157,8 @@ export function openMenu(
     a = kb && el?.getBoundingClientRect ? { rect: el.getBoundingClientRect() } : { x: anchor.clientX, y: anchor.clientY };
   } else a = anchor;
   const toolbarButton = anchor instanceof HTMLElement && anchor.matches(".mobile-db-tools .tbtn") ? anchor : null;
-  menuStore.set({ render, anchor: a, minWidth: opts.minWidth, kb, toolbarButton, restore: toolbarButton ?? document.activeElement as HTMLElement | null });
+  const trigger = opts.placement === "above" && anchor instanceof HTMLElement ? anchor : null;
+  menuStore.set({ ...opts, render, anchor: a, kb, toolbarButton, trigger, restore: trigger ?? toolbarButton ?? document.activeElement as HTMLElement | null });
 }
 export function closeMenu() {
   menuStore.set(null);
@@ -179,10 +181,22 @@ function MenuHost() {
   // caret-anchored on purpose. Read per open; menus never survive a rotation.
   const sheet = document.body.classList.contains('mobile-database') || matchMedia(MOBILE_MQ).matches;
   const toolbarFilter = state?.toolbarButton?.classList.contains("filter-trigger");
+  useLayoutEffect(()=>{
+    if(!state || !sheet || !ref.current)return;
+    const changed:HTMLElement[]=[];
+    let node:HTMLElement|null=ref.current.parentElement;
+    while(node && node!==document.body){
+      for(const sibling of Array.from(node.parentElement?.children ?? []))if(sibling!==node && sibling instanceof HTMLElement && !sibling.inert){sibling.inert=true;changed.push(sibling);}
+      node=node.parentElement;
+    }
+    ref.current.querySelector<HTMLElement>('button:not(:disabled),input')?.focus();
+    return()=>{changed.forEach(el=>el.inert=false);};
+  },[state,sheet]);
   // Escape closes the open menu (capture phase: the menu is the topmost layer);
   // ↑↓/Home/End move real focus between items unless an inner input owns keys.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!state) return;
+    const parentModal = modalStore.get()?.node;
     const on = (e: KeyboardEvent) => {
       if (imeGhost(e)) return;
       if (e.key === "Escape") {
@@ -211,20 +225,23 @@ function MenuHost() {
     window.addEventListener("keydown", on, true);
     return () => {
       window.removeEventListener("keydown", on, true);
-      if (state.restore?.isConnected) state.restore.focus();
+      if (!state.restore?.isConnected) return;
+      if (!state.trigger) state.restore.focus();
+      else if (!menuStore.get() && modalStore.get()?.node === parentModal) {
+        state.restore.focus({ preventScroll: true });
+      }
     };
   }, [state]);
-  useLayoutEffect(()=>{
-    if(!state || !sheet || !ref.current)return;
-    const changed:HTMLElement[]=[];
-    let node:HTMLElement|null=ref.current.parentElement;
-    while(node && node!==document.body){
-      for(const sibling of Array.from(node.parentElement?.children ?? []))if(sibling!==node && sibling instanceof HTMLElement && !sibling.inert){sibling.inert=true;changed.push(sibling);}
-      node=node.parentElement;
-    }
-    ref.current.querySelector<HTMLElement>('button:not(:disabled),input')?.focus();
-    return()=>{changed.forEach(el=>el.inert=false);};
-  },[state,sheet]);
+  useLayoutEffect(() => {
+    const trigger = state?.trigger;
+    if (!trigger) return;
+    const previous = trigger.getAttribute("aria-expanded");
+    trigger.setAttribute("aria-expanded", "true");
+    return () => {
+      if (previous === null) trigger.removeAttribute("aria-expanded");
+      else trigger.setAttribute("aria-expanded", previous);
+    };
+  }, [state]);
   useLayoutEffect(() => {
     const button = state?.toolbarButton;
     const menu = ref.current;
@@ -253,21 +270,39 @@ function MenuHost() {
     };
   }, [state]);
   useLayoutEffect(() => {
-    if (!state || !ref.current || sheet) return setPos(null);
-    const { x, y } = anchorPoint(state.anchor);
-    const r = ref.current.getBoundingClientRect();
-    setPos({
-      left: Math.min(x, innerWidth - r.width - 10),
-      top: Math.min(y + 4, innerHeight - r.height - 10),
-    });
-    if (state.kb) ref.current.querySelector<HTMLElement>("button.item, input")?.focus();
+    const menu = ref.current;
+    if (!state || !menu || sheet) return setPos(null);
+    const position = () => {
+      const r = menu.getBoundingClientRect();
+      if (state.placement === "above" && "rect" in state.anchor) {
+        const anchor = state.trigger?.getBoundingClientRect() ?? state.anchor.rect;
+        const gap = 6, edge = 8;
+        const above = anchor.top - gap - edge, below = innerHeight - anchor.bottom - gap - edge;
+        const top = above >= r.height || above >= below ? anchor.top - gap - r.height : anchor.bottom + gap;
+        setPos({
+          left: Math.max(edge, Math.min(anchor.left, innerWidth - r.width - edge)),
+          top: Math.max(edge, Math.min(top, innerHeight - r.height - edge)),
+        });
+      } else {
+        const { x, y } = anchorPoint(state.anchor);
+        setPos({ left: Math.min(x, innerWidth - r.width - 10), top: Math.min(y + 4, innerHeight - r.height - 10) });
+      }
+    };
+    position();
+    if (state.kb) menu.querySelector<HTMLElement>("button.item, input")?.focus();
+    if (state.placement === "above") {
+      const observer = new ResizeObserver(position);
+      observer.observe(menu);
+      window.addEventListener("resize", position);
+      return () => { observer.disconnect(); window.removeEventListener("resize", position); };
+    }
   }, [state, sheet]);
   if (!state) return null;
   return (
     <div class="menu-layer" onMouseDown={(e) => e.target === e.currentTarget && closeMenu()}>
       <div
         ref={ref}
-        role={sheet ? "dialog" : undefined} aria-modal={sheet ? true : undefined} aria-label={sheet ? t("视图设置") : undefined}
+        role={sheet || state.label ? "dialog" : undefined} aria-modal={sheet ? true : undefined} aria-label={state.label ?? (sheet ? t("视图设置") : undefined)}
         class={"pop" + (sheet ? " sheet" : "") + (state.toolbarButton ? " toolbar-menu" : "") + (toolbarFilter ? " filter-menu" : "")}
         style={sheet ? undefined : { left: pos?.left ?? -9999, top: pos?.top ?? -9999, minWidth: state.minWidth }}
         onMouseDown={(e) => e.stopPropagation()}
