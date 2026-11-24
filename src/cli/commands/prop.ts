@@ -18,6 +18,7 @@ import { resolveRef } from "../../core/resolve.ts";
 import { errorCode } from "../../core/errors.ts";
 import { idKind } from "../../core/ids.ts";
 import { resolveDb } from "../refs.ts";
+import { parseIntArg } from "../args.ts";
 import { print, table, guard, warn } from "../output.ts";
 import type { Database } from "bun:sqlite";
 import { FRESH_ARGS, freshDb } from "../fresh.ts";
@@ -76,7 +77,7 @@ const add = defineCommand({
       name: args.name,
       type: args.type as PropType,
       config,
-      position: args.position != null ? Number(args.position) : undefined,
+      position: parseIntArg(args.position, "--position"),
     });
     warnIfDuplicateName(db, databaseId, row.name);
     print(row, () => `${row.id}\t${row.name}\t${row.type}`);
@@ -123,7 +124,7 @@ const update = defineCommand({
     const row = updateProperty(db, resolveRef(db, args.id, { kind: "prop" }), {
       name: args.name,
       config,
-      position: args.position != null ? Number(args.position) : undefined,
+      position: parseIntArg(args.position, "--position"),
     });
     if (args.name != null) warnIfDuplicateName(db, row.database_id, row.name);
     print(row);

@@ -9,6 +9,8 @@ import {
   listRecords,
   moveRecord,
   updateRecord,
+  unsetRecordFields,
+  UNSET,
   deleteRecord,
 } from "./records.ts";
 import { hasIndex } from "./indexing.ts";
@@ -62,6 +64,25 @@ test("explicit null keeps the key as null; a null-valued oplog change removes it
   const raw = db.query("SELECT data FROM records WHERE id = ?").get(rec.id) as {
     data: string;
   };
+  expect(JSON.parse(raw.data)).toEqual({});
+});
+
+test("UNSET / unsetRecordFields remove the JSON key (distinct from null)", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Notes" });
+  addProperty(db, d.id, { name: "body", type: "text" });
+  addProperty(db, d.id, { name: "tag", type: "text" });
+  const rec = createRecord(db, d.id, { body: "hello", tag: "x" });
+
+  updateRecord(db, rec.id, { body: UNSET });
+  expect(getRecord(db, rec.id)!.values).toEqual({ tag: "x" });
+
+  updateRecord(db, rec.id, { tag: null });
+  expect(getRecord(db, rec.id)!.values).toEqual({ tag: null });
+
+  unsetRecordFields(db, rec.id, ["tag"]);
+  expect(getRecord(db, rec.id)!.values).toEqual({});
+  const raw = db.query("SELECT data FROM records WHERE id = ?").get(rec.id) as { data: string };
   expect(JSON.parse(raw.data)).toEqual({});
 });
 

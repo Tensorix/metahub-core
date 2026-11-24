@@ -15,6 +15,7 @@ import {
   listDatabases,
   createDatabase,
   updateDatabase,
+  describeDatabase,
   duplicateDatabase,
   deleteDatabase,
 } from "../../core/databases.ts";
@@ -34,6 +35,7 @@ import {
   getRecord,
   createRecord,
   updateRecord,
+  unsetRecordFields,
   moveRecord,
   deleteRecord,
 } from "../../core/records.ts";
@@ -190,7 +192,9 @@ const RenameOptionReq = z.object({ from: z.string(), to: z.string() });
 const RemoveOptionReq = z.object({ name: z.string() });
 const RecordValuesReq = z
   .record(z.string(), z.any())
-  .describe('Flat { column: value } cell patch (keyed by property name).');
+  .describe(
+    'Flat { column: value } cell patch (keyed by property name or id). Optional "$unset": ["field",...] removes cell keys (json_remove; distinct from JSON null).',
+  );
 const CreateDocumentReq = z.object({
   title: z.string(),
   body: z.string().optional(),
@@ -569,6 +573,23 @@ export const webuiRoutes: Route[] = [
   },
   {
     method: "GET",
+    path: "/api/database/describe",
+    summary:
+      "Schema introspection for agents: database + properties + example create payload. Query: ?id=<id>",
+    response: z.object({
+      database: DatabaseSchema,
+      properties: z.array(PropertySchema),
+      example_create: z.record(z.string(), z.any()),
+      query: z.object({
+        filter: z.string(),
+        sort: z.string(),
+        operators: z.array(z.string()),
+      }),
+    }),
+    handler: handle((req, { db }) => describeDatabase(db, need(req, "id"))),
+  },
+  {
+    method: "GET",
     path: "/api/database/activity",
     summary:
       "Recent changes across all records of a database, newest first. Query: ?db=<id>&limit=<n>",
@@ -751,12 +772,27 @@ export const webuiRoutes: Route[] = [
   {
     method: "PATCH",
     path: "/api/record",
-    summary: "Update record fields. Query: ?id=<id>; body is a {field: value} map",
+    summary:
+      "Update record fields. Query: ?id=<id>; body is a {field: value} map. Optional $unset:[fields] removes keys.",
     request: RecordValuesReq,
     response: RecordSchema,
     handler: handle(async (req, { db }) => {
-      const values = (await req.json()) as Record<string, unknown>;
-      return updateRecord(db, need(req, "id"), values);
+      const body = (await req.json()) as Record<string, unknown>;
+      const id = need(req, "id");
+      const unsetRaw = body.$unset;
+      delete body.$unset;
+      let clear: string[] = [];
+      if (unsetRaw !== undefined) {
+        if (!Array.isArray(unsetRaw) || unsetRaw.some((x) => typeof x !== "string"))
+          throw new MhError("invalid_input", "$unset must be an array of field names");
+        clear = unsetRaw as string[];
+      }
+      if (!Object.keys(body).length && !clear.length)
+        throw new MhError("invalid_input", "need fields to update and/or $unset");
+      // Apply values first, then unset so an overlapping field ends up cleared.
+      if (Object.keys(body).length) updateRecord(db, id, body);
+      if (clear.length) return unsetRecordFields(db, id, clear);
+      return getRecord(db, id)!;
     }),
   },
   {

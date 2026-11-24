@@ -5,6 +5,7 @@ import {
   listRecords,
   getRecord,
   updateRecord,
+  unsetRecordFields,
   deleteRecord,
   recordTitleMap,
 } from "../../core/records.ts";
@@ -21,6 +22,7 @@ import { resolveRef } from "../../core/resolve.ts";
 import { errorCode, MhError } from "../../core/errors.ts";
 import { idKind } from "../../core/ids.ts";
 import { resolveDb } from "../refs.ts";
+import { parseCommaList, parseIntArg } from "../args.ts";
 import { print, table, guard } from "../output.ts";
 import type { Database } from "bun:sqlite";
 import { FRESH_ARGS, freshDb } from "../fresh.ts";
@@ -118,7 +120,7 @@ const list = defineCommand({
     const rows = listRecords(db, databaseId, {
       filter,
       sort,
-      limit: args.limit != null ? Number(args.limit) : undefined,
+      limit: parseIntArg(args.limit, "--limit"),
     });
     print(
       { database: databaseId, count: rows.length, records: rows },
@@ -146,15 +148,54 @@ const get = defineCommand({
 });
 
 const update = defineCommand({
-  meta: { name: "update", description: "Update record cells (partial)" },
+  meta: {
+    name: "update",
+    description: "Update record cells (partial). Use --unset to remove cell keys (not JSON null).",
+  },
   args: {
     id: { type: "positional", required: true, description: "Record ref (id/prefix)" },
     data: { type: "string", description: "JSON of {column: value} (@file/@- ok)" },
+    unset: {
+      type: "string",
+      description: "Comma-separated fields to clear (removes the JSON key; distinct from null)",
+    },
   },
   run: guard(async (args) => {
     const db = openMetahub();
+    const id = resolveRef(db, args.id, { kind: "rec" });
     const data = (await resolveJson<Record<string, unknown>>(args.data)) ?? {};
-    const row = updateRecord(db, resolveRef(db, args.id, { kind: "rec" }), data);
+    const clear = parseCommaList(args.unset, "--unset");
+    if (!Object.keys(data).length && !clear.length)
+      throw new MhError("invalid_input", "need --data and/or --unset");
+    if (Object.keys(data).length) updateRecord(db, id, data);
+    const row = clear.length ? unsetRecordFields(db, id, clear) : getRecord(db, id)!;
+    print(row);
+  }),
+});
+
+const unset = defineCommand({
+  meta: {
+    name: "unset",
+    description: "Remove cell keys from a record (json_remove; distinct from writing null)",
+  },
+  args: {
+    id: { type: "positional", required: true, description: "Record ref (id/prefix)" },
+    field: {
+      type: "positional",
+      required: false,
+      description: "One field to clear (or use --fields)",
+    },
+    fields: { type: "string", description: "Comma-separated fields to clear" },
+  },
+  run: guard((args) => {
+    const db = openMetahub();
+    const id = resolveRef(db, args.id, { kind: "rec" });
+    const list = [
+      ...(args.field ? [args.field] : []),
+      ...parseCommaList(args.fields, "--fields"),
+    ];
+    if (!list.length) throw new MhError("invalid_input", "need a field or --fields");
+    const row = unsetRecordFields(db, id, list);
     print(row);
   }),
 });
@@ -253,5 +294,5 @@ const del = defineCommand({
 
 export default defineCommand({
   meta: { name: "record", description: "Manage records (rows)" },
-  subCommands: { create, list, get, update, history, revert, delete: del },
+  subCommands: { create, list, get, update, unset, history, revert, delete: del },
 });

@@ -4,6 +4,7 @@ import { runSchema } from "./db.ts";
 import {
   createDatabase,
   getDatabase,
+  describeDatabase,
   updateDatabase,
   duplicateDatabase,
   deleteDatabase,
@@ -18,6 +19,20 @@ function newDb(node = "test-node"): Database {
   db.query("INSERT INTO meta (key, value) VALUES ('node_id', ?)").run(node);
   return db;
 }
+
+test("describeDatabase returns schema, example payload, and query operators", () => {
+  const db = newDb();
+  const d = createDatabase(db, { name: "Tasks" });
+  addProperty(db, d.id, { name: "Title", type: "text" });
+  addProperty(db, d.id, { name: "Status", type: "select", config: { options: ["todo", "done"] } });
+  addProperty(db, d.id, { name: "Done", type: "checkbox" });
+
+  const info = describeDatabase(db, d.id);
+  expect(info.database.name).toBe("Tasks");
+  expect(info.properties.map((p) => p.name)).toEqual(["Title", "Status", "Done"]);
+  expect(info.example_create).toEqual({ Title: "", Status: "todo", Done: false });
+  expect(info.query.operators).toEqual(["eq"]);
+});
 
 test("updateDatabase renames and changes icon", () => {
   const db = newDb();

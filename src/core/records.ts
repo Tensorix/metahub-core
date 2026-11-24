@@ -39,6 +39,18 @@ export interface PreparedRecordCell {
   value: unknown;
 }
 
+/**
+ * Sentinel for "remove this cell key" (json_remove), distinct from JSON `null`
+ * which is a stored value. Pass as a cell value to `updateRecord` /
+ * `prepareRecordCells`, or use `unsetRecordFields`. Not JSON-serializable —
+ * CLI/REST map `--unset` / `$unset` onto it.
+ */
+export const UNSET: unique symbol = Symbol.for("metahub.unset");
+export type Unset = typeof UNSET;
+export function isUnset(v: unknown): v is Unset {
+  return v === UNSET;
+}
+
 interface OrderedRecordRow {
   id: string;
   database_id: string;
@@ -178,7 +190,8 @@ export function resolveData(
 }
 
 /** Resolve property refs and coerce each value exactly once. Input order is
- * preserved because it also determines the HLC order of emitted cells. */
+ * preserved because it also determines the HLC order of emitted cells.
+ * `UNSET` skips coercion and becomes an oplog null → json_remove. */
 export function prepareRecordCells(
   db: DbDriver,
   databaseId: string,
@@ -186,7 +199,7 @@ export function prepareRecordCells(
 ): PreparedRecordCell[] {
   return resolveData(listProperties(db, databaseId), data).map(({ prop, value }) => ({
     prop,
-    value: coerce(db, prop, value),
+    value: isUnset(value) ? undefined : coerce(db, prop, value),
   }));
 }
 
@@ -514,6 +527,19 @@ export const updateRecord = grouped(function updateRecord(
     .get(id) as { id: string; database_id: string } | null;
   if (!rec) throw new MhError("not_found", `no such record: ${id}`);
   return updateRecordPrepared(db, id, prepareRecordCells(db, rec.database_id, data));
+});
+
+/** Remove one or more cell keys (json_remove). Fields are property name or id.
+ *  Distinct from writing JSON `null`, which keeps the key present. */
+export const unsetRecordFields = grouped(function unsetRecordFields(
+  db: DbDriver,
+  id: string,
+  fields: string[],
+): RecordRow {
+  if (!fields.length) throw new MhError("invalid_input", "need at least one field to unset");
+  const data: Record<string, unknown> = {};
+  for (const f of fields) data[f] = UNSET;
+  return updateRecord(db, id, data);
 });
 
 export const deleteRecord = grouped(function deleteRecord(db: DbDriver, id: string): boolean {

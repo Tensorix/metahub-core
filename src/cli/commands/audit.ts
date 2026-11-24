@@ -6,6 +6,7 @@ import {
   revertChangeGroup,
   type AuditEntry,
 } from "../../core/audit.ts";
+import { parseIntArg } from "../args.ts";
 import { print, guard, table } from "../output.ts";
 
 function summarize(e: AuditEntry): string {
@@ -81,7 +82,7 @@ const revert = defineCommand({
 const runList = guard((args: Record<string, any>) => {
   const db = openMetahub();
   const page = listAuditEntries(db, {
-    limit: args.limit != null ? Number(args.limit) : undefined,
+    limit: parseIntArg(args.limit, "--limit", { min: 1 }),
     actor: args.actor,
     before: args.before,
   });
