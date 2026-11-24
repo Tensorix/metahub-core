@@ -653,6 +653,12 @@ export function TableBlock({
   );
 }
 
+function updateShortText(cell: HTMLElement) {
+  // Use visible text so inline formatting and link targets do not affect sizing.
+  const length = cell.textContent?.trim().length ?? 0;
+  cell.toggleAttribute("data-short-text", length > 0 && length <= 16);
+}
+
 export function TableCell({
   value, renderKey, r, c, align, onInput, onKeyDown, onCompositionStart, onCompositionEnd,
 }: {
@@ -676,6 +682,7 @@ export function TableCell({
     if (el) {
       const html = inlineToHtml(value);
       if (el.innerHTML !== html && htmlToInline(el.innerHTML) !== value) el.innerHTML = html;
+      updateShortText(el);
     }
   }, [renderKey]);
   return (
@@ -687,7 +694,11 @@ export function TableCell({
       contentEditable
       data-ph={r === 0 ? t("表头") : ""}
       style={align ? { textAlign: align } : undefined}
-      onInput={(e) => onInput(htmlToInline((e.currentTarget as HTMLElement).innerHTML))}
+      onInput={(e) => {
+        const cell = e.currentTarget as HTMLElement;
+        updateShortText(cell);
+        onInput(htmlToInline(cell.innerHTML));
+      }}
       onKeyDown={(e) => onKeyDown(e as KeyboardEvent)}
       onCompositionStart={onCompositionStart ? () => onCompositionStart() : undefined}
       onCompositionEnd={

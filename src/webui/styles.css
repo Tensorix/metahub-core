@@ -1037,6 +1037,8 @@
      first resizer drag freezes measured widths and drops this class (table-block.tsx). */
   table.doc-table.autofit { table-layout:auto; width:auto; max-width:calc(100cqw - 26px); }
   table.doc-table.autofit .doc-td { min-width:48px; } /* empty columns don't collapse */
+  /* Let a short label contribute its full word width to automatic layout. */
+  table.doc-table.autofit .doc-td[data-short-text] { word-break:normal; overflow-wrap:break-word; }
   /* Code tokens are atomic: raising the column's min-content makes the auto
      algorithm shed width into wrappable prose columns instead of breaking
      `file-names.md` at hyphens; an over-long token falls back to the scroll
