@@ -3,6 +3,8 @@ import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { UiHost } from "../ui";
 import { DatabaseView } from "../table";
+import { bindMobileImageClipboard } from "../mobile-image-clipboard";
+import { setTableImageClipboardWriter } from "../table-image";
 import {
   boot,
   rpc,
@@ -107,6 +109,10 @@ let closing: Promise<unknown> | null = null;
 function openSession(config: DatabaseBoot) {
   beginSession(config);
   closing = null;
+  bindMobileImageClipboard(async (png) => {
+    if (closing || !sessionActive() || boot.session !== config.session) throw new Error("数据表会话已关闭");
+    await rpc("clipboardWriteImage", png);
+  });
   (window as any).__METAHUB_DATABASE__ = config;
   document.documentElement.dataset.resolved = boot.dark ? "dark" : "light";
   document.body.classList.add("mobile-database");
@@ -136,6 +142,7 @@ async function closeSession(id: string) {
       render(null, document.getElementById("app")!);
       await rpc("releaseQueries");
       endSession();
+      setTableImageClipboardWriter(undefined);
       document.body.inert = true;
       Reflect.deleteProperty(window, "__METAHUB_DATABASE__");
       window.scrollTo(0, 0);

@@ -1,10 +1,12 @@
+import { isClipboardPng } from "../clipboard-image";
+
 /** Credentials and arbitrary network requests are intentionally absent. */
 export const EDITOR_PROTOCOL = 1;
 export type EditorDraft = { revision: number; title: string; body: string; version: string | null };
 export type EditorMediaRequest = { action: "pick" | "resolve" | "preview"; src?: string; kind?: "library" | "image" | "video" | "audio" | "file" };
 export type EditorRequest = {
   v: 1; session: string; id: number; type: "request";
-  method: "load" | "refresh" | "checkpoint" | "save" | "targets" | "media" | "navigate";
+  method: "load" | "refresh" | "checkpoint" | "save" | "targets" | "media" | "navigate" | "clipboardWriteImage";
   params: unknown;
 };
 export type EditorState = "saved" | "dirty" | "saving" | "conflict" | "error";
@@ -36,6 +38,7 @@ export function parseEditorMessage(raw: string, session: string): EditorRequest 
     case "checkpoint": if (!isDraft(x.params)) return null; break;
     case "save": if (!isDraft(x.params) || !("force" in x.params) || typeof x.params.force !== "boolean") return null; break;
     case "navigate": if (typeof x.params !== "string" || x.params.length > 4096) return null; break;
+    case "clipboardWriteImage": if (!isClipboardPng(x.params)) return null; break;
     case "media": {
       if (!object(x.params) || !["pick", "resolve", "preview"].includes(String(x.params.action))) return null;
       if (x.params.src !== undefined && (typeof x.params.src !== "string" || x.params.src.length > 8192)) return null;

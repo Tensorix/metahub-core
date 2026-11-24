@@ -19,6 +19,7 @@ import { preferSurface } from '../lib/database/prewarm';
 import { EditorSurface } from "./EditorSurface";
 import { useTheme } from "@/lib/theme";
 import { DocumentToolbar } from "./DocumentToolbar";
+import * as Clipboard from "expo-clipboard";
 import type { EditorPosition, EditorSurfaceHandle } from "./DefaultEditorSurface";
 import { EditorHost, type EditorHostServices } from "../lib/editor/host";
 import { createNativePresentationGuard } from "../lib/editor/native-presentation";
@@ -109,6 +110,7 @@ export const DocumentEditor = forwardRef<
         acknowledge: (revision, version) =>
           servicesRef.current.acknowledge(revision, version),
         save: (snapshot) => servicesRef.current.save(snapshot),
+        clipboardWriteImage: Clipboard.setImageAsync,
         listTargets: () =>
           servicesRef.current.listTargets?.() ?? Promise.resolve([]),
         media: (request) => {

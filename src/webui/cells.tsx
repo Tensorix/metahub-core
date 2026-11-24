@@ -9,26 +9,25 @@ import { docLinkTitle, onDocTitleChange } from "./doc-titles.ts";
 import { t } from "./i18n/t.ts";
 import { Icon } from "./icons.tsx";
 
-// ---- option colors (stable per string) ----
-const HUES = [4, 28, 45, 130, 165, 200, 220, 255, 290, 330];
-export function optColor(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return `hsl(${HUES[h % HUES.length]} 65% 45%)`;
-}
+import { optColor } from "./option-color.ts";
+export { optColor } from "./option-color.ts";
 
 export function Chip({ text }: { text: string }) {
   return <span class="chip" style={{ ["--c" as any]: optColor(text) }}>{text}</span>;
+}
+
+export const colWidth = (p: Prop) => p.config?.width ?? 180;
+
+export function referenceLabel(id: string, title: string | null | undefined): string {
+  if (title === "") return t("无标题");
+  return title || (id.length > 15 ? `${id.slice(0, 14)}…` : id);
 }
 
 /** Chip label for a relation value: the target record's title, "无标题" for a
  *  titled-but-empty record, and a shortened raw id while loading / for dangling
  *  refs / when the target db has no text property. */
 export function relationLabel(dbId: string | undefined, recId: string): string {
-  const title = relationTitle(dbId, recId);
-  if (title) return title;
-  if (title === "") return t("无标题");
-  return recId.length > 15 ? `${recId.slice(0, 14)}…` : recId;
+  return referenceLabel(recId, relationTitle(dbId, recId));
 }
 
 /** One relation chip: shows the target record's title and links to it. Plain
@@ -65,10 +64,7 @@ function RelChip({ dbId, recId }: { dbId: string | undefined; recId: string }) {
  *  refs (deleted or unsynced documents). */
 export function docLabel(docId: string): { label: string; missing: boolean } {
   const title = docLinkTitle(docId);
-  if (title) return { label: title, missing: false };
-  if (title === "") return { label: t("无标题"), missing: false };
-  const short = docId.length > 15 ? `${docId.slice(0, 14)}…` : docId;
-  return { label: short, missing: title === null };
+  return { label: referenceLabel(docId, title), missing: title === null };
 }
 
 /** One doc chip: shows the document's title and links to it. Same anchor-based

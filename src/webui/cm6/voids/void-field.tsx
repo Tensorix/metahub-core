@@ -92,6 +92,14 @@ function voidUnder(view: EditorView, host: HTMLElement): VoidRange | null {
   return found;
 }
 
+/** The mounted table at this block, including its session-only column widths. */
+export function tableAtBlock(view: EditorView, v: VoidRange): HTMLTableElement | null {
+  const cursor = view.state.field(voidField, false)?.deco.iter(v.from + 1);
+  if (cursor?.from !== v.from) return null;
+  const widget = cursor.value?.spec.widget as VoidWidget | undefined;
+  return widget?.dom?.querySelector<HTMLTableElement>("table.doc-table") ?? null;
+}
+
 /** Leading whitespace of the void's opening line — the nesting indent that
  *  blockToText (which serializes at indent 0) must be re-applied with. */
 function voidIndent(view: EditorView, v: VoidRange): string {

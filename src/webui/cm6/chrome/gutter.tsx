@@ -19,6 +19,8 @@ import { docModel } from "../doc-model";
 import { deferCoords } from "../defer";
 import { blockAt, blockSpanWithChildren, rangeForSelection, lineSpanRange, duplicateRange, type BlockRange as Range } from "../block-range";
 import { turnInto, type TargetType } from "../convert";
+import { tableAtBlock } from "../voids/void-field";
+import { copyDocumentTableImage } from "../../media/table-block";
 
 // "转换为" targets, in menu order; labels/icons come from the shared BLOCK_MENU
 // (same strings/icons as the slash menu and the old editor's grip menu).
@@ -131,6 +133,7 @@ class GutterPlugin implements PluginValue {
     const showConvert = multi || !v || textVoid;
     const items = !multi && textVoid ? CONVERT_ITEMS.filter((m) => m.type === "p") : CONVERT_ITEMS;
     const current = multi ? null : currentType(view, range.fromLine);
+    const table = v?.kind === "table" && target.from === v.from && target.to === v.to ? tableAtBlock(view, v) : null;
     openMenu(e, (close) => (
       <>
         {showConvert && (
@@ -149,6 +152,7 @@ class GutterPlugin implements PluginValue {
           </>
         )}
         <MenuItem icon="copy" label={multi ? t("复制块组") : t("复制块")} onClick={() => { duplicateRange(view, moveTarget); close(); }} />
+        {table && <MenuItem icon="image" label={t("复制为图片")} onClick={() => { close(); void copyDocumentTableImage(table); }} />}
         <MenuItem icon="trash" label={multi ? t("删除块组") : t("删除块")} danger onClick={() => { this.remove(moveTarget); close(); }} />
       </>
     ));

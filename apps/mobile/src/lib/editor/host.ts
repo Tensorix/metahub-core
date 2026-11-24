@@ -9,6 +9,7 @@ export interface EditorHostServices {
   listTargets?(): Promise<{ id: string; title: string; kind: "doc" | "db" | "rec" }[]>;
   media?(request: EditorMediaRequest, present?: NativePresentation): Promise<{ src?: string; url?: string; name?: string; mime?: string }>;
   navigate?(target: string, present?: NativePresentation): Promise<void>;
+  clipboardWriteImage?(base64: string): Promise<void>;
   isCurrent(): boolean;
 }
 /** One instance per renderer. Every mutation runs in order; a late old-session
@@ -56,7 +57,7 @@ export class EditorHost {
         return { v: 1, session: this.session, type: "response", id: request.id, ok: false, error: error instanceof Error ? error.message : String(error), code: (error as { code?: string })?.code };
       }
     };
-    if (request.method === "media" || request.method === "targets" || request.method === "navigate") return run();
+    if (request.method === "media" || request.method === "targets" || request.method === "navigate" || request.method === "clipboardWriteImage") return run();
     const pending = this.chain.then(run, run);
     this.chain = pending;
     return pending;
@@ -92,6 +93,11 @@ export class EditorHost {
         return saved;
       }
       case "targets": return this.services.listTargets?.() ?? [];
+      case "clipboardWriteImage": {
+        if (!this.services.clipboardWriteImage) throw new Error("图片剪贴板不可用");
+        await this.services.clipboardWriteImage(request.params as string);
+        return null;
+      }
       case "media": {
         if (!this.services.media) throw new Error("Media is unavailable in this session");
         return this.services.media(request.params as EditorMediaRequest);

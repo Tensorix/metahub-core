@@ -52,10 +52,9 @@ const pending = new Map<
 export function rpc<T = any>(method: string, ...args: unknown[]): Promise<T> {
   if (!active) return Promise.reject(new Error("数据表会话已关闭"));
   const id = ++sequence;
-  const key =
-    method +
-    ":" +
-    JSON.stringify(method === "checkpoint" ? args.slice(0, 2) : args[0]);
+  const key = writeMethods.has(method)
+    ? method + ":" + JSON.stringify(method === "checkpoint" ? args.slice(0, 2) : args[0])
+    : method;
   const promise = new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);

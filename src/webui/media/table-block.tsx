@@ -15,14 +15,33 @@ import type { Block, ColAlign } from "../blocks.ts";
 import { Icon } from "../icons.tsx";
 import { openMenu, MenuItem, MenuLabel, MenuSep } from "../ui.tsx";
 import { inlineToHtml, htmlToInline } from "../markdown.tsx";
+import { copyTableImage } from "../table-image.ts";
+import { tip } from "../shortcuts.ts";
 import { startColumnResize, startPointerDrag } from "../pointer-drag.ts";
-import { type CellSel, normRect, inRect, edgeShadow, clearRect, selectionToTsv } from "../cell-select.ts";
+import { type CellSel, type CellRect, normRect, inRect, edgeShadow, clearRect, selectionToTsv } from "../cell-select.ts";
 
 // Touch (no hover): the active cell is the focused one (focusin) instead of
 // the hovered one, step-move menu items back up drag-reorder, and the cell
 // rectangle gets an on-screen action bar. Evaluated once — a device's pointer
 // class doesn't change mid-session.
 const COARSE = typeof matchMedia !== "undefined" && matchMedia("(hover: none)").matches;
+
+export function copyDocumentTableImage(table: HTMLTableElement, rect?: CellRect) {
+  return copyTableImage(() => {
+    const body = table.tBodies[0]!;
+    const { r0, r1, c0, c1 } = rect ?? {
+      r0: 0, r1: body.rows.length - 1, c0: 0, c1: body.rows[0]!.cells.length - 1,
+    };
+    const columns = Array.from(body.rows[0]!.cells).slice(c0, c1 + 1);
+    return {
+      rows: Array.from(body.rows).slice(r0, r1 + 1).map((row) =>
+        Array.from(row.cells).slice(c0, c1 + 1).map((cell) => cell.querySelector<HTMLElement>(".doc-td")!)),
+      headerRow: r0 === 0,
+      widths: columns.map((cell) => cell.getBoundingClientRect().width),
+      align: columns.map((cell) => (cell.querySelector<HTMLElement>(".doc-td")!.style.textAlign || null) as ColAlign),
+    };
+  });
+}
 
 // Focus the contentEditable cell at (r, c) under `root` and drop the caret at
 // its end. Shared by the in-table Tab/Enter navigation and the cell-rectangle
@@ -504,11 +523,18 @@ export function TableBlock({
     const wr = wrap.getBoundingClientRect();
     const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
     return {
-      left: Math.round(Math.min(Math.max((ar.left + br.right) / 2 - wr.left - 66, 4), wr.width - 136)),
+      left: Math.round((ar.left + br.right) / 2 - wr.left),
       top: Math.round(Math.max(ar.top - wr.top - 38, -34)),
     };
   };
   const selBar = selBarPos();
+  const copyImage = (selection?: CellRect) => {
+    if (tableRef.current) void copyDocumentTableImage(tableRef.current, selection);
+  };
+  // Touch exposes the range action next to the selection. The footer can
+  // still copy the entire table while that selection is active.
+  const footerSelection = COARSE ? undefined : rect ?? undefined;
+  const footerLabel = footerSelection ? t("复制选区为图片") : t("复制为图片");
   const copyFlash = () => {
     const tbl = tableRef.current;
     if (!tbl) return;
@@ -546,8 +572,9 @@ export function TableBlock({
         </button>
       )}
       {selBar && rect && (
-        <div class="doc-sel-bar" style={{ left: selBar.left, top: selBar.top }}>
+        <div class="doc-sel-bar" style={{ "--selection-center": selBar.left + "px", top: selBar.top }}>
           <button onClick={() => { navigator.clipboard?.writeText(selectionToTsv(rows, rect)).catch(() => {}); copyFlash(); }}>{t("复制")}</button>
+          <button aria-label={t("复制选区为图片")} onClick={() => copyImage(rect)}>{t("复制为图片")}</button>
           <button onClick={() => { block.rows = clearRect(rows, rect); onTableChange(); onCellSel(null); }}>{t("清空")}</button>
           <button onClick={() => onCellSel(null)}>✕</button>
         </div>
@@ -610,9 +637,16 @@ export function TableBlock({
               <Icon name="plus" cls="ico sm" />
             </button>
           </div>
-          <button class="doc-table-addrow" title={t("新增行")} onMouseDown={(e) => { e.preventDefault(); addRow(); }}>
-            <Icon name="plus" cls="ico sm" />
-          </button>
+          <div class="doc-table-footer">
+            <button class="doc-table-addrow" title={t("新增行")} onMouseDown={(e) => { e.preventDefault(); addRow(); }}>
+              <Icon name="plus" cls="ico sm" />
+            </button>
+            <button type="button" class="doc-table-copy-image" {...tip(footerLabel)}
+              onMouseDown={(e) => e.preventDefault()} onClick={() => copyImage(footerSelection)}>
+              <Icon name="image" cls="ico sm" />
+              <span>{footerLabel}</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

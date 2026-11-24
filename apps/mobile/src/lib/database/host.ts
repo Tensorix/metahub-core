@@ -5,6 +5,7 @@ import {
 } from "../../../../../src/shared/views/database-view-query";
 import type { RecordQuery } from "../../../../../src/shared/views/query";
 import type { ReplicaService } from "../../../../../src/core/replica/service";
+import { isClipboardPng } from "../clipboard-image";
 import {
   recordWriter,
   prepareCell,
@@ -17,6 +18,7 @@ export function createDatabaseHost(
   capabilities: {
     openRecord(id: string): void;
     clipboardWrite(text: string): Promise<void>;
+    clipboardWriteImage?(base64: string): Promise<void>;
     clipboardRead(): Promise<string>;
     openDocument?(id: string): void;
     openLink?(url: string): Promise<unknown>;
@@ -241,6 +243,11 @@ export function createDatabaseHost(
         return capabilities.clipboardWrite(args[0]);
       }
       if (method === "clipboardRead") return capabilities.clipboardRead();
+      if (method === "clipboardWriteImage") {
+        if (!isClipboardPng(args[0])) throw new Error("无效的 PNG 图片");
+        if (!capabilities.clipboardWriteImage) throw new Error("图片剪贴板不可用");
+        return capabilities.clipboardWriteImage(args[0]);
+      }
       if (method === "openRecord") {
         await flush();
         if (typeof args[0] !== "string") throw new Error("Invalid record");

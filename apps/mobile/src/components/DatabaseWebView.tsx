@@ -108,6 +108,7 @@ export function DatabaseWebView({
             await Clipboard.setStringAsync(text);
           },
           clipboardRead: Clipboard.getStringAsync,
+          clipboardWriteImage: Clipboard.setImageAsync,
           openDocument: (id) => router.push(`/doc/${id}`),
           openLink: (url) => Linking.openURL(url),
         },

@@ -65,6 +65,22 @@ describe("native editor durable bridge", () => {
     expect(f.store.readDocument("doc")).toEqual(draft(1));
     finish({}); await picker; f.close();
   });
+  test("copies a PNG through the current editor session only", async () => {
+    const f = fixture();
+    try {
+      const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxioAAAAASUVORK5CYII=";
+      const copied: string[] = [];
+      f.services.clipboardWriteImage = async value => { copied.push(value); };
+      const host = new EditorHost("renderer", f.services);
+      const copy = request(1, "clipboardWriteImage", png);
+      expect(parseEditorMessage(JSON.stringify(copy), "renderer")).toEqual(copy);
+      expect(parseEditorMessage(JSON.stringify({ ...copy, params: "data:image/png;base64," + png }), "renderer")).toBeNull();
+      expect((await host.request(copy))?.ok).toBe(true);
+      host.dispose();
+      expect(await host.request({ ...copy, id: 2 })).toBeNull();
+      expect(copied).toEqual([png]);
+    } finally { f.close(); }
+  });
   test("switched session does not acknowledge or reply after an old save resolves", async () => {
     const f = fixture(); let finish!: (value: { version: string }) => void;
     f.services.save = () => new Promise(resolve => { finish = resolve; });

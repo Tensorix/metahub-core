@@ -16,10 +16,12 @@ function fixture() {
     [prop.id]: "Before",
   });
   let current = true;
+  const copiedImages: string[] = [];
   const host = createDatabaseHost(service, database.id, () => current, {
     openRecord: () => {},
     clipboardRead: async () => "",
     clipboardWrite: async () => {},
+    clipboardWriteImage: async png => { copiedImages.push(png); },
   });
   return {
     db,
@@ -28,11 +30,26 @@ function fixture() {
     prop,
     row,
     host,
+    copiedImages,
     leave: () => {
       current = false;
     },
   };
 }
+test("database image copy validates PNGs and rejects a stale workspace", async () => {
+  const f = fixture();
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxioAAAAASUVORK5CYII=";
+  try {
+    await expect(f.host.call("clipboardWriteImage", ["invalid"])).rejects.toThrow("PNG");
+    await f.host.call("clipboardWriteImage", [png]);
+    f.leave();
+    await expect(f.host.call("clipboardWriteImage", [png])).rejects.toThrow("工作区");
+    expect(f.copiedImages).toEqual([png]);
+  } finally {
+    f.service.dispose();
+    f.db.close();
+  }
+});
 test("draft ACK is persistent, revisions cannot overwrite new input, flush shares native writer", async () => {
   const f = fixture();
   try {

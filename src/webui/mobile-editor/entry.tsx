@@ -11,6 +11,9 @@ import { DocumentSaveQueue, type DocumentSaveResult, type DocumentSaveState } fr
 import { isDraft, type EditorDraft, type EditorMediaRequest } from "../../../apps/mobile/src/lib/editor/protocol";
 import { bindBridge, releaseBridge, type EditorBridge } from "./bridge";
 import { safeUrl } from "../../core/md/grammar";
+import { UiHost } from "../ui";
+import { bindMobileImageClipboard } from "../mobile-image-clipboard";
+import { setTableImageClipboardWriter } from "../table-image";
 
 type Position = { anchor: number; head: number; scroll: number; version: string | null };
 let capturePosition: (() => Position | null) | undefined;
@@ -259,13 +262,14 @@ let owner: { id: string; bridge: EditorBridge } | undefined;
 function openSession(config: Bootstrap) {
   if (owner) throw new Error("上一文档仍在使用编辑器");
   const bridge = bindBridge(config.session);
+  bindMobileImageClipboard(png => bridge.rpc<void>("clipboardWriteImage", png));
   owner = { id: config.session, bridge };
   window.__METAHUB_EDITOR__ = config;
   freezeRequested = false;
   document.body.inert = false;
   document.documentElement.dataset.resolved = config.dark ? "dark" : "light";
   document.documentElement.style.setProperty("--editor-top-inset", `${Math.max(0, config.topInset ?? 0)}px`);
-  render(<App bridge={bridge} />, root);
+  render(<><App bridge={bridge} /><UiHost /></>, root);
 }
 function closeSession(id: string) {
   if (!owner || owner.id !== id) return false;
@@ -275,6 +279,7 @@ function closeSession(id: string) {
   composing = undefined;
   render(null, root);
   releaseBridge(owner.bridge);
+  setTableImageClipboardWriter(undefined);
   resetDocTitles();
   owner = undefined;
   Reflect.deleteProperty(window, "__METAHUB_EDITOR__");

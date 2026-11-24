@@ -40,7 +40,9 @@ import {
 } from "./ui.tsx";
 import { SYNCED_EVENT } from "./data/replica.ts";
 import { type DbTab } from "./view.ts";
-import { Chip, CellDisplay, coerceInput, cellText, optColor, relationLabel, docLabel, isPlainTextEditable } from "./cells.tsx";
+import { Chip, CellDisplay, colWidth, coerceInput, cellText, optColor, relationLabel, docLabel, isPlainTextEditable } from "./cells.tsx";
+import { databaseTableImage, type DatabaseImageSelection } from "./database-image";
+import { copyTableImage } from "./table-image";
 import {
   relationTitleList,
   relationTitleProp,
@@ -205,8 +207,6 @@ export function DatabaseView({
   const [peek, setPeek] = useState<string | null>(null);
   const [peekProp, setPeekProp] = useState<string | null>(null);
   const [cellSel, setCellSel] = useState<CellSel | null>(null);
-  // Column width lives in prop.config.width (persisted + replicated); 180 is the default.
-  const colWidth = (p: Prop) => p.config?.width ?? 180;
   const suppressColClick = useRef(false);
   // The row drag handle lives *outside* the table card (in the left margin), so it
   // can't be a table cell (clipped by .tablescroll/.tablewrap). A single handle
@@ -829,6 +829,10 @@ export function DatabaseView({
   // Visible rows = filter → search → sort; visible columns = minus hidden.
   // Cell coordinates (r, c) index these two arrays everywhere below.
   const cols = view.layout === "table" ? props.filter((p) => !view.hidden.includes(p.id)) : props;
+  const imageQueryId = loaded && query === debouncedQuery && queryWindow.index?.id;
+  const copyImage = (selection?: DatabaseImageSelection) => {
+    if (imageQueryId) void copyTableImage(() => databaseTableImage(queryWindow, imageQueryId, cols, view.calc, selection));
+  };
   const sorted = records;
   const rowHeight = view.wrap ? presentation.wrappedRow : presentation.row;
   useLayoutEffect(()=>{
@@ -1036,6 +1040,7 @@ export function DatabaseView({
         onRename={(id, name) => updateView({ name }, id)}
         onDuplicate={duplicateView}
         onDelete={deleteView}
+        onCopyImage={view.layout === "table" && imageQueryId && cols.length ? () => copyImage() : undefined}
       >
         <button class="btn btn-primary" aria-label="新建记录" onClick={newRecord}><Icon name="plus" cls="ico sm" />{t("新建")}</button>
       </ViewTabs>
@@ -1328,6 +1333,9 @@ export function DatabaseView({
           <button onClick={() => guard(async () => { for (const id of sel) await duplicateRecord(await api.getRecord(id)); })}>
             <Icon name="copy" cls="ico sm" />{t("复制")}
           </button>
+          {view.layout === "table" && imageQueryId && cols.length > 0 && (
+            <button {...tip(t("复制选区为图片"))} onClick={() => copyImage({ checked: sel })}><Icon name="image" cls="ico sm" /></button>
+          )}
           <button class="del" onClick={async () => {
             const ok = await confirmDialog({ title: t("删除记录？"), message: t("确定删除选中的 {n} 条记录？", { n: sel.size }), confirmLabel: t("删除"), danger: true });
             if (ok) deleteRecords([...sel]);
@@ -1342,6 +1350,9 @@ export function DatabaseView({
         <div class="selbar cellselbar">
           <span class="cnt">{t("{n} 个单元格", { n: (cr.r1 - cr.r0 + 1) * (cr.c1 - cr.c0 + 1) })}</span>
           <button onClick={copySelection}><Icon name="copy" cls="ico sm" />{t("复制")}</button>
+          {imageQueryId && (
+            <button {...tip(t("复制选区为图片"))} onClick={() => copyImage({ rect: cr })}><Icon name="image" cls="ico sm" /></button>
+          )}
           <button onClick={() => applyToSelection((p) => sorted[cr.r0]!.cells[p.id] ?? null)}>
             <Icon name="copy" cls="ico sm" />{t("填充")}
           </button>

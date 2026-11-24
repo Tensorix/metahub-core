@@ -5,6 +5,9 @@ html,body,#app{height:100%;width:100%;margin:0;overflow:hidden}
 .mobile-database .db-head{display:none}
 .mobile-database .db-view,.mobile-database .gridhost,.mobile-database .tablewrap{flex:1;min-height:0;display:flex;flex-direction:column}
 .mobile-database button{min-width:48px;min-height:48px;box-sizing:border-box}
+/* Keep the hover handle inside its gutter when touch dispatches a mousemove
+   before click. Extending over a checkbox sends that tap to the handle. */
+.mobile-database .rowgrip-ext{left:0;min-width:0;width:var(--grip-gutter)}
 .mobile-database button:disabled{opacity:.4;cursor:default}
 .mobile-database .views{flex:none;margin:0;gap:8px;min-height:56px}
 .mobile-database .view-strip{align-self:stretch}

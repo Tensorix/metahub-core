@@ -1089,28 +1089,38 @@
   .doc-coldrop { position:absolute; width:2px; margin-left:-1px; background:var(--accent); border-radius:1px; pointer-events:none; z-index:6; }
   /* touch selection action bar: the OSK has no Delete/⌘C, so the cell
      rectangle gets on-screen verbs; sits on the wrap layer above the selection */
-  .doc-sel-bar { position:absolute; z-index:8; display:flex; gap:2px; padding:3px;
+  .doc-sel-bar { position:absolute; left:0; z-index:8; display:flex; gap:2px; padding:3px; width:max-content; max-width:100%;
+    transform:translateX(clamp(0px,calc(var(--selection-center) - 50%),calc(100cqw - 100%)));
     background:var(--accent); border-radius:9px; box-shadow:var(--shadow-sm); animation:gripFade .12s ease both; }
   .doc-sel-bar button { color:var(--accent-fg,#fff); font-size:13px; line-height:1; padding:5px 9px; border-radius:6px; }
   .doc-sel-bar button:active { background:color-mix(in srgb, #000 18%, transparent); }
   /* add-column (right edge) and add-row (bottom edge) buttons */
   .doc-table-addcol { width:22px; margin-left:4px; flex:none; display:grid; place-items:center; color:var(--muted);
     border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s,opacity .12s; }
-  /* sticky + 100cqw (the wrap is the container): on a wide table the bar pins
-     to the scrollport at any horizontal offset; narrow tables never hit the
-     max-width and keep their table-wide bar. Engines without cqw just ignore
-     the cap and fall back to scrolling with the table. */
-  .doc-table-addrow { width:100%; max-width:100cqw; position:sticky; left:0; height:22px; margin-top:4px; display:grid; place-items:center; color:var(--muted);
+  /* Keep both actions reachable as a wide table scrolls horizontally. */
+  .doc-table-footer { position:sticky; left:0; display:flex; gap:4px; max-width:100cqw; margin-top:4px; }
+  .doc-table-addrow { flex:1; height:22px; display:grid; place-items:center; color:var(--muted);
     border:1px dashed var(--line-strong); border-radius:var(--radius-sm); background:var(--surface); transition:background .12s,color .12s,border-color .12s,opacity .12s; }
+  .doc-table-copy-image { display:grid; place-items:center; width:22px; height:22px; flex:none; color:var(--muted);
+    border-radius:var(--radius-sm); transition:background .12s,color .12s,opacity .12s; }
+  .doc-table-copy-image span { display:none; }
   .doc-table-addcol:hover, .doc-table-addrow:hover { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
   /* Notion-style: the add bars only materialize while the table is active —
      hover or keyboard focus on desktop, an editing (focused) cell on touch.
      Opacity-only so nothing shifts; pointer-events gates off the invisible
      bars (a touch tap must not hit a bar it can't see). */
-  .doc-table-addrow, .doc-table-addcol { opacity:0; pointer-events:none; }
-  .doc-table-wrap:focus-within :is(.doc-table-addrow, .doc-table-addcol) { opacity:1; pointer-events:auto; }
+  .doc-table-addrow, .doc-table-addcol, .doc-table-copy-image { opacity:0; pointer-events:none; }
+  .doc-table-wrap:focus-within :is(.doc-table-addrow, .doc-table-addcol, .doc-table-copy-image),
+  .doc-table-wrap:has(.cells-active) .doc-table-copy-image { opacity:1; pointer-events:auto; }
   @media (hover:hover) and (pointer:fine) {
-    .doc-table-wrap:hover :is(.doc-table-addrow, .doc-table-addcol) { opacity:1; pointer-events:auto; }
+    .doc-table-wrap:hover :is(.doc-table-addrow, .doc-table-addcol, .doc-table-copy-image) { opacity:1; pointer-events:auto; }
+    .doc-table-copy-image:hover { background:var(--hover-2); color:var(--fg); }
+  }
+  @media (hover:none) {
+    .doc-table-copy-image { opacity:1; pointer-events:auto; display:flex; gap:5px; width:auto; min-height:40px;
+      padding-inline:6px; font-size:var(--fs-sm); white-space:nowrap; }
+    .doc-table-copy-image span { display:inline; }
+    .doc-table-footer { align-items:center; }
   }
   /* cell range selection (box select): soft fill per cell; the accent rectangle
      outline is drawn via inline inset box-shadow on the edge cells (see
@@ -2690,6 +2700,8 @@
     .toasts { left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom)); }
     .toast { justify-content:center; }
     .selbar { bottom:calc(16px + env(safe-area-inset-bottom)); max-width:calc(100vw - 24px); }
+    .db > .selbar { width:max-content; overflow-x:auto; white-space:nowrap; }
+    .db > .selbar > * { flex:none; }
   }
   @keyframes sheet-up { from { transform:translateY(100%); } }
   @keyframes sheet-down { from { transform:translateY(-100%); } }

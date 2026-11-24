@@ -59,7 +59,7 @@ function singleImageUrl(md: string): string | null {
   return m ? m[1]! : null;
 }
 
-function blobToDataUrl(b: Blob): Promise<string> {
+export function blobToDataUrl(b: Blob): Promise<string> {
   return new Promise((res, rej) => {
     const r = new FileReader();
     r.onload = () => res(r.result as string);

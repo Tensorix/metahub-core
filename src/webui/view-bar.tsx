@@ -28,7 +28,7 @@ export type PickRefs = (anchor: MenuAnchor, prop: Prop, current: string[], onPic
 
 // ---- view tabs --------------------------------------------------------------
 
-export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDuplicate, onDelete, children }: {
+export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDuplicate, onDelete, onCopyImage, children }: {
   views: ViewDef[];
   activeId: string;
   onSelect: (id: string) => void;
@@ -36,6 +36,7 @@ export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDupl
   onRename: (id: string, name: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
+  onCopyImage?: () => void;
   children?: ComponentChildren;
 }) {
   const tabsRef = useRef<HTMLDivElement>(null);
@@ -58,6 +59,9 @@ export function ViewTabs({ views, activeId, onSelect, onCreate, onRename, onDupl
           promptDialog({ title: t("重命名视图"), value: v.name, confirmLabel: t("保存") }).then((name) => { if (name && name !== v.name) onRename(v.id, name); });
         }} />
         <MenuItem icon="copy" label={t("复制视图")} onClick={() => { close(); onDuplicate(v.id); }} />
+        {v.id === activeId && onCopyImage && (
+          <MenuItem icon="image" label={t("复制为图片")} onClick={() => { close(); onCopyImage(); }} />
+        )}
         {views.length > 1 && (
           <>
             <MenuSep />

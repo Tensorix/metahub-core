@@ -210,9 +210,7 @@ export class DatabaseQueryWindow {
     }
     await Promise.all(jobs);
   }
-  async readRange(start: number, end: number) {
-    const throughEnd =
-      this.index?.totalExact === false && end >= this.index.total;
+  async completeIndex(): Promise<QueryIndex> {
     while (
       this.index?.statistics === "loading" &&
       this.source.recordQueryStatus
@@ -225,8 +223,13 @@ export class DatabaseQueryWindow {
       this.index = next;
       this.changed();
     }
-    const index = this.index;
-    if (!index) throw new Error("查询尚未完成");
+    if (!this.index) throw new Error("查询尚未完成");
+    return this.index;
+  }
+  async readRange(start: number, end: number) {
+    const throughEnd =
+      this.index?.totalExact === false && end >= this.index.total;
+    const index = await this.completeIndex();
     if (throughEnd) end = index.total;
     const rows: RecordRow[] = [];
     for (

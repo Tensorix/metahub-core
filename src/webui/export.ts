@@ -1,3 +1,4 @@
+import { downloadBlob } from "./download-blob.ts";
 import { csvPropertyHeaders } from "../core/csv-columns.ts";
 import { toCsv } from "../core/csv.ts";
 import { encodeRelationCell } from "../core/relation-cells.ts";
@@ -17,14 +18,7 @@ export function safeFilename(name: string, ext: string): string {
 }
 
 export function downloadText(filename: string, text: string, type: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  downloadBlob(filename, new Blob([text], { type }));
 }
 
 /** propId → (targetId → title) for every relation/doc column, fetched fresh so
